@@ -8,10 +8,12 @@ import { AlarmIcon } from "../../shared/design-system/icons/index";
 import {
   countDue,
   dueSince,
+  formatDue,
+  isDisplayable,
   navigableTarget,
   nextDelay,
   nowSeconds,
-  pendingMessageIds,
+  pendingMessageDue,
 } from "./model";
 import { RemindDialog } from "./RemindDialog";
 import { RemindersPage } from "./RemindersPage";
@@ -256,23 +258,30 @@ export const apply: PluginModule["apply"] = (ctx) => {
       reminders?.snapshot ?? noState,
       reminders?.snapshot ?? noState,
     );
-    return pendingMessageIds(state).has(message.id) ? (
-      <span
-        className={styles.marker}
-        role="img"
-        title="Reminder set"
-        aria-label="Reminder set"
-      >
+    const due = pendingMessageDue(state);
+    if (!due.has(message.id)) return null;
+    const at = due.get(message.id);
+    const label =
+      at !== undefined && isDisplayable(at)
+        ? `Reminder set for ${formatDue(at)}`
+        : "Reminder set";
+    // Labelled only: a title would repeat the label as its description.
+    return (
+      <span className={styles.marker} role="img" aria-label={label}>
         <AlarmIcon size={14} aria-hidden="true" />
       </span>
-    ) : null;
+    );
   }
 
   ctx.conversation.registerMessageAction({
     id: "remind-me",
     title: "Remind me",
     icon: () => <AlarmIcon size={16} aria-hidden="true" />,
-    matches: (_message, session) => !!session.reminders,
+    // Like Reply and Report: a message the relay never stored has nothing to
+    // come back to.
+    matches: (message, session) =>
+      !!session.reminders &&
+      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
     component: RemindDialog,
     marker: Marker,
   });

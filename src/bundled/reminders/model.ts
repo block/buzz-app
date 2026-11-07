@@ -39,21 +39,32 @@ export function nextDelay(reminders: readonly Reminder[], now: number) {
     : Math.min((next - now) * 1000, MAX_DELAY_MS);
 }
 
-const pendingIds = new WeakMap<RemindersState, ReadonlySet<string>>();
-/** Message ids with a pending reminder, derived once per reminders snapshot. */
-export function pendingMessageIds(state: RemindersState) {
-  let ids = pendingIds.get(state);
-  if (!ids) {
-    ids = new Set(
-      state.reminders.flatMap((reminder) =>
-        reminder.status === "pending" && reminder.target
-          ? [reminder.target.eventId]
-          : [],
-      ),
-    );
-    pendingIds.set(state, ids);
+const pendingDue = new WeakMap<
+  RemindersState,
+  ReadonlyMap<string, number | undefined>
+>();
+/**
+ * Each message with a pending reminder, mapped to its earliest due time,
+ * derived once per reminders snapshot.
+ */
+export function pendingMessageDue(state: RemindersState) {
+  let due = pendingDue.get(state);
+  if (!due) {
+    const next = new Map<string, number | undefined>();
+    for (const { status, target, notBefore } of state.reminders) {
+      if (status !== "pending" || !target) continue;
+      const earliest = next.get(target.eventId);
+      next.set(
+        target.eventId,
+        earliest !== undefined && notBefore !== undefined
+          ? Math.min(earliest, notBefore)
+          : (notBefore ?? earliest),
+      );
+    }
+    due = next;
+    pendingDue.set(state, due);
   }
-  return ids;
+  return due;
 }
 
 export type ReminderGroup = Readonly<{ label: string; reminders: Reminder[] }>;
@@ -95,7 +106,7 @@ export function endOfToday() {
 }
 
 /** The given day offset at 9am local, rolled forward a day if already past. */
-function nextDayAt9am(dayOffset: number) {
+export function nextDayAt9am(dayOffset: number) {
   const now = new Date();
   const target = new Date(now);
   target.setDate(target.getDate() + dayOffset);
@@ -116,10 +127,25 @@ export const TIME_PRESETS: readonly TimePreset[] = [
   },
 ];
 
+const dateString = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 /** Today as local `YYYY-MM-DD`, for the custom date input. */
-export function todayDateString() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+export const todayDateString = () => dateString(new Date());
+
+/** A time as local custom date and time values. */
+export function customInputs(at: number) {
+  const due = new Date(at * 1000);
+  return { date: dateString(due), time: due.toTimeString().slice(0, 5) };
+}
+
+/** A due time as custom date and time values, while that minute is still ahead. */
+export function dueInputs(at: number | undefined) {
+  if (at === undefined || !isDisplayable(at)) return undefined;
+  const inputs = customInputs(at);
+  return parseCustomDateTime(inputs.date, inputs.time) === null
+    ? undefined
+    : inputs;
 }
 
 /** A strictly future local date and time in unix seconds, or null. */

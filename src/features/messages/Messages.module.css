@@ -227,6 +227,9 @@
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
+.marks:empty {
+  display: none;
+}
 .byline time {
   color: var(--text-subtle);
   font-size: var(--text-caption);

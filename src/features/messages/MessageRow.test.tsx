@@ -3,6 +3,7 @@ import {
   createLocalAgentActivity,
   REPLY_CORRELATION_MS,
 } from "../agents/local-activity";
+import { readFileSync } from "node:fs";
 import { StrictMode } from "react";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -46,6 +47,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { MessageRow } from "./MessageRow";
 import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
+import styles from "./Messages.module.css";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -2786,6 +2788,80 @@ it("contains a broken plugin message action to its own contribution", () => {
     expect(screen.getByText("healthy marker")).toBeInTheDocument();
   } finally {
     error.mockRestore();
+    cleanup();
+  }
+});
+
+it("shows a plugin mark on a grouped message, once, outside its hidden byline", () => {
+  let marked = true;
+  const action = {
+    id: "mark",
+    title: "Mark",
+    key: "test.plugin/mark",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: () => true,
+    component: () => null,
+    marker: () =>
+      marked ? <span role="img" aria-label="Reminder set for later" /> : null,
+  };
+  const actions = [action];
+  const none: never[] = [];
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const props = {
+    row: { ...row, replyCount: 0 },
+    session,
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    extensions: {
+      tools: { snapshot: () => none, subscribe: () => () => {} },
+      inline: { snapshot: () => none, subscribe: () => () => {} },
+      actions: { snapshot: () => actions, subscribe: () => () => {} },
+    },
+  };
+  const mark = () => {
+    // Announced once: not also inside the screen-reader byline.
+    const [only, ...others] = screen.getAllByRole("img", {
+      name: "Reminder set for later",
+    });
+    expect(others).toEqual([]);
+    return only as HTMLElement;
+  };
+  try {
+    const view = renderDom(<MessageRow {...props} layout="continuation" />);
+    // jsdom applies no CSS, so the hidden byline is found by its class.
+    expect(mark().closest(".sr-only")).toBeNull();
+    // A copy leaves the mark out, as it does the hidden byline.
+    expect(mark().closest(".select-none")).not.toBeNull();
+    // A leading row keeps its mark in the byline, beside the time.
+    view.rerender(<MessageRow {...props} layout="timeline" />);
+    expect(mark().closest(".sr-only")).toBeNull();
+    expect(mark().parentElement?.querySelector("time")).not.toBeNull();
+    cleanup();
+    // A marker with nothing to show leaves an empty line, which collapses.
+    // jsdom applies no CSS, so the stylesheet's rule is read directly.
+    marked = false;
+    const { container } = renderDom(
+      <MessageRow {...props} layout="continuation" />,
+    );
+    expect(container.querySelector(`.${styles.marks}`)).toBeEmptyDOMElement();
+    expect(
+      readFileSync("src/features/messages/Messages.module.css", "utf8"),
+    ).toMatch(/\.marks:empty\s*\{\s*display:\s*none;\s*\}/);
+  } finally {
     cleanup();
   }
 });

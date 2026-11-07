@@ -129,6 +129,8 @@ const reminders: Reminders = {
   cancel: async (id) =>
     update(id, { status: "cancelled", notBefore: undefined }),
 };
+// Specs stand in for another device by writing to the store directly.
+Object.assign(window, { reminders });
 const connection = {
   status: "ready",
   scope: `https://community.example:${viewer}`,

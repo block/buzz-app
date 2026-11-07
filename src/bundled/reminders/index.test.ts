@@ -1,5 +1,10 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { ChannelMessage } from "../../features/relay/contracts";
+import type { MessageAction } from "../../features/conversation/contracts";
 import type { RelayEvent } from "../../features/relay/events";
+import type { RelaySession } from "../../features/relay/session";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { createReminders } from "../../features/relay/reminders";
 import { Context } from "@deepseek-ai/cordis";
@@ -10,6 +15,7 @@ import { NotificationsService } from "../../features/notifications/service";
 import { createNotificationPreferences } from "../../features/notifications/preferences";
 import type { NotificationPlatform } from "../../features/notifications/platform";
 import { apply } from "./index";
+import { formatDue } from "./model";
 
 const viewer = "a".repeat(64);
 const target = {
@@ -95,6 +101,8 @@ function mount(notifications?: unknown) {
     effect: (body: () => () => void) => void stop.push(body()),
   };
   apply(ctx as unknown as Parameters<typeof apply>[0]);
+  const action = ctx.conversation.registerMessageAction.mock
+    .calls[0]?.[0] as MessageAction;
   const connect = (scope: string, reminders: unknown) => {
     snapshot = {
       status: "ready",
@@ -107,7 +115,7 @@ function mount(notifications?: unknown) {
   const dispose = () => {
     for (const body of stop.splice(0)) body();
   };
-  return { submit, connect, dispose };
+  return { submit, connect, dispose, action };
 }
 
 const at = (seconds: number) => vi.setSystemTime(seconds * 1000);
@@ -127,6 +135,73 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it.each([
+  [undefined, true],
+  ["accepted", true],
+  ["seen", true],
+  ["sending", false],
+  ["unknown", false],
+  ["failed", false],
+] as const)("offers Remind me on a %s message: %s", (delivery, offered) => {
+  const { action } = mount();
+  const message = { id: "m", ...(delivery ? { delivery } : {}) };
+  expect(
+    action.matches(
+      message as ChannelMessage,
+      {
+        reminders: session(Promise.resolve([])).capability,
+      } as unknown as RelaySession,
+    ),
+  ).toBe(offered);
+  // Without the reminder store there is nothing to offer, delivered or not.
+  expect(action.matches(message as ChannelMessage, {} as RelaySession)).toBe(
+    false,
+  );
+});
+
+it("labels a message's mark with its earliest pending due time", () => {
+  const { action } = mount();
+  const Marker = action.marker;
+  if (!Marker) throw new Error("Remind me has no marker");
+  const reminder = (
+    id: string,
+    status: "pending" | "done",
+    notBefore?: number,
+  ) => ({
+    id,
+    eventId: id,
+    createdAt: 1,
+    status,
+    ...(notBefore !== undefined ? { notBefore } : {}),
+    target,
+  });
+  const markup = (reminders: unknown[]) => {
+    const state = { status: "ready", hydrated: true, reminders };
+    return renderToStaticMarkup(
+      createElement(Marker, {
+        message: { id: target.eventId } as ChannelMessage,
+        session: {
+          reminders: { subscribe: () => () => {}, snapshot: () => state },
+        } as unknown as RelaySession,
+      }),
+    );
+  };
+  const label = `Reminder set for ${formatDue(2_000_000_000)}`;
+  const marked = markup([
+    reminder("later", "pending", 2_100_000_000),
+    reminder("done", "done", 1_900_000_000),
+    reminder("sooner", "pending", 2_000_000_000),
+  ]);
+  expect(marked).toContain(`aria-label="${label}"`);
+  // Announced once: a title or hint would repeat the label as a description.
+  expect(marked).not.toMatch(/title=|tooltip-trigger/);
+  // A due time Date cannot show still marks the message.
+  expect(markup([reminder("far", "pending", 8_640_000_000_001)])).toContain(
+    'aria-label="Reminder set"',
+  );
+  expect(markup([reminder("done", "done", 2_000_000_000)])).toBe("");
 });
 
 it("notifies a reminder from slow history even after a live update moved the clock", async () => {

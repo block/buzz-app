@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import type { ChannelMessage } from "../../features/relay/contracts";
@@ -14,7 +15,9 @@ import { foldMessages } from "../../features/relay/fold";
 import type { RelaySession } from "../../features/relay/session";
 import { keypair, signed } from "../../features/relay/testing";
 import userEvent from "@testing-library/user-event";
-import { RemindDialog } from "./RemindDialog";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { formatDue, nowSeconds } from "./model";
+import { RemindDialog, SnoozeDialog } from "./RemindDialog";
 
 afterEach(() => {
   cleanup();
@@ -285,6 +288,140 @@ it("reveals labelled custom fields and saves a future time with the note", async
     new Date("2099-06-20T14:30").getTime() / 1000,
     "Follow up",
   );
+});
+
+it("starts Custom date & time at the next 9am, so it never opens on a past time", async () => {
+  for (const [clock, date] of [
+    ["2026-11-04T08:30", "2026-11-04"],
+    ["2026-11-04T09:00", "2026-11-05"],
+    ["2026-11-04T17:45", "2026-11-05"],
+  ] as const) {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date(clock) });
+    try {
+      cleanup();
+      const user = userEvent.setup();
+      const create = vi.fn(async (..._args: unknown[]) => {});
+      dialog(create);
+      await user.click(screen.getByRole("combobox", { name: "When" }));
+      await user.click(
+        await screen.findByRole("option", { name: "Custom date & time" }),
+      );
+      expect(screen.getByLabelText("Reminder date")).toHaveValue(date);
+      expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+      expect(screen.queryByRole("status")).toBeNull();
+      const save = screen.getByRole("button", { name: "Set reminder" });
+      expect(save).toBeEnabled();
+      await user.click(save);
+      expect(create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ eventId: "m" }),
+        new Date(`${date}T09:00`).getTime() / 1000,
+        "",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
+
+it("confirms a saved reminder with its due time", async () => {
+  const create = vi.fn(async (..._args: unknown[]) => {});
+  const close = vi.fn();
+  render(
+    <ToastProvider>
+      <RemindDialog
+        message={
+          {
+            id: "m",
+            channelId: "c",
+            authorId: "a",
+            content: "hello",
+          } as unknown as ChannelMessage
+        }
+        session={{ reminders: { create } } as unknown as RelaySession}
+        close={close}
+      />
+    </ToastProvider>,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Set reminder" }));
+  expect(close).toHaveBeenCalledOnce();
+  const at = create.mock.calls[0]?.[1] as number;
+  // Sonner mounts a toast transparent, then fades it in.
+  await waitFor(() =>
+    expect(screen.getByText(`Reminder set for ${formatDue(at)}`)).toBeVisible(),
+  );
+});
+
+it("starts a custom snooze at the reminder's due time while it is ahead, else the next 9am", () => {
+  const snooze = (due: number | undefined) =>
+    render(
+      <SnoozeDialog
+        title="Snooze reminder"
+        due={due}
+        cancelled={false}
+        save={vi.fn()}
+        close={vi.fn()}
+        finalFocus={() => null}
+      />,
+    );
+  snooze(new Date("2099-06-20T16:15").getTime() / 1000);
+  expect(screen.getByLabelText("Reminder date")).toHaveValue("2099-06-20");
+  expect(screen.getByLabelText("Reminder time")).toHaveValue("16:15");
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  // A past or undisplayable due time starts from the next 9am: today's until
+  // it passes, then tomorrow's, so Custom… never opens on a past time.
+  for (const [clock, date] of [
+    ["2026-11-04T08:30", "2026-11-04"],
+    ["2026-11-04T09:00", "2026-11-05"],
+    ["2026-11-04T17:45", "2026-11-05"],
+  ] as const) {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date(clock) });
+    try {
+      for (const due of [nowSeconds() - 60, 8_640_000_000_001, undefined]) {
+        cleanup();
+        snooze(due);
+        expect(screen.getByLabelText("Reminder date")).toHaveValue(date);
+        expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+        expect(screen.queryByRole("status")).toBeNull();
+        expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
+
+it("keeps a cancelled reminder's custom snooze open, with what was typed, but won't save it", async () => {
+  const save = vi.fn(() => Promise.reject(new Error("offline")));
+  const props = {
+    title: "Snooze reminder",
+    due: new Date("2099-06-20T16:15").getTime() / 1000,
+    save,
+    close: vi.fn(),
+    finalFocus: () => null,
+  };
+  const view = render(<SnoozeDialog {...props} cancelled={false} />);
+  fireEvent.change(screen.getByLabelText("Reminder time"), {
+    target: { value: "17:30" },
+  });
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The reminder could not be updated. Try again.",
+  );
+  view.rerender(<SnoozeDialog {...props} cancelled />);
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This reminder was cancelled.",
+  );
+  // There is nothing to try again, so the notice replaces the save error.
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByLabelText("Reminder time")).toHaveValue("17:30");
+  const button = screen.getByRole("button", { name: "Save" });
+  expect(button).toBeDisabled();
+  fireEvent.click(button);
+  expect(save).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
 });
 
 it("stays open after a stray outside click", async () => {

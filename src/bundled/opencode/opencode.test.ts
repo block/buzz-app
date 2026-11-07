@@ -1,4 +1,10 @@
 import { expect, it } from "vitest";
+import { AcpProcess } from "../../features/agent-harness/acp/process";
+import type {
+  ServeMcp,
+  ToolServer,
+} from "../../features/agent-harness/acp/types";
+import type { McpHandler } from "../../features/host/service";
 import type { HostProcessOptions } from "../../features/host/service";
 import { bundledPlugins } from "..";
 import { OpenCodeModels, picks } from "./models";
@@ -32,6 +38,7 @@ const fake = (failure?: string) => {
   const spawned: { id: string; options: HostProcessOptions }[] = [];
   const received: { method: string; params: Record<string, unknown> }[] = [];
   let killed = 0;
+  let sessions = 0;
   const spawn = async (id: string, options: HostProcessOptions = {}) => {
     if (failure) throw new Error(failure);
     spawned.push({ id, options });
@@ -43,7 +50,7 @@ const fake = (failure?: string) => {
           method === "initialize"
             ? { agentCapabilities: { mcpCapabilities: { http: true } } }
             : method === "session/new"
-              ? { sessionId: "s1", configOptions: CONFIG_OPTIONS }
+              ? { sessionId: `s${++sessions}`, configOptions: CONFIG_OPTIONS }
               : { configOptions: CONFIG_OPTIONS };
         queueMicrotask(() =>
           options.onStdout?.(
@@ -187,4 +194,80 @@ it("does not cache a failed model read", async () => {
 it("fills a saved config with defaults", () => {
   expect(config(undefined)).toEqual(DEFAULT_CONFIG);
   expect(config({ model: "m" })).toEqual({ ...DEFAULT_CONFIG, model: "m" });
+});
+
+it("routes the shared Buzz tool server's calls by the session id opencode sends", async () => {
+  const handlers: McpHandler[] = [];
+  const serve: ServeMcp = async (handler) => {
+    handlers.push(handler);
+    return {
+      url: "http://127.0.0.1:1/mcp",
+      headers: [{ name: "Authorization", value: "Bearer t" }],
+      close: async () => undefined,
+      closed: new Promise<void>(() => undefined),
+    };
+  };
+  const toolsFor =
+    (name: string): ToolServer =>
+    async (conversation, message) => ({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { name, conversation },
+    });
+  const call = (sessionID?: string) =>
+    handlers[0]?.({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "send",
+        ...(sessionID ? { _meta: { "ai.opencode/sessionID": sessionID } } : {}),
+      },
+    });
+
+  const opencode = fake();
+  const process = await OpenCodeProcess.start(opencode.spawn, {
+    cwd: "/w",
+    serve,
+  });
+  const a = await process.open({
+    cwd: "/w",
+    systemPrompt: "",
+    tools: toolsFor("a"),
+  });
+  const b = await process.open({
+    cwd: "/w",
+    systemPrompt: "",
+    tools: toolsFor("b"),
+  });
+  a.conversation = "chan/a";
+  b.conversation = "chan/b";
+  expect(handlers).toHaveLength(1);
+  const servers = opencode.received
+    .filter(({ method }) => method === "session/new")
+    .map(({ params }) => params.mcpServers);
+  expect(servers[0]).toEqual(servers[1]);
+  expect(await call(a.id)).toMatchObject({
+    result: { name: "a", conversation: "chan/a" },
+  });
+  expect(await call(b.id)).toMatchObject({
+    result: { name: "b", conversation: "chan/b" },
+  });
+  expect(await call()).toMatchObject({ error: { code: -32602 } });
+  expect(await call("nope")).toMatchObject({
+    error: { code: -32602 },
+  });
+  await process.close(a);
+  expect(await call(a.id)).toMatchObject({
+    error: { code: -32602 },
+  });
+
+  const goose = await AcpProcess.start(
+    opencode.spawn,
+    { ...OPENCODE, sharedMcp: false },
+    { cwd: "/w", serve },
+  );
+  await goose.open({ cwd: "/w", systemPrompt: "", tools: toolsFor("x") });
+  await goose.open({ cwd: "/w", systemPrompt: "", tools: toolsFor("y") });
+  expect(handlers).toHaveLength(3);
 });

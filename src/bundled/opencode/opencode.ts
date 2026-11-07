@@ -33,6 +33,7 @@ export const OPENCODE: AcpHooks = {
   missing:
     "opencode is not installed or not on your PATH. Install it, then run `opencode auth login`.",
   env: ENV,
+  sharedMcp: true,
   select: async (opencode, session, want) => {
     let levels:
       | { id: string | undefined; values: string[] | undefined }

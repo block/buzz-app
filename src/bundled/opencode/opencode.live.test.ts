@@ -99,9 +99,17 @@ const serve: ServeMcp = async (handler) => {
 type Send = { name?: string; arguments?: { text?: string } };
 
 async function live() {
-  const calls: { method: string; params: unknown }[] = [];
-  const tools: ToolServer = async (_conversation, message) => {
-    calls.push({ method: message.method, params: message.params });
+  const calls: {
+    method: string;
+    params: unknown;
+    conversation: string | undefined;
+  }[] = [];
+  const tools: ToolServer = async (conversation, message) => {
+    calls.push({
+      method: message.method,
+      params: message.params,
+      conversation,
+    });
     if (message.method === "tools/call")
       return {
         jsonrpc: "2.0",
@@ -165,6 +173,62 @@ describe.skipIf(!LIVE)("opencode acp", () => {
       expect(settled.ok).toBe(true);
       expect(calls.some((call) => call.method === "tools/list")).toBe(true);
       expect(sends().at(-1)?.arguments?.text).toContain("pong");
+    } finally {
+      await opencode.kill();
+    }
+  });
+
+  it("routes each session's Buzz tool calls to that session", {
+    timeout: 240_000,
+  }, async () => {
+    const { opencode, cwd, tools, calls } = await live();
+    try {
+      const open = () =>
+        opencode.open({
+          cwd,
+          tools,
+          choice: () => ({ provider: "", model: MODEL }),
+          systemPrompt: systemPrompt({
+            scope: "thread",
+            cwd,
+            agent: { name: "Ada", pubkey: "a".repeat(64) },
+          }),
+        });
+      const [a, b] = [await open(), await open()];
+      a.conversation = "channel/a";
+      b.conversation = "channel/b";
+      const [ra, rb] = await Promise.all(
+        [
+          [a, "alpha-111"],
+          [b, "bravo-222"],
+        ].map(([session, text]) =>
+          (session as typeof a).send(
+            `Call the Buzz send tool once with the text \`${text}\` and final true.`,
+          ),
+        ),
+      );
+      expect(ra?.ok).toBe(true);
+      expect(rb?.ok).toBe(true);
+      const sent = calls
+        .filter((call) => call.method === "tools/call")
+        .map((call) => ({
+          conversation: call.conversation,
+          text: (call.params as Send).arguments?.text,
+        }));
+      expect(sent).toContainEqual({
+        conversation: "channel/a",
+        text: expect.stringContaining("alpha-111"),
+      });
+      expect(sent).toContainEqual({
+        conversation: "channel/b",
+        text: expect.stringContaining("bravo-222"),
+      });
+      expect(
+        sent.filter((call) => call.conversation === "channel/a"),
+      ).toHaveLength(1);
+      expect(
+        sent.filter((call) => call.conversation === "channel/b"),
+      ).toHaveLength(1);
     } finally {
       await opencode.kill();
     }

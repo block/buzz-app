@@ -6,6 +6,7 @@ import {
   launchEnvironment,
   options,
 } from "./desktop-config.mjs";
+import { prepareCredentialHelper } from "./dev-credential-helper.mjs";
 import { worktreePort } from "./worktree-port.mjs";
 
 // `me` (from `just desktop me`) signs in with the release build's key, read-only.
@@ -41,6 +42,31 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const env = launchEnvironment(root);
 delete env.BUZZ_DEV_RELEASE_KEY;
 if (me) env.BUZZ_DEV_RELEASE_KEY = "1";
+// On macOS `me` also routes Keychain items through a helper it installs once,
+// so approvals survive rebuilds. Like the release key, only `me` turns it on.
+for (const name of [
+  "BUZZ_DEV_CREDENTIAL_HELPER",
+  "BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE",
+  "BUZZ_DEV_HELPER_SIGNING",
+])
+  delete env[name];
+if (me && !help && process.platform === "darwin") {
+  try {
+    const { helper, identity } = prepareCredentialHelper(root);
+    env.BUZZ_DEV_CREDENTIAL_HELPER = helper;
+    // Any item may still need its one approval, so a dialog may show.
+    env.BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE = "1";
+    env.BUZZ_DEV_HELPER_SIGNING = identity;
+    // `tauri dev` starts the app with `cargo run`, which starts it through this.
+    const runner = fileURLToPath(new URL("./dev-sign-run.sh", import.meta.url));
+    for (const triple of ["AARCH64_APPLE_DARWIN", "X86_64_APPLE_DARWIN"])
+      env[`CARGO_TARGET_${triple}_RUNNER`] = runner;
+  } catch (error) {
+    console.warn(
+      `Keychain helper unavailable (${error.message}); Keychain may ask for each saved item.`,
+    );
+  }
+}
 // Give Rust the development frontend's effective public pin (including an
 // explicit empty override), so native agent starts select the signer the
 // frontend actually uses.

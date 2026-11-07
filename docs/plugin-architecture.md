@@ -2520,8 +2520,8 @@ manual presence preference) and its status write path. A bare `/status` asks the
 profile menu, through the `statusSheet` service, to open the set-status sheet. It also registers a completion provider that lists
 commands by name while the caret ends a leading `/token`. Choosing a row inserts
 `/name ` and never runs it. The existing completion host supplies arrow, Enter, Tab
-and Escape handling. Other result variants (`ui`) and availability that
-depends on a relay round trip are not part of this contract yet.
+and Escape handling. A `ui` result and availability that depends on a relay round
+trip are not part of this contract yet.
 
 `buzz.commands` also ships the channel membership commands, each over the service the
 channel UI already uses and each throwing on failure so the draft stays:
@@ -2533,6 +2533,10 @@ channel UI already uses and each throwing on failure so the draft stays:
 | `/join #channel` | any | always | joins when not a member, then opens the channel |
 | `/leave` (alias `/part`) | channel, thread | a regular channel the viewer is listed in | reads leave permission, then asks the app's own **Leave channel** confirmation; declining keeps the draft quietly, and confirming runs the same leave and navigation as the sidebar's Leave action |
 | `/who` (alias `/members`) | any | always | opens the conversation's member panel |
+| `/rename <name>` | channel, thread | the viewer is owner or admin of a regular channel | renames through the channel details capability after reading the verified details |
+| `/archive` | channel, thread | the viewer is owner or admin of a regular channel | asks the app's archive confirmation; a declined one keeps the draft quietly |
+| `/mute` | any | always | toggles the sidebar mute and says which state it is now in |
+| `/dm @user… [message]` (alias `/msg`) | any | always | opens the direct message with the leading mentions, sends the message first when there is one, then opens it |
 
 `/invite` and `/remove` set `mentionsAreArguments` and take only @mentions: every
 mentioned person must be named in the text, and no mention, or text that is not a
@@ -2548,12 +2552,22 @@ the ones the sidebar and the channel header already use. The promise settles `co
 after the action ran and `cancelled` when the viewer declined, and rejects with the
 failure. A command returns `{ cancelled: true }` for the declined case: the host keeps
 the draft, returns focus to the composer and shows nothing. Where no navigation state
-hosts the dialog, `confirmChannelAction` is absent and `/leave` fails with the draft kept.
+hosts the dialog, `confirmChannelAction` is absent and `/leave` fails with the draft kept. `/archive` asks the same way with the action `"archive"`.
 
 `buzz.reminders` owns `/remind me <what> <when>`. The command's `session` carries no
 reminders, so it reads the ready session from the plugin's `relay` injection, requires
 that session's scope to equal the composer's, and creates a standalone reminder (a note
 and a due time, no target message) with `reminders.create(undefined, notBefore, note)`.
+
+`/rename` applies the channel settings field's rules (leading `#` and surrounding
+whitespace removed, 1 to 120 characters); a mention, a channel link or a second
+line is rejected rather than becoming part of the name. `/dm` takes the leading
+mentions as the people (one to eight others, and only agents the viewer may message)
+and the rest as the message. It opens the conversation, sends the message and waits
+for delivery before navigating. When the send fails the draft stays and nothing
+opens; a failed event the outbox proves undelivered is dismissed so rerunning does
+not duplicate it, while an unconfirmed one stays and the error says it may have been
+sent.
 
 ### Composer completion providers
 

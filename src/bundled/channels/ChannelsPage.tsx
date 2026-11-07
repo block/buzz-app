@@ -40,6 +40,7 @@ import {
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { CommunityMembership } from "../moderation/membership";
+import { useFirstChannel } from "./first-channel";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
@@ -381,6 +382,7 @@ function ChannelWorkspace({
   );
   const list = useChannelRoster(queries.channels);
   const initialList = useRef(list);
+  useFirstChannel({ scope, cached, queries, list, membership });
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
@@ -734,7 +736,7 @@ function ChannelWorkspace({
     "messages",
     navigator,
   );
-  const { settings, setSettings, retireMenuEntries } = tabState;
+  const { settings, setSettings } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -1549,11 +1551,6 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
-  // Menu panels belong to one visit. Retire only this visit's keyed entries.
-  useEffect(() => {
-    if (!currentId) return;
-    return () => retireMenuEntries();
-  }, [currentId, retireMenuEntries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {

@@ -4,10 +4,8 @@ import {
   clearAttachmentDraft,
   subscribeAttachmentDraftCounts,
 } from "../../features/messages/attachment-draft";
-import {
-  hasDraftContent,
-  mentionDraft,
-} from "../../features/messages/mention-draft";
+import { draftCounts } from "../../features/messages/draft-places";
+import { mentionDraft } from "../../features/messages/mention-draft";
 import type { RelaySession } from "../../features/relay/session";
 import {
   clearView,
@@ -88,7 +86,7 @@ export function readDrafts(
       `${session.scope}:${key}`,
     );
   const listed = listDraftViews(session.scope, (value, key) =>
-    hasDraftContent(mentionDraft(value), files(key)),
+    draftCounts(session, key, value),
   );
   const activity = readActivity(session.scope);
   const seen = new Set<string>();

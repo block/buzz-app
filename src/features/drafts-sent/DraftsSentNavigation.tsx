@@ -2,11 +2,12 @@ import type { RelayData } from "../relay/service";
 import type { Navigation } from "../navigation/controller";
 import type { NavigationScope, OpenTarget } from "../navigation/targets";
 import { useChannelList, useRelayConnection } from "../relay/react";
+import { CountBadge } from "../../shared/design-system/ui/CountBadge";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SendIcon } from "../../shared/design-system/icons";
+import styles from "./DraftsSent.module.css";
 import { useDrafts } from "./drafts";
 import { listed, scopeOf } from "./scope";
-import styles from "./DraftsSent.module.css";
 
 /** The host's Drafts & sent destination, shared by sidebar and global search. */
 export function draftsSentTarget(
@@ -37,7 +38,12 @@ export function DraftsSentNavigation({
   return (
     <NavigationItem
       label="Drafts & sent"
-      icon={<SendIcon size={16} strokeWidth={2.5} aria-hidden="true" />}
+      icon={
+        // Same icon box as plugin page rows, so this row shares their columns.
+        <span className="shell-page-icon">
+          <SendIcon size={16} strokeWidth={2.5} aria-hidden="true" />
+        </span>
+      }
       selected={
         target.kind === "page" &&
         target.pluginId === "buzz.channels" &&
@@ -66,12 +72,11 @@ export function DraftsSentBadge({ relay }: { relay: RelayData }) {
       ).length
     : 0;
   return count ? (
-    <span
-      className={styles.badge}
-      role="img"
-      aria-label={`${count} draft${count === 1 ? "" : "s"}`}
-    >
-      {count > 999 ? "999+" : count}
+    <span className={styles.badge}>
+      <CountBadge
+        count={count}
+        label={`${count} draft${count === 1 ? "" : "s"}`}
+      />
     </span>
   ) : null;
 }

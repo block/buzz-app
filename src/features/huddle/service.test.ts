@@ -455,6 +455,52 @@ it.each([
   },
 );
 
+it("accepts listening state only for the current connected call", async () => {
+  const h = harness();
+  await h.service.join(destination, "room");
+  h.receive({ type: "connected", room: "room", participants: [] });
+  const id = h.service.snapshot().id;
+  if (!id) throw new Error("Missing call id");
+  h.service.voiceListening("stale", "agent", true);
+  expect(h.service.snapshot().listening).toBeUndefined();
+  h.service.voiceListening(id, "agent", true);
+  expect(h.service.snapshot().listening).toEqual(["agent"]);
+  h.service.voiceListening("stale", "agent", false);
+  expect(h.service.snapshot().listening).toEqual(["agent"]);
+  h.service.voiceListening(id, "agent", false);
+  expect(h.service.snapshot().listening).toEqual([]);
+  await h.service.leave();
+  h.service.voiceListening(id, "agent", true);
+  expect(h.service.snapshot().listening).toBeUndefined();
+  await h.service.dispose();
+});
+
+it("ignores voice errors and dismissals from a previous call", async () => {
+  const h = harness();
+  try {
+    await h.service.join(destination, "room");
+    h.receive({ type: "connected", room: "room", participants: [] });
+    const previous = h.service.snapshot().id;
+    if (!previous) throw new Error("Missing previous call id");
+    await h.service.leave();
+    await h.service.join(destination, "room");
+    h.receive({ type: "connected", room: "room", participants: [] });
+    const current = h.service.snapshot().id;
+    if (!current) throw new Error("Missing current call id");
+    expect(current).not.toBe(previous);
+    h.service.voiceError(previous, "Late close failure");
+    expect(h.service.snapshot().error).toBeUndefined();
+    h.service.voiceError(current, "Current voice failure");
+    expect(h.service.snapshot().error).toBe("Current voice failure");
+    h.service.voiceError(previous);
+    expect(h.service.snapshot().error).toBe("Current voice failure");
+    h.service.voiceError(current);
+    expect(h.service.snapshot().error).toBeUndefined();
+  } finally {
+    await h.dispose();
+  }
+});
+
 it("publishes this document's call phase to optional consumers until Huddles unloads", async () => {
   const h = harness();
   const leaving = deferred<void>();
@@ -499,3 +545,73 @@ it("publishes this document's call phase to optional consumers until Huddles unl
   await consumer.dispose();
   await h.dispose();
 });
+
+it("preserves a five-frame capture burst while IPC is in flight", async () => {
+  const h = harness();
+  const gate = deferred<void>();
+  const send = vi.mocked(h.bridge.send);
+  send.mockImplementationOnce(() => gate.promise);
+  try {
+    await h.service.join(destination);
+    h.receive({
+      type: "connected",
+      room: "room",
+      participants: [destination.viewer],
+    });
+    for (let i = 0; i < 5; i++) h.send(Array(960).fill(i / 10));
+    expect(send).toHaveBeenCalledTimes(1);
+    gate.resolve();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(5));
+    expect(send.mock.calls.map(([, pcm]) => pcm[0])).toEqual([
+      0, 0.1, 0.2, 0.3, 0.4,
+    ]);
+  } finally {
+    gate.resolve();
+    await h.dispose();
+  }
+});
+
+it.each(["mute", "leave", "failure"])(
+  "discards pending human audio on %s",
+  async (action) => {
+    const h = harness();
+    const gate = deferred<void>();
+    const send = vi.mocked(h.bridge.send);
+    send.mockImplementationOnce(async () => {
+      await gate.promise;
+      if (action === "failure") throw new Error("send failed");
+    });
+    try {
+      await h.service.join(destination);
+      h.receive({
+        type: "connected",
+        room: "room",
+        participants: [destination.viewer],
+      });
+      h.send(Array(960).fill(0.1));
+      h.send(Array(960).fill(0.2));
+      if (action === "mute") {
+        h.service.mute();
+        h.send(Array(960).fill(0.3));
+        h.service.mute();
+        h.send(Array(960).fill(0.4));
+      } else if (action === "leave") await h.service.leave();
+      gate.resolve();
+      if (action === "mute") {
+        await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+        expect(send.mock.calls.map(([, pcm]) => pcm[0])).toEqual([0.1, 0.4]);
+      } else {
+        if (action === "failure")
+          await vi.waitFor(() =>
+            expect(h.service.snapshot().phase).toBe("error"),
+          );
+        await send.mock.results[0]?.value.catch(() => {});
+        h.send(Array(960).fill(0.5));
+        expect(send).toHaveBeenCalledTimes(1);
+      }
+    } finally {
+      gate.resolve();
+      await h.dispose();
+    }
+  },
+);

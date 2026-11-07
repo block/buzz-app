@@ -480,6 +480,7 @@ function Actions({
           actions={
             <>
               <Button
+                variant="prominent"
                 disabled={busy === "merge" || busy === "enqueue"}
                 onClick={() => {
                   setConfirming(undefined);
@@ -489,7 +490,7 @@ function Actions({
                 Cancel
               </Button>
               <Button
-                variant={confirming.bypass ? "attention" : "prominent"}
+                variant={confirming.bypass ? "attention" : "subtle"}
                 loading={busy === "merge" || busy === "enqueue"}
                 onClick={() =>
                   void run(

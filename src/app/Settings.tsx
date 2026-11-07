@@ -240,6 +240,8 @@ const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
 const noProviders: readonly RegisteredProvider[] = [];
 const noDecisionProviders = () => noProviders;
+/** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
+const PLUGIN_DETAILS = "settings.pluginDetails";
 
 function restrictedPlugin(plugin: PluginInfo) {
   return (
@@ -894,21 +896,47 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const shownPluginId = useRef(selectedPluginId);
+  shownPluginId.current = selectedPluginId;
   const addressedPlugin = useRef(false);
+  // Set while Settings dismisses its own visit: the visit it lands on keeps
+  // what is shown rather than what it last showed.
+  const closingVisit = useRef(false);
+  // Open in Buzz and a finished install can call back after the visit changed.
+  const currentNavigation = useRef(navigation);
+  useLayoutEffect(() => {
+    currentNavigation.current = navigation;
+  }, [navigation]);
   const requestedPluginId =
     navigation?.target.kind === "settings"
       ? navigation.target.pluginId
       : undefined;
   useEffect(() => {
-    if (selected !== "plugins" || !navigation?.entryId) return;
-    if (requestedPluginId) {
-      setSelectedPluginId(requestedPluginId);
-      addressedPlugin.current = true;
-    } else if (addressedPlugin.current) {
-      setSelectedPluginId(undefined);
-      addressedPlugin.current = false;
+    if (
+      selected !== "plugins" ||
+      requestedSection !== "plugins" ||
+      !navigation?.entryId
+    )
+      return;
+    const leftAddressed = addressedPlugin.current;
+    const closed = closingVisit.current;
+    addressedPlugin.current = !!requestedPluginId;
+    closingVisit.current = false;
+    if (requestedPluginId) setSelectedPluginId(requestedPluginId);
+    else if (navigation.traversal && !closed) {
+      const shown = navigation.position(PLUGIN_DETAILS);
+      setSelectedPluginId(typeof shown === "string" ? shown : undefined);
+    } else {
+      // A visit records what it starts with; addressed details don't carry over.
+      const shown = leftAddressed ? undefined : shownPluginId.current;
+      setSelectedPluginId(shown);
+      navigation.savePosition(PLUGIN_DETAILS, shown ?? null);
     }
-  }, [requestedPluginId, navigation?.entryId, selected]);
+  }, [requestedPluginId, requestedSection, navigation, selected]);
+  const showPluginDetails = (id: string | undefined) => {
+    setSelectedPluginId(id);
+    currentNavigation.current?.savePosition(PLUGIN_DETAILS, id ?? null);
+  };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -936,7 +964,10 @@ export function Settings({
   const visibleReturn = (target: HTMLElement | null) =>
     covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
   useEffect(() => {
-    if (selected !== "plugins") setSelectedPluginId(undefined);
+    if (selected !== "plugins") {
+      setSelectedPluginId(undefined);
+      addressedPlugin.current = closingVisit.current = false;
+    }
   }, [selected]);
   useEffect(() => {
     const element = layout.current;
@@ -962,14 +993,18 @@ export function Settings({
     if (selectedPluginId && catalog && !selectedPlugin) {
       pluginSection.current?.focus();
       setSelectedPluginId(undefined);
+      navigation?.savePosition(PLUGIN_DETAILS, null);
     }
-  }, [catalog, selectedPlugin, selectedPluginId]);
+  }, [catalog, navigation, selectedPlugin, selectedPluginId]);
   const closePluginDetails = () => {
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
-    setSelectedPluginId(undefined);
-    if (requestedPluginId) onPluginDetailsClosed?.();
+    showPluginDetails(undefined);
+    if (requestedPluginId) {
+      closingVisit.current = true;
+      onPluginDetailsClosed?.();
+    }
   };
   useLayoutEffect(() => {
     const held = heldPluginRow.current;
@@ -1136,7 +1171,7 @@ export function Settings({
                         pluginTrigger.current = event.currentTarget;
                         holdPluginRow(event.currentTarget);
                         if (!active) setActivationAttempt(undefined);
-                        setSelectedPluginId(active ? undefined : id);
+                        showPluginDetails(active ? undefined : id);
                       }}
                     >
                       {isEssentialPlugin(plugin) && (
@@ -1197,7 +1232,7 @@ export function Settings({
                           onClick={(event) => {
                             holdPluginRow(event.currentTarget);
                             setActivationAttempt(undefined);
-                            setSelectedPluginId(id);
+                            showPluginDetails(id);
                             setReviewPluginId(id);
                           }}
                         >
@@ -1522,7 +1557,17 @@ export function Settings({
                     : undefined
                 }
                 requestSignal={navigation?.signal}
-                onClosed={() => onPluginImportClosed?.()}
+                onClosed={() => {
+                  // "Open in Buzz" shows its plugin before this dismissal
+                  // lands. An install finishing after Back closes nothing.
+                  if (
+                    navigation?.target.kind === "settings" &&
+                    navigation.target.pluginImport &&
+                    navigation.entryId === currentNavigation.current?.entryId
+                  )
+                    closingVisit.current = true;
+                  onPluginImportClosed?.();
+                }}
                 actionTarget={pluginImportActions}
                 request={installRequest}
                 onRequestSettled={installRequests?.settle}
@@ -1542,7 +1587,7 @@ export function Settings({
                       ) ?? []),
                     ].find((button) => button.dataset.pluginId === id) ?? null;
                   setActivationAttempt(undefined);
-                  setSelectedPluginId(id);
+                  showPluginDetails(id);
                 }}
                 returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />

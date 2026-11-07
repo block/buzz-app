@@ -65,11 +65,13 @@ catch-up (including a message taller than the viewport):
   would also read attention delivered later with an older one (a retried send,
   a fast clock). Participation discovered later makes a reply relevant again,
   with its own unread state intact.
-- The same channel catch-up also writes `msg:` marks for the retained top-level
-  mentions and broadcast replies through the bottom row, as in Slack and Discord,
-  so a mention taller than the viewport is still read. Messages marked unread
-  keep their intent. These marks stay on this device: frontier-only sync never
-  publishes `msg:` marks, though it still reads them from older clients.
+- The same channel catch-up also writes `msg:` marks for the top-level mentions
+  and broadcast replies retained at dwell completion through the bottom row, as
+  in Slack and Discord, so a mention taller than the viewport is still read. One
+  that arrives while the catch-up is saving waits for its own dwell. Messages
+  marked unread keep their intent. These marks stay on this device:
+  frontier-only sync never publishes `msg:` marks, though it still reads them
+  from older clients.
 - `thread-activity:<root>` acknowledges replies through the newest reply only in
   that thread. A collapsed newest reply, or one outside the bottom viewport in a
   branch-ordered thread, cannot earn catch-up; visible rows still read individually.

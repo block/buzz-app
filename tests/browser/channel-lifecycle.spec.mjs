@@ -831,3 +831,41 @@ test.describe("remote Solo unarchive", () => {
     expect(app.report.unexpected).toEqual([]);
   });
 });
+
+// Browser-only: Playwright clicks scroll items into view, so only layout shows
+// whether the shared menu clips a permitted action behind a hidden scrollbar.
+test.describe("Solo chat owned through its agent", () => {
+  test.use({
+    soloChannels: ["11111111-1111-4111-8111-111111111111"],
+    lifecycleRole: "member",
+    lifecycleOwnerAgent: true,
+    readState: true,
+  });
+  test("shows every lifecycle action without scrolling the menu", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const row = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .getByRole("button", { name: "Lifecycle channel", exact: true });
+    await row.focus();
+    await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", {
+      name: "Actions for Lifecycle channel",
+    });
+    // The owner-agent grant offers all three to a plain member.
+    for (const name of ["Leave chat", "Archive chat", "Delete chat"])
+      await expect(
+        menu.getByRole("menuitem", { name, exact: true }),
+      ).toBeInViewport({ ratio: 1 });
+    // At the default text scale, the old 24rem cap clipped this menu by its
+    // fixed-pixel parts; larger text grows rows and a rem cap alike.
+    expect(
+      await menu.evaluate((popup) => popup.scrollHeight - popup.clientHeight),
+    ).toBe(0);
+    expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+    expect(app.report.unexpected).toEqual([]);
+  });
+});

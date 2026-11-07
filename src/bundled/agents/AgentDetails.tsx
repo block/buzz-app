@@ -59,6 +59,11 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import {
+  syncText,
+  type SyncLine,
+  type SyncState,
+} from "../../features/agents/team-migration";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import {
@@ -93,6 +98,8 @@ export function AgentDetails({
   initialTranscript,
   close,
   openConversation,
+  openLink,
+  canOpenLink,
   communities,
   openSettings,
   historyPresentation,
@@ -113,6 +120,9 @@ export function AgentDetails({
   close?: () => void;
   /** Opens a turn's conversation from its activity; see AgentViewProps. */
   openConversation?: AgentViewProps["openConversation"];
+  /** Opens a link from a plugin's tab; see AgentAddedTab. */
+  openLink?: ((target: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   communities?: CommunityReader | undefined;
   openSettings?: ((section: string) => void) | undefined;
 }) {
@@ -505,6 +515,8 @@ export function AgentDetails({
               initialTranscript={initialTranscript}
               close={close}
               openConversation={openConversation}
+              openLink={openLink}
+              canOpenLink={canOpenLink}
               settingsHost={settings.settingsHost}
               onDiscard={settings.discard}
               memories={memories}
@@ -541,6 +553,9 @@ export function AgentDetails({
                         />
                       }
                     />
+                    {agent.place === "here" && (
+                      <AgentSyncRow agents={agents} agent={agent} />
+                    )}
                     {agent.place === "here" && (
                       <AgentConfigHistoryRow
                         agents={agents}
@@ -708,4 +723,34 @@ function SharedSettingsNotice({
       </PopoverRoot>
     </div>
   );
+}
+
+/** Where the agent's config lives; nothing while that is still settling. */
+function AgentSyncRow({ agents, agent }: { agents: Agents; agent: Agent }) {
+  const line = useSyncLine(
+    agents,
+    () => agents.agentSync(agent.pubkey),
+    "agent",
+  );
+  return line ? (
+    <PreferenceRow title={line.title} subtitle={line.reason} />
+  ) : null;
+}
+
+/** A team or agent's sync status line, the same object while it reads the
+ * same, as a store snapshot must be. */
+export function useSyncLine(
+  agents: Pick<Agents, "subscribe">,
+  read: () => SyncState | undefined,
+  of: "team" | "agent",
+) {
+  const last = useRef<SyncLine | undefined>(undefined);
+  return useSyncExternalStore(agents.subscribe, () => {
+    const next = syncText(read(), of);
+    const prior = last.current;
+    if (prior?.title === next?.title && prior?.reason === next?.reason)
+      return prior;
+    last.current = next;
+    return next;
+  });
 }

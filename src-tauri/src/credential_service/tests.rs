@@ -144,14 +144,16 @@ pub(crate) fn service_over(
     human: IdentityHost,
 ) -> CredentialService {
     let notices = notices.clone();
-    CredentialService::new(
+    let service = CredentialService::new(
         host.clone(),
         "xyz.block.buzz.test".into(),
         human,
         identity.clone(),
         Arc::new(keychain.clone()),
         Arc::new(move |notice| notices.lock().unwrap().push(notice)),
-    )
+    );
+    *service.0.pairings.communities.lock().unwrap() = Some(vec![RELAY.into()]);
+    service
 }
 
 fn token(env: &str) -> String {
@@ -187,7 +189,14 @@ pub(crate) async fn ask(
     params: &[&str],
 ) -> (StatusCode, Value) {
     let body = json!({ "id": "1", "method": method, "params": params }).to_string();
-    respond(&fixture.service, Some(token), Some(1), body.as_bytes()).await
+    respond(
+        &fixture.service,
+        Some(token),
+        Some(1),
+        body.as_bytes(),
+        None,
+    )
+    .await
 }
 
 pub(crate) fn error(reply: &(StatusCode, Value)) -> (StatusCode, &str) {
@@ -432,7 +441,7 @@ async fn a_protection_change_mid_request_withholds_the_result() {
                 .to_string();
         let request = tokio::spawn({
             let (service, token) = (service.clone(), token.clone());
-            async move { respond(&service, Some(&token), Some(1), body.as_bytes()).await }
+            async move { respond(&service, Some(&token), Some(1), body.as_bytes(), None).await }
         });
         // The key is read only once the check before the request has passed.
         tokio::task::spawn_blocking(move || held.recv())
@@ -449,7 +458,7 @@ async fn a_protection_change_mid_request_withholds_the_result() {
         );
         assert_eq!(reply.1["result"], "", "provider={provider}");
         let body = json!({ "id": "1", "method": "get_public_key", "params": [] }).to_string();
-        let after = respond(&service, Some(&token), Some(1), body.as_bytes()).await;
+        let after = respond(&service, Some(&token), Some(1), body.as_bytes(), None).await;
         assert_eq!(after.0, StatusCode::UNAUTHORIZED, "provider={provider}");
     }
 }
@@ -595,7 +604,7 @@ async fn revocation_while_a_key_is_read_withholds_the_result() {
             let (service, waiting) = (fixture.service.clone(), token.clone());
             let body = json!({ "id": "1", "method": method, "params": params }).to_string();
             let request = tokio::spawn(async move {
-                respond(&service, Some(&waiting), Some(1), body.as_bytes()).await
+                respond(&service, Some(&waiting), Some(1), body.as_bytes(), None).await
             });
             // Admitted: it spent one request of its rate, and now waits for the key.
             while !fixture.service.callers()[&key].spent() {
@@ -637,7 +646,7 @@ async fn deletion_while_the_agent_is_read_answers_revoked() {
     let (service, waiting) = (fixture.service.clone(), token.clone());
     let request = tokio::spawn(async move {
         let body = json!({ "id": "1", "method": "auth_tag", "params": [] }).to_string();
-        respond(&service, Some(&waiting), Some(1), body.as_bytes()).await
+        respond(&service, Some(&waiting), Some(1), body.as_bytes(), None).await
     });
     while !fixture.service.callers()[&key].spent() {
         tokio::task::yield_now().await;
@@ -657,7 +666,7 @@ async fn an_unknown_token_is_revoked_and_a_missing_one_too() {
     let reply = ask(&fixture, "not-a-token", "get_public_key", &[]).await;
     assert_eq!(error(&reply), (StatusCode::UNAUTHORIZED, "revoked"));
     let body = json!({ "id": "1", "method": "describe", "params": [] }).to_string();
-    let reply = respond(&fixture.service, None, Some(1), body.as_bytes()).await;
+    let reply = respond(&fixture.service, None, Some(1), body.as_bytes(), None).await;
     assert_eq!(error(&reply), (StatusCode::UNAUTHORIZED, "revoked"));
 }
 
@@ -666,19 +675,26 @@ async fn versions_and_envelopes_are_checked_first() {
     let fixture = fixture();
     let (_issued, token) = bound(&fixture).await;
     let body = json!({ "id": "7", "method": "describe", "params": [] }).to_string();
-    let reply = respond(&fixture.service, Some(&token), Some(2), body.as_bytes()).await;
+    let reply = respond(
+        &fixture.service,
+        Some(&token),
+        Some(2),
+        body.as_bytes(),
+        None,
+    )
+    .await;
     assert_eq!(
         error(&reply),
         (StatusCode::BAD_REQUEST, "unsupported_version")
     );
     assert_eq!(reply.1["versions"], json!([1]));
     assert_eq!(reply.1["id"], "7");
-    let reply = respond(&fixture.service, Some(&token), None, body.as_bytes()).await;
+    let reply = respond(&fixture.service, Some(&token), None, body.as_bytes(), None).await;
     assert_eq!(
         error(&reply),
         (StatusCode::BAD_REQUEST, "unsupported_version")
     );
-    let reply = respond(&fixture.service, Some(&token), Some(1), b"{}").await;
+    let reply = respond(&fixture.service, Some(&token), Some(1), b"{}", None).await;
     assert_eq!(error(&reply), (StatusCode::BAD_REQUEST, "invalid_request"));
     let reply = ask(&fixture, &token, "sign_event", &[]).await;
     assert_eq!(error(&reply), (StatusCode::BAD_REQUEST, "invalid_request"));
@@ -687,7 +703,14 @@ async fn versions_and_envelopes_are_checked_first() {
     // Unknown fields are ignored.
     let body =
         json!({ "id": "8", "method": "get_public_key", "params": [], "extra": 1 }).to_string();
-    let reply = respond(&fixture.service, Some(&token), Some(1), body.as_bytes()).await;
+    let reply = respond(
+        &fixture.service,
+        Some(&token),
+        Some(1),
+        body.as_bytes(),
+        None,
+    )
+    .await;
     assert_eq!(reply.1["result"], fixture.agent.pubkey.as_str());
 }
 

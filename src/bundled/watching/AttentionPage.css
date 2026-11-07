@@ -54,6 +54,10 @@
   overflow: auto;
   margin: 0;
 }
+.attention-markdown :is(a, .attention-link) {
+  text-decoration: underline;
+  cursor: pointer;
+}
 .attention-markdown ul,
 .attention-markdown ol {
   margin: 0;
@@ -158,6 +162,7 @@
   }
 }
 .attention-interest-head {
+  padding-block-start: var(--space-2);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -166,12 +171,6 @@
 .attention-interest-head > h4 {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-@media (hover: hover) and (pointer: fine) {
-  .attention-interest-head:not(:hover, :focus-within) .attention-delete {
-    opacity: 0;
-    pointer-events: none;
-  }
 }
 .attention-instructions-preview {
   min-width: 0;

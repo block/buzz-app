@@ -18,8 +18,8 @@ import { PluginRequestCard } from "./PluginRequestCard";
 
 afterEach(cleanup);
 
-// https://github.com/squareup/buzz-plugin-browser, whose manifest is this.
-const BROWSER = "https://github.com/squareup/buzz-plugin-browser";
+// https://github.com/example-org/buzz-plugin-browser, whose manifest is this.
+const BROWSER = "https://github.com/example-org/buzz-plugin-browser";
 const commit = "6de3f81448ba218b67939b9ca240898f46aecfd7";
 const manifest = {
   id: "example.browser",

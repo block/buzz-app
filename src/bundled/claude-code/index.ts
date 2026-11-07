@@ -224,6 +224,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         splitSettings: true,
+        reconcilesConfig: true,
         component: SettingsTab,
       },
       {

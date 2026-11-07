@@ -163,9 +163,10 @@
   /* No scrollbar frame extension here, so the end fill omits its 6px. */
   --channel-row-fill-end: var(--space-1);
 }
-/* Shorten every painted row symmetrically while preserving icon, label, trailing
-   control, and scrollbar positions. Wrapped channel rows paint on the wrapper;
-   direct destination and Solo chat rows paint on the navigation item itself. */
+/* Wrapped channel rows paint on the wrapper; direct destination and Solo chat
+   rows paint on the navigation item itself, so shorten them to the fill and
+   measure their padding from that painted edge. As in ChannelSidebarRow, icons
+   start 4px and trailing content ends 6px inside the pill. */
 .channelList [data-variant="row"],
 .sidebarFilter [data-variant="row"] {
   width: calc(
@@ -175,7 +176,7 @@
   );
   margin-inline: var(--channel-row-fill-start) var(--channel-row-fill-end);
   padding-inline: calc(var(--space-2) - var(--channel-row-fill-start))
-    calc(var(--space-1) + var(--space-half) - var(--channel-row-fill-start));
+    calc(var(--space-1) + var(--space-half));
 }
 .channelList [data-variant="row"][data-inset],
 .sidebarFilter [data-variant="row"][data-inset] {

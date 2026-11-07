@@ -20,7 +20,7 @@ import {
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
-import { eventDto } from "../../features/relay/events";
+import { eventDto, type RelayEvent } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
 import {
   keypair,
@@ -32,6 +32,12 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { ReadStateSigning } from "../../features/relay/read-state-host";
+import {
+  decodeReadState,
+  signReadState,
+  // @ts-expect-error Test the production Node codec with disposable identities.
+} from "../../../browser-host/read-state.mjs";
 import {
   readJournal,
   type ReadJournal,
@@ -381,6 +387,192 @@ it("shows the first six unread conversations ahead of the rest", async () => {
       ).toBeNull(),
     );
     expect(screen.queryByText("No recent activity yet.")).toBeNull();
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it("previews and opens the newest unread reply of a channel unread only through threads", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    larry = keypair(),
+    moe = keypair();
+  const discovery = [
+    profile(larry, { name: "Larry" }),
+    profile(moe, { name: "Moe" }),
+    ...["team", "blank", "mixed", "marked"].flatMap((id) => [
+      metadata(relay, id, id),
+      roster(relay, id, [viewer.pubkey, larry.pubkey]),
+    ]),
+    ...(
+      [
+        ["solo", larry],
+        ["pair", moe],
+      ] as const
+    ).flatMap(([id, friend]) => [
+      metadata(relay, id, id, undefined, [["t", "dm"]]),
+      roster(relay, id, [viewer.pubkey, friend.pubkey]),
+    ]),
+  ];
+  let live: LiveCallbacks | undefined;
+  let journal: ReadJournal | undefined;
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      readState: {
+        decode: async (events) => decodeReadState(events, viewer.secret),
+        sign: async (intent: ReadStateSigning) =>
+          signReadState(intent, viewer.secret),
+        publish: async () => {},
+      },
+      async query(filters) {
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      readStateFloor: () => 0,
+      readPublisherLock: async (_signal, work) => work(),
+      readStateStorage: {
+        close() {},
+        async update(change) {
+          journal = readJournal(change(journal), viewer.pubkey);
+          return journal;
+        },
+      },
+    },
+  );
+  const reply = (
+    root: RelayEvent,
+    content: string,
+    time: number,
+    author = larry,
+  ) =>
+    message(
+      author,
+      root.tags.find(([tag]) => tag === "h")?.[1] ?? "",
+      content,
+      time,
+      [["e", root.id, "", "reply"]],
+    );
+  const root = message(
+    viewer,
+    "team",
+    "so uh how do I get that audio to stop",
+    10,
+  );
+  const blankRoot = message(viewer, "blank", "attachment thread", 10);
+  const mixedRoot = message(viewer, "mixed", "mixed thread", 10);
+  const markedRoot = message(viewer, "marked", "marked thread", 10);
+  const newerRoot = message(viewer, "team", "newer thread", 15);
+  const oldest = reply(root, "Draft PR is up", 11);
+  const older = reply(root, "CI is green now", 12);
+  const newest = reply(newerRoot, "Newest thread reply", 16);
+  const soloRoot = message(viewer, "solo", "solo thread", 10);
+  const soloReply = reply(soloRoot, "Only DM thread reply", 11);
+  const pairRoots = [
+    message(viewer, "pair", "first DM thread", 10),
+    message(viewer, "pair", "second DM thread", 10),
+  ] as const;
+  const open = vi.fn();
+  const rowsOf = (group: string) =>
+    within(screen.getByRole("group", { name: group })).getAllByRole("option");
+  const row = (name: string) =>
+    rowsOf("Unread").find((option) => option.textContent?.startsWith(name));
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query=""
+        onQueryChange={() => {}}
+        input={createRef()}
+        pages={[]}
+        openConversation={open}
+      />,
+    );
+    await waitFor(() => expect(rowsOf("Recent activity")).toHaveLength(4));
+    assert(live);
+    const callbacks = live;
+    act(() =>
+      callbacks.receive([
+        root,
+        oldest,
+        older,
+        newerRoot,
+        newest,
+        blankRoot,
+        reply(blankRoot, "", 13),
+        mixedRoot,
+        reply(mixedRoot, "mixed reply", 14),
+        message(larry, "mixed", "new top-level message", 15),
+        markedRoot,
+        reply(markedRoot, "marked reply", 17),
+        soloRoot,
+        soloReply,
+        ...pairRoots,
+        reply(pairRoots[0], "First DM reply", 11, moe),
+        reply(pairRoots[1], "Second DM reply", 12, moe),
+      ]),
+    );
+    await act(async () => {
+      await owner.session.unread.markUnreadLocal({
+        kind: "channel",
+        channelId: "marked",
+      });
+    });
+    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
+    // The newest unread reply of the newest thread, by its author, not a root.
+    await waitFor(() =>
+      expect(row("team")).toHaveTextContent(
+        "Thread reply, Larry: Newest thread reply",
+      ),
+    );
+    expect(row("blank")).toHaveTextContent("Larry replied in a thread");
+    // Unread channel messages keep the channel's own preview and destination.
+    expect(row("mixed")).not.toHaveTextContent("Larry:");
+    expect(row("mixed")).not.toHaveTextContent("Thread reply,");
+    fireEvent.click(row("mixed") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("mixed");
+    // So does a channel marked unread, whatever its threads hold.
+    expect(row("marked")).not.toHaveTextContent("Larry:");
+    fireEvent.click(row("marked") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("marked");
+    // A DM shares one read marker, so only a single unread thread leads it.
+    expect(row("Larry")).toHaveTextContent(
+      "Thread reply, Larry: Only DM thread reply",
+    );
+    fireEvent.click(row("Larry") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("solo", soloReply.id, soloRoot.id);
+    expect(row("Moe")).not.toHaveTextContent("Thread reply,");
+    fireEvent.click(row("Moe") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("pair");
+    // The row opens the reply it previews, in its thread.
+    fireEvent.click(row("team") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("team", newest.id, newerRoot.id);
+    // Reading that thread previews the other one's newest reply.
+    const read = (rootId: string, messageId: string) =>
+      act(async () => {
+        await owner.session.unread.markThrough(
+          { kind: "thread", channelId: "team", rootId },
+          messageId,
+        );
+      });
+    await read(newerRoot.id, newest.id);
+    await waitFor(() =>
+      expect(row("team")).toHaveTextContent("Larry: CI is green now"),
+    );
+    expect(row("team")).not.toHaveTextContent("audio");
+    fireEvent.click(row("team") as HTMLElement);
+    expect(open).toHaveBeenLastCalledWith("team", older.id, root.id);
+    // Reading every thread takes the channel out of Unread.
+    await read(root.id, older.id);
+    await waitFor(() => expect(row("team")).toBeUndefined());
   } finally {
     cleanup();
     owner.dispose();

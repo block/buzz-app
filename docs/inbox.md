@@ -255,23 +255,6 @@ selected-read visibility, read/retry, workflow attribution, thread follows, exac
 readers and draft persistence. Deletion retains consent and text-before-attachment
 cleanup. The former history/candidate/exact-mention work is excluded.
 
-**Separate engineering handoff:** diagnose missing older/agent conversations by
-tracing fetched events, participation evidence and filtering. Agree mixed/unknown
-sender behavior, mention policy and filter persistence separately. Coordinate
-John's archive/refresh/development work; progressive relay loading is not fixed here.
-
-**Evidence:** integration with main `ce2f66ea` preserves John's #757 archive
-retirement and #758 refresh status without shifting rows, plus main's #800 test
-pruning. It passes 116 Inbox tests, 2 shared-hook tests, TypeScript/build and 74
-Chromium/WebKit executions across Inbox, sidebar and existing panel journeys.
-Independent merge-resolution review found no blockers. The prior `5b4d45d0` head
-passed hosted CI and DCO; current-head hosted checks remain a separate gate.
-Common splitter checks stay in Inbox; Drafts keeps cross-view width, header
-alignment, narrow sizing, editing and modal/focus coverage. No browser cases were
-removed. Human confirmation and required review remain open; local synthetic
-checks do not attest native/live acceptance.
-
-
 ## Reaction activity
 
 `session.inboxFeed.reactions` owns a separate bounded projection of recipient-tagged

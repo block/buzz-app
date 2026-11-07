@@ -82,7 +82,7 @@ pub(super) fn record() -> Arc<Session> {
 #[test]
 fn each_community_routes_by_host_to_its_own_server() {
     let servers = config::compiled(
-        Some(r#"{"version":1,"id":"bb-block","identityOrigin":"https://block.builderlab.xyz","communityHosts":["buzz.block.builderlab.xyz"],"adapterBase":"https://block.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
+        Some(r#"{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
         None,
         None,
     )
@@ -116,14 +116,14 @@ fn each_community_routes_by_host_to_its_own_server() {
             .id
             .clone()
     };
-    assert_eq!(id("wss://buzz.block.builderlab.xyz"), "bb-block");
+    assert_eq!(id("wss://buzz.acme.builderlab.xyz"), "bb-acme");
     assert_eq!(id("wss://team.communities.buzz.xyz"), "bb-public");
     assert!(first
         .server_for("wss://team.communities.buzz.xyz")
         .unwrap()
         .is(&public));
     // A community no server covers stays with the first, which attaches no token.
-    assert_eq!(id("wss://relay.example"), "bb-block");
+    assert_eq!(id("wss://relay.example"), "bb-acme");
     assert_eq!(
         first
             .server_for_command(Some("https://Team.communities.buzz.xyz"), None)
@@ -142,7 +142,7 @@ fn each_community_routes_by_host_to_its_own_server() {
         .unwrap()
         .is(&public));
     assert!(first
-        .server_for_command(None, Some("bb-block"))
+        .server_for_command(None, Some("bb-acme"))
         .unwrap()
         .is(&first));
     assert!(first.server_for_command(None, Some("other")).is_err());
@@ -151,14 +151,14 @@ fn each_community_routes_by_host_to_its_own_server() {
             .servers()
             .map(|server| server.0.config.as_ref().unwrap().id.as_str())
             .collect::<Vec<_>>(),
-        ["bb-block", "bb-public"]
+        ["bb-acme", "bb-public"]
     );
 }
 
 #[tokio::test]
 async fn signing_out_of_one_server_keeps_the_others_session() {
     let mut configs = config::compiled(
-        Some(r#"{"version":1,"id":"bb-block","identityOrigin":"https://block.builderlab.xyz","communityHosts":["buzz.block.builderlab.xyz"],"adapterBase":"https://block.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
+        Some(r#"{"version":1,"id":"bb-acme","identityOrigin":"https://acme.builderlab.xyz","communityHosts":["buzz.acme.builderlab.xyz"],"adapterBase":"https://acme.builderlab.xyz/api/goose","apiBasePath":"/api/goose/"}"#),
         None,
         None,
     )

@@ -185,6 +185,7 @@ export function BackupPrompt({
 }) {
   const [saving, setSaving] = useState<boolean>();
   const [error, setError] = useState<string>();
+  const sync = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (ended && saving === undefined && error === undefined) onClose();
   }, [ended, saving, error, onClose]);
@@ -214,6 +215,7 @@ export function BackupPrompt({
       title="Sync your identity with Builderlab?"
       description="Buzz will save an encrypted copy of your identity key with your Builderlab account. That copy can restore your identity, including in other apps where you use the same key."
       onClose={onClose}
+      initialFocus={sync}
       finalFocus={finalFocus}
       pending={saving !== undefined}
       actions={
@@ -227,6 +229,7 @@ export function BackupPrompt({
             I will manage my own key
           </Button>
           <Button
+            ref={sync}
             type="button"
             variant="prominent"
             disabled={saving === false}

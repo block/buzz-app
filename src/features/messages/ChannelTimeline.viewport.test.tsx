@@ -20,7 +20,9 @@ import { foldMessages } from "../relay/fold";
 import { keypair, message } from "../relay/testing";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 import {
+  ActivityIndicatorPresentation,
   TypingPresentation,
+  useActivityTypingReplacement,
   useTypingReplacement,
 } from "../conversation/typing-presentation";
 import type { RelaySession } from "../relay/session";
@@ -28,6 +30,20 @@ import type { RelaySession } from "../relay/session";
 function RecordedTyping({ session }: { session: RelaySession }) {
   useTypingReplacement(
     { session, channelId: "alpha", threadRootId: undefined, pubkey: "agent" },
+    true,
+  );
+  return null;
+}
+/** A message's live bubble registers presence in the conversation's store. */
+function LiveBubble({ session }: { session: RelaySession }) {
+  useActivityTypingReplacement(
+    {
+      session,
+      channelId: "alpha",
+      threadRootId: undefined,
+      pubkey: "agent",
+      presence: true,
+    },
     true,
   );
   return null;
@@ -334,9 +350,13 @@ it.each([1, 4])(
   },
 );
 
-it.each([false, true])(
-  "keeps ongoing typing in the reply group after completed history (replaced=%s)",
-  (replaced) => {
+it.each([
+  [false, false],
+  [true, false],
+  [true, true],
+])(
+  "keeps ongoing typing in the reply group after completed history (replaced=%s, presented=%s)",
+  (replaced, presented) => {
     const { owner, updates, content } = activityFixture();
     try {
       const history = updates(2);
@@ -366,17 +386,31 @@ it.each([false, true])(
         },
       };
       const view = render(
-        <TypingPresentation active>
-          {replaced && <RecordedTyping session={queries} />}
-          {content(
-            [...history, { ...reply, id: "reply", content: "Main reply" }],
-            undefined,
-            true,
-            queries,
-          )}
-        </TypingPresentation>,
+        <ActivityIndicatorPresentation>
+          <TypingPresentation active>
+            {replaced && !presented && <RecordedTyping session={queries} />}
+            {presented && <LiveBubble session={queries} />}
+            {content(
+              [...history, { ...reply, id: "reply", content: "Main reply" }],
+              undefined,
+              true,
+              queries,
+            )}
+          </TypingPresentation>
+        </ActivityIndicatorPresentation>,
       );
       expect(screen.queryByText("2 completed steps")).toBeNull();
+      if (presented) {
+        // A live bubble elsewhere shows the agent: no conversation cue, and
+        // the reply does not join one.
+        expect(
+          screen.queryByRole("button", { name: /Activity: .*working/ }),
+        ).toBeNull();
+        expect(
+          screen.getByText("Main reply").closest("li"),
+        ).not.toHaveAttribute("data-stack-next", "true");
+        return;
+      }
       expect(
         screen.getByRole("button", { name: /Activity: .*working/ }),
       ).toBeVisible();
@@ -865,6 +899,81 @@ it("hides the owner's starting agents only in a complete personal chat", () => {
     view.unmount();
   } finally {
     owner.dispose();
+  }
+});
+
+it("offline, says older messages can be loaded once Buzz reconnects instead of offering an inert Load older", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const viewer = keypair(),
+    relay = keypair();
+  // The relay service's saved-conversations session and the connected
+  // session that replaces it share one identity and scope.
+  const transport = {
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: async () => [],
+  };
+  const offline = createRelaySession(transport, { cachedOnly: true });
+  const online = createRelaySession(transport);
+  // One saved page of a longer history.
+  const window: ChannelWindow = {
+    channelId: "alpha",
+    rows: foldMessages("alpha", relay.pubkey, [
+      message(viewer, "alpha", "Saved message", 100),
+    ]),
+    status: "ready",
+    hasMore: true,
+    loadingOlder: false,
+    freshness: "cached",
+    error: undefined,
+  };
+  const timeline = (
+    owner: typeof offline,
+    historyControl: "button" | "scroll" = "button",
+  ) => (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="offline-history"
+      continuityKey="relay:1"
+      queries={owner.session}
+      window={window}
+      historyControl={historyControl}
+      onOpenLink={() => false}
+    />
+  );
+  const waiting = "You can load older messages once Buzz reconnects.";
+  try {
+    const view = render(timeline(offline));
+    expect(screen.getByText(waiting)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /older messages/ })).toBeNull();
+    // Solo chats page on scroll, which reads nothing offline either.
+    view.rerender(timeline(offline, "scroll"));
+    expect(screen.getByText(waiting)).toBeVisible();
+    // The connected session replaces it without remounting the timeline.
+    const history = screen.getByRole("region", {
+      name: "Channel message history",
+    });
+    view.rerender(timeline(online));
+    expect(
+      screen.getByRole("region", { name: "Channel message history" }),
+    ).toBe(history);
+    expect(
+      screen.getByRole("button", { name: "Load older messages" }),
+    ).toBeEnabled();
+    expect(screen.queryByText(waiting)).toBeNull();
+    view.unmount();
+  } finally {
+    offline.dispose();
+    online.dispose();
   }
 });
 

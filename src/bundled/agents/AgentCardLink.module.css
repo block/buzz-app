@@ -2,6 +2,17 @@
   display: inline-flex;
   margin-right: calc(var(--space-half) * 1.5);
   vertical-align: -0.1875em;
+  /* Align on the tile's bottom edge, not on a fallback initial's baseline:
+     the initial is text, a picture is not, and the tile would drop. */
+  contain: layout;
+}
+/* A card's picture is transparent artwork: show it on the message or hover
+   card itself, without the avatar's backdrop or squircle mask. A fallback
+   initial keeps both. */
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared Avatar element. */
+:is(.icon, .preview) :global(.buzz-avatar):not(:has([data-avatar-fallback])) {
+  background: none;
+  mask: none;
 }
 .preview {
   display: flex;

@@ -129,6 +129,7 @@ function setup({
   status = "ready" as ChannelWindow["status"],
   blocked = undefined as boolean | undefined,
   session = undefined as RelaySession | undefined,
+  continuityKey = undefined as string | undefined,
   historyControl = "button" as "button" | "scroll",
   hasMore = false,
   loadingOlder = false,
@@ -264,7 +265,7 @@ function setup({
       olderReads();
     }
   });
-  const queries =
+  let queries =
     session ??
     ({
       channels: { loadOlder, window: snapshot },
@@ -304,6 +305,7 @@ function setup({
       historyControl,
       scope: "scope",
       queries,
+      continuityKey,
       window: session?.channels.window(channelId) ?? {
         channelId,
         status,
@@ -412,6 +414,21 @@ function setup({
         children: ReactElement[];
       }>;
       return edge.props.children.some((child) => child?.type === Button);
+    },
+    /** The edge's plain caption text, if any (not its alert or status). */
+    caption() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement<{ role?: string; children: unknown }>[];
+      }>;
+      return edge.props.children.find(
+        (child) => child?.type === "span" && !child.props.role,
+      )?.props.children;
+    },
+    /** Replaces the session, as reconnecting does under a stable continuityKey. */
+    swap(next: RelaySession) {
+      session = next;
+      queries = next;
+      render();
     },
     retry() {
       const edge = section.props.children[0] as ReactElement<{
@@ -1407,6 +1424,117 @@ it.each(["held head", "live handoff", "disconnected"])(
     }
   },
 );
+
+it("offline top-edge input reads nothing, and the connected session pages once it verifies", async () => {
+  const relay = keypair(),
+    viewer = keypair();
+  const event = message(viewer, "channel", "saved", 20);
+  const head = [
+    event,
+    bounds(relay, "channel", "head", {
+      has_more: true,
+      next_cursor: { created_at: 20, id: event.id },
+    }),
+  ];
+  const saved = {
+    read: async () => [
+      { channelId: "channel", savedAt: Date.now(), events: head, profiles: [] },
+    ],
+    write: async () => {},
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close: () => {},
+  };
+  // Both sessions share one transport, so every older read is counted here.
+  const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const older = () =>
+    scripted.pending.filter((read) => read.filters[0]?.until !== undefined);
+  const offline = createRelaySession(scripted.transport, {
+    prepared: true,
+    cachedOnly: true,
+    persistence: {
+      ...saved,
+      readStartup: async () => ({
+        discovery: {
+          savedAt: Date.now(),
+          relayAuthor: relay.pubkey,
+          events: [
+            roster(relay, "channel", [viewer.pubkey]),
+            metadata(relay, "channel", "Channel"),
+          ],
+        },
+      }),
+    },
+  });
+  let online: ReturnType<typeof createRelaySession> | undefined;
+  await offline.restore();
+  offline.session.channels.ensure("channel");
+  await vi.waitFor(() =>
+    expect(offline.session.channels.window("channel")).toMatchObject({
+      status: "ready",
+      freshness: "cached",
+      hasMore: true,
+    }),
+  );
+  const h = setup({
+    session: offline.session,
+    continuityKey: "relay:1",
+    historyControl: "scroll",
+    initial: { offset: 0, bottom: false },
+  });
+  h.element.scrollTop = 0;
+  try {
+    h.gesture();
+    h.render();
+    expect(h.caption()).toBe(
+      "You can load older messages once Buzz reconnects.",
+    );
+    await flush();
+    expect(older()).toHaveLength(0);
+    online = createRelaySession(
+      {
+        ...scripted.transport,
+        subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+      },
+      { prepared: true, persistence: saved },
+    );
+    const channels = online.session.channels;
+    channels.ensureList();
+    scripted
+      .next()
+      .respond([
+        roster(relay, "channel", [viewer.pubkey]),
+        metadata(relay, "channel", "Channel"),
+      ]);
+    await flush();
+    channels.ensure("channel");
+    await vi.waitFor(() =>
+      expect(channels.window("channel").freshness).toBe("cached"),
+    );
+    const held = scripted.next();
+    // A handoff to a cached head is not verification: the gesture waits.
+    h.swap(online.session);
+    expect(h.caption()).toBeUndefined();
+    expect(older()).toHaveLength(0);
+    held.respond(head);
+    await vi.waitFor(() =>
+      expect(channels.window("channel").freshness).toBe("verified"),
+    );
+    h.render();
+    await vi.waitFor(() => expect(older()).toHaveLength(1));
+    expect(older()[0]?.filters[0]).toMatchObject({
+      until: 20,
+      before_id: event.id,
+    });
+    h.render();
+    expect(older()).toHaveLength(1);
+  } finally {
+    h.unmount();
+    offline.dispose();
+    online?.dispose();
+  }
+});
 
 it("cached rerenders do not reissue a blocked attempt", () => {
   const h = setup({ hasMore: true, freshness: "cached" });

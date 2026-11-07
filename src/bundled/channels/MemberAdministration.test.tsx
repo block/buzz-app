@@ -302,21 +302,16 @@ it.each([
     const dialog = await screen.findByRole("dialog", { name: "Add member?" });
     expect(dialog).toHaveAccessibleDescription("Morgan");
     expect(t.publish).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(
-        within(dialog).getByRole("button", { name: "Cancel" }),
-      ).toHaveFocus(),
-    );
-    await t.user.click(
-      within(dialog).getByRole("button", {
-        name:
-          role === "guest"
-            ? "Add with view-only access"
-            : role === "member"
-              ? "Add to participate"
-              : "Add as admin",
-      }),
-    );
+    const add = within(dialog).getByRole("button", {
+      name:
+        role === "guest"
+          ? "Add with view-only access"
+          : role === "member"
+            ? "Add to participate"
+            : "Add as admin",
+    });
+    await vi.waitFor(() => expect(add).toHaveFocus());
+    await t.user.click(add);
     await vi.waitFor(() =>
       expect(
         t.session.memberAdministration.snapshot(id).operation?.status,
@@ -731,7 +726,7 @@ it("presents verified roles, protects owners/self, and confirms a separate delib
   let dialog = await t.choose("Set as admin");
   await vi.waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Cancel" }),
+      within(dialog).getByRole("button", { name: "Set as admin" }),
     ).toHaveFocus(),
   );
   expect(

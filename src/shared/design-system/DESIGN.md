@@ -444,7 +444,7 @@ force every plugin into one universal page component. Read the
 
 ## Direction
 
-Buzz adopts Block UI's visual language and semantic color grammar. Base UI
+Buzz has its own visual language and semantic color grammar. Base UI
 remains the behavior layer; Buzz owns styles, composition and product semantics.
 Use Inter and JetBrains Mono, public dependencies and generic examples. Do not
 copy private packages, proprietary fonts, internal product data or private source.
@@ -1491,6 +1491,8 @@ preloading and product shortcuts remain with the caller.
 controls: the primary NavigationItem owns focus and `aria-current`, while the
 card owns the shared hover and selected surface. Put details in its `footer`,
 not inside the primary button. Nested destinations keep their own selection.
+Default cards use sidebar selection for `aria-current="page"` and neutral
+collection selection for `aria-current="true"`; selection persists during hover.
 Use `tone="tonal"` for task trees: the shared card uses neutral selected and hover
 surfaces. Use `tone="inset"` for a lead destination whose own hover, focus, menu,
 and selection use `surface-inset`. Both tones rest transparent, including open
@@ -1641,10 +1643,8 @@ Values scale with the host interface-size preference.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
-Typography provenance: the ramp and role settings derive from the pinned
-[Block UI typography
-specification](https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json).
-The values documented above define this system, including the 12px xsmall role.
+The values documented above define this system's typography, including the
+12px xsmall role.
 
 ## Both modes
 

@@ -112,6 +112,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useThreadDraft } from "./draft-places";
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
 export type MessageRowProps = {
@@ -282,6 +283,13 @@ function MessageRowContent({
     row.threadRootId,
   );
   const rootId = row.threadRootId ?? row.id;
+  const threadDraft = useThreadDraft(
+    onOpenThread && (row.replyCount > 0 || (startsThreads && !row.threadRootId))
+      ? session
+      : undefined,
+    row.channelId,
+    rootId,
+  );
   const openLink = useCallback(
     (url: string) => onOpenLink(url, { rootId }),
     [onOpenLink, rootId],
@@ -675,11 +683,13 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
-  const avatarSize = compactAvatar
-    ? "tiny"
-    : layout === "timeline"
-      ? "default"
-      : "small";
+  const avatarSize = flat
+    ? "default"
+    : compactAvatar
+      ? "tiny"
+      : layout === "timeline"
+        ? "default"
+        : "small";
   const authorName = (
     <>
       {/* Inside the name, so the byline keeps the text baseline. */}
@@ -827,7 +837,7 @@ function MessageRowContent({
         ))}
       quickControls={
         <>
-          {stackPrevious && showTime && (
+          {stackPrevious && showTime && !flat && (
             <span
               className={styles.keyboardMessageTime}
               data-message-keyboard-time
@@ -918,7 +928,9 @@ function MessageRowContent({
       : undefined;
     return (
       ((row.replyCount > 0 ||
-        (startsThreads && !row.threadRootId && threadAgents.length > 0) ||
+        (startsThreads &&
+          !row.threadRootId &&
+          (threadAgents.length > 0 || threadDraft)) ||
         activity) &&
         onOpenThread && (
           <Button
@@ -938,8 +950,17 @@ function MessageRowContent({
             type="button"
             aria-label={
               row.replyCount > 0
-                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}`
-                : `View thread: ${activity ? [remainingWorkingLabel, activity.label].filter(Boolean).join(". ") : threadWorkingLabel}`
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
+                : `View thread: ${[
+                    ...(activity
+                      ? [remainingWorkingLabel, activity.label]
+                      : threadAgents.length > 0
+                        ? [threadWorkingLabel]
+                        : []),
+                    threadDraft && "Draft reply",
+                  ]
+                    .filter(Boolean)
+                    .join(". ")}`
             }
             onClick={(event) => {
               event.currentTarget.focus();
@@ -948,6 +969,8 @@ function MessageRowContent({
           >
             <ReplySummary
               hideEmptyLabel={!!activity}
+              draft={threadDraft}
+              replied={row.replyCount > 0}
               count={activity ? 0 : row.replyCount}
               participants={row.participants}
               profiles={participantProfiles}
@@ -1102,6 +1125,15 @@ function MessageRowContent({
               (!(flat ? stackPrevious : stackNext) || avatarFocused) && (
                 <div className={styles.messageAvatar}>{avatar}</div>
               )}
+            {!renderMessage && flat && stackPrevious && (
+              <span className={styles.continuationTime}>
+                <MessageTimestamp
+                  createdAt={row.createdAt}
+                  visible={showTime}
+                  compact
+                />
+              </span>
+            )}
             <div className={styles.messageHeader}>
               {!row.membership &&
                 !row.huddle &&
@@ -1237,7 +1269,9 @@ function MessageRowContent({
             )}
             <MessageTimestampHint
               createdAt={
-                !renderMessage && stackPrevious ? row.createdAt : undefined
+                !renderMessage && stackPrevious && !flat
+                  ? row.createdAt
+                  : undefined
               }
               attachments={attachmentGroups.length > 0}
             >

@@ -219,7 +219,7 @@ it("keeps a stopped agent visible beside another agent's persistent failure", ()
   try {
     f.send(A, "failed", 1, "turn_started", { triggeringEventIds: [root] });
     f.send(B, "stopped", 1, "turn_started", { triggeringEventIds: [root] });
-    f.send(A, "failed", 2, "turn_completed", { outcome: "failed" });
+    f.send(A, "failed", 2, "turn_error", { error: "Request failed" });
     f.send(B, "stopped", 2, "turn_completed", { outcome: "cancelled" });
     expect(screen.getByText("Couldn’t finish")).toBeInTheDocument();
     expect(screen.getByText("Bubbles · Stopped")).toBeInTheDocument();
@@ -238,7 +238,6 @@ it("keeps a stopped agent visible beside another agent's persistent failure", ()
   }
 });
 it.each([
-  ["failed", "Couldn’t finish"],
   ["terminated", "Couldn’t finish"],
   ["cancelled", "Stopped"],
 ])(
@@ -946,7 +945,7 @@ it("moves a stopped note below the agent's latest public reply", async () => {
   }
 });
 it.each(["failed", "terminated", "unknown"])(
-  "places a remote %s caption beneath its reply without repeating the agent identity",
+  "settles remote %s beside its reply and shows only warranted captions",
   (outcome) => {
     const f = fixture();
     const reply = {
@@ -986,6 +985,11 @@ it.each(["failed", "terminated", "unknown"])(
       if (outcome === "unknown") act(() => vi.advanceTimersByTime(31000));
       else f.send(A, "remote", 2, "turn_completed", { outcome });
       expect(screen.getByTestId("request")).toBeEmptyDOMElement();
+      if (outcome === "failed") {
+        expect(screen.getByTestId("reply")).toBeEmptyDOMElement();
+        expect(screen.queryByText("Couldn’t finish")).not.toBeInTheDocument();
+        return;
+      }
       const caption = within(screen.getByTestId("reply"));
       expect(
         caption.getByText(

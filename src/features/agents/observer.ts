@@ -13,8 +13,10 @@ export function terminalOutcome(kind: string, outcome: unknown) {
   switch (outcome) {
     case undefined:
     case "completed":
-      return "ended";
+    // A failed tool batch can still yield a useful reply. Only settle work;
+    // the signed execution-failure notice independently reports request failure.
     case "failed":
+      return "ended";
     case "terminated":
       return "error";
     case "cancelled":

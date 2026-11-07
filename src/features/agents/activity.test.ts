@@ -91,7 +91,7 @@ it("does not settle an aggregate after its other linked lifecycle turn was evict
 it.each([
   [undefined, "ended"],
   ["completed", "ended"],
-  ["failed", "error"],
+  ["failed", "ended"],
   ["terminated", "error"],
   ["cancelled", "stopped"],
   ["future-outcome", "unknown"],

@@ -1338,8 +1338,13 @@ beyond 30 seconds or disconnect makes work unknown, not stopped. Terminal state
 retains a monotonic evidence timestamp through clock rollback and bounded eviction.
 There is no agent-global sequence gate: producer sequences reset, skip and interleave.
 
-Remote terminal outcomes map `completed` to success, `failed`/`terminated` to
-failure, and `cancelled` to stopped without identifying who cancelled. Exact
+Remote terminal outcomes map `completed` and bare `failed` to settled,
+`terminated` to failure, and `cancelled` to stopped without identifying who
+cancelled. Settled does not claim success: a failed tool batch can still yield a
+useful reply. Explicit `turn_error`/`agent_panic` remain failures. A signed
+`execution-failure` reply independently shows **Couldn’t finish · Details** with
+its original explanation. If that reply never arrives, a genuine failure reported
+only as bare `failed` can lack a failure caption. Exact
 trigger IDs and outcomes survive raw-record trimming. Losing a lifecycle turn
 makes aggregate request completion uncertain.
 

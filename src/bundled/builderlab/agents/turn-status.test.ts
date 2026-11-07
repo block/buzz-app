@@ -187,8 +187,9 @@ async function fixture(
 
 it.each([
   ["completed", "ended"],
-  ["failed", "error"],
+  ["failed", "ended"],
   ["cancelled", "stopped"],
+  ["terminated", "error"],
 ])(
   "recovers missed %s terminal status through the real lifecycle",
   async (outcome, expected) => {
@@ -221,9 +222,9 @@ it.each(["turn_liveness", "resolve"] as const)(
       f.result.resolve(response({ task: "failed" }));
       await vi.advanceTimersByTimeAsync(31000);
       await vi.waitFor(() =>
-        expect(f.activity.queries.snapshot().turns[0]?.outcome).toBe("error"),
+        expect(f.activity.queries.snapshot().turns[0]?.outcome).toBe("ended"),
       );
-      expect(f.work()).toBe(start === "turn_liveness" ? undefined : "error");
+      expect(f.work()).toBe(start === "turn_liveness" ? undefined : "ended");
     } finally {
       f.dispose();
     }
@@ -252,7 +253,7 @@ it("refreshes the owned agent inventory when another agent appears", async () =>
         f.activity.queries
           .snapshot()
           .turns.find((turn) => turn.turnId === "newTask")?.outcome,
-      ).toBe("error"),
+      ).toBe("ended"),
     );
   } finally {
     f.dispose();
@@ -298,7 +299,7 @@ it("leaves missing status unknown and reads it again after reconnect", async () 
     f.setStatus({ task: "failed" });
     f.activity.state({ status: "retrying", routes: [] });
     f.activity.state(connected);
-    await vi.waitFor(() => expect(f.work()).toBe("error"));
+    await vi.waitFor(() => expect(f.work()).toBe("ended"));
   } finally {
     f.dispose();
   }
@@ -470,7 +471,7 @@ it("does not overwrite a live terminal with a delayed readback", async () => {
     await vi.advanceTimersByTimeAsync(31000);
     await f.started.promise;
     f.send("turn_completed", 2, { outcome: "completed" });
-    f.result.resolve(response({ task: "failed" }));
+    f.result.resolve(response({ task: "terminated" }));
     await vi.advanceTimersByTimeAsync(1);
     expect(f.work()).toBe("ended");
   } finally {

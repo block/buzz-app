@@ -53,7 +53,7 @@ const update = (sessionUpdate: string, fields: object) => ({
 it.each([
   [undefined, "ended"],
   ["completed", "ended"],
-  ["failed", "error"],
+  ["failed", "ended"],
   ["terminated", "error"],
   ["cancelled", "stopped"],
   ["new-outcome", "unknown"],

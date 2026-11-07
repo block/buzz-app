@@ -27,7 +27,7 @@ afterEach(cleanup);
 
 it.each([
   ["completed", "Completed"],
-  ["failed", "Failed"],
+  ["failed", "Completed"],
   ["terminated", "Failed"],
   ["cancelled", "Stopped"],
   ["future-outcome", "Status unknown"],

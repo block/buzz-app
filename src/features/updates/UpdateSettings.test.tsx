@@ -11,7 +11,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { UpdateSettings } from "./UpdateSettings";
-import { createUpdates, type UpdatePlatform, type Updates } from "./updates";
+import {
+  type AgentWork,
+  createUpdates,
+  type UpdatePlatform,
+  type Updates,
+} from "./updates";
 
 const native = vi.hoisted(() => ({
   getVersion: vi.fn(async () => "1.2.3"),
@@ -32,13 +37,16 @@ async function afterBackgroundCheck(check: ReturnType<typeof vi.fn>) {
   await Promise.resolve(check.mock.results[0]?.value).catch(() => {});
 }
 
-function renderSettings(platform: Partial<UpdatePlatform>) {
-  updates = createUpdates({
-    desktop: true,
-    check: async () => null,
-    relaunch: async () => {},
-    ...platform,
-  });
+function renderSettings(platform: Partial<UpdatePlatform>, work?: AgentWork) {
+  updates = createUpdates(
+    {
+      desktop: true,
+      check: async () => null,
+      relaunch: async () => {},
+      ...platform,
+    },
+    work,
+  );
   render(<UpdateSettings updates={updates} active />);
   return updates;
 }
@@ -238,4 +246,46 @@ it("keeps focus through download, install and refused restart", async () => {
       install.resolve();
     });
   }
+});
+
+it("schedules a downloaded update for when agents are idle, and cancels it", async () => {
+  const install = vi.fn(async () => {});
+  const update = {
+    version: "1.2.3",
+    download: async () => {},
+    install,
+    close: async () => {},
+  };
+  const updates = renderSettings(
+    { check: async () => update },
+    {
+      isWorking: () => true,
+      workingCount: () => 1,
+      subscribeWorking: () => () => {},
+    },
+  );
+  const idle = await screen.findByRole("button", {
+    name: "Update when agents are idle",
+  });
+  idle.focus();
+  fireEvent.click(idle);
+  expect(
+    await screen.findByText("Restarting when agents are idle."),
+  ).toBeVisible();
+  // Focus stays on the button that now cancels.
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  expect(updates.snapshot().state).toBe("scheduled");
+  expect(
+    screen.queryByRole("button", { name: "Update when agents are idle" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    await screen.findByText("Ready to install. Buzz will restart."),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Update when agents are idle" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+  await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
 });

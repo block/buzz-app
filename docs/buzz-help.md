@@ -859,6 +859,13 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
   without forgetting the saved choice.
+- On desktop, when a Buzz update has downloaded, its notice and **Settings →
+  Software updates** offer **Update now** and **Update when agents are idle**.
+  Updating restarts Buzz, which stops agent turns running on this device; the
+  notice says how many agents are working. **Update when agents are idle** waits
+  until no agent on this device has queued or running work for one minute, then
+  restarts. **Update now** and **Cancel** stay available while it waits;
+  dismissing the notice keeps the wait. Reloading Buzz drops the wait.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without

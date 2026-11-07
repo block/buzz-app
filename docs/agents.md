@@ -699,6 +699,10 @@ goose sessions end with the app, so a resumed goose turn opens a new one and is
 shown the mention's thread, including what it already posted there.
 Mentions queued behind a working turn, watch turns and other types are not
 kept.
+The update notice's **Update when agents are idle** avoids this stop: it
+waits on `AgentRunners.workingCount()` (exposed as `AgentsService.work`) to
+stay at zero for `IDLE_QUIET_MS`, checks again, then installs and restarts
+(`src/features/updates/updates.ts`).
 
 ### Saved Solo follow-ups
 

@@ -207,6 +207,11 @@ it.each([
   },
 );
 
+it("lets an update wait for the app's agents to be idle", () => {
+  expect(services.updates.idleOptionAvailable()).toBe(true);
+  expect(services.updates.workingCount()).toBe(0);
+});
+
 it("disposes the real host services and plugins once", async () => {
   await openCommunities();
   const appearanceDisposal = vi.spyOn(services.appearance, "dispose");

@@ -11,7 +11,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UpdateNotice } from "./UpdateNotice";
-import { createUpdates, type Updates } from "./updates";
+import { type AgentWork, createUpdates, type Updates } from "./updates";
 
 let updates: Updates | undefined;
 afterEach(() => {
@@ -29,7 +29,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function readyUpdate() {
+async function readyUpdate(work?: AgentWork) {
   const download = deferred();
   const install = deferred();
   const update = {
@@ -40,11 +40,14 @@ async function readyUpdate() {
   };
   const checks = [update, null, update];
   const relaunch = vi.fn(async () => {});
-  updates = createUpdates({
-    desktop: true,
-    check: async () => checks.shift() ?? null,
-    relaunch,
-  });
+  updates = createUpdates(
+    {
+      desktop: true,
+      check: async () => checks.shift() ?? null,
+      relaunch,
+    },
+    work,
+  );
   const view = render(
     <ToastProvider>
       <UpdateNotice updates={updates} />
@@ -60,6 +63,10 @@ async function readyUpdate() {
 it("offers update and restart once the download is ready", async () => {
   const { update, install, relaunch } = await readyUpdate();
   expect(screen.getByText("Click to update")).toBeVisible();
+  // An app without agents has nothing to wait for.
+  expect(
+    screen.queryByRole("button", { name: "Update when agents are idle" }),
+  ).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Update now" }));
   expect(await screen.findByText("Updating")).toBeVisible();
@@ -159,4 +166,95 @@ it("stays dismissed when the notice remounts, e.g. during community restoration"
   expect(
     await screen.findByRole("dialog", { name: "Ready to update!" }),
   ).toBeVisible();
+});
+
+/** Local agents with `count` working. */
+function agentWork(count: number) {
+  const listeners = new Set<() => void>();
+  return {
+    isWorking: () => count > 0,
+    workingCount: () => count,
+    subscribeWorking(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    set(next: number) {
+      count = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+
+it("prefers updating once agents are idle while they work, and says what Update now interrupts", async () => {
+  const work = agentWork(2);
+  await readyUpdate(work);
+  expect(
+    screen.getByText("2 agents are working. Updating now interrupts them."),
+  ).toBeVisible();
+  const idle = screen.getByRole("button", {
+    name: "Update when agents are idle",
+  });
+  expect(idle).toHaveAttribute("data-variant", "prominent");
+  expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
+    "data-variant",
+    "subtle",
+  );
+
+  work.set(1);
+  expect(
+    screen.getByText("1 agent is working. Updating now interrupts it."),
+  ).toBeVisible();
+  work.set(0);
+  expect(screen.getByText("Click to update")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
+    "data-variant",
+    "prominent",
+  );
+});
+
+it("schedules the update, and keeps Update now and Cancel reachable", async () => {
+  const { updates, update } = await readyUpdate(agentWork(1));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Update when agents are idle" }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: "Update scheduled" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Buzz restarts once agents finish their work. 1 working now.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Update when agents are idle" }),
+  ).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(
+    await screen.findByRole("dialog", { name: "Ready to update!" }),
+  ).toBeVisible();
+  expect(updates.snapshot().state).toBe("ready");
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Update when agents are idle" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+  expect(update.install).toHaveBeenCalledOnce();
+});
+
+it("keeps the schedule when its notice is dismissed", async () => {
+  const { updates } = await readyUpdate(agentWork(1));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Update when agents are idle" }),
+  );
+  await screen.findByRole("dialog", { name: "Update scheduled" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss update notification" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  expect(updates.snapshot().state).toBe("scheduled");
 });

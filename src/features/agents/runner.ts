@@ -653,27 +653,43 @@ export class AgentRunners {
   private readonly stopped: Interrupted;
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
-  private workingNow = false;
+  private workingCountNow = 0;
   private readonly workingListeners = new Set<() => void>();
   constructor(private readonly host: RunnerHost) {
     this.checkpoints = host.checkpoints.read();
     this.turns = this.left = this.stopped = host.interrupted.read();
   }
 
-  /** Whether any agent has a job in a lane or a turn still working. */
+  /** Whether any agent has an event being classified, a job queued or in a
+   * lane, or a turn still working. */
   isWorking() {
-    return this.workingNow;
+    return this.workingCountNow > 0;
   }
+  /** How many agents have an event being classified, a job queued or in a
+   * lane, or a turn still working. */
+  workingCount() {
+    return this.workingCountNow;
+  }
+  /** Called whenever `workingCount` changes. */
   subscribeWorking(listener: () => void) {
     this.workingListeners.add(listener);
     return () => void this.workingListeners.delete(listener);
   }
   private noteWorking() {
-    const working = [...this.runners.values()].some(
-      (runner) => runner.busy.size > 0 || runner.working > 0,
-    );
-    if (working === this.workingNow) return;
-    this.workingNow = working;
+    // By pubkey: an agent in several communities has a runner in each.
+    const working = new Set<string>();
+    for (const runner of this.runners.values())
+      if (
+        runner.busy.size > 0 ||
+        runner.working > 0 ||
+        runner.classifying > 0 ||
+        runner.queues.mention.length > 0 ||
+        runner.queues.watch.length > 0
+      )
+        working.add(runner.member.pubkey);
+    const count = working.size;
+    if (count === this.workingCountNow) return;
+    this.workingCountNow = count;
     for (const listener of this.workingListeners) listener();
   }
 
@@ -2039,6 +2055,7 @@ export class AgentRunners {
     runner.queues.watch.length = 0;
     runner.later.length = 0;
     runner.waiting.clear();
+    this.noteWorking();
   }
   /** Runs a matched watch's classifier, then queues the event if it passes.
    * The classifier runs after the watch's selectors and filter, and before the
@@ -2070,6 +2087,7 @@ export class AgentRunners {
       return false;
     }
     runner.classifying += inputs.length;
+    this.noteWorking();
     if (trigger.type === "source") this.sourceJobs.set(job, agent.key);
     const count = (by: number) => {
       const next = (runner.classifyingIn.get(interest) ?? 0) + by;
@@ -2134,6 +2152,9 @@ export class AgentRunners {
           });
       } finally {
         unreserve();
+        // Here, not in unreserve: a passing event is queued by then, so the
+        // count does not dip to zero between classifying and queued.
+        this.noteWorking();
         if (trigger.type === "source") {
           this.sourceJobs.delete(job);
           const object = job.matched?.object;
@@ -2462,6 +2483,7 @@ export class AgentRunners {
     rate.admitted++;
     if (runner.activityClaimed) this.showWork(runner, job);
     queue.push(job);
+    this.noteWorking();
     void this.drain(runner);
     return true;
   }
@@ -2593,6 +2615,8 @@ export class AgentRunners {
       if (next.job) this.start(runner, agent, type, run, next.lane, next.job);
     }
     runner.running = false;
+    // Queued work may have been taken, dropped or discarded above.
+    this.noteWorking();
   }
   /** The job a free lane starts next, taken from its queue; its `job` is
    * undefined when the one taken is no longer current. */

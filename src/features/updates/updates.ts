@@ -10,6 +10,8 @@ export type UpdateStatus =
   | { state: "downloading" }
   | { state: "installing" }
   | { state: "ready" }
+  /** Ready, and installs once local agents have been idle for `IDLE_QUIET_MS`. */
+  | { state: "scheduled" }
   | { state: "error"; message: string };
 
 /** The subset of the Tauri updater handle this owner uses. */
@@ -26,17 +28,28 @@ export type UpdatePlatform = {
   relaunch(): Promise<void>;
 };
 
+/** Whether local agents are working, which a restart would interrupt. */
+export type AgentWork = Readonly<{
+  isWorking(): boolean;
+  workingCount(): number;
+  /** Called whenever `workingCount` changes. */
+  subscribeWorking(listener: () => void): () => void;
+}>;
+
 export const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 // Native request deadlines, so a stalled server cannot pin a check or download.
 // The updater does not carry the check timeout over to the download.
 export const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 export const UPDATE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+// Bridges the gap between a turn ending and the follow-up or reply it leads to.
+export const IDLE_QUIET_MS = 60 * 1000;
 const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "checking",
   "available",
   "downloading",
   "installing",
   "ready",
+  "scheduled",
 ]);
 
 const tauriPlatform: UpdatePlatform = {
@@ -58,8 +71,12 @@ const isUpdaterUnavailable = (message: string) =>
   message.includes("plugin updater not found") ||
   message.includes("not initialized");
 
-/** App-wide update lifecycle: background checks, download, install and relaunch. */
-export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
+/** App-wide update lifecycle: background checks, download, install and relaunch.
+ * Without `agentWork`, installing once agents are idle is not offered. */
+export function createUpdates(
+  platform: UpdatePlatform = tauriPlatform,
+  agentWork?: AgentWork,
+) {
   let status: UpdateStatus = { state: "idle" };
   let update: UpdateHandle | null = null;
   let checkInFlight = false;
@@ -69,17 +86,44 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let inlineViews = 0;
   let noticeDismissed = false;
   let noticeRecovery = false;
+  let quietTimer: ReturnType<typeof setTimeout> | undefined;
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const listener of listeners) listener();
   };
   const setStatus = (next: UpdateStatus) => {
     status = next;
+    if (next.state !== "scheduled") clearTimeout(quietTimer);
     if (next.state === "ready") noticeRecovery = false;
-    if (next.state !== "ready" && next.state !== "installing")
+    if (
+      next.state !== "ready" &&
+      next.state !== "installing" &&
+      next.state !== "scheduled"
+    )
       noticeDismissed = false;
     notify();
   };
+
+  /** Starts the quiet period over, or holds it while agents work. */
+  const waitForQuiet = () => {
+    clearTimeout(quietTimer);
+    if (!agentWork || agentWork.isWorking()) return;
+    quietTimer = setTimeout(() => {
+      if (status.state !== "scheduled") return;
+      // Work reports clear this timer, so this guards only a report that
+      // never arrived; the next idle report starts the quiet period again.
+      if (agentWork.isWorking()) {
+        console.info("Update deferred: agents are working");
+        return;
+      }
+      console.info("Installing the scheduled update: agents are idle");
+      void installAndRelaunch();
+    }, IDLE_QUIET_MS);
+  };
+  const stopWork = agentWork?.subscribeWorking(() => {
+    if (status.state === "scheduled") waitForQuiet();
+    notify();
+  });
 
   const closeUpdate = async () => {
     if (downloadInFlight || installInFlight || !update) return;
@@ -196,8 +240,30 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
     noticeRecovery: () => noticeRecovery,
     checkForUpdate: () => runCheck(false),
     installAndRelaunch,
+    /** Whether `installWhenIdle` is offered: this app runs agents. */
+    idleOptionAvailable: () => agentWork !== undefined,
+    /** Local agents working now, which installing would interrupt. */
+    workingCount: () => agentWork?.workingCount() ?? 0,
+    /** Installs a ready update once agents have been idle for `IDLE_QUIET_MS`. */
+    installWhenIdle() {
+      if (!agentWork || status.state !== "ready") return;
+      console.info(
+        `Update scheduled for when agents are idle; ${agentWork.workingCount()} working`,
+      );
+      setStatus({ state: "scheduled" });
+      waitForQuiet();
+    },
+    cancelScheduled() {
+      if (status.state !== "scheduled") return;
+      console.info(
+        `Scheduled update cancelled; ${agentWork?.workingCount() ?? 0} working`,
+      );
+      setStatus({ state: "ready" });
+    },
     dispose() {
       clearInterval(interval);
+      clearTimeout(quietTimer);
+      stopWork?.();
       void closeUpdate();
     },
   };

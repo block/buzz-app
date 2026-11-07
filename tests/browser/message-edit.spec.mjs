@@ -109,10 +109,9 @@ test("Cmd+Up edits in the existing composer and restores native focus, draft his
     await page.getByRole("button", { name: "Retry edit", exact: true }).click();
     await expect(input).toBeFocused();
     await expect(input).toHaveJSProperty("value", "");
-    // The applied edit replaces the caption and marks it as edited.
-    const revised = page.getByText("Revised caption reject (edited)", {
-      exact: true,
-    });
+    // The applied edit replaces the caption and marks it as edited; the
+    // marker's screen-reader date follows.
+    const revised = page.getByText(/^Revised caption reject \(edited\)/);
     await expect(revised).toBeVisible();
     // The marker is metadata, so a selection of the caption leaves it out.
     expect(

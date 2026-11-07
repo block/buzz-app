@@ -46,6 +46,8 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { MessageRow } from "./MessageRow";
 import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
+import { formatFullTimestamp } from "../../shared/datetime";
+import { MAX_MARKDOWN_LENGTH } from "../relay/message-content";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -4742,6 +4744,55 @@ it("marks an edited body after its last line, and leaves an unedited one unmarke
     render("Hi how are ya.", false);
     expect(screen.queryByText("(edited)")).toBeNull();
   } finally {
+    cleanup();
+  }
+});
+
+it("dates the edit in the edited marker's hover hint and accessible date", async () => {
+  const user = userEvent.setup();
+  const editedAt = new Date(2026, 9, 2, 15, 5, 9).getTime() / 1000;
+  const file = { url: "https://example.com/notes.txt", kind: "file" as const };
+  const zone = process.env.TZ;
+  try {
+    // After the body's last line, after a body too long for Markdown, and
+    // after a captionless row's attachments.
+    for (const patch of [
+      { content: "Hi" },
+      { content: "x".repeat(MAX_MARKDOWN_LENGTH + 1) },
+      { content: "", attachments: [file] },
+    ]) {
+      process.env.TZ = "America/Los_Angeles";
+      renderMessage({
+        row: { ...row, ...patch, edited: true, editedAt },
+        media: (url) => url,
+      });
+      const marker = screen.getByText("(edited)");
+      const date = marker.querySelector(".sr-only");
+      const hint = formatFullTimestamp(editedAt);
+      // As on the byline's clock, assistive technology reads the time without
+      // a tab stop or an open hint.
+      expect(marker).not.toHaveAttribute("tabindex");
+      expect(date).toHaveTextContent(hint);
+      await user.hover(marker);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(hint);
+      // The time follows the time zone and the clock settings, as the byline's
+      // does; the zone is checked when the window regains focus.
+      process.env.TZ = "Asia/Tokyo";
+      act(() => window.dispatchEvent(new Event("focus")));
+      const zoned = formatFullTimestamp(editedAt);
+      expect(zoned).not.toBe(hint);
+      expect(date).toHaveTextContent(zoned);
+      expect(screen.getByRole("tooltip")).toHaveTextContent(zoned);
+      act(() => setClockPreference({ hourCycle: "h23" }));
+      expect(formatFullTimestamp(editedAt)).not.toBe(zoned);
+      expect(date).toHaveTextContent(formatFullTimestamp(editedAt));
+      setClockPreference({ hourCycle: "system" });
+      cleanup();
+    }
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+    setClockPreference({ hourCycle: "system" });
     cleanup();
   }
 });

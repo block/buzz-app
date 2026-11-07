@@ -266,6 +266,7 @@ describe("message fold", () => {
     expect(rows.map((row) => row.id)).toEqual([a.id, spoofed.id]);
     expect(rows[0]).toMatchObject({
       content: "edit two",
+      editedAt: 14,
       mentions: [bob.pubkey],
       reactions: [{ content: "👍" }, { content: "🎉" }],
       replyCount: 0,

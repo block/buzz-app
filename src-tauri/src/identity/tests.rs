@@ -103,7 +103,7 @@ fn legacy_import_adopts_only_a_valid_old_key_and_never_replaces_one() {
         *store.saved.lock().unwrap() = saved.clone().map(String::into_bytes);
         *store.denied.lock().unwrap() = denied;
         *store.legacy.lock().unwrap() = legacy;
-        let result = identity(&store).import_legacy();
+        let result = identity(&store).import_legacy(None);
         assert_eq!(result.is_ok(), imports, "{result:?}");
         assert_eq!(
             *store.legacy_reads.lock().unwrap(),
@@ -169,7 +169,27 @@ fn a_linked_legacy_key_is_saved_from_the_one_read_that_signed() {
     owner.sign_legacy(template).unwrap();
     // Old Buzz's storage changing after the link can't change what is saved.
     *store.legacy.lock().unwrap() = Some(Key::new(Zeroizing::new([2; 32])).nsec().unwrap());
-    assert_eq!(owner.import_legacy().unwrap(), fixture().viewer().unwrap());
+    assert_eq!(
+        owner.import_legacy(None).unwrap(),
+        Some(fixture().viewer().unwrap())
+    );
+    assert_eq!(*store.legacy_reads.lock().unwrap(), 1);
+    assert_eq!(*store.saved.lock().unwrap(), Some(nsec.into_bytes()));
+    assert!(owner.legacy.is_none());
+}
+#[test]
+fn an_expected_legacy_import_saves_only_that_key() {
+    let nsec = fixture().nsec().unwrap();
+    let store = Arc::new(Memory::default());
+    *store.legacy.lock().unwrap() = Some(nsec.clone());
+    let mut owner = identity(&store);
+    let other = Key::new(Zeroizing::new([2; 32])).viewer().unwrap();
+    // Another account's key: nothing is saved, and the one read is kept.
+    assert_eq!(owner.import_legacy(Some(&other)).unwrap(), None);
+    assert_eq!(*store.saved.lock().unwrap(), None);
+    assert!(owner.legacy.is_some());
+    let viewer = fixture().viewer().unwrap();
+    assert_eq!(owner.import_legacy(Some(&viewer)).unwrap(), Some(viewer));
     assert_eq!(*store.legacy_reads.lock().unwrap(), 1);
     assert_eq!(*store.saved.lock().unwrap(), Some(nsec.into_bytes()));
     assert!(owner.legacy.is_none());

@@ -392,19 +392,25 @@ impl Identity {
         Ok(viewer)
     }
     /// Adopts the key installed old Buzz saved, exactly as a pasted import would.
-    fn import_legacy(&mut self) -> Result<String> {
+    /// With `expected`, only when it is that key: another key is kept in memory,
+    /// unsaved, and nothing is returned.
+    fn import_legacy(&mut self, expected: Option<&str>) -> Result<Option<String>> {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was overwritten".into());
         }
-        let nsec = match self.legacy.take() {
-            Some(key) => Zeroizing::new(key.nsec()?),
-            None => self.store.legacy()?,
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => Key::parse(self.store.legacy()?.trim())
+                .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was changed")?,
         };
-        let nsec = nsec.trim();
-        if Key::parse(nsec).is_err() {
-            return Err("The earlier Buzz app's identity is malformed; nothing was changed".into());
+        if let Some(expected) = expected {
+            if key.viewer()? != expected {
+                self.legacy = Some(key);
+                return Ok(None);
+            }
         }
-        self.save(Some(nsec))
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.save(Some(&nsec)).map(Some)
     }
     /// Signs with the key installed old Buzz saved, read from its storage and
     /// never saved here, so first run can link it before adopting it: a key
@@ -1301,15 +1307,23 @@ pub fn identity_legacy_available<R: tauri::Runtime>(app: tauri::AppHandle<R>) ->
             .is_dir()
     })
 }
+/// `expected` saves old Buzz's key only when it is that key, as setup does for
+/// the key an account already holds; otherwise nothing is saved or returned.
 #[tauri::command]
 pub async fn identity_import_legacy(
     host: tauri::State<'_, IdentityHost>,
     backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
-) -> Result<String> {
-    let public = with_identity(host.inner().clone(), Identity::import_legacy).await?;
-    let backup = backup.inner().clone();
-    let identity = host.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    expected: Option<String>,
+) -> Result<Option<String>> {
+    let public = with_identity(host.inner().clone(), move |identity| {
+        identity.import_legacy(expected.as_deref())
+    })
+    .await?;
+    if public.is_some() {
+        let backup = backup.inner().clone();
+        let identity = host.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    }
     Ok(public)
 }
 #[tauri::command]

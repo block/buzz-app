@@ -17,7 +17,6 @@ import {
   releaseFirstRunSession,
   type FirstRunIdentity,
 } from "../../bundled/builderlab/oauth/first-run";
-import { ApiFailure } from "../../bundled/builderlab/communities/api";
 import type { Credential } from "../../bundled/builderlab/session";
 import { communityDestination } from "../communities/destination";
 import { accountConsents } from "../communities/account-consent";
@@ -78,7 +77,9 @@ import { PublicKeyPanel } from "./PublicKeyPanel";
 import type { Restored } from "./restore-communities";
 import { type Identity, nativeIdentityEnabled } from "./service";
 import {
+  adoptLinkedLegacy,
   backUp,
+  boundElsewhere,
   checkAccount,
   checkBackup,
   checkCreation,
@@ -468,12 +469,21 @@ export function Welcome({
       {
         label: "Preparing your identity…",
         run: async () => {
+          // The account's key, with no backup and not on this device, may be
+          // old Buzz's: a first run linked it, then stopped before saving it.
+          const adopted =
+            !!checkedKey &&
+            !checkedBackups?.includes(checkedKey) &&
+            (await adoptLinkedLegacy(identity, checkedKey));
           const here = identity.snapshot();
           const onDevice = here.status === "ready" ? here.viewer : undefined;
           // A device that already keeps communities opens on them once the
-          // account's are restored, rather than on Join a community.
+          // account's are restored, rather than on Join a community. One that
+          // had no key until now keeps none.
           const open: SetupStep[] =
-            onDevice && communities.snapshot().memberships.length > 0
+            onDevice &&
+            !adopted &&
+            communities.snapshot().memberships.length > 0
               ? [
                   {
                     label: "Opening Buzz…",
@@ -511,12 +521,7 @@ export function Welcome({
                 try {
                   await current.bind(here.viewer);
                 } catch (error) {
-                  if (
-                    error instanceof ApiFailure &&
-                    (error.code === "pubkey_already_bound" ||
-                      error.code === "identity_already_bound")
-                  )
-                    return askToReplace(here.viewer);
+                  if (boundElsewhere(error)) return askToReplace(here.viewer);
                   throw error;
                 }
                 return { next: afterLink };
@@ -525,8 +530,16 @@ export function Welcome({
             return { next: [linkHere] };
           }
           // The account's key is already here: bring back its communities.
+          // Adopted just now, it replaces the Welcome back the check chose
+          // and is backed up, as that first run would have done next.
           if (onDevice === checkedKey)
-            return { next: [...finish(checkedKey), ...open] };
+            return {
+              next: [
+                ...(adopted ? [settled, backupKey(current)] : []),
+                ...finish(checkedKey),
+                ...open,
+              ],
+            };
           if (onDevice) return askToReplace(onDevice);
           if (!checkedBackups?.includes(checkedKey)) return;
           void current.recovery.beginRecovery();
@@ -534,6 +547,11 @@ export function Welcome({
         },
       },
     ]);
+  };
+  /** Rests where setup ends, as when the account check found its key here. */
+  const settled: SetupStep = {
+    label: "Preparing your identity…",
+    run: async () => ({ status: "done" }),
   };
   /**
    * Another account's key is here, and replacing it is always the user's
@@ -731,8 +749,9 @@ export function Welcome({
     backToLanding();
   };
   /**
-   * The failed page's way out once setup saved a key: the landing as a
-   * relaunch shows it, keeping the key, so another account can sign in.
+   * The failed page's way out after a Builderlab sign-in: signs out of it and
+   * returns to the landing, keeping any key saved here (shown as a relaunch
+   * shows it), so the next sign-in can pick another account.
    */
   const leaveFailedSetup = () => {
     setConfirmed(false);
@@ -1331,14 +1350,16 @@ export function Welcome({
                 ? "Your key is saved on this device."
                 : undefined
           }
-          // The launch sign-in may always return to the landing, which can
-          // open the app without it.
-          onBack={failedAfterKey && !relaunch ? undefined : backToLanding}
-          onSwitchAccount={
-            failedAfterKey && !relaunch ? leaveFailedSetup : undefined
-          }
+          // After a Builderlab sign-in the way out signs out of it, so the
+          // next sign-in can pick another account; Back would sign in to the
+          // same one again. The landing it returns to can still open the app
+          // with a key from an earlier launch.
+          onBack={reads.current ? undefined : backToLanding}
+          onSwitchAccount={reads.current ? leaveFailedSetup : undefined}
           onRetry={
-            progress.unsupportedBackup ? undefined : () => void setup.retry()
+            progress.unsupportedBackup || progress.bound
+              ? undefined
+              : () => void setup.retry()
           }
           onContinue={
             progress.unsupportedBackup
@@ -1442,7 +1463,8 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 /**
  * What a failed link or unlink leaves undone: the key is not the account's
  * (and, after an unlink, the old key stays bound), and with it the backup,
- * which needs a linked key. The page has no way past it but Try again.
+ * which needs a linked key. The page has no way past it but Try again, or
+ * leaving through Use a different account.
  */
 const UNLINKED_NOTE =
   "Your key is saved on this device, but it isn’t linked to your account or backed up yet.";
@@ -1514,7 +1536,8 @@ function Failure({
         )}
         {onSwitchAccount && (
           <Button
-            variant="ghost"
+            // The only way on when nothing else is offered.
+            variant={onRetry || onContinue ? "ghost" : "prominent"}
             size="lg"
             onClick={onSwitchAccount}
             disabled={!!busy}

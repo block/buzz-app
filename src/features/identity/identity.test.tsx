@@ -1352,6 +1352,55 @@ it.each(["can't be read", "is another account's"])(
   },
 );
 
+it("a relaunch after old Buzz's key was linked but not saved saves that key and backs it up, instead of Welcome back", async () => {
+  const attempt = deferred<Credential>();
+  const backUp = vi.fn(() => Promise.resolve());
+  const { identity } = legacyLaunch(
+    Promise.resolve(true),
+    () => Promise.resolve(viewer),
+    () => attempt.promise,
+    linkedTo(viewer, [], { backUp }),
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await act(async () => attempt.resolve(credential));
+  expect(
+    await screen.findByRole("heading", { name: "Connect to a community" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Continue with this key" }),
+  ).toBeNull();
+  expect(identity.snapshot()).toEqual({ status: "ready", viewer });
+  // Only the account's own key may be saved.
+  expect(invoke).toHaveBeenCalledWith("identity_import_legacy", {
+    expected: viewer,
+  });
+  expect(backUp).toHaveBeenCalledWith(viewer);
+  identity.dispose();
+});
+
+it("a linked account whose key old Buzz does not hold still rests on Welcome back, with nothing saved", async () => {
+  const attempt = deferred<Credential>();
+  const { identity } = legacyLaunch(
+    Promise.resolve(true),
+    // Native saves nothing for another key and answers null.
+    () => Promise.resolve(null as unknown as string),
+    () => attempt.promise,
+    linkedTo(owned.pubkey),
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await act(async () => attempt.resolve(credential));
+  expect(
+    await screen.findByRole("heading", { name: "Continue with this key" }),
+  ).toBeVisible();
+  expect(invoke).toHaveBeenCalledWith("identity_import_legacy", {
+    expected: owned.pubkey,
+  });
+  expect(identity.snapshot()).toEqual({ status: "missing", busy: false });
+  identity.dispose();
+});
+
 it("after Sign out, the next launch offers old Buzz's identity again while its folder remains", async () => {
   const user = userEvent.setup();
   const first = legacyLaunch(Promise.resolve(true), () =>
@@ -2600,7 +2649,7 @@ it("a link that fails after the key is created blocks setup with Try again, whic
   identity.dispose();
 });
 
-it("a link refused for good after the key is created leaves through Use a different account, keeping the key, to a landing that asks the next sign-in to check it", async () => {
+it("a link refused for good after the key is created offers only Use a different account, which keeps the key and returns to a landing that asks the next sign-in to check it", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "nsec_backup_choice")
       return Promise.resolve({
@@ -2640,11 +2689,10 @@ it("a link refused for good after the key is created leaves through Use a differ
   expect(
     await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
   ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Try again" }));
-  await waitFor(() => expect(bind).toHaveBeenCalledTimes(2));
-  expect(
-    await screen.findByRole("heading", { name: "Couldn’t finish setup" }),
-  ).toBeVisible();
+  // Asking again would get the same answer, so Try again is not offered.
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  expect(bind).toHaveBeenCalledTimes(1);
   await user.click(
     screen.getByRole("button", { name: "Use a different account" }),
   );
@@ -4750,7 +4798,7 @@ it("a device that will not keep the join's record names the storage failure befo
   identity.dispose();
 });
 
-it("a key creation failure stops setup and Back returns to the first-launch screen", async () => {
+it("a key creation failure stops setup, and Use a different account returns to the first-launch screen", async () => {
   vi.mocked(invoke)
     .mockResolvedValueOnce(null)
     .mockResolvedValueOnce(false)
@@ -4789,7 +4837,11 @@ it("a key creation failure stops setup and Back returns to the first-launch scre
   expect(identity.snapshot().status).toBe("missing");
   expect(screen.queryByText(keySavedNote)).toBeNull();
   expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  // After a sign-in, the way out signs out of it rather than going Back.
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
   expect(welcomeHeading()).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
   expect(landingSignIn()).toBeEnabled();
@@ -4912,6 +4964,7 @@ it("Enter your private key on Welcome back classifies what is pasted, and Back r
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_legacy_available",
+    "identity_legacy_available",
   ]);
   identity.dispose();
 });
@@ -4958,6 +5011,7 @@ it("a native import refusal stays on the import page with the key kept, and Back
   ).toBeVisible();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
+    "identity_legacy_available",
     "identity_legacy_available",
     "identity_import",
   ]);
@@ -5021,6 +5075,7 @@ it("a dropped or chosen key file fills the field from its first line, and an ove
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_legacy_available",
+    "identity_legacy_available",
   ]);
   identity.dispose();
 });
@@ -5069,6 +5124,7 @@ it("an account's linked key imported after signing in from the connect choice is
     "identity_legacy_available",
     "relay_http",
     "relay_http",
+    "identity_legacy_available",
     "identity_import",
     "relay_http",
     "relay_http",
@@ -5243,6 +5299,7 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_legacy_available",
+    "identity_legacy_available",
     "identity_import",
   ]);
   identity.dispose();
@@ -5330,6 +5387,8 @@ it.each([
     ]);
     expect(commands()).toEqual([
       "identity_restore",
+      "identity_legacy_available",
+      "identity_legacy_available",
       "identity_legacy_available",
     ]);
     identity.dispose();
@@ -6355,6 +6414,7 @@ it("I lost my key lists the communities the old key owns, Back returns to Welcom
   expect(calls).toEqual([
     "identity_restore",
     "identity_legacy_available",
+    "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
     `bind ${viewer}`,
@@ -6410,6 +6470,7 @@ it("a transient unlink failure after Start over keeps the new key, and Try again
   expect(calls).toEqual([
     "identity_restore",
     "identity_legacy_available",
+    "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
     `unbind ${owned.pubkey}`,
@@ -6458,6 +6519,7 @@ it("an unlink refused after Start over offers only Try again, which runs the unl
   expect(calls).toEqual([
     "identity_restore",
     "identity_legacy_available",
+    "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
     `unbind ${owned.pubkey}`,
@@ -6503,6 +6565,7 @@ it("a transient link failure after a successful unlink retries only the link, ne
   expect(unbind).toHaveBeenCalledTimes(1);
   expect(calls).toEqual([
     "identity_restore",
+    "identity_legacy_available",
     "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
@@ -6632,6 +6695,7 @@ it("a linked account signed in from the connect choice is welcomed back and its 
     "identity_legacy_available",
     "relay_http",
     "relay_http",
+    "identity_legacy_available",
     "identity_import",
     "relay_http",
     "relay_http",
@@ -6682,6 +6746,7 @@ it("Connect from the choice as a linked account is welcomed back at the build po
     "identity_legacy_available",
     "relay_http",
     "relay_http",
+    "identity_legacy_available",
     "identity_import",
     "relay_http",
     "relay_http",
@@ -6689,7 +6754,7 @@ it("Connect from the choice as a linked account is welcomed back at the build po
   identity.dispose();
 });
 
-it("an account check that fails stops setup, and Back returns to the first-launch screen", async () => {
+it("an account check that fails stops setup, and Use a different account returns to the first-launch screen", async () => {
   vi.mocked(invoke).mockResolvedValueOnce(null).mockResolvedValueOnce(false);
   const backupStatus = vi.fn<FirstRunAccount["backupStatus"]>();
   const identity = createIdentity();
@@ -6729,7 +6794,10 @@ it("an account check that fails stops setup, and Back returns to the first-launc
   // Nothing after the check ran, and no key was made.
   expect(backupStatus).not.toHaveBeenCalled();
   expect(identity.snapshot().status).toBe("missing");
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
   expect(welcomeHeading()).toBeVisible();
   expect(landingSignIn()).toBeEnabled();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
@@ -6775,6 +6843,7 @@ it("the development seed answers the account reads in place of kgoose", async ()
   // No host request went anywhere: the seed replaced both reads.
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
+    "identity_legacy_available",
     "identity_legacy_available",
   ]);
   identity.dispose();
@@ -6947,6 +7016,7 @@ it("a development seed's unlink status fails Start over's unlink as kgoose would
   expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
+    "identity_legacy_available",
     "identity_legacy_available",
     "identity_create",
   ]);
@@ -8348,7 +8418,7 @@ it("a relaunch sign-in whose account has no key links and backs up the device ke
   identity.dispose();
 });
 
-it("a failed relaunch sign-in can go Back to the landing, which still continues without signing in", async () => {
+it("a failed relaunch sign-in leaves through Use a different account to the landing, which still continues without signing in", async () => {
   localStorage.setItem(ROUTE_NOTE, "builderlab");
   keyOnDevice();
   const bind = vi.fn((_pubkey: string) =>
@@ -8371,7 +8441,10 @@ it("a failed relaunch sign-in can go Back to the landing, which still continues 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The account could not be linked.",
   );
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Use a different account" }),
+  );
   await user.click(continueWithoutSigningIn());
   expect(await screen.findByText("Signed in")).toBeVisible();
   identity.dispose();

@@ -78,8 +78,8 @@ community requires Builderlab sign-in, so it starts at once there, exactly as
 the welcome screen's own button does, and the welcome screen shows it pending
 (**Cancel sign-in**, with the field disabled); setup then lands on **Join
 Community** for the address, and it is never offered a key of the user's own
-instead. Cancel sign-in, and **Back** from a sign-in or setup failure, return
-to the welcome screen with the address kept and do not look it up again. A
+instead. Cancel sign-in, **Back** from a sign-in failure, and **Use a
+different account** from a setup failure, return to the welcome screen with the address kept and do not look it up again. A
 canceled sign-in that finishes later is ignored: it cannot restart setup or use
 a later sign-in's account. Any other found community, including one run by
 another Builderlab deployment, pauses on **Connect to {host}**: nothing a relay publishes names its sign-in portal, so the user
@@ -186,7 +186,13 @@ only once the account holds it, from that same read (native holds the key in
 memory between the signature and the save, so the OS asks for old Buzz's
 storage once). When kgoose refuses it as another account's, or it can't be
 read (a denied OS prompt included), first run makes a new key instead, so a key
-that can't be linked never reaches this device.
+that can't be linked never reaches this device. A run that linked it and then
+stopped before the save (a failed save, or Buzz quit in between) leaves the
+account holding a key this device lacks. When that key isn't backed up, the
+next sign-in checks old Buzz's key before resting on Welcome back
+(`identity_import_legacy` with `expected`, which saves it only when it is the
+account's key and otherwise saves nothing), then saves and backs it up and
+continues as a returning account would.
 
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
@@ -260,14 +266,17 @@ account, **Continue without backup** skips only that backup step and runs the
 remaining community setup. It retains the saved linked key and does not persist
 a backup opt-out. Transient backup failures remain retry-only; linking cannot
 be bypassed.
-Before a key exists, the page also offers **Back** to the welcome screen.
-After a key exists, a refusal Try again can't change (another account already
-linked, an origin or clock problem) would leave only Try again, so the page
-also offers **Use a different account**: it signs out of the account and
-returns to the welcome screen as a relaunch shows it, keeping the key. That
-screen's **Sign in** checks the key with the next account, and **Continue
-without signing in** opens the app as on any relaunch; the account is checked
-at the next launch.
+After a Builderlab sign-in, including the one a relaunch waits on, the page
+offers **Use a different account** in place of Back: it signs out of the
+account and returns to the welcome screen, keeping any key here, as a relaunch
+shows it. Back alone would sign in to the same account again from the
+browser's session. That screen's **Sign in** asks for credentials and checks
+the key with the next account, and **Continue without signing in** opens the
+app with a key already here, as on any relaunch; the account is checked at the
+next launch. A link kgoose refuses because the key or the account is already
+bound elsewhere (`pubkey_already_bound`, `identity_already_bound`) is not
+offered Try again, which would get the same answer; Use a different account is
+the only way on. Failures before any sign-in keep **Back**.
 
 Within one first-run session the Join page exits only through a join or a
 restored community; there is no skip. That holds only while the app stays

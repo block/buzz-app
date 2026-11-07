@@ -102,6 +102,30 @@ function vacant(identity: Identity) {
 }
 
 /**
+ * Set while a first run links old Buzz's key and has not saved it yet, so only
+ * a run that stopped in between (a failed save, or Buzz quit) brings up the OS
+ * prompt for old Buzz's storage after a later sign-in.
+ */
+const LEGACY_LINK = "buzz.legacy-link-pending.v1";
+
+function noteLegacyLink(pending: boolean) {
+  try {
+    if (pending) localStorage.setItem(LEGACY_LINK, "1");
+    else localStorage.removeItem(LEGACY_LINK);
+  } catch {
+    // Storage refused: a later sign-in won't recover an unsaved link by itself.
+  }
+}
+
+function legacyLinkPending(): boolean {
+  try {
+    return localStorage.getItem(LEGACY_LINK) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The key for an account that has none: old Buzz's, when it was used on this
  * device, so someone who used Buzz before stays the same person; otherwise a
  * new one. Old Buzz's key is linked first and saved only once the account
@@ -118,15 +142,21 @@ export function keyForAccount(
     run: async () => {
       vacant(identity);
       if (await identity.legacyAvailable().catch(() => false)) {
+        // A failure from here may leave old Buzz's key linked, so the note
+        // stays until the key is saved or was never linked.
+        noteLegacyLink(true);
         const linked = await account.bindLegacy();
         if (linked) {
-          await identity.importLegacy();
+          // Pinned: native saves only the key the account now holds.
+          await identity.importLegacy(linked);
           // A refused save reports its own reason, such as a denied read.
           saved(identity);
           if (viewer(identity) !== linked)
             throw new Error("Your key could not be saved on this device.");
+          noteLegacyLink(false);
           return;
         }
+        noteLegacyLink(false);
       }
       await identity.create();
       saved(identity);
@@ -137,18 +167,24 @@ export function keyForAccount(
 /**
  * Saves old Buzz's key when it is `linked`, the key the account holds but this
  * device lacks: a first run that linked it and stopped before saving it (a
- * failed save, or Buzz quit in between) leaves exactly that. Another key, no
- * old Buzz, or a refused read saves nothing, and the account's pages follow.
+ * failed save, or Buzz quit in between) leaves exactly that. Only after such a
+ * run, so no other sign-in brings up the OS prompt for old Buzz's storage.
+ * Another key, no old Buzz, or a refused read saves nothing, and the account's
+ * pages follow.
  */
 export async function adoptLinkedLegacy(
   identity: Identity,
   linked: string,
 ): Promise<boolean> {
+  if (!legacyLinkPending()) return false;
   if (identity.snapshot().status !== "missing") return false;
   if (!(await identity.legacyAvailable().catch(() => false))) return false;
   await identity.importLegacy(linked);
   const here = identity.snapshot();
-  return here.status === "ready" && here.viewer === linked;
+  const adopted = here.status === "ready" && here.viewer === linked;
+  // Old Buzz's key is not this account's: that run linked nothing it holds.
+  if (adopted || here.status === "missing") noteLegacyLink(false);
+  return adopted;
 }
 
 /** Creates a key on this device, which the account steps then act on. */

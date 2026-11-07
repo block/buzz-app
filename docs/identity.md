@@ -176,25 +176,32 @@ importing a key still refuses while one is on the device.
 An account with no key takes this device's key, else old Buzz's, else a new
 one, without asking. When the account holds no key, the account check can't
 tell whose this device's key is, but the link can: kgoose refusing it as
-another account's (`pubkey_already_bound`), or finding the account linked to
-another key meanwhile (`identity_already_bound`), makes it another account's
-key on this device, handled as above rather than failing setup. Old Buzz's key is
+another account's (`pubkey_already_bound`) makes it another account's key on
+this device, handled as above rather than failing setup. Finding the account
+linked to another key meanwhile (`identity_already_bound`, a race with another
+device) leaves this device's key not the account's, which the account check
+also asks about with the same dialog; after Replace, the next sign-in finds the
+account's key. Old Buzz's key is
 linked before it is saved: native signs the link challenge with it straight
 from old Buzz's storage (`identity_sign_builderlab_binding` with `legacy`,
 only while no key is saved here, and saving nothing), and first run saves it
 only once the account holds it, from that same read (native holds the key in
 memory between the signature and the save, so the OS asks for old Buzz's
 storage once). When kgoose refuses it as another account's, or it can't be
-read (a denied OS prompt included, which native answers with null), first run
-makes a new key instead, so a key that can't be linked never reaches this
-device. Any other failure, such as a challenge that expired before native
-signed it, fails setup with Try again, which links old Buzz's key again. A run that linked it and then
-stopped before the save (a failed save, or Buzz quit in between) leaves the
-account holding a key this device lacks. When that key isn't backed up, the
-next sign-in checks old Buzz's key before resting on Welcome back
+read (absent, a denied OS prompt or malformed, which native answers with
+null), first run makes a new key instead, so a key that can't be linked never
+reaches this device. Any other failure, such as a challenge that expired before
+native signed it or a busy or locked store, fails setup with Try again, which
+links old Buzz's key again. A run that linked it and then stopped before the
+save (a failed save, or Buzz quit in between) leaves the account holding a key
+this device lacks. First run notes on this device that it is linking old
+Buzz's key (`buzz.legacy-link-pending.v1`) until the key is saved or was never
+linked. Only with that note, when the account's key isn't backed up, the next
+sign-in checks old Buzz's key before resting on Welcome back
 (`identity_import_legacy` with `expected`, which saves it only when it is the
-account's key and otherwise saves nothing), then saves and backs it up and
-continues as a returning account would.
+account's key and otherwise saves nothing, and clears the note), then saves
+and backs it up and continues as a returning account would. Without the note,
+no other sign-in brings up the OS prompt for old Buzz's storage.
 
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under

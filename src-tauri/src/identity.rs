@@ -2,6 +2,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
 use buzz_credential_store as credentials;
+use buzz_agent_controller::LegacyHumanError;
 use nostr::{
     event::Event,
     key::{Keys, SecretKey as NostrSecretKey},
@@ -160,7 +161,7 @@ trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     fn add(&self, value: &[u8]) -> Result<()>;
     /// The key installed old Buzz saved, read-only, after the person asks for it.
-    fn legacy(&self) -> Result<Zeroizing<String>>;
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError>;
     /// Only Sign out may call this, from the next launch; an absent item is success.
     fn delete(&self) -> Result<()>;
     /// The key saved under its service from before 1.0, which reads copy.
@@ -183,7 +184,7 @@ fn read_saved(
     }
 }
 #[cfg(not(test))]
-fn read_legacy() -> Result<Zeroizing<String>> {
+fn read_legacy() -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
     buzz_agent_controller::PlatformCredentials::default()
         .read_legacy_human(buzz_agent_controller::LegacySource::Installed)
 }
@@ -210,7 +211,7 @@ mod platform {
         fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_previous_human)
         }
-        fn legacy(&self) -> Result<Zeroizing<String>> {
+        fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
@@ -268,7 +269,7 @@ mod keyring_platform {
         fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_previous_human)
         }
-        fn legacy(&self) -> Result<Zeroizing<String>> {
+        fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
@@ -305,8 +306,11 @@ impl Store for OsStore {
     fn add(&self, _: &[u8]) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
-    fn legacy(&self) -> Result<Zeroizing<String>> {
-        Err("Secure identity storage is not available on this platform yet".into())
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
+        Err(LegacyHumanError {
+            message: "Secure identity storage is not available on this platform yet".into(),
+            transient: false,
+        })
     }
     fn delete(&self) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
@@ -400,7 +404,7 @@ impl Identity {
         }
         let key = match self.legacy.take() {
             Some(key) => key,
-            None => Key::parse(self.store.legacy()?.trim())
+            None => Key::parse(self.store.legacy().map_err(|error| error.message)?.trim())
                 .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was changed")?,
         };
         if let Some(expected) = expected {
@@ -414,23 +418,23 @@ impl Identity {
     }
     /// Signs with the key installed old Buzz saved, read from its storage and
     /// never saved here, so first run can link it before adopting it: a key
-    /// that can't be linked never lands on this device. `None` when that key
-    /// can't be read (absent, denied or malformed), so first run makes a new
-    /// one; any other failure is an error, so a retry still links old Buzz's.
+    /// that can't be linked never lands on this device. `None` when no usable
+    /// key is there (absent, denied or malformed), so first run makes a new
+    /// one; any other failure, a busy or locked store included, is an error,
+    /// so a retry still links old Buzz's.
     fn sign_legacy(&mut self, event: EventTemplate) -> Result<Option<serde_json::Value>> {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was signed".into());
         }
         let key = match self.legacy.take() {
             Some(key) => key,
-            None => match self
-                .store
-                .legacy()
-                .ok()
-                .and_then(|nsec| Key::parse(nsec.trim()).ok())
-            {
-                Some(key) => key,
-                None => return Ok(None),
+            None => match self.store.legacy() {
+                Ok(nsec) => match Key::parse(nsec.trim()) {
+                    Ok(key) => key,
+                    Err(_) => return Ok(None),
+                },
+                Err(error) if error.transient => return Err(error.message),
+                Err(_) => return Ok(None),
             },
         };
         let signed = key.sign(event);

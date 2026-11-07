@@ -6,6 +6,7 @@ struct Memory {
     write_denied: Mutex<bool>,
     reads: Mutex<usize>,
     legacy: Mutex<Option<String>>,
+    legacy_busy: Mutex<bool>,
     legacy_reads: Mutex<usize>,
     previous: Mutex<Option<Vec<u8>>>,
     deletes: Mutex<Vec<&'static str>>,
@@ -29,14 +30,23 @@ impl Store for Arc<Memory> {
         *saved = Some(value.to_vec());
         Ok(())
     }
-    fn legacy(&self) -> Result<Zeroizing<String>> {
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
         *self.legacy_reads.lock().unwrap() += 1;
+        if *self.legacy_busy.lock().unwrap() {
+            return Err(LegacyHumanError {
+                message: "busy".into(),
+                transient: true,
+            });
+        }
         self.legacy
             .lock()
             .unwrap()
             .clone()
             .map(Zeroizing::new)
-            .ok_or_else(|| "No identity from the earlier Buzz app was found".into())
+            .ok_or_else(|| LegacyHumanError {
+                message: "No identity from the earlier Buzz app was found".into(),
+                transient: false,
+            })
     }
     fn delete(&self) -> Result<()> {
         if *self.write_denied.lock().unwrap() {
@@ -159,6 +169,24 @@ fn legacy_binding_signs_with_the_old_key_but_never_saves_it() {
         // Signing never saves: the store holds exactly what it held before.
         assert_eq!(*store.saved.lock().unwrap(), saved.map(String::into_bytes));
     }
+}
+#[test]
+fn a_busy_legacy_store_is_an_error_so_a_retry_signs_with_the_old_key() {
+    let store = Arc::new(Memory::default());
+    *store.legacy.lock().unwrap() = Some(fixture().nsec().unwrap());
+    *store.legacy_busy.lock().unwrap() = true;
+    let mut owner = identity(&store);
+    let template = || {
+        parse_challenge(builderlab_challenge())
+            .template(1_700_000_000, "")
+            .unwrap()
+    };
+    assert_eq!(owner.sign_legacy(template()).unwrap_err(), "busy");
+    assert!(owner.legacy.is_none());
+    *store.legacy_busy.lock().unwrap() = false;
+    assert!(owner.sign_legacy(template()).unwrap().is_some());
+    assert_eq!(*store.legacy_reads.lock().unwrap(), 2);
+    assert_eq!(*store.saved.lock().unwrap(), None);
 }
 #[test]
 fn a_linked_legacy_key_is_saved_from_the_one_read_that_signed() {

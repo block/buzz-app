@@ -1380,10 +1380,15 @@ it("a failed link of old Buzz's key, such as an expired challenge, makes no new 
   expect(bindLegacy).toHaveBeenCalledTimes(2);
   expect(commands()).not.toContain("identity_create");
   expect(commands()).toContain("identity_import_legacy");
+  expect(localStorage.getItem("buzz.legacy-link-pending.v1")).toBeNull();
   identity.dispose();
 });
 
+const LEGACY_LINK = "buzz.legacy-link-pending.v1";
+
 it("a relaunch after old Buzz's key was linked but not saved saves that key and backs it up, instead of Welcome back", async () => {
+  // The first run noted its link of old Buzz's key and stopped before saving it.
+  localStorage.setItem(LEGACY_LINK, "1");
   const attempt = deferred<Credential>();
   const backUp = vi.fn(() => Promise.resolve());
   const { identity } = legacyLaunch(
@@ -1407,10 +1412,30 @@ it("a relaunch after old Buzz's key was linked but not saved saves that key and 
     expected: viewer,
   });
   expect(backUp).toHaveBeenCalledWith(viewer);
+  expect(localStorage.getItem(LEGACY_LINK)).toBeNull();
+  identity.dispose();
+});
+
+it("with no unsaved link of old Buzz's key, a linked account whose key is elsewhere rests on Welcome back without reading old Buzz's storage", async () => {
+  const attempt = deferred<Credential>();
+  const { identity } = legacyLaunch(
+    Promise.resolve(true),
+    () => Promise.reject(new Error("read old Buzz's storage unasked")),
+    () => attempt.promise,
+    linkedTo(viewer),
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  await act(async () => attempt.resolve(credential));
+  expect(
+    await screen.findByRole("heading", { name: "Continue with this key" }),
+  ).toBeVisible();
+  expect(commands()).not.toContain("identity_import_legacy");
   identity.dispose();
 });
 
 it("a linked account whose key old Buzz does not hold still rests on Welcome back, with nothing saved", async () => {
+  localStorage.setItem(LEGACY_LINK, "1");
   const attempt = deferred<Credential>();
   const { identity } = legacyLaunch(
     Promise.resolve(true),
@@ -1429,6 +1454,8 @@ it("a linked account whose key old Buzz does not hold still rests on Welcome bac
     expected: owned.pubkey,
   });
   expect(identity.snapshot()).toEqual({ status: "missing", busy: false });
+  // That link was not this account's key, so the note goes.
+  expect(localStorage.getItem(LEGACY_LINK)).toBeNull();
   identity.dispose();
 });
 
@@ -4995,7 +5022,6 @@ it("Enter your private key on Welcome back classifies what is pasted, and Back r
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_legacy_available",
-    "identity_legacy_available",
   ]);
   identity.dispose();
 });
@@ -5042,7 +5068,6 @@ it("a native import refusal stays on the import page with the key kept, and Back
   ).toBeVisible();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
-    "identity_legacy_available",
     "identity_legacy_available",
     "identity_import",
   ]);
@@ -5106,7 +5131,6 @@ it("a dropped or chosen key file fills the field from its first line, and an ove
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_legacy_available",
-    "identity_legacy_available",
   ]);
   identity.dispose();
 });
@@ -5155,7 +5179,6 @@ it("an account's linked key imported after signing in from the connect choice is
     "identity_legacy_available",
     "relay_http",
     "relay_http",
-    "identity_legacy_available",
     "identity_import",
     "relay_http",
     "relay_http",
@@ -5330,7 +5353,6 @@ it("a linked account is welcomed back with its npub, accepts only the linked key
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
     "identity_legacy_available",
-    "identity_legacy_available",
     "identity_import",
   ]);
   identity.dispose();
@@ -5418,8 +5440,6 @@ it.each([
     ]);
     expect(commands()).toEqual([
       "identity_restore",
-      "identity_legacy_available",
-      "identity_legacy_available",
       "identity_legacy_available",
     ]);
     identity.dispose();
@@ -6445,7 +6465,6 @@ it("I lost my key lists the communities the old key owns, Back returns to Welcom
   expect(calls).toEqual([
     "identity_restore",
     "identity_legacy_available",
-    "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
     `bind ${viewer}`,
@@ -6501,7 +6520,6 @@ it("a transient unlink failure after Start over keeps the new key, and Try again
   expect(calls).toEqual([
     "identity_restore",
     "identity_legacy_available",
-    "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
     `unbind ${owned.pubkey}`,
@@ -6550,7 +6568,6 @@ it("an unlink refused after Start over offers only Try again, which runs the unl
   expect(calls).toEqual([
     "identity_restore",
     "identity_legacy_available",
-    "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
     `unbind ${owned.pubkey}`,
@@ -6596,7 +6613,6 @@ it("a transient link failure after a successful unlink retries only the link, ne
   expect(unbind).toHaveBeenCalledTimes(1);
   expect(calls).toEqual([
     "identity_restore",
-    "identity_legacy_available",
     "identity_legacy_available",
     "identity_create",
     `unbind ${owned.pubkey}`,
@@ -6726,7 +6742,6 @@ it("a linked account signed in from the connect choice is welcomed back and its 
     "identity_legacy_available",
     "relay_http",
     "relay_http",
-    "identity_legacy_available",
     "identity_import",
     "relay_http",
     "relay_http",
@@ -6777,7 +6792,6 @@ it("Connect from the choice as a linked account is welcomed back at the build po
     "identity_legacy_available",
     "relay_http",
     "relay_http",
-    "identity_legacy_available",
     "identity_import",
     "relay_http",
     "relay_http",
@@ -6874,7 +6888,6 @@ it("the development seed answers the account reads in place of kgoose", async ()
   // No host request went anywhere: the seed replaced both reads.
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
-    "identity_legacy_available",
     "identity_legacy_available",
   ]);
   identity.dispose();
@@ -7047,7 +7060,6 @@ it("a development seed's unlink status fails Start over's unlink as kgoose would
   expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "identity_restore",
-    "identity_legacy_available",
     "identity_legacy_available",
     "identity_create",
   ]);
@@ -8234,7 +8246,7 @@ const signOuts = () =>
   vi.mocked(invoke).mock.calls.filter(([command]) => command === "sign_out");
 /** The replace question's wording for a key with a confirmed backup, and without one. */
 const BACKED_UP =
-  "Its key is backed up in Builderlab: sign in to that account again to restore it.";
+  "Its key was backed up in Builderlab: sign in to that account again to restore it.";
 const MAYBE_NOT_BACKED_UP = "It may not be backed up.";
 
 it("a relaunch sign-in to another account asks even for a backed-up device key, saying it is backed up, and Replace restarts to sign in again", async () => {

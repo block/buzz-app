@@ -84,11 +84,11 @@ import {
   checkBackup,
   checkCreation,
   createKey,
-  keyForAccount,
   createSetup,
   findCommunities,
   importKey,
   keepBackup,
+  keyForAccount,
   linkKey,
   type Resting,
   restoreCommunities,
@@ -494,12 +494,13 @@ export function Welcome({
                   },
                 ]
               : [];
-          const afterLink = [backupKey(current), ...finish(undefined), ...open];
+          const afterLink = [backupKey(current), ...finish(undefined)];
           // No key on the account: this device's key becomes the account's,
           // then old Buzz's from this device, or a new one, with no choice to
           // make. kgoose refusing this device's key as another account's, or
-          // finding the account linked meanwhile, asks before replacing it,
-          // as the account check would.
+          // finding the account linked to another key meanwhile, asks before
+          // replacing it, as the account check would for an account whose key
+          // is not this device's.
           if (!checkedKey) {
             if (!onDevice)
               return {
@@ -978,7 +979,7 @@ export function Welcome({
               title="A different account is saved on this computer"
               description={
                 replacingBackedUp
-                  ? "Replacing it removes that account from this computer to continue with the one you just signed in to. Its key is backed up in Builderlab: sign in to that account again to restore it."
+                  ? "Replacing it removes that account from this computer to continue with the one you just signed in to. Its key was backed up in Builderlab: sign in to that account again to restore it."
                   : "Replacing it removes that account from this computer to continue with the one you just signed in to. It may not be backed up."
               }
               onClose={switchAccount}

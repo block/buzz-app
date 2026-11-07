@@ -42,6 +42,7 @@ import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
+import type { TabAction } from "../../features/conversation/contracts";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
@@ -65,6 +66,8 @@ type Props = {
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  /** Conversation actions a sidebar row also offers (menu and ⌘-click). */
+  tabActions?: ContributionReader<TabAction> | undefined;
   sidebarSections?: SidebarSections | undefined;
   /** A plugin restriction shows only Solo; the saved filter returns after. */
   sidebarScope?: SidebarScope | undefined;
@@ -259,6 +262,7 @@ function ScopedSidebar({
           viewer={connection.viewer}
           sidebarSections={props.sidebarSections}
           sidebarRows={props.sidebarRows}
+          tabActions={props.tabActions}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
@@ -307,6 +311,7 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
+                      tabActions={props.tabActions}
                       renderContents={(
                         ordinary,
                         ordinaryActions,

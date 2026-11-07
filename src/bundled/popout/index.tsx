@@ -162,16 +162,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   // Thread tabs: the tab menu beside Open in channel. Whole conversations
   // follow in S2.
+  // A conversation tab's menu, a sidebar row's menu, and ⌘/Ctrl-click on a
+  // sidebar row: channels, DMs, Solo chats and threads all open in a window.
   ctx.conversation.registerTabAction({
-    id: "open-thread-window",
+    id: "open-window",
     title: "Open in new window",
-    matches: (target) => !!target.threadRootId,
+    gesture: "modifier-click",
+    matches: () => true,
     run: (target) => {
-      if (!target.threadRootId) return;
       void windows
         .open({
           channelId: target.channelId,
-          threadRootId: target.threadRootId,
+          ...(target.threadRootId ? { threadRootId: target.threadRootId } : {}),
         })
         .catch(() => {});
     },

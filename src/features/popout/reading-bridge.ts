@@ -71,7 +71,7 @@ export function createReadingOwner(
           }
         }
         try {
-          leases.set(data.lease, reading.reading(channelId));
+          leases.set(data.lease, reading.reading(channelId, rootId));
         } catch {
           /* Membership may disappear between commit and observation. */
         }

@@ -1,4 +1,6 @@
 import { revealCreatedChannel } from "./created-channel";
+import type { ContributionReader, TabAction } from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import {
   useCallback,
   useEffect,
@@ -130,6 +132,8 @@ type Inventory = {
 };
 
 const noSubscription = () => () => {};
+const noneActions: readonly Contribution<TabAction>[] = [];
+const noTabActions = () => noneActions;
 const emptyContributions: readonly RegisteredSidebarSection[] = [];
 const noSidebarSections = () => emptyContributions;
 const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
@@ -156,6 +160,7 @@ export function ChannelInventory({
   viewer,
   sidebarSections: contributedSections,
   sidebarRows: contributedRows,
+  tabActions,
   render,
 }: {
   relay: RelayData;
@@ -171,8 +176,14 @@ export function ChannelInventory({
   viewer?: string | undefined;
   sidebarSections?: SidebarSections | undefined;
   sidebarRows?: SidebarRows | undefined;
+  /** Conversation actions a row offers in its menu; one may claim ⌘-click. */
+  tabActions?: ContributionReader<TabAction> | undefined;
   render(inventory: Inventory): ReactNode;
 }) {
+  const conversationActions = useSyncExternalStore(
+    tabActions?.subscribe ?? noSubscription,
+    tabActions?.snapshot ?? noTabActions,
+  );
   const contributions = useSyncExternalStore(
     contributedSections?.subscribe ?? noSubscription,
     contributedSections?.snapshot ?? noSidebarSections,
@@ -409,6 +420,26 @@ export function ChannelInventory({
     (id: string) => {
       const parts = splitPartition(scope);
       if (!viewer || !parts || relay.snapshot().session !== queries) return;
+      // ⌘/Ctrl-click hands the row to the action that claims the gesture
+      // (a pop-out window) instead of opening it in place.
+      const event = window.event;
+      if (event instanceof MouseEvent && (event.metaKey || event.ctrlKey)) {
+        const target = { channelId: id };
+        const claimed = conversationActions.find((action) => {
+          try {
+            return (
+              action.gesture === "modifier-click" &&
+              action.matches(target, queries)
+            );
+          } catch {
+            return false;
+          }
+        });
+        if (claimed) {
+          claimed.run(target, queries);
+          return;
+        }
+      }
       clientMetrics.channelIntent(id, window.event);
       writeView(scope, "selected-channel", id);
       void navigator.open({
@@ -418,7 +449,7 @@ export function ChannelInventory({
         scope: { viewer, communityOrigin: parts.communityOrigin },
       });
     },
-    [navigator, relay, queries, scope, viewer],
+    [navigator, relay, queries, scope, viewer, conversationActions],
   );
   const openActivityMessage = useCallback(
     (
@@ -933,6 +964,25 @@ export function ChannelInventory({
     actions.push(
       <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />,
     );
+    // Contributed conversation actions (the same a tab's menu offers).
+    for (const action of conversationActions) {
+      const target = { channelId: channel.id };
+      let offered = false;
+      try {
+        offered = action.matches(target, queries);
+      } catch {
+        offered = false; // A failing contribution hides itself, not the menu.
+      }
+      if (offered)
+        actions.push(
+          <MenuItem
+            key={`action:${action.key}`}
+            onClick={() => action.run(target, queries)}
+          >
+            {action.title}
+          </MenuItem>,
+        );
+    }
     if (!surface && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu

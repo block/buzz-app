@@ -273,6 +273,8 @@ export function SharedAgentPanel({
           {community && (
             <Button
               variant={backdrop ? "glass" : "subtle"}
+              size="sm"
+              shape="control"
               onClick={() => {
                 void writeClipboardText(
                   sharedAgentLink(agent.id, community),

@@ -2388,14 +2388,17 @@ it.each([
     await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
     await run(f.delivery("SAME_THREAD"));
     await run(f.delivery("OTHER_THREAD", "e".repeat(64)));
-    await vi.waitFor(() => expect(steers()).toHaveLength(2));
-    const [same, other] = steers();
+    await run(f.delivery("THIRD_THREAD", "d".repeat(64)));
+    await vi.waitFor(() => expect(steers()).toHaveLength(3));
+    const [same, other, third] = steers();
+    const line = `The reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to \`reply: "${root}"\`.`;
     expect(same).toContain("SAME_THREAD");
-    expect(same).not.toContain("Ordinary replies");
+    expect(same).not.toContain("ordinary replies");
     expect(other).toContain("OTHER_THREAD");
-    expect(other).toContain(
-      `The reply target above is for the new message only. Ordinary replies about the work you were already doing still go to \`reply: "${root}"\`.`,
-    );
+    expect(other).toContain(line);
+    // The line names the turn's first request, not the latest steer.
+    expect(third).toContain("THIRD_THREAD");
+    expect(third).toContain(line);
     await f.complete();
     await vi.waitFor(() =>
       expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),

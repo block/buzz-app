@@ -66,6 +66,7 @@ export function apply(ctx) {
 | `navigation` | Open destinations | `await ctx.navigation.open(target)` returns `{ status: "opened" \| "failed" \| "superseded" \| "cancelled" }`. Targets: `{ version: 1, kind: "plugin", pluginId, pageId?, params? }`, `{ version: 1, kind: "home" }`, `{ version: 1, kind: "settings", section? }`. |
 | `notifications` | OS notification category | `const { submit } = ctx.notifications.register({ id, label })`, then `await submit({ sourceKey, target, title?, body? })` where `target` is an open target. The host bounds and flattens the text. |
 | `browser` | Embedded website (macOS desktop only) | `ctx.browser.available` (boolean) and `ctx.react.createElement(ctx.browser.View, { url, storage?, label? })` inside a panel component. HTTP(S) only. |
+| `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, timeoutMs?, community? })`. `state` is the text to judge; the provider sees it, so send only what the decision needs. `questions` has 1 to 32 entries keyed by answer name (at most 64 characters): `{ type: "yes_no", instructions }`, `{ type: "choice", instructions, options }` (2 to 255 options, value -> when to pick it) or `{ type: "score", instructions, levels }` (2 to 10 labels, lowest first). `timeoutMs` is 1 to 30 seconds (default 30). `community` is the relay URL of the community the text comes from; Builderlab refuses a request without it. Resolves `{ outcome: "answered", backend, model, answers }` (`yes_no`: `probability`; `choice`: `choice`, `confidence`, `probabilities`; `score`: 0-based `score`, `confidence`, `probabilities`) or `{ outcome: "failed", backend, reason }` (`unavailable`, `missing_credentials`, `unauthorized`, `invalid_request`, `input_limit`, `timeout`, `service_error`, `invalid_response`). It never rejects and never retries. The owner chooses the provider in Settings → Decisions API; until then Builderlab answers (with its Jev model) when the owner is signed in to it, else TypeSafe. `ctx.decisions.status()` and `ctx.decisions.subscribe(listener)` tell you whether a provider is ready. |
 | `host` | Commands, HTTPS, processes, files | Requires `manifest.host` grants; see below. |
 | `pluginInstaller` (optional) | Ask the owner to install another plugin or check installation status | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. |
 
@@ -94,6 +95,8 @@ ctx.effect(() => {
   return unsubscribe;
 });
 ```
+
+The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from `src/plugins/author.ts` in the same repository. Read it before you use a service that is not in this table.
 
 ## Host access (`manifest.host`)
 

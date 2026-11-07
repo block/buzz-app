@@ -3540,7 +3540,7 @@ it("prepares a task before starting it, keeps a refused draft and signs only its
     });
     expect(f.channelWrites.start.mock.calls[0]?.[2]).toEqual([agent]);
     expect(f.messages.send.mock.calls[0]?.[2]).toEqual([agent]);
-    expect(f.messages.send.mock.calls[0]).toHaveLength(5);
+    expect(f.messages.send.mock.calls[0]?.slice(5)).toEqual([[], {}]);
     expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(workspace.label);
     const recovery = f.messages.send.mock.calls[0]?.[4];
     expect(JSON.parse(recovery?.value ?? "null")).toMatchObject({
@@ -4559,136 +4559,177 @@ it.each(["refresh", "stable", "revoked", "startup"] as const)(
   },
 );
 
-it("shows pending accepted-message recovery and cancels binding when its draft region ends", async () => {
-  const f = setup(),
-    viewer = keypair(),
-    agent = "a".repeat(64);
-  Object.assign(f.session, { viewer: viewer.pubkey });
-  const region = createSoloRegionFixture(viewer.pubkey);
-  const record = vi.fn(async () => {}),
-    started = vi.fn(),
-    retry = vi.fn();
-  const channelId = "22222222-2222-4222-8222-222222222222",
-    draftId = "33333333-3333-4333-8333-333333333333";
-  let resolve = () => {};
-  const ready = new Promise<void>((done) => {
-    resolve = done;
-  });
-  const starting = vi.fn(() => ready);
-  const source = await region.register({
-    task: {
-      prepare: async () => ({ ok: false, reason: "Saved message only" }),
-      markChannelStarted: async () => "resume",
-      recordFirstEvent: record,
-      participants: {
-        eligible: (key) => key === agent,
-        defaultRecipient: () => agent,
-        makePrimary: async () => {},
+it.each(["accepted", "seen", "cancelled"] as const)(
+  "finishes a saved task receipt only after binding and draft transfer (%s)",
+  async (outcome) => {
+    const f = setup(),
+      viewer = keypair(),
+      agent = "a".repeat(64);
+    Object.assign(f.session, { viewer: viewer.pubkey });
+    const region = createSoloRegionFixture(viewer.pubkey);
+    let finishBinding = () => {};
+    const binding = new Promise<void>((resolve) => {
+      finishBinding = resolve;
+    });
+    const record = vi.fn(() => binding),
+      started = vi.fn(),
+      retry = vi.fn();
+    const channelId = "22222222-2222-4222-8222-222222222222",
+      draftId = "33333333-3333-4333-8333-333333333333";
+    let resolve = () => {};
+    const ready = new Promise<void>((done) => {
+      resolve = done;
+    });
+    const starting = vi.fn(() => ready);
+    const source = await region.register({
+      task: {
+        prepare: async () => ({ ok: false, reason: "Saved message only" }),
+        markChannelStarted: async () => "resume",
+        recordFirstEvent: record,
+        participants: {
+          eligible: (key) => key === agent,
+          defaultRecipient: () => agent,
+          makePrimary: async () => {},
+        },
       },
-    },
-  });
-  const lookup = vi
-    .spyOn(soloNavigation, "soloNavigationFor")
-    .mockReturnValue(region.service);
-  const labels = [SOLO_LABEL, source.handle.label, "solo-task-mode:v1"];
-  const event = signed(viewer, {
-    kind: 9,
-    content: "@Member agent Saved request",
-    tags: [
-      ["h", channelId],
-      ["p", agent],
-    ],
-  });
-  const create = signed(viewer, {
-    kind: 9007,
-    content: "",
-    tags: [
-      ["h", channelId],
-      ["name", "Saved task"],
-      ["visibility", "private"],
-      ["channel_type", "stream"],
-      ...labels.map((label) => ["t", label]),
-      ["p", viewer.pubkey],
-      ["p", agent],
-    ],
-  });
-  const recovery = {
-    key: `solo-task:${draftId}`,
-    value: JSON.stringify({
-      draftId,
-      revision: 7,
-      preparationId: "prepared:7",
-      channelId,
-      regionLabel: source.handle.label,
-    }),
-  };
-  const operations = [
-    { event, signed: event, delivery: "accepted", recovery },
-    { event: create, signed: create, delivery: "accepted" },
-  ];
-  const channelList = {
-    channels: [
+    });
+    const lookup = vi
+      .spyOn(soloNavigation, "soloNavigationFor")
+      .mockReturnValue(region.service);
+    const labels = [SOLO_LABEL, source.handle.label, "solo-task-mode:v1"];
+    const event = signed(viewer, {
+      kind: 9,
+      content: "@Member agent Saved request",
+      tags: [
+        ["h", channelId],
+        ["p", agent],
+      ],
+    });
+    const create = signed(viewer, {
+      kind: 9007,
+      content: "",
+      tags: [
+        ["h", channelId],
+        ["name", "Saved task"],
+        ["visibility", "private"],
+        ["channel_type", "stream"],
+        ...labels.map((label) => ["t", label]),
+        ["p", viewer.pubkey],
+        ["p", agent],
+      ],
+    });
+    const recovery = {
+      key: `solo-task:${draftId}`,
+      value: JSON.stringify({
+        draftId,
+        revision: 7,
+        preparationId: "prepared:7",
+        channelId,
+        regionLabel: source.handle.label,
+      }),
+    };
+    const operations = [
       {
-        id: channelId,
-        channelType: "solo",
-        creator: viewer.pubkey,
-        members: [viewer.pubkey, agent],
-        labels,
+        event,
+        signed: event,
+        delivery: outcome === "seen" ? "seen" : "accepted",
+        recovery,
       },
-    ],
-  };
-  Object.assign(f.session.channels, { list: () => channelList });
-  Object.assign(f.session.channelWrites, {
-    starting,
-    resumeStart: () => ({ create: create.id, ready }),
-  });
-  Object.assign(f.session.outbox as object, {
-    snapshot: () => operations,
-    retry,
-  });
-  const key = `solo:task:${draftId}:new-draft`;
-  writeView("accepted-recovery", key, taggedDraft("Saved request"));
-  const view = render(
-    <SoloDraft
-      session={f.session}
-      scope="accepted-recovery"
-      task={{ region: source.handle.label, draftId }}
-      onStarted={started}
-    />,
-  );
-  try {
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(starting).toHaveBeenCalledWith(channelId));
-    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-    expect(record).not.toHaveBeenCalled();
-    expect(started).not.toHaveBeenCalled();
-    await act(async () => {
-      region.cache();
+      { event: create, signed: create, delivery: "accepted" },
+    ];
+    const channelList = {
+      channels: [
+        {
+          id: channelId,
+          channelType: "solo",
+          creator: viewer.pubkey,
+          members: [viewer.pubkey, agent],
+          labels,
+        },
+      ],
+    };
+    Object.assign(f.session.channels, { list: () => channelList });
+    Object.assign(f.session.channelWrites, {
+      starting,
+      resumeStart: () => ({ create: create.id, ready }),
     });
-    expect(screen.getByRole("alert")).toHaveTextContent(/abort/i);
-    await act(async () => {
+    const acknowledge = vi.fn(async () => {
+      expect(
+        readView("accepted-recovery", `draft:${channelId}`, null),
+      ).toMatchObject({ text: expect.stringContaining("Edited request") });
+      expect(
+        readView("accepted-recovery", `solo:task:${draftId}:new-draft`, null),
+      ).toBe("");
+    });
+    Object.assign(f.session.outbox as object, {
+      acknowledge,
+      snapshot: () => operations,
+      retry,
+    });
+    const key = `solo:task:${draftId}:new-draft`;
+    writeView(
+      "accepted-recovery",
+      key,
+      taggedDraft(outcome === "cancelled" ? "Saved request" : "Edited request"),
+    );
+    const view = render(
+      <SoloDraft
+        session={f.session}
+        scope="accepted-recovery"
+        task={{ region: source.handle.label, draftId }}
+        onStarted={started}
+      />,
+    );
+    try {
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(starting).toHaveBeenCalledWith(channelId));
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeDisabled();
+      expect(record).not.toHaveBeenCalled();
+      expect(started).not.toHaveBeenCalled();
+      expect(acknowledge).not.toHaveBeenCalled();
+      if (outcome === "cancelled") {
+        await act(async () => {
+          region.cache();
+        });
+        expect(screen.getByRole("alert")).toHaveTextContent(/abort/i);
+        await act(async () => {
+          resolve();
+        });
+        expect(record).not.toHaveBeenCalled();
+        expect(started).not.toHaveBeenCalled();
+        expect(retry).not.toHaveBeenCalled();
+        expect(operations[0]).toMatchObject({
+          event: { id: event.id },
+          signed: event,
+          recovery,
+        });
+        expect(readView("accepted-recovery", key, null)).toMatchObject({
+          text: expect.stringContaining("Saved request"),
+        });
+        expect(acknowledge).not.toHaveBeenCalled();
+      } else {
+        await act(async () => resolve());
+        await waitFor(() => expect(record).toHaveBeenCalledOnce());
+        expect(acknowledge).not.toHaveBeenCalled();
+        expect(started).not.toHaveBeenCalled();
+        await act(async () => finishBinding());
+        await waitFor(() => expect(started).toHaveBeenCalledWith(channelId));
+        expect(acknowledge).toHaveBeenCalledExactlyOnceWith(event.id);
+        expect(retry).not.toHaveBeenCalled();
+      }
+    } finally {
+      finishBinding();
       resolve();
-    });
-    expect(record).not.toHaveBeenCalled();
-    expect(started).not.toHaveBeenCalled();
-    expect(retry).not.toHaveBeenCalled();
-    expect(operations[0]).toMatchObject({
-      event: { id: event.id },
-      signed: event,
-      recovery,
-    });
-    expect(readView("accepted-recovery", key, null)).toMatchObject({
-      text: expect.stringContaining("Saved request"),
-    });
-  } finally {
-    resolve();
-    view.unmount();
-    lookup.mockRestore();
-    await region.dispose();
-  }
-});
+      view.unmount();
+      lookup.mockRestore();
+      await region.dispose();
+    }
+  },
+);
 
 it.each([
   "fresh",
@@ -5006,7 +5047,7 @@ it.each([
       );
       expect(f.messages.send.mock.calls[0]?.[1]).toBe(prose);
       expect(f.messages.send.mock.calls[0]?.[2]).toEqual([primary]);
-      expect(f.messages.send.mock.calls[0]).toHaveLength(5);
+      expect(f.messages.send.mock.calls[0]?.slice(5)).toEqual([[], {}]);
       expect(readView(scope, "solo:default-agent", null)).toBe(b);
       expect(f.messages.send.mock.calls[0]?.[1]).not.toContain(project.label);
     } finally {

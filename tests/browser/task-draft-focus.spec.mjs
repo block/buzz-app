@@ -37,7 +37,7 @@ for (const selection of ["pointer", "keyboard"]) {
     const item = menu.getByRole("menuitem", { name: "New task", exact: true });
     if (selection === "pointer") await item.click();
     else {
-      await item.focus();
+      await expect(item).toBeFocused();
       await page.keyboard.press("Enter");
     }
     const editor = page

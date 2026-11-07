@@ -1,7 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MAX_PENDING, type OutgoingEvent } from "../relay/outbox";
+import { keypair, signed } from "../relay/testing";
+import { profileTarget } from "../profiles/target";
+import { AgentsContext } from "../agents/react";
+import type { Agents } from "../agents/service";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MentionPicker } from "../../bundled/mentions/MentionPicker";
@@ -14,7 +26,8 @@ import { stubAvatarBrowserApis } from "../agents/avatar-testing";
 import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-testing";
 import type { SoloTaskMode } from "../channel-navigation/solo-navigation-contract";
 import { composerDOMFixture } from "../messages/composer-testing";
-import { readView } from "../../shared/view-state";
+import type { MentionDraft } from "../messages/mention-draft";
+import { readView, writeView } from "../../shared/view-state";
 import { TaskSoloDraft } from "./TaskSoloDraft";
 
 vi.mock(
@@ -63,7 +76,7 @@ function gate() {
   return { promise, resolve, reject };
 }
 
-async function fixture() {
+async function fixture(models?: Agents, initialDraft?: MentionDraft) {
   const region = createSoloRegionFixture();
   disposals.push(region.dispose);
   const rows = [{ pubkey: agent, name: "Task agent", managed: false }];
@@ -88,6 +101,7 @@ async function fixture() {
     ready: Promise.resolve(),
   }));
   const send = vi.fn(() => "first-event");
+  let operations: readonly OutgoingEvent[] = [];
   Object.assign(region.session, {
     agentChoices: {
       ...region.session.agentChoices,
@@ -113,7 +127,7 @@ async function fixture() {
       supports: () => true,
       subscribe: () => () => {},
       ready: outboxReady,
-      snapshot: () => empty,
+      snapshot: () => operations,
       whenPrepared,
     },
   });
@@ -125,10 +139,11 @@ async function fixture() {
     revision: input.revision,
     preparationId: "prepared",
   }));
+  const claim = vi.fn<SoloTaskMode["markChannelStarted"]>(async () => "start");
   const source = await region.register({
     task: {
       prepare,
-      markChannelStarted: async () => "start",
+      markChannelStarted: claim,
       recordFirstEvent: async () => {},
       participants: {
         eligible: (key) => allowed && key === agent,
@@ -143,7 +158,7 @@ async function fixture() {
       <TaskSoloDraft
         session={region.session}
         scope={region.scope}
-        focusRequest={focusRequest}
+        {...(focusRequest === undefined ? {} : { focusRequest })}
         route={{ region: source.handle.label, draftId }}
         agent={agent}
         extensions={extensions}
@@ -151,10 +166,24 @@ async function fixture() {
       />
     </StrictMode>
   );
-  const mounted = render(view());
+  const wrapped = (request?: number | AbortSignal) =>
+    models ? (
+      <AgentsContext.Provider value={models}>
+        {view(request)}
+      </AgentsContext.Provider>
+    ) : (
+      view(request)
+    );
+  if (initialDraft)
+    writeView(region.scope, `solo:task:${draftId}:new-draft`, initialDraft);
+  const mounted = render(wrapped());
   return {
+    claim,
+    pending(next: readonly OutgoingEvent[]) {
+      operations = next;
+    },
     focus(request?: number | AbortSignal) {
-      mounted.rerender(view(request));
+      mounted.rerender(wrapped(request));
     },
     ...region,
     ready,
@@ -228,6 +257,8 @@ it.each(["accepted", "rejected"] as const)(
         [agent],
         [],
         expect.any(Object),
+        [],
+        {},
       );
       if (outcome === "accepted") {
         await act(async () => f.sent.resolve());
@@ -316,6 +347,164 @@ it("focuses a new task navigation request and preserves user focus between reque
     expect(screen.getByRole("textbox")).toHaveFocus();
   } finally {
     elsewhere.remove();
+    f.mounted.unmount();
+  }
+});
+
+it("refuses a task before claiming its marker when fewer than two outbox slots remain, then retries", async () => {
+  const f = await fixture();
+  const user = userEvent.setup();
+  const viewer = keypair();
+  const operations = Array.from({ length: MAX_PENDING - 1 }, (_, index) => ({
+    event: signed(viewer, {
+      kind: 7,
+      content: "+",
+      tags: [],
+      created_at: index,
+    }),
+    delivery: "failed" as const,
+  }));
+  f.pending(operations);
+  try {
+    f.ready.resolve();
+    f.sent.resolve();
+    await user.type(screen.getByRole("textbox"), "Keep the full queue draft");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Resolve or dismiss pending operations",
+    );
+    expect(f.claim).not.toHaveBeenCalled();
+    expect(f.start).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveTextContent(
+      "Keep the full queue draft",
+    );
+    f.pending(operations.slice(1));
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
+    expect(f.claim).toHaveBeenCalledOnce();
+    expect(f.start).toHaveBeenCalledOnce();
+    expect(f.send).toHaveBeenCalledOnce();
+  } finally {
+    f.ready.resolve();
+    f.sent.resolve();
+    f.mounted.unmount();
+  }
+});
+
+it("keeps an ineligible identity link in a new task without claiming or sending", async () => {
+  const f = await fixture();
+  const link = `[@Unavailable](${profileTarget("c".repeat(64))}) Help `;
+  try {
+    f.ready.resolve();
+    f.sent.resolve();
+    await waitFor(() => expect(selected()).toBeEnabled());
+    screen.getByRole("textbox").focus();
+    fireEvent.paste(screen.getByRole("textbox"), {
+      clipboardData: {
+        items: [],
+        getData: (format: string) => (format === "text/plain" ? link : ""),
+        types: ["text/plain"],
+      },
+    });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Select an eligible task agent",
+    );
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.claim).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Unavailable");
+  } finally {
+    f.ready.resolve();
+    f.sent.resolve();
+    f.mounted.unmount();
+  }
+});
+
+it("sends the selected model and effort to the first task primary", async () => {
+  const entry = {
+    pubkey: agent,
+    key: agent,
+    name: "Task agent",
+    type: "test/agent",
+  };
+  const snapshot = { status: "ready", agents: [entry], teams: [] };
+  const types = [
+    {
+      key: "test/agent",
+      models: () => ({
+        current: "fast",
+        sendDefaults: true,
+        models: [
+          { id: "fast", label: "Fast", efforts: [] },
+          {
+            id: "deep",
+            label: "Deep",
+            efforts: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+      }),
+    },
+  ];
+  const f = await fixture(
+    {
+      find: (key: string) => (key === agent ? entry : undefined),
+      joinable: () => [],
+      sessionState: () => "unavailable",
+      subscribe: () => () => {},
+      snapshot: () => snapshot,
+      types: () => types,
+    } as unknown as Agents,
+    {
+      text: "@Task agent Use the selected model",
+      recipients: [{ pubkey: agent, name: "Task agent", start: 0, end: 11 }],
+    },
+  );
+  const user = userEvent.setup();
+  try {
+    f.ready.resolve();
+    f.sent.resolve();
+    await waitFor(() =>
+      expect(screen.getByRole("textbox")).toHaveTextContent("Task agent"),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /Model.*effort/ }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Model for Task agent in this chat",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Deep" }),
+    );
+    const effort = await screen.findByLabelText(
+      "Effort for Task agent in this chat",
+    );
+    effort.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(effort).toHaveAttribute("aria-valuetext", "High");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(f.started).toHaveBeenCalledWith(channelId));
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(
+      channelId,
+      "@Task agent Use the selected model",
+      [agent],
+      [],
+      expect.any(Object),
+      [],
+      { [agent]: { model: "deep", effort: "high" } },
+    );
+  } finally {
+    f.ready.resolve();
+    f.sent.resolve();
     f.mounted.unmount();
   }
 });

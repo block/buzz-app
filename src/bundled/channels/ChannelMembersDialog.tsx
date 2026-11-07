@@ -554,8 +554,7 @@ function TeamRow({
   );
 }
 
-/** The one access dialog. Any conversation lists and adds members; a Solo chat
- * adds people under its share rule and can also be shared to a channel. */
+/** Supported props for installed plugins reusing the host member picker. */
 export type ChannelMembersDialogProps = {
   session: RelaySession;
   channelId: string;
@@ -573,6 +572,10 @@ export type ChannelMembersDialogProps = {
   accessSettings?: React.ReactNode;
   /** The plugin destination copied by Copy link; defaults to the channel link. */
   shareLink?: string;
+};
+
+/** Host navigation and visit lifetimes stay outside the plugin contract. */
+type HostChannelMembersDialogProps = ChannelMembersDialogProps & {
   agents?: Agents;
   communities?: CommunityReader | undefined;
   navigator?: Navigation | undefined;
@@ -600,7 +603,7 @@ export function ChannelMembersDialog({
   navigator,
   signal,
   visit = false,
-}: ChannelMembersDialogProps) {
+}: HostChannelMembersDialogProps) {
   const [changingMember, setChangingMember] = useState(false);
   const changeInFlight = useRef<AbortSignal | undefined>(undefined);
   const memberPending = !!memberActions?.pending || changingMember;

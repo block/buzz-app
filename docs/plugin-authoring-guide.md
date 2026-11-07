@@ -136,7 +136,9 @@ The plugin owns opening/closing and the trigger ref for focus return; render the
 picker only while open. Keep it keyed to session/channel. Addressable openings
 must follow the [navigation contract](navigation-history.md); the component does
 not register a destination. Keep external operations in their existing owner if
-navigation can hide the dialog.
+navigation can hide the dialog. The public picker props cover session/channel,
+trigger/close, title/description, member actions, access settings and share link;
+host navigation and visit-lifetime props remain internal.
 
 `memberActions` routes individual additions, role changes and removals through
 the plugin, retaining host role checks; team additions are hidden. Its `canAdd`

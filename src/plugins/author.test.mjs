@@ -56,6 +56,11 @@ export function apply(ctx: Context) {
     memberActions: { canAdd: true, pending: false, async change(change: MemberChange, signal: AbortSignal) { void [change.expectedRole, signal.aborted]; } },
     accessSettings: createElement(ctx.conversation.ui.GeneralAccess, general), shareLink: "buzz://plugin?id=example.plugin" };
   createElement(ctx.conversation.ui.MembersDialog, picker);
+  type HostPickerKeys = "agents" | "communities" | "navigator" | "signal" | "visit" | "canOpenLink" | "onOpenLink" | "onOpenConversation";
+  const pickerHasNoHostProps: Extract<keyof ChannelMembersDialogProps, HostPickerKeys> extends never ? true : false = true;
+  void pickerHasNoHostProps;
+  // @ts-expect-error Host navigation visits are not plugin props.
+  createElement(ctx.conversation.ui.MembersDialog, { ...picker, visit: true });
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
   const conversations: ReturnType<UnreadCapability["inbox"]> = unread.inbox();
   for (const item of conversations.items) {

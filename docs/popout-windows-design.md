@@ -682,6 +682,21 @@ Entry points reuse the sidebar row menu and the row click handler. Solo chats:
 the timeline projection only; agent reply surfaces specific to Solo are not
 re-created in the companion (named as a gap in help).
 
+### Review log (S2)
+
+- `6ba910c` → four findings: conversation frames hit thread-shaped owner
+  admission (actions, handoff, retry) and the Huddle roster rule on send;
+  files kept in a hidden frame were lost on back (drafts keyed by the
+  companion's rebuilt session objects); hidden-frame reading leases could
+  still mark read. Fixed `b1f8d70`: admission gates on the frame's projection
+  (`shown`), pop-out frames trust relay writability, the companion retains
+  unmounted editors' drafts and transfers them back, leases re-check
+  enablement per request and are revoked when a frame is covered.
+- `b1f8d70` → the retained-draft cap evicted silently; an active voice
+  capture was discarded by drill/back. Fixed `f4e2e24`: no eviction; the
+  companion asks to discard a recording before navigating. Reviewer: all S2
+  findings closed at source/test level. Native acceptance open.
+
 ### Non-goals (S2)
 
 Canvas/pages/Settings windows; restoring windows after restart; typing

@@ -9,8 +9,10 @@ import {
 } from "react";
 import { createHuddleComposerClient } from "../../features/huddle/composer-client";
 import {
+  attachmentDraft,
   attachmentDraftCount,
   subscribeAttachmentDraftCounts,
+  transferAttachmentDraft,
 } from "../../features/messages/attachment-draft";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { huddleComposerExtensions } from "./composer-extensions";
@@ -18,6 +20,52 @@ import type { ChannelMessage } from "../../features/relay/contracts";
 import type { ComposerSession } from "../../features/messages/composer-session";
 
 const noEdits: readonly ChannelMessage[] = [];
+
+/**
+ * Files a companion window keeps for an editor that is not mounted right now:
+ * a pop-out that drilled from its conversation into a thread still holds the
+ * conversation's files (drafts are keyed by the editor's session object,
+ * which a companion rebuilds per connection), and returns them to the editor
+ * that mounts again for the same draft key. Bounded; the oldest is dropped.
+ */
+const retainedDrafts = new Map<
+  string,
+  { session: ComposerSession; channelId: string }
+>();
+const MAX_RETAINED_DRAFTS = 8;
+const retainedListeners = new Set<() => void>();
+const retainedChanged = () => {
+  for (const listener of retainedListeners) listener();
+};
+function retainDraft(key: string, session: ComposerSession, channelId: string) {
+  retainedDrafts.delete(key);
+  retainedDrafts.set(key, { session, channelId });
+  while (retainedDrafts.size > MAX_RETAINED_DRAFTS) {
+    const oldest = retainedDrafts.keys().next().value;
+    if (oldest === undefined) break;
+    retainedDrafts.delete(oldest);
+  }
+  retainedChanged();
+}
+/** Files held for other editors of this window: still unsent work. */
+function useRetainedDraftCount(except: string) {
+  const subscribe = useCallback((listener: () => void) => {
+    retainedListeners.add(listener);
+    const stops = [...retainedDrafts.values()].map(({ session }) =>
+      subscribeAttachmentDraftCounts(session, listener),
+    );
+    return () => {
+      retainedListeners.delete(listener);
+      for (const stop of stops) stop();
+    };
+  }, []);
+  return useSyncExternalStore(subscribe, () => {
+    let count = 0;
+    for (const [key, { session }] of retainedDrafts)
+      if (key !== except) count += attachmentDraftCount(session, key);
+    return count;
+  });
+}
 
 /** How the hosting window presents the editor; the Huddle defaults apply. */
 export type CompanionComposerPresentation = {
@@ -113,8 +161,36 @@ function ConnectedComposer({
     ),
     () => (editorSession ? attachmentDraftCount(editorSession, draftKey) : 0),
   );
+  // Files kept for this draft by an earlier editor session of this window
+  // return to this one; on unmount, this editor's files are kept the same way.
+  const room = data?.room;
+  useEffect(() => {
+    if (!editorSession || !draftKey || !room) return;
+    const kept = retainedDrafts.get(draftKey);
+    if (kept && kept.session !== editorSession) {
+      const source = attachmentDraft(kept.session, draftKey, kept.channelId);
+      if (source.snapshot().length)
+        try {
+          transferAttachmentDraft(
+            source,
+            attachmentDraft(editorSession, draftKey, room),
+          );
+        } catch {
+          /* The new draft already holds files; the kept ones stay kept. */
+        }
+    }
+    if (kept) {
+      retainedDrafts.delete(draftKey);
+      retainedChanged();
+    }
+    return () => {
+      if (attachmentDraftCount(editorSession, draftKey) > 0)
+        retainDraft(draftKey, editorSession, room);
+    };
+  }, [editorSession, draftKey, room]);
+  const retainedFiles = useRetainedDraftCount(draftKey);
   const onHeld = presentation?.onHeld;
-  const held = editorHeld || files > 0;
+  const held = editorHeld || files > 0 || retainedFiles > 0;
   useEffect(() => {
     onHeld?.(held);
   }, [onHeld, held]);

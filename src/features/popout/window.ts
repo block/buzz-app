@@ -234,6 +234,9 @@ export function createPopoutWindows(
             threadRootId: text,
           }),
         );
+        // The hidden frame's reading leases end now: only the shown frame
+        // marks anything read.
+        frame.reading.revoke();
         sync(entry);
         return;
       }

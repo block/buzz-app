@@ -409,13 +409,8 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
     let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
     policy.push_str(&format!("; script-src 'sha256-{script_hash}'"));
     let script = format!("<script>{script}</script>");
-    let artwork = if builderlab {
-        let artwork =
-            base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
-        include_str!("artwork.html").replace("{{artwork}}", &artwork)
-    } else {
-        String::new()
-    };
+    let artwork = base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
+    let artwork = include_str!("artwork.html").replace("{{artwork}}", &artwork);
     let provider = if builderlab { "Builderlab" } else { "Buzz" };
     let mark = if builderlab {
         include_str!("../../../public/builderlab-mark.svg")
@@ -429,14 +424,7 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
         .replace("{{label}}", label);
     // Replace whole HTML comments so the template remains valid on its own.
     let body = include_str!("page.html")
-        .replace(
-            "<!-- {{pageBrand}} -->",
-            if builderlab { &brand } else { "" },
-        )
-        .replace(
-            "<!-- {{cardBrand}} -->",
-            if builderlab { "" } else { &brand },
-        )
+        .replace("<!-- {{pageBrand}} -->", &brand)
         .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
         .replace("<!-- {{script}} -->", &script)
         .replace("<!-- {{artwork}} -->", &artwork)

@@ -10,11 +10,12 @@ each performing its own code exchange and verification:
 - Native FI uses NIP-FA `return_to` and an S256 handoff challenge, without
   inventing an echoed OAuth state. Handoff secrets stay in its native session
   owner. It uses the shared callback template and account card with Buzz
-  branding and browser light/dark styling. Success means the callback was
-  received, not that native account verification has completed: the page
-  instructs the user to return to the app to finish verification. Errors retain
-  their generic recovery copy. Federated pages share the three-second close script and manual-close hint,
-  with no cube artwork. After native verification and session installation,
+  branding and the existing light web sign-in shell, including cube artwork.
+  Success means the callback was received, not that native account verification
+  has completed: the page instructs the user to return to the app to finish
+  verification. Errors retain their generic recovery copy. Federated pages share
+  the three-second close script and manual-close hint.
+  After native verification and session installation,
   their attempt-scoped macOS return can focus the visible Buzz window only
   while the captured browser is foreground. Cancellation, replacement, expiry
   and failed verification retire that permission. The signed-in snapshot
@@ -125,9 +126,10 @@ browser.
   dependency on the harness-picker feature. The cropped `cubes.webp` is embedded
   in the response rather than fetched from the short-lived listener. The same
   branded shell serves key-backup restore. Federated identity shares the template,
-  embedded font, and account card, using `public/buzz-mark.svg` and a visible Buzz
-  label inside the card. Its shell uses Buzz's dot texture and browser light/dark
-  colors. See `NOTICE.md` for artwork provenance.
+  embedded font, artwork, and account card, using `public/buzz-mark.svg` and a
+  visible Buzz label above the card. Both callbacks retain the web sign-in
+  shell's light colors regardless of browser color scheme. See `NOTICE.md` for
+  artwork provenance.
 
 ## Standards scope
 

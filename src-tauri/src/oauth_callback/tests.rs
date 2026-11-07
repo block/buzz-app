@@ -710,7 +710,26 @@ fn assert_federated_callback(response: &str, message: &str) {
     assert!(headers.contains(&format!("script-src 'sha256-{script_hash}'")));
     assert!(body.contains("Closing this window automatically"));
     assert!(body.contains("id=\"close-spinner\""));
-    assert!(!body.contains("class=\"artwork\""));
+    let (shell, card) = body
+        .split_once("<main aria-labelledby=\"heading\">")
+        .unwrap();
+    assert!(shell.contains("class=\"brand\""));
+    assert!(!card.contains("class=\"brand\""));
+    assert!(shell.contains("class=\"artwork\" aria-hidden=\"true\""));
+    let artwork = body
+        .split_once("data:image/webp;base64,")
+        .unwrap()
+        .1
+        .split_once('"')
+        .unwrap()
+        .0;
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(artwork)
+            .unwrap(),
+        include_bytes!("cubes.webp")
+    );
+    assert!(body.contains("data-close-delay=\"3\""));
     let style = body
         .split_once("<style>")
         .unwrap()
@@ -721,6 +740,7 @@ fn assert_federated_callback(response: &str, message: &str) {
     let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style));
     assert!(headers.contains(&format!("style-src 'sha256-{hash}'")));
     assert!(headers.contains("default-src 'none'"));
+    assert!(headers.contains("img-src data:;"));
     assert!(headers.contains("font-src data:;"));
     assert!(headers.contains("base-uri 'none'; frame-ancestors 'none'"));
 

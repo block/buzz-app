@@ -15,6 +15,16 @@ const conversation = {
 } as const;
 
 describe("open target boundary", () => {
+  it("bounds an addressable DM conversion dialog to all messages or a source event", () => {
+    for (const dmMove of ["all", "D".repeat(64)]) {
+      const target = parseOpenTarget({ ...conversation, dmMove });
+      expect(target).toMatchObject({ dmMove: dmMove.toLowerCase() });
+      expect(targetKey(target)).not.toBe(targetKey(conversation));
+    }
+    expect(() =>
+      parseOpenTarget({ ...conversation, dmMove: "invalid" }),
+    ).toThrow();
+  });
   it("bounds a scoped forwarding presentation independently of its underlying message", () => {
     const target = parseOpenTarget({
       ...conversation,

@@ -15,12 +15,23 @@ export function eventMs(event: Pick<EventData, "created_at" | "tags">) {
 
 /** The one rendered message order: effective ms ascending, then event id ascending. */
 export function compareMessages(
-  a: Readonly<{ id: string; createdAt: number; createdAtMs?: number }>,
-  b: Readonly<{ id: string; createdAt: number; createdAtMs?: number }>,
+  a: Readonly<{
+    id: string;
+    createdAt: number;
+    createdAtMs?: number;
+    moved?: { ms: number; original: string };
+  }>,
+  b: Readonly<{
+    id: string;
+    createdAt: number;
+    createdAtMs?: number;
+    moved?: { ms: number; original: string };
+  }>,
 ) {
   return (
-    (a.createdAtMs ?? a.createdAt * 1000) -
-      (b.createdAtMs ?? b.createdAt * 1000) || a.id.localeCompare(b.id)
+    (a.moved?.ms ?? a.createdAtMs ?? a.createdAt * 1000) -
+      (b.moved?.ms ?? b.createdAtMs ?? b.createdAt * 1000) ||
+    (a.moved?.original ?? a.id).localeCompare(b.moved?.original ?? b.id)
   );
 }
 

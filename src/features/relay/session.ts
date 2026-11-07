@@ -1,3 +1,4 @@
+import { moveControl } from "../dm-moves/protocol";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
@@ -2476,12 +2477,21 @@ export function createRelaySession(
      * a reconnect, marked `replay` on its batch. Includes the viewer's own echoes.
      * Overlapping routes and replays can deliver one event more than once;
      * listeners dedupe by id. */
-    subscribeLive(listener: LiveListener, options?: { replay?: boolean }) {
+    subscribeLive(
+      listener: LiveListener,
+      options?: { replay?: boolean; dmMoves?: boolean },
+    ) {
       if (closed) return () => {};
       const listeners = options?.replay ? replayListeners : liveEventListeners;
-      listeners.add(listener);
+      const receive: LiveListener = options?.dmMoves
+        ? listener
+        : (batch) => {
+            const events = batch.events.filter((event) => !moveControl(event));
+            if (events.length) listener({ ...batch, events });
+          };
+      listeners.add(receive);
       return () => {
-        listeners.delete(listener);
+        listeners.delete(receive);
       };
     },
     typing: {
@@ -3706,7 +3716,12 @@ export function createRelaySession(
       const delivered = new Set<string>();
       const incoming: readonly IncomingMessage[] = Object.freeze(
         visible.flatMap((event) => {
-          if (!candidates.has(event.id) || delivered.has(event.id)) return [];
+          if (
+            moveControl(event) ||
+            !candidates.has(event.id) ||
+            delivered.has(event.id)
+          )
+            return [];
           delivered.add(event.id);
           const body =
             event.kind === 40002 ? objectBody(event.content) : undefined;

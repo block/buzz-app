@@ -1,3 +1,7 @@
+import {
+  DmMoveMenuItem,
+  DmMovePresentation,
+} from "../../features/dm-moves/DmMove";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -2330,6 +2334,15 @@ function ChannelWorkspace({
                       <>
                         {drawer.launchers}
                         <ChannelHeaderMenu
+                          convertDm={
+                            current ? (
+                              <DmMoveMenuItem
+                                session={queries}
+                                channelId={current.id}
+                                navigation={navigator}
+                              />
+                            ) : undefined
+                          }
                           startChat={
                             navigator &&
                             current &&
@@ -2582,7 +2595,9 @@ function ChannelWorkspace({
           navigation={navigator}
           renderDialog
         >
-          {workspace}
+          <DmMovePresentation session={queries} navigation={navigator}>
+            {workspace}
+          </DmMovePresentation>
         </ForwardMessageProvider>
       </ConversationChannel>
       {soloMoveNotices}

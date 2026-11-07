@@ -211,6 +211,23 @@ revokes all of them, and a pairing unused for 30 days expires.
   Confirmations with a required field or checkbox start at the relevant control;
   the action stays gated until its requirements are met.
 
+- In a DM, choose **Channel actions → Convert to thread**, or a message’s
+  **Convert to thread from here** action. Choose a joined text channel, the
+  messages to include, and an approval window (24 hours by default). Everyone
+  must approve before anyone is added or any messages are copied. A local
+  agent’s owner approves for it; hosted agents and attachments are unsupported.
+  Private destinations require everyone to be a member already. Public
+  destinations add missing participants only after approval. Guests cannot
+  convert into a channel where they cannot post.
+- After everyone approves, the move waits for everyone to be online; the
+  approval deadline no longer applies. Keep the approving apps running. Each
+  person’s app posts their own messages, and owners’ apps post for their local
+  agents. Latest edits are included, deleted messages are omitted, and replies
+  retain their structure. If a deleted message makes that structure impossible
+  to verify, Buzz stops the move and explains why. The initiator can cancel
+  until posting starts. The request card shows progress, retry, and the new
+  thread’s link. Reopening the app resumes saved work without posting it twice.
+
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds

@@ -2,6 +2,8 @@
 //! and owner attestation never enter the WebView; it asks for one bounded
 //! event, read, upload or memory write at a time, and native signs and sends it
 //! to the agent's community.
+pub(crate) mod dm_move;
+
 use buzz_agent_controller::{
     inline_picture, AppAgent, AppAgents, Carry, Credentials, OldStores, PlatformCredentials,
     PortSource, Portables, ProtectionBinding, ProtectionDefaults, Published, Removal, Secret,

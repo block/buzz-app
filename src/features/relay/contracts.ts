@@ -133,6 +133,10 @@ export type ChannelMessage = Readonly<{
   /** Effective send ms (valid `ms` tag, else createdAt * 1000); ordered by `compareMessages`. */
   createdAtMs?: number;
   content: string;
+  /** Validated conversion metadata; display only, never read-cursor evidence. */
+  moved?: Readonly<{ move: string; original: string; ms: number }>;
+  /** One request card represents the DM-scoped coordination events. */
+  dmMove?: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */

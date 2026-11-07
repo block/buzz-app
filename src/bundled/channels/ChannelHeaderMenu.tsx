@@ -32,6 +32,7 @@ export function ChannelHeaderMenu({
   openMenuPanel,
   finishConversion,
   startChat,
+  convertDm,
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
@@ -39,6 +40,7 @@ export function ChannelHeaderMenu({
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
   startChat?: ReactNode;
+  convertDm?: ReactNode;
   finishConversion?: (() => void) | undefined;
   menuPanels?: readonly RegisteredPanel[] | undefined;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
@@ -78,6 +80,7 @@ export function ChannelHeaderMenu({
       }
     >
       {startChat}
+      {convertDm}
       {finishConversion && (
         <MenuItem onClick={finishConversion}>
           <MenuIcon>{null}</MenuIcon>

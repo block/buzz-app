@@ -157,6 +157,8 @@ const selections = new WeakMap<
   {
     opened?: PageTabTarget | undefined;
     target?: Selection | undefined;
+    /** The selection Unread hid because it was read when Unread turned on. */
+    readWhenFiltered?: Selection | undefined;
     scrollTop?: number | undefined;
     /** Whether the selected row overlapped the list's visible box. */
     selectedShown?: boolean | undefined;
@@ -373,13 +375,18 @@ function InboxList({
   const [selectedTarget, setSelectedTarget] = useState(
     () => selections.get(session)?.target,
   );
+  // Saved with the selection, so a row Unread hid stays hidden on return.
+  const [readWhenFiltered, setReadWhenFiltered] = useState(
+    () => selections.get(session)?.readWhenFiltered,
+  );
   useEffect(() => {
     selections.set(session, {
       ...selections.get(session),
       opened,
       target: selectedTarget,
+      readWhenFiltered,
     });
-  }, [session, opened, selectedTarget]);
+  }, [session, opened, selectedTarget, readWhenFiltered]);
   const fallbackControl = useRef<HTMLButtonElement | null>(null);
   const focusToolbar = useCallback(
     () => fallbackControl.current?.focus({ preventScroll: true }),
@@ -571,6 +578,18 @@ function InboxList({
     }
     return "unknown";
   };
+  // Unread holds the selected row once it is read, so reading it does not
+  // remove it. A row already read when the filter turns on is not held: it
+  // leaves the list but stays selected, until it has unread activity again.
+  const shown = activityItems.find((item) => item.id === selectedId);
+  const [wasUnreadOnly, setWasUnreadOnly] = useState(unreadOnly);
+  if (wasUnreadOnly !== unreadOnly) {
+    setWasUnreadOnly(unreadOnly);
+    setReadWhenFiltered(
+      unreadOnly && shown && !hasUnread(shown) ? selectedTarget : undefined,
+    );
+  } else if (readWhenFiltered && shown && hasUnread(shown))
+    setReadWhenFiltered(undefined);
   const visible = activityItems.filter(
     (item) =>
       (senderFilter === "everyone" ||
@@ -579,6 +598,7 @@ function InboxList({
       (!unreadOnly ||
         hasUnread(item) ||
         (item.id === selectedId &&
+          selectedTarget !== readWhenFiltered &&
           item.messageIds.includes(selectedTarget?.messageId ?? ""))),
   );
   const reactionItems =

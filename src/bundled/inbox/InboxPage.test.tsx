@@ -2170,6 +2170,66 @@ it("renders all loaded rows without pagination while preserving unread filtering
   expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
 });
 
+it("hides a selected row already read when Unread turns on, keeping its selection", async () => {
+  const h = fixture();
+  const view = render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  await chooseFilter("Unread only", "Attention");
+  const thread = rows().find((row) =>
+    row.textContent?.includes("A thread update"),
+  );
+  if (!thread) throw new Error("Missing thread row");
+  fireEvent.click(within(thread).getByRole("button", { name: /^Open / }));
+  // Reading the row opened under Unread keeps it in place.
+  await waitFor(() => expect(rows()[0]).not.toHaveAttribute("data-unread"));
+  expect(rows()).toHaveLength(2);
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  await act(async () => {
+    await h.owner.session.unread.markChannelRead("room");
+  });
+  await chooseFilter("All", "Attention");
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  // Turning Unread on with the read row selected leaves nothing unread.
+  await chooseFilter("Unread only", "Attention");
+  expect(rows()).toHaveLength(0);
+  expect(screen.getByText("All caught up")).toBeInTheDocument();
+  // The open conversation stays selected beside the list.
+  expect(reader()).toBeInTheDocument();
+  // Returning to Activity keeps the row hidden and the conversation selected.
+  view.unmount();
+  const returned = render(h.view);
+  await screen.findByText("All caught up");
+  expect(rows()).toHaveLength(0);
+  await chooseFilter("All", "Attention");
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  expect(
+    rows().find((row) => row.hasAttribute("data-selected")),
+  ).toHaveTextContent("A thread update");
+  await chooseFilter("Unread only", "Attention");
+  expect(rows()).toHaveLength(0);
+  // New activity returns the row, and reading it keeps it in place again.
+  if (!h.root) throw new Error("Missing fixture thread root");
+  const reply = message(
+    h.alice,
+    "room",
+    "Another thread update",
+    Math.floor(Date.now() / 1000) + 2,
+    [["e", h.root.id, "", "reply"]],
+  );
+  h.addEvent(reply);
+  act(() => h.emit([reply]));
+  await waitFor(() => expect(rows()).toHaveLength(1));
+  expect(rows()[0]).toHaveAttribute("data-unread");
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  await act(async () => {
+    await h.owner.session.unread.markChannelRead("room");
+  });
+  await waitFor(() => expect(rows()[0]).not.toHaveAttribute("data-unread"));
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]).toHaveAttribute("data-selected");
+  returned.unmount();
+});
+
 it("intersects activity and representative sender evidence without inferring missing profiles", async () => {
   const h = fixture({ withDm: true, withSenders: true, holdProfiles: true });
   render(h.view);

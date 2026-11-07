@@ -347,6 +347,27 @@ fn a_builderlab_customer_server_is_added_again_at_every_launch() {
     )
     .unwrap();
     assert_eq!(ids(&launch()), ["bb-public", "bb-kept"]);
+    // An append that failed partway left a fragment with no newline: the next
+    // host gets a line of its own, so the next launch adds its server again.
+    std::fs::write(&record, "buzz.kept.builderlab.xyz\nbuzz.ac").unwrap();
+    launch()
+        .server_for("wss://buzz.acme.builderlab.xyz")
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        "buzz.kept.builderlab.xyz\nbuzz.ac\nbuzz.acme.builderlab.xyz\n"
+    );
+    assert_eq!(ids(&launch()), ["bb-public", "bb-kept", "bb-acme"]);
+    // A list that cannot be read is not appended to, and its server is not
+    // used.
+    let unreadable = tempfile::tempdir().unwrap();
+    let blind = customers_listed_in(
+        config::Config::parse(config::BUILT_IN).unwrap(),
+        Vec::new(),
+        Some(Some(unreadable.path().into())),
+    );
+    assert!(blind.server_for("wss://buzz.other.builderlab.xyz").is_err());
+    assert_eq!(ids(&blind), ["bb-public"]);
     // A server that could not be listed is not used.
     let unlisted = customers_listed_in(
         config::Config::parse(config::BUILT_IN).unwrap(),

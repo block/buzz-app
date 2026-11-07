@@ -828,6 +828,11 @@ async function refusalOf(response) {
 }
 /** The browser response whose route is making a relay request. */
 const refusalTarget = new AsyncLocalStorage();
+/** `admittedApiRequest`, but a queued request keeps its own route's response:
+ * the shared lane starts a waiting request from whichever one finished, so
+ * left unbound it would mark that one's response with this one's refusal. */
+const admittedRelayRequest = (lane, request, ...rest) =>
+  admittedApiRequest(lane, AsyncLocalStorage.bind(request), ...rest);
 const json = (res, code, body) => {
   res.writeHead(code, {
     "Content-Type": "application/json",
@@ -1447,7 +1452,7 @@ export function relayBrokerPlugin({
                   AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 ]);
                 const dispatch = (path, body) =>
-                  admittedApiRequest(
+                  admittedRelayRequest(
                     lane,
                     () => {
                       requestSignal.throwIfAborted();
@@ -3262,7 +3267,7 @@ export function relayBrokerPlugin({
             };
             response = presence
               ? await request()
-              : await admittedApiRequest(
+              : await admittedRelayRequest(
                   lane,
                   request,
                   requestSignal,

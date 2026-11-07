@@ -195,21 +195,9 @@ export function AgentCreateDialog({
     setDirty(true);
     setError("");
   };
-  // The harness and config the person switched from, while a harness's
-  // setup may send them back.
-  const [left, setLeft] = useState<{ key: string; config: unknown }>();
-  const decline = () => {
-    const item = left && types.find((candidate) => candidate.key === left.key);
-    setLeft(undefined);
-    if (!left || !item) return;
-    restoreHarnessFocus.current = item.key;
-    setConfigurationReady(false);
-    chooseModel(item, left.config);
-  };
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
-    setLeft(type ? { key: type.key, config } : undefined);
     const next = seed(item);
     // Typed instructions follow a new agent to its new harness. A harness
     // that carries none was emptied, so a card's text must not come back.
@@ -282,7 +270,11 @@ export function AgentCreateDialog({
             onValueChange={choose}
           />
           {CreateAction && (
-            <CreateAction key={type.key} disabled={pending || avatarBusy} />
+            <CreateAction
+              key={type.key}
+              {...(edited ? { agent: edited } : {})}
+              disabled={pending || avatarBusy}
+            />
           )}
         </div>
       }
@@ -445,7 +437,6 @@ export function AgentCreateDialog({
                 disabled={pending}
                 harnessControl={harnessControl}
                 onReadyChange={setConfigurationReady}
-                {...(left && { onDecline: decline })}
                 onChange={(next, options) => chooseModel(type, next, options)}
               />
             ) : (

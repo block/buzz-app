@@ -868,15 +868,13 @@ export type AgentType<Config = unknown> = {
     AgentCreateProps<Config> & {
       harnessControl: ReactNode;
       onReadyChange?: (ready: boolean) => void;
-      /** Present while the person has just switched to this harness from
-       * another: returns them to it, as they had it, such as when they turn
-       * down setup this harness asks for on arrival. */
-      onDecline?: () => void;
     }
   >;
   /** Compact provider-owned action beside Harness. Readiness belongs to
    * CreateConfiguration; this slot only presents the provider's action. */
   CreateAction?: ComponentType<{
+    /** The agent being edited, as CreateConfiguration has it. */
+    agent?: AgentCreateProps<Config>["agent"];
     disabled: boolean;
   }>;
   /** Provider-owned account notice, pinned outside the agent's tab content.

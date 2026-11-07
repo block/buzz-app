@@ -1178,7 +1178,7 @@ it("opens a deep-link invite on Personal space without claiming until the user c
       invite={{
         community: "https://invited.example",
         code: "v2.invite",
-        requestId: 1,
+        requestId: "1",
       }}
       onInviteClose={onInviteClose}
       onSelect={t.onSelect}
@@ -1192,7 +1192,7 @@ it("opens a deep-link invite on Personal space without claiming until the user c
   ).toBe(false);
   expect(t.select).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Back" }));
-  expect(onInviteClose).toHaveBeenCalledWith(1);
+  expect(onInviteClose).toHaveBeenCalledWith("1");
   expect(t.select).not.toHaveBeenCalled();
 });
 
@@ -1205,7 +1205,7 @@ it("connects at once to a community the person asked to join from the app", asyn
         community: "https://created.example",
         code: "",
         submitted: true,
-        requestId: 2,
+        requestId: "2",
       }}
       onInviteClose={vi.fn()}
       onSelect={t.onSelect}

@@ -1415,8 +1415,9 @@ without it, Create remains available and the server enforces its owner limit.
 estimated from visible rows. One origin-wide pending slot is
 re-read and verified before dispatch; browser local storage has no atomic compare-and-set,
 so exactly simultaneous contexts remain a documented client-side race;
-it never signs deletion or infers acceptance from a missing list row. Joining
-stays in the existing Join a community dialog; the card only copies the new relay address. Its
+it never signs deletion or infers acceptance from a missing list row. After
+creation the card opens the Join a community dialog on the new address through
+`communityJoin`, or copies the address when no identity is ready to join with. Its
 account backend follows the same split as `HostService`: live development with a
 pinned viewer uses the broker's `/api/builderlab/*` routes (`browser-host/builderlab.mjs`),
 which keep their own session credential and signing key in Node. Desktop builds use

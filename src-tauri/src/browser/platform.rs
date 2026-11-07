@@ -384,6 +384,8 @@ pub(super) fn resize_guest(
     guest: &WebView,
     host: &tauri::Webview,
     bounds: super::BrowserBounds,
+    // macOS lays out in points, which equal the frontend's CSS pixels.
+    _css_scale: Option<f64>,
 ) -> Result<(), String> {
     use objc2_web_kit::WKWebView;
     use wry::WebViewExtMacOS;
@@ -427,6 +429,8 @@ pub(super) fn resize_guest(
     guest: &WebView,
     host: &tauri::Webview,
     bounds: super::BrowserBounds,
+    // Windows logical pixels equal the frontend's CSS pixels.
+    _css_scale: Option<f64>,
 ) -> Result<(), String> {
     let scale = host
         .window()
@@ -451,12 +455,213 @@ pub(super) fn resize_guest(
 }
 
 #[cfg(target_os = "linux")]
+mod linux {
+    use gtk::prelude::*;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use wry::{WebView, WebViewBuilder, WebViewBuilderExtUnix, WebViewExtUnix};
+
+    thread_local! {
+        static GUEST_LAYER: RefCell<Option<gtk::Overlay>> = const { RefCell::new(None) };
+        static GUEST_RECTS: RefCell<HashMap<usize, gtk::Allocation>> =
+            RefCell::new(HashMap::new());
+    }
+
+    /// The layer floating browser guests above the window's own content,
+    /// created on first use.
+    fn guest_layer(window: &gtk::ApplicationWindow) -> gtk::Overlay {
+        GUEST_LAYER.with(|layer| {
+            if let Some(overlay) = layer.borrow().as_ref() {
+                return overlay.clone();
+            }
+            let overlay = gtk::Overlay::new();
+            overlay.connect_get_child_position(|_, child| {
+                GUEST_RECTS.with(|rects| rects.borrow().get(&(child.as_ptr() as usize)).copied())
+            });
+            if let Some(child) = window.child() {
+                window.remove(&child);
+                overlay.add(&child);
+            }
+            window.add(&overlay);
+            overlay.show_all();
+            layer.borrow_mut().replace(overlay.clone());
+            overlay
+        })
+    }
+
+    fn guest_frame(guest: &webkit2gtk::WebView) -> Option<gtk::Fixed> {
+        guest
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Fixed>().ok())
+    }
+
+    /// Builds the guest's content into its own frame on the window's overlay.
+    ///
+    /// An overlay child receives events everywhere inside its allocation, so
+    /// a window-spanning guest container would swallow every click meant for
+    /// the app. Each guest instead gets a frame whose allocation resize_guest
+    /// sets exactly to the guest's bounds through the overlay's
+    /// get-child-position signal. The frame appears and disappears with its
+    /// guest and is destroyed with it, leaving no event surface behind.
+    pub fn build_guest(
+        builder: WebViewBuilder<'_>,
+        window: &gtk::ApplicationWindow,
+    ) -> Result<WebView, String> {
+        let overlay = guest_layer(window);
+        let frame = gtk::Fixed::new();
+        frame.set_no_show_all(true);
+        overlay.add_overlay(&frame);
+        let guest = builder
+            .build_gtk(&frame)
+            .map_err(|error| error.to_string())?;
+        let widget = guest.webview();
+        widget.connect_show(|widget| {
+            if let Some(frame) = guest_frame(widget) {
+                frame.show();
+            }
+        });
+        widget.connect_hide(|widget| {
+            if let Some(frame) = guest_frame(widget) {
+                frame.hide();
+            }
+        });
+        // A workspace switch or minimize unmaps the window's GdkWindow
+        // without unmapping child widgets, so WebKit never learns the guest
+        // went away and came back: it keeps showing its discarded frame and
+        // the guest stays black. On every toplevel remap, cycle visible
+        // guests through hide/show so WebKit's own visibility tracking
+        // submits a fresh frame.
+        window.add_events(gtk::gdk::EventMask::STRUCTURE_MASK);
+        let remap = widget.downgrade();
+        let remap_handler = window.connect_map_event(move |_, _| {
+            if let Some(widget) = remap.upgrade() {
+                if widget.is_visible() {
+                    widget.hide();
+                    widget.show();
+                }
+            }
+            gtk::glib::Propagation::Proceed
+        });
+        widget.connect_destroy({
+            let frame = frame.downgrade();
+            let window = window.clone();
+            let remap_handler = RefCell::new(Some(remap_handler));
+            move |_| {
+                if let Some(handler) = remap_handler.borrow_mut().take() {
+                    window.disconnect(handler);
+                }
+                // GTK unparents a widget before emitting its destroy signal,
+                // so the frame must be reached through the weak reference.
+                if let Some(frame) = frame.upgrade() {
+                    GUEST_RECTS.with(|rects| rects.borrow_mut().remove(&(frame.as_ptr() as usize)));
+                    // Guest drops run on the UI thread; destroying the frame
+                    // from its child's destroy signal is reentrancy-safe.
+                    unsafe { frame.destroy() };
+                }
+            }
+        });
+        Ok(guest)
+    }
+
+    pub fn place_guest(
+        guest: &webkit2gtk::WebView,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) -> Result<(), String> {
+        let frame = guest_frame(guest).ok_or("Browser content has no guest frame")?;
+        GUEST_RECTS.with(|rects| {
+            rects.borrow_mut().insert(
+                frame.as_ptr() as usize,
+                gtk::Allocation::new(x, y, width, height),
+            );
+        });
+        guest.set_size_request(width, height);
+        // set_size_request queues no resize on a hidden widget, so its cached
+        // requisition would stay stale and the next container pass would
+        // reallocate the guest at its old size. Marking the resize makes the
+        // direct allocation below clear that cache (gtk_widget_ensure_resize).
+        guest.queue_resize();
+        // The container pass does not reliably reallocate the guest inside
+        // its frame, so allocate it directly, as wry's fixed-parent
+        // set_bounds does.
+        guest.size_allocate(&gtk::Allocation::new(0, 0, width, height));
+        frame.queue_resize();
+        Ok(())
+    }
+
+    /// CSS pixel to GTK unit ratio. The frontend measures in CSS pixels while
+    /// GTK allocates in integer-scaled units; the two ratios differ under
+    /// fractional display scaling, so a 1:1 mapping misplaces guests there.
+    pub fn css_to_gtk(css_scale: Option<f64>, gtk_scale: f64) -> f64 {
+        css_scale
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .unwrap_or(gtk_scale)
+            / gtk_scale
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn css_to_gtk_differs_only_under_fractional_scaling() {
+            assert_eq!(super::css_to_gtk(Some(2.0), 2.0), 1.0);
+            assert_eq!(super::css_to_gtk(Some(1.0), 1.0), 1.0);
+            assert!((super::css_to_gtk(Some(2.2331), 2.0) - 1.11655).abs() < 1e-4);
+            // Absent or unusable ratios keep the historical 1:1 mapping.
+            assert_eq!(super::css_to_gtk(None, 2.0), 1.0);
+            assert_eq!(super::css_to_gtk(Some(0.0), 2.0), 1.0);
+            assert_eq!(super::css_to_gtk(Some(-2.0), 2.0), 1.0);
+            assert_eq!(super::css_to_gtk(Some(f64::NAN), 2.0), 1.0);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn resize_guest(
-    _guest: &WebView,
-    _host: &tauri::Webview,
-    _bounds: super::BrowserBounds,
+    guest: &WebView,
+    host: &tauri::Webview,
+    bounds: super::BrowserBounds,
+    css_scale: Option<f64>,
 ) -> Result<(), String> {
-    Err("Embedded Buzz Browser is not supported on Linux".into())
+    use gtk::prelude::*;
+    use wry::WebViewExtUnix;
+    // CSS coordinates start at the host webview's top left; guest frames are
+    // positioned on the window's overlay, so the host's offset must be added.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    host.with_webview(move |webview| {
+        let widget = webview.inner();
+        let allocation = widget.allocation();
+        let offset = widget
+            .toplevel()
+            .and_then(|toplevel| widget.translate_coordinates(&toplevel, 0, 0))
+            .unwrap_or((0, 0));
+        let _ = sender.send((
+            allocation.width() as f64,
+            allocation.height() as f64,
+            offset,
+            f64::from(widget.scale_factor()),
+        ));
+    })
+    .map_err(|error| error.to_string())?;
+    let (width, height, (x, y), gtk_scale) = receiver
+        .try_recv()
+        .map_err(|_| "Browser layout must run on the UI thread")?;
+    let factor = linux::css_to_gtk(css_scale, gtk_scale);
+    let bounds = super::BrowserBounds {
+        x: bounds.x * factor,
+        y: bounds.y * factor,
+        width: bounds.width * factor,
+        height: bounds.height * factor,
+    }
+    .clip(width, height)?;
+    linux::place_guest(
+        &guest.webview(),
+        x + bounds.x.round() as i32,
+        y + bounds.y.round() as i32,
+        bounds.width.round() as i32,
+        bounds.height.round() as i32,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -493,7 +698,7 @@ pub(super) fn load(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn set_media_suspended(_guest: &WebView, _suspended: bool) -> Result<(), String> {
     Err("Suspending a page's media is supported only on macOS".into())
 }
@@ -535,11 +740,9 @@ pub(super) fn build_guest(builder: WebViewBuilder<'_>, window: &Window) -> Resul
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn build_guest(
-    _builder: WebViewBuilder<'_>,
-    _window: &Window,
-) -> Result<WebView, String> {
-    Err("Embedded Buzz Browser is not supported on Linux".into())
+pub(super) fn build_guest(builder: WebViewBuilder<'_>, window: &Window) -> Result<WebView, String> {
+    let gtk_window = window.gtk_window().map_err(|error| error.to_string())?;
+    linux::build_guest(builder, &gtk_window)
 }
 
 #[cfg(target_os = "linux")]
@@ -572,6 +775,16 @@ pub(super) fn forward(guest: &WebView) -> Result<(), String> {
     use webkit2gtk::WebViewExt;
     use wry::WebViewExtUnix;
     guest.webview().go_forward();
+    Ok(())
+}
+
+/// WebKitGTK has no suspend equivalent; muting keeps a hidden page silent
+/// while its playback keeps running.
+#[cfg(target_os = "linux")]
+pub(super) fn set_media_suspended(guest: &WebView, suspended: bool) -> Result<(), String> {
+    use webkit2gtk::WebViewExt;
+    use wry::WebViewExtUnix;
+    guest.webview().set_is_muted(suspended);
     Ok(())
 }
 

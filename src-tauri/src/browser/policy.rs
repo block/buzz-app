@@ -135,7 +135,7 @@ impl BrowserBounds {
         Ok(())
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux", test))]
     pub(super) fn clip(self, width: f64, height: f64) -> Result<Self, String> {
         self.validate()?;
         let clipped = Self {

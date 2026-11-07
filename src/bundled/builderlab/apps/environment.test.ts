@@ -1,7 +1,24 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { isAppUrl, isViewerTarget, viewerAppDomain } from "./environment";
+import {
+  isAppUrl,
+  isViewerTarget,
+  viewerAppDomain,
+  viewerSignInSupported,
+} from "./environment";
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+it("supports native viewer sign-in only in the macOS host", () => {
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
+  expect(viewerSignInSupported()).toBe(true);
+  vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+  expect(viewerSignInSupported()).toBe(false);
+  vi.stubGlobal("navigator", { platform: "Win32" });
+  expect(viewerSignInSupported()).toBe(false);
+});
 
 it("uses the exact Apps domain paired with the trusted login build configuration", () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://login.example");

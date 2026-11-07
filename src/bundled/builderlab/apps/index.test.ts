@@ -8,6 +8,7 @@ import { applyApps } from "./index";
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 const json = (body: unknown): HostResponse => ({
@@ -22,6 +23,9 @@ async function setup(
   canUseRemoteAgents = true,
 ) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", url);
+  // matches() reads the host platform when called; keep these tool flows on
+  // macOS, the one host with native viewer sign-in.
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
   const session = createTestSession(async () => ({
     revision: "session",
     account: {

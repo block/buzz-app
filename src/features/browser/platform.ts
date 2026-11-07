@@ -127,11 +127,17 @@ function normalizedUrl(url: string): string {
   return validation.url;
 }
 
+/** The host webview's devicePixelRatio. Bounds travel in CSS pixels; only
+ * Linux needs this, to map them into GTK's integer-scaled widget units. */
+function cssScale(): number | null {
+  return typeof window === "undefined" ? null : window.devicePixelRatio;
+}
+
 export function createBrowserPlatform(): BrowserPlatform {
   const available =
     isTauri() &&
     typeof navigator !== "undefined" &&
-    /Mac/i.test(navigator.platform);
+    /Mac|Linux/i.test(navigator.platform);
   return {
     available,
     attach: async (url, bounds, storage, builderlab) => {
@@ -148,6 +154,7 @@ export function createBrowserPlatform(): BrowserPlatform {
             ? { broker: builderlab.broker }
             : { federated: builderlab.federated }
           : null,
+        scale: cssScale(),
       }).catch((error: unknown) => {
         throw attachError(error);
       });
@@ -174,7 +181,12 @@ export function createBrowserPlatform(): BrowserPlatform {
       return sessionId;
     },
     setBounds: (sessionId, bounds, visible) =>
-      invoke("browser_set_bounds", { sessionId, bounds, visible }),
+      invoke("browser_set_bounds", {
+        sessionId,
+        bounds,
+        visible,
+        scale: cssScale(),
+      }),
     setMediaSuspended: (sessionId, suspended) =>
       invoke("browser_set_media_suspended", { sessionId, suspended }),
     navigate: async (sessionId, url, fallbackToHttp = false) =>

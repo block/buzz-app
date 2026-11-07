@@ -239,12 +239,20 @@ test("long recovery stays above the composer at enlarged text size", async ({
     document.documentElement.style.fontSize = "20px";
   });
   app.relay.holdEose("alpha");
+  const requests = () =>
+    app.relay.requests.filter(
+      (r) => r.community === "primary" && r.routes.includes("alpha"),
+    ).length;
+  const before = requests();
   app.relay.failRoute(
     "primary",
     "alpha",
     `error: ${"Unavailable".repeat(160)}`,
   );
   const warning = notice(page);
+  // Jump the quiet delay only once recovery has started: its retry REQ shows
+  // the app received the failure.
+  await expect.poll(requests).toBeGreaterThan(before);
   await page.clock.fastForward(30_000);
   await expect(warning).toBeVisible();
   await input.fill("Unsent recovery draft");
@@ -410,12 +418,21 @@ test.describe("public preview recovery", () => {
     // Hold EOSE so automatic recovery cannot settle before the checks.
     app.relay.holdEose(app.openChannelId);
     const warning = notice(page);
+    const requests = () =>
+      app.relay.requests.filter(
+        (r) =>
+          r.community === "primary" && r.routes.includes(app.openChannelId),
+      ).length;
+    const before = requests();
     try {
       app.relay.failRoute(
         "primary",
         app.openChannelId,
         "error: Live updates are temporarily unavailable. Try reconnecting to this channel.",
       );
+      // Jump the quiet delay only once recovery has started: its retry REQ
+      // shows the app received the failure.
+      await expect.poll(requests).toBeGreaterThan(before);
       await page.clock.fastForward(30_000);
       await expect(warning).toBeVisible();
       await expect

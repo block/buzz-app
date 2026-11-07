@@ -11,11 +11,18 @@ test("relay reads recover automatically after the network returns", async ({
   app,
 }, testInfo) => {
   let offline = false;
+  // This tests reads, not read-state publication. A read-state save that
+  // fires after the network returns but before the live socket reattaches is
+  // refused by the broker (503), so saves stay behind the edge page from the
+  // outage on.
+  let slept = false;
   app.report.relayFailures = [];
   await page.route("**/api/relay/**", async (route) => {
     const url = route.request().url();
-    if (!offline || new URL(url).pathname.endsWith("/session"))
-      return route.fallback();
+    const { pathname } = new URL(url);
+    const refused =
+      offline || (slept && pathname.endsWith("/read-state-publish"));
+    if (!refused || pathname.endsWith("/session")) return route.fallback();
     app.report.relayFailures.push(url);
     await route.fulfill({
       status: 403,
@@ -34,6 +41,7 @@ test("relay reads recover automatically after the network returns", async ({
   await expect(composer).toBeVisible();
 
   offline = true;
+  slept = true;
   app.relay.disconnect("primary");
   // A long sleep: the reconnect replay reaches its limit, so the open
   // channel needs a read to catch up, and that read meets the outage.
@@ -47,7 +55,13 @@ test("relay reads recover automatically after the network returns", async ({
     name: "Buzz is having trouble connecting",
     exact: true,
   });
-  await expect.poll(() => app.report.relayFailures.length).toBeGreaterThan(0);
+  // Wait for the channel's catch-up read to meet the outage. An earlier
+  // failure, such as presence, can recover once the broker's own relay
+  // socket returns, and jumping the clock on it would leave the notice to
+  // clear while the network is still down.
+  await expect
+    .poll(() => app.report.relayFailures.some((url) => url.endsWith("/query")))
+    .toBe(true);
   // A short outage, like waking from sleep, says nothing.
   await expect(notice).toHaveCount(0);
   await page.clock.fastForward(30_000);

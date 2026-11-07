@@ -192,7 +192,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         <HostedCommunities
           api={communities}
           active={active}
-          join={ctx.communityJoin.open}
+          join={ctx.communityJoin?.open}
         />
       );
     const viewer =
@@ -206,7 +206,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
         api={communities}
         active={active}
-        join={ctx.communityJoin.open}
+        join={ctx.communityJoin?.open}
         sharedSignIn
       />
     ) : null;

@@ -8,14 +8,15 @@ import type { InviteLink } from "./invite-link";
 export type JoinRequest = InviteLink & { submitted?: boolean };
 
 /** Opens the join dialog on a community address the person chose in the app;
- * false when no identity is ready to join with, so the caller can hand the
- * address off another way. */
+ * false when the address is not a community origin or no identity is ready to
+ * join with, so the caller can hand the address off another way. */
 export type CommunityJoin = {
   open(address: string): boolean;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
-    communityJoin: CommunityJoin;
+    /** Optional: older hosts do not provide it. */
+    communityJoin?: CommunityJoin;
   }
 }
 

@@ -202,9 +202,16 @@ export function createServices() {
     open(address: string) {
       const { viewer } = communities.snapshot();
       if (!viewer) return false;
+      let community: string;
+      try {
+        community = communityDestination(address).url;
+      } catch {
+        // Not a community origin (a path, credentials): hand it off instead.
+        return false;
+      }
       invites.open(
         {
-          community: communityDestination(address).url,
+          community,
           code: "",
           submitted: true,
         },

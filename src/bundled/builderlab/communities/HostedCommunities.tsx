@@ -76,7 +76,7 @@ export function HostedCommunities({
   active(): boolean;
   /** Opens the app's join dialog on a community this account just created;
    * false when it cannot, and the address is handed off instead. */
-  join?: (address: string) => boolean;
+  join?: ((address: string) => boolean) | undefined;
   /** The surrounding page owns sign-in, sign-out and the account row. */
   sharedSignIn?: boolean;
 }) {

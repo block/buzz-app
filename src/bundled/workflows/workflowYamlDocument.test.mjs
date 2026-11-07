@@ -3,6 +3,7 @@ import { test } from "vitest";
 
 import {
   readWorkflowDocumentFields,
+  readWorkflowTriggerOn,
   yamlWithWorkflowEnabled,
   yamlWithWorkflowName,
 } from "./workflowYamlDocument.ts";
@@ -107,4 +108,33 @@ test("header edits preserve advanced YAML and comments without form ownership", 
     assert.match(source, /future: untouched/);
     assert.match(source, /on: schedule/);
   }
+});
+
+test("reads the trigger type of a definition Form mode cannot show", () => {
+  assert.equal(
+    readWorkflowTriggerOn(
+      "name: Hook\ntrigger:\n  on: webhook\nsteps:\n  - id: react\n    action: add_reaction\n",
+    ),
+    "webhook",
+  );
+  assert.equal(readWorkflowTriggerOn(INCOMPLETE_STEP_YAML), "message_posted");
+  // Aliases resolve, as they do on the relay.
+  assert.equal(
+    readWorkflowTriggerOn("hook: &hook webhook\ntrigger:\n  on: *hook\n"),
+    "webhook",
+  );
+  assert.equal(
+    readWorkflowTriggerOn("base: &base\n  on: webhook\ntrigger: *base\n"),
+    "webhook",
+  );
+  for (const yaml of [
+    "",
+    "- webhook",
+    "trigger: [",
+    "trigger: webhook",
+    "trigger:\n  on: 4",
+    // Too many aliases to resolve safely.
+    "a: &a [x, x, x, x, x, x, x, x, x, x]\nb: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]\nc: [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]\ntrigger:\n  on: webhook\n",
+  ])
+    assert.equal(readWorkflowTriggerOn(yaml), null, yaml);
 });

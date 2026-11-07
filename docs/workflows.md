@@ -101,7 +101,19 @@ See the [capability contract](../src/features/workflows/types.ts).
   any displayed value. The secret is held in memory until that dialog takes
   it and never enters the outbox journal, operation errors or logs. The hook
   URL needs the relay HTTP base the host advertises; without it the dialog
-  shows the relative `/hooks/{id}` route only.
+  shows the relative `/hooks/{id}` route only. Afterwards, while the saved
+  trigger is Webhook, the same address with Copy URL appears in Trigger
+  settings when the draft's trigger is Webhook, and on the YAML tab, which is
+  the only place for definitions Form mode can't show. It sits outside the
+  disabled fieldset, so read-only channel members and a pending save can still
+  copy it, and it never shows the secret. The author is told how to replace a
+  lost secret, with the Enabled switch described as that surface shows it
+  (close Trigger settings to reach it, or above on the YAML tab; the Workflow
+  settings panel has no visible heading to name); read-only viewers are told
+  only the author can. The relay keeps the secret across saves that keep the
+  Webhook trigger and drops it on a save with any other trigger, so a lost
+  secret is replaced in two saves: off with another trigger (the old secret
+  now gets 404), then Webhook again, which issues a new one.
 - Destructive deletion confirmation, unconfirmed manual run of the saved
   configuration (the editor's Run now is unavailable while the draft has
   unsaved changes), and on-demand run/trace history in

@@ -21,7 +21,11 @@ import { huddleComposerExtensions } from "../huddles/composer-extensions";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { ChatCircleIcon } from "../../shared/design-system/icons";
+import {
+  CaretLeftIcon,
+  ChatCircleIcon,
+} from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import styles from "./Popout.module.css";
 
 const noSubscription = () => () => {};
@@ -49,6 +53,10 @@ export function PopoutWindowView({
     () => (view.root ? [view.root, ...view.replies] : view.replies),
     [view.root, view.replies],
   );
+  const conversation = view.isDm ? view.title : `#${view.title}`;
+  // Companion wording follows the frame: a thread's replies or a
+  // conversation's messages.
+  const what = view.thread ? "thread" : "conversation";
   const newest = rows.at(-1)?.id;
   useEffect(() => {
     if (newest && following.current)
@@ -86,8 +94,8 @@ export function PopoutWindowView({
     view.detached ? undefined : view.composer,
     {
       channelName: view.title,
-      label: "Reply to thread",
-      placeholder: "Reply to thread",
+      label: view.thread ? "Reply to thread" : `Message ${conversation}`,
+      placeholder: view.thread ? "Reply to thread" : `Message ${conversation}`,
       onHeld,
       replyParentId: replyTarget?.id,
       replyContext,
@@ -239,13 +247,27 @@ export function PopoutWindowView({
   return (
     <MessageEditScope>
       <div className={styles.window} data-reading-surface="">
-        {/* As Slack's pop-out: what this window is, and of which conversation. */}
+        {/* As Slack's pop-out: what this window is, and of which conversation;
+            a frame opened from the conversation offers the way back to it. */}
         <header className={styles.header}>
+          {view.canGoBack && (
+            <IconButton
+              hint="familiar"
+              aria-label="Back to conversation"
+              title="Back"
+              icon={<CaretLeftIcon />}
+              onClick={() => act("back")}
+            />
+          )}
           <h1 className={styles.title}>
-            <span className={styles.kind}>Thread</span>{" "}
-            <span className={styles.conversation}>
-              {view.isDm ? view.title : `#${view.title}`}
-            </span>
+            {view.thread ? (
+              <>
+                <span className={styles.kind}>Thread</span>{" "}
+                <span className={styles.conversation}>{conversation}</span>
+              </>
+            ) : (
+              <span className={styles.kind}>{conversation}</span>
+            )}
           </h1>
         </header>
         {view.detached && (
@@ -263,25 +285,27 @@ export function PopoutWindowView({
           tabIndex={-1}
           className={styles.messages}
           role="log"
-          aria-label="Thread messages"
+          aria-label={view.thread ? "Thread messages" : "Messages"}
           onScroll={(e) => {
             const el = e.currentTarget;
             following.current =
               el.scrollHeight - el.scrollTop - el.clientHeight < 48;
           }}
         >
-          {readingSession && view.root && (
+          {readingSession && rows[0] && (
             <Reading
               session={readingSession}
-              channelId={view.root.channelId}
+              channelId={rows[0].channelId}
               latestMessageId={newest}
-              rootId={view.root.id}
+              rootId={view.thread ? view.root?.id : undefined}
               scroller={log}
               settled={settled}
             />
           )}
           {view.limited && (
-            <p className={styles.notice}>Showing the latest 500 replies.</p>
+            <p className={styles.notice}>
+              Showing the latest 500 {view.thread ? "replies" : "messages"}.
+            </p>
           )}
           {view.canLoadMore && (
             <Button
@@ -289,13 +313,15 @@ export function PopoutWindowView({
               disabled={view.loadingOlder}
               onClick={() => act("older")}
             >
-              {view.loadingOlder ? "Loading…" : "Load earlier replies"}
+              {view.loadingOlder
+                ? "Loading…"
+                : `Load earlier ${view.thread ? "replies" : "messages"}`}
             </Button>
           )}
           {!rows.length &&
             (view.status === "loading" ? (
               <p className={styles.notice} role="status">
-                Loading thread…
+                Loading {what}…
               </p>
             ) : view.status === "ready" && !view.error ? (
               <EmptyState icon={<ChatCircleIcon />} title="No messages yet" />
@@ -312,7 +338,13 @@ export function PopoutWindowView({
                 focusConversation();
               },
               management,
+              // A conversation drills into one of its threads here, in this
+              // window; main re-points the projection and keeps the way back.
+              onOpenThread: view.thread
+                ? undefined
+                : (rootId) => act("openThread", rootId),
             }}
+            layout={view.thread ? "thread" : "timeline"}
             openLink={(url) => {
               // Buzz targets continue in main; the OS browser takes the rest.
               if (!isBuzzLink(url)) return false;
@@ -348,8 +380,8 @@ export function PopoutWindowView({
           !view.detached && (
             <p className={styles.notice} role="status">
               {view.status === "ready" && !view.error
-                ? "This thread is read-only here."
-                : "Connecting to this thread…"}
+                ? `This ${what} is read-only here.`
+                : `Connecting to this ${what}…`}
             </p>
           )
         )}

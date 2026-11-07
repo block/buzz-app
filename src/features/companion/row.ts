@@ -32,6 +32,8 @@ export type CompanionRow = {
   mentionReferences?: readonly string[];
   time: number;
   delivery: Delivery;
+  /** Replies in this message's thread, as main counts them (timeline rows). */
+  replyCount?: number;
   /** Reaction groups as main knows them, bounded for the native DTO: at most
    * 64 groups and 128 events each, the viewer's own events first so a capped
    * list still decides add-versus-remove correctly. */
@@ -178,6 +180,9 @@ export function projectCompanionRow(
     mentionReferences: r.mentionReferences ?? [],
     time: r.createdAt,
     delivery: r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",
+    ...(r.replyCount > 0
+      ? { replyCount: Math.min(Math.floor(r.replyCount), 1_000_000) }
+      : {}),
     ...projectReactions(r.reactions, session.viewer),
     ...(r.agentEnvelope || profile?.isAgent ? { authorIsAgent: true } : {}),
   };

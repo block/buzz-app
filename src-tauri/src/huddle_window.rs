@@ -100,6 +100,9 @@ pub(crate) struct DiscussionRow {
     /// The author is an agent, by profile hint (pop-outs).
     #[serde(default)]
     author_is_agent: bool,
+    /// Replies in this message's thread (pop-out conversation frames).
+    #[serde(default)]
+    reply_count: u32,
     /// Plugin actions main would offer, for a labelled main-window handoff.
     #[serde(default)]
     actions: Vec<HandoffAction>,
@@ -749,6 +752,7 @@ mod tests {
                 management: None,
                 editable: None,
                 author_is_agent: false,
+                reply_count: 0,
                 actions: vec![],
             }],
         });

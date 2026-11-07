@@ -38,6 +38,8 @@ export type CompanionRowCapabilities = {
   onReply?: ((messageId: string) => void) | undefined;
   /** Main-admitted message management, driven by each row's projected policy. */
   management?: CompanionManagementActions | undefined;
+  /** Conversation timelines: a row's thread opens in this window. */
+  onOpenThread?: ((rootId: string) => void) | undefined;
 };
 
 /** Projected rows in a companion window: the shared message renderer over
@@ -52,9 +54,12 @@ export function CompanionRows({
   allowImageCopy = true,
   children,
   capabilities,
+  layout = "thread",
 }: {
   rows: readonly CompanionRow[];
   writable: boolean;
+  /** A conversation timeline shows day dividers and thread affordances. */
+  layout?: "thread" | "timeline";
   capabilities?: CompanionRowCapabilities | undefined;
   openLink?: ((target: string) => boolean) | undefined;
   recover(id: string, dismiss?: boolean): void;
@@ -70,10 +75,17 @@ export function CompanionRows({
   );
   return (
     <>
-      {rows.map((row) => {
+      {rows.map((row, index) => {
         // The row's own recovery line below reports delivery; the renderer's
         // would duplicate it.
         const { delivery: _delivery, ...message } = toMessage(row);
+        const previous = rows[index - 1];
+        const day =
+          layout === "timeline" &&
+          (!previous ||
+            new Date(previous.time * 1000).toDateString() !==
+              new Date(row.time * 1000).toDateString());
+        const openThread = capabilities?.onOpenThread;
         const management = capabilities?.management;
         const reactions = capabilities?.reactions;
         const scope = capabilities?.scope;
@@ -160,9 +172,15 @@ export function CompanionRows({
                 setImage({ rowId: row.id, url });
                 return true;
               }}
-              day={false}
+              day={day}
               retry={undefined}
-              layout="thread"
+              layout={layout}
+              onOpenThread={
+                layout === "timeline" && openThread
+                  ? (_messageId, threadRootId) => openThread(threadRootId)
+                  : undefined
+              }
+              startsThreads={layout === "timeline" && !!openThread && writable}
             />
             {["failed", "unknown"].includes(row.delivery) && (
               <p role="status" className="text-secondary">

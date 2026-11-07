@@ -47,6 +47,7 @@ type ReviewFixtureOptions = {
   fromThread?: boolean;
   attachmentInReply?: boolean;
   openThreadTab?: () => boolean;
+  restoreFocus?: HTMLElement;
   media?: (url: string) => string | undefined;
 };
 
@@ -63,6 +64,7 @@ async function setupReview({
   fromThread = false,
   attachmentInReply = false,
   openThreadTab,
+  restoreFocus,
   media = (url) => url,
 }: ReviewFixtureOptions) {
   // The DOM emulator has no playback engine; keep native playback calls observable.
@@ -168,6 +170,7 @@ async function setupReview({
         messageId={selectedId}
         initialTime={selectedTime}
         hasComments={fromThread}
+        {...(restoreFocus && { restoreFocus: { current: restoreFocus } })}
         close={() => setSelectedId(undefined)}
         onOpenLink={() => false}
       />
@@ -870,13 +873,24 @@ it.each(["image", "video"] as const)(
   },
 );
 
-it("keeps comment message links inert beneath a host tab opener", async () => {
+it("opens comment message links in a host thread tab, then closes", async () => {
+  // Closing the review shows the fixture's thread panel, which observes layout.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   const openThreadTab = vi.fn(() => true);
-  const target = `buzz://message?channel=one&id=${"a".repeat(64)}`;
-  await setupReview({
+  const opener = document.body.appendChild(document.createElement("button"));
+  const id = "a".repeat(64);
+  const target = `buzz://message?channel=one&id=${id}`;
+  const { user } = await setupReview({
     kind: "image",
     openComments: false,
     openThreadTab,
+    restoreFocus: opener,
     replies: (viewer, root) => [
       message(viewer, "one", `See <${target}>`, 2, [
         ["e", root.id, "", "reply"],
@@ -888,14 +902,14 @@ it("keeps comment message links inert beneath a host tab opener", async () => {
   });
   const link = await within(comments).findByRole("link");
   expect(link).toHaveAttribute("href", target);
-  const event = new MouseEvent("contextmenu", {
-    bubbles: true,
-    cancelable: true,
-  });
-  fireEvent(link, event);
-  expect(event.defaultPrevented).toBe(false);
-  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-  expect(openThreadTab).not.toHaveBeenCalled();
+  fireEvent.contextMenu(link);
+  await user.click(await screen.findByRole("menuitem", { name: "Open link" }));
+  // The link leaves with the review; closing the tab returns to its opener.
+  expect(openThreadTab).toHaveBeenCalledWith("one", id, id, opener);
+  expect(
+    screen.queryByRole("dialog", { name: "Image viewer" }),
+  ).not.toBeInTheDocument();
+  opener.remove();
 });
 
 it("opens image comments by default when the thread contains replies", async () => {

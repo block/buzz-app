@@ -14,7 +14,7 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   PanelWorkspace,
   usePanelTabTitle,
@@ -299,4 +299,85 @@ it("keeps a channel's menu tab while away and drops it if the channel became ine
   view.rerender(<Harness channelId="beta" />);
   view.rerender(<Harness channelId="alpha" />);
   expect(screen.queryByText("Canvas contents")).not.toBeInTheDocument();
+});
+
+it("returns a link's named focus target when its panel closes, and hands it to the host", () => {
+  const profile: RegisteredPanel = {
+    id: "profile",
+    key: "fixture:profile",
+    pluginId: "fixture",
+    revision: "1",
+    title: "Profile",
+    matches: (target) => target === "fixture:profile",
+    component: () => <p>Profile content</p>,
+  };
+  const available = [profile];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    resolve: (target: string) =>
+      profile.matches(target) ? profile : undefined,
+  } as unknown as Panels;
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const openLink = vi.fn(() => true);
+  let workspace!: ReturnType<typeof useConversationTabs>;
+  function Harness({ comment }: { comment: boolean }) {
+    const state = useChannelTabState(session, "alpha");
+    workspace = useConversationTabs({
+      profiles: new Map(),
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink,
+    });
+    return (
+      <>
+        <button type="button">View image</button>
+        {/* A review comment, which leaves with its review. */}
+        {comment && <button type="button">View Sam profile</button>}
+        <PanelWorkspace
+          value={workspace.selectedTab}
+          select={(id) => workspace.selectPanelTab(id)}
+          items={workspace.items}
+        />
+      </>
+    );
+  }
+  const view = render(<Harness comment />);
+  const opener = screen.getByRole("button", { name: "View image" });
+  screen.getByRole("button", { name: "View Sam profile" }).focus();
+  const message = `buzz://message?channel=alpha&id=${"a".repeat(64)}`;
+  act(() => {
+    expect(
+      workspace.openConversationLink("alpha", message, {
+        returnFocus: opener,
+      }),
+    ).toBe(true);
+  });
+  expect(openLink).toHaveBeenCalledWith(message, opener);
+  act(() => {
+    expect(
+      workspace.openConversationLink("alpha", "fixture:profile", {
+        returnFocus: opener,
+      }),
+    ).toBe(true);
+  });
+  view.rerender(<Harness comment={false} />);
+  fireEvent.click(screen.getByRole("button", { name: "Close Profile tab" }));
+  expect(opener).toHaveFocus();
 });

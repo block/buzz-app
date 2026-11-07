@@ -1281,6 +1281,170 @@ it("opens a linked thread from a readable channel through one stable opener", ()
   }
 });
 
+it("closing the last side thread returns focus where its link named, unless that target is hidden", () => {
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  // The media that opened a review, which the followed link left.
+  const media = document.createElement("button");
+  const fallback = document.createElement("button");
+  document.body.append(media, fallback);
+  onTestFinished(() => {
+    media.remove();
+    fallback.remove();
+  });
+  const h = renderHook(() =>
+    useConversationTabs({
+      profiles: new Map(),
+      state: useChannelTabState(session, "alpha"),
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      scope: "scope:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+      fallbackFocus: { current: fallback },
+    }),
+  );
+  const close = (id: string) => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    act(() => h.result.current.items.find((item) => item.id === id)?.close());
+  };
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+  });
+  close("thread:alpha:a");
+  expect(media).toHaveFocus();
+
+  // Closing it while other tabs remain retires the target, so the thread
+  // opened again from elsewhere returns as the pane usually does.
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+    h.result.current.openConversationThread("alpha", "b", "b");
+  });
+  close("thread:alpha:a");
+  expect(document.body).toHaveFocus();
+  act(() => h.result.current.openConversationThread("alpha", "a", "a"));
+  close("thread:alpha:b");
+  close("thread:alpha:a");
+  expect(fallback).toHaveFocus();
+
+  // A target that cannot take focus leaves the pane's usual return.
+  act(() => {
+    h.result.current.openLinkedThread("alpha", "a", "a", media);
+  });
+  media.hidden = true;
+  close("thread:alpha:a");
+  expect(fallback).toHaveFocus();
+});
+
+it.each(["a main-pane close", "Close all", "Close other tabs"] as const)(
+  "a linked thread keeps its return target across pane moves, and %s retires it",
+  (closing) => {
+    const channels = [{ id: "alpha", name: "Alpha" }];
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+    } as unknown as RelaySession;
+    const emptyPanels: RegisteredPanel[] = [];
+    const panels = {
+      snapshot: () => emptyPanels,
+      subscribe: () => () => {},
+    } as unknown as Panels;
+    const relay = {
+      snapshot: () => ({ status: "ready", session }),
+    } as unknown as RelayData;
+    const media = document.createElement("button");
+    const fallback = document.createElement("button");
+    document.body.append(media, fallback);
+    onTestFinished(() => {
+      media.remove();
+      fallback.remove();
+    });
+    // Activity's workspace: threads open in the side pane and may move to main.
+    const h = renderHook(() =>
+      useConversationTabs({
+        profiles: new Map(),
+        state: useChannelTabState(session, undefined, "page:inbox"),
+        relay,
+        session,
+        panels,
+        current: undefined,
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        isLive: () => true,
+        openLink: () => false,
+        fallbackFocus: { current: fallback },
+        mainPane: true,
+        anyMainThread: true,
+        threadPane: "side",
+      }),
+    );
+    const item = (id: string) =>
+      [...h.result.current.items, ...h.result.current.mainItems].find(
+        (entry) => entry.id === id,
+      );
+    const close = (id: string) => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      act(() => item(id)?.close());
+    };
+    const move = (id: string, delta: -1 | 1) =>
+      act(() => item(id)?.move?.(delta));
+    const linked = "thread:alpha:linked";
+    const other = "thread:alpha:other";
+    act(() => {
+      h.result.current.openLinkedThread("alpha", "linked", "linked", media);
+    });
+    move(linked, -1);
+    expect(h.result.current.mainItems.map((entry) => entry.id)).toEqual([
+      linked,
+    ]);
+    move(linked, 1);
+    close(linked);
+    expect(media).toHaveFocus();
+
+    act(() => {
+      h.result.current.openLinkedThread("alpha", "linked", "linked", media);
+      h.result.current.openConversationThread("alpha", "other", "other");
+    });
+    if (closing === "a main-pane close") {
+      move(linked, -1);
+      close(linked);
+    } else
+      act(() => {
+        if (closing === "Close all") h.result.current.closeAllTabs();
+        else h.result.current.closeOtherTabs(other);
+      });
+    expect(item(linked)).toBeUndefined();
+    // The thread opened again from elsewhere returns as the pane usually does.
+    act(() =>
+      h.result.current.openConversationThread("alpha", "linked", "linked"),
+    );
+    close(other);
+    close(linked);
+    expect(h.result.current.items).toEqual([]);
+    expect(fallback).toHaveFocus();
+  },
+);
+
 it.each(["linked", "conversation"] as const)(
   "%s thread opening preserves only the selected side panel's context",
   (opener) => {
@@ -2028,7 +2192,8 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   expect(rowOpeners.get(`${roots.r1}:reply`)?.("https://example.com/")).toBe(
     true,
   );
-  expect(latest).toHaveBeenCalledWith("https://example.com/");
+  // No return target: the row's own control survives.
+  expect(latest).toHaveBeenCalledWith("https://example.com/", undefined);
   expect(first).not.toHaveBeenCalled();
   // Rows decide which links are openable while rendering, so new panels reach them.
   available = [{ key: "app", title: "App" } as RegisteredPanel];

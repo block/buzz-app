@@ -20,9 +20,15 @@ export const LinkDescriptionContext = createContext<
   ((description: string | undefined) => void) | undefined
 >(undefined);
 
-/** Host workspace opener for a message link's thread tab; false when it cannot. */
+/** Host workspace opener for a message link's thread tab; false when it cannot.
+ * returnFocus is where closing the tab returns focus, when not the link. */
 export const LinkThreadTabContext = createContext<
-  | ((channelId: string, messageId: string, rootId: string) => boolean)
+  | ((
+      channelId: string,
+      messageId: string,
+      rootId: string,
+      returnFocus?: HTMLElement,
+    ) => boolean)
   | undefined
 >(undefined);
 

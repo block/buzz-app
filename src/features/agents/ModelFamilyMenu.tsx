@@ -16,6 +16,28 @@ import {
   MenuSubmenuPopup,
 } from "../../shared/design-system/ui/Menu";
 
+const FAST_SUFFIX = " · Fast";
+
+/** Marks a low-latency model the way " · Default" marks inheritance. */
+function FastSuffix({ model }: { model: ModelChoice }) {
+  return model.fast ? (
+    <span className="buzz-select-value-suffix text-subtle">{FAST_SUFFIX}</span>
+  ) : null;
+}
+
+/** Menu rows space their children apart; one text run keeps the suffix
+ * attached to the name instead of floating as its own column. */
+function ModelName({ model, label }: { model: ModelChoice; label: string }) {
+  return model.fast ? (
+    <span>
+      {label}
+      <FastSuffix model={model} />
+    </span>
+  ) : (
+    label
+  );
+}
+
 /** Catalogs expose IDs, not a common family field. Unknown IDs remain available. */
 export function modelFamily(model: ModelChoice): string {
   if (model.family) return model.family;
@@ -85,7 +107,7 @@ export function ModelFamilyMenu({
   const hasFamilyLogos = [...families.keys()].some((family) =>
     modelLogo(family),
   );
-  const selectedLabel = `${selected.label}${inherited ? " · Default" : ""}`;
+  const selectedLabel = `${selected.label}${selected.fast ? FAST_SUFFIX : ""}${inherited ? " · Default" : ""}`;
   const menu = (
     <MenuRoot>
       <MenuTrigger
@@ -113,6 +135,7 @@ export function ModelFamilyMenu({
               <span className={`buzz-select-value ${styles.model}`}>
                 {selected.label}
               </span>
+              {appearance !== "glass-ghost" && <FastSuffix model={selected} />}
               {inherited && appearance !== "glass-ghost" && (
                 <span className="buzz-select-value-suffix text-subtle">
                   {" · Default"}
@@ -177,9 +200,14 @@ export function ModelFamilyMenu({
                         value={model.id}
                         closeOnClick
                       >
-                        {model.unlisted && model.description
-                          ? `${model.label} · ${model.description}`
-                          : model.label}
+                        <ModelName
+                          model={model}
+                          label={
+                            model.unlisted && model.description
+                              ? `${model.label} · ${model.description}`
+                              : model.label
+                          }
+                        />
                       </MenuRadioItem>
                     ),
                   )}
@@ -238,7 +266,7 @@ function EffortMenu({
       }}
     >
       <MenuSubmenuTrigger role="menuitemradio" aria-checked={selected}>
-        {model.label}
+        <ModelName model={model} label={model.label} />
         {selected && <CheckIcon size={16} aria-hidden="true" />}
       </MenuSubmenuTrigger>
       <MenuSubmenuPopup aria-label={`${model.label} thinking effort`}>

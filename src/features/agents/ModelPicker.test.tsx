@@ -96,6 +96,37 @@ it.each([
   },
 );
 
+it("marks fast models in the family menu and on the selected trigger", async () => {
+  const user = userEvent.setup();
+  render(
+    <ModelPicker
+      groupByFamily
+      includeDefault={false}
+      models={[
+        { id: "kimi-cerebras", label: "Kimi K3.1 Pro", fast: true },
+        { id: "kimi-hosted", label: "Kimi K3" },
+      ]}
+      value="kimi-cerebras"
+      defaultLabel="Choose model"
+      onChange={vi.fn()}
+    />,
+  );
+  const trigger = screen.getByRole("button", {
+    name: "Model: Kimi K3.1 Pro · Fast",
+  });
+  expect(trigger).toHaveTextContent("Kimi K3.1 Pro · Fast");
+  await user.click(trigger);
+  const submenu = await screen.findByRole("menuitem", { name: "Kimi" });
+  submenu.focus();
+  await user.keyboard("{ArrowRight}");
+  expect(
+    await screen.findByRole("menuitemradio", { name: /^Kimi K3\.1 Pro/ }),
+  ).toHaveTextContent("Kimi K3.1 Pro · Fast");
+  expect(
+    screen.getByRole("menuitemradio", { name: "Kimi K3" }),
+  ).not.toHaveTextContent("Fast");
+});
+
 const models: ModelChoice[] = [
   { id: "sonnet", label: "Sonnet" },
   { id: "opus", label: "Opus", description: "Most capable" },

@@ -4,7 +4,10 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import type { ExternalApps } from "./external-connection";
+import type {
+  ExternalApps,
+  ExternalAuthorization,
+} from "./external-connection";
 import {
   externalMcpEnabled,
   fullAgentAccess,
@@ -36,7 +39,7 @@ export function ExternalAuthorizationDialog({
   const pending = state.pending;
   useEffect(() => {
     if (pending && client.viewer !== pending.viewer)
-      void connection.deny().catch(() => {});
+      void connection.deny(pending.request).catch(() => {});
   }, [pending, client.viewer, connection]);
   return (
     <>
@@ -51,7 +54,8 @@ export function ExternalAuthorizationDialog({
           client.viewer === pending.viewer &&
           externalMcpEnabled(client.selected) ? (
           <ReadyConsent
-            key={transport.scope}
+            key={`${transport.scope} ${pending.request.state}`}
+            request={pending.request}
             session={transport.session}
             agents={agents}
             connection={connection}
@@ -91,7 +95,7 @@ function ConsentDialog({
   const deny = (
     <Button
       variant="outline"
-      onClick={() => void connection.deny().catch(() => {})}
+      onClick={() => void connection.deny(request).catch(() => {})}
     >
       Deny
     </Button>
@@ -104,7 +108,7 @@ function ConsentDialog({
       size="compact"
       actions={actions ?? deny}
       onOpenChange={(open) => {
-        if (!open) void connection.deny().catch(() => {});
+        if (!open) void connection.deny(request).catch(() => {});
       }}
     >
       {request && (
@@ -167,11 +171,16 @@ function ConsentDialog({
   );
 }
 function ReadyConsent({
+  request,
   session,
   agents,
   connection,
   communities,
-}: ConsentProps & { session: RelaySession; agents: Agents }) {
+}: ConsentProps & {
+  request: ExternalAuthorization;
+  session: RelaySession;
+  agents: Agents;
+}) {
   const choices = useAgentChoices(session, false, true);
   const inventory = useSyncExternalStore(agents.subscribe, agents.snapshot);
   const availability = useSyncExternalStore(agents.subscribe, () =>
@@ -206,7 +215,7 @@ function ReadyConsent({
         <>
           <Button
             variant="outline"
-            onClick={() => void connection.deny().catch(() => {})}
+            onClick={() => void connection.deny(request).catch(() => {})}
           >
             Deny
           </Button>
@@ -214,7 +223,7 @@ function ReadyConsent({
             disabled={!chosen || !state.available}
             onClick={() => {
               if (chosen && agents.canConnectExternal(chosen.key))
-                void connection.approve(chosen.key);
+                void connection.approve(request, chosen.key);
             }}
           >
             Authorize

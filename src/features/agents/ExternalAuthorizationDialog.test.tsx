@@ -243,19 +243,17 @@ it("lets the owner dismiss an authorization error without starting setup again",
     },
     deny: async () => {},
   });
-  connection.open(
-    {
-      version: 1,
-      client: "Test app",
-      callback: "http://127.0.0.1:1234/buzz/authorize",
-      state: "A".repeat(43),
-      scope: ["agent"],
-      code_challenge: "A".repeat(43),
-      code_challenge_method: "S256",
-    },
-    "viewer",
-  );
-  await connection.approve("test-agent");
+  const request = {
+    version: 1,
+    client: "Test app",
+    callback: "http://127.0.0.1:1234/buzz/authorize",
+    state: "A".repeat(43),
+    scope: ["agent"],
+    code_challenge: "A".repeat(43),
+    code_challenge_method: "S256",
+  } as const;
+  connection.open(request, "viewer");
+  await connection.approve(request, "test-agent");
   const subscribe = () => () => {};
   const client = { viewer: "viewer" };
   const transport = { status: "idle" };
@@ -279,4 +277,114 @@ it("lets the owner dismiss an authorization error without starting setup again",
   await waitFor(() => expect(notice).not.toBeInTheDocument());
   expect(connection.snapshot().error).toBeUndefined();
   expect(connection.snapshot().grant?.phase).toBe("ended");
+});
+
+it("authorizes the replacement request it shows, never an earlier agent choice", async () => {
+  const user = userEvent.setup();
+  const first = "a".repeat(64),
+    second = "c".repeat(64),
+    viewer = "b".repeat(64),
+    origin = "https://fixture.example.test";
+  vi.stubEnv("VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES", origin);
+  const subscribe = () => () => {};
+  const choices = {
+    selectable: [{ pubkey: first }, { pubkey: second }],
+    pending: false,
+    archives: { status: "ready" },
+  };
+  const transport = {
+    status: "ready",
+    scope: origin,
+    session: { agentChoices: { subscribe, snapshot: () => choices } },
+  };
+  const client = {
+    viewer,
+    selected: origin,
+    memberships: [{ id: origin, name: "Test community" }],
+  };
+  const inventory = {
+    agents: [
+      { key: first, pubkey: first, name: "First agent", place: "here" },
+      { key: second, pubkey: second, name: "Second agent", place: "here" },
+    ],
+  };
+  const authorize = vi.fn(async () => {}),
+    deny = vi.fn(async () => {});
+  const connect = vi.fn(async () => ({
+    url: "http://127.0.0.1:1234/mcp",
+    headers: [],
+    closed: new Promise<void>(() => {}),
+    close: async () => {},
+    authorize,
+  }));
+  const connection = createExternalApps();
+  const release = connection.bind({ connect, deny });
+  const request = {
+    version: 1,
+    client: "Earlier app",
+    callback: "http://127.0.0.1:1234/buzz/authorize",
+    state: "A".repeat(43),
+    scope: ["agent"],
+    code_challenge: "A".repeat(43),
+    code_challenge_method: "S256",
+  } as const;
+  connection.open(request, viewer);
+  render(
+    <ExternalAuthorizationDialog
+      connection={connection}
+      agents={
+        {
+          subscribe,
+          snapshot: () => inventory,
+          canConnectExternal: () => true,
+        } as unknown as Agents
+      }
+      communities={
+        {
+          subscribe,
+          snapshot: () => client,
+          select: () => {},
+        } as unknown as Communities
+      }
+      relay={{ subscribe, snapshot: () => transport } as unknown as RelayData}
+    />,
+  );
+  const agent = await screen.findByRole("combobox", { name: "Agent" });
+  act(() => agent.focus());
+  await user.keyboard("{ArrowDown}");
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: "Second agent" })).toBeVisible(),
+  );
+  await user.click(screen.getByRole("option", { name: "Second agent" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Authorize" })).toBeEnabled(),
+  );
+  act(() =>
+    connection.open(
+      { ...request, client: "Newer app", state: "B".repeat(43) },
+      viewer,
+    ),
+  );
+  expect(await screen.findByText("Newer app requests access.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Agent" })).not.toHaveTextContent(
+    "Second agent",
+  );
+  act(() => screen.getByRole("combobox", { name: "Agent" }).focus());
+  await user.keyboard("{ArrowDown}");
+  await user.click(await screen.findByRole("option", { name: "First agent" }));
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
+  await waitFor(() => expect(authorize).toHaveBeenCalledOnce());
+  expect(authorize).toHaveBeenCalledWith(
+    expect.objectContaining({ state: "B".repeat(43) }),
+  );
+  expect(connect).toHaveBeenCalledWith(
+    first,
+    expect.any(AbortSignal),
+    expect.any(Function),
+    ["agent"],
+  );
+  expect(deny).toHaveBeenCalledOnce();
+  cleanup();
+  release();
 });

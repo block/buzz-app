@@ -183,8 +183,10 @@ export function createExternalApps() {
     timer = undefined;
     update({ ...state, pending: undefined });
   };
-  const deny = async () => {
+  /** With `request`, answers only that displayed request, never a newer one. */
+  const deny = async (request?: ExternalAuthorization) => {
     const pending = state.pending;
+    if (request && pending?.request !== request) return;
     clearPending();
     if (pending && host) await host.deny(nativeRequest(pending.request));
   };
@@ -200,20 +202,35 @@ export function createExternalApps() {
     await previous?.close();
   };
   const revoke = async () => {
-    generation++;
     resuming = undefined;
+    // Close before the native write so a failed write still disconnects; in-flight
+    // setup sees the new generation and closes its result.
+    const closing = closeSession().catch(() => {});
+    const revokeGeneration = generation;
+    const { pairing } = state;
+    // The saved approval stays listed until the native revoke removes it.
+    if (pairing)
+      update({
+        ...state,
+        grant: {
+          client: pairing.approval.client,
+          agent: pairing.approval.agent,
+          phase: "ended",
+        },
+      });
     try {
-      if (state.pairing && !host?.pairing)
+      if (pairing && !host?.pairing)
         throw new Error("Saved approval is unavailable.");
       await host?.pairing?.("revoke");
-      update({ ...state, pairing: undefined });
-      await closeSession();
+      if (generation === revokeGeneration)
+        update({ ...state, pairing: undefined, grant: undefined });
     } catch {
       update({
         ...state,
         error: "Cannot revoke the saved approval. Retry in Buzz.",
       });
     }
+    await closing;
   };
   const resume = async () => {
     const incoming = resuming,
@@ -388,9 +405,12 @@ export function createExternalApps() {
     clearError() {
       update({ ...state, error: undefined });
     },
-    async approve(agent: AgentKey) {
+    /** Approves only `request`, the request the owner saw, while it is still pending. */
+    async approve(request: ExternalAuthorization, agent: AgentKey) {
       const pending = state.pending,
         bound = host;
+      // A stale click leaves a newer request, and its dialog, untouched.
+      if (pending && pending.request !== request) return;
       if (!pending || !bound || pending.expires <= Date.now()) {
         update({
           ...state,

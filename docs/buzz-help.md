@@ -1015,7 +1015,9 @@ for another 30 days. Approval expires after 30 days without renewal. Buzz shows
 this policy before you authorize access. Expired or revoked approval requires
 new owner consent. The app can restore the same access after Buzz or the app
 restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
-even when no session is connected. Full access requires new approval.
+even when no session is connected. If Buzz cannot remove the saved approval,
+revoking still disconnects the app; the approval stays listed so you can retry.
+Full access requires new approval.
 
 ### Reconnecting an old agent in a DM
 

@@ -5,6 +5,7 @@ import {
   createExternalApps,
   legacyRequest,
   parseExternalAuthorization,
+  type ExternalApps,
   type ExternalAuthorization,
 } from "./external-connection";
 
@@ -35,6 +36,11 @@ function transport() {
     authorize: vi.fn(async () => {}),
     close: vi.fn(async () => ended.resolve()),
   };
+}
+function approvePending(connection: ExternalApps, agent: string) {
+  const pending = connection.snapshot().pending;
+  if (!pending) throw new Error("No request is pending.");
+  return connection.approve(pending.request, agent);
 }
 afterEach(() => vi.useRealTimers());
 it("parses the generic authorization request without a bearer", () => {
@@ -142,29 +148,43 @@ it.each(["revoked", "proof", "viewer", "scope", "widened scope"])(
   },
 );
 
-it("closes a resume result that arrives after revoke", async () => {
-  const result = deferred<HostMcpServer>();
-  const started = deferred<void>();
-  const server = transport();
-  const connection = createExternalApps();
-  const pairing = vi.fn(async (_operation: string) => savedPairing);
-  connection.bind({
-    connect: async () => {
-      started.resolve();
-      return result.promise;
-    },
-    deny: async () => {},
-    pairing,
-  });
-  connection.open(resumeRequest, "viewer");
-  await started.promise;
-  await connection.revoke();
-  result.resolve(server);
-  await vi.waitFor(() => expect(server.close).toHaveBeenCalled());
-  expect(server.authorize).not.toHaveBeenCalled();
-  expect(connection.snapshot().pairing).toBeUndefined();
-  expect(connection.snapshot().grant).toBeUndefined();
-});
+it.each([false, true])(
+  "closes a resume result that arrives after revoke (native revoke fails: %s)",
+  async (revokeFails) => {
+    const result = deferred<HostMcpServer>();
+    const started = deferred<void>();
+    const server = transport();
+    const connection = createExternalApps();
+    const pairing = vi.fn(async (operation: string) => {
+      if (operation === "revoke" && revokeFails)
+        throw new Error("Saved approval write failed");
+      return savedPairing;
+    });
+    connection.bind({
+      connect: async () => {
+        started.resolve();
+        return result.promise;
+      },
+      deny: async () => {},
+      pairing,
+    });
+    connection.open(resumeRequest, "viewer");
+    await started.promise;
+    await connection.revoke();
+    result.resolve(server);
+    await vi.waitFor(() => expect(server.close).toHaveBeenCalled());
+    expect(server.authorize).not.toHaveBeenCalled();
+    if (revokeFails) {
+      // The saved approval still exists, so it stays visible for a retry.
+      expect(connection.snapshot().pairing).toEqual(savedPairing);
+      expect(connection.snapshot().grant?.phase).toBe("ended");
+      expect(connection.snapshot().error).toContain("Cannot revoke");
+    } else {
+      expect(connection.snapshot().pairing).toBeUndefined();
+      expect(connection.snapshot().grant).toBeUndefined();
+    }
+  },
+);
 
 it("closes a failed resume without revoking saved approval", async () => {
   const server = transport();
@@ -202,7 +222,7 @@ it("keeps pending owner consent when reconnect proof fails", async () => {
     },
   });
   connection.open(request, "viewer");
-  const approving = connection.approve("test-agent");
+  const approving = approvePending(connection, "test-agent");
   await started.promise;
   try {
     connection.open(resumeRequest, "viewer");
@@ -267,7 +287,7 @@ it("observes the current session close after reconnect fails", async () => {
     pairing: async () => savedPairing,
   });
   connection.open(request, "viewer");
-  await connection.approve("test-agent");
+  await approvePending(connection, "test-agent");
   connection.open(resumeRequest, "viewer");
   await vi.waitFor(() =>
     expect(connection.snapshot().error).toContain("Cannot restore"),
@@ -299,7 +319,7 @@ it("keeps saved approval visible when the initial callback fails", async () => {
     pairing,
   });
   connection.open({ ...request, version: 2 }, "viewer");
-  await connection.approve("test-agent");
+  await approvePending(connection, "test-agent");
   expect(connection.snapshot().pairing).toEqual(savedPairing);
   expect(connection.snapshot().grant?.phase).toBe("ended");
   await connection.revoke();
@@ -329,7 +349,7 @@ it("refuses a late initial approval while native revoke is pending", async () =>
     },
   });
   connection.open({ ...request, version: 2 }, "viewer");
-  const approving = connection.approve("test-agent");
+  const approving = approvePending(connection, "test-agent");
   await connectStarted.promise;
   const revoked = connection.revoke();
   await revokeStarted.promise;
@@ -362,7 +382,7 @@ it.each([
     const connection = createExternalApps();
     connection.bind({ connect, deny });
     connection.open({ ...request, scope }, "viewer");
-    await connection.approve("test-agent");
+    await approvePending(connection, "test-agent");
     expect(connect).not.toHaveBeenCalled();
     expect(deny).toHaveBeenCalledOnce();
     expect(connection.snapshot().pending).toBeUndefined();
@@ -379,7 +399,7 @@ it.each([{ scope: ["agent"] }] as const)(
     connection.bind({ connect, deny });
     connection.open({ ...request, scope }, "viewer");
     expect(connect).not.toHaveBeenCalled();
-    await connection.approve("test-agent");
+    await approvePending(connection, "test-agent");
     expect(connect).toHaveBeenCalledWith(
       "test-agent",
       expect.any(AbortSignal),
@@ -417,7 +437,7 @@ it("closes a server that starts after revocation", async () => {
     deny: async () => {},
   });
   connection.open(request, "viewer");
-  const approving = connection.approve("test-agent");
+  const approving = approvePending(connection, "test-agent");
   try {
     await started.promise;
     await connection.revoke();
@@ -454,7 +474,7 @@ it.each([false, true])(
     const connection = createExternalApps();
     connection.bind({ connect: async () => server, deny: async () => {} });
     connection.open(request, "viewer");
-    await connection.approve("test-agent");
+    await approvePending(connection, "test-agent");
     expect(server.close).toHaveBeenCalled();
     expect(connection.snapshot().error).toContain("Start setup again");
   },
@@ -482,14 +502,14 @@ it("keeps a replacement grant visible while an older failure closes", async () =
   const connection = createExternalApps();
   connection.bind({ connect, deny: async () => {} });
   connection.open(request, "viewer");
-  const failed = connection.approve("first-agent");
+  const failed = approvePending(connection, "first-agent");
   try {
     await started.promise;
     connection.open(
       { ...request, client: "Second client", state: "B".repeat(43) },
       "viewer",
     );
-    await connection.approve("second-agent");
+    await approvePending(connection, "second-agent");
     expect(connection.snapshot().grant).toMatchObject({
       agent: "second-agent",
       phase: "connected",
@@ -505,4 +525,110 @@ it("keeps a replacement grant visible while an older failure closes", async () =
   expect(connection.snapshot().error).toBeUndefined();
   await connection.revoke();
   expect(second.close).toHaveBeenCalledOnce();
+});
+
+it("answers only the displayed request after a newer one replaces it", async () => {
+  const server = transport(),
+    connect = vi.fn(async () => server),
+    deny = vi.fn(async () => {});
+  const connection = createExternalApps();
+  connection.bind({ connect, deny });
+  const displayed = request;
+  const newer = { ...request, client: "Newer client", state: "B".repeat(43) };
+  connection.open(displayed, "viewer");
+  connection.open(newer, "viewer");
+  expect(deny).toHaveBeenCalledOnce();
+  await connection.approve(displayed, "test-agent");
+  await connection.deny(displayed);
+  expect(connect).not.toHaveBeenCalled();
+  expect(deny).toHaveBeenCalledOnce();
+  expect(connection.snapshot().pending?.request).toBe(newer);
+  expect(connection.snapshot().error).toBeUndefined();
+  await connection.approve(newer, "test-agent");
+  expect(server.authorize).toHaveBeenCalledWith(
+    expect.objectContaining({ state: newer.state }),
+  );
+  await connection.approve(displayed, "other-agent");
+  expect(connect).toHaveBeenCalledOnce();
+  expect(server.close).not.toHaveBeenCalled();
+  expect(connection.snapshot().grant).toMatchObject({
+    client: "Newer client",
+    agent: "test-agent",
+    phase: "waiting",
+  });
+});
+
+it("ends a live connection when the saved approval cannot be revoked", async () => {
+  const agentPairing = {
+    ...savedPairing,
+    approval: { ...savedPairing.approval, scopes: ["agent"] as const },
+  };
+  const first = transport(),
+    second = transport();
+  const lifetimes: AbortSignal[] = [];
+  const connect = vi
+    .fn<Agents["connectExternal"]>()
+    .mockImplementationOnce(async (_agent, signal) => {
+      lifetimes.push(signal);
+      return first;
+    })
+    .mockResolvedValueOnce(second);
+  let saved = false;
+  first.authorize.mockImplementationOnce(async () => {
+    saved = true;
+  });
+  const revokeStarted = deferred<void>(),
+    revoking = deferred<void>();
+  let failRevoke = false;
+  const connection = createExternalApps();
+  connection.bind({
+    connect,
+    deny: async () => {},
+    pairing: async (operation) => {
+      if (operation === "revoke" && failRevoke) {
+        revokeStarted.resolve();
+        await revoking.promise;
+        throw new Error("Saved approval write failed");
+      }
+      if (operation === "revoke") saved = false;
+      return saved ? agentPairing : null;
+    },
+  });
+  connection.open({ ...request, version: 2 }, "viewer");
+  await approvePending(connection, "test-agent");
+  expect(connection.snapshot().grant?.phase).toBe("waiting");
+  expect(connection.snapshot().pairing).toEqual(agentPairing);
+
+  failRevoke = true;
+  const revoked = connection.revoke();
+  try {
+    await revokeStarted.promise;
+    // Local access ends before the saved approval write settles.
+    expect(lifetimes[0]?.aborted).toBe(true);
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(connection.snapshot().grant).toEqual({
+      client: agentPairing.approval.client,
+      agent: agentPairing.approval.agent,
+      phase: "ended",
+    });
+  } finally {
+    revoking.resolve();
+    await revoked;
+  }
+  expect(connection.snapshot().error).toContain("Cannot revoke");
+  expect(connection.snapshot().pairing).toEqual(agentPairing);
+  expect(connection.snapshot().grant).toEqual({
+    client: agentPairing.approval.client,
+    agent: agentPairing.approval.agent,
+    phase: "ended",
+  });
+
+  failRevoke = false;
+  connection.open({ ...request, version: 2, state: "B".repeat(43) }, "viewer");
+  await approvePending(connection, "test-agent");
+  expect(second.authorize).toHaveBeenCalledWith(
+    expect.objectContaining({ state: "B".repeat(43) }),
+  );
+  expect(connection.snapshot().grant?.phase).toBe("waiting");
+  expect(connection.snapshot().error).toBeUndefined();
 });

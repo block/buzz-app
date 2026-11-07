@@ -863,6 +863,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   sound menu under **Settings → Notifications**. While that plugin is disabled,
   the menu shows the choice as unavailable and alerts play the default sound;
   re-enabling the plugin restores it.
+- Each sound menu under **Settings → Notifications** also offers **Choose file…**
+  under **Your sounds**: pick an audio file of up to 512 KiB from your computer
+  for that row. Buzz copies it into this device, so moving the original is fine;
+  choosing another file for the row replaces it. Other accounts on the device
+  share these files, and other devices do not get them.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without

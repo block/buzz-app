@@ -3,6 +3,7 @@ import {
   createContributions,
   type Contribution,
 } from "../../plugins/contributions";
+import type { NotificationCategory } from "./preferences";
 import { SOUND_NAMES, type SoundRef } from "./sound";
 
 export type SoundDefinition = Readonly<{
@@ -34,11 +35,15 @@ type PackEntry = Readonly<{
 }>;
 
 const BUNDLED: ReadonlySet<string> = new Set(SOUND_NAMES);
+/** Plugin ids cannot contain `_`, so these refs never collide with a pack. */
+export const localSoundRef = (category: NotificationCategory): SoundRef =>
+  `_local/${category}`;
+export const isLocalSoundRef = (ref: SoundRef) => ref.startsWith("_local/");
 const ID = /^[a-z0-9-]{1,32}$/;
 // A plugin.js is capped at 8 MiB; 4 MiB of audio leaves room for its code.
 const MAX_PACKS = 8;
 const MAX_SOUNDS = 32;
-const MAX_SOUND_BYTES = 512 * 1024;
+export const MAX_SOUND_BYTES = 512 * 1024;
 const MAX_PLUGIN_BYTES = 4 * 1024 * 1024;
 
 const validLabel = (label: unknown) =>
@@ -58,11 +63,15 @@ export function createSoundRegistry(root: Context) {
     { pluginId: string; soundIds: readonly string[]; bytes: number }
   >();
   const elements = new Map<string, HTMLAudioElement>();
-  // Plugin sounds whose audio failed to load; alerts fall back to the default.
+  // Pack or chosen sounds whose audio failed to load; alerts fall back to the default.
   const broken = new Set<SoundRef>();
   let indexed: readonly Contribution<PackEntry>[] | undefined;
   let catalog: readonly SoundPack[] = [];
   let sources: ReadonlyMap<string, string> = new Map();
+  // Files the user chose in Settings, by ref.
+  const locals = new Map<SoundRef, { label: string; source: string }>();
+  let localCatalog: ReadonlyMap<SoundRef, string> = new Map();
+  const localListeners = new Set<() => void>();
   const index = () => {
     const current = packs.snapshot();
     if (current === indexed) return;
@@ -88,6 +97,8 @@ export function createSoundRegistry(root: Context) {
   const source = (ref: SoundRef) => {
     if (BUNDLED.has(ref)) return `/sounds/${ref}.mp3`;
     if (broken.has(ref)) return null;
+    const local = locals.get(ref);
+    if (local) return local.source;
     index();
     return sources.get(ref) ?? null;
   };
@@ -97,7 +108,35 @@ export function createSoundRegistry(root: Context) {
       index();
       return catalog;
     },
-    subscribe: packs.subscribe,
+    /** Labels of chosen files by ref. */
+    localSounds: () => localCatalog,
+    subscribe(listener: () => void) {
+      const stop = packs.subscribe(listener);
+      localListeners.add(listener);
+      return () => {
+        stop();
+        localListeners.delete(listener);
+      };
+    },
+    /** Makes a chosen file playable as `localSoundRef(category)`, replacing
+     * any earlier file for that row. */
+    setLocal(category: NotificationCategory, label: string, audio: Blob) {
+      const ref = localSoundRef(category);
+      const previous = locals.get(ref);
+      const source = URL.createObjectURL(audio);
+      if (previous) {
+        const element = elements.get(previous.source);
+        if (element) element.onerror = null;
+        elements.delete(previous.source);
+        URL.revokeObjectURL(previous.source);
+      }
+      broken.delete(ref);
+      locals.set(ref, { label, source });
+      localCatalog = new Map(
+        [...locals].map(([key, value]) => [key, value.label] as const),
+      );
+      for (const listener of localListeners) listener();
+    },
     /** Known and playable now; Silent counts as available. */
     isAvailable: (ref: SoundRef) => ref === "silent" || source(ref) !== null,
     source,
@@ -113,7 +152,7 @@ export function createSoundRegistry(root: Context) {
             audio.onerror = () => {
               if (broken.has(ref)) return;
               broken.add(ref);
-              console.warn(`Plugin sound ${ref} could not be played`);
+              console.warn(`Sound ${ref} could not be played`);
             };
           elements.set(url, audio);
         }

@@ -5,6 +5,7 @@ import type { PluginModule } from "../../plugins/api";
 import { provideNavigation } from "../navigation/service";
 import { NotificationsService, type Notifications } from "./service";
 import { createNotificationPreferences } from "./preferences";
+import type { CustomSound, CustomSoundStore } from "./custom-sounds";
 // @ts-expect-error -- example plugins ship as untyped, prebuilt JavaScript.
 import * as examplePack from "../../../examples/plugins/sound-pack/plugin.js";
 import type {
@@ -24,7 +25,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function setup() {
+function setup(customSounds?: CustomSoundStore) {
   const ctx = new Context();
   contexts.push(ctx);
   let module: PluginModule = { apply() {} };
@@ -62,6 +63,7 @@ function setup() {
     preferences,
     undefined,
     (name) => plays.push(name),
+    customSounds ?? { load: async () => [], save: async () => {} },
   );
   service.selectViewer(viewer);
   return {
@@ -776,4 +778,77 @@ it("registering after the plugin's scope ended leaves no media URL behind", asyn
   expect(() => notifications?.sounds.register(soundPack())).toThrow();
   expect(t.service.soundRegistry.snapshot()).toEqual([]);
   expect(revoked).toHaveBeenCalledTimes(created.mock.calls.length);
+});
+function memoryStore(initial: CustomSound[] = []) {
+  const saved = [...initial];
+  return {
+    saved,
+    load: vi.fn(async () => [...saved]),
+    save: vi.fn(async (sound: CustomSound) => {
+      saved.push(sound);
+    }),
+  };
+}
+const audioFile = (name: string, bytes = 4, type = "audio/wav") =>
+  new File([new Uint8Array(bytes)], name, { type });
+it("a chosen sound file is saved on this device, selected for its row and played", async () => {
+  const created = vi.spyOn(URL, "createObjectURL");
+  const revoked = vi.spyOn(URL, "revokeObjectURL");
+  const store = memoryStore();
+  const t = setup(store);
+  await t.service.chooseCustomSound("mention", audioFile("chime.wav"));
+  expect(store.saved).toHaveLength(1);
+  expect(store.saved[0]).toMatchObject({
+    category: "mention",
+    name: "chime.wav",
+  });
+  expect(t.service.snapshot().preferences.sounds.mention).toBe(
+    "_local/mention",
+  );
+  expect(t.service.soundRegistry.localSounds().get("_local/mention")).toBe(
+    "chime.wav",
+  );
+  await t.submit("one");
+  await flush();
+  expect(t.plays).toEqual(["_local/mention"]);
+  // Choosing again for the row replaces the earlier file.
+  await t.service.chooseCustomSound("mention", audioFile("bell.wav"));
+  expect(t.service.soundRegistry.localSounds().get("_local/mention")).toBe(
+    "bell.wav",
+  );
+  expect(revoked).toHaveBeenCalledWith(created.mock.results[0]?.value);
+});
+it("a file that is not audio, or larger than 512 KiB, is refused and nothing changes", async () => {
+  const store = memoryStore();
+  const t = setup(store);
+  for (const file of [
+    audioFile("notes.txt", 4, "text/plain"),
+    audioFile("long.wav", 512 * 1024 + 1),
+  ])
+    await expect(t.service.chooseCustomSound("direct", file)).rejects.toThrow(
+      "512 KiB",
+    );
+  expect(store.save).not.toHaveBeenCalled();
+  expect(t.service.snapshot().preferences.sounds.direct).toBe("flutter");
+});
+it("sound files chosen earlier are playable after a restart", async () => {
+  const store = memoryStore([
+    { category: "direct", name: "bell.wav", audio: audioFile("bell.wav") },
+  ]);
+  const t = setup(store);
+  await vi.waitFor(() =>
+    expect(t.service.soundRegistry.isAvailable("_local/direct")).toBe(true),
+  );
+  expect(t.service.soundRegistry.isAvailable("_local/mention")).toBe(false);
+  t.service.updatePreferences({
+    sounds: {
+      ...t.service.snapshot().preferences.sounds,
+      direct: "_local/direct",
+      mention: "_local/mention",
+    },
+  });
+  t.service.playCategorySound("direct");
+  // A row whose file is missing plays the default.
+  t.service.playCategorySound("mention");
+  expect(t.plays).toEqual(["_local/direct", "flutter"]);
 });

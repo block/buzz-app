@@ -14,7 +14,11 @@ alert sounds under `public/sounds/`, plugins can add
 [sound packs](plugin-architecture.md), and the notifications service plays the
 per-category selection (with a shared default) in the running app after a
 banner submission is accepted. A selected plugin sound whose pack is disabled
-or failed to load plays the default sound and stays selected. OS banners are
+or failed to load plays the default sound and stays selected. A row can also
+use an audio file chosen from the computer (up to 512 KiB, one per row, saved
+as `_local/<category>`): Settings copies it into a device-wide IndexedDB store,
+`buzz-custom-sounds-v1`, so it survives restarts and is shared by the device's
+accounts; a missing or unplayable file falls back the same way. OS banners are
 always submitted silent, so the
 system never plays a second sound: the browser banner sets `silent: true`, the
 Windows toast is built with silent audio (`sound(None)`), Linux Notify sends

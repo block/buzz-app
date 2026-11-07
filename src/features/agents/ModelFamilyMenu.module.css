@@ -18,3 +18,20 @@
 .effort {
   margin-inline-start: var(--space-2);
 }
+/* A name and its Fast bolt read as one unit in rows, labels and triggers. */
+.name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.fast {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin-inline-start: var(--space-1);
+  color: var(--text-subtle);
+}
+.name > .fast {
+  margin-inline-start: 0;
+}

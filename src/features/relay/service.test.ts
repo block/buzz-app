@@ -140,3 +140,20 @@ it("reconnects a connection the federated session refused once it is signed in",
   expect(connect).toHaveBeenCalledTimes(2);
   expect(data.snapshot().status).toBe("ready");
 });
+it("asks a live socket that may have died during sleep to answer", async () => {
+  vi.useFakeTimers();
+  const check = vi.fn();
+  const source: ReadTransport = {
+    ...transport("viewer"),
+    subscribe: () => ({ update() {}, retry() {}, check, dispose() {} }),
+  };
+  const data = provideRelay(root(), async () => source);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(data.snapshot().status).toBe("ready");
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(check).not.toHaveBeenCalled();
+  // Timers stop while the machine sleeps, so the clock jumps between ticks.
+  vi.setSystemTime(Date.now() + 60_000);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(check).toHaveBeenCalledTimes(1);
+});

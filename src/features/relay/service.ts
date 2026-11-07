@@ -391,16 +391,18 @@ export function provideRelay(
   };
   ctx.provide("relay", service);
   ctx.effect(() => {
-    // Network, focus and wake are hints that the relay may answer again.
-    // Failed background reads retry now; healthy sessions do no extra work.
+    // Network, focus and wake are hints that the relay may answer again, and
+    // that a socket which still looks open may have died while asleep.
+    // Failed background reads retry now; a live socket is asked to answer.
     const online = () => {
       if (snapshot.cached) service.retry();
-      else store.session.recovery?.retryNow();
+      else {
+        store.session.recovery?.retryNow();
+        store.session.checkLive();
+      }
     };
     const visible = () => {
-      if (document.visibilityState !== "visible") return;
-      if (snapshot.cached) service.retry();
-      else store.session.recovery?.retryNow();
+      if (document.visibilityState === "visible") online();
     };
     // Timers stop while the machine sleeps. A large gap between ticks means
     // it woke up, which a desktop window does not always report as focus.

@@ -2580,6 +2580,11 @@ export function createRelaySession(
     soloPreferences: soloPreferences.queries,
     reminders: reminders?.capability,
     live,
+    /** Wake, network and focus hint that the live socket, which may still look
+     * open, could have died unseen: it must answer a probe or be replaced. */
+    checkLive() {
+      traffic?.check?.();
+    },
     /** The one automatic retry owner for background reads. Undefined offline. */
     recovery,
     profiling,

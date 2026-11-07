@@ -4,6 +4,7 @@
 import {
   type ReactNode,
   useEffect,
+  useEffectEvent,
   useId,
   useRef,
   useState,
@@ -65,6 +66,12 @@ import { writeClipboardText } from "../../shared/clipboard";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
 const pageSize = 200;
+// An addressable listing can leave the mounted page while Import continues.
+// Reopening that listing must observe its operation, not submit a second copy.
+const catalogImports = new WeakMap<
+  RelaySession,
+  Map<string, ReturnType<Agents["port"]>>
+>();
 
 type Importing = Readonly<{
   agents: Agents;
@@ -75,6 +82,7 @@ type Importing = Readonly<{
   onOpen?: ((agent: Agent) => void) | undefined;
   /** Opens a Settings section, such as Manage plugins. */
   openSettings?: ((section: string) => void) | undefined;
+  importSession?: RelaySession | undefined;
 }>;
 
 export type SharedAgentSelection = {
@@ -265,6 +273,7 @@ export function SharedAgentPanel({
             shared={agent}
             variant={backdrop ? "glass" : "subtle"}
             {...importing}
+            importSession={session}
           />
           {community && (
             <Button
@@ -515,10 +524,11 @@ export function SharedImportDialog({
   onImported,
   onOpen,
   openSettings,
+  importSession,
   onClose,
   finalFocus,
 }: Importing & {
-  shared: SharedDefinition;
+  shared: SharedDefinition & { id?: string };
   onClose(): void;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
 }) {
@@ -534,7 +544,12 @@ export function SharedImportDialog({
   const [type, setType] = useState(initial?.key ?? "");
   const [config, setConfig] = useState<unknown>(initial?.config);
   const [instructions, setInstructions] = useState(shared.instructions);
-  const [pending, setPending] = useState(false);
+  const [inFlight] = useState(() =>
+    importSession && shared.id
+      ? catalogImports.get(importSession)?.get(shared.id)
+      : undefined,
+  );
+  const [pending, setPending] = useState(!!inFlight);
   // Anything changed from what was shared; Undo brings it back.
   const edited =
     type !== (initial?.key ?? "") ||
@@ -561,6 +576,24 @@ export function SharedImportDialog({
         ),
       );
   const [error, setError] = useState("");
+  const imported = useEffectEvent(onImported);
+  useEffect(() => {
+    if (!inFlight) return;
+    let active = true;
+    void inFlight.then(
+      ({ agent }) => {
+        if (active) imported(agent);
+      },
+      (reason) => {
+        if (!active) return;
+        setError(reason instanceof Error ? reason.message : String(reason));
+        setPending(false);
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [inFlight]);
   // What block/buzz refuses, such as hidden characters in what is shown here.
   let refused = "";
   try {
@@ -580,14 +613,34 @@ export function SharedImportDialog({
     setPending(true);
     setError("");
     try {
-      const { agent } = await agents.port({
-        source: "shared",
-        type: chosen.key,
-        name: shared.name,
-        ...(shared.picture ? { picture: shared.picture } : {}),
-        instructions,
-        ...(config !== undefined ? { config } : {}),
-      });
+      let operations = importSession
+        ? catalogImports.get(importSession)
+        : undefined;
+      if (importSession && !operations) {
+        operations = new Map();
+        catalogImports.set(importSession, operations);
+      }
+      let operation = shared.id ? operations?.get(shared.id) : undefined;
+      if (!operation) {
+        operation = agents.port({
+          source: "shared",
+          type: chosen.key,
+          name: shared.name,
+          ...(shared.picture ? { picture: shared.picture } : {}),
+          instructions,
+          ...(config !== undefined ? { config } : {}),
+        });
+        if (operations && shared.id) {
+          const id = shared.id;
+          const pending = operations;
+          pending.set(id, operation);
+          void operation.then(
+            () => pending.delete(id),
+            () => pending.delete(id),
+          );
+        }
+      }
+      const { agent } = await operation;
       onImported(agent);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));

@@ -284,10 +284,14 @@ bumping that revision updates both. The build uses block/buzz's own
 `Cargo.lock`, not this repository's, with stripped release symbols. `tauri
 build` runs it through `beforeBuildCommand`; `just desktop` runs it with `--dev`
 (a debug build, and a failure only warns). It selects `TAURI_ENV_TARGET_TRIPLE`
-or the host, installs under `target/buzz-cli/<rev>/<target>/<profile>`, which
-lets Cargo skip an install that is already current, and replaces the staged file
-atomically. Linked worktrees use the main checkout's `target/`, so they share
-one build of each revision. A first release build takes about two minutes.
+or the host, installs under `target/buzz-cli-v2/<rev>/<target>/<profile>`, and
+keeps Cargo build outputs in that prefix's `build` directory. Both caches are
+isolated by revision, target and profile so another revision's named executable
+cannot be staged as a fresh build. The `v2` layout bypasses installs made with
+the old shared build cache. Cargo skips current installs, and staging replaces
+the file atomically. Linked worktrees use the main checkout's `target/`, so they
+share one build per revision, target and profile. A first release build takes
+about two minutes.
 
 The macOS release signing service signs the executable with the Developer ID
 certificate and the hardened runtime, as it does `goose-acp` and

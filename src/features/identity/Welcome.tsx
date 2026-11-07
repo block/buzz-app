@@ -978,7 +978,7 @@ export function Welcome({
               title="A different account is saved on this computer"
               description={
                 replacingBackedUp
-                  ? "Replacing it removes that account from this computer to continue with the one you just signed in to. Its key is backed up in Builderlab: sign in to that account again to restore it. Buzz restarts to finish."
+                  ? "Replacing it removes that account from this computer to continue with the one you just signed in to. Its key is backed up in Builderlab: sign in to that account again to restore it."
                   : "Replacing it removes that account from this computer to continue with the one you just signed in to. It may not be backed up."
               }
               onClose={switchAccount}

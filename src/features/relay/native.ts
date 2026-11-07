@@ -46,6 +46,7 @@ import { validateDetailsTemplate } from "./channel-details-protocol";
 import { validateArchiveRequestTemplate } from "./identity-archive-protocol";
 import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
+import { PIN_KINDS } from "../pins/protocol";
 import { repoGitHost } from "../repos/git";
 
 import { PublishRejected } from "./outbox";
@@ -106,6 +107,7 @@ export const nativeWriteKinds = [
   40100,
   42000,
   45010,
+  ...PIN_KINDS,
   ...WORKFLOW_KINDS,
 ] as const;
 

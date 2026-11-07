@@ -1,0 +1,131 @@
+[
+  {
+    "name": "pin",
+    "accepted": true,
+    "kind": 40004,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["client-id", "22222222-2222-4222-8222-222222222222"]
+    ]
+  },
+  {
+    "name": "pin without client id",
+    "accepted": true,
+    "kind": 40004,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    ]
+  },
+  {
+    "name": "pin with content",
+    "accepted": false,
+    "kind": 40004,
+    "content": "pinned",
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    ]
+  },
+  {
+    "name": "pin without channel",
+    "accepted": false,
+    "kind": 40004,
+    "tags": [
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    ]
+  },
+  {
+    "name": "pin of two messages",
+    "accepted": false,
+    "kind": 40004,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["e", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+    ]
+  },
+  {
+    "name": "pin of uppercase id",
+    "accepted": false,
+    "kind": 40004,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+    ]
+  },
+  {
+    "name": "pin with mention",
+    "accepted": false,
+    "kind": 40004,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+      ["p", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]
+    ]
+  },
+  {
+    "name": "pinner unpins",
+    "accepted": true,
+    "kind": 5,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+      ["k", "40004"],
+      ["client-id", "22222222-2222-4222-8222-222222222222"]
+    ]
+  },
+  {
+    "name": "admin unpins",
+    "accepted": true,
+    "kind": 9005,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+      ["k", "40004"],
+      ["client-id", "22222222-2222-4222-8222-222222222222"]
+    ]
+  },
+  {
+    "name": "admin removal of a message",
+    "accepted": false,
+    "kind": 9005,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+      ["k", "9"]
+    ]
+  },
+  {
+    "name": "admin unpin without kind",
+    "accepted": false,
+    "kind": 9005,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
+    ]
+  },
+  {
+    "name": "admin unpin of two pins",
+    "accepted": false,
+    "kind": 9005,
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+      ["e", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
+      ["k", "40004"]
+    ]
+  },
+  {
+    "name": "admin unpin with reason",
+    "accepted": false,
+    "kind": 9005,
+    "content": "off topic",
+    "tags": [
+      ["h", "11111111-1111-4111-8111-111111111111"],
+      ["e", "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"],
+      ["k", "40004"]
+    ]
+  }
+]

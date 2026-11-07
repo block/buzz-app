@@ -3,8 +3,30 @@ import assert from "node:assert/strict";
 import {
   createUpstream,
   validFilters,
+  validMessageDeletion,
   validMessageTemplate,
+  validPin,
+  validPinRemoval,
 } from "./relay-broker.mjs";
+import pinCases from "../src/features/pins/pin-signing-contract.json";
+
+test("broker pin signing matches the shared native contract", () => {
+  assert.ok(pinCases.length > 0);
+  const validators = {
+    5: validMessageDeletion,
+    9005: validPinRemoval,
+    40004: validPin,
+  };
+  for (const { name, accepted, kind, content = "", tags } of pinCases)
+    assert.equal(
+      validators[kind]({ kind, content, created_at: 1788810000, tags }),
+      accepted,
+      name,
+    );
+  // Kind 9005 is never a general moderator delete from this host.
+  assert.equal(validPin({ kind: 9005, content: "", tags: [] }), false);
+  assert.equal(validPinRemoval({ kind: 40004, content: "", tags: [] }), false);
+});
 
 test("read broker accepts non-channel finite reads without relaxing filter budgets", () => {
   for (const filter of [

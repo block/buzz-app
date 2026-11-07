@@ -1,0 +1,7 @@
+{
+  "id": "buzz.pins",
+  "name": "Pins",
+  "apiVersion": 1,
+  "description": "Pin important messages so everyone in a channel can find them.",
+  "discovery": { "category": "communication", "tags": ["messaging"] }
+}

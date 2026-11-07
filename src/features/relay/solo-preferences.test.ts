@@ -393,3 +393,67 @@ it("checks the exact project capacity before saving and reclaims a removed filin
     f.dispose();
   }
 });
+
+it("renames only the Solo group label, preserving IDs, defaults, assignments and Messages", async () => {
+  const f = fixture();
+  f.install(groups);
+  const solo = f.session.soloPreferences;
+  try {
+    await solo.ensure();
+    expect(solo.sectionRenameWritable).toBe(true);
+    await solo.renameSection("work", "  Renamed work  ");
+    expect(solo.snapshot().data?.sections).toEqual([
+      { id: "work", name: "Renamed work", order: 0 },
+    ]);
+    const saved = JSON.parse(f.publish.mock.calls[0]?.[0].content ?? "null");
+    expect(saved.value).toEqual({
+      ...groups,
+      groups: [{ ...groups.groups[0], name: "Renamed work" }],
+    });
+    expect(f.assignment).not.toHaveBeenCalled();
+    expect(f.removal).not.toHaveBeenCalled();
+    expect(f.star).not.toHaveBeenCalled();
+    await solo.renameSection("work", "Renamed work");
+    expect(f.publish).toHaveBeenCalledOnce();
+    await solo.refresh();
+    expect(solo.snapshot().data?.sections[0]?.name).toBe("Renamed work");
+  } finally {
+    f.dispose();
+  }
+});
+
+it.each(["", "   ", "x".repeat(81)])(
+  "rejects invalid Solo workspace label %j without publication",
+  async (name) => {
+    const f = fixture();
+    f.install(groups);
+    try {
+      await f.session.soloPreferences.ensure();
+      await expect(
+        f.session.soloPreferences.renameSection("work", name),
+      ).rejects.toThrow("1–80 characters");
+      expect(f.publish).not.toHaveBeenCalled();
+    } finally {
+      f.dispose();
+    }
+  },
+);
+
+it("does not recreate a deleted workspace or change its name after refused publication", async () => {
+  const f = fixture();
+  f.install(groups);
+  const solo = f.session.soloPreferences;
+  try {
+    await solo.ensure();
+    f.publish.mockRejectedValueOnce(new Error("Offline"));
+    await expect(solo.renameSection("work", "New")).rejects.toThrow();
+    expect(solo.snapshot().data?.sections[0]?.name).toBe("Solo work");
+    f.install({ ...groups, groups: [], assignments: {} });
+    await expect(solo.renameSection("work", "New")).rejects.toThrow(
+      "unavailable",
+    );
+    expect(f.publish).toHaveBeenCalledOnce();
+  } finally {
+    f.dispose();
+  }
+});

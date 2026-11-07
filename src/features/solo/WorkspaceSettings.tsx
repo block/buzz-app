@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { RelaySession } from "../relay/session";
-import type { KitEntry, Lineup } from "../channel-templates/model";
+import type { KitEntry, Lineup, Template } from "../channel-templates/model";
 import { emptyLineup, parseLineup } from "../channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -41,6 +41,12 @@ export function WorkspaceSettings({
   signal?: AbortSignal | undefined;
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
+  const [name, setName] = useState(target.name);
+  const renamed = target.kind === "project" && name.trim() !== target.name;
+  const nameError =
+    renamed && (!name.trim() || name.trim().length > 80)
+      ? "Use a workspace name of 1–80 characters."
+      : undefined;
   const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
   const [raw, setRaw] = useState<string>();
   const [base, setBase] = useState<string>();
@@ -58,6 +64,7 @@ export function WorkspaceSettings({
   const alive = useRef(true);
   const inFlight = useRef(false);
   const confirmedCanvas = useRef("");
+  const confirmedDefaults = useRef<Template | undefined>(undefined);
   const canvasAvailable =
     target.kind === "project" || !!session.canvas?.available;
   const lifetime = useLifetime({
@@ -101,6 +108,12 @@ export function WorkspaceSettings({
             entry.record.value.id === id,
         );
         const template = projectDefault(kit.entries, target.id, id);
+        confirmedDefaults.current =
+          entry &&
+          !entry.record.deleted &&
+          entry.record.value.type === "template"
+            ? entry.record.value
+            : undefined;
         setRecipeId(id);
         setEntries(kit.entries);
         setLineup(template ?? emptyLineup());
@@ -122,8 +135,11 @@ export function WorkspaceSettings({
         "base" in saved &&
         (saved.base === null || typeof saved.base === "string")
       ) {
-        if (target.kind === "project" && "lineup" in saved)
-          setLineup(parseLineup(saved.lineup));
+        if (target.kind === "project") {
+          if ("lineup" in saved) setLineup(parseLineup(saved.lineup));
+          if ("name" in saved && typeof saved.name === "string")
+            setName(saved.name);
+        }
         adopt(saved.canvas);
         setBase(saved.base ?? undefined);
         if ((saved.base ?? undefined) !== revision) {
@@ -135,6 +151,7 @@ export function WorkspaceSettings({
       } else {
         adopt(content);
         setBase(revision);
+        if (replace) setName(target.name);
       }
       setLoaded(true);
       setReloadConfirmed(false);
@@ -168,6 +185,7 @@ export function WorkspaceSettings({
     setError("");
     setStatus("");
     let canvasConfirmed = false;
+    let defaultsConfirmed = false;
     try {
       if (lifetime.checkOnly) {
         // Checking an uncertain details write never publishes pending Canvas edits.
@@ -195,6 +213,11 @@ export function WorkspaceSettings({
             ? workspaceCanvas(workspace)
             : workspaceCanvas({ folders: [], canvas: raw })
           : undefined;
+        if (nameError) throw new Error(nameError);
+        if (renamed && !session.soloPreferences.sectionRenameWritable)
+          throw new Error(
+            "Workspace renaming is unavailable. Refresh workspaces and retry.",
+          );
         if (lifetime.changed && lifetime.blocked)
           throw new Error(
             lifetime.invalid ||
@@ -202,7 +225,12 @@ export function WorkspaceSettings({
           );
         if (
           canvas !== undefined &&
-          !writeView(scope, key, { canvas, base: base ?? null, lineup })
+          !writeView(scope, key, {
+            canvas,
+            base: base ?? null,
+            lineup,
+            ...(target.kind === "project" ? { name } : {}),
+          })
         )
           throw new CanvasSettingsError(
             "Your draft couldn’t be saved on this device. No new changes were sent.",
@@ -215,11 +243,30 @@ export function WorkspaceSettings({
             const template = projectTemplate(
               session.scope,
               recipeId,
-              target.name,
+              name.trim(),
               { ...lineup, canvas },
             );
             try {
-              await session.channelKit.save(template, base);
+              if (
+                JSON.stringify(template) !==
+                JSON.stringify(confirmedDefaults.current)
+              ) {
+                const revision = await session.channelKit.save(template, base);
+                confirmedDefaults.current = template;
+                defaultsConfirmed = true;
+                setBase(revision);
+                if (
+                  !writeView(scope, key, {
+                    canvas,
+                    base: revision ?? null,
+                    lineup,
+                    name,
+                  })
+                )
+                  throw new Error(
+                    "Workspace defaults saved, but the confirmed revision couldn’t be saved on this device. Keep this dialog open to retry.",
+                  );
+              }
             } catch (reason) {
               throw new CanvasSettingsError(
                 reason instanceof Error ? reason.message : String(reason),
@@ -250,6 +297,9 @@ export function WorkspaceSettings({
         }
         // Canvas operations remain session-owned; the visit fences only later admission.
         if (!active()) return;
+        if (renamed)
+          await session.soloPreferences.renameSection(target.id, name.trim());
+        if (!active()) return;
         if (lifetime.changed) await lifetime.run("save");
       }
       if (!active()) return;
@@ -263,7 +313,7 @@ export function WorkspaceSettings({
     } catch (reason) {
       if (active()) {
         setError(
-          `${canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
+          `${defaultsConfirmed ? "Workspace defaults saved. " : canvasConfirmed ? "Workspace and Canvas saved. " : ""}${reason instanceof Error ? reason.message : String(reason)}`,
         );
         setCanvasError(reason instanceof CanvasSettingsError);
       }
@@ -286,14 +336,11 @@ export function WorkspaceSettings({
       close={close}
       busy={busy || lifetime.busy}
       title={target.kind === "project" ? "Workspace settings" : undefined}
-      saveLabel={
-        lifetime.checkOnly
-          ? "Check save status"
-          : `Save ${target.kind === "project" ? "defaults" : "changes"}`
-      }
+      saveLabel={lifetime.checkOnly ? "Check save status" : "Save changes"}
       saveLoading={busy || lifetime.busy || loadingCanvas}
       saveDisabled={
         loadingCanvas ||
+        !!nameError ||
         !!signal?.aborted ||
         (!loaded && !lifetime.eligible) ||
         (lifetime.available &&
@@ -303,6 +350,17 @@ export function WorkspaceSettings({
       }
       onSave={() => void save()}
     >
+      {target.kind === "project" && (
+        <Field label="Workspace name" error={nameError}>
+          <Input
+            value={name}
+            required
+            maxLength={80}
+            disabled={busy || !session.soloPreferences.sectionRenameWritable}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+      )}
       {lifetime.available && lifetime.base && (
         <Field label="Chat name" error={lifetime.nameError}>
           <Input

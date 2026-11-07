@@ -142,6 +142,7 @@ it("saves section defaults as an existing relay template without writing section
   const close = vi.fn();
   const session = {
     scope: "https://relay.example.test:viewer",
+    soloPreferences: { sectionRenameWritable: true },
     channelKit: {
       refresh: async () => {},
       snapshot: () => ({ status: "ready", entries: [] }),
@@ -163,7 +164,7 @@ it("saves section defaults as an existing relay template without writing section
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "Work carefully" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(close).toHaveBeenCalled());
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -211,6 +212,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
   const session = {
     scope: "https://relay.example.test:viewer",
     channelKit: kit.capability,
+    soloPreferences: { sectionRenameWritable: true },
   } as unknown as RelaySession;
   const close = vi.fn();
   const view = () => (
@@ -228,7 +230,7 @@ it("recreates deleted section defaults using the tombstone revision", async () =
       target: { value: "Old instructions" },
     },
   );
-  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   first.unmount();
   const saved = kit.capability.snapshot().entries[0];
@@ -243,12 +245,118 @@ it("recreates deleted section defaults using the tombstone revision", async () =
   fireEvent.change(screen.getByRole("textbox", { name: /^Instructions/ }), {
     target: { value: "New instructions" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Save defaults" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(2));
   const restored = kit.capability.snapshot().entries[0];
   expect(restored?.record.deleted).toBe(false);
   expect(restored?.record.value).toMatchObject({ canvas: "New instructions" });
   expect(send).toHaveBeenCalledTimes(3);
+});
+
+function projectSettings() {
+  const save = vi.fn(async () => "defaults-two");
+  const renameSection = vi.fn(async () => {});
+  const close = vi.fn();
+  const session = {
+    scope: "https://relay.example.test:viewer",
+    soloPreferences: { sectionRenameWritable: true, renameSection },
+    channelKit: {
+      refresh: async () => {},
+      snapshot: () => ({ status: "ready", entries: [] }),
+      save,
+    },
+  } as unknown as RelaySession;
+  const view = () => (
+    <WorkspaceSettings
+      session={session}
+      scope="test"
+      target={{ kind: "project", id: "work", name: "Work" }}
+      close={close}
+    />
+  );
+  const mounted = render(view());
+  return { save, renameSection, close, session, view, mounted };
+}
+
+it("renames a workspace with its defaults, trims the label, and leaves chats alone", async () => {
+  const h = projectSettings();
+  await screen.findByRole("textbox", { name: /^Instructions/ });
+  fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+    target: { value: "  Better work  " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.renameSection).toHaveBeenCalledWith("work", "Better work");
+  expect(h.save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: await projectTemplateId("work"),
+      name: "Better work chats",
+    }),
+    undefined,
+  );
+});
+
+it.each(["", "   ", "x".repeat(81)])(
+  "rejects invalid workspace name %j before either write",
+  async (value) => {
+    const h = projectSettings();
+    await screen.findByRole("textbox", { name: /^Instructions/ });
+    fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+      target: { value },
+    });
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("1–80 characters");
+    expect(h.save).not.toHaveBeenCalled();
+    expect(h.renameSection).not.toHaveBeenCalled();
+  },
+);
+
+it("retains both drafts when rename fails and retries without resending confirmed defaults", async () => {
+  const h = projectSettings();
+  h.renameSection.mockRejectedValueOnce(new Error("Rename refused"));
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: /^Instructions/ }),
+    { target: { value: "Keep this" } },
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+    target: { value: "New work" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Workspace defaults saved. Rename refused",
+  );
+  expect(h.close).not.toHaveBeenCalled();
+  expect(
+    readView("test", "solo:workspace-draft:project:work", null),
+  ).toMatchObject({
+    name: "New work",
+    base: "defaults-two",
+    canvas: "Keep this",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(h.close).toHaveBeenCalledOnce());
+  expect(h.save).toHaveBeenCalledOnce();
+  expect(h.renameSection).toHaveBeenCalledTimes(2);
+});
+
+it("restores a failed name draft after reopening and stops rename if defaults fail", async () => {
+  const h = projectSettings();
+  h.save.mockRejectedValueOnce(new Error("Defaults changed"));
+  await screen.findByRole("textbox", { name: /^Instructions/ });
+  fireEvent.change(screen.getByRole("textbox", { name: "Workspace name" }), {
+    target: { value: "My draft" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Defaults changed",
+  );
+  expect(h.renameSection).not.toHaveBeenCalled();
+  h.mounted.unmount();
+  render(h.view());
+  await screen.findByRole("textbox", { name: /^Instructions/ });
+  expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+    "My draft",
+  );
 });
 
 // The combined modal talks to the real signed details owner; Canvas remains its

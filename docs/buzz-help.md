@@ -270,6 +270,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Open a workspace’s menu → **Workspace settings** to change its name, then
+  **Save changes**. Renaming keeps its chats, folders, and instructions in place.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.

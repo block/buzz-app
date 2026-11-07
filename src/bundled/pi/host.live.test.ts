@@ -201,12 +201,15 @@ out.toolStop = { wait: await pi.rpc("wait", { agent, submission: t1.submission }
 // Past what Pi keeps verbatim, so compacting summarizes the older turn.
 faux.setResponses([() => fauxAssistantMessage("Read it"), () => fauxAssistantMessage("Read it too"), () => fauxAssistantMessage("Summary of the chat")]);
 for (const request of ["S2", "S3"]) {
-  const long = await pi.rpc("deliver", turn(request, "word ".repeat(25_000)));
+  const long = await pi.rpc("deliver", { ...turn(request, "word ".repeat(25_000)), thread: "t1" });
   await pi.rpc("wait", { agent, submission: long.submission });
 }
+// A thread's mark is its own: another thread in the same key has none.
+const threadSeen = async (thread) => (await pi.rpc("place", { agent, key: "chan/root", thread })).seen;
+out.threads = { t1: await threadSeen("t1"), t2: await threadSeen("t2") };
 await pi.rpc("session", { agent, key: "chan/root", action: "compact" });
 await pi.rpc("session", { agent, key: "chan/root", action: "new" });
-out.renewed = { place: await pi.rpc("place", { agent, key: "chan/root" }), kinds: (await pi.rpc("entries", { agent, conversation: s1.conversation })).entries.map((entry) => entry.kind).slice(0, 2) };
+out.renewed = { place: await pi.rpc("place", { agent, key: "chan/root" }), t1: await threadSeen("t1"), kinds: (await pi.rpc("entries", { agent, conversation: s1.conversation })).entries.map((entry) => entry.kind).slice(0, 2) };
 out.unplaced = await pi.rpc("session", { agent, key: "chan/none", action: "compact" });
 // Which turn starts a session, and the session it starts, come from Pi's own
 // history: a reset's entry id, or 0 before any.
@@ -734,8 +737,10 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     // A later turn's first-turn check stops at the session's first prompt,
     // well short of the hundreds of entries since the reset.
     expect(out.sessions.deliverRead).toBeLessThan(50);
+    expect(out.threads).toEqual({ t1: 100, t2: 0 });
     expect(out.renewed).toEqual({
       place: { seen: 0 },
+      t1: 0,
       kinds: ["pi.reset", "pi.compaction"],
     });
     expect(out.unplaced).toEqual({});

@@ -234,7 +234,8 @@ const context = BACKGROUND_CONTEXT;
 const checkpointWhen = (_value, _ops, { deltasSinceBase }) =>
   deltasSinceBase >= 64;
 /** Each Buzz conversation key's Pi conversation, the tools' default
- * destination for it, and the newest message it has been shown. */
+ * destination for it, and the newest message it has been shown, also per
+ * thread when several threads share it. */
 const Places = defineDoc({
   kind: "buzz.places",
   version: 1,
@@ -242,6 +243,9 @@ const Places = defineDoc({
   initial: () => ({}),
   checkpointWhen,
 });
+/** Threads a conversation key keeps a mark for; the least recently used are
+ * forgotten. */
+const THREADS = 200;
 /** An Attention wake's reply destination belongs to its request, independently
  * of the conversation's tool defaults. Recorded before submission for recovery. */
 const Replies = defineDoc({
@@ -1386,20 +1390,29 @@ export function serve({
       return { models: state?.models ?? {} };
     },
     /** The newest message a conversation key's Pi conversation has been
-     * shown; 0 when it has none yet. */
-    async place({ agent, key }) {
+     * shown, of `thread` when given; 0 when it has none yet. */
+    async place({ agent, key, thread }) {
       const { harness } = await agentOf(agent);
       const place = (await harness.snapshot(Places, context))?.[key];
       return {
         seen:
           place && (await harness.conversation(place.conversation, context))
-            ? place.seen
+            ? ((thread ? place.threads?.[thread] : place.seen) ?? 0)
             : 0,
       };
     },
     /** A turn for a conversation key: its Pi conversation, made the first
      * time, takes the request, or steers its run if one is working. */
-    async deliver({ agent, key, at, context: tools, reply, refresh, ...turn }) {
+    async deliver({
+      agent,
+      key,
+      thread,
+      at,
+      context: tools,
+      reply,
+      refresh,
+      ...turn
+    }) {
       const opened = await agentOf(agent);
       const prior = opened.queues.get(key);
       const delivered = (async () => {
@@ -1452,10 +1465,20 @@ export function serve({
         // messages it would have been shown for the next.
         await harness.commit(async (tx) => {
           const places = await tx.doc(Places);
+          const threads = { ...places[key]?.threads };
+          if (thread) {
+            const previous = threads[thread] ?? 0;
+            delete threads[thread];
+            threads[thread] = Math.max(at, previous);
+          }
           places[key] = {
             conversation: conversation.id,
             context: tools,
             seen: Math.max(at, places[key]?.seen ?? 0),
+            // Forgetting an old thread's mark only shows its context again.
+            threads: Object.fromEntries(
+              Object.entries(threads).slice(-THREADS),
+            ),
           };
         }, context);
         return submitted;
@@ -1570,7 +1593,8 @@ export function serve({
         await conversation.reset(undefined, context);
         await harness.commit(async (tx) => {
           const places = await tx.doc(Places);
-          if (places[key]) places[key] = { ...places[key], seen: 0 };
+          if (places[key])
+            places[key] = { ...places[key], seen: 0, threads: {} };
         }, context);
         return;
       }

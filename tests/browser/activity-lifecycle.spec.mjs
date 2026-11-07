@@ -126,6 +126,37 @@ for (const inThread of [false, true]) {
           .evaluate((el) => el.getBoundingClientRect().height),
       ).toBe(tailHeight);
     }
+    // Real pointer hit-testing and the host's profile route: the working
+    // row's avatar and name open the agent's profile, as an author's do.
+    const working = history.locator("[data-conversation-activity]");
+    const profile = page.getByRole("region", {
+      name: "Profile details",
+      exact: true,
+    });
+    const closeProfile = page.getByRole("button", {
+      name: "Close Working agent tab",
+      exact: true,
+    });
+    for (const identity of [
+      working.getByRole("button", {
+        name: "View Working agent profile",
+        exact: true,
+      }),
+      working.getByRole("button", { name: "Working agent", exact: true }),
+    ]) {
+      // A typing pulse lasts 8 seconds; renew it before each round trip so
+      // slow runs keep the working row.
+      publish(20002, "");
+      await identity.click();
+      await expect(profile).toBeVisible();
+      await closeProfile.click();
+      await expect(profile).toHaveCount(0);
+      // Closing a profile beside a thread does not restore focus to its
+      // origin, as for any reply author's avatar; the channel does.
+      if (!inThread) await expect(identity).toBeFocused();
+    }
+    // Renew it once more: the append below must find this same row working.
+    publish(20002, "");
     await trigger.focus();
     const original = await trigger.elementHandle();
     app.append(
@@ -156,6 +187,14 @@ for (const inThread of [false, true]) {
         ),
       )
       .toBe(true);
+    // The activity run that replaces the working row opens the profile too.
+    await disclosure
+      .locator("xpath=ancestor::*[@data-agent-response-preview]")
+      .getByRole("button", { name: "View Working agent profile", exact: true })
+      .click();
+    await expect(profile).toBeVisible();
+    await closeProfile.click();
+    await expect(profile).toHaveCount(0);
     await disclosure.click();
     const collapse = history.getByRole("button", {
       name: /Collapse activity history/,
@@ -175,3 +214,64 @@ for (const inThread of [false, true]) {
     await expect(collapse).toBeVisible();
   });
 }
+
+// The opener is gone when the profile closes: only the real page shows where
+// the panel host sends focus after a live row replaces it.
+test("closing a profile opened from a working row returns focus to the agent's activity that replaced it", async ({
+  page,
+  app,
+}) => {
+  const key = generateSecretKey();
+  const pubkey = getPublicKey(key);
+  await page.route("**/agent-library", (route) =>
+    route.fulfill({
+      json: {
+        definitions: [],
+        identities: [{ pubkey, name: "Working agent" }],
+      },
+    }),
+  );
+  app.serveProfile(key, { name: "Working agent", is_agent: true });
+  await open(page, app);
+  await end(page);
+  const history = page.getByRole("region", { name: "Channel message history" });
+  await settle(page, history);
+  const publish = (kind, content, tags, createdAt) =>
+    app.relay.publish(
+      "primary",
+      finalizeEvent(
+        {
+          kind,
+          content,
+          tags: [["h", "alpha"], ...tags],
+          created_at: createdAt,
+        },
+        key,
+      ),
+    );
+  const now = Math.floor(Date.now() / 1000);
+  publish(20002, "", [], now);
+  const name = history
+    .locator("[data-conversation-activity]")
+    .getByRole("button", { name: "Working agent", exact: true });
+  await name.click();
+  const profile = page.getByRole("region", {
+    name: "Profile details",
+    exact: true,
+  });
+  await expect(profile).toBeVisible();
+  publish(9, "Checking the lifecycle", [["audience", "agents"]], now + 2);
+  const run = history
+    .getByRole("button", {
+      name: /Show activity history:.*Checking the lifecycle/,
+    })
+    .locator("xpath=ancestor::*[@data-agent-response-preview]");
+  await expect(run).toBeVisible();
+  await expect(name).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(profile).toHaveCount(0);
+  // Not the channel menu: the same agent's avatar or name in its activity.
+  await expect(run.locator(":focus")).toHaveAccessibleName(
+    /^(View )?Working agent( profile)?$/,
+  );
+});

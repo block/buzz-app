@@ -443,7 +443,9 @@ test("message activity opens a grouped preview and the agent's profile without l
   const channelActivity = row.getByRole("region", {
     name: "Agent activity on this message",
   });
-  await channelActivity.getByRole("button").click();
+  await channelActivity
+    .getByRole("button", { name: /^View agent activity:/ })
+    .click();
   const mixedActivity = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,

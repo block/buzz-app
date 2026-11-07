@@ -300,3 +300,125 @@ it("keeps a channel's menu tab while away and drops it if the channel became ine
   view.rerender(<Harness channelId="alpha" />);
   expect(screen.queryByText("Canvas contents")).not.toBeInTheDocument();
 });
+
+const agent = "a".repeat(64);
+it.each([
+  [
+    "the newest control for the same profile",
+    agent,
+    ["Earlier", "Agent"],
+    "button",
+    "Agent",
+  ],
+  ["the messages, without one", agent, [], "region", "Channel message history"],
+  [
+    "the opener while it remains",
+    agent,
+    ["Working agent"],
+    "button",
+    "Working agent",
+  ],
+  [
+    "the channel menu from another opener",
+    undefined,
+    ["Agent"],
+    "button",
+    "Channel actions",
+  ],
+] as const)(
+  "closing a profile returns focus to %s",
+  (_, opener, replacement, role, name) => {
+    const channels = [{ id: "alpha", name: "Alpha" }];
+    const panel = {
+      key: "profile",
+      title: "Profile",
+      component: () => <p>Profile</p>,
+    } as unknown as RegisteredPanel;
+    const available = [panel];
+    const panels = {
+      snapshot: () => available,
+      subscribe: () => () => {},
+    } as unknown as Panels;
+    const session = {
+      viewer: "viewer",
+      channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+    } as unknown as RelaySession;
+    const relay = {
+      snapshot: () => ({ status: "ready", session }),
+    } as unknown as RelayData;
+    let workspace!: ReturnType<typeof useConversationTabs>;
+    // A byline link, as AuthorLink renders it.
+    const identity = (label: string, pubkey: string | undefined) => (
+      // biome-ignore lint/a11y/useSemanticElements: matches AuthorLink
+      <span
+        key={label}
+        role="button"
+        tabIndex={-1}
+        data-profile-pubkey={pubkey}
+      >
+        {label}
+      </span>
+    );
+    function Harness({ rows }: { rows: readonly string[] }) {
+      const history = useRef<HTMLElement>(null);
+      const fallback = useRef<HTMLButtonElement>(null);
+      const state = useChannelTabState(session, "alpha");
+      workspace = useConversationTabs({
+        profiles: new Map(),
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: false,
+        isLive: () => true,
+        openLink: () => false,
+        fallbackFocus: fallback,
+        history,
+      });
+      return (
+        <>
+          <button type="button" ref={fallback}>
+            Channel actions
+          </button>
+          <section ref={history} tabIndex={-1}>
+            <section
+              data-message-scroller=""
+              tabIndex={-1}
+              aria-label="Channel message history"
+            >
+              {rows.map((label) =>
+                identity(label, label === "Working agent" ? opener : agent),
+              )}
+              {identity("Someone else", "b".repeat(64))}
+              {/* A hidden copy is not a destination. */}
+              <div inert>{identity("Inert agent", agent)}</div>
+            </section>
+          </section>
+          <PanelWorkspace
+            value={workspace.selectedTab}
+            select={(id) => workspace.selectPanelTab(id)}
+            items={workspace.items}
+          />
+        </>
+      );
+    }
+    const view = render(<Harness rows={["Working agent"]} />);
+    const trigger = screen.getByRole("button", { name: "Working agent" });
+    act(() => {
+      trigger.focus();
+      workspace.panelTrigger.current = trigger;
+      workspace.open({ panel, channelId: "alpha", target: "profile" }, true);
+    });
+    expect(screen.getByText("Profile", { selector: "p" })).toBeVisible();
+    // The live row can be replaced while the profile is open.
+    view.rerender(<Harness rows={replacement} />);
+    fireEvent.click(screen.getByRole("button", { name: "Close Profile tab" }));
+    expect(screen.queryByText("Profile", { selector: "p" })).toBeNull();
+    expect(screen.getByRole(role, { name })).toHaveFocus();
+  },
+);

@@ -227,27 +227,32 @@ function ChooserItems({ items }: { items: () => ReactNode }) {
 }
 
 /** Incoming conversation activity over existing stores; no reads or capture. */
-export function TypingIndicator({
-  session,
-  channelId,
-  threadRootId,
-  canOpenActivity,
-  openActivity,
-  previousAuthor,
-  inFlow = false,
-  audience = "all",
-}: {
-  audience?: "all" | "humans" | "agents";
-  previousAuthor?: string | undefined;
-  inFlow?: boolean;
-  session: ComposerSession & Partial<Pick<RelaySession, "agentActivity">>;
-  channelId: string;
-  threadRootId?: string | undefined;
-  canOpenActivity?: ((target: string) => boolean) | undefined;
-  openActivity?:
-    | ((target: string, origin?: MessageLinkOrigin) => boolean)
-    | undefined;
-}) {
+export function TypingIndicator(
+  props: {
+    previousAuthor?: string | undefined;
+    inFlow?: boolean;
+    channelId: string;
+    threadRootId?: string | undefined;
+    canOpenActivity?: ((target: string) => boolean) | undefined;
+    openActivity?:
+      | ((target: string, origin?: MessageLinkOrigin) => boolean)
+      | undefined;
+  } & (
+    | { audience: "humans"; session: AgentSession }
+    // Agent rows preview their profiles, which read the whole session.
+    | { audience?: "all" | "agents"; session: RelaySession }
+  ),
+) {
+  const {
+    session,
+    channelId,
+    threadRootId,
+    canOpenActivity,
+    openActivity,
+    previousAuthor,
+    inFlow = false,
+    audience = "all",
+  } = props;
   const {
     activity,
     details,
@@ -501,6 +506,21 @@ export function TypingIndicator({
                 session.media,
               )}
               layout={threadRootId ? "thread" : "timeline"}
+              profile={
+                props.audience !== "humans" && openActivity && canOpenActivity
+                  ? {
+                      pubkey: firstAgent,
+                      session: props.session,
+                      channelId,
+                      canOpen: canOpenActivity,
+                      open: (target) =>
+                        openActivity(
+                          target,
+                          threadRootId ? { rootId: threadRootId } : undefined,
+                        ),
+                    }
+                  : undefined
+              }
             >
               <AgentChooser
                 key={`${channelId}:${threadRootId ?? ""}`}

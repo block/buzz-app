@@ -412,6 +412,13 @@ function MessageActivity(
           }))}
           picture={avatarMedia(primary.picture, session.media)}
           layout={props.messageLayout}
+          profile={{
+            pubkey: primary.agent,
+            session,
+            channelId,
+            canOpen,
+            open: props.open,
+          }}
         >
           {shown.map((entry) => (
             <TypingReplacement
@@ -451,6 +458,11 @@ type Entry = {
   records: ReturnType<typeof activityRecords>;
   turns: readonly ActivityTurn[];
 };
+
+/** The working agent's avatar and name retire with the bubble's trigger. */
+function retiring(trigger: HTMLElement | null) {
+  return trigger?.closest<HTMLElement>("[data-message-activity]") ?? trigger;
+}
 
 function ActivityBubble({
   entries,
@@ -525,7 +537,8 @@ function ActivityBubble({
       const focused = trigger.current?.ownerDocument.activeElement;
       if (
         focused &&
-        (trigger.current?.contains(focused) || popup.current?.contains(focused))
+        (retiring(trigger.current)?.contains(focused) ||
+          popup.current?.contains(focused))
       )
         retirement.current.onFocusedRemoval?.();
     },
@@ -534,7 +547,7 @@ function ActivityBubble({
   useLayoutEffect(() => {
     if (interactive) return;
     const source = popup.current;
-    const button = trigger.current;
+    const button = retiring(trigger.current);
     const document = (source ?? button)?.ownerDocument;
     const active = document?.activeElement;
     setExpanded(false);

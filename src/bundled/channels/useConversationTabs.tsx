@@ -73,6 +73,7 @@ export function useConversationTabs({
   isLive,
   openLink,
   fallbackFocus,
+  history,
   eligible,
   threadId,
   onOpenDrawer,
@@ -112,6 +113,9 @@ export function useConversationTabs({
   isLive(): boolean;
   openLink(url: string): boolean;
   fallbackFocus?: RefObject<HTMLElement | null>;
+  /** The conversation history, which takes focus back from a profile opener
+   * that a live row replaced while the profile was open. */
+  history?: RefObject<HTMLElement | null>;
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
   onOpenDrawer?(): void;
@@ -503,6 +507,27 @@ export function useConversationTabs({
       panelHistory.current.onVisitPanel?.(opening.current);
     tabState.select(id);
   };
+  // A live row can replace a profile's opener while the profile is shown
+  // (a working row giving way to its activity): focus returns to the newest
+  // control for the same profile, else to the messages it was among.
+  const successor = (trigger: HTMLElement | null | undefined) => {
+    const pubkey = trigger?.dataset.profilePubkey;
+    const scope = history?.current;
+    const live = (element: Element) =>
+      !element.closest('[inert], [hidden], [aria-hidden="true"]');
+    if (!pubkey || !scope?.isConnected || !live(scope)) return undefined;
+    return (
+      [
+        ...scope.querySelectorAll<HTMLElement>(
+          `[data-profile-pubkey="${CSS.escape(pubkey)}"]`,
+        ),
+      ]
+        .filter(live)
+        .at(-1) ??
+      scope.querySelector<HTMLElement>("[data-message-scroller]") ??
+      scope
+    );
+  };
   const afterClose = (id: string, trigger?: HTMLElement | null) => {
     if (id !== selectedTab) return;
     const index = rootTabIds.indexOf(id);
@@ -512,7 +537,9 @@ export function useConversationTabs({
       false,
     );
     if (!remaining.length) {
-      const target = trigger?.isConnected ? trigger : fallbackFocus?.current;
+      const target = trigger?.isConnected
+        ? trigger
+        : (successor(trigger) ?? fallbackFocus?.current);
       if (target) target.focus({ preventScroll: true });
       else focusSplit.current = true;
     }

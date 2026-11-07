@@ -162,10 +162,13 @@ export function ProfilePeek({
           {
             id?: string;
             onClick?: () => void;
+            "data-profile-pubkey"?: string;
           } & typeof focusRegion
         >,
         {
           id: triggerId,
+          // Lets focus find this profile's control in a row that replaces it.
+          "data-profile-pubkey": pubkey,
           onClick: openProfile,
           ...focusRegion,
           onFocus: () => {

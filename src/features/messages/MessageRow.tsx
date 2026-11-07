@@ -1,5 +1,6 @@
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import { AuthorLink } from "./AuthorLink";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
@@ -1151,38 +1152,12 @@ function MessageRowContent({
                   <span className={styles.authorWithStatus}>
                     <strong className={styles.author}>
                       {clickable && !stackPrevious ? (
-                        // The avatar is the group's keyboard stop and preview;
-                        // the name only answers a click. Text, not a button, so
-                        // a selection can start on it and a copy keeps it as
-                        // plain prose (no profile target).
-                        // biome-ignore lint/a11y/useSemanticElements: a <button> would block starting a text selection on the name
-                        <span
-                          role="button"
-                          tabIndex={-1}
-                          data-message-author=""
-                          className={styles.authorLink}
-                          onClick={(event) => {
-                            // A click arriving with text selected (the end of
-                            // a drag, or the second click of a double-click)
-                            // is a selection, not a request. A double-click's
-                            // first click opens the profile like any click.
-                            const selection =
-                              event.currentTarget.ownerDocument.getSelection();
-                            if (selection && !selection.isCollapsed) return;
-                            // WebKit skips focusing on pointer click, so the
-                            // profile tab's close would have no origin.
-                            event.currentTarget.focus();
-                            openLink(target);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" && event.key !== " ")
-                              return;
-                            event.preventDefault();
-                            openLink(target);
-                          }}
+                        <AuthorLink
+                          pubkey={row.authorId}
+                          onOpen={() => openLink(target)}
                         >
                           {authorName}
-                        </span>
+                        </AuthorLink>
                       ) : (
                         authorName
                       )}
@@ -1879,6 +1854,20 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
         stackPrevious={activity?.container !== "standalone"}
         picture={author.picture}
         layout={props.layout === "thread" ? "thread" : "timeline"}
+        profile={
+          props.canOpenLink
+            ? {
+                pubkey: author.pubkey,
+                session,
+                channelId: row.channelId,
+                canOpen: props.canOpenLink,
+                open: (target) =>
+                  props.onOpenLink(target, {
+                    rootId: row.threadRootId ?? row.id,
+                  }),
+              }
+            : undefined
+        }
       >
         <div className={styles.standaloneActivity}>{content}</div>
       </AgentResponsePreview>

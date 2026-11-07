@@ -1314,6 +1314,7 @@ function ChannelWorkspace({
     openLink: (url) => openLink(url, { fromThread: true }),
     // A Solo conversation has no channel menu; its history takes focus instead.
     fallbackFocus: solo ? historyContainer : settingsTrigger,
+    history: historyContainer,
     openMembers: () => setMembersOpen(true),
     eligible: (entry) =>
       !entry.panel.channelMenu ||

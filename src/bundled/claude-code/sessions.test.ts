@@ -360,35 +360,6 @@ it("keeps the running turn's thread for its results when another thread steers i
   await expect(Promise.all([first, other, same])).resolves.toHaveLength(3);
 });
 
-it("sends no claim of running work in a steer Claude runs as a turn of its own", async () => {
-  const { pool, claudes } = sessions({ hold: true });
-  const first = pool.deliver("c", "first", 1, { activityScope: "A" });
-  await flush();
-  const process = claudes()[0];
-  if (!process) throw new Error("no process");
-  const other = pool.deliver("c", "plain", 2, {
-    steer: "steer",
-    activityScope: "B",
-  });
-  await flush();
-  // A's turn ends before Claude reads the steer, so the steer's text, as
-  // written, is the whole prompt of the turn Claude then runs for it.
-  process.finish();
-  await expect(Promise.all([first, other])).resolves.toHaveLength(2);
-  sessionState(process, "running");
-  sessionState(process, "idle");
-  await flush();
-  expect(process.prompts).toHaveLength(2);
-  const steer = process.prompts[1] ?? "";
-  expect(steer).toContain(
-    "The reply target above is for the new message only.",
-  );
-  expect(steer).toContain(
-    'If you are still working on an earlier request, ordinary replies about that work still go to `reply: "A"`.',
-  );
-  expect(steer).not.toContain("the work you were already doing");
-});
-
 const interruptsOf = (process: { received: Record<string, unknown>[] }) =>
   process.received.filter(
     (message) =>

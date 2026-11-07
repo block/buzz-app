@@ -1,5 +1,5 @@
-/* Reserve the inheritance marker; model and effort names share the remaining
-   space and truncate independently instead of painting over one another. */
+/* Reserve the inheritance marker; model and effort names keep their own
+   widths and truncate independently instead of painting over one another. */
 .value {
   display: flex;
   align-items: center;
@@ -10,7 +10,7 @@
 .model,
 .effort {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

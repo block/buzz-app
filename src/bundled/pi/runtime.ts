@@ -663,6 +663,7 @@ export class PiRuntime {
           context,
           text,
           steer: steerPrompt(text),
+          scope: topLevel ? channel : root,
           request,
           ...(attention ? { reply: where, refresh: true } : {}),
           ...picked,

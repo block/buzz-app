@@ -7,6 +7,7 @@ import { Header } from "../../shared/design-system/ui/Header";
 import { useReducedMotion } from "motion/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { formatFullTimestamp } from "../../shared/datetime";
 import { useClockFormat } from "../../shared/clock-preference";
@@ -51,7 +52,7 @@ const MESSAGES: Record<MemorySnapshot["status"], string> = {
   ready: "Memory isn't available here.",
 };
 
-const REMARK = [remarkGfm];
+const REMARK = [remarkGfm, remarkBreaks];
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const MONTH_SECONDS = 30 * 24 * 60 * 60;
 const TWO_MONTHS_SECONDS = 2 * MONTH_SECONDS;

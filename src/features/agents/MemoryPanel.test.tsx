@@ -129,6 +129,61 @@ it("shows core first, then other memories in Markdown accordions", async () => {
   expect(within(references).queryByText("core")).not.toBeInTheDocument();
 });
 
+it("renders rich memory blocks and preserves authored line breaks", async () => {
+  const { container } = setup(async () => ({
+    entries: [
+      entry(
+        "core",
+        "# Priorities\n\nFirst line.\nSecond line.\n\n" +
+          "- **Keep** context\n- *Read* sources\n\n" +
+          "> Remember why.\n\n`inline`\n\n```ts\nconst safe = true;\n```\n\n" +
+          "| Topic | Status |\n| --- | --- |\n| Memory | Ready |\n\n" +
+          "[Guide](https://example.com/guide)",
+      ),
+    ],
+    partial: false,
+  }));
+  await openCore();
+  expect(
+    screen.getByRole("heading", { name: "Priorities", level: 1 }),
+  ).toBeVisible();
+  const paragraph = screen.getByText(/First line/);
+  expect(paragraph.querySelector("br")).toBeInTheDocument();
+  expect(screen.getAllByRole("listitem")).toHaveLength(2);
+  expect(screen.getByText("Keep").tagName).toBe("STRONG");
+  expect(screen.getByText("Read").tagName).toBe("EM");
+  expect(container.querySelector("blockquote")).toHaveTextContent(
+    "Remember why.",
+  );
+  expect(container.querySelector("pre > code")).toHaveTextContent(
+    "const safe = true;",
+  );
+  expect(screen.getByRole("table")).toHaveTextContent("MemoryReady");
+  expect(screen.getByRole("link", { name: "Guide" })).toHaveAttribute(
+    "href",
+    "https://example.com/guide",
+  );
+});
+
+it("keeps memory images and raw HTML inert and unsafe links inactive", async () => {
+  const { container } = setup(async () => ({
+    entries: [
+      entry(
+        "core",
+        "![Private diagram](https://example.com/private.png)\n\n" +
+          '<img src="https://example.com/track.png">\n\n' +
+          "[Unsafe](javascript:alert%281%29)",
+      ),
+    ],
+    partial: false,
+  }));
+  await openCore();
+  expect(screen.getByText("Private diagram")).toBeVisible();
+  expect(screen.getByText("Unsafe")).toBeVisible();
+  expect(container.querySelector("img, script, iframe")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+});
+
 it("explains memory scope for the current community and follows its presentation", async () => {
   const user = userEvent.setup();
   let known = {

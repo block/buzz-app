@@ -1756,11 +1756,12 @@ export class CodexRuntime {
                 request.answered();
                 return;
               }
+              const running = active.requests[0]?.replyRoot;
               await active.rpc.request("turn/steer", {
                 threadId: active.threadId,
                 expectedTurnId: active.turnId,
                 input: input(
-                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey))}`,
+                  `${context}${request.project ?? ""}${turnInput(request.agent.key, request.event, request.conversation, text, true, noteOf(request), wake, this.reads(request.agent.key)?.authorNames?.(request.event.pubkey), running !== request.replyRoot ? running : undefined)}`,
                 ),
               });
               active.reply = request;

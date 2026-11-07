@@ -356,7 +356,7 @@ export type MessageComposerProps = {
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
   autoFocus?: boolean | RefObject<HTMLElement | null>;
-  focusRequest?: number;
+  focusRequest?: number | AbortSignal;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
@@ -601,7 +601,6 @@ function Composer({
   useLayoutEffect(() => {
     if (disabled || !active) sendAttempt.current?.abort();
   }, [disabled, active]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(() => () => sendAttempt.current?.abort(), [replyParentId]);
   const inputId = useId();
   const draftKey =
@@ -1198,7 +1197,6 @@ function Composer({
     setLinkEdit(null);
     completion.invalidate();
   });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: A changed draft or edit target retires feedback about the previous paste.
   useEffect(() => {
     setPasteTooLong(false);
   }, [draft, editing.target]);
@@ -1981,7 +1979,6 @@ function Composer({
     }
     return found;
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Reconciles resolvers against the chips in the draft; the helpers read current refs.
   useEffect(() => {
     const alive = new Set(value.pending?.map((chip) => chip.id));
     for (const [id, entry] of pendingMentions.current) {

@@ -349,3 +349,15 @@ unrelated settings and credentials, and so do the release-only
 `BUZZ_UPDATER_*` inputs. `BUZZ_` values reach child processes of the app, so keep them
 to public configuration. Direct `pnpm tauri build` and `cargo` runs do not load
 `.env.local` this way.
+
+On Linux, when the NVIDIA kernel module is loaded and GTK will use Wayland, the
+app sets `WEBKIT_FORCE_DMABUF_RENDERER=1` and `__NV_DISABLE_EXPLICIT_SYNC=1`
+before WebKit starts. Ubuntu's WebKitGTK package turns GPU rendering off on
+NVIDIA unless the first is set, and Wayland then closes the app with protocol
+error 71 unless the second is set. To restore WebKit's default, start the app
+with `WEBKIT_FORCE_DMABUF_RENDERER=0` in its own environment, such as in a
+desktop entry's `Exec=env ...` line. `.env.local` does not forward this name.
+The app also leaves both alone when `WEBKIT_DISABLE_DMABUF_RENDERER` or
+`WEBKIT_DISABLE_COMPOSITING_MODE` is set to anything but `0`, or when
+`__NV_DISABLE_EXPLICIT_SYNC` is set to anything but `1`. Child processes
+inherit whatever the app sets.

@@ -1669,8 +1669,10 @@ it.each([false, true])(
         ),
       )) as never);
     const deliver = async (event: RelayEvent) => {
-      await f.deliver(event);
-      await flush(100);
+      const workingUntil = vi.fn<Delivery["workingUntil"]>();
+      await f.deliver(event, { workingUntil });
+      await vi.waitFor(() => expect(workingUntil).toHaveBeenCalledOnce());
+      await workingUntil.mock.calls[0]?.[0];
       return f.goose()?.turns.at(-1)?.text ?? "";
     };
     await deliver(first);

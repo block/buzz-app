@@ -4,6 +4,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -14,7 +15,12 @@ import { XIcon } from "../icons";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 
-const ToastHost = createContext("");
+type ToastHostState = {
+  id: string;
+  active: boolean;
+  parent: ToastHostState | undefined;
+};
+const ToastHost = createContext<ToastHostState | undefined>(undefined);
 type Tone = "error" | "warning" | "info" | "success";
 
 /** Mount once in the host. Sonner owns announcements, expiry and swiping. */
@@ -26,6 +32,8 @@ export function ToastProvider({
   portalContainer?: HTMLElement | undefined;
 }) {
   const id = useId();
+  const parent = useContext(ToastHost);
+  const [host] = useState(() => ({ id, active: true, parent }));
   useEffect(() => {
     // Sonner's global hotkey must not bypass the host's modal focus boundary.
     const guardModal = (event: KeyboardEvent) => {
@@ -39,17 +47,18 @@ export function ToastProvider({
     window.addEventListener("keydown", guardModal, true);
     return () => window.removeEventListener("keydown", guardModal, true);
   }, []);
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    host.active = true;
+    return () => {
+      host.active = false;
       for (const notice of toast.getToasts()) {
         if ("toasterId" in notice && notice.toasterId === id)
           toast.dismiss(notice.id);
       }
-    },
-    [id],
-  );
+    };
+  }, [id, host]);
   return (
-    <ToastHost value={id}>
+    <ToastHost value={host}>
       {createPortal(
         <Toaster
           id={id}
@@ -188,7 +197,7 @@ export function ToastNotice({
   navigation?: ToastCardProps["navigation"];
 }) {
   const id = useId();
-  const toasterId = useContext(ToastHost);
+  const toasterId = useContext(ToastHost)?.id ?? "";
   const [source] = useState(() =>
     noticeContent({ title, description, tone, children }),
   );
@@ -257,15 +266,19 @@ export function useToastDismiss() {
   return toast.dismiss;
 }
 
-/** Completed actions outlive their originating row. */
+/** Completed actions use the nearest surviving host after their source closes. */
 export function useToastNotification() {
-  const toasterId = useContext(ToastHost);
+  const host = useContext(ToastHost);
   return (
     title: string,
     tone: "success" | "error" | "info",
     action?: { label: string; onClick(): void; timeout?: number },
-  ) =>
-    String(
+  ) => {
+    let destination = host;
+    while (destination && !destination.active) destination = destination.parent;
+    // A closed provider tree has no destination; an unscoped caller keeps Sonner's default.
+    if (host && !destination) return "";
+    return String(
       toast.custom(
         (id) => (
           <ToastCard
@@ -290,9 +303,10 @@ export function useToastNotification() {
         ),
         {
           id: crypto.randomUUID(),
-          toasterId,
+          toasterId: destination?.id ?? "",
           duration: action ? (action.timeout ?? 8000) : 4000,
         },
       ),
     );
+  };
 }

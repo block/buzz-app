@@ -1464,10 +1464,17 @@ it("loads directory pages on scroll and ignores a late previous search", async (
 
 it("keeps loaded pages when clearing search or returning to New message, scoped to the session", async () => {
   const t = setup();
-  t.directMessages.people.mockImplementation(async (query, page) => ({
-    people: query ? people.slice(2, 3) : people.slice(page - 1, page),
-    hasMore: !query && page < 3,
-  }));
+  let releasePage!: () => void;
+  const pageReady = new Promise<void>((resolve) => {
+    releasePage = resolve;
+  });
+  t.directMessages.people.mockImplementation(async (query, page) => {
+    if (!query && page === 3) await pageReady;
+    return {
+      people: query ? people.slice(2, 3) : people.slice(page - 1, page),
+      hasMore: !query && page < 3,
+    };
+  });
   const view = t.mount();
   await screen.findByRole("option", { name: "Person 1" });
   fireEvent.scroll(screen.getByRole("listbox"));
@@ -1484,12 +1491,22 @@ it("keeps loaded pages when clearing search or returning to New message, scoped 
   const requests = t.directMessages.people.mock.calls.length;
   view.unmount();
   const reopened = t.mount();
-  await waitFor(() => expect(recipient()).toBeEnabled());
-  await waitFor(() =>
+  try {
+    await waitFor(() => expect(recipient()).toBeEnabled());
+    await waitFor(() =>
+      expect(t.directMessages.people).toHaveBeenCalledTimes(requests + 1),
+    );
+    expect(t.directMessages.people).toHaveBeenLastCalledWith(
+      "",
+      3,
+      expect.any(AbortSignal),
+    );
     expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual(
       loaded,
-    ),
-  );
+    );
+  } finally {
+    releasePage();
+  }
   await screen.findByRole("option", { name: "Person 3" });
   expect(t.directMessages.people).toHaveBeenCalledTimes(requests + 1);
   expect(t.directMessages.people).toHaveBeenLastCalledWith(

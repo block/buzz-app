@@ -387,6 +387,7 @@ test("launch waits for the initial sidebar and message history before revealing 
     await expect(page.locator("#root")).toHaveAttribute("inert", "");
     await expect(page.locator("#root")).toHaveAttribute("aria-hidden", "true");
     await expect(page.locator("#buzz-toast-root")).toHaveAttribute("inert", "");
+    await expect(page.locator("#buzz-toast-root")).toHaveCSS("display", "none");
     await expect(page.locator("#buzz-toast-root")).toHaveAttribute(
       "aria-hidden",
       "true",
@@ -421,6 +422,10 @@ test("launch waits for the initial sidebar and message history before revealing 
     await expect(page.locator("#root")).not.toHaveAttribute("inert");
     await expect(page.locator("#root")).not.toHaveAttribute("aria-hidden");
     await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute("inert");
+    await expect(page.locator("#buzz-toast-root")).not.toHaveCSS(
+      "display",
+      "none",
+    );
     await expect(page.locator("#buzz-toast-root")).not.toHaveAttribute(
       "aria-hidden",
     );

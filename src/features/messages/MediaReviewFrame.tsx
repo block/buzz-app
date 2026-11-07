@@ -1,3 +1,5 @@
+import { MediaMenuDownloadStatus } from "./MediaDownloadAction";
+import { MediaViewerToasts } from "./MediaViewerToasts";
 import { useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -140,37 +142,40 @@ export function MediaReviewFrame({
         }}
         aria-label={label}
       >
-        <div
-          className={styles.mediaReviewHeading}
-          title={title}
-          data-review-chrome=""
-          data-tauri-drag-region
-        >
-          <PanelHeader
-            title={<PanelHeaderLabel title={title} />}
-            actions={
-              <>
-                {actions}
-                <IconButton
-                  size="compact"
-                  type="button"
-                  aria-label="Close fullscreen viewer"
-                  data-review-dismiss=""
-                  onClick={(event) => dismiss(event.detail > 0)}
-                  icon={<XIcon size={20} aria-hidden="true" />}
-                />
-              </>
-            }
-          />
-        </div>
-        <div
-          className={`${styles.mediaReviewStage} dark`}
-          data-color-mode="dark"
-          data-review-stage=""
-        >
-          {children}
-        </div>
-        {sidebar}
+        <MediaViewerToasts>
+          <div
+            className={styles.mediaReviewHeading}
+            title={title}
+            data-review-chrome=""
+            data-tauri-drag-region
+          >
+            <PanelHeader
+              title={<PanelHeaderLabel title={title} />}
+              actions={
+                <>
+                  {actions}
+                  <IconButton
+                    size="compact"
+                    type="button"
+                    aria-label="Close fullscreen viewer"
+                    data-review-dismiss=""
+                    onClick={(event) => dismiss(event.detail > 0)}
+                    icon={<XIcon size={20} aria-hidden="true" />}
+                  />
+                </>
+              }
+            />
+            <MediaMenuDownloadStatus />
+          </div>
+          <div
+            className={`${styles.mediaReviewStage} dark`}
+            data-color-mode="dark"
+            data-review-stage=""
+          >
+            {children}
+          </div>
+          {sidebar}
+        </MediaViewerToasts>
       </section>
     </div>,
     document.body,

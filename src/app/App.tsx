@@ -26,7 +26,7 @@ import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
-import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadAction";
+import { MediaMenuDownloadProvider } from "../features/messages/MediaDownloadAction";
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
@@ -125,7 +125,9 @@ function ConnectedApp({ services }: { services: AppServices }) {
           installRequests={services.pluginInstallRequests}
           navigation={services.navigation}
         >
-          <ConnectedAppContent services={services} />
+          <MediaMenuDownloadProvider>
+            <ConnectedAppContent services={services} />
+          </MediaMenuDownloadProvider>
         </PluginUpdates>
       </AgentsContext.Provider>
     </ToastProvider>
@@ -707,7 +709,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             relay={services.relay}
           />
           <InterruptedNotice agents={services.agents} />
-          <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
           <TeamUpdateReview agents={services.agents} />

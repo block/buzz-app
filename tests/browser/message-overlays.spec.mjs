@@ -263,10 +263,12 @@ test("unavailable dark media review keeps Retry readable in a light host", async
     document.documentElement.dataset.colorMode = "light";
   });
   const dialog = page.getByRole("dialog", { name: "Image viewer" });
-  const retry = dialog.getByRole("button", { name: "Retry", exact: true });
-  await expect(dialog.getByRole("alert").first()).toContainText(
-    "Original message unavailable.",
-  );
+  const message = dialog
+    .getByRole("alert")
+    .filter({ has: page.getByRole("button", { name: "Retry", exact: true }) });
+  const retry = message.getByRole("button", { name: "Retry", exact: true });
+  await expect(message).toContainText("Original message unavailable.");
+  await expect(retry).toBeVisible();
   await expect(retry).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(retry).toHaveCSS("background-color", "rgb(35, 35, 35)");
   await retry.hover();

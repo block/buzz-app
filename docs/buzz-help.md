@@ -415,6 +415,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   and, when you are elsewhere, can open it (except a huddle). Your message and
   files are back in that conversation's composer. Do not
   promise support for every file type or size.
+- **Fullscreen media** temporarily hides background notices, including ready
+  updates. Close the viewer to use a ready update notice again. Actions inside
+  the viewer, including copying comment code and native image/video menu
+  downloads, show their result inside the open viewer. Comment actions such as
+  Stop and copying code report results in the app if the viewer closes first.
+  If another viewer hides that feedback, its expiry pauses until it is visible again.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.

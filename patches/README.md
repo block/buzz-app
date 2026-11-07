@@ -1,3 +1,18 @@
+# Sonner 2.0.8 modal expiry
+
+Both ESM and CommonJS bundles pause each toast's existing finite expiry while an
+ancestor is inert. This preserves completed-action feedback routed from a closed
+viewer to the app host when another viewer hides that host. An attribute observer
+watches the mounted toast's ancestor chain and disconnects on unmount. Sonner
+retains ownership of remaining time, interaction pauses, dismissal and removal;
+there is no second timer or notification queue.
+
+`Toast.test.tsx` covers arrival before and during inertness, exact remaining
+lifetime after reveal, and teardown. `use-work-stops.test.tsx` exercises a real
+deferred Stop rejection with an inert enclosing host. The existing updates browser
+journey covers a deferred comment-copy failure across real viewer close/reopen,
+hidden beyond its lifetime and then visible before expiry resumes.
+
 # Virtua 0.53.5 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from

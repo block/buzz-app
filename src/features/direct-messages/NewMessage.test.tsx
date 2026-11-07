@@ -288,6 +288,7 @@ it("finds a hosted agent by its owned name and sends without local custody", asy
   expect(t.directMessages.open).toHaveBeenCalledWith(
     [hosted.pubkey],
     expect.any(AbortSignal),
+    false,
   );
   expect(t.messages.send).toHaveBeenCalledOnce();
 });
@@ -1096,8 +1097,8 @@ it("keeps a failed draft editable and resolves changed recipients again", async 
     expect(t.onStarted).toHaveBeenCalledWith(channel, "d".repeat(64)),
   );
   expect(t.directMessages.open.mock.calls).toEqual([
-    [[people[0]?.pubkey], expect.any(AbortSignal)],
-    [[people[0]?.pubkey, people[1]?.pubkey], expect.any(AbortSignal)],
+    [[people[0]?.pubkey], expect.any(AbortSignal), false],
+    [[people[0]?.pubkey, people[1]?.pubkey], expect.any(AbortSignal), false],
   ]);
   expect(t.outbox.dismiss).toHaveBeenCalledOnce();
 });
@@ -1143,6 +1144,7 @@ it("holds Send while the To field has text that is not a recipient", async () =>
   expect(t.directMessages.open).toHaveBeenCalledWith(
     [people[0]?.pubkey],
     expect.any(AbortSignal),
+    false,
   );
 });
 
@@ -1964,6 +1966,7 @@ it("labels people by verified identity, never an editable handle, and opens the 
   expect(t.directMessages.open).toHaveBeenCalledWith(
     [aleksandr.pubkey],
     expect.any(AbortSignal),
+    false,
   );
 });
 

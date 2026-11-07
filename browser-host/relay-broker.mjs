@@ -2665,9 +2665,12 @@ export function relayBrokerPlugin({
           if (directMessage) {
             try {
               filters = directMessageEvent(filters, viewer, key);
-            } catch {
+            } catch (error) {
               return json(res, 400, {
-                error: "Choose between one and eight other people.",
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Choose between one and eight other people.",
                 sent: false,
               });
             }

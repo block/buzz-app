@@ -20,6 +20,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 import type { LiveCallbacks } from "../../features/relay/live";
+import type { DirectMessageHistory } from "../../features/relay/transport";
 import { createRelaySession } from "../../features/relay/session";
 import type { VerifiedProfileAuthority } from "../../features/relay/verified-profile";
 import {
@@ -99,8 +100,9 @@ async function setup(
   missingNames = false,
   localAgent = false,
   navigation?: {
-    canOpenLink(target: string): boolean;
-    onOpenLink(target: string, returnFocus?: HTMLElement): boolean;
+    canOpenLink?(target: string): boolean;
+    onOpenLink?(target: string, returnFocus?: HTMLElement): boolean;
+    onOpenConversation?(channelId: string): boolean;
   },
   agents?: Agents,
   options: {
@@ -120,6 +122,13 @@ async function setup(
     verifiedProfiles?: VerifiedProfileAuthority;
     visibility?: "private" | "public";
     joinRole?: "member" | "guest";
+    /** Lets the viewer add to DMs; a person added without history lands in
+     * a new DM, `forkId`. */
+    directMessages?: boolean;
+    /** The person's profile claims to be an agent; the relay disagrees. */
+    personClaimsAgent?: boolean;
+    /** The DM is the relay's moderation DM with the viewer. */
+    moderation?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -140,7 +149,27 @@ async function setup(
       (i + 10000).toString(16).padStart(64, "0"),
     ),
     ...(options.memberProfiles ?? []).map((event) => event.pubkey),
+    ...(options.moderation ? [relay.pubkey] : []),
   ];
+  const forkId = "22222222-2222-4222-8222-222222222222";
+  let forkMembers: string[] | undefined;
+  const openDirectMessage = vi.fn(
+    async (
+      pubkeys: readonly string[],
+      _signal: AbortSignal,
+      into?: DirectMessageHistory,
+    ) => {
+      if (failure) throw new Error(failure);
+      // As the relay: only the history tag joins this DM in place.
+      if (into?.includeHistory) {
+        members.push(...pubkeys);
+        clock++;
+        return id;
+      }
+      forkMembers = [...members, ...pubkeys];
+      return forkId;
+    },
+  );
   let live: LiveCallbacks | undefined;
   let clock = 1700000000;
   let failure = "";
@@ -159,7 +188,10 @@ async function setup(
       members.push(_event.tags.find((tag) => tag[0] === "p")?.[1] ?? target);
     clock++;
   });
-  const personProfile = profile(person, { name: "Morgan" });
+  const personProfile = profile(person, {
+    name: "Morgan",
+    ...(options.personClaimsAgent ? { is_agent: true } : {}),
+  });
   const stableEvents = [
     signed(relay, {
       kind: 39000,
@@ -211,7 +243,17 @@ async function setup(
       await options.pendingMemberNames;
     if (filters.some((filter) => filter.kinds?.includes(39002)))
       await rosterRead;
-    return [roster(relay, id, members, clock), ...stableEvents].filter(
+    const fork = forkMembers
+      ? [
+          signed(relay, {
+            kind: 39000,
+            content: "",
+            tags: [["d", forkId], ["t", "dm"], ["private"]],
+          }),
+          roster(relay, forkId, forkMembers, clock),
+        ]
+      : [];
+    return [roster(relay, id, members, clock), ...fork, ...stableEvents].filter(
       (event) => filters.some((filter) => matchesEvent(event, filter)),
     );
   });
@@ -240,6 +282,7 @@ async function setup(
         ? { verifiedProfiles: options.verifiedProfiles }
         : {}),
       readAgentLibrary,
+      ...(options.directMessages ? { openDirectMessage } : {}),
       writer: {
         kinds: [
           9,
@@ -300,6 +343,8 @@ async function setup(
     publish,
     query,
     readAgentLibrary,
+    openDirectMessage,
+    forkId,
     session: owner.session,
     relay,
     person,
@@ -1504,11 +1549,13 @@ it("shows the real rejection and retries without discarding the query", async ()
   await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Morgan is in the channel.");
 });
-it("DMs are view-only and never search outside their members", async () => {
+it("DMs cannot add people without a connection that adds to them", async () => {
   const t = await setup("dm");
   await t.user.type(screen.getByRole("searchbox"), "Morgan");
   expect(
-    screen.getByText("DM membership cannot be changed here."),
+    screen.getByText(
+      "Adding people to this DM is unavailable in this connection.",
+    ),
   ).toBeVisible();
   expect(
     screen.queryByRole("region", { name: "Not in this channel" }),
@@ -1528,6 +1575,136 @@ it("DMs are view-only and never search outside their members", async () => {
       filters.some((filter) => filter.search),
     ),
   ).toBe(false);
+});
+it("the moderation DM offers no way to add anyone", async () => {
+  const t = await setup("dm", false, false, undefined, undefined, {
+    directMessages: true,
+    moderation: true,
+  });
+  await t.user.type(screen.getByRole("searchbox"), "Morgan");
+  expect(screen.getByText("People can’t be added to this DM.")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /^Add Morgan/ }),
+  ).not.toBeInTheDocument();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});
+it("a person joins a DM with its history when the adder includes it", async () => {
+  const t = await setup("dm", false, false, undefined, undefined, {
+    directMessages: true,
+    extraMembers: 1,
+  });
+  await t.user.click(await t.search());
+  const choice = await screen.findByRole("alertdialog", {
+    name: "Add Morgan?",
+  });
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  await t.user.click(
+    within(choice).getByRole("button", { name: "Include history" }),
+  );
+  await screen.findByText("Morgan added.");
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.person.pubkey],
+    expect.any(AbortSignal),
+    { channelId: "11111111-1111-4111-8111-111111111111", includeHistory: true },
+  );
+  expect(t.publish).not.toHaveBeenCalled();
+});
+it("a person added without history opens a new DM of everyone", async () => {
+  const onOpenConversation = vi.fn(() => true);
+  const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
+    directMessages: true,
+    extraMembers: 1,
+  });
+  await t.user.click(await t.search());
+  await t.user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Add Morgan?" }),
+    ).getByRole("button", { name: "Start new DM" }),
+  );
+  await vi.waitFor(() =>
+    expect(onOpenConversation).toHaveBeenCalledWith(t.forkId),
+  );
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.person.pubkey],
+    expect.any(AbortSignal),
+    {
+      channelId: "11111111-1111-4111-8111-111111111111",
+      includeHistory: false,
+    },
+  );
+});
+it("a person added to a DM of one person and their agents starts a new DM without asking", async () => {
+  const onOpenConversation = vi.fn(() => true);
+  const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
+    directMessages: true,
+  });
+  await t.user.click(await t.search());
+  await vi.waitFor(() =>
+    expect(onOpenConversation).toHaveBeenCalledWith(t.forkId),
+  );
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.person.pubkey],
+    expect.any(AbortSignal),
+    {
+      channelId: "11111111-1111-4111-8111-111111111111",
+      includeHistory: false,
+    },
+  );
+});
+it("cancelling the choice adds no one", async () => {
+  const t = await setup("dm", false, false, undefined, undefined, {
+    directMessages: true,
+    extraMembers: 1,
+  });
+  await t.user.click(await t.search());
+  await t.user.click(
+    within(
+      await screen.findByRole("alertdialog", { name: "Add Morgan?" }),
+    ).getByRole("button", { name: "Cancel" }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});
+it("an agent joins a DM directly, without a history choice", async () => {
+  const t = await setup("dm", false, false, undefined, undefined, {
+    directMessages: true,
+  });
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  await t.user.click(
+    await screen.findByRole("button", { name: /^Add Fixture agent/ }),
+  );
+  await screen.findByText("Fixture agent added.");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.agent.pubkey],
+    expect.any(AbortSignal),
+    {
+      channelId: "11111111-1111-4111-8111-111111111111",
+      includeHistory: true,
+    },
+  );
+});
+it("someone whose profile claims to be an agent still joins this DM", async () => {
+  const onOpenConversation = vi.fn(() => true);
+  const t = await setup("dm", false, false, { onOpenConversation }, undefined, {
+    directMessages: true,
+    personClaimsAgent: true,
+  });
+  await t.user.click(await t.search());
+  await screen.findByText("Morgan added.");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(onOpenConversation).not.toHaveBeenCalled();
+  expect(t.openDirectMessage).toHaveBeenCalledWith(
+    [t.person.pubkey],
+    expect.any(AbortSignal),
+    {
+      channelId: "11111111-1111-4111-8111-111111111111",
+      includeHistory: true,
+    },
+  );
 });
 it("Escape closes the dialog and restores focus to its header button", async () => {
   const t = await setup();

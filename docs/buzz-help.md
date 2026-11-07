@@ -327,6 +327,15 @@ revokes all of them, and a pairing unused for 30 days expires.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Adding to a DM**: open the DM's access dialog and search for someone to
+  add. An agent joins right away and can read the DM's earlier messages. For a
+  person, choose **Include history** to add them to this DM with its earlier
+  messages, or **Start new DM** to message everyone in a new DM without the
+  earlier messages.
+  After Include history, messaging only the original people starts a new DM.
+  If the people you'd end up with already have a DM, Buzz opens that one
+  instead. A DM can include up to nine people; agents don't count. Removing
+  people from a DM isn't available.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,

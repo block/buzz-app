@@ -71,6 +71,7 @@ function AppShellContent({
   settingsCards,
   federatedIdentity,
   accountActions,
+  bindStatusSheet,
   appearance,
   pluginRecommendations = 0,
   searchServices,
@@ -102,6 +103,7 @@ function AppShellContent({
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   accountActions: AccountActionsService;
+  bindStatusSheet: (open: () => boolean) => () => void;
   appearance: Appearance;
   /** Managed plugin recommendations awaiting review, pointed out beside Plugins. */
   pluginRecommendations?: number;
@@ -375,6 +377,7 @@ function AppShellContent({
             <ProfileButton
               communities={communities}
               accountActions={accountActions}
+              bindStatusSheet={bindStatusSheet}
               settingsSelected={selected === "settings"}
               appearance={appearance}
               pluginRecommendations={pluginRecommendations}

@@ -677,6 +677,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           onInviteClose={services.invites.clear}
           settingsCards={services.settingsCards}
           accountActions={services.accountActions}
+          bindStatusSheet={services.statusSheet.bind}
           appearance={services.appearance}
           pluginRecommendations={pluginRecommendations}
           searchServices={services}

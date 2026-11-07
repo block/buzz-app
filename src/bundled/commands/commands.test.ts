@@ -1,5 +1,5 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   SlashCommand,
@@ -7,6 +7,10 @@ import type {
 } from "../../features/conversation/contracts";
 import { listSlashCommands, slashQuery } from "./slash-query";
 import { shrug } from "./shrug";
+import { choosePresence } from "./presence";
+import { parseStatus, runStatus } from "./status";
+import type { ComposerSession } from "../../features/messages/composer-session";
+import type { PresenceControl } from "../../features/presence/activity";
 
 const wire = "¯" + "\\".repeat(3) + "_(ツ)" + "\\" + "_/¯";
 
@@ -87,3 +91,163 @@ it("lists a scoped command only in its scopes", () => {
   expect(names("thread")).toEqual(["away", "shrug"]);
   expect(names(undefined)).toEqual(["shrug"]);
 });
+
+const shortcodes: Record<string, string> = {
+  tada: "🎉",
+  party: ":party:",
+};
+const resolve = vi.fn(async (code: string) => shortcodes[code]);
+
+it.each([
+  ["", { kind: "open" }],
+  ["clear", { kind: "clear" }],
+  ["CLEAR", { kind: "clear" }],
+  ["clear it", { kind: "set", emoji: "", text: "clear it" }],
+  [":tada: shipped", { kind: "set", emoji: "🎉", text: "shipped" }],
+  [":tada:", { kind: "set", emoji: "🎉", text: "" }],
+  [
+    ":party:   all  hands",
+    { kind: "set", emoji: ":party:", text: "all  hands" },
+  ],
+  [":nope: shipped", { kind: "set", emoji: "", text: ":nope: shipped" }],
+  [":nope:", { kind: "set", emoji: "", text: ":nope:" }],
+  ["tada shipped", { kind: "set", emoji: "", text: "tada shipped" }],
+  ["🎉 shipped", { kind: "set", emoji: "🎉", text: "shipped" }],
+  ["🎉", { kind: "set", emoji: "🎉", text: "" }],
+  ["👍🏽 ok", { kind: "set", emoji: "👍🏽", text: "ok" }],
+  ["❤️ love", { kind: "set", emoji: "❤️", text: "love" }],
+  ["1️⃣ first", { kind: "set", emoji: "1️⃣", text: "first" }],
+  ["👨‍👩‍👧 family", { kind: "set", emoji: "👨‍👩‍👧", text: "family" }],
+  ["🇺🇸 home", { kind: "set", emoji: "🇺🇸", text: "home" }],
+  ["🎉🎉 shipped", { kind: "set", emoji: "", text: "🎉🎉 shipped" }],
+  ["🎉shipped", { kind: "set", emoji: "", text: "🎉shipped" }],
+  ["in a meeting", { kind: "set", emoji: "", text: "in a meeting" }],
+  ["a", { kind: "set", emoji: "", text: "a" }],
+  ["1", { kind: "set", emoji: "", text: "1" }],
+])("reads the /status arguments %j", async (args, expected) => {
+  expect(await parseStatus(args, resolve)).toEqual(expected);
+});
+
+it("asks the resolver only about a lone :shortcode: first argument", async () => {
+  resolve.mockClear();
+  await parseStatus(":tada: :party: x", resolve);
+  await parseStatus("see :tada:", resolve);
+  await parseStatus("🎉 :tada:", resolve);
+  await parseStatus(":a:b: x", resolve);
+  expect(resolve.mock.calls).toEqual([["tada"]]);
+});
+
+const statusSession = (
+  catalog: { status: "ready" | "error"; entries: { shortcode: string }[] },
+  after?: (status: "ready" | "error") => void,
+) => {
+  let current = catalog;
+  const settle = async () => {
+    if (after) {
+      after("ready");
+      current = { status: "ready", entries: [{ shortcode: "party" }] };
+    }
+  };
+  const save = vi.fn(async () => {});
+  const emoji = {
+    snapshot: () => current,
+    ensure: vi.fn(() => settle()),
+    refresh: vi.fn(() => settle()),
+  };
+  return {
+    emoji,
+    save,
+    session: { emoji, statuses: { save } } as unknown as ComposerSession,
+  };
+};
+const sheet = { open: () => true };
+
+it("retries a failed emoji catalog before reading an unknown shortcode, and refuses to guess while it is not ready", async () => {
+  const recovering = statusSession({ status: "error", entries: [] }, () => {});
+  await expect(
+    runStatus(
+      ":party: ship",
+      recovering.session,
+      sheet,
+      new AbortController().signal,
+    ),
+  ).resolves.toBe("Status set");
+  expect(recovering.emoji.refresh).toHaveBeenCalledTimes(1);
+  expect(recovering.emoji.ensure).not.toHaveBeenCalled();
+  expect(recovering.save).toHaveBeenCalledWith(
+    { text: "ship", emoji: ":party:" },
+    expect.any(AbortSignal),
+  );
+
+  const stuck = statusSession({ status: "error", entries: [] });
+  await expect(
+    runStatus(
+      ":nope: ship",
+      stuck.session,
+      sheet,
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow("Could not load community emoji. Try again.");
+  expect(stuck.save).not.toHaveBeenCalled();
+});
+
+it("does not save a status once the command is aborted", async () => {
+  const controller = new AbortController();
+  const aborting = statusSession({ status: "ready", entries: [] });
+  aborting.emoji.ensure.mockImplementation(async () => {
+    controller.abort();
+  });
+  await expect(
+    runStatus(":tada: ship", aborting.session, sheet, controller.signal),
+  ).rejects.toThrow();
+  expect(aborting.save).not.toHaveBeenCalled();
+
+  const passing = statusSession({ status: "ready", entries: [] });
+  const running = new AbortController();
+  await expect(
+    runStatus("clear", passing.session, sheet, running.signal),
+  ).resolves.toBe("Status cleared");
+  expect(passing.save).toHaveBeenCalledWith(
+    { text: "", emoji: "" },
+    running.signal,
+  );
+
+  const plain = statusSession({ status: "ready", entries: [] });
+  const early = new AbortController();
+  early.abort();
+  await expect(
+    runStatus("clear", plain.session, sheet, early.signal),
+  ).rejects.toThrow();
+  expect(plain.save).not.toHaveBeenCalled();
+});
+
+const control = (
+  accepted: boolean,
+  error?: string,
+): [PresenceControl, ReturnType<typeof vi.fn>] => {
+  const setPreference = vi.fn(() => accepted);
+  return [
+    {
+      setPreference,
+      snapshot: () => ({ status: "online", preference: "auto", error }),
+    },
+    setPreference,
+  ];
+};
+
+it.each([
+  ["away", true, undefined, undefined],
+  ["auto", true, undefined, undefined],
+  ["away", false, undefined, "Could not change your availability."],
+  ["auto", false, undefined, "Could not change your availability."],
+  ["away", true, "Could not save your status.", "Could not save your status."],
+] as const)(
+  "sets %s and reports a missing viewer or an unsaved presence change (accepted %s, error %s)",
+  (target, accepted, error, failure) => {
+    const [presence, setPreference] = control(accepted, error);
+    if (failure)
+      expect(() => choosePresence(presence, target)).toThrow(failure);
+    else expect(() => choosePresence(presence, target)).not.toThrow();
+    expect(setPreference).toHaveBeenCalledExactlyOnceWith(target);
+  },
+);

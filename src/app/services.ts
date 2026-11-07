@@ -36,6 +36,7 @@ import { AgentsService } from "../features/agents/service";
 import { deviceSettings } from "./device-settings";
 import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
+import { createStatusSheet } from "../features/user-status/sheet";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { createInviteIntent } from "../features/communities/invite-intent";
@@ -134,6 +135,12 @@ export function createServices() {
     pending: communities.pendingSync,
     apply: communities.applySync,
   });
+  ctx.provide("presence", {
+    snapshot: communities.presence.snapshot,
+    setPreference: communities.presence.setPreference,
+  });
+  const statusSheet = createStatusSheet();
+  ctx.provide("statusSheet", statusSheet.sheet);
   const relay = communities.relay;
   const artifactStorage = new ArtifactStorageService(ctx);
   provideArtifactStoreSync(ctx, artifactStorage);
@@ -283,6 +290,7 @@ export function createServices() {
     firstRunFederatedIdentity,
     relay,
     communities,
+    statusSheet,
     invites,
     rejectedLinks,
     deepLinks,

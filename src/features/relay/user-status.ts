@@ -216,7 +216,7 @@ export function createUserStatuses(
       publish();
     };
   }
-  async function save(input: StatusInput) {
+  async function save(input: StatusInput, cancel?: AbortSignal) {
     if (
       closed ||
       !viewer ||
@@ -239,6 +239,7 @@ export function createUserStatuses(
     const signal = AbortSignal.any([
       controller.signal,
       AbortSignal.timeout(12000),
+      ...(cancel ? [cancel] : []),
     ]);
     try {
       // Fetch current own replacement before signing, including on a fresh installation.

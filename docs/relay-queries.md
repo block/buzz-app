@@ -1048,8 +1048,8 @@ again with nothing continuous. The grant reaches the session before anything
 the re-sent batch delivers, and before any report the browser broker holds back
 under backpressure (it writes live events at once). The window keeps the rows it
 holds when the grant arrives: while the relay left the channel out, the stream
-delivered nothing for it and a read was denied. Until a catch-up takes those
-rows, a continuous report does not resume the window, and
+delivered nothing for it and a read was denied. Until a catch-up started after
+the grant takes those rows (one already running may have read its head first), a continuous report does not resume the window, and
 the next catch-up (or the next drop's) pages back to them, past the rows the
 re-sent batch delivered. A report with nothing continuous and no grant since
 pages back to the rows held when it arrives, so a routine re-send after a

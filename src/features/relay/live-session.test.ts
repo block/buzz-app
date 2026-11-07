@@ -1958,6 +1958,38 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
+  it("keeps the rows held at a grant owed past a catch-up already running at its report", async () => {
+    // A catch-up whose head was read before access ended still runs when the
+    // grant, its re-sent batch's first row and that batch's report arrive.
+    const h = reconnectHarness();
+    try {
+      const seen = await verifiedThenDropped(h);
+      await resume(h, [], false);
+      const before = h.read();
+      await h.grant();
+      const fresh = message(h.alice, "c", "fresh", 60);
+      h.live.receive([fresh]);
+      await flush();
+      h.live.established("c");
+      await flush();
+      // The older head lands: it reaches the drop's rows and settles.
+      before.respond(h.page("head", [seen], seen));
+      await flush();
+      const hidden = message(h.alice, "c", "hidden", 30),
+        newer = message(h.alice, "c", "newer", 50);
+      h.read().respond(h.page("head", [fresh, newer], newer));
+      await flush();
+      const older = h.read();
+      expect(older.filters[0]).toMatchObject({ before_id: newer.id });
+      older.respond(h.page(h.cursor(newer), [hidden, seen], seen));
+      await flush();
+      expect(h.rows()).toEqual([seen.id, hidden.id, newer.id, fresh.id]);
+      expect(h.window().freshness).toBe("verified");
+    } finally {
+      h.owner.dispose();
+    }
+  });
+
   it("keeps the rows held at a grant when the stream drops again before its catch-up", async () => {
     const h = reconnectHarness();
     try {

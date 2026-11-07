@@ -4315,6 +4315,12 @@ export function createChannelStore(
       const valid = () => epoch === epochAtStart && live(retained, generation);
       if (!retained.snapshot.rows.length)
         setWindow(retained, { status: "loading", error: undefined });
+      // A grant's rows stay owed until a fill started after it takes them: a
+      // fill already running may have read its head before the grant.
+      if (retained.grantKept) {
+        retained.kept ??= retained.grantKept;
+        retained.grantKept = undefined;
+      }
       const kept = retained.kept ?? rowIds(retained);
       const dropsAtStart = streamDrops;
       /** What the reader keeps once this fill has settled continuity: nothing,
@@ -4500,7 +4506,6 @@ export function createChannelStore(
         // drop before the catch-up settles keeps them.
         state.kept ??= state.grantKept ?? rowIds(state);
         state.keptLive = false;
-        state.grantKept = undefined;
         setWindow(state, {
           freshness: "cached",
           error: undefined,

@@ -2988,7 +2988,9 @@ function Composer({
           },
           capturedAttachments,
           async (uploaded) => {
-            const sent = await publish(uploaded);
+            // Report a synchronous publication before the new row can render.
+            const result = publish(uploaded);
+            const sent = typeof result === "string" ? result : await result;
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {

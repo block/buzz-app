@@ -1879,6 +1879,7 @@ async function mountUploadComposer(
   options: {
     threadRootId?: string;
     replyParentId?: string;
+    onSend?: MessageComposerProps["onSend"];
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
     profiles?: readonly RelayEvent[];
@@ -2005,6 +2006,7 @@ async function mountUploadComposer(
           {...(options.replyParentId
             ? { replyParentId: options.replyParentId }
             : {})}
+          {...(options.onSend ? { onSend: options.onSend } : {})}
         />
       </ConversationPresentation>
     </AgentsContext.Provider>
@@ -3185,6 +3187,32 @@ it("keeps a background send on its original thread when the composer moves", asy
   const tags = h.publish.mock.calls[0]?.[0].tags ?? [];
   expect(tags).toContainEqual(["e", root, "", "reply"]);
   expect(tags.flat()).not.toContain("c".repeat(64));
+});
+
+it("reports a background reply in the task that publishes it", async () => {
+  const order: string[] = [];
+  const h = await mountUploadComposer({
+    threadRootId: "b".repeat(64),
+    onSend: () => order.push("onSend"),
+  });
+  const outbox = h.owner.session.outbox;
+  if (!outbox) throw new Error("Missing outbox");
+  let queued = false;
+  outbox.subscribe(() => {
+    if (queued || !outbox.snapshot().length) return;
+    queued = true;
+    // React renders an external store's subscribers in a microtask.
+    queueMicrotask(() => order.push("microtask"));
+  });
+  attachByPaste(h.input(), attachmentFile());
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor());
+  });
+  await waitFor(() => expect(order).toHaveLength(2));
+  expect(order).toEqual(["onSend", "microtask"]);
 });
 
 it("names a failed background reply's thread and opens that thread", async () => {

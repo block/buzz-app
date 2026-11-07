@@ -2086,6 +2086,8 @@ function ThreadMessages({
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;
+            // Never count this composer's own send as a new arrival.
+            previousReplies.current.ids.add(id);
             if (selectedParent)
               setExpanded(
                 (current) =>

@@ -1,5 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { SOUND_NAMES, isSoundName, playNotificationSound } from "./sound";
+import {
+  DEFAULT_CATEGORY_SOUNDS,
+  DEFAULT_SOUND,
+  SOUND_NAMES,
+  isSoundName,
+  playNotificationSound,
+} from "./sound";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -46,4 +52,15 @@ it("Silent is valid and never creates or plays an audio asset", () => {
   expect(isSoundName("silent")).toBe(true);
   expect(playNotificationSound("silent")).toBeNull();
   expect(audio).not.toHaveBeenCalled();
+});
+
+it("the bee buzz is bundled and every category defaults to it", () => {
+  expect(isSoundName("buzz")).toBe(true);
+  expect(DEFAULT_SOUND).toBe("buzz");
+  expect(Object.values(DEFAULT_CATEGORY_SOUNDS)).toEqual([
+    "buzz",
+    "buzz",
+    "buzz",
+    "buzz",
+  ]);
 });

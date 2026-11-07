@@ -192,8 +192,9 @@ export function policyRelay({
     quotaNextOlder(channel, seconds = 1) {
       quotas.set(`older:${channel}`, seconds);
     },
-    refuseSigned(status, body) {
-      refusal = status ? { status, body } : undefined;
+    /** With `only`, just the signed requests to those paths. */
+    refuseSigned(status, body, only) {
+      refusal = status ? { status, body, only } : undefined;
     },
     async fetch(url, init) {
       try {
@@ -205,7 +206,10 @@ export function policyRelay({
           expect(new URL(url).pathname).toBe("/");
           return Response.json(discovery?.(communityOf(url)) ?? {});
         }
-        if (refusal)
+        if (
+          refusal &&
+          (!refusal.only || refusal.only.includes(new URL(url).pathname))
+        )
           return new Response(refusal.body, {
             status: refusal.status,
             headers: { "Content-Type": "text/plain; charset=utf-8" },

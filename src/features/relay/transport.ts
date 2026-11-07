@@ -55,6 +55,7 @@ import {
   presenceFilter,
   presenceText,
   type CommunityRefusal,
+  BROKER_REFUSAL_HEADER,
 } from "./http-admission";
 import { yieldToHost } from "./yield";
 import { clientMetrics } from "../developer/client-metrics";
@@ -472,9 +473,9 @@ async function readResponseError(response: Response) {
   );
 }
 
-/** The broker answers a community refusal with the JSON its own admission
- * classified. The connection hears it before the feature that asked handles
- * its error. */
+/** The broker marks any response whose upstream relay request met a community
+ * refusal with `x-buzz-refusal` (`relay-broker.mjs`), whatever its route does
+ * with the relay's body. Every broker request below goes through here. */
 function brokerRefusals() {
   const listeners = new Set<(kind: CommunityRefusal) => void>();
   return {
@@ -484,14 +485,9 @@ function brokerRefusals() {
     },
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
       const response = await fetch(input, init);
-      if (
-        listeners.size &&
-        (response.status === 401 || response.status === 403)
-      ) {
-        const { admission } = await readApiFailure(response.clone());
-        if (admission)
-          for (const listener of [...listeners]) listener(admission);
-      }
+      const kind = response.headers.get(BROKER_REFUSAL_HEADER);
+      if (kind === "sign-in" || kind === "access")
+        for (const listener of [...listeners]) listener(kind);
       return response;
     },
   };
@@ -625,7 +621,7 @@ export async function connectBrokerTransport(
     profiling,
     observeRefusal,
     ...(session.attachmentUploads === true && session.relayUrl
-      ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
+      ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl, fetch) }
       : {}),
     ...(session.presence && session.live
       ? {
@@ -1410,8 +1406,6 @@ export async function connectSignedTransport(
       ? { verifyStored: (values) => parseEvents(values, verify) }
       : {}),
     ...(upload ? { uploadAttachment: hostUpload(upload, httpOrigin) } : {}),
-    observeRefusal: (listener) =>
-      signedAdmissions.observeRefusal(httpOrigin, viewer, listener),
     observePresence: presence.observe,
     async presenceSnapshot(authors, signal) {
       const filters = [{ kinds: [20001], authors, limit: authors.length }];

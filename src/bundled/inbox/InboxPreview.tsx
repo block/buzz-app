@@ -21,6 +21,7 @@ import {
   useProfileGeneration,
   useRelayConnection,
 } from "../../features/relay/react";
+import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ArrowRightIcon, ChecksIcon } from "../../shared/design-system/icons";
@@ -84,9 +85,12 @@ export function InboxPreview({
       <p className={`text-body text-subtle ${styles.notice}`} role="status">
         {connection.status === "connecting"
           ? "Connecting to your activity…"
-          : (connection.error ?? "Choose a community to see your activity.")}
+          : connection.denied
+            ? // Its notice, on every page, offers what fixes it.
+              communityRefusalTitle(connection.refusal)
+            : (connection.error ?? "Choose a community to see your activity.")}
       </p>
-      {connection.status === "error" && (
+      {connection.status === "error" && !connection.denied && (
         <div className={styles.notice}>
           <Button size="sm" onClick={relay.retry}>
             Retry connection

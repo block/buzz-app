@@ -43,7 +43,10 @@ import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
-import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
+import {
+  CommunityRefusalNotice,
+  CommunitySignIn,
+} from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { Membership } from "../../features/communities/service";
 
@@ -161,8 +164,8 @@ function ScopedSidebar({
     preferences?.subscribe ?? noSubscription,
     () => preferences?.snapshot(),
   );
-  // The community refused this account. Messages reports it once, with its
-  // own Try again; the sidebar keeps only the account action that answers it.
+  // The community refused this account: one notice on every page says what
+  // fixes it, so the sidebar keeps no notice or Try again of its own.
   const refused =
     connection.status === "error" && connection.denied && !connection.retrying;
   // A cached startup session has no Solo capabilities yet; its unavailable
@@ -380,8 +383,20 @@ function ScopedSidebar({
             <SidebarList>
               {/* A connection retrying by itself is still connecting; only a
                   settled failure asks for Try again, right beside its notice. */}
-              <div className={styles.connectionStatus}>
-                {!refused && (
+              {refused ? (
+                <CommunityRefusalNotice
+                  // A refusal while connecting is the relay's about access.
+                  refusal={connection.refusal ?? "access"}
+                  identity={communityIdentity(
+                    props.federatedIdentity,
+                    connection.origin,
+                  )}
+                  retry={props.relay.retry}
+                  relay={connection.origin}
+                  memberships={props.memberships}
+                />
+              ) : (
+                <div className={styles.connectionStatus}>
                   <p>
                     {connection.status === "connecting" || connection.retrying
                       ? "Connecting…"
@@ -389,11 +404,8 @@ function ScopedSidebar({
                         ? "Couldn’t load channels."
                         : "Choose a community to see channels."}
                   </p>
-                )}
-                {connection.status === "error" && !connection.retrying && (
-                  <>
-                    {/* Messages offers the sign-in a refusal asks for. */}
-                    {connection.refusal !== "sign-in" && (
+                  {connection.status === "error" && !connection.retrying && (
+                    <>
                       <CommunitySignIn
                         identity={communityIdentity(
                           props.federatedIdentity,
@@ -404,13 +416,11 @@ function ScopedSidebar({
                         relay={connection.origin}
                         memberships={props.memberships}
                       />
-                    )}
-                    {!refused && (
                       <Button onClick={props.relay.retry}>Try again</Button>
-                    )}
-                  </>
-                )}
-              </div>
+                    </>
+                  )}
+                </div>
+              )}
             </SidebarList>
           </SidebarFrame>
         </div>

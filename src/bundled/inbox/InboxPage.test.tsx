@@ -778,6 +778,19 @@ it("retries the card's connection, activity and read-state failures", async () =
   expect(await screen.findByText("relay offline")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry connection" }));
   expect(h.retryConnection).toHaveBeenCalledOnce();
+  // A refusal is the community's, not the connection's: its notice on every
+  // page offers what fixes it, so Activity neither shows the relay's raw text
+  // nor a retry of the same request.
+  act(() =>
+    h.failConnection("restricted: authorization denied", { denied: true }),
+  );
+  expect(
+    await screen.findByText("You don’t have access to this community"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/restricted:/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry connection" }),
+  ).not.toBeInTheDocument();
 });
 
 function fixture(
@@ -1394,8 +1407,14 @@ function fixture(
         : undefined;
       for (const listener of syncListeners) listener();
     },
-    failConnection(error: string) {
-      connection = { ...connection, status: "error", error, generation: 2 };
+    failConnection(error: string, refused?: Partial<RelaySnapshot>) {
+      connection = {
+        ...connection,
+        status: "error",
+        error,
+        generation: 2,
+        ...refused,
+      };
       for (const listener of subscribers) listener();
     },
   };

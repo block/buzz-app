@@ -4474,3 +4474,43 @@ fn reaction_author_address_is_accepted_by_packaged_signing() {
     };
     assert!(validate_event("https://relay.test", &event).is_ok());
 }
+
+#[tokio::test]
+async fn community_refusals_reach_the_window_from_any_signed_request() {
+    let response = |status, body: &str| -> Result<RelayResponse> {
+        Ok(RelayResponse {
+            status,
+            headers: BTreeMap::new(),
+            body: body.into(),
+        })
+    };
+    for (result, expected) in [
+        (response(401, "authentication required\n"), Some("sign-in")),
+        (response(403, "evidence rejected\n"), Some("sign-in")),
+        (response(403, "authorization denied\n"), Some("access")),
+        (Err(SIGNED_OUT.into()), Some("sign-in")),
+        // Exact bytes and status only: an item's refusal or an edge page stays
+        // with whoever asked for it.
+        (response(401, "authorization denied\n"), None),
+        (response(403, "authorization denied"), None),
+        (
+            response(403, r#"{"error":"restricted: authorization denied"}"#),
+            None,
+        ),
+        (response(503, "authorization unavailable\n"), None),
+        (Err("Relay request could not be confirmed".into()), None),
+    ] {
+        assert_eq!(community_refusal(&result), expected);
+    }
+    let mut refused = refusals().subscribe();
+    let url = Url::parse("https://refusal.test/query").unwrap();
+    observe_refusal(&url, &response(200, "[]"));
+    observe_refusal(&url, &response(403, "authorization denied\n"));
+    loop {
+        let refusal = refused.recv().await.unwrap();
+        if refusal.community == "https://refusal.test" {
+            assert_eq!(refusal.refusal, "access");
+            break;
+        }
+    }
+}

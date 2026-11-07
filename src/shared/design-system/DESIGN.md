@@ -1485,6 +1485,9 @@ explicitly; portals do not inherit a hidden ancestor. Keep form errors and
 blocked-page recovery inline. Relay connection recovery is the exception: it
 retries on its own, so after a 30-second quiet delay it shows one buttonless
 notice in the toast stack on every page, and other surfaces do not repeat it.
+A community's refusal of the account is the other exception: it affects every
+page, so its one notice stays in the toast stack with the actions that
+fixes it, and pages it leaves empty only say why.
 Channel LiveStatus keeps failures that recovery does not retry in the
 conversation flow immediately above the composer, with bounded overflow, so Send
 and companion-panel controls remain usable. Its retry policy and diagnostics

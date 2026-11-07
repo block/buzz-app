@@ -969,24 +969,87 @@ async fn send(
     authenticated: bool,
     response_limit: usize,
 ) -> Result<RelayResponse> {
-    let assertion = if authenticated {
-        evidence(host, fi, &url).await?
-    } else {
-        None
-    };
-    send_authorized(
-        host,
-        AuthorizationContext {
-            fi,
-            assertion: assertion.as_ref(),
+    let community = url.clone();
+    let result = async {
+        let assertion = if authenticated {
+            evidence(host, fi, &url).await?
+        } else {
+            None
+        };
+        send_authorized(
+            host,
+            AuthorizationContext {
+                fi,
+                assertion: assertion.as_ref(),
+            },
+            url,
+            method,
+            body,
+            authenticated,
+            response_limit,
+        )
+        .await
+    }
+    .await;
+    if authenticated {
+        observe_refusal(&community, &result);
+    }
+    result
+}
+
+/// What the whole community refused, as `http-admission.ts` reads it: the
+/// relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`) and the
+/// sign-in this device no longer has. Anything else stays with its caller.
+fn community_refusal(result: &Result<RelayResponse>) -> Option<&'static str> {
+    match result {
+        Ok(response) => match (response.status, response.body.as_str()) {
+            (401, "authentication required\n") | (403, "evidence rejected\n") => Some("sign-in"),
+            (403, "authorization denied\n") => Some("access"),
+            _ => None,
         },
-        url,
-        method,
-        body,
-        authenticated,
-        response_limit,
-    )
-    .await
+        Err(error) if error == SIGNED_OUT => Some("sign-in"),
+        Err(_) => None,
+    }
+}
+const SIGNED_OUT: &str = "Federated sign-in is required";
+
+#[derive(Clone, Serialize)]
+struct Refusal {
+    community: String,
+    refusal: &'static str,
+}
+
+fn refusals() -> &'static tokio::sync::broadcast::Sender<Refusal> {
+    static REFUSALS: OnceLock<tokio::sync::broadcast::Sender<Refusal>> = OnceLock::new();
+    REFUSALS.get_or_init(|| tokio::sync::broadcast::channel(16).0)
+}
+
+/// Every signed relay request passes here, so a community's refusal reaches
+/// the window whichever command met it first.
+fn observe_refusal(url: &Url, result: &Result<RelayResponse>) {
+    if let Some(refusal) = community_refusal(result) {
+        let _ = refusals().send(Refusal {
+            community: url.origin().ascii_serialization(),
+            refusal,
+        });
+    }
+}
+
+/// Tells the window `relay-refusal` for each community refusal.
+pub(crate) fn watch_refusals<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    use tauri::Emitter as _;
+    let mut refused = refusals().subscribe();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match refused.recv().await {
+                Ok(refusal) => {
+                    let _ = app.emit_to("main", "relay-refusal", refusal);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }
 
 async fn send_authorized(
@@ -1465,20 +1528,26 @@ async fn upload_file(
     (size, hash): (usize, String),
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
-    let assertion = evidence(host, fi, &url).await?;
-    upload_file_authorized(
-        host,
-        AuthorizationContext {
-            fi,
-            assertion: assertion.as_ref(),
-        },
-        url,
-        kind,
-        path,
-        (size, hash),
-        progress,
-    )
-    .await
+    let community = url.clone();
+    let result = async {
+        let assertion = evidence(host, fi, &url).await?;
+        upload_file_authorized(
+            host,
+            AuthorizationContext {
+                fi,
+                assertion: assertion.as_ref(),
+            },
+            url,
+            kind,
+            path,
+            (size, hash),
+            progress,
+        )
+        .await
+    }
+    .await;
+    observe_refusal(&community, &result);
+    result
 }
 
 async fn upload_file_authorized(

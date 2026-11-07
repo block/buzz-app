@@ -36,6 +36,9 @@ export type ApiFailure = Readonly<{
   admission?: CommunityRefusal;
 }>;
 export type CommunityRefusal = "sign-in" | "access";
+/** The development broker's mark on a response whose relay request the
+ * community refused (`relay-broker.mjs`). */
+export const BROKER_REFUSAL_HEADER = "x-buzz-refusal";
 /** The relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`): plain
  * text with one trailing LF, decided before any route. Exact bytes and status
  * only; any other text, such as an edge proxy's page, stays untrusted. Each maps
@@ -70,9 +73,15 @@ const COMMUNITY_REFUSALS: ReadonlyMap<
     },
   ],
 ]);
-/** Native rejects a request that needs a sign-in it no longer has with this
- * string (src-tauri `federated_identity/assertion.rs`), before sending it. */
-const NATIVE_SIGN_IN_REQUIRED = "Federated sign-in is required";
+/** The refusal a read's error reports, when it was the relay's community-wide
+ * one (its `ApiFailure.error`): a refusal met while connecting. */
+export function refusalOfError(error: unknown): CommunityRefusal | undefined {
+  const text = error instanceof Error ? error.message : String(error);
+  return [...COMMUNITY_REFUSALS.values()].find(
+    (refusal) => refusal.error === text,
+  )?.admission;
+}
+/** Native classifies the same bodies in `relay.rs` (`community_refusal`). */
 function communityRefusal(
   status: number,
   text: string,
@@ -200,9 +209,7 @@ type Ticket = {
 /** One host/principal API lane, bounded like the broker's six-request ceiling.
  * Available capacity dispatches immediately; only server cooldowns pause starts.
  * Cooldowns reject queued work rather than spending a read's 10s deadline. */
-export function createApiAdmission(
-  onRefusal?: (kind: CommunityRefusal) => void,
-) {
+export function createApiAdmission() {
   let pausedUntil = 0,
     active = 0,
     preparing = 0,
@@ -233,10 +240,6 @@ export function createApiAdmission(
     }
   }
   return {
-    /** A request in this lane met a community-wide refusal. */
-    refused(kind: CommunityRefusal) {
-      onRefusal?.(kind);
-    },
     /** Lossy snapshot lease; never consumes ordinary slots or start credit. */
     tryPresence() {
       if (
@@ -335,22 +338,11 @@ export async function admittedApiRequest(
 ): Promise<Response> {
   return lane.run(
     async () => {
-      let response: Response;
-      try {
-        response = await request();
-      } catch (error) {
-        if (
-          error === NATIVE_SIGN_IN_REQUIRED ||
-          (error instanceof Error && error.message === NATIVE_SIGN_IN_REQUIRED)
-        )
-          lane.refused("sign-in");
-        throw error;
-      }
+      const response = await request();
       if (response.ok) return response;
       const failure = await readApiFailure(response, reason);
       if (failure.quota === "api" && failure.retryAfterMs !== undefined)
         lane.pause(failure.retryAfterMs);
-      if (failure.admission) lane.refused(failure.admission);
       const headers = new Headers(response.headers);
       headers.delete("content-length");
       headers.delete("content-encoding");

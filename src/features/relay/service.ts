@@ -14,9 +14,9 @@ import {
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
-import type { CommunityRefusal } from "./http-admission";
-/** The snapshot's error for a refusal heard after connecting. A sign-in
- * refusal keeps native's wording, which `CommunitySignIn` answers with sign-in. */
+import { refusalOfError, type CommunityRefusal } from "./http-admission";
+/** The snapshot's error for a refusal heard after connecting, for logs and
+ * diagnostics; what it offers follows `refusal`, never this text. */
 const REFUSAL_ERRORS: Record<CommunityRefusal, string> = {
   "sign-in": "Federated sign-in is required",
   access: "restricted: authorization denied",
@@ -205,14 +205,16 @@ export function provideRelay(
     current: number,
     signal: AbortSignal,
     error: string,
-    refused?: { kind: CommunityRefusal; viewer: string; origin: string },
+    kind?: CommunityRefusal,
+    /** The connection it refused, once one was made. */
+    refused?: { viewer: string; origin: string },
   ) {
     const live = () =>
       !disposed &&
       !signal.aborted &&
       current === generation &&
       signal === controller?.signal;
-    if (refused?.kind !== "sign-in") {
+    if (kind !== "sign-in") {
       await store.clearCache();
       if (resume) {
         const disk = createHeadPersistence(resume.viewer, resume.scope);
@@ -235,14 +237,9 @@ export function provideRelay(
       session: store.session,
       error,
       denied: true,
+      ...(kind ? { refusal: kind } : {}),
       // Sign-in recovery looks up this community's own sign-in by origin.
-      ...(refused
-        ? {
-            refusal: refused.kind,
-            viewer: refused.viewer,
-            origin: refused.origin,
-          }
-        : {}),
+      ...refused,
     });
   }
   const service: RelayData & {
@@ -304,8 +301,7 @@ export function provideRelay(
           let refused: CommunityRefusal | undefined;
           let ready = false;
           const refuse = (kind: CommunityRefusal) =>
-            deny(current, signal, REFUSAL_ERRORS[kind], {
-              kind,
+            deny(current, signal, REFUSAL_ERRORS[kind], kind, {
               viewer: transport.viewer,
               origin: transportOrigin(transport),
             });
@@ -383,7 +379,7 @@ export function provideRelay(
           )
             return;
           if (readErrorKind(error) === "denied")
-            await deny(current, signal, String(error));
+            await deny(current, signal, String(error), refusalOfError(error));
           else {
             transientFailure = isTransientFailure(error);
             publish({

@@ -269,11 +269,9 @@ it("keeps one item's JSON refusal with its feature", async () => {
       .admission,
   ).toBeUndefined();
 });
-it("tells the lane about a community refusal and keeps the relay's status", async () => {
-  const refusals: string[] = [];
-  const lane = createApiAdmission((kind) => refusals.push(kind));
+it("keeps the relay's status and its classified reason through the lane", async () => {
   const response = await admittedApiRequest(
-    lane,
+    createApiAdmission(),
     async () => new Response("authorization denied\n", { status: 403 }),
   );
   expect(response.status).toBe(403);
@@ -281,18 +279,4 @@ it("tells the lane about a community refusal and keeps the relay's status", asyn
     error: "restricted: authorization denied",
     admission: "access",
   });
-  await expect(
-    admittedApiRequest(lane, () =>
-      Promise.reject("Federated sign-in is required"),
-    ),
-  ).rejects.toBe("Federated sign-in is required");
-  // An edge page and an item's refusal say nothing about the community.
-  await admittedApiRequest(
-    lane,
-    async () => new Response("<html>Forbidden</html>", { status: 403 }),
-  );
-  await admittedApiRequest(lane, async () =>
-    Response.json({ error: "restricted: p-gated" }, { status: 403 }),
-  );
-  expect(refusals).toEqual(["access", "sign-in"]);
 });

@@ -1004,9 +1004,9 @@ it("collapsing the contributed Solo section in All hides its ordinary chats", as
   }
 });
 
-// Messages offers the sign-in a refused, signed-out community needs; the
-// sidebar's own sign-in prompt would be a second copy of it.
-it("leaves a sign-in refusal's sign-in to Messages", () => {
+// A refused community gets one notice in the toast stack on every page, with
+// what fixes it. The sidebar's sign-in prompt and Try again would repeat it.
+it("moves a refusal's recovery from the sidebar to its one notice", async () => {
   const h = federatedFixture();
   const f = fixture(
     true,
@@ -1028,8 +1028,18 @@ it("leaves a sign-in refusal's sign-in to Messages", () => {
       name: "Sign in with builderlab.example",
     }),
   ).toBeVisible();
-  // A refusal of that sign-in is the page's to answer.
   f.connection({ denied: true, refusal: "sign-in" });
+  const notice = await screen.findByRole("dialog", {
+    name: "Sign in to open this community",
+  });
+  expect(
+    within(notice).getByRole("button", {
+      name: "Sign in with builderlab.example",
+    }),
+  ).toBeVisible();
+  expect(
+    within(notice).queryByRole("button", { name: "Try again" }),
+  ).toBeNull();
   expect(
     within(sidebar()).queryByRole("button", { name: /Sign in|Try again/ }),
   ).toBeNull();
@@ -1048,13 +1058,19 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
     .setup()
     .click(within(sidebar()).getByRole("button", { name: "Try again" }));
   expect(retry).toHaveBeenCalledOnce();
-  // A refusal is about access, not the connection, and the page reports it:
-  // the sidebar neither repeats it nor offers a second Try again.
+  // A refusal is about access, not the connection. Its notice reports it on
+  // every page; the sidebar neither repeats it nor offers Try again.
   f.connection({
     status: "error",
     error: "ReadError: Relay read failed (403)",
     denied: true,
   });
+  const notice = await screen.findByRole("dialog", {
+    name: "You don’t have access to this community",
+  });
+  expect(
+    within(notice).getByRole("button", { name: "Check again" }),
+  ).toBeVisible();
   expect(within(sidebar()).queryByText("Couldn’t load channels.")).toBeNull();
   expect(within(sidebar()).queryByText(/have access/)).toBeNull();
   expect(

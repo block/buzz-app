@@ -54,8 +54,6 @@ it("independently unloads panels without removing the page or shared data", asyn
   });
   // Channels hands community membership to its page for auto-join settings.
   root.provide("adminAccess", { membership: undefined });
-  // Channels offers a refused community's sign-in from its page.
-  root.provide("federatedIdentity", {});
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});
   provideNavigation(root);

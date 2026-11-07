@@ -9,6 +9,7 @@ import {
 } from "./verified-profile";
 import { nativeSocket } from "./native-socket";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { EventTemplate } from "nostr-tools";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import {
@@ -76,7 +77,7 @@ import {
   type Signer,
 } from "./transport";
 import { nativeSidebar } from "./native-sidebar";
-import { readApiFailure } from "./http-admission";
+import { readApiFailure, type CommunityRefusal } from "./http-admission";
 
 async function nativeReadInvoke<T>(
   command: string,
@@ -381,11 +382,47 @@ export function relaySelf(info: Record<string, unknown>): string | undefined {
     : undefined;
 }
 
+type RefusalListener = (kind: CommunityRefusal) => void;
+const refusalListeners = new Map<string, Set<RefusalListener>>();
+let refusalEvents: Promise<unknown> | undefined;
+/** Native reports a community's refusal from whichever signed request met it
+ * (`observe_refusal` in relay.rs), so no command needs its own check. One
+ * window listener serves every connection; it is ready before any connects. */
+async function nativeRefusals(origin: string) {
+  refusalEvents ??= listen<{ community: string; refusal: string }>(
+    "relay-refusal",
+    ({ payload }) => {
+      const kind = payload.refusal;
+      if (kind !== "sign-in" && kind !== "access") return;
+      for (const listener of [
+        ...(refusalListeners.get(payload.community) ?? []),
+      ])
+        listener(kind);
+    },
+  ).catch(() => {
+    // Without it a refusal still fails its own request; the next connect retries.
+    refusalEvents = undefined;
+  });
+  await refusalEvents;
+  const community = new URL(origin).origin;
+  return (listener: RefusalListener) => {
+    const listeners = refusalListeners.get(community) ?? new Set();
+    refusalListeners.set(community, listeners);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size && refusalListeners.get(community) === listeners)
+        refusalListeners.delete(community);
+    };
+  };
+}
+
 export async function connectNativeTransport(
   community: string,
   signal?: AbortSignal,
 ): Promise<ReadTransport> {
   const origin = communityDestination(community).url;
+  const observeRefusal = await nativeRefusals(origin);
   const info = await nativeRelayInfo(origin, signal);
   const author = relaySelf(info);
   if (!author) throw new Error("Relay did not advertise its identity");
@@ -459,6 +496,7 @@ export async function connectNativeTransport(
   // Capabilities describe implemented host operations, not everything this key can sign.
   return {
     ...transport,
+    observeRefusal,
     ...(artifactIncrementalCapability(info)
       ? {
           artifactIncremental: createArtifactIncrementalReader(

@@ -313,13 +313,18 @@ revokes all of them, and a pairing unused for 30 days expires.
   for the first 30 seconds. If it still can't connect, a notice at the bottom
   right says "Buzz is having trouble connecting" until it reconnects. There is
   nothing to press.
-- **Refused by a community**: if a community refuses your account, Messages
-  says so once. If it needs you to sign in (you never have, signed out, or
-  your sign-in expired), it says **Sign in to open this community** and, where
-  Buzz can sign you in to that community's server, offers **Sign in with**
-  that server; otherwise **Try again**. If your account has no access, it says
-  so, with **Try again**. It doesn't retry on its own; signing in, or Try
-  again once you have access, reopens it.
+- **Refused by a community**: if a community refuses your account, one
+  notice at the bottom right says so on every page, with what fixes it. It
+  doesn't retry on its own.
+  - **Sign in to open this community**: your sign-in ended or expired.
+    **Sign in with** that community's server. If Buzz still thinks you're
+    signed in, **Sign in again** signs you out of that server and back in.
+  - **This community needs a sign-in Buzz doesn't support yet**: this build
+    can't sign in to that community. Ask its admin which Buzz version or
+    server to use.
+  - **You don't have access to this community**: when you're signed in through
+    the community's server, it names the account it refused and offers
+    **Switch account**. **Check again** once an admin has added you.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private

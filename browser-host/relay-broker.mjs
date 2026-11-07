@@ -134,7 +134,10 @@ import {
   apiFailure,
   presenceFilter,
   presenceText,
+  readApiFailure,
+  BROKER_REFUSAL_HEADER,
 } from "../src/features/relay/http-admission.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { Readable, Transform } from "node:stream";
@@ -802,6 +805,29 @@ function failureSummary(error) {
   );
   return `${category}${code ? ` (${code})` : ""}`;
 }
+/** A community refusal in a relay 401/403, read from a copy of its body. Only
+ * the relay's short denial text counts, so a longer body stops being read at
+ * once; its route still owns, reads or cancels the original. */
+async function refusalOf(response) {
+  const reader = response.clone().body?.getReader();
+  if (!reader) return undefined;
+  const chunks = [];
+  for (let bytes = 0; ; ) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > 64) {
+      // A tee'd copy's cancel settles only once the original's does too.
+      void reader.cancel().catch(() => {});
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const copy = new Response(Buffer.concat(chunks), { status: response.status });
+  return (await readApiFailure(copy)).admission;
+}
+/** The browser response whose route is making a relay request. */
+const refusalTarget = new AsyncLocalStorage();
 const json = (res, code, body) => {
   res.writeHead(code, {
     "Content-Type": "application/json",
@@ -853,7 +879,22 @@ export function relayBrokerPlugin({
       const localArchive = () => (archive ??= openArchive(archiveFile));
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
-      const fetchUpstream = upstreamFetch ?? upstream.fetch;
+      const relayFetch = upstreamFetch ?? upstream.fetch;
+      /** Every relay request passes here, so a community refusal reaches the
+       * browser whichever route met it and whatever it does with the body. */
+      const fetchUpstream = async (url, init) => {
+        const response = await relayFetch(url, init);
+        const res = refusalTarget.getStore();
+        if (
+          res &&
+          !res.headersSent &&
+          (response.status === 401 || response.status === 403)
+        ) {
+          const admission = await refusalOf(response);
+          if (admission) res.setHeader(BROKER_REFUSAL_HEADER, admission);
+        }
+        return response;
+      };
       const readSidebarHead = async (response, label = "preference") => {
         if (!response.body)
           throw new Error(`Sidebar ${label} response missing`);
@@ -940,6 +981,10 @@ export function relayBrokerPlugin({
         `signing as ${viewer.slice(0, 8)}… for explicitly selected communities (lazy, scoped connections)`,
       );
       server.middlewares.use(async (req, res, next) => {
+        // This request's relay requests run with its response, so a community
+        // refusal any of them meets marks it (`fetchUpstream`). Each request
+        // has its own async context, so nothing else sees it.
+        refusalTarget.enterWith(res);
         if (
           !req.url?.startsWith("/api/relay/") &&
           !req.url?.startsWith("/api/builderlab/")

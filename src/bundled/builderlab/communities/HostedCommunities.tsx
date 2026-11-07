@@ -89,6 +89,7 @@ export function HostedCommunities({
   const [action, setAction] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   const proceed = useRef<HTMLButtonElement>(null);
   const [transfer, setTransfer] = useState<Community | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Community | null>(null);
@@ -954,12 +955,16 @@ export function HostedCommunities({
           title={confirm.title}
           description={confirm.description}
           pending={busy}
-          initialFocus={confirm.caution ? undefined : proceed}
+          initialFocus={confirm.caution ? cancel : proceed}
           onClose={() => setConfirm(null)}
           {...(failure ? { children: failure } : {})}
           actions={
             <>
-              <Button disabled={busy} onClick={() => setConfirm(null)}>
+              <Button
+                ref={cancel}
+                disabled={busy}
+                onClick={() => setConfirm(null)}
+              >
                 Cancel
               </Button>
               <Button

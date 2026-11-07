@@ -383,6 +383,44 @@ it("opens the forwarded message in the DM from the success notice, with the sour
   expect(navigation.snapshot().entry.target).toEqual(source);
 });
 
+it.each([
+  ["Enter", "{Enter}"],
+  ["Space", " "],
+])(
+  "reaches the success notice's link by Tab and opens the DM with %s",
+  async (_key, press) => {
+    const user = userEvent.setup();
+    const { navigation } = setup();
+    const source = navigation.snapshot().entry.target;
+    await choose(user);
+    await user.click(screen.getByRole("button", { name: "Forward" }));
+    const link = await screen.findByRole("button", {
+      name: "Open your DM with Avery Chen",
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Forward message" }),
+      ).not.toBeInTheDocument(),
+    );
+    // F6 is Sonner's hotkey for the stack; user-event has no F6 key code.
+    fireEvent.keyDown(document.body, { key: "F6", code: "F6" });
+    expect(link.closest("[data-sonner-toaster]")).toHaveFocus();
+    await user.tab();
+    await user.tab();
+    expect(link).toHaveFocus();
+    await user.keyboard(press);
+    await waitFor(() =>
+      expect(navigation.snapshot().entry.target).toMatchObject({
+        kind: "conversation",
+        channelId: destination,
+        messageId: "e".repeat(64),
+      }),
+    );
+    act(() => navigation.back());
+    expect(navigation.snapshot().entry.target).toEqual(source);
+  },
+);
+
 it("preserves the selection and note across Back/Forward; Cancel retires the visit", async () => {
   const user = userEvent.setup();
   const { navigation, messages } = setup();

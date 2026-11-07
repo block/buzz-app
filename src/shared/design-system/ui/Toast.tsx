@@ -145,6 +145,9 @@ function ToastCard({
           className="buzz-toast-open"
           aria-label={navigation.label}
           title={navigation.label}
+          // WebKit Tabs past a button without an explicit tabindex unless the
+          // OS enables full keyboard access; the body action is keyboard-first.
+          tabIndex={0}
           onClick={navigation.open}
         />
       )}

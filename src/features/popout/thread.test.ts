@@ -1011,7 +1011,8 @@ it("classifies typing as main's indicator does: thread work at a shown root is t
         channelId: "channel",
         messageId: ROOT,
         threadRootId: ROOT,
-        thread: true as const,
+        // No thread hint: the conversation frame must infer it from the shown
+        // root's replies, as main's indicator does.
         state: "working" as const,
         startedAt: Date.now(),
       },

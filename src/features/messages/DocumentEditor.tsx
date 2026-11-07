@@ -103,12 +103,48 @@ export function DocumentEditor({
   const [formats, setFormats] = useState<readonly ComposerFormat[]>([]);
   const [link, setLink] = useState<ComposerLinkEdit>();
   const emitted = useRef(value);
+  const syncing = useRef(false);
+  const accepted = useRef<
+    | {
+        value: string;
+        draft: typeof draft;
+        restore(): void;
+      }
+    | undefined
+  >(undefined);
+  const rememberAccepted = () => {
+    if (
+      !source &&
+      !syncing.current &&
+      emitted.current === value &&
+      input.current
+    )
+      accepted.current = { value, draft, restore: input.current.checkpoint() };
+  };
   // A rich edit renders even when its onChange is declined. Reconcile every
   // committed render so only accepted content survives, before the next paint.
   useLayoutEffect(() => {
-    if (source || value === emitted.current) return;
+    syncing.current = false;
+    if (source) return;
+    if (value === emitted.current) {
+      rememberAccepted();
+      return;
+    }
     emitted.current = value;
-    setDraft(documentEditorDraft(value));
+    syncing.current = true;
+    const previous = accepted.current;
+    if (previous?.value === value) {
+      // Restore the accepted document, selection and undo state without an edit
+      // transaction that could normalize Markdown or notify the plugin again.
+      previous.restore();
+      setDraft(previous.draft);
+    } else setDraft(documentEditorDraft(value));
+  });
+  useLayoutEffect(() => {
+    // The engine emits native select events even when formatting is unchanged.
+    const field = input.current;
+    field?.addEventListener("select", rememberAccepted);
+    return () => field?.removeEventListener("select", rememberAccepted);
   });
   useEffect(() => {
     if (!linkOpen) {
@@ -177,6 +213,7 @@ export function DocumentEditor({
                 maxLength={maxLength}
                 decorationsFor={noDecorations}
                 onDraftChange={(next) => {
+                  if (syncing.current) return;
                   setDraft(next);
                   const markdown = composerMarkdown(next);
                   if (markdown !== value) {

@@ -561,7 +561,7 @@ function Timeline({
     agentPubkeys,
   );
   const activity = presentation.groups;
-  const stableActivity = useStableRowActivity();
+  const stableActivity = useStableRowActivity(chronologicalRows);
   const rowsById = useMemo(
     () => new Map(chronologicalRows.map((row) => [row.id, row])),
     [chronologicalRows],

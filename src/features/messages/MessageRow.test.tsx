@@ -642,6 +642,30 @@ it("renders the signed whole-thread total rather than only direct replies", () =
   expect(html).toContain('aria-label="View thread: 3 replies"');
   expect(html).toContain("3 replies</span>");
 });
+it("reserves the last reply's recency in the summary and names it for assistive tech", () => {
+  vi.useFakeTimers({ now: 10_000 * 1000 });
+  try {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{ ...row, replyCount: 6, lastReplyAt: 10_000 - 2 * 3600 }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        onOpenThread={() => {}}
+      />,
+    );
+    expect(html).toContain(
+      'aria-label="View thread: 6 replies, last reply 2 hours ago"',
+    );
+    expect(html).toMatch(
+      /data-thread-recency="" aria-hidden="true"><span>·<\/span><span>last reply 2 hours ago<\/span>/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({
@@ -2135,11 +2159,12 @@ it("bounds reply participants and projects artwork with fallback initials", () =
     const trigger = screen.getByRole("button", {
       name: "View thread: 23 replies",
     });
+    // The newest replier (first) renders last, on top of the stack.
     expect(
       [...trigger.querySelectorAll("[title]")].map((e) =>
         e.getAttribute("title"),
       ),
-    ).toEqual(["Alice", "Brain", "p3"]);
+    ).toEqual(["p3", "Brain", "Alice"]);
     expect(trigger.querySelector("img")).toHaveAttribute(
       "src",
       "https://proxy/avatar",

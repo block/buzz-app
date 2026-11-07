@@ -4,6 +4,9 @@ import { PencilSimpleIcon } from "../../shared/design-system/icons/index";
 import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
+
+const SHOWN_PARTICIPANTS = 3;
 
 /** Shared summary contents for channel threads and collapsed reply branches. */
 export function ReplySummary({
@@ -20,7 +23,13 @@ export function ReplySummary({
   hideEmptyLabel = false,
   draft = false,
   replied = count > 0,
+  lastReplyAt,
+  now,
 }: {
+  /** Unix seconds of the newest reply, revealed on hover beside the count. */
+  lastReplyAt?: number | undefined;
+  /** Unix seconds the recency is measured from. */
+  now?: number;
   workingParticipants?: readonly string[];
   activity?: ReactNode;
   /** Activity-only triggers already have an accessible thread action label. */
@@ -30,6 +39,7 @@ export function ReplySummary({
   /** The thread has replies, even when an activity line hides their count. */
   replied?: boolean;
   count: number;
+  /** Newest replier first. */
   participants: readonly string[];
   profiles?: ReadonlyMap<string, Profile> | undefined;
   agentPubkeys?: ReadonlySet<string> | undefined;
@@ -38,21 +48,29 @@ export function ReplySummary({
   unreadLabel?: string | undefined;
   unreadCount?: number;
 }) {
+  const newest = [...new Set(participants)].filter(
+    (id) => !workingParticipants.includes(id),
+  );
+  // Later avatars overlap earlier ones, so the newest replier renders last:
+  // on top, beside the count.
+  const stacked = [
+    ...newest.slice(0, SHOWN_PARTICIPANTS).reverse(),
+    ...newest.slice(SHOWN_PARTICIPANTS),
+  ];
   return (
     <>
       <AvatarStack
         size="small"
-        items={[...new Set(participants)]
-          .filter((id) => !workingParticipants.includes(id))
-          .map((id) => {
-            const profile = profiles?.get(id);
-            return {
-              id,
-              name: resolveName(id, profile?.name ?? id.slice(0, 10)),
-              src: avatarMedia(profile?.picture, media),
-              shape: agentPubkeys?.has(id) ? "squircle" : "circle",
-            };
-          })}
+        max={SHOWN_PARTICIPANTS}
+        items={stacked.map((id) => {
+          const profile = profiles?.get(id);
+          return {
+            id,
+            name: resolveName(id, profile?.name ?? id.slice(0, 10)),
+            src: avatarMedia(profile?.picture, media),
+            shape: agentPubkeys?.has(id) ? "squircle" : "circle",
+          };
+        })}
       />
       {activity}
       {(count > 0 || !(hideEmptyLabel || draft)) && (
@@ -76,6 +94,16 @@ export function ReplySummary({
           {replied && <span aria-hidden="true">·</span>}
           <PencilSimpleIcon size={14} aria-hidden="true" />
           {replied ? "Draft" : "Draft reply"}
+        </span>
+      )}
+      {lastReplyAt !== undefined && count > 0 && (
+        <span
+          className={styles.threadRecency}
+          data-thread-recency=""
+          aria-hidden="true"
+        >
+          <span>·</span>
+          <span>last reply {relativeTimestamp(lastReplyAt, now)}</span>
         </span>
       )}
     </>

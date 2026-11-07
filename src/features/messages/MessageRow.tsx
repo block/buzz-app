@@ -112,6 +112,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 import { useThreadDraft } from "./draft-places";
 
 export type MessageLinkOrigin = Readonly<{ rootId: string }>;
@@ -455,6 +456,9 @@ function MessageRowContent({
   const active = useConversationPresentation();
   const forward = useForwardMessage();
   const [reporting, setReporting] = useState<"open" | "sent">();
+  // Rows don't re-render on a clock, so recency is measured when the summary
+  // is about to show it.
+  const [recencyNow, setRecencyNow] = useState(() => Date.now() / 1000);
   const registeredActions = useSyncExternalStore(
     extensions?.actions?.subscribe ?? noSubscribe,
     extensions?.actions?.snapshot ?? noActions,
@@ -917,6 +921,10 @@ function MessageRowContent({
     const remainingThreadAgents = threadAgents.filter(
       (agent) => !activity?.participants.includes(agent.pubkey),
     );
+    const recency =
+      row.replyCount > 0 && !activity && row.lastReplyAt !== undefined
+        ? `last reply ${relativeTimestamp(row.lastReplyAt, recencyNow)}`
+        : undefined;
     const remainingWorkingLabel = remainingThreadAgents.length
       ? `${remainingThreadAgents.map(({ pubkey, name }) => resolveName(pubkey, name)).join(", ")} ${threadWaiting ? "waiting" : "working"}`
       : undefined;
@@ -944,7 +952,7 @@ function MessageRowContent({
             type="button"
             aria-label={
               row.replyCount > 0
-                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
+                ? `View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${recency ? `, ${recency}` : ""}${unreadLabel ? `. ${unreadLabel}` : ""}${workingLabel ? `. ${workingLabel}` : ""}${activity ? `. ${activity.label}` : ""}${threadDraft ? ". Draft reply" : ""}`
                 : `View thread: ${[
                     ...(activity
                       ? [remainingWorkingLabel, activity.label]
@@ -956,12 +964,16 @@ function MessageRowContent({
                     .filter(Boolean)
                     .join(". ")}`
             }
+            onPointerEnter={() => setRecencyNow(Date.now() / 1000)}
+            onFocus={() => setRecencyNow(Date.now() / 1000)}
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenThread(row.id, row.threadRootId ?? row.id);
             }}
           >
             <ReplySummary
+              lastReplyAt={row.lastReplyAt}
+              now={recencyNow}
               hideEmptyLabel={!!activity}
               draft={threadDraft}
               replied={row.replyCount > 0}

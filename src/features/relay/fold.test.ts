@@ -443,6 +443,35 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
+  it("takes the newest reply time from the summary or a newer pending reply", () => {
+    const root = message(alice, channel, "root", 10);
+    const pending = message(bob, channel, "re", 40, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const lastReplyAt = (
+      body: Record<string, unknown>,
+      pendingReplies: readonly string[] = [],
+    ) =>
+      foldMessages(
+        channel,
+        relay.pubkey,
+        [root, pending, summary(relay, channel, root.id, body)],
+        { pendingReplies: new Set(pendingReplies) },
+      )[0]?.lastReplyAt;
+    expect(lastReplyAt({ descendant_count: 2, last_reply_at: 30 })).toBe(30);
+    expect(lastReplyAt({ descendant_count: 2, last_reply_at: null })).toBe(
+      undefined,
+    );
+    expect(lastReplyAt({ descendant_count: 2, last_reply_at: "30" })).toBe(
+      undefined,
+    );
+    expect(
+      lastReplyAt({ descendant_count: 2, last_reply_at: 30 }, [pending.id]),
+    ).toBe(40);
+    expect(
+      lastReplyAt({ descendant_count: 2, last_reply_at: 50 }, [pending.id]),
+    ).toBe(50);
+  });
   it("layers pending replies on their root's summary and leads participants with their authors", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>

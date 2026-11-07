@@ -85,6 +85,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.sentFromThread?.rootId === right.sentFromThread?.rootId &&
     left.sentFromThread?.excerpt === right.sentFromThread?.excerpt &&
     left.replyCount === right.replyCount &&
+    left.lastReplyAt === right.lastReplyAt &&
     sameArray(left.participants, right.participants)
   );
 }

@@ -978,6 +978,36 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .messageBody [data-reply-connector] {
   margin-inline-start: calc(var(--space-4) + var(--space-3));
   max-width: calc(100% - var(--space-4) - var(--space-3));
+  /* A row-like target that already holds the hover recency, so revealing it
+     never shifts the layout. min() because min-width beats max-width. */
+  min-inline-size: min(20rem, calc(100% - var(--space-4) - var(--space-3)));
+}
+.messageBody :where([data-reply-connector]) > [class~="buzz-button-label"] {
+  flex: 1;
+}
+/* Follows the count like the draft marker. A zero basis never forces a wrap;
+   a narrow summary truncates it instead. */
+.threadRecency {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--text-subtle);
+  opacity: 0;
+  transition: opacity var(--duration-state) var(--easing-state);
+}
+.threadRecency > :last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-thread-summary]:is(:hover, :focus-visible) .threadRecency {
+  opacity: 1;
+}
+@media (hover: none) {
+  .threadRecency {
+    opacity: 1;
+  }
 }
 .messageBody [data-reply-connector]::before {
   content: "";
@@ -3446,6 +3476,11 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 :where(html[data-message-density="compact"])
   .messageBody
+  [data-reply-connector] {
+  min-inline-size: min(20rem, 100%);
+}
+:where(html[data-message-density="compact"])
+  .messageBody
   [data-reply-connector]::before {
   content: none;
 }
@@ -3474,6 +3509,26 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 .message[data-viewer-message] > .messageBody > [data-reply-connector] {
   margin-inline-end: calc(var(--space-4) + var(--space-3));
+}
+/* The recency and spare width face inward, so participants and count stay
+   beside the connector on either side. */
+.message[data-viewer-message]
+  > .messageBody
+  > [data-reply-connector]
+  > [class~="buzz-button-label"] {
+  justify-content: flex-end;
+}
+.message[data-viewer-message]
+  > .messageBody
+  > [data-reply-connector]
+  .threadRecency {
+  order: -1;
+  flex-direction: row-reverse;
+}
+/* An own message's body fits its content, so the summary's row width has to
+   widen the body; 60% stays within the body's max-width. */
+.message[data-viewer-message] > .messageBody:has(> [data-reply-connector]) {
+  min-inline-size: min(calc(20rem + var(--space-4) + var(--space-3)), 60%);
 }
 .message[data-viewer-message] > .messageBody > [data-reply-connector]::before {
   inset-inline-start: auto;

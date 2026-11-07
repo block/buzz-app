@@ -461,6 +461,12 @@ impl CredentialService {
             advertise::remove(&home, &self.0.instance);
         }
     }
+    /// A new page in the main webview: a request the old page left waiting is
+    /// declined, and until the new page's prompt is mounted, `pair` is refused
+    /// without asking.
+    pub(crate) fn page_load(&self) {
+        self.0.pairings.page_load();
+    }
     /// Saves the revocation of every pairing promptly when the human signs
     /// out of NIP-FI or changes account. Requests fence on their own (see
     /// `Pairings::follow`); a restart under another human or account revokes
@@ -909,6 +915,12 @@ pub(crate) async fn credential_pairing_communities(
 ) -> Result<(), ()> {
     service.0.pairings.set_communities(communities).await;
     Ok(())
+}
+
+/// The page's pairing prompt began (`mounted`) or stopped listening.
+#[tauri::command]
+pub(crate) fn credential_pair_prompt(service: tauri::State<'_, CredentialService>, mounted: bool) {
+    service.0.pairings.prompt(mounted);
 }
 
 #[tauri::command]

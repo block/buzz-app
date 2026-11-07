@@ -158,11 +158,12 @@ for (const target of ["alpha", "profiles"]) {
         await expect(warning).toHaveCount(0);
       } else {
         // Exhausted stream recovery hands over to session recovery: a new
-        // REQ with no click, and one notice once it lasts 30 s.
+        // REQ with no click, and one notice once it lasts 30 s. Jump the
+        // quiet delay only after that REQ shows the app received the failure.
+        await expect.poll(() => requests().length).toBeGreaterThan(before);
         await page.clock.fastForward(30_000);
         await expect(notice(page)).toBeVisible();
         await expect(warning).toHaveCount(0);
-        await expect.poll(() => requests().length).toBeGreaterThan(before);
       }
     }
     // The notice keeps showing while the retried REQ waits for EOSE, and it

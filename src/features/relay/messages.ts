@@ -60,6 +60,7 @@ export function createMessages(
   unmentionedRecipients: (channelId: string) => readonly string[] = () => [],
   /** Events whose `buzz:copy-of` tag names this message id (sent-to-channel copies). */
   copiesOf: (id: string) => readonly EventData[] = () => [],
+  beforeThreadCopy: (channelId: string) => void = () => {},
 ) {
   const writer = (
     kind: number,
@@ -391,6 +392,7 @@ export function createMessages(
         throw new Error(
           "Reload the thread reply before sending it to the channel",
         );
+      beforeThreadCopy(channelId);
       const attachmentSource = find(row.attachmentSourceId ?? row.id);
       if (
         !attachmentSource ||

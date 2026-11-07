@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -44,10 +45,12 @@ function gate() {
   });
   return { promise, resolve };
 }
-async function fixture() {
+async function fixture(multiple = false) {
   const viewer = keypair(),
     agent = keypair(),
+    peer = keypair(),
     authority = keypair();
+  const participants = multiple ? [agent.pubkey, peer.pubkey] : [agent.pubkey];
   const region = createSoloRegionFixture(viewer.pubkey);
   let records: readonly OutgoingEvent[] = [];
   let serial = Promise.resolve();
@@ -123,7 +126,8 @@ async function fixture() {
       markChannelStarted: mark,
       recordFirstEvent: record,
       participants: {
-        eligible: (key) => eligible && key === agent.pubkey,
+        eligible: (key) => eligible && participants.includes(key),
+        maxRecipients: multiple ? 2 : 1,
         defaultRecipient: () => agent.pubkey,
         makePrimary: async () => {},
       },
@@ -135,14 +139,12 @@ async function fixture() {
     let beforeQuery = async () => {};
     const native = {
       status: "ready" as const,
-      agents: [
-        {
-          pubkey: agent.pubkey,
-          name: "Task agent",
-          owner: viewer.pubkey,
-          relayUrl: "https://relay.example.org",
-        },
-      ],
+      agents: participants.map((pubkey, index) => ({
+        pubkey,
+        name: index ? "Other agent" : "Task agent",
+        owner: viewer.pubkey,
+        relayUrl: "https://relay.example.org",
+      })),
     };
     const value = createRelaySession(
       {
@@ -160,7 +162,7 @@ async function fixture() {
           return !created
             ? []
             : [
-                roster(authority, channelId, [viewer.pubkey, agent.pubkey]),
+                roster(authority, channelId, [viewer.pubkey, ...participants]),
                 metadata(authority, channelId, "Task", undefined, [
                   ["t", "stream"],
                   ["private"],
@@ -236,6 +238,7 @@ async function fixture() {
     };
   }
   return {
+    participants,
     owner,
     mount,
     draft,
@@ -261,7 +264,14 @@ async function fixture() {
       claimed = value;
     },
     setEligible: (value: boolean) => {
-      eligible = value;
+      act(() => {
+        eligible = value;
+        source.update({
+          status: "ready",
+          binding: source.binding(),
+          revision: value ? 3 : 2,
+        });
+      });
     },
     failSave: (value: boolean) => {
       rejectSave = value;
@@ -275,6 +285,76 @@ async function fixture() {
     },
   };
 }
+
+it("sends a fresh multi-participant task only to its primary and clears its draft and files", async () => {
+  const f = await fixture(true);
+  try {
+    const owner = await f.owner();
+    const [primary, peer] = f.participants;
+    assert.exists(primary);
+    assert.exists(peer);
+    const draft = {
+      text: "@Task agent @Other agent Review the attachment",
+      recipients: [
+        { pubkey: primary, name: "Task agent", start: 0, end: 11 },
+        { pubkey: peer, name: "Other agent", start: 12, end: 24 },
+      ],
+    };
+    writeView(scope, draftKey, draft);
+    const files = attachmentDraft(
+      owner.session,
+      `${scope}:${draftKey}`,
+      draftId,
+    );
+    const upload = {
+      name: "notes.txt",
+      type: "text/plain",
+      size: 5,
+      sha256: "a".repeat(64),
+      url: `https://relay.example.org/media/${"a".repeat(64)}.txt`,
+    };
+    files.addUploaded(upload);
+    const view = f.mount(owner);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(view.started).toHaveBeenCalledExactlyOnceWith(channelId),
+    );
+    expect(f.prepare).toHaveBeenCalledOnce();
+    expect(f.prepare.mock.calls[0]?.[0].recipients).toEqual(f.participants);
+    expect(f.mark).toHaveBeenCalledOnce();
+    expect(f.publications).toHaveLength(2);
+    const creates = f.rows().filter((row) => row.event.kind === 9007);
+    expect(creates).toHaveLength(1);
+    expect(creates[0]?.signed?.tags.filter(([key]) => key === "p")).toEqual([
+      ["p", owner.session.viewer],
+      ...f.participants.map((pubkey) => ["p", pubkey]),
+    ]);
+    expect(f.publications).toContain(creates[0]?.signed?.id);
+    const first = f.rows().filter((row) => row.event.kind === 9);
+    expect(first).toHaveLength(1);
+    expect(first[0]?.delivery).toBe("accepted");
+    expect(first[0]?.event.tags.filter(([key]) => key === "p")).toEqual([
+      ["p", f.participants[0]],
+    ]);
+    expect(first[0]?.event.content).toBe(
+      `${draft.text}\n\n[notes.txt](<${upload.url}>)`,
+    );
+    expect(readView(scope, draftKey, null)).toBe("");
+    expect(readView(scope, `draft:${channelId}`, null)).toBeNull();
+    expect(files.snapshot()).toHaveLength(0);
+    expect(
+      attachmentDraft(
+        owner.session,
+        `${scope}:draft:${channelId}`,
+        channelId,
+      ).snapshot(),
+    ).toHaveLength(0);
+  } finally {
+    await f.dispose();
+  }
+});
 
 it.each(["before", "after"] as const)(
   "resumes the staged identity after exit %s the source claim commits",

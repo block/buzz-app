@@ -36,6 +36,39 @@ export const soloRegionFixture: BundledPlugin = {
         id: "work",
         title: "Solo",
         icon: null,
+        ...(new URL(location.href).searchParams.has("solo-task-fixture")
+          ? {
+              task: {
+                prepare: async () => ({
+                  ok: false as const,
+                  reason: "Choose an agent",
+                }),
+                markChannelStarted: async () => "start" as const,
+                recordFirstEvent: async () => {},
+                participants: {
+                  eligible: () => false,
+                  defaultRecipient: () => undefined,
+                  makePrimary: async () => {},
+                },
+              },
+              actions: () => [
+                {
+                  id: "create",
+                  label: "Create",
+                  icon: "plus" as const,
+                  onSelect() {},
+                  menu: () => [
+                    {
+                      id: "task",
+                      label: "New task",
+                      onSelect: () =>
+                        handle.openDraft(binding, { mode: "task" }),
+                    },
+                  ],
+                },
+              ],
+            }
+          : {}),
         bind(next) {
           binding = next;
           snapshot = { status: "ready", binding, revision: 1 };

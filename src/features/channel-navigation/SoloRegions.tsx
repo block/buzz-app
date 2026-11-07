@@ -515,6 +515,7 @@ function RegionAction({
   run(action: Pick<SoloRegionAction, "onSelect">): Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [selectedAction, setSelectedAction] = useState(false);
   const localTrigger = useRef<HTMLButtonElement>(null);
   const anchor = triggerRef ?? localTrigger;
   const afterClose = useRef<Pick<SoloRegionAction, "onSelect"> | undefined>(
@@ -522,6 +523,7 @@ function RegionAction({
   );
   const choose = (item: Pick<SoloRegionAction, "onSelect">) => {
     afterClose.current = item;
+    setSelectedAction(true);
     setOpen(false);
   };
   let items: ReturnType<NonNullable<SoloRegionAction["menu"]>> | undefined;
@@ -573,7 +575,10 @@ function RegionAction({
     <MenuRoot
       open={open}
       onOpenChange={(next) => {
-        if (next) afterClose.current = undefined;
+        if (next) {
+          afterClose.current = undefined;
+          setSelectedAction(false);
+        }
         setOpen(next);
       }}
       onOpenChangeComplete={(next) => {
@@ -587,7 +592,12 @@ function RegionAction({
       }}
     >
       <MenuTrigger render={trigger} />
-      <MenuPopup align="end" size="compact" aria-label={action.label}>
+      <MenuPopup
+        align="end"
+        size="compact"
+        aria-label={action.label}
+        finalFocus={selectedAction ? false : undefined}
+      >
         {groups.map((name) => {
           const group = items.filter((item) => (item.group ?? "") === name);
           return (

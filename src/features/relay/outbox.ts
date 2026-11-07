@@ -145,7 +145,7 @@ export class PublishNotSent extends PublishRejected {}
 
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
-const MAX_PENDING = 256;
+export const MAX_PENDING = 256;
 const MAX_CONFIRMED = 2048;
 /** Unresolved Canvas saves have their own allowance, so a few large canvases
  * never use up the room that ordinary messages need. */

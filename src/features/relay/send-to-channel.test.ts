@@ -3,7 +3,9 @@ import { profileMentionParts } from "../messages/profile-mentions";
 import { createMessages } from "./messages";
 import { createOutbox } from "./outbox";
 import { foldMessages } from "./fold";
-import { keypair, message, signed } from "./testing";
+import { keypair, message, signed, metadata, roster } from "./testing";
+import { createRelaySession } from "./session";
+import { matchesEvent } from "./projection";
 import type { EventData } from "./events";
 
 const author = keypair();
@@ -427,3 +429,68 @@ it("still deletes the other copies when one deletion fails, then reports it", as
   );
   expect(sent).toEqual(copies.map((copy) => copy.id));
 });
+
+it.each([false, true])(
+  "checks the session task policy before a thread copy enters the outbox (task=%s)",
+  async (task) => {
+    const relay = keypair();
+    const events = [
+      metadata(relay, "channel", "Conversation", undefined, [
+        ["t", "stream"],
+        ["public"],
+        ...(task ? [["t", "solo-task-mode:v1"]] : []),
+      ]),
+      roster(relay, "channel", [author.pubkey, other.pubkey]),
+      root,
+      reply,
+    ];
+    const sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
+      signed(author, template),
+    );
+    const publish = vi.fn(async () => {});
+    const owner = createRelaySession(
+      {
+        viewer: author.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        query: async (filters) =>
+          events.filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          ),
+        writer: { kinds: [9], sign, publish },
+      },
+      { outboxStorage: { load: () => [], save: () => {} } },
+    );
+    try {
+      const { session } = owner;
+      session.channels.ensureList();
+      await vi.waitFor(() =>
+        expect(session.channels.list().status).toBe("ready"),
+      );
+      await session.read([{ kinds: [9], "#h": ["channel"], limit: 10 }]);
+      const outbox = session.outbox;
+      assert.exists(outbox);
+      await outbox.ready();
+      const row = foldMessages("channel", author.pubkey, [root, reply], {
+        includeReplies: true,
+      }).find((item) => item.id === reply.id);
+      assert.exists(row);
+      if (task) {
+        expect(() => session.messages.sendToChannel(row)).toThrow(
+          "Thread replies cannot be copied to a task conversation.",
+        );
+        expect(outbox.snapshot()).toHaveLength(0);
+        expect(sign).not.toHaveBeenCalled();
+        expect(publish).not.toHaveBeenCalled();
+      } else {
+        const id = session.messages.sendToChannel(row);
+        await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+        expect(outbox.snapshot()).toMatchObject([
+          { event: { id, content: reply.content }, delivery: "accepted" },
+        ]);
+      }
+    } finally {
+      owner.dispose();
+    }
+  },
+);

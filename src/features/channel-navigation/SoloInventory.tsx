@@ -312,7 +312,7 @@ export function SoloInventory({
         renderChatMenu={renderChatMenu}
         navigator={navigator}
         draft={
-          draft
+          draft && !draft.task
             ? {
                 projectId: draft.project,
                 content: (

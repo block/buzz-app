@@ -45,13 +45,16 @@ import type { SoloDraft as DraftRoute } from "../channel-navigation/routes";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { taskHeaderUI } from "./TaskHeaderTitle";
 import { regionLabels } from "./region-labels";
+import { useDefaultAgent } from "./default-agent";
 import composerStyles from "../messages/Messages.module.css";
+import type { MentionPicks } from "../relay/messages";
+import { MAX_PENDING } from "../relay/outbox";
 
 const noopSubscribe = () => () => {};
 const noSnapshot = () => undefined;
 
 /** Task-only preparation reuses the host editor and Solo start. Workspace
- * defaults never enter this path. The plugin owns the durable creation intent. */
+ * setup defaults never enter this path. The plugin owns the durable creation intent. */
 export function TaskSoloDraft({
   session,
   scope,
@@ -76,10 +79,6 @@ export function TaskSoloDraft({
     service?.subscribe ?? noopSubscribe,
     service?.snapshot ?? noSnapshot,
   );
-  const choices = useSyncExternalStore(
-    session.agentChoices.subscribe,
-    session.agentChoices.snapshot,
-  );
   const context = taskDraftContext(session, route.region);
   const key = `solo:task:${route.draftId}`;
   const [state, setState] = useState(() => {
@@ -98,12 +97,13 @@ export function TaskSoloDraft({
     };
   });
   const current = useRef(state);
-  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState<{ primary: string | undefined }>();
+  const busy = sending !== undefined;
   const [error, setError] = useState<string>();
   const attempt = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => attempt.current?.abort(), []);
   const changed = useCallback(
-    (draft: MentionDraft) => {
+    (draft: MentionDraft, selectedPrimary?: string) => {
       const previous = current.current;
       let primary = previous.primary;
       if (
@@ -111,6 +111,7 @@ export function TaskSoloDraft({
         !draft.recipients.some((item) => item.pubkey === primary)
       )
         primary = draft.recipients[0]?.pubkey;
+      primary = selectedPrimary ?? primary;
       if (
         JSON.stringify(draft) === JSON.stringify(previous.draft) &&
         primary === previous.primary
@@ -129,42 +130,60 @@ export function TaskSoloDraft({
     },
     [scope, key],
   );
-  const eligiblePrimary = (() => {
+  const eligible = (key: string) => {
     try {
-      return context &&
-        state.primary &&
-        context.mode.participants.eligible(state.primary)
-        ? choices.selectable.find((item) => item.pubkey === state.primary)
-        : undefined;
+      return (
+        !!context &&
+        context.mode.participants.eligible(key) &&
+        session.agentChoices
+          .snapshot()
+          .selectable.some((choice) => choice.pubkey === key)
+      );
     } catch {
-      return undefined;
+      return false;
     }
-  })();
+  };
+  const eligiblePrimary = useDefaultAgent(
+    session,
+    scope,
+    state.primary ?? agent,
+    eligible,
+  );
   const snapshot = (
     draft: MentionDraft,
     attachments: TaskDraft["attachments"] = [],
-  ): TaskDraft | undefined =>
-    context
+  ): TaskDraft | undefined => {
+    const explicit = [...new Set(draft.recipients.map((item) => item.pubkey))];
+    const primary = explicit.length
+      ? explicit.includes(current.current.primary ?? "")
+        ? current.current.primary
+        : explicit[0]
+      : eligiblePrimary?.pubkey;
+    return context
       ? {
           draftId: route.draftId,
           revision: current.current.revision,
           binding: context.binding,
           text: composerMarkdown(draft),
-          recipients: [...new Set(draft.recipients.map((item) => item.pubkey))],
-          ...(current.current.primary
-            ? { primary: current.current.primary }
-            : {}),
+          recipients: explicit.length ? explicit : primary ? [primary] : [],
+          ...(primary ? { primary } : {}),
           ...(draft.workspace ? { workspace: draft.workspace } : {}),
           attachments,
         }
       : undefined;
-  async function start(draft: MentionDraft, files: AttachmentDraft) {
+  };
+  async function start(
+    draft: MentionDraft,
+    files: AttachmentDraft,
+    picks?: MentionPicks,
+  ) {
     if (attempt.current || !context) return;
     const currentContext = context;
     const outbox = session.outbox;
+    const selection = snapshot(draft);
     const controller = new AbortController();
     attempt.current = controller;
-    setBusy(true);
+    setSending({ primary: selection?.primary });
     setError(undefined);
     const signal = AbortSignal.any([controller.signal, currentContext.signal]);
     try {
@@ -173,7 +192,7 @@ export function TaskSoloDraft({
       signal.throwIfAborted();
       const journal = outbox;
       await journal.withChat(`solo-task:${route.draftId}`, async (owned) => {
-        async function resumeSaved() {
+        async function resumeSaved(newlyStaged = false) {
           const operations = journal.snapshot();
           const pending = operations.filter(
             (item) => item.recovery?.key === `solo-task:${route.draftId}`,
@@ -223,6 +242,7 @@ export function TaskSoloDraft({
                   !currentContext.signal.aborted &&
                   taskDraftContext(session, currentContext.label)?.binding
                     .incarnation === currentContext.binding.incarnation &&
+                  recipients.every(eligible) &&
                   recipients.length > 0 &&
                   recipients.length <=
                     (currentContext.mode.participants.maxRecipients ?? 1) &&
@@ -261,17 +281,15 @@ export function TaskSoloDraft({
               }
             }
             const edited =
-              !outgoing ||
-              outgoing.content !== saved.event.content ||
-              JSON.stringify(outgoing.tags) !==
-                JSON.stringify(
-                  saved.event.tags.filter(([name]) => name === "imeta"),
-                ) ||
-              JSON.stringify(
-                [
-                  ...new Set(draft.recipients.map((item) => item.pubkey)),
-                ].sort(),
-              ) !== JSON.stringify([...new Set(recipients)].sort());
+              !newlyStaged &&
+              (!outgoing ||
+                outgoing.content !== saved.event.content ||
+                JSON.stringify(outgoing.tags) !==
+                  JSON.stringify(
+                    saved.event.tags.filter(([name]) => name === "imeta"),
+                  ) ||
+                JSON.stringify([...(selection?.recipients ?? [])].sort()) !==
+                  JSON.stringify([...new Set(recipients)].sort()));
             const targetFiles = attachmentDraft(
               session,
               `${scope}:${targetKey}`,
@@ -311,6 +329,10 @@ export function TaskSoloDraft({
                   signal,
                 );
                 signal.throwIfAborted();
+                if (!active())
+                  throw new Error(
+                    "A saved task participant is no longer eligible.",
+                  );
                 if (claim !== "start" && claim !== "resume")
                   throw new Error("The saved task claim is invalid.");
               }
@@ -363,35 +385,52 @@ export function TaskSoloDraft({
           return false;
         }
         if (await resumeSaved()) return;
-        const recipients = [
-          ...new Set(draft.recipients.map((item) => item.pubkey)),
-        ];
+        const recipients = selection?.recipients ?? [];
+        const primary = selection?.primary;
         if (
           recipients.length >
           (currentContext.mode.participants.maxRecipients ?? 1)
         )
           throw new Error("Tag one agent per message");
-        changed(draft);
-        const uploaded = await files.prepareForSend(signal);
-        signal.throwIfAborted();
-        const input = snapshot(draft, uploaded);
-        if (
-          !input?.primary ||
-          !input.recipients.includes(input.primary) ||
-          input.recipients.some(
-            (key) => !currentContext.mode.participants.eligible(key),
-          )
-        )
+        if (!selection || !primary || !recipients.includes(primary))
           throw new Error("Choose an eligible primary agent before sending.");
+        changed(draft, primary);
+        const input = {
+          ...selection,
+          primary,
+          revision: current.current.revision,
+        };
+        const active = () =>
+          owned() &&
+          !signal.aborted &&
+          taskDraftContext(session, currentContext.label)?.binding
+            .incarnation === currentContext.binding.incarnation &&
+          input.recipients.every(eligible);
+        const checkActive = () => {
+          signal.throwIfAborted();
+          if (!active())
+            throw new Error(
+              "A selected task agent is no longer eligible. Choose an available agent.",
+            );
+        };
+        checkActive();
+        const uploaded = await files.prepareForSend(signal);
+        checkActive();
+        input.attachments = uploaded;
         const message = session.messages.prepareNewChat(
           input.text,
           [input.primary],
           uploaded,
+          Object.fromEntries(
+            Object.entries(picks ?? {}).filter(
+              ([pubkey]) => pubkey === input.primary,
+            ),
+          ),
         );
         if (message.content.length > 32_000)
           throw new Error("The task message exceeds 32,000 characters.");
         const result = await currentContext.mode.prepare(input, signal);
-        signal.throwIfAborted();
+        checkActive();
         if (!result.ok) {
           if (result.reason === "already_sent" && result.channelId) {
             const channelId = result.channelId;
@@ -457,7 +496,9 @@ export function TaskSoloDraft({
           members: Object.freeze([...result.members]),
         });
         if (
-          !prepared.channelId ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+            prepared.channelId,
+          ) ||
           !prepared.preparationId ||
           prepared.revision !== input.revision ||
           !prepared.members.includes(input.primary) ||
@@ -471,6 +512,10 @@ export function TaskSoloDraft({
         )
           throw new Error(
             "The prepared task has changed. Review its agents and retry.",
+          );
+        if (journal.snapshot().length > MAX_PENDING - 2)
+          throw new Error(
+            "Resolve or dismiss pending operations before creating a task.",
           );
         const create = session.channelWrites.prepareStart(
           prepared.channelId,
@@ -491,7 +536,7 @@ export function TaskSoloDraft({
           }),
         );
         signal.throwIfAborted();
-        if (!(await resumeSaved()))
+        if (!(await resumeSaved(true)))
           throw new Error("The saved task submission is unavailable.");
       });
     } catch (reason) {
@@ -499,12 +544,14 @@ export function TaskSoloDraft({
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       if (attempt.current === controller) attempt.current = undefined;
-      if (!controller.signal.aborted) setBusy(false);
+      if (!controller.signal.aborted) setSending(undefined);
     }
   }
   const Header = context?.mode.header;
+  const selected = snapshot(state.draft);
+  const canSubmit = !!selected?.primary && selected.recipients.every(eligible);
   return (
-    <SoloDraftView>
+    <SoloDraftView title="New task">
       <MessageComposer
         session={session}
         scope={scope}
@@ -516,19 +563,39 @@ export function TaskSoloDraft({
         inviteAgents
         label="Message your task agent"
         placeholder="What do you want to accomplish?"
-        autoFocus={!!focusRequest}
-        defaultMention={eligiblePrimary}
-        requireMention
+        focusRequest={focusRequest}
         taskDraft={{
           region:
             context?.region ??
             route.region.slice(route.region.lastIndexOf(":") + 1),
           policy: context?.mode.participants,
+          recipient: sending ? sending.primary : selected?.primary,
+          selectPrimary: (pubkey, draft) => {
+            if (
+              attempt.current ||
+              !context ||
+              !eligible(pubkey) ||
+              taskDraftContext(session, context.label)?.binding.incarnation !==
+                context.binding.incarnation
+            )
+              return false;
+            try {
+              changed(draft, pubkey);
+              setError(undefined);
+              return true;
+            } catch (reason) {
+              setError(
+                reason instanceof Error ? reason.message : String(reason),
+              );
+              return false;
+            }
+          },
         }}
         submission={{
           draftKey: `${key}:new-draft`,
           locked: busy,
-          disabled: busy || !context || !session.channelWrites.available,
+          disabled:
+            busy || !context || !canSubmit || !session.channelWrites.available,
           attachments: true,
           changed,
           header: (draft, controls) => {
@@ -537,19 +604,14 @@ export function TaskSoloDraft({
               <Header draft={input} {...controls} ui={taskHeaderUI} />
             ) : null;
           },
-          submit: (draft, files) => {
-            void start(draft, files);
+          submit: (draft, files, _addressed, picks) => {
+            void start(draft, files, picks);
           },
         }}
       />
       {!context && (
         <p className={composerStyles.composerColumn} role="status">
           {TASK_UNAVAILABLE}
-        </p>
-      )}
-      {eligiblePrimary && (
-        <p className={composerStyles.composerColumn}>
-          Primary: {eligiblePrimary.name}
         </p>
       )}
       {error && (

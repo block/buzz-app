@@ -13,8 +13,13 @@ import {
   callAttentionTool,
   isAttentionTool,
 } from "./attention";
-import type { BuzzClient, Context } from "./client";
-import { callOwnerTool, isOwnerTool, OWNER_TOOLS } from "./owner";
+import type { BuzzClient, Context, OwnerAccess } from "./client";
+import {
+  callOwnerTool,
+  isOwnerTool,
+  type OwnerAnswer,
+  ownerTools,
+} from "./owner";
 import { callPluginTool, isPluginTool, PLUGIN_TOOLS } from "./plugins";
 import { callSettingsTool, isSettingsTool, SETTINGS_TOOLS } from "./settings";
 import {
@@ -86,31 +91,34 @@ const listed = ({ name, description, inputSchema }: AddedTool): Listed => ({
 export type SessionTool = Listed & Readonly<{ load: "always" | "search" }>;
 
 /** The tools a session lists: the Buzz tools, then those plugins add. The
- * owner tools only with `owner`: a client with `ownerAccess`. */
+ * owner tools only with `owner`, a client's `ownerAccess`. */
 export const sessionTools = (
   added: readonly AddedTool[] = [],
-  owner = false,
+  owner?: Pick<OwnerAccess, "media">,
 ): readonly SessionTool[] => [
   ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
   ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  ...(owner
-    ? OWNER_TOOLS.map((tool) => ({ ...tool, load: "search" as const }))
-    : []),
+  ...ownerTools(owner).map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */
-export function sessionHint(added: readonly AddedTool[] = [], owner = false) {
+export function sessionHint(
+  added: readonly AddedTool[] = [],
+  owner?: Pick<OwnerAccess, "media">,
+) {
   const plugins = added.length
     ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
     : "";
-  const owned = owner
-    ? ", your owner's channels, members, messages and canvases read with their access (owner_channel_list, owner_read)"
-    : "";
+  const owned = !owner
+    ? ""
+    : owner.media
+      ? ", your owner's channels, members, messages, canvases and media read with their access (owner_channel_list, owner_read, owner_media_get)"
+      : ", your owner's channels, members, messages and canvases read with their access (owner_channel_list, owner_read)";
   return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${owned}${plugins}.`;
 }
 
@@ -173,17 +181,23 @@ export async function callSessionTool(
       ...(typeof args.command === "string" ? { command: args.command } : {}),
     });
   let reply: Reply;
-  let held: (() => void) | undefined;
+  let owned: OwnerAnswer | undefined;
   try {
     if (isOwnerTool(name) && !added.some((tool) => tool.name === name))
-      ({ text: reply, held } = await callOwnerTool(client, name, args));
+      ({ reply } = owned = await callOwnerTool(client, name, args));
     else reply = await dispatchSessionTool(client, context, name, args, added);
   } catch (error) {
     return checkedToolError(client, session, error);
   }
-  await client.protect?.({ kind: "tool-result", session, content: reply });
-  // An owner read is released only while the binding it was read with holds.
-  held?.();
+  try {
+    await client.protect?.({ kind: "tool-result", session, content: reply });
+    // An owner read is released only while the binding it was read with
+    // holds; owner media is saved only then.
+    await owned?.held();
+  } catch (error) {
+    owned?.discard?.();
+    throw error;
+  }
   return reply;
 }
 

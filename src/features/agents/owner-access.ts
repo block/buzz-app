@@ -8,6 +8,7 @@ import type {
   OwnerAccess,
   OwnerChannel,
   OwnerExecution,
+  OwnerMedia,
   OwnerReadRequest,
   OwnerRole,
 } from "../../buzz-mcp/client";
@@ -26,6 +27,7 @@ import {
 } from "../relay/channel-lifecycle-protocol";
 import { soloLabels } from "../solo/labels";
 import type { RelaySession } from "../relay/session";
+import type { OwnerMediaNative } from "./native";
 
 /** Whether this build lets agents read with their owner's access in
  * `community`: its exact canonical origin is in the build's list. */
@@ -76,10 +78,12 @@ const changed = () =>
   );
 
 /** `agent`'s owner reads. `bind` answers the owner's current binding for the
- * agent's community, or undefined when it may not be used now. */
+ * agent's community, or undefined when it may not be used now. With `media`,
+ * native holds owner media for review. */
 export function createOwnerAccess(
-  agent: Readonly<{ pubkey: string; owner: string }>,
+  agent: Readonly<{ pubkey: string; relay: string; owner: string }>,
   bind: () => OwnerBinding | undefined,
+  media?: OwnerMediaNative,
 ): OwnerAccess {
   /** The binding each answer was read with. */
   const answered = new WeakMap<OwnerExecution, OwnerBinding>();
@@ -280,6 +284,55 @@ export function createOwnerAccess(
       ...(changes.length >= EDITS ? { editsLimited: true as const } : {}),
     };
   };
+
+  /** Media read into native memory and held there for review; a cancel,
+   * unbind or rebind drops it, even one that comes before the bytes do. */
+  async function ownerMedia(
+    native: OwnerMediaNative,
+    url: string,
+    signal: AbortSignal | undefined,
+  ): Promise<OwnerMedia> {
+    const id = crypto.randomUUID();
+    const member = { pubkey: agent.pubkey, relay: agent.relay };
+    let bound: AbortSignal | undefined;
+    let settled = false;
+    const discard = () => {
+      if (settled) return;
+      settled = true;
+      bound?.removeEventListener("abort", discard);
+      void native.discard(id).catch(() => {});
+    };
+    try {
+      return await run(signal, async (binding, signal) => {
+        bound = signal;
+        signal.addEventListener("abort", discard, { once: true });
+        const staged = await native.stage(member, id, url);
+        signal.throwIfAborted();
+        return {
+          ...staged,
+          execution: execution(binding),
+          // Checked and started in one synchronous step, as a text answer is
+          // released right after its own check.
+          release: () => {
+            if (settled) throw changed();
+            try {
+              holds(binding);
+            } catch (error) {
+              discard();
+              throw error;
+            }
+            settled = true;
+            signal.removeEventListener("abort", discard);
+            return native.publish(member, id);
+          },
+          discard,
+        };
+      });
+    } catch (error) {
+      discard();
+      throw error;
+    }
+  }
 
   return Object.freeze({
     channels: (signal?: AbortSignal) =>
@@ -539,6 +592,10 @@ export function createOwnerAccess(
       if (!binding) throw changed();
       holds(binding);
     },
+    ...(media && {
+      media: (url: string, signal?: AbortSignal) =>
+        ownerMedia(media, url, signal),
+    }),
   });
 }
 

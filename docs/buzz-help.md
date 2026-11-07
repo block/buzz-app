@@ -836,10 +836,11 @@ available rather than silently discarding it.
 
 - In communities where your build enables it, an agent running on this
   device with a built-in harness can list your channels, including private and
-  archived ones, DMs and Solo chats it is not in, and see a channel's details
-  and members, read with your access. It cannot change anything this way, and
-  it stops working when you sign out, switch accounts, disconnect or stop its
-  turn.
+  archived ones, DMs and Solo chats it is not in, and read a channel's details,
+  members, messages and Canvas, and the community's files, with your access.
+  It cannot change anything this way, and it stops working when you sign out,
+  switch accounts, disconnect or stop its turn. An agent on a remote execution
+  target cannot get files this way.
 
 Saved teams from **Your teams** appear in the inline `@` suggestions and the
 mention picker. Select a team to insert its members as individual mentions.

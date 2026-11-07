@@ -2453,19 +2453,23 @@ export class AgentsService extends Service implements Agents {
       settings: () => this.deviceSettings,
       ownerAccess: (agent) =>
         ownerMcpEnabled(agent.relay)
-          ? createOwnerAccess(agent, () => {
-              const binding = this.bindingOf(agent);
-              return binding &&
-                ownerMcpEnabled(binding.origin) &&
-                this.communities.snapshot().viewer === agent.owner
-                ? {
-                    viewer: binding.viewer,
-                    origin: binding.origin,
-                    session: binding.session,
-                    signal: binding.controller.signal,
-                  }
-                : undefined;
-            })
+          ? createOwnerAccess(
+              agent,
+              () => {
+                const binding = this.bindingOf(agent);
+                return binding &&
+                  ownerMcpEnabled(binding.origin) &&
+                  this.communities.snapshot().viewer === agent.owner
+                  ? {
+                      viewer: binding.viewer,
+                      origin: binding.origin,
+                      session: binding.session,
+                      signal: binding.controller.signal,
+                    }
+                  : undefined;
+              },
+              native?.ownerMedia,
+            )
           : undefined,
       classifier: () => this.classifier(),
       decisions: () => this.decisions,

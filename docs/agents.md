@@ -79,10 +79,11 @@ servers do not support these operations.
 
 In communities the build flag `BUZZ_OWNER_MCP_COMMUNITIES` enables, an agent's
 runs in this app on a bundled harness list `owner_channel_list`, `owner_channel_get`,
-`owner_member_list`, `owner_read`, `owner_canvas_get` and `owner_canvas_history`.
+`owner_member_list`, `owner_read`, `owner_canvas_get`, `owner_canvas_history`
+and `owner_media_get`.
 They read the owner's channels, one channel's details and
 the owner's rights in it, its roster, its messages, whole threads and searches,
-and its Canvas and earlier revisions, through the
+its Canvas and earlier revisions, and the community's media, through the
 owner's own signed-in session, including private and archived channels, DMs and
 Solo chats the agent is not in. Message reads and Canvas history page with a
 `next` cursor, as `read` and the app's history do. A search covers only the
@@ -91,10 +92,16 @@ channels' matches still fill its page, so `limited` with few results means
 narrowing it by channel or time. A message shows its newest edit by its author
 or, as in the app, by the author's verified owner. One read fetches a page's edits;
 when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
-nothing: no membership, subscription, read state, post, agent start or Canvas
+nothing to the community: no membership, subscription, read state, post, agent start or Canvas
 change. Content comes from the relay's own answer, not the owner's open views,
-so it changes no unread counts. They do not save the owner's attachments: a
-saved file would be readable before the call's final checks. The app
+so it changes no unread counts. `owner_media_get` gets one media blob of the
+agent's community, by its URL or `sha256[.ext]`, as `media_get` does but signed
+as the owner: the app holds it in memory, up to 500 MiB, until protection has
+reviewed the answer, and saves it to a local file only after the call's final
+checks, while the owner is still signed in and the agent was not deleted. A
+refused, cancelled or failed call saves nothing. Agents running on a remote
+execution target do not list it and are refused it, since its file would be
+on this device. The app
 decides the agent, owner and community;
 answers name them in `executedAs`. Each call needs the agent's owner signed in
 to that community now and fails, returning nothing, when the account, community

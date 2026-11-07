@@ -8,7 +8,8 @@ import { executionSpawn } from "./execution";
 // so one agent works in several conversations at once. Claude acts in Buzz with
 // the in-process Buzz tools, signed by the agent's native-held key; the runtime
 // only reports a turn that fails.
-import type { Context } from "../../buzz-mcp/client";
+import type { Context, OwnerAccess } from "../../buzz-mcp/client";
+import { withoutOwnerMedia } from "../../buzz-mcp/owner";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { type Listing, respond } from "../../buzz-mcp/rpc";
 import {
@@ -162,7 +163,10 @@ const where = ({ workspace, model, effort }: Config) => ({
 /** How Claude lists the session tools: in full up front only those marked
  * `alwaysLoad`, and the rest by name until its tool search loads them, with
  * the server's instructions saying what they are. */
-const listing = (added: readonly AddedTool[], owner = false): Listing => ({
+const listing = (
+  added: readonly AddedTool[],
+  owner?: Pick<OwnerAccess, "media">,
+): Listing => ({
   instructions: sessionHint(added, owner),
   tool: ({ load, ...tool }) =>
     load === "always"
@@ -1379,7 +1383,8 @@ export class ClaudeRuntime {
         const handle = entry.handle;
         const client =
           handle &&
-          appClient(handle, {
+          // A remote target's files are not here, so neither is owner media.
+          appClient(this.target ? withoutOwnerMedia(handle) : handle, {
             // Its PreToolUse hook reviews every tool, Buzz's included.
             nativeToolGate: true,
             protectionContext: async () => {
@@ -1412,7 +1417,7 @@ export class ClaudeRuntime {
           context,
           message,
           this.added(),
-          listing(this.added(), !!client?.ownerAccess),
+          listing(this.added(), client?.ownerAccess),
         );
       };
     const saved = this.savedSessions(agent);

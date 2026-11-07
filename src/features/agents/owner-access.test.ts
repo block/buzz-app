@@ -23,6 +23,7 @@ const person = "c".repeat(64);
 const otherOwner = "d".repeat(64);
 const relayAuthor = "e".repeat(64);
 const community = "https://relay.example.test";
+const relay = "wss://relay.example.test";
 const joined = "11111111-1111-4111-8111-111111111111";
 const archived = "22222222-2222-4222-8222-222222222222";
 const system = "44444444-4444-4444-8444-444444444444";
@@ -276,7 +277,7 @@ describe("owner access", () => {
   it("lists the owner's channels, including ones the agent is not in, as the owner", async () => {
     const fake = fakeSession({ channels });
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(access.channels()).resolves.toEqual({
@@ -314,7 +315,7 @@ describe("owner access", () => {
   ])("marks a list that is not complete partial: %j", async (state, asks) => {
     const fake = fakeSession({ channels: [], ...state });
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     const list = await access.channels();
@@ -329,7 +330,7 @@ describe("owner access", () => {
       signed(joined, { [owner]: "admin", [person]: "member", [agent]: "bot" }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     const details = await access.channel(joined);
@@ -377,7 +378,7 @@ describe("owner access", () => {
         signed(joined, { [owner]: "owner", [person]: "member" }, metadata),
       );
       const access = createOwnerAccess(
-        { pubkey: agent, owner },
+        { pubkey: agent, relay, owner },
         bound(fake.session).bind,
       );
       await expect(access.channel(joined)).resolves.toMatchObject({
@@ -405,7 +406,7 @@ describe("owner access", () => {
       }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(access.channel(joined)).resolves.toMatchObject({
@@ -438,7 +439,7 @@ describe("owner access", () => {
       signed(joined, { [person]: "owner" }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(access.channel(joined)).resolves.toMatchObject({
@@ -471,7 +472,7 @@ describe("owner access", () => {
   ])("fails for %s", async (_what, id, events) => {
     const fake = fakeSession({ channels }, events);
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(access.channel(id)).rejects.toThrow();
@@ -487,7 +488,7 @@ describe("owner access", () => {
       () => signed(untyped, { [owner]: "owner" }, [["t", "system"]]),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(access.channel(untyped)).rejects.toThrow(
@@ -505,7 +506,7 @@ describe("owner access", () => {
       signed(joined, { [owner]: "owner" }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(
@@ -524,7 +525,7 @@ describe("owner access", () => {
       }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(
@@ -552,7 +553,7 @@ describe("owner access", () => {
       signed(joined, { [owner]: "owner" }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await access.channels();
@@ -595,7 +596,10 @@ describe("owner access", () => {
       else if (state === "another account's binding")
         binding.set({ ...binding.first, viewer: otherOwner });
       else binding.controller.abort();
-      const access = createOwnerAccess({ pubkey: agent, owner }, binding.bind);
+      const access = createOwnerAccess(
+        { pubkey: agent, relay, owner },
+        binding.bind,
+      );
       await expect(access.channels()).rejects.toThrow("not connected");
       await expect(access.channel(joined)).rejects.toThrow("not connected");
       expect(fake.readRemote).not.toHaveBeenCalled();
@@ -617,7 +621,10 @@ describe("owner access", () => {
         await held;
         return signed(joined, { [owner]: "owner" });
       });
-      const access = createOwnerAccess({ pubkey: agent, owner }, binding.bind);
+      const access = createOwnerAccess(
+        { pubkey: agent, relay, owner },
+        binding.bind,
+      );
       const call = access.channel(joined);
       await reading.promise;
       if (change === "signs in as someone else")
@@ -640,7 +647,10 @@ describe("owner access", () => {
         signed(joined, { [owner]: "owner" }),
       );
       const binding = bound(fake.session);
-      const access = createOwnerAccess({ pubkey: agent, owner }, binding.bind);
+      const access = createOwnerAccess(
+        { pubkey: agent, relay, owner },
+        binding.bind,
+      );
       const reviewing = started();
       const approve = started();
       const protect = vi.fn(async (action: ProtectionAction) => {
@@ -674,7 +684,7 @@ describe("owner access", () => {
 
   it("answers only reads it made itself", () => {
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fakeSession({ channels }).session).bind,
     );
     expect(() => access.held({ agent, owner, community })).toThrow(
@@ -695,7 +705,10 @@ describe("owner access", () => {
           );
         }),
     );
-    const access = createOwnerAccess({ pubkey: agent, owner }, binding.bind);
+    const access = createOwnerAccess(
+      { pubkey: agent, relay, owner },
+      binding.bind,
+    );
     const call = access.channel(joined);
     await reading.promise;
     binding.controller.abort();
@@ -707,7 +720,7 @@ describe("owner access", () => {
       signed(joined, { [owner]: "owner" }),
     );
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     const before = new AbortController();
@@ -730,9 +743,9 @@ describe("owner access", () => {
     });
     const mine = bound(first.session);
     const theirs = bound(second.session, otherOwner);
-    const a = createOwnerAccess({ pubkey: agent, owner }, mine.bind);
+    const a = createOwnerAccess({ pubkey: agent, relay, owner }, mine.bind);
     const b = createOwnerAccess(
-      { pubkey: person, owner: otherOwner },
+      { pubkey: person, relay, owner: otherOwner },
       theirs.bind,
     );
     await a.channels();
@@ -766,7 +779,7 @@ describe("owner reads", () => {
     return {
       fake,
       binding,
-      access: createOwnerAccess({ pubkey: agent, owner }, binding.bind),
+      access: createOwnerAccess({ pubkey: agent, relay, owner }, binding.bind),
     };
   };
   const contentReads = (fake: ReturnType<typeof fakeSession>) =>
@@ -914,7 +927,7 @@ describe("owner reads", () => {
       post("1", joined, 10, "secret"),
     ]);
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(fake.session).bind,
     );
     await expect(
@@ -945,7 +958,7 @@ describe("owner reads", () => {
         key === "snapshotRead" ? undefined : Reflect.get(object, key),
     });
     const access = createOwnerAccess(
-      { pubkey: agent, owner },
+      { pubkey: agent, relay, owner },
       bound(session).bind,
     );
     await expect(
@@ -1102,5 +1115,208 @@ describe("owner reads", () => {
     ).resolves.toMatchObject({ executedAs, revisions: [{ id: canvas.id }] });
     // Every answer came from the relay's own reads with the owner's session.
     expect(fake.snapshotRead).toHaveBeenCalled();
+  });
+});
+
+describe("owner media", () => {
+  const png = "iVBORw0KGgoAAAANSUhEUg==";
+  const staged = {
+    path: "/tmp/buzz-agent-media/a.png",
+    type: "image/png",
+    size: 16,
+    data: png,
+  };
+  function media() {
+    const order: string[] = [];
+    const native = {
+      stage: vi.fn(async (_member: unknown, _id: string, _url: string) => {
+        order.push("stage");
+        return staged;
+      }),
+      publish: vi.fn(async () => {
+        order.push("publish");
+      }),
+      discard: vi.fn(async () => {
+        order.push("discard");
+      }),
+    };
+    return { native, order };
+  }
+  const access = (
+    binding: ReturnType<typeof bound>,
+    native?: ReturnType<typeof media>["native"],
+  ) => createOwnerAccess({ pubkey: agent, relay, owner }, binding.bind, native);
+  const client = (
+    ownerAccess: ReturnType<typeof access>,
+    fields: Partial<BuzzClient> = {},
+  ) =>
+    ({
+      pubkey: agent,
+      key: agent,
+      ownerAccess,
+      ...fields,
+    }) as unknown as BuzzClient;
+
+  it("is offered only where native can hold it", () => {
+    const binding = bound(fakeSession({ channels }).session);
+    expect(access(binding).media).toBeUndefined();
+    expect(access(binding, media().native).media).toBeTypeOf("function");
+  });
+
+  it("stages as the agent's own membership, then saves it in the same step as its check", async () => {
+    const { native, order } = media();
+    const binding = bound(fakeSession({ channels }).session);
+    const read = await access(binding, native).media?.("a.png");
+    expect(native.stage).toHaveBeenCalledWith(
+      { pubkey: agent, relay },
+      expect.any(String),
+      "a.png",
+    );
+    expect(read).toMatchObject({
+      ...staged,
+      execution: { agent, owner, community },
+    });
+    expect(native.publish).not.toHaveBeenCalled();
+    const saving = read?.release();
+    // Invoked before anything else can run: no await between check and save.
+    expect(native.publish).toHaveBeenCalledWith(
+      { pubkey: agent, relay },
+      native.stage.mock.calls[0]?.[1],
+    );
+    await saving;
+    expect(order).toEqual(["stage", "publish"]);
+    expect(() => read?.release()).toThrow("changed during the call");
+    expect(native.publish).toHaveBeenCalledOnce();
+  });
+
+  it.each(["signs in as someone else", "reconnects", "disconnects"])(
+    "drops staged media, saving nothing, when the owner's connection %s before its release",
+    async (change) => {
+      const { native } = media();
+      const binding = bound(fakeSession({ channels }).session);
+      const read = await access(binding, native).media?.("a.png");
+      if (change === "signs in as someone else")
+        binding.set({ ...binding.first, viewer: otherOwner });
+      else if (change === "reconnects")
+        binding.set({
+          ...binding.first,
+          session: fakeSession({ channels }).session,
+        });
+      else binding.set(undefined);
+      expect(() => read?.release()).toThrow();
+      expect(native.publish).not.toHaveBeenCalled();
+      expect(native.discard).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("drops media whose binding is replaced or whose caller cancels, even before it arrives", async () => {
+    for (const cause of ["rebind", "cancel"]) {
+      const { native } = media();
+      const binding = bound(fakeSession({ channels }).session);
+      const arriving = started();
+      let arrive = () => {};
+      native.stage.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            arriving.resolve();
+            arrive = () => resolve(staged);
+          }),
+      );
+      const caller = new AbortController();
+      const read = access(binding, native).media?.("a.png", caller.signal);
+      await arriving.promise;
+      if (cause === "rebind") binding.controller.abort();
+      else caller.abort(new Error("Turn ended"));
+      // Told at once, before the read's own reply.
+      expect(native.discard).toHaveBeenCalledOnce();
+      arrive();
+      await expect(read).rejects.toThrow();
+      expect(native.discard).toHaveBeenCalledOnce();
+      expect(native.publish).not.toHaveBeenCalled();
+    }
+    // After staging, a rebind drops it too.
+    const { native } = media();
+    const binding = bound(fakeSession({ channels }).session);
+    const read = await access(binding, native).media?.("a.png");
+    binding.controller.abort();
+    expect(native.discard).toHaveBeenCalledOnce();
+    expect(() => read?.release()).toThrow("changed during the call");
+    expect(native.publish).not.toHaveBeenCalled();
+  });
+
+  it("is saved only after its reviewed result, and dropped when review refuses it", async () => {
+    for (const verdict of ["allow", "deny"]) {
+      const { native, order } = media();
+      const binding = bound(fakeSession({ channels }).session);
+      const protect = vi.fn(async (action: ProtectionAction) => {
+        order.push(action.kind);
+        if (verdict === "deny" && action.kind === "tool-result")
+          throw new Error("denied result");
+      });
+      const call = callSessionTool(
+        client(access(binding, native), { protect }),
+        {},
+        "owner_media_get",
+        { url: "a.png" },
+      );
+      if (verdict === "deny") {
+        await expect(call).rejects.toThrow("denied result");
+        expect(order).toEqual(["tool", "stage", "tool-result", "discard"]);
+      } else {
+        await expect(call).resolves.toMatchObject({
+          data: png,
+          type: "image/png",
+        });
+        expect(order).toEqual(["tool", "stage", "tool-result", "publish"]);
+        // The reviewed reply named the media and who read it.
+        const content = protect.mock.calls.at(-1)?.[0]?.content as
+          | { text: string }
+          | undefined;
+        expect(JSON.parse(String(content?.text))).toEqual({
+          executedAs: { agent, owner, community },
+          path: staged.path,
+          type: staged.type,
+          size: staged.size,
+        });
+      }
+    }
+  });
+
+  it("drops media when the turn ends during its review", async () => {
+    const { native } = media();
+    const binding = bound(fakeSession({ channels }).session);
+    let live = true;
+    const reviewing = started();
+    const approve = started();
+    const turn = appClient(
+      {
+        pubkey: agent,
+        key: agent,
+        owner,
+        ownerAccess: access(binding, native),
+        protection: {
+          check: async (action: ProtectionAction) => {
+            if (action.kind !== "tool-result") return;
+            reviewing.resolve();
+            await approve.promise;
+          },
+        },
+      } as unknown as AgentHandle,
+      {
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+        protectionContext: async () => ({}),
+        check: () => {
+          if (!live) throw new Error("The turn has ended");
+        },
+      },
+    );
+    const call = callSessionTool(turn, {}, "owner_media_get", { url: "a.png" });
+    await reviewing.promise;
+    live = false;
+    approve.resolve();
+    await expect(call).rejects.toThrow("The turn has ended");
+    expect(native.publish).not.toHaveBeenCalled();
+    expect(native.discard).toHaveBeenCalled();
   });
 });

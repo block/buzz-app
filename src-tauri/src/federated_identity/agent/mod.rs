@@ -436,6 +436,51 @@ impl AgentTokens {
             && !row.closed
             && row.generation == incarnation.row
     }
+    /// Runs `write` only while a local caller's work stamped `incarnation` at
+    /// `retirements` still acts, holding the locks [`Admission::commit`] holds in
+    /// the same order, so deletion, sign-out and a change of account either
+    /// precede it or wait for it. `write` must not reenter the credential owners.
+    pub(crate) fn commit_caller<T>(
+        &self,
+        agent: &str,
+        relay: &str,
+        incarnation: Stamp,
+        retirements: u64,
+        write: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let row = row_key(agent, relay)?;
+        let retired = lock(&self.0.retired);
+        let incarnations = lock(&self.0.incarnations);
+        let (at, row) = (
+            incarnations.get(agent).copied().unwrap_or_default(),
+            incarnations.get(&row).copied().unwrap_or_default(),
+        );
+        let state = self.0.identity.state();
+        if at.closed
+            || at.generation != incarnation.key
+            || row.closed
+            || row.generation != incarnation.row
+        {
+            return Err(DELETED.into());
+        }
+        // An organization sign-out marks its retirement pending before it counts it.
+        if retired.pending == Some(true) || state.closed || state.retirements != retirements {
+            return Err(CHANGED.into());
+        }
+        write()
+    }
+    /// As an organization sign-out does before it counts its retirement.
+    #[cfg(test)]
+    pub(crate) fn mark_retirement_pending(&self) {
+        lock(&self.0.retired).pending = Some(true);
+    }
+    /// Signals once the next sign-out finds the retirement lock taken.
+    #[cfg(test)]
+    pub(crate) fn on_sign_out_contended(&self) -> std::sync::mpsc::Receiver<()> {
+        let (contended, waiting) = std::sync::mpsc::channel();
+        *lock(&self.0.contended) = Some(contended);
+        waiting
+    }
     /// The owner's retirements so far: sign-out, another account, or a
     /// retired grant each add one.
     pub(crate) fn retirements(&self) -> u64 {

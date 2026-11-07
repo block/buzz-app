@@ -6389,6 +6389,102 @@ it("runs bound Codex tools in the guest workspace, resumes, and stops on provide
   }
 });
 
+it.each([false, true])(
+  "lists and runs owner_media_get only where its files are, not on a remote target: remote %s",
+  async (remote) => {
+    let f!: ReturnType<typeof fixture>;
+    f = remote
+      ? fixture([], undefined, false, {}, undefined, undefined, async () =>
+          guestTarget(f),
+        )
+      : fixture();
+    const executedAs = { agent: "agent", owner: "owner", community: "c" };
+    const media = vi.fn(async () => ({
+      execution: executedAs,
+      path: "/tmp/buzz-agent-media/a.pdf",
+      type: "application/pdf",
+      size: 3,
+      release: vi.fn(async () => {}),
+      discard: vi.fn(),
+    }));
+    const ownerAccess = {
+      channels: vi.fn(),
+      channel: vi.fn(),
+      members: vi.fn(),
+      messages: vi.fn(),
+      canvas: vi.fn(),
+      canvasHistory: vi.fn(),
+      held: vi.fn(),
+      media,
+    };
+    const delivery = f.delivery("@Codex get that file");
+    await f.runtime.run({
+      ...delivery,
+      agent: { ...delivery.agent, ownerAccess } as typeof delivery.agent,
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const thread = f.sent.find((wire) => wire.method === "thread/start")
+      ?.params as {
+      dynamicTools: { description: string; tools: { name: string }[] }[];
+    };
+    const names = thread.dynamicTools[0]?.tools.map((tool) => tool.name);
+    expect(names).toContain("owner_read");
+    expect(names?.includes("owner_media_get")).toBe(!remote);
+    expect(
+      thread.dynamicTools[0]?.description.includes("owner_media_get"),
+    ).toBe(!remote);
+    // A remembered or guessed call is refused there before anything is read.
+    const reply = (await f.tool("owner_media_get", { url: "a.pdf" }))
+      ?.result as { success: boolean; contentItems: { text: string }[] };
+    expect(reply.success).toBe(!remote);
+    expect(reply.contentItems[0]?.text).toContain(
+      remote ? "nothing was read" : '"executedAs"',
+    );
+    expect(media).toHaveBeenCalledTimes(remote ? 0 : 1);
+    await f.complete();
+  },
+);
+
+it("starts fresh instead of restoring an owner binding saved before owner_media_get was listed", async () => {
+  const f = fixture();
+  f.storage.set(
+    `buzz.codex.sessions.v17:${scope}:${pubkey}`,
+    JSON.stringify({
+      [JSON.stringify(["channel", root])]: {
+        threadId: "owner-thread",
+        workspace: "/tmp/codex-test",
+        tools: ":owner",
+      },
+    }),
+  );
+  const media = vi.fn();
+  const ownerAccess = {
+    channels: vi.fn(),
+    channel: vi.fn(),
+    members: vi.fn(),
+    messages: vi.fn(),
+    canvas: vi.fn(),
+    canvasHistory: vi.fn(),
+    held: vi.fn(),
+    media,
+  };
+  const delivery = f.delivery("new work");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, ownerAccess } as typeof delivery.agent,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(f.sent.filter((wire) => wire.method === "thread/resume")).toHaveLength(
+    0,
+  );
+  const thread = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { dynamicTools: { tools: { name: string }[] }[] };
+  expect(thread.dynamicTools[0]?.tools.map((tool) => tool.name)).toContain(
+    "owner_media_get",
+  );
+  await f.complete();
+});
+
 function guestTarget(guest: ReturnType<typeof fixture>): AgentExecution {
   const lifetime = new AbortController();
   return {

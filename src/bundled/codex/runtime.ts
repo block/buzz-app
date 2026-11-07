@@ -49,7 +49,8 @@ import type {
   SessionControlAction,
   SessionState,
 } from "../../features/agents/service";
-import type { Context } from "../../buzz-mcp/client";
+import type { Context, OwnerAccess } from "../../buzz-mcp/client";
+import { isOwnerTool, withoutOwnerMedia } from "../../buzz-mcp/owner";
 import {
   type AddedTool,
   addedKey,
@@ -488,6 +489,11 @@ export class CodexRuntime {
   private readonly controls = new SessionControls(() => {
     for (const listener of this.listeners) listener();
   });
+  /** The agent's owner access as its threads get it: a remote target's
+   * files are not here, so neither is owner media. */
+  private ownerAccess(agent: Pick<AgentHandle, "ownerAccess">) {
+    return (this.target ? withoutOwnerMedia(agent) : agent).ownerAccess;
+  }
   private controlKey(agent: Agent, place: SessionPlace) {
     return JSON.stringify([
       place.channelId,
@@ -1916,7 +1922,7 @@ export class CodexRuntime {
         {
           ...params,
           ephemeral: true,
-          dynamicTools: dynamicTools(this.added(), !!agent.ownerAccess),
+          dynamicTools: dynamicTools(this.added(), this.ownerAccess(agent)),
         },
       );
       once.threadId = started.thread.id;
@@ -2166,7 +2172,10 @@ export class CodexRuntime {
     if (
       !turn ||
       call.namespace !== "buzz" ||
-      !sessionTools(this.added(), true).some((tool) => tool.name === call.tool)
+      !(
+        isOwnerTool(call.tool) ||
+        sessionTools(this.added()).some((tool) => tool.name === call.tool)
+      )
     )
       throw new Error("No active Buzz tool for this thread and turn");
     const check = () => {
@@ -2240,7 +2249,7 @@ export class CodexRuntime {
     const final = isFinalMessage(call.tool, args);
     const reply = await callSessionTool(
       this.target
-        ? {
+        ? withoutOwnerMedia({
             ...client,
             media: async () => {
               this.target?.signal.throwIfAborted();
@@ -2248,7 +2257,7 @@ export class CodexRuntime {
                 "Media download is unavailable for remote Codex agents.",
               );
             },
-          }
+          })
         : client,
       context,
       call.tool,
@@ -2569,8 +2578,10 @@ export class CodexRuntime {
       // Resume restores the thread's tools, so one started with other added
       // tools starts fresh.
       const added = this.added();
-      const owner = !!agent.ownerAccess;
-      const tools = addedKey(added) + (owner ? ":owner" : "");
+      const owner = this.ownerAccess(agent);
+      const tools =
+        addedKey(added) +
+        (owner ? (owner.media ? ":owner+media" : ":owner") : "");
       const resuming =
         existing?.workspace === workspace && (existing.tools ?? "") === tools;
       type Started = { thread: { id: string; cwd: string } };
@@ -2990,7 +3001,10 @@ function follow(
  * keeps a deferred tool from the model until its tool search finds it. Every
  * model in Codex's catalog has tool search (supports_search_tool); one
  * without it would not see deferred tools. */
-const dynamicTools = (added: readonly AddedTool[], owner: boolean) => [
+const dynamicTools = (
+  added: readonly AddedTool[],
+  owner: Pick<OwnerAccess, "media"> | undefined,
+) => [
   {
     type: "namespace",
     name: "buzz",

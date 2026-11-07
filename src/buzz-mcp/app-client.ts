@@ -48,6 +48,7 @@ export function appClient(
   const handoff = agent.handoff;
   const plugins = agent.plugins;
   const { settings, ownerAccess } = agent;
+  const ownerMedia = ownerAccess?.media;
   /** An owner read, only while the turn still holds before and after it. */
   const owned = async <T>(read: (signal?: AbortSignal) => Promise<T>) => {
     check();
@@ -106,6 +107,29 @@ export function appClient(
           check();
           ownerAccess.held(execution);
         },
+        ...(ownerMedia && {
+          media: async (url) => {
+            check();
+            const media = await ownerMedia(url, options.signal);
+            /** Checks the turn, dropping the media if it ended. */
+            const live = () => {
+              try {
+                check();
+              } catch (error) {
+                media.discard();
+                throw error;
+              }
+            };
+            live();
+            return {
+              ...media,
+              release: () => {
+                live();
+                return media.release();
+              },
+            };
+          },
+        }),
       },
     }),
     relayAuthor: options.relayAuthor,

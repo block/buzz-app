@@ -222,7 +222,20 @@ export type OwnerAccess = Readonly<{
   /** Throws unless the binding that answered with `execution` still holds,
    * as checked just before its answer is released; reads nothing. */
   held(execution: OwnerExecution): void;
+  /** One of the community's media blobs, by its URL or `sha256[.ext]`, read
+   * with the owner's access into memory; nothing is at its `path` until
+   * `release`. Only where the host can hold media for review. */
+  media?(url: string, signal?: AbortSignal): Promise<OwnerMedia>;
 }>;
+/** Owner media held for review. `release` saves it to `path` while the
+ * binding it was read with still holds, checked and started synchronously;
+ * `discard` drops it. Either settles it. */
+export type OwnerMedia = Media &
+  Readonly<{
+    execution: OwnerExecution;
+    release(): Promise<void>;
+    discard(): void;
+  }>;
 
 export interface BuzzClient {
   protect?(action: ProtectionAction): Promise<void>;

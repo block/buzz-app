@@ -5,9 +5,15 @@ import type {
   BuzzEvent,
   OwnerAccess,
   OwnerChannel,
+  OwnerMedia,
 } from "./client";
 import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
-import { OWNER_TOOLS, callOwnerTool, isOwnerTool } from "./owner";
+import {
+  OWNER_TOOLS,
+  callOwnerTool,
+  isOwnerTool,
+  withoutOwnerMedia,
+} from "./owner";
 import { respond } from "./rpc";
 import {
   type AddedTool,
@@ -86,6 +92,25 @@ function owned() {
     held: vi.fn<OwnerAccess["held"]>(),
   };
 }
+const PNG = "iVBORw0KGgoAAAANSUhEUg==";
+const release = vi.fn(async () => {});
+const discard = vi.fn();
+const media = (patch: Partial<OwnerMedia> = {}): OwnerMedia => ({
+  execution: executedAs,
+  path: "/tmp/a.png",
+  type: "image/png",
+  size: 16,
+  data: PNG,
+  release,
+  discard,
+  ...patch,
+});
+/** Owner access that also holds media for review. */
+function withMedia() {
+  release.mockClear();
+  discard.mockClear();
+  return { ...owned(), media: vi.fn(async () => media()) };
+}
 const clientWith = (fields: Partial<BuzzClient> = {}) =>
   ({
     pubkey: executedAs.agent,
@@ -104,7 +129,7 @@ describe("callOwnerTool", () => {
             q: "PLAN",
             limit: 1,
           })
-        ).text,
+        ).reply as string,
       ),
     ).toEqual({
       executedAs,
@@ -121,7 +146,10 @@ describe("callOwnerTool", () => {
     });
     expect(
       JSON.parse(
-        String((await callOwnerTool(client, "owner_channel_list", {})).text),
+        String(
+          (await callOwnerTool(client, "owner_channel_list", {}))
+            .reply as string,
+        ),
       ),
     ).toEqual({
       executedAs,
@@ -138,7 +166,7 @@ describe("callOwnerTool", () => {
     expect(
       JSON.parse(
         (await callOwnerTool(client, "owner_channel_get", { channel: id }))
-          .text,
+          .reply as string,
       ),
     ).toMatchObject({ executedAs, channel: { name: "Plans" } });
     expect(ownerAccess.channel).toHaveBeenCalledWith(id);
@@ -150,7 +178,7 @@ describe("callOwnerTool", () => {
             offset: 1,
             limit: 1,
           })
-        ).text,
+        ).reply as string,
       ),
     ).toEqual({
       executedAs,
@@ -222,7 +250,9 @@ describe("callOwnerTool", () => {
     const ownerAccess = owned();
     const client = clientWith({ ownerAccess });
     const read = async (args: Record<string, unknown>) =>
-      JSON.parse((await callOwnerTool(client, "owner_read", args)).text);
+      JSON.parse(
+        (await callOwnerTool(client, "owner_read", args)).reply as string,
+      );
     ownerAccess.messages.mockResolvedValueOnce({
       execution: executedAs,
       channel: id,
@@ -385,7 +415,7 @@ describe("callOwnerTool", () => {
     const ownerAccess = owned();
     const client = clientWith({ ownerAccess });
     const call = async (name: string, args: Record<string, unknown>) =>
-      JSON.parse((await callOwnerTool(client, name, args)).text);
+      JSON.parse((await callOwnerTool(client, name, args)).reply as string);
     expect(await call("owner_canvas_get", { channel: id })).toEqual({
       executedAs,
       channel: id,
@@ -455,6 +485,7 @@ describe("callOwnerTool", () => {
       "owner_read",
       "owner_canvas_get",
       "owner_canvas_history",
+      "owner_media_get",
     ]);
     expect(
       OWNER_TOOLS.every(
@@ -475,11 +506,11 @@ describe("owner tools in the session", () => {
   it("lists them only to a client with owner access, on search", async () => {
     expect(names(sessionTools()).some(isOwnerTool)).toBe(false);
     expect(sessionHint()).not.toContain("owner_channel_list");
-    const tools = sessionTools([], true);
+    const tools = sessionTools([], withMedia());
     expect(
       tools.filter((tool) => isOwnerTool(tool.name)).map((tool) => tool.load),
     ).toEqual(OWNER_TOOLS.map(() => "search"));
-    expect(sessionHint([], true)).toContain("owner_channel_list");
+    expect(sessionHint([], withMedia())).toContain("owner_channel_list");
     const list = async (client?: BuzzClient) =>
       (
         (await respond(client, {}, { id: 1, method: "tools/list" })) as {
@@ -488,9 +519,88 @@ describe("owner tools in the session", () => {
       ).result.tools;
     expect(names(await list()).some(isOwnerTool)).toBe(false);
     expect(names(await list(clientWith())).some(isOwnerTool)).toBe(false);
-    expect(names(await list(clientWith({ ownerAccess: owned() })))).toEqual(
+    expect(names(await list(clientWith({ ownerAccess: withMedia() })))).toEqual(
       expect.arrayContaining(names(OWNER_TOOLS)),
     );
+  });
+
+  it("lists and runs owner_media_get only where owner media is held for review", async () => {
+    const listed = async (client: BuzzClient) =>
+      names(
+        (
+          (await respond(client, {}, { id: 1, method: "tools/list" })) as {
+            result: { tools: { name: string }[] };
+          }
+        ).result.tools,
+      );
+    const plain = clientWith({ ownerAccess: owned() });
+    const media = clientWith({ ownerAccess: withMedia() });
+    // Without it (another host, or a remote target's runtime) it is neither
+    // listed, hinted nor run, directly or from a remembered list.
+    for (const client of [plain, withoutOwnerMedia(media)]) {
+      expect(await listed(client)).toContain("owner_read");
+      expect(await listed(client)).not.toContain("owner_media_get");
+      expect(sessionHint([], client.ownerAccess)).not.toContain(
+        "owner_media_get",
+      );
+      await expect(
+        callSessionTool(client, {}, "owner_media_get", { url: "a.png" }),
+      ).rejects.toThrow("nothing was read");
+    }
+    expect(media.ownerAccess?.media).not.toHaveBeenCalled();
+    expect(await listed(media)).toContain("owner_media_get");
+    expect(sessionHint([], media.ownerAccess)).toContain("owner_media_get");
+    expect(withoutOwnerMedia(plain)).toBe(plain);
+  });
+
+  it("answers owner media as media_get does, saving it only once released", async () => {
+    const ownerAccess = withMedia();
+    const client = clientWith({ ownerAccess });
+    const answer = await callOwnerTool(client, "owner_media_get", {
+      url: " a.png ",
+    });
+    expect(ownerAccess.media).toHaveBeenCalledWith("a.png");
+    expect(answer.reply).toEqual({
+      data: PNG,
+      type: "image/png",
+      text: JSON.stringify({
+        executedAs,
+        path: "/tmp/a.png",
+        type: "image/png",
+        size: 16,
+      }),
+    });
+    expect(release).not.toHaveBeenCalled();
+    await answer.held();
+    expect(release).toHaveBeenCalledOnce();
+    answer.discard?.();
+    expect(discard).toHaveBeenCalledOnce();
+    // Not an image: its path only.
+    const { data: _, ...pdf } = media({ type: "application/pdf" });
+    ownerAccess.media.mockResolvedValueOnce(pdf);
+    expect(
+      JSON.parse(
+        (await callOwnerTool(client, "owner_media_get", { url: "b.pdf" }))
+          .reply as string,
+      ),
+    ).toMatchObject({ type: "application/pdf" });
+    await expect(callOwnerTool(client, "owner_media_get", {})).rejects.toThrow(
+      "url is required",
+    );
+    await expect(
+      callOwnerTool(client, "owner_media_get", { url: "a.png", agent: "x" }),
+    ).rejects.toThrow("agent cannot be used");
+  });
+
+  it("drops owner media whose release fails", async () => {
+    const client = clientWith({ ownerAccess: withMedia() });
+    release.mockImplementationOnce(() => {
+      throw new Error("changed during the call");
+    });
+    await expect(
+      callSessionTool(client, {}, "owner_media_get", { url: "a.png" }),
+    ).rejects.toThrow("changed during the call");
+    expect(discard).toHaveBeenCalled();
   });
 
   it("refuses a direct or remembered call from a client without owner access", async () => {

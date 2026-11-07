@@ -102,7 +102,7 @@ createInterface({input:process.stdin}).on('line', (line) => {
     writeFileSync(session+'.saved','saved');
     send({type:'system',subtype:'init',session_id:'session-1',model:'haiku'});
     if (wire.message.content === 'hold' || wire.message.content.includes('hold-request') || (wire.message.content === '/compact' && existsSync('hold-compact'))) return;
-    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:wire.message.content.includes('read-path-request')?'send':'read',arguments:{path:'proof.bin',audience:'everyone'}}}}});
+    send({type:'control_request',request_id:'tool',request:{subtype:'mcp_message',server_name:'buzz',message:{jsonrpc:'2.0',id:1,method:'tools/call',params:wire.message.content.includes('owner-media-request')?{name:'owner_media_get',arguments:{url:'a.pdf'}}:{name:wire.message.content.includes('read-path-request')?'send':'read',arguments:{path:'proof.bin',audience:'everyone'}}}}});
   } else if (wire.type === 'control_response') {
     if (wire.response.request_id === 'tool') {
       process.stderr.write(JSON.stringify(wire.response.response));
@@ -382,6 +382,31 @@ it("resumes a saved target before its first post-restart compaction and gives Ne
     expect(f.sessions[2]?.key).not.toBe(f.sessions[0]?.key);
     expect(f.sessions[2]?.intent).toBe("new");
     expect(f.local).not.toHaveBeenCalled();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+it("neither lists nor runs owner media for a remote Claude, whose files are elsewhere", async () => {
+  const f = await remoteFixture();
+  const media = vi.fn();
+  Object.assign(f.handle, {
+    ownerAccess: {
+      channels: vi.fn(),
+      channel: vi.fn(),
+      members: vi.fn(),
+      messages: vi.fn(),
+      canvas: vi.fn(),
+      canvasHistory: vi.fn(),
+      held: vi.fn(),
+      media,
+    },
+  });
+  try {
+    await f.deliver("owner-media-request");
+    await vi.waitFor(() => expect(f.output.join("")).toContain("mcp_response"));
+    expect(f.output.join("")).toContain("owner_media_get is not available");
+    expect(media).not.toHaveBeenCalled();
   } finally {
     await f.cleanup();
   }

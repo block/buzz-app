@@ -352,9 +352,11 @@ export function createTabs({
   /** Opens Claude's setup in Settings → Agent setup. */
   openSetup?: () => void;
 }>) {
-  function useRemote(agent: AgentViewProps<Config>["agent"]) {
-    const key = agent.key;
-    const selection = JSON.stringify(agent.executionBinding ?? null);
+  /** Whether `agent` runs on an execution target; undefined while that is
+   * being resolved, and for no agent. */
+  function useRemote(agent: AgentViewProps<Config>["agent"] | undefined) {
+    const key = agent?.key;
+    const selection = JSON.stringify(agent?.executionBinding ?? null);
     const [state, setState] = useState<{
       agent: string;
       selection: string;
@@ -362,6 +364,7 @@ export function createTabs({
       error?: string;
     }>();
     useEffect(() => {
+      if (!key) return;
       let current = true;
       void runtime.isRemote(key).then(
         (remote) => {
@@ -376,7 +379,7 @@ export function createTabs({
         current = false;
       };
     }, [key, selection]);
-    return state?.agent === key && state.selection === selection
+    return key && state?.agent === key && state.selection === selection
       ? state
       : undefined;
   }
@@ -573,11 +576,19 @@ export function createTabs({
   }) {
     const state = useSetupCatalog();
     const notify = useToastNotification();
+    // An agent being edited may run on an execution target, which brings its
+    // own credentials: only an agent that runs here needs this computer's.
+    // One whose place can't be told is taken to run here.
+    const execution = useRemote(agent);
+    const resolving = !!agent && !execution;
+    const local = !agent || (!!execution && execution.remote !== true);
     const signedOut =
-      state.status?.state === "signed-out" && state.running !== "install";
+      local &&
+      state.status?.state === "signed-out" &&
+      state.running !== "install";
     // Only missing credentials hold creation: an agent made before Claude is
     // installed waits for the download, as it did with the Model row alone.
-    const ready = !!state.status && !signedOut;
+    const ready = !!state.status && !signedOut && !resolving;
     useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const [asking, setAsking] = useState(false);
     // Once per arrival: after a key is saved, a later sign-out asks in the row.

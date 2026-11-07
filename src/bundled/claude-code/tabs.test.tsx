@@ -1799,6 +1799,49 @@ it("keeps Claude's missing key as a row in the Harness group when Claude starts 
   expect(onReadyChange).toHaveBeenLastCalledWith(true);
 });
 
+it("lets an agent on an execution target be edited without a key on this computer", async () => {
+  const { type } = installed({ keySaved: false, remote: true });
+  const Configuration = type.CreateConfiguration;
+  if (!Configuration) throw new Error("Missing creation configuration");
+  const onReadyChange = vi.fn();
+  render(
+    <Configuration
+      agent={{ ...agent(), executionBinding: { provider: "nexus/blox" } }}
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      harnessControl={<div>Harness row</div>}
+      onReadyChange={onReadyChange}
+      onDecline={vi.fn()}
+      onChange={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+  expect(screen.queryByText("Claude needs an Anthropic API key")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Set up Claude" })).toBeNull();
+  expect(screen.getByText("Model")).toBeInTheDocument();
+});
+
+it("still asks for the key to edit an agent that runs on this computer", async () => {
+  const { type } = installed({ keySaved: false });
+  const Configuration = type.CreateConfiguration;
+  if (!Configuration) throw new Error("Missing creation configuration");
+  const onReadyChange = vi.fn();
+  render(
+    <Configuration
+      agent={agent()}
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      harnessControl={<div>Harness row</div>}
+      onReadyChange={onReadyChange}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText("Claude needs an Anthropic API key"),
+  ).toBeVisible();
+  expect(onReadyChange).toHaveBeenLastCalledWith(false);
+});
+
 it("sends a library card without a key to Claude's setup in Settings", async () => {
   const { type, navigation } = installed({ keySaved: false });
   const Model = type.CreateModel;

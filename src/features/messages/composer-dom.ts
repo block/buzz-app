@@ -140,6 +140,8 @@ export type ComposerInputElement = HTMLDivElement & {
   insertResource(resource: ComposerResource): true | string;
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(): boolean;
+  /** Indents (or with `outdent`, lifts) the list item at the caret. */
+  indentListItem(outdent: boolean): boolean;
   editLink(): ComposerLinkEdit | null;
   removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;

@@ -6715,6 +6715,22 @@ it("accepts a completion before handling list Enter", async () => {
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("accepts a mention on Tab without indenting the list item", async () => {
+  const h = mountTypeahead();
+  await h.user.type(h.input(), "- first{Enter}@hon");
+  expect(h.rows()).toEqual(["Honey hon"]);
+  await h.user.keyboard("{Tab}");
+  expect(h.rows()).toBeNull();
+  expect(h.input().querySelector("ul ul")).toBeNull();
+  const items = h.input().querySelectorAll(":scope > ul > li");
+  expect(items).toHaveLength(2);
+  expect(items[1]).toHaveTextContent(first.name);
+  // With no completion open, Tab still indents the item.
+  await h.user.keyboard("{Tab}");
+  expect(h.input().querySelector("ul ul > li")).toHaveTextContent(first.name);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
 it("sends a pasted fenced block verbatim on Enter instead of opening a block from its closing fence", async () => {
   const h = mount();
   act(() => {

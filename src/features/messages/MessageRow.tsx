@@ -1041,6 +1041,9 @@ function MessageRowContent({
         tools={extensions.tools}
         inline={extensions.inline}
         profiles={directory.profiles}
+        agentPubkeys={agentPubkeys}
+        onOpenLink={openLink}
+        canOpenLink={canOpenLink}
         disabled={
           !canReact ||
           (!!row.delivery && !["accepted", "seen"].includes(row.delivery))

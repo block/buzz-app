@@ -8,10 +8,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
+import { profileTarget } from "../profiles/target";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { createRelaySession } from "../relay/session";
 import {
   flush,
@@ -31,25 +34,65 @@ import type {
   ReactionToolProps,
 } from "../conversation/contracts";
 import { PublishRejected } from "../relay/outbox";
-import { useSyncExternalStore } from "react";
+import { type ComponentProps, useSyncExternalStore } from "react";
 
 const viewer = keypair(),
   other = keypair(),
   relay = keypair();
 const owners: { dispose(): void }[] = [];
+const observers = new Set<{
+  callback: IntersectionObserverCallback;
+  rows: Set<Element>;
+}>();
 beforeEach(() => {
   // jsdom hides [popover] but does not implement showPopover. Model opening
   // for content assertions; browser tests cover top-layer painting and clipping.
   HTMLElement.prototype.showPopover = function () {
     this.style.display = "block";
   };
+  // jsdom has no layout: tests decide which reactor rows scroll into view.
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      rows = new Set<Element>();
+      constructor(readonly callback: IntersectionObserverCallback) {
+        observers.add(this);
+      }
+      observe(row: Element) {
+        this.rows.add(row);
+      }
+      unobserve(row: Element) {
+        this.rows.delete(row);
+      }
+      disconnect() {
+        observers.delete(this);
+      }
+    },
+  );
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
+  observers.clear();
   Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
   for (const owner of owners.splice(0)) owner.dispose();
   localStorage.clear();
 });
+/** Scrolls these rows of the full reaction list into view. */
+function reveal(rows: readonly Element[]) {
+  act(() => {
+    for (const observer of [...observers])
+      observer.callback(
+        rows
+          .filter((row) => observer.rows.has(row))
+          .map(
+            (target) =>
+              ({ target, isIntersecting: true }) as IntersectionObserverEntry,
+          ),
+        observer as unknown as IntersectionObserver,
+      );
+  });
+}
 const registry = <T,>(
   entries: ReturnType<ContributionReader<T>["snapshot"]>,
 ): ContributionReader<T> => ({
@@ -121,7 +164,11 @@ function harness(
     disabled = false,
     onFocusedRemoval,
     audience,
-  }: {
+    ...reactors
+  }: Pick<
+    ComponentProps<typeof MessageReactions>,
+    "agentPubkeys" | "onOpenLink" | "canOpenLink"
+  > & {
     audience?: "agents";
     disabled?: boolean;
     onFocusedRemoval?: () => void;
@@ -145,6 +192,7 @@ function harness(
             />
           </div>
           <MessageReactions
+            {...reactors}
             {...(onFocusedRemoval ? { onFocusedRemoval } : {})}
             row={audience ? { ...row, audience } : row}
             session={owner.session}
@@ -158,6 +206,23 @@ function harness(
     );
   }
   return { ...owner, live, wire, publish, Controls };
+}
+/** Answers other profile reads, which run one at a time, until one asking
+ * for `author` is live, and returns it. */
+async function profileRead(h: ReturnType<typeof harness>, author: string) {
+  const asks = (entry: (typeof h.wire.pending)[number]) =>
+    !!entry.filters[0]?.authors?.includes(author);
+  const live = () =>
+    h.wire.pending.filter((entry) => !entry.signal?.aborted && asks(entry));
+  for (let read = 0; read < 10 && !live().length; read++)
+    await act(async () => {
+      for (const entry of h.wire.pending)
+        if (entry.filters[0]?.kinds?.includes(0) && !asks(entry))
+          entry.respond([]);
+      await flush();
+    });
+  expect(live()).toHaveLength(1);
+  return live()[0];
 }
 it("shows one bubble per emoji, counts unique people, and removes all my duplicate events", async () => {
   const mine = react(),
@@ -219,11 +284,13 @@ it("keeps one bubble and focus when the count crosses the former grouping thresh
   expect(group.textContent).toBe("👍9");
   expect(group.getAttribute("aria-pressed")).toBe("true");
   act(() => group.focus());
-  const preview = await screen.findByRole("tooltip");
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
   expect(preview.textContent).toContain("You");
-  for (const person of others)
+  for (const person of others.slice(0, 2))
     expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
-  expect(preview.textContent).not.toContain("others");
+  expect(preview.textContent).toContain("and 6 others");
+  for (const person of others.slice(2))
+    expect(preview.textContent).not.toContain(person.pubkey.slice(0, 10));
   fireEvent.click(group);
   expect(pills()).toHaveLength(1);
   expect(document.activeElement).toBe(group);
@@ -235,99 +302,463 @@ it("keeps one bubble and focus when the count crosses the former grouping thresh
   });
 });
 
-it.each([3, 4, 5])("shows all %i reactors in the preview", async (count) => {
-  const people = Array.from({ length: count }, () => keypair());
-  const h = harness(people.map((person) => react(person)));
-  render(<h.Controls />);
-  act(() =>
-    screen.getByRole("button", { name: `👍: ${count} people` }).focus(),
-  );
-  const preview = await screen.findByRole("tooltip");
-  for (const person of people)
-    expect(preview.textContent).toContain(person.pubkey.slice(0, 10));
-  expect(
-    within(preview).getByRole("region", { name: "Everyone who reacted" })
-      .tabIndex,
-  ).toBe(-1);
-});
+it.each([
+  [3, null],
+  [4, "and 1 other"],
+  [5, "and 2 others"],
+] as const)(
+  "pluralizes the preview remainder for %i reactors",
+  async (count, remainder) => {
+    const people = Array.from({ length: count }, () => keypair());
+    const h = harness(people.map((person) => react(person)));
+    render(<h.Controls />);
+    act(() =>
+      screen.getByRole("button", { name: `👍: ${count} people` }).focus(),
+    );
+    // A preview with a remainder link is a named dialog; otherwise a tooltip.
+    const preview = remainder
+      ? await screen.findByRole("dialog", { name: "👍 reactions" })
+      : await screen.findByRole("tooltip");
+    if (remainder)
+      expect(
+        within(preview).getByRole("button", { name: remainder }),
+      ).toBeTruthy();
+    else expect(within(preview).queryByText(/^and /)).toBeNull();
+  },
+);
 
-it("opening a large preview preserves unrelated cached profiles", async () => {
-  const h = harness([react(other)]);
-  const unrelated = profile(other, { name: "Existing colleague" });
-  act(() =>
-    h.live.receive([
-      unrelated,
-      ...Array.from({ length: 63 }, (_, index) =>
-        profile(keypair(), { name: `Cached colleague ${index}` }),
-      ),
-    ]),
-  );
-  const people = Array.from({ length: 1025 }, () => keypair());
-  const events = new Map(
-    people.map((person, index) => [
-      person.pubkey,
-      profile(person, { name: `Reactor ${index}` }),
-    ]),
-  );
-  const row = h.session.channels.window("c").rows[0];
-  const first = people[0],
-    last = people.at(-1);
-  if (!row || !first || !last) throw new Error("Missing fixture data");
-  const completed = new Set();
-  const settleReads = async () => {
-    await flush();
-    let pending = h.wire.pending.find((entry) => !completed.has(entry));
-    while (pending) {
-      completed.add(pending);
-      pending.respond(
-        pending.filters.flatMap((filter) =>
-          filter.kinds?.includes(0)
-            ? (filter.authors ?? []).flatMap((id) =>
-                events.get(id) ? [events.get(id) as RelayEvent] : [],
-              )
-            : [],
-        ),
-      );
-      await flush();
-      pending = h.wire.pending.find((entry) => !completed.has(entry));
-    }
-  };
-  await act(settleReads);
+it("lists everyone in a grouped reaction, loading names as rows scroll in", async () => {
+  const named = keypair(),
+    blocked = keypair(),
+    agent = keypair();
+  const people = [
+    named,
+    blocked,
+    agent,
+    ...Array.from({ length: 7 }, () => keypair()),
+  ];
+  // My later reaction is listed first; a duplicate never lists its author twice.
+  const h = harness([
+    ...people.map((person, index) => react(person, 2 + index)),
+    react(named, 20),
+    react(viewer, 21),
+  ]);
+  const onOpenLink = vi.fn((_target: string) => true);
   render(
-    <MessageReactions
-      row={{
-        ...row,
-        reactions: [
-          {
-            content: "👍",
-            events: people.map((person, index) => ({
-              id: String(index),
-              authorId: person.pubkey,
-            })),
-          },
-        ],
-      }}
-      session={h.session}
-      scope="test"
-      disabled={false}
-      tools={tools}
-      inline={inline}
+    <h.Controls
+      agentPubkeys={new Set([agent.pubkey])}
+      onOpenLink={onOpenLink}
+      canOpenLink={(target) => target !== profileTarget(blocked.pubkey)}
     />,
   );
-  const pill = screen.getByRole("button", { name: "👍: 1025 people" });
-  fireEvent.mouseEnter(pill);
-  // Pointer transit must not start profile enrichment before opening.
-  expect(h.session.profiles.snapshot().get(first.pubkey)).toBeUndefined();
-  act(() => pill.focus());
-  const preview = await screen.findByRole("tooltip");
-  await act(settleReads);
-  expect(preview.textContent).toContain("Reactor 0");
-  expect(h.session.profiles.snapshot().get(other.pubkey)?.name).toBe(
-    "Existing colleague",
+  const group = screen.getByRole("button", { name: "👍: 11 people" });
+  // The pointer route to the list is a browser journey; focus opens at once.
+  act(() => group.focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "and 8 others" }),
   );
-  // Names outside the first visible page remain readable as identity fallbacks.
-  expect(preview.textContent).toContain(last.pubkey.slice(0, 10));
-  expect(h.session.profiles.snapshot().has(last.pubkey)).toBe(false);
+  const list = await screen.findByRole("menu", {
+    name: "Everyone who reacted with 👍",
+  });
+  const items = within(list).getAllByRole("menuitem");
+  const expected = ["You", ...people.map((_, index) => `Person ${index}`)];
+  expect(items).toHaveLength(expected.length);
+  const profileReads = () =>
+    h.wire.pending.filter((entry) => entry.filters[0]?.kinds?.includes(0));
+  // Profile reads run one at a time, so answer each as it is issued.
+  const resolve = async (names: readonly string[]) => {
+    const resolved = () =>
+      names.every(
+        (name) =>
+          within(list).queryAllByRole("menuitem", { name }).length === 1,
+      );
+    for (let read = 0; read < 10 && !resolved(); read++)
+      await act(async () => {
+        for (const entry of profileReads())
+          entry.respond(
+            people.flatMap((person, index) =>
+              entry.filters[0]?.authors?.includes(person.pubkey)
+                ? [profile(person, { name: `Person ${index}` })]
+                : [],
+            ),
+          );
+        await flush();
+      });
+    expect(resolved()).toBe(true);
+  };
+  reveal(items.slice(0, 5));
+  await resolve(expected.slice(0, 5));
+  // Rows out of view load nothing until they scroll in.
+  const requested = profileReads().flatMap(
+    (entry) => entry.filters[0]?.authors ?? [],
+  );
+  for (const person of people.slice(4))
+    expect(requested).not.toContain(person.pubkey);
+  reveal(items.slice(5));
+  await resolve(expected);
+  for (const [index, name] of expected.entries())
+    expect(within(list).getByRole("menuitem", { name })).toBe(items[index]);
+  const [, human, refused, agentRow] = items;
+  if (!human || !refused || !agentRow) throw new Error("Expected reactor rows");
+  expect(refused.getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(refused);
+  expect(onOpenLink).not.toHaveBeenCalled();
+  expect(
+    agentRow
+      .querySelector("[data-avatar-shape]")
+      ?.getAttribute("data-avatar-shape"),
+  ).toBe("squircle");
+  fireEvent.click(agentRow);
+  expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(
+    profileTarget(agent.pubkey, { agent: true }),
+  );
+  expect(onOpenLink.mock.calls[0]?.[0]).toMatch(/^buzz:agent-profile:/);
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  fireEvent.click(
+    within(
+      await screen.findByRole("dialog", { name: "👍 reactions" }),
+    ).getByRole("button", { name: "and 8 others" }),
+  );
+  fireEvent.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Person 0",
+    }),
+  );
+  expect(onOpenLink).toHaveBeenLastCalledWith(profileTarget(named.pubkey));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+});
+
+it("says when names in the full list could not load and retries on reopening", async () => {
+  const people = Array.from({ length: 9 }, () => keypair());
+  const h = harness(people.map((person, index) => react(person, 2 + index)));
+  render(<h.Controls />);
+  const group = screen.getByRole("button", { name: "👍: 9 people" });
+  const last = people.at(-1)?.pubkey ?? "";
+  const reads = () =>
+    h.wire.pending.filter((entry) => entry.filters[0]?.authors?.includes(last));
+  // Profile reads run one at a time: answer the preview's until the list's runs.
+  const open = async (count: number) => {
+    const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+    fireEvent.click(
+      within(preview).getByRole("button", { name: "and 6 others" }),
+    );
+    const list = await screen.findByRole("menu");
+    reveal(within(list).getAllByRole("menuitem"));
+    for (let read = 0; read < 10 && reads().length < count; read++)
+      await act(async () => {
+        for (const entry of h.wire.pending)
+          if (
+            entry.filters[0]?.kinds?.includes(0) &&
+            !entry.filters[0].authors?.includes(last)
+          )
+            entry.respond([]);
+        await flush();
+      });
+    expect(reads()).toHaveLength(count);
+    return list;
+  };
+  act(() => group.focus());
+  const list = await open(1);
+  await act(async () => {
+    reads()[0]?.fail(new Error("Profiles offline"));
+    await flush();
+  });
+  const note = within(list).getByRole("alert");
+  expect(note.textContent).toBe(
+    "Some names could not load. Reopen this list to try again.",
+  );
+  const items = within(list).getAllByRole("menuitem");
+  expect(items).toHaveLength(9);
+  // After the rows: a failed later page must not push the visible ones down.
+  expect(items.at(-1)?.nextElementSibling).toBe(note);
+  // Unnamed (the preview's read found no profile) and unresolved rows read as
+  // the shared public-key labels, distinguishable across the group.
+  const labels = publicKeyLabels(people.map((person) => person.pubkey));
+  for (const [index, name] of [...labels.values()].entries())
+    expect(within(list).getByRole("menuitem", { name })).toBe(items[index]);
+  fireEvent.keyDown(list, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await open(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("names reactors whose profile has no name by the shared labels", async () => {
+  const nameless = keypair();
+  const people = [nameless, keypair(), keypair(), keypair()];
+  const h = harness(people.map((person, index) => react(person, 2 + index)));
+  render(<h.Controls />);
+  act(() => screen.getByRole("button", { name: "👍: 4 people" }).focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  fireEvent.click(within(preview).getByRole("button", { name: "and 1 other" }));
+  const list = await screen.findByRole("menu");
+  reveal(within(list).getAllByRole("menuitem"));
+  // An about-only kind 0 is a profile that names no one.
+  const body = (index: number) =>
+    index ? { name: `Person ${index}` } : { about: "No name here" };
+  const named = () =>
+    within(list).queryAllByRole("menuitem", { name: /^Person \d$/ }).length ===
+    3;
+  // Profile reads run one at a time, so answer each as it is issued.
+  for (let read = 0; read < 10 && !named(); read++)
+    await act(async () => {
+      for (const entry of h.wire.pending)
+        if (entry.filters[0]?.kinds?.includes(0))
+          entry.respond(
+            people.flatMap((person, index) =>
+              entry.filters[0]?.authors?.includes(person.pubkey)
+                ? [profile(person, body(index))]
+                : [],
+            ),
+          );
+      await flush();
+    });
+  expect(named()).toBe(true);
+  const label = publicKeyLabels(people.map((person) => person.pubkey)).get(
+    nameless.pubkey,
+  );
+  if (!label) throw new Error("Expected a public-key label");
+  const row = within(list).getByRole("menuitem", { name: label });
+  // Its initial is the key label's, as for a reactor with no profile.
+  expect(row.querySelector("[data-avatar-fallback]")?.textContent).toBe("N");
+});
+
+it("asks again for names a disconnect cancels, without reporting a reconnect's re-read", async () => {
+  // A browser's DOMException is an Error, so the reader's cancellation reads
+  // as cancelled. jsdom's is not, and would read as a failure.
+  vi.stubGlobal(
+    "DOMException",
+    class extends Error {
+      constructor(message?: string, name = "Error") {
+        super(message);
+        this.name = name;
+      }
+    },
+  );
+  const last = keypair();
+  const people = [...Array.from({ length: 8 }, () => keypair()), last];
+  const h = harness(people.map((person, index) => react(person, 2 + index)));
+  act(() => h.live.state({ status: "connected", routes: [] }));
+  render(<h.Controls />);
+  const listRead = () => profileRead(h, last.pubkey);
+  act(() => screen.getByRole("button", { name: "👍: 9 people" }).focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "and 6 others" }),
+  );
+  const list = await screen.findByRole("menu");
+  reveal(within(list).getAllByRole("menuitem"));
+  const dropped = await listRead();
+  // A dropped connection cancels in-flight reads, and nothing reads them again.
+  await act(async () => {
+    h.live.state({ status: "retrying", routes: [] });
+    await flush();
+  });
+  expect(dropped?.signal?.aborted).toBe(true);
+  // Rows still in view ask again.
+  reveal(within(list).getAllByRole("menuitem"));
+  const cancelled = await listRead();
+  // A restored connection cancels pending profile reads, then reads them again.
+  await act(async () => {
+    h.live.established();
+    await flush();
+  });
+  expect(cancelled?.signal?.aborted).toBe(true);
+  reveal(within(list).getAllByRole("menuitem"));
+  const again = await listRead();
+  await act(async () => {
+    again?.respond([profile(last, { name: "Last person" })]);
+    await flush();
+  });
+  expect(
+    within(list).getByRole("menuitem", { name: "Last person" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("asks again for names a cache shrink quietly cancels while the list stays open", async () => {
+  const last = keypair();
+  const people = [...Array.from({ length: 8 }, () => keypair()), last];
+  const h = harness(people.map((person, index) => react(person, 2 + index)));
+  // An open channel reserves room for its roster (ConversationChannel).
+  const release = h.session.profiles.reserve?.(people.length);
+  if (!release) throw new Error("Expected a profile reservation");
+  render(<h.Controls />);
+  act(() => screen.getByRole("button", { name: "👍: 9 people" }).focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "and 6 others" }),
+  );
+  const list = await screen.findByRole("menu");
+  reveal(within(list).getAllByRole("menuitem"));
+  const cancelled = await profileRead(h, last.pubkey);
+  // A member leaving lowers the reservation; the next task shrinks the cache
+  // and cancels the list's background page without rejecting its ensure.
+  await act(async () => {
+    release();
+    await flush();
+  });
+  expect(cancelled?.signal?.aborted).toBe(true);
+  // The same rows, still in view, ask again.
+  reveal(within(list).getAllByRole("menuitem"));
+  const again = await profileRead(h, last.pubkey);
+  await act(async () => {
+    again?.respond([profile(last, { name: "Last person" })]);
+    await flush();
+  });
+  expect(
+    within(list).getByRole("menuitem", { name: "Last person" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("stops asking for names once the rows in view outgrow the cache's byte budget", async () => {
+  // Twelve profiles with long about fields; the cache's bytes hold eight.
+  const people = Array.from({ length: 12 }, () => keypair());
+  const about = "a".repeat(240 * 1024);
+  const profiles = people.map((person, index) =>
+    profile(person, { name: `Person ${index}`, about }),
+  );
+  const h = harness(people.map((person, index) => react(person, 2 + index)));
+  render(<h.Controls />);
+  act(() => screen.getByRole("button", { name: "👍: 12 people" }).focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  fireEvent.click(
+    within(preview).getByRole("button", { name: "and 9 others" }),
+  );
+  const list = await screen.findByRole("menu");
+  const answered = new Set<(typeof h.wire.pending)[number]>();
+  // The list never moves: rows in view report to any observer watching them,
+  // as a browser's does on observe, and every profile read is answered.
+  const settle = async () => {
+    reveal(within(list).getAllByRole("menuitem"));
+    let reads = 0;
+    // Profile reads run one at a time.
+    for (let step = 0; step < 10; step++)
+      await act(async () => {
+        for (const entry of h.wire.pending)
+          if (entry.filters[0]?.kinds?.includes(0) && !answered.has(entry)) {
+            answered.add(entry);
+            reads++;
+            entry.respond(
+              profiles.filter((event) =>
+                entry.filters[0]?.authors?.includes(event.pubkey),
+              ),
+            );
+          }
+        await flush();
+      });
+    return reads;
+  };
+  expect(await settle()).toBeGreaterThan(0);
+  // The list's own reads evicted some of its names.
+  expect(h.session.profiles.evictions?.()).toBeGreaterThan(0);
+  expect(await settle()).toBe(0);
+  expect(await settle()).toBe(0);
+});
+
+it("reaches the full list by keyboard and returns to the emoji on Escape", async () => {
+  // jsdom lays nothing out, so the preview would treat its emoji as scrolled
+  // out of view and leave Tab to document order.
+  const rect = vi
+    .spyOn(Element.prototype, "getBoundingClientRect")
+    .mockReturnValue(
+      DOMRect.fromRect({ x: 100, y: 100, width: 20, height: 20 }),
+    );
+  const html = document.documentElement;
+  Object.defineProperties(html, {
+    clientWidth: { configurable: true, value: 1024 },
+    clientHeight: { configurable: true, value: 768 },
+  });
+  onTestFinished(() => {
+    rect.mockRestore();
+    Reflect.deleteProperty(html, "clientWidth");
+    Reflect.deleteProperty(html, "clientHeight");
+  });
+  const user = userEvent.setup();
+  const h = harness(
+    Array.from({ length: 9 }, (_, index) => react(keypair(), 2 + index)),
+  );
+  const onOpenLink = vi.fn((_target: string) => true);
+  render(<h.Controls onOpenLink={onOpenLink} canOpenLink={() => true} />);
+  const group = screen.getByRole("button", { name: "👍: 9 people" });
+  act(() => group.focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  await user.keyboard("{Tab}");
+  expect(document.activeElement).toBe(
+    within(preview).getByRole("button", { name: "and 6 others" }),
+  );
+  await user.keyboard("{Enter}");
+  const list = await screen.findByRole("menu", {
+    name: "Everyone who reacted with 👍",
+  });
+  expect(within(list).getAllByRole("menuitem")).toHaveLength(9);
+  await waitFor(() => expect(list.contains(document.activeElement)).toBe(true));
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(group));
+  // Escape closes one layer: back on the emoji, its preview opens again.
+  await screen.findByRole("dialog", { name: "👍 reactions" });
+  expect(onOpenLink).not.toHaveBeenCalled();
+  expect(h.session.outbox?.snapshot()).toHaveLength(0);
+});
+
+it("closes the full list without dropping focus or keeping the row warm when the group splits", async () => {
+  const people = Array.from({ length: 4 }, () => keypair());
+  const reactions = people.map((person, index) => react(person, 2 + index));
+  const h = harness(reactions);
+  render(<h.Controls />);
+  const group = screen.getByRole("button", { name: "👍: 4 people" });
+  fireEvent.mouseEnter(group);
+  act(() => group.focus());
+  const preview = await screen.findByRole("dialog", { name: "👍 reactions" });
+  // The pointer crosses to the preview and then into the list. Both are
+  // portaled, so React keeps counting it as inside the row, and a list that
+  // vanishes under it sends the row no leave.
+  fireEvent.mouseLeave(group, { relatedTarget: preview });
+  fireEvent.click(within(preview).getByRole("button", { name: "and 1 other" }));
+  const list = await screen.findByRole("menu");
+  await waitFor(() => expect(list.contains(document.activeElement)).toBe(true));
+  // A host that opens no profiles lists names without marking them unavailable.
+  for (const item of within(list).getAllByRole("menuitem"))
+    expect(item.hasAttribute("data-disabled")).toBe(false);
+  // Everyone but the last reactor leaves at once, so the group becomes one emoji.
+  act(() =>
+    h.live.receive(
+      reactions.slice(0, 3).map((removed, index) => {
+        const leaving = people[index];
+        if (!leaving) throw new Error("Expected a reactor");
+        return signed(leaving, {
+          kind: 5,
+          content: "",
+          created_at: 20,
+          tags: [["e", removed.id]],
+        });
+      }),
+    ),
+  );
+  expect(screen.queryByRole("menu")).toBeNull();
+  const individual = screen.getAllByRole("button", { name: /^👍:/ });
+  expect(individual).toHaveLength(1);
+  expect(document.activeElement).toBe(individual[0]);
+  // The closed list also returns focus to the pill on the next frame; let
+  // that pass so the blur below is not undone.
+  await act(() => new Promise(requestAnimationFrame));
+  act(() => individual[0]?.blur());
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  // Losing the list counts as leaving the row: the next hover waits the full
+  // rest instead of opening at once as if a preview were still open.
+  vi.useFakeTimers();
+  try {
+    fireEvent.mouseEnter(individual[0] as HTMLElement);
+    fireEvent.mouseMove(individual[0] as HTMLElement);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS - 1));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(screen.getByRole("tooltip")).toBeTruthy();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("keeps custom emoji URLs separate and updates a grouped count when I join", async () => {
@@ -672,7 +1103,7 @@ it("uses the original animated emoji in reaction emojis and previews", async () 
 });
 
 it("loads names for people who only reacted after a preview opens", async () => {
-  const people = Array.from({ length: 5 }, () => keypair());
+  const people = Array.from({ length: 3 }, () => keypair());
   const h = harness(people.map((person) => react(person)));
   render(<h.Controls />);
   // Complete startup reads so the scheduler can admit background reactor names.
@@ -688,7 +1119,7 @@ it("loads names for people who only reacted after a preview opens", async () => 
     }
   });
   const pill = screen.getByRole("button", {
-    name: "👍: 5 people",
+    name: "👍: 3 people",
   });
   fireEvent.mouseEnter(pill);
   fireEvent.mouseMove(pill);

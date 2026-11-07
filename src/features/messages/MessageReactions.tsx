@@ -2,7 +2,6 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import {
   type CSSProperties,
   type RefObject,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -12,6 +11,16 @@ import {
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
+import {
+  MenuItem,
+  MenuNote,
+  MenuPopup,
+  MenuRoot,
+} from "../../shared/design-system/ui/Menu";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
+import { profileTarget } from "../profiles/target";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
 import type {
   ComposerTool,
@@ -26,7 +35,9 @@ import type {
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
+import { readErrorKind } from "../relay/errors";
 import { selectProfiles } from "../relay/profile-selection";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import styles from "./Messages.module.css";
 import { isUnicodeEmojiOnly } from "./emoji-size";
 
@@ -37,6 +48,13 @@ type Props = {
   disabled: boolean;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
+};
+/** Names and profile destinations for the people who reacted. */
+type Reactors = {
+  profiles?: ReadonlyMap<string, Profile> | undefined;
+  agentPubkeys?: ReadonlySet<string> | undefined;
+  onOpenLink?: ((target: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
 };
 const noSubscribe = () => () => {};
 const noOperations = Object.freeze([]);
@@ -169,33 +187,151 @@ function ReactionGlyph({
   );
 }
 
-/** Mounted by PreviewCard's portal: closed pills do not observe the full roster. */
+/** Everyone in a grouped reaction, mounted only with its list. A group can
+ * outgrow the profile directory's request budget, and loading everyone would
+ * evict names the timeline shows: load names as rows near the visible area. */
+function ReactorItems({
+  popup,
+  people,
+  session,
+  profiles,
+  agentPubkeys,
+  onOpenLink,
+  canOpenLink,
+}: Reactors & {
+  popup: RefObject<HTMLDivElement | null>;
+  people: readonly string[];
+  session: RelaySession;
+}) {
+  // A shrink cancels pending background reads without rejecting them.
+  const readCancellations = () => session.profiles.cancellations?.() ?? 0;
+  const cancellations = useSyncExternalStore(
+    session.profiles.subscribe,
+    readCancellations,
+    readCancellations,
+  );
+  const requested = useRef({ cancellations, ids: new Set<string>() });
+  const [failed, setFailed] = useState(false);
+  const [released, setReleased] = useState(0);
+  // Show any names already loaded; request only the rows that come into view.
+  const selection = useMemo(
+    () => selectProfiles(session.profiles, people),
+    [session.profiles, people],
+  );
+  const loaded = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
+  const keys = useMemo(() => publicKeyLabels(people), [people]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: people and released add rows to observe.
+  useEffect(() => {
+    const root = popup.current;
+    if (!root) return;
+    // A shrink quietly cancels pending pages, so rows in view ask again. Names
+    // still loaded cost no read. An eviction does not ask again: when the rows'
+    // profiles outgrow the byte budget, each read evicts names another row
+    // asked for, and asking again would never settle.
+    if (requested.current.cancellations !== cancellations)
+      requested.current = { cancellations, ids: new Set() };
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const page = entries.flatMap(({ isIntersecting, target }) => {
+          const id = (target as HTMLElement).dataset.reactor;
+          if (!isIntersecting || !id || requested.current.ids.has(id))
+            return [];
+          requested.current.ids.add(id);
+          observer.unobserve(target);
+          return [id];
+        });
+        if (!page.length) return;
+        session.profiles.ensure(page, "background").catch((error) => {
+          if (readErrorKind(error) !== "cancelled") return setFailed(true);
+          // A reconnect reads pending ids again itself; a disconnect only
+          // cancels them. Observe these rows again: those in view ask again,
+          // joining the reconnect's read or reading now.
+          for (const id of page) requested.current.ids.delete(id);
+          setReleased((count) => count + 1);
+        });
+      },
+      // The visible rows and the next screenful, far below the request budget.
+      { root, rootMargin: "100% 0px" },
+    );
+    for (const row of root.querySelectorAll<HTMLElement>("[data-reactor]"))
+      if (!requested.current.ids.has(row.dataset.reactor ?? ""))
+        observer.observe(row);
+    return () => observer.disconnect();
+  }, [popup, people, session, released, cancellations]);
+  return (
+    <>
+      {people.map((authorId) => {
+        const profile = loaded.get(authorId) ?? profiles?.get(authorId);
+        // A profile without a name carries a hex fragment, not a name.
+        const known = profile?.nameIsFallback ? undefined : profile?.name;
+        const name =
+          authorId === session.viewer
+            ? "You"
+            : (known ?? keys.get(authorId) ?? "Unknown person");
+        const agent = !!agentPubkeys?.has(authorId);
+        const target = profileTarget(authorId, { agent });
+        const destination =
+          target && canOpenLink?.(target) ? target : undefined;
+        return (
+          <MenuItem
+            key={authorId}
+            data-reactor={authorId}
+            // A host without profile destinations leaves every row enabled:
+            // nothing here is unavailable, and choosing one closes the list.
+            disabled={!!canOpenLink && !destination}
+            onClick={() => destination && onOpenLink?.(destination)}
+          >
+            <ChoiceRow
+              leading={
+                <Avatar
+                  alt=""
+                  fallback={known ?? name}
+                  src={avatarMedia(profile?.picture, session.media)}
+                  size="small"
+                  shape={agent || profile?.isAgent ? "squircle" : "circle"}
+                />
+              }
+              label={name}
+            />
+          </MenuItem>
+        );
+      })}
+      {/* After the rows: a failed later page must not push the visible ones down. */}
+      {failed && (
+        <MenuNote role="alert">
+          Some names could not load. Reopen this list to try again.
+        </MenuNote>
+      )}
+    </>
+  );
+}
+
+/** Mounted by PreviewCard's portal: closed pills do not observe their reactors. */
 function ReactionPreviewContent({
   reaction,
-  authorIds,
+  previewAuthors,
+  remaining,
   session,
   profiles,
   name,
   previewTilt,
-  peopleList,
-  overflowing,
-  onOverflow,
+  othersButton,
+  onShowAll,
 }: {
   reaction: MessageReaction;
-  authorIds: string[];
+  previewAuthors: readonly string[];
+  remaining: number;
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile> | undefined;
   name: string;
   previewTilt: string;
-  peopleList: RefObject<HTMLElement | null>;
-  overflowing: boolean;
-  onOverflow(overflowing: boolean): void;
+  othersButton: RefObject<HTMLButtonElement | null>;
+  onShowAll(): void;
 }) {
-  const previewAuthors = useMemo(() => {
-    return session.viewer && authorIds.includes(session.viewer)
-      ? [session.viewer, ...authorIds.filter((id) => id !== session.viewer)]
-      : authorIds;
-  }, [authorIds, session.viewer]);
   const reactorProfiles = useMemo(
     () => selectProfiles(session.profiles, previewAuthors),
     [session.profiles, previewAuthors],
@@ -212,53 +348,10 @@ function ReactionPreviewContent({
         profiles?.get(authorId)?.name ??
         authorId.slice(0, 10)),
   );
-  // Opening enriches a small first page, never pointer transit across a pill.
+  // Opening enriches the names shown, never pointer transit across a pill.
   useEffect(() => {
-    void session.profiles
-      .ensure(previewAuthors.slice(0, 32), "background")
-      .catch(() => {});
+    void session.profiles.ensure(previewAuthors, "background").catch(() => {});
   }, [session.profiles, previewAuthors]);
-  const observePeople = useCallback(
-    (element: HTMLElement | null) => {
-      peopleList.current = element;
-      if (!element) return;
-      const measure = () => {
-        onOverflow(element.scrollHeight > element.clientHeight);
-      };
-      measure();
-      const resize =
-        typeof ResizeObserver === "undefined"
-          ? undefined
-          : new ResizeObserver(measure);
-      resize?.observe(element);
-      if (element.firstElementChild) resize?.observe(element.firstElementChild);
-      const visible =
-        typeof IntersectionObserver === "undefined"
-          ? undefined
-          : new IntersectionObserver(
-              (entries) => {
-                const ids = entries
-                  .filter((entry) => entry.isIntersecting)
-                  .map((entry) => (entry.target as HTMLElement).dataset.author)
-                  .filter((id): id is string => !!id);
-                for (let start = 0; start < ids.length; start += 32)
-                  void session.profiles
-                    .ensure(ids.slice(start, start + 32), "background")
-                    .catch(() => {});
-              },
-              { root: element },
-            );
-      for (let index = 0; index < previewAuthors.length; index++) {
-        const person = element.firstElementChild?.children.item(index);
-        if (person) visible?.observe(person);
-      }
-      return () => {
-        resize?.disconnect();
-        visible?.disconnect();
-      };
-    },
-    [session.profiles, previewAuthors, peopleList, onOverflow],
-  );
   return (
     <div className={styles.reactionPreviewContent}>
       <span
@@ -267,21 +360,27 @@ function ReactionPreviewContent({
       >
         <ReactionGlyph reaction={reaction} session={session} />
       </span>
-      <section
-        ref={observePeople}
-        className={styles.reactionPreviewNames}
-        aria-label="Everyone who reacted"
-        tabIndex={overflowing ? 0 : undefined}
-      >
-        <div>
-          {previewAuthors.map((authorId, index) => (
-            <span key={authorId} data-author={authorId}>
-              {index > 0 ? ", " : ""}
-              {users[index]}
-            </span>
-          ))}
-        </div>
-      </section>
+      <span className={styles.reactionPreviewNames}>
+        {users.map((user, index) => (
+          <span
+            key={previewAuthors[index]}
+            className={styles.reactionPreviewPerson}
+          >
+            {user}
+          </span>
+        ))}
+      </span>
+      {remaining > 0 && (
+        <Button
+          ref={othersButton}
+          variant="link"
+          size="inline"
+          aria-haspopup="menu"
+          onClick={onShowAll}
+        >
+          and {remaining} {remaining === 1 ? "other" : "others"}
+        </Button>
+      )}
       <span className={styles.reactionPreviewName}>{name}</span>
     </div>
   );
@@ -293,6 +392,9 @@ function ReactionEmoji({
   mine,
   session,
   profiles,
+  agentPubkeys,
+  onOpenLink,
+  canOpenLink,
   disabled,
   busy,
   toggle,
@@ -301,12 +403,12 @@ function ReactionEmoji({
   previewSlide,
   previewOpen,
   onPreviewChange,
-}: {
+  onListClose,
+}: Reactors & {
   reaction: MessageReaction;
   authorIds: string[];
   mine: boolean;
   session: RelaySession;
-  profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
   busy: boolean;
   toggle(content: string, emoji?: CustomEmoji): boolean;
@@ -315,6 +417,7 @@ function ReactionEmoji({
   previewSlide: "left" | "right" | undefined;
   previewOpen: boolean;
   onPreviewChange(open: boolean): void;
+  onListClose(): void;
 }) {
   const [name, setName] = useState(reaction.content);
   // A retained focus must not reopen the preview over delivery recovery controls.
@@ -322,11 +425,33 @@ function ReactionEmoji({
   const [previewDismissed, setPreviewDismissed] = useState(false);
   const [previewTilt, setPreviewTilt] = useState("0deg");
   const emojiAnchor = useRef<HTMLSpanElement>(null);
-  const peopleList = useRef<HTMLElement>(null);
-  const [overflowing, setOverflowing] = useState(false);
+  const pill = useRef<HTMLButtonElement>(null);
+  const othersButton = useRef<HTMLButtonElement>(null);
+  const listPopup = useRef<HTMLDivElement>(null);
+  const [listOpen, setListOpen] = useState(false);
   const unavailable = disabled || busy;
   // Who reacted stays readable to people who cannot react.
   const shown = previewOpen && !previewDismissed && !busy;
+  // You first, then everyone else in reaction order.
+  const people = useMemo(
+    () =>
+      session.viewer && authorIds.includes(session.viewer)
+        ? [session.viewer, ...authorIds.filter((id) => id !== session.viewer)]
+        : authorIds,
+    [authorIds, session.viewer],
+  );
+  const previewAuthors = useMemo(() => people.slice(0, 3), [people]);
+  const remaining = people.length - previewAuthors.length;
+  // The emoji keeps its instance as the group shrinks; an open list must not
+  // come back when the remainder does.
+  if (remaining === 0 && listOpen) setListOpen(false);
+  // The list can also close without MenuRoot hearing it: the remainder
+  // empties above, or this emoji unmounts while it is open. Report every
+  // close from here so the row resets the same way each time.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onListClose only resets row state.
+  useEffect(() => {
+    if (listOpen) return onListClose;
+  }, [listOpen]);
   const grouped = authorIds.length > 1;
   const labelProfiles = useMemo(
     () => selectProfiles(session.profiles, grouped ? [] : authorIds),
@@ -361,11 +486,11 @@ function ReactionEmoji({
         anchor={emojiAnchor}
         open={shown}
         warm={previewWarm}
-        // Scrollability must not change positioning and its measured available height.
+        // Position every preview alike, with or without "and N others".
         sticky
-        {...(overflowing && {
-          actionRef: peopleList,
-          "aria-label": `People who reacted with ${name}`,
+        {...(remaining > 0 && {
+          actionRef: othersButton,
+          "aria-label": `${reaction.content} reactions`,
         })}
         className={[
           styles.reactionPreview,
@@ -377,6 +502,7 @@ function ReactionEmoji({
         onOpenChange={onPreviewChange}
         trigger={
           <Button
+            ref={pill}
             variant="plain"
             size={grouped ? "caption" : "sm"}
             shape={grouped ? "capsule" : "icon"}
@@ -426,26 +552,53 @@ function ReactionEmoji({
       >
         <ReactionPreviewContent
           reaction={reaction}
-          authorIds={authorIds}
+          previewAuthors={previewAuthors}
+          remaining={remaining}
           session={session}
           profiles={profiles}
           name={name}
           previewTilt={previewTilt}
-          peopleList={peopleList}
-          overflowing={overflowing}
-          onOverflow={setOverflowing}
+          othersButton={othersButton}
+          onShowAll={() => {
+            onPreviewChange(false);
+            setListOpen(true);
+          }}
         />
       </PreviewCard>
+      {remaining > 0 && (
+        <MenuRoot open={listOpen} onOpenChange={setListOpen}>
+          <MenuPopup
+            ref={listPopup}
+            anchor={emojiAnchor}
+            finalFocus={pill}
+            aria-label={`Everyone who reacted with ${reaction.content}`}
+            // Focus here counts as on this emoji: if it splits up, focus
+            // moves to one of its individual emojis.
+            data-reaction={reaction.content}
+            data-reaction-url={reaction.emoji?.url}
+          >
+            <ReactorItems
+              popup={listPopup}
+              people={people}
+              session={session}
+              profiles={profiles}
+              agentPubkeys={agentPubkeys}
+              onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+            />
+          </MenuPopup>
+        </MenuRoot>
+      )}
     </span>
   );
 }
 
 /** Always mounted under the message so failed add/remove operations stay recoverable. */
 export function MessageReactions(
-  props: Props & {
-    onFocusedRemoval?: () => void;
-    profiles?: ReadonlyMap<string, Profile>;
-  },
+  props: Props &
+    Reactors & {
+      onFocusedRemoval?: () => void;
+    },
 ) {
   const active = useConversationPresentation();
   const { row, session, scope, tools } = props;
@@ -456,6 +609,25 @@ export function MessageReactions(
     session.emoji.snapshot,
   );
   const [pointerInRow, setPointerInRow] = useState(false);
+  const reactionRow = useRef<HTMLDivElement>(null);
+  const focusedReaction = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const previous = focusedReaction.current;
+    if (!previous || previous.isConnected) return;
+    focusedReaction.current = null;
+    if (!active || document.activeElement !== document.body) return;
+    // Grouping can replace the focused control after a local or live update.
+    const replacement = Array.from(
+      reactionRow.current?.querySelectorAll<HTMLButtonElement>(
+        "button[data-reaction]",
+      ) ?? [],
+    ).find(
+      (button) =>
+        button.dataset.reaction === previous.dataset.reaction &&
+        button.dataset.reactionUrl === previous.dataset.reactionUrl,
+    );
+    if (replacement) replacement.focus({ preventScroll: true });
+  });
   const [preview, setPreview] = useState<{
     key: string | null;
     index: number;
@@ -463,6 +635,12 @@ export function MessageReactions(
   }>();
   if (!active && preview) setPreview(undefined);
   if (!active && pointerInRow) setPointerInRow(false);
+  const leaveRow = () => {
+    setPointerInRow(false);
+    // An open preview keeps its own hover close, so the pointer can cross
+    // the gap to it; only a closed one stops warming the next pill here.
+    setPreview((current) => (current?.key ? current : undefined));
+  };
   const select = (content: string) => {
     return action.toggle(content, catalogEmoji(catalog.entries, content));
   };
@@ -481,17 +659,27 @@ export function MessageReactions(
   return (
     // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
     <div
+      ref={reactionRow}
       className={styles.reactions}
       data-message-reactions={(active && reactions.length > 0) || undefined}
       data-testid="reaction-row"
       data-populated={(active && reactions.length > 0) || undefined}
       role="group"
       aria-label="Reactions"
-      onMouseEnter={() => setPointerInRow(true)}
-      onMouseLeave={() => {
-        setPointerInRow(false);
-        setPreview((current) => (current?.key === null ? undefined : current));
+      onFocusCapture={(event) => {
+        focusedReaction.current =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>(
+                "button[data-reaction], [role='menu'][data-reaction]",
+              )
+            : null;
       }}
+      onBlurCapture={() => {
+        if (focusedReaction.current?.isConnected)
+          focusedReaction.current = null;
+      }}
+      onMouseEnter={() => setPointerInRow(true)}
+      onMouseLeave={leaveRow}
     >
       {active &&
         reactions.map(({ reaction, authorIds, mine }, index) => {
@@ -512,15 +700,22 @@ export function MessageReactions(
               mine={mine}
               session={session}
               profiles={props.profiles}
+              agentPubkeys={props.agentPubkeys}
+              onOpenLink={props.onOpenLink}
+              canOpenLink={props.canOpenLink}
               disabled={props.disabled}
               busy={action.busy}
               toggle={action.toggle}
               onFocusedRemoval={props.onFocusedRemoval}
               // Who reacted is a preview (DESIGN.md "Hover timing"): once one is
               // open, moving along the row slides it to the next pill at once.
-              previewWarm={pointerInRow && !!preview}
+              previewWarm={!!preview}
               previewOpen={preview?.key === key}
               previewSlide={previewSlide}
+              // React counts the portaled list as inside this row, but a list
+              // that unmounts under the pointer can send the row no leave.
+              // Closing it counts as leaving: at worst, the next pill waits.
+              onListClose={leaveRow}
               onPreviewChange={(open) =>
                 setPreview((current) =>
                   open

@@ -4601,7 +4601,10 @@ it("marking a seen channel unread shows its whole row again", async () => {
   await h.session.unread.ensure();
   expect(h.snapshot().row?.observedCount).toBe(0);
   await h.session.unread.markUnreadLocal(h.target);
-  expect(h.snapshot()).toMatchObject({ manual: "local-only", observedCount: 1 });
+  expect(h.snapshot()).toMatchObject({
+    manual: "local-only",
+    observedCount: 1,
+  });
   expect(h.snapshot().row).toBeUndefined();
 });
 

@@ -431,7 +431,9 @@ test.describe("explicit mark-through with membership activity", () => {
         if (!activityOnly) {
           // The open channel's row is quiet; the engine keeps the unread.
           await expect
-            .poll(async () => (await channelUnread(page, alphaId)).observedCount)
+            .poll(
+              async () => (await channelUnread(page, alphaId)).observedCount,
+            )
             .toBe(2);
         }
         await options(page);

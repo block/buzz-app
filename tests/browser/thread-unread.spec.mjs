@@ -7,6 +7,7 @@ import {
   readJournal,
   releaseReadingFocus,
 } from "./reading.mjs";
+import { channelUnread } from "./unread-state.mjs";
 
 test.use({
   productionBroker: true,
@@ -29,9 +30,10 @@ test.describe("mentioned reply priority", () => {
     await holdReadingFocus(page);
     await open(page, app);
     const alpha = page.locator('button[data-channel-id="alpha"]');
-    await expect(
-      alpha.getByRole("img", { name: /unread threads?/ }),
-    ).toBeVisible();
+    // The open channel's row is quiet; its activity popover still lists threads.
+    await expect
+      .poll(async () => (await channelUnread(page, "alpha")).threads)
+      .toBe(2);
     await alpha.hover();
     const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
     await expect(popover).toBeVisible();
@@ -452,8 +454,12 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(broadcast).toHaveAccessibleName(/Observed unread replies/);
   const alpha = page.locator('button[data-channel-id="alpha"]');
   const activity = alpha.getByRole("img", { name: /unread threads?/ });
-  await expect(activity).toBeVisible();
-  await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
+  // The open channel's row is quiet while its threads stay unread.
+  await expect
+    .poll(async () => (await channelUnread(page, "alpha")).threads)
+    .toBe(2);
+  await expect(activity).toHaveCount(0);
+  await expect(alpha.getByText("Alpha", { exact: true })).not.toHaveCSS(
     "font-weight",
     "600",
   );
@@ -468,6 +474,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(
     alpha.getByRole("img", { name: /Marked unread on this device only/ }),
   ).toBeAttached();
+  // Marking it unread shows the whole row again, its threads included.
   await expect(activity).toHaveAccessibleName(/unread threads?/);
   await page.evaluate(() => {
     document.documentElement.dataset.colorMode = "dark";
@@ -737,9 +744,10 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
     .get("primary/alpha")
     .find((row) => row.content === "Thread root 0");
   const alpha = page.locator('button[data-channel-id="alpha"]');
-  await expect(
-    alpha.getByRole("img", { name: /unread threads?/ }),
-  ).toBeVisible();
+  // The open channel's row is quiet; its activity popover still lists threads.
+  await expect
+    .poll(async () => (await channelUnread(page, "alpha")).threads)
+    .toBeGreaterThan(0);
   let release;
   const held = new Promise((resolve) => {
     release = resolve;

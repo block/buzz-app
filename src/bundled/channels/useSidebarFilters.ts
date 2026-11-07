@@ -125,9 +125,7 @@ export function useUnreadChannelIds(
     () =>
       JSON.stringify(
         targets
-          .filter((target) =>
-            channelHasUnread(unread, target.channelId, shown),
-          )
+          .filter((target) => channelHasUnread(unread, target.channelId, shown))
           .map((target) => target.channelId),
       ),
     [targets, unread, shown],

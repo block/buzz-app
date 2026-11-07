@@ -1,7 +1,7 @@
 import { openPage } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { holdReadingFocus } from "./reading.mjs";
+import { holdReadingFocus, readJournal } from "./reading.mjs";
 
 // Browser-only boundary: real shared-menu focus/dismissal, production broker,
 // IndexedDB reload and app-global preference startup. Policy matrices live in Vitest.
@@ -37,10 +37,13 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
     "aria-label",
     /^6 observed unread messages/,
   );
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  // The selected channel's row is quiet; read state proves nothing read it.
+  const alphaUnread = async () => {
+    const frontiers = (await readJournal(page))?.state.frontiers ?? {};
+    return frontiers.alpha === undefined && !frontiers["activity:alpha"];
+  };
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await beta.focus();
   await page.keyboard.press("Shift+F10");
   await expect(menu).toBeVisible();
@@ -151,10 +154,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   const clickedBefore = await seconds();
   await expect(beta).toBeFocused();
   await expect(badge(beta)).toHaveCount(0);
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await expect(alpha).toHaveAttribute("aria-current", "page");
   await expect
     .poll(
@@ -177,10 +178,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   await page.keyboard.press("Escape");
   await expect(beta).toBeFocused();
   await expect(beta.getByLabel(/^(Muting;|Muted;)/)).toHaveCount(0);
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await expect(badge(beta)).toHaveCount(0);
   await beta.click({ button: "right" });
   const markUnread = menu.getByRole("menuitem", {
@@ -236,10 +235,8 @@ test("channel menu mute/read persist without selecting the row; failed mute rema
   }
   await expect(localMark).toHaveCount(0);
   await expect(badge(beta)).toHaveCount(0);
-  await expect(badge(alpha)).toHaveAttribute(
-    "aria-label",
-    /^8 observed unread messages/,
-  );
+  await expect(badge(alpha)).toHaveCount(0);
+  expect(await alphaUnread()).toBe(true);
   await page.keyboard.press("Shift+F10");
   await expect(markUnread).toBeVisible();
   const unmute = holdResponse(page, "**/sidebar-mute");

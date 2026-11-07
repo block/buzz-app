@@ -52,6 +52,12 @@ export type MessageAttention = Readonly<{
    * attention when the lookup finishes. */
   pending?: boolean;
   unread: boolean;
+  /** Unread as all of its channel's activity: like `unread`, but a reply
+   * outside the viewer's conversations counts too, unless the viewer
+   * unfollowed its thread. Badges and alerts by category still use `unread`. */
+  activityUnread?: true;
+  /** The viewer unfollowed this reply's thread. */
+  unfollowed?: true;
   /** This row is explicitly forced unread during the current channel visit. */
   forced: boolean;
   viewing: boolean;
@@ -817,6 +823,7 @@ export function createUnread({
         view.channelId === channelId &&
         view.visible(messageId, view.ids.has(messageId)),
     );
+    const unread = isUnread(entry, reads.state(), dm);
     return Object.freeze({
       status: kind
         ? "eligible"
@@ -827,7 +834,12 @@ export function createUnread({
       ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
-      unread: isUnread(entry, reads.state(), dm),
+      ...(unread ||
+      (chosen(entry) !== false && afterFrontier(entry, reads.state(), dm))
+        ? { activityUnread: true }
+        : {}),
+      ...(chosen(entry) === false ? { unfollowed: true } : {}),
+      unread,
       forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
       viewing,
     });

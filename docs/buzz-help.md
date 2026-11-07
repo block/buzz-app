@@ -342,6 +342,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   been deleted; or the preview couldn't load. Links don't record their
   community, so one from another community looks like a private or missing
   channel. The card still opens the link.
+- **Background chat sounds:** Plugins can keep their background conversations silent on this device, including mentions, replies, and agent completions. Banners and unread indicators follow your normal settings; other chats keep their usual sounds.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

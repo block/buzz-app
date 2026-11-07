@@ -99,6 +99,7 @@ import {
   type Stream,
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
+import type { ToolApprovalAsk } from "./tool-approval";
 import type { DeviceSettings } from "../../shared/device-settings";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
@@ -516,6 +517,13 @@ export type RunnerHost = {
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins as the agent's handle offers them. */
   plugins?(agent: Agent): AgentHandle["plugins"];
+  /** Asks the owner to allow a plugin tool's call for the agent. */
+  approveTool(
+    agent: Agent,
+    ask: ToolApprovalAsk,
+    signal: AbortSignal,
+    live?: () => void,
+  ): Promise<"once" | "always">;
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
@@ -2689,6 +2697,11 @@ export class AgentRunners {
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
+      // The turn's actual end, past the handoff deadline `signal` carries.
+      const ended = new AbortController();
+      void working.settled.then(() =>
+        ended.abort(new Error("The turn has ended")),
+      );
       const delivery = Object.freeze({
         trigger: job.trigger,
         ...(job.channelId ? { channelId: job.channelId } : {}),
@@ -2699,6 +2712,7 @@ export class AgentRunners {
         ...pick,
         ...(team ? { team } : {}),
         signal,
+        ended: ended.signal,
         workingUntil: working.hold,
         ...(job.work
           ? {
@@ -2956,6 +2970,19 @@ export class AgentRunners {
         // plugin's call would read as the agent's own.
         ...(run && {
           plugins: this.host.plugins?.(agent),
+          approveTool: async (
+            ask: ToolApprovalAsk,
+            signal?: AbortSignal,
+            live?: () => void,
+          ) => {
+            lifetime.throwIfAborted();
+            return this.host.approveTool(
+              agent,
+              ask,
+              signal ? AbortSignal.any([lifetime, signal]) : lifetime,
+              live,
+            );
+          },
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);

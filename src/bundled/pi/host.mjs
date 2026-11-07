@@ -988,8 +988,11 @@ export function serve({
     stream.start(async (events) => {
       for (const event of events)
         if (event.type === "run_start") state.busy = true;
-        else if (event.type === "run_end") state.busy = false;
-        else if (
+        else if (event.type === "run_end") {
+          state.busy = false;
+          // A run Pi starts from what it queued has no known scope.
+          state.scope = undefined;
+        } else if (
           event.type === "submission" &&
           event.record.status === "placed" &&
           event.record.requestId

@@ -9619,7 +9619,6 @@ for (const channelType of ["stream", "forum"] as const)
       expect(screen.getByRole("dialog")).toBeInTheDocument();
       // block/buzz parity: without permission, Invite is absent, not disabled.
       expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
-      // Without an Invite continuation, focus stays on the safe default.
       await waitFor(() =>
         expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
       );
@@ -9691,7 +9690,7 @@ it.each(["Do nothing", "Invite"])(
   },
 );
 
-it("focuses Invite so Enter adds a nonmember before sending", async () => {
+it("Enter on a deliberately focused Invite adds a nonmember before sending", async () => {
   const h = mount();
   const add = vi.fn(async () => {});
   const list = {
@@ -9707,9 +9706,11 @@ it("focuses Invite so Enter adds a nonmember before sending", async () => {
   });
   act(() => h.commands().insertMention(first));
   fireEvent.submit(screen.getByRole("form"));
+  const invite = screen.getByRole("button", { name: "Invite" });
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Invite" })).toHaveFocus(),
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
   );
+  invite.focus();
   await userEvent.setup().keyboard("{Enter}");
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(add).toHaveBeenCalledWith("channel", first.pubkey);
@@ -9734,7 +9735,10 @@ it("keeps focus on Invite while the invite runs and fails", async () => {
   act(() => h.commands().insertMention(first));
   fireEvent.submit(screen.getByRole("form"));
   const invite = screen.getByRole("button", { name: "Invite" });
-  await waitFor(() => expect(invite).toHaveFocus());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
+  );
+  invite.focus();
   await userEvent.setup().keyboard("{Enter}");
   expect(add).toHaveBeenCalledOnce();
   expect(invite).toHaveAttribute("aria-busy", "true");
@@ -9921,7 +9925,7 @@ it("brings several agents in, then adds them together", async () => {
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
 });
 
-it.each(["close", "escape"])(
+it.each(["close", "escape", "enter"])(
   "%s preserves the captured draft and returns focus without adding or sending",
   async (action) => {
     const h = mount();
@@ -9947,13 +9951,15 @@ it.each(["close", "escape"])(
       "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
     );
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
-    // Enter answers the focused Invite action, so it is not a dismissal path.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Invite" })).toHaveFocus(),
+      expect(screen.getByRole("button", { name: "Close" })).toHaveFocus(),
     );
     if (action === "close")
       fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    else await userEvent.setup().keyboard("{Escape}");
+    else
+      await userEvent
+        .setup()
+        .keyboard(action === "enter" ? "{Enter}" : "{Escape}");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );

@@ -26,7 +26,10 @@ import {
   contentEmojiTags,
   EMOJI_SET,
   EMOJI_SET_KIND,
+  emojiTags,
+  normalizeShortcode,
   referencedEmoji,
+  type CustomEmoji,
 } from "../features/relay/emoji";
 import { newer } from "../features/relay/events";
 import {
@@ -114,6 +117,10 @@ export async function captureToolBody(
   )
     throw new Error("Protected picture uploads are not supported.");
   const message = name === "send" || name === "reply_in_subthread";
+  if (name === "emoji_set" && text(args.path))
+    throw new Error(
+      "Protected uploads are not supported; pass a Buzz media url instead.",
+    );
   if (
     !message &&
     name !== "mem_set" &&
@@ -399,6 +406,12 @@ export const TOOLS: readonly Tool[] = [
     ["url"],
   ),
   tool(
+    "emoji_set",
+    "Add a custom emoji to your set, for everyone in the community to use, or change one you added. path: a local image to upload; url: a Buzz media URL.",
+    { shortcode: str, path: str, url: str },
+    ["shortcode"],
+  ),
+  tool(
     "repo",
     "A channel's Git repository (default: current): its URL and a header that lets git clone, fetch and push it as you for 60 seconds. create starts one for the channel.",
     {
@@ -432,6 +445,11 @@ const REPO_PAGES = 5;
 /** Each agent's repository creation in progress, so its turns start one at a
  * time: a second could otherwise pass the same checks and rebind the first. */
 const creating = new Map<string, Promise<unknown>>();
+/** Each agent's emoji set write in progress, so its turns save one at a time. */
+const editingEmoji = new Map<string, Promise<unknown>>();
+/** A community media blob's URL, as an upload returns it. */
+const MEDIA_URL =
+  /^https:\/\/[^/?#@\s]+\/media\/[0-9a-f]{64}(?:\.[a-z0-9]{1,8})?$/;
 /** A read's page size and scan budget. */
 const PAGE = 500;
 const MAX_EVENTS = 10_000;
@@ -1318,6 +1336,42 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const coordinate = `${NOTE}:${client.pubkey}:${name}`;
     await client.publish({ kind: 5, content: "", tags: [["a", coordinate]] });
     return `deleted ${coordinate}`;
+  },
+
+  async emoji_set({ client }, args) {
+    const shortcode = normalizeShortcode(required(args, "shortcode"));
+    if (!shortcode)
+      throw new Error("A shortcode is 1 to 64 letters, digits, _ or -.");
+    const path = text(args.path);
+    const given = text(args.url);
+    if (!path === !given) throw new Error("Pass path or url, not both.");
+    // Only an image blob of this community's own, which clients load through
+    // it rather than from a host of the agent's choosing.
+    if (given) {
+      if (!MEDIA_URL.test(given))
+        throw new Error("url must be a Buzz media URL.");
+      let type: string;
+      try {
+        type = (await client.media(given)).type;
+      } catch {
+        throw new Error("url must be a Buzz media URL.");
+      }
+      if (!type.startsWith("image/"))
+        throw new Error(`${given} is not an image.`);
+    }
+    // One write at a time per agent, so two of its turns cannot each replace
+    // the set the other just saved.
+    const previous = editingEmoji.get(client.pubkey) ?? Promise.resolve();
+    const run = previous
+      .catch(() => {})
+      .then(() => saveEmoji(client, shortcode, path, given));
+    editingEmoji.set(client.pubkey, run);
+    try {
+      return await run;
+    } finally {
+      if (editingEmoji.get(client.pubkey) === run)
+        editingEmoji.delete(client.pubkey);
+    }
   },
 
   async canvas_get(tools, args) {
@@ -2400,6 +2454,109 @@ function noteSlug(value: unknown) {
 async function waitUntil(at: number) {
   while (Date.now() < at)
     await new Promise((resolve) => setTimeout(resolve, at - Date.now()));
+}
+
+/** Emoji sets read to check a shortcode is free; a full page may leave out
+ * the set that has it. */
+const EMOJI_SETS = 500;
+/** Adds `shortcode` to the agent's emoji set, with the image at `path` or
+ * `url`, keeping each of its entries that still decides its shortcode. */
+async function saveEmoji(
+  client: BuzzClient,
+  shortcode: string,
+  path: string | undefined,
+  given: string | undefined,
+): Promise<string> {
+  // Read from the writer, so a lagging replica cannot hide the set this
+  // write replaces.
+  const own = {
+    kinds: [EMOJI_SET_KIND],
+    authors: [client.pubkey],
+    "#d": [EMOJI_SET],
+    limit: 1,
+    consistency: "strong",
+  };
+  const [community, ownSet] = await Promise.all([
+    client.query([
+      { kinds: [EMOJI_SET_KIND], "#d": [EMOJI_SET], limit: EMOJI_SETS },
+    ]),
+    client.query([own]),
+  ]);
+  if (community.length >= EMOJI_SETS)
+    throw new Error(
+      `This community has too many emoji sets to check that :${shortcode}: is free.`,
+    );
+  const sets = new Map<string, BuzzEvent>();
+  for (const event of [...community, ...ownSet])
+    sets.set(event.pubkey, newer(sets.get(event.pubkey), event));
+  const prior = sets.get(client.pubkey);
+  const others = [...sets.values()].filter(
+    (set) => set.pubkey !== client.pubkey,
+  );
+  const mine = emojiTags(prior ?? { tags: [] });
+  const time = prior?.created_at ?? 0;
+  // Whether the agent's entry decides its shortcode for everyone, as
+  // communityEmoji picks: no other set gives it another image that is newer,
+  // or as new and sorting first.
+  const decides = ({ shortcode: code, url }: CustomEmoji) =>
+    others.every(
+      (set) =>
+        set.created_at < time ||
+        emojiTags(set).every(
+          (emoji) =>
+            emoji.shortcode !== code ||
+            emoji.url === url ||
+            (set.created_at === time && url < emoji.url),
+        ),
+    );
+  // Republishing an entry another member has since replaced, or adding one
+  // someone else has, would replace their emoji.
+  const current = mine.find((emoji) => emoji.shortcode === shortcode);
+  if (
+    current
+      ? !decides(current)
+      : others.some((set) =>
+          emojiTags(set).some((emoji) => emoji.shortcode === shortcode),
+        )
+  )
+    throw new Error(`:${shortcode}: is taken; choose another shortcode.`);
+  const rest = mine.filter((emoji) => emoji.shortcode !== shortcode);
+  const dropped = rest.filter((emoji) => !decides(emoji));
+  let url = given ?? "";
+  if (path) {
+    const data = await client.read(path);
+    const type = sniff(data);
+    if (!type?.startsWith("image/"))
+      throw new Error(`${path} is not a PNG, JPEG, GIF or WebP image.`);
+    url = (await client.upload(data, type)).url;
+  }
+  const after = prior ? (prior.created_at + 1) * 1000 : 0;
+  if (after - Date.now() > 5000)
+    throw new Error("Your emoji set was just changed; try again.");
+  await waitUntil(after);
+  const saved = await client.publish({
+    kind: EMOJI_SET_KIND,
+    content: "",
+    tags: [
+      ["d", EMOJI_SET],
+      ...rest
+        .filter((emoji) => !dropped.includes(emoji))
+        .map((emoji) => ["emoji", emoji.shortcode, emoji.url]),
+      ["emoji", shortcode, url],
+    ],
+  });
+  // The community accepts a write that loses to another of the same second,
+  // as one from another process running this agent can.
+  let latest: BuzzEvent | undefined;
+  for (const event of await client.query([own])) latest = newer(latest, event);
+  if (latest?.id !== saved.id)
+    throw new Error(
+      "conflict: your emoji set changed while this was saved; try again.",
+    );
+  const left = dropped.map((emoji) => `:${emoji.shortcode}:`).join(", ");
+  return `Added :${shortcode}: (${url}).${
+    left ? ` Left out ${left}, which other members' emoji replaced.` : ""
+  }`;
 }
 
 /** Each author's newest version of each note, newest first. */

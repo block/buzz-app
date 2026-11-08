@@ -727,6 +727,28 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
           call("read", "buzz__read", "completed", "q"),
         ),
       ]),
+      // buzz-agent reports an MCP application error as a completed call.
+      record([
+        event(
+          "remote",
+          "acp_read",
+          update("tool_call", {
+            toolCallId: "rejected",
+            title: "buzz__send",
+            status: "in_progress",
+            rawInput: { text: "Rejected" },
+          }),
+        ),
+        event(
+          "remote",
+          "acp_read",
+          update("tool_call_update", {
+            toolCallId: "rejected",
+            status: "completed",
+            rawOutput: { isError: true, content: "not a member" },
+          }),
+        ),
+      ]),
     ],
     { agent },
   ).turns[0];
@@ -741,5 +763,6 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
     ["message", "Nested", true],
     ["tool", "buzz__send"],
     ["tool", "buzz__read"],
+    ["tool", "buzz__send"],
   ]);
 });

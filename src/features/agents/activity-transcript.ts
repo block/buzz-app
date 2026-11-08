@@ -357,6 +357,8 @@ function buildTranscript(
     tools: Map<string, ToolItem>;
     /** Text of each call's arguments, for calls that may post a message. */
     sent: Map<string, string>;
+    /** Calls whose result reported an error, whatever their status says. */
+    errored: Set<string>;
     plan?: Extract<TranscriptItem, { type: "plan" }>;
     piStartup?: string;
     payloadThread?: string;
@@ -438,6 +440,7 @@ function buildTranscript(
         items: [],
         tools: new Map(),
         sent: new Map(),
+        errored: new Set(),
       };
       turns.set(turnId, turn);
     }
@@ -591,6 +594,9 @@ function buildTranscript(
             const text = str(object(update.rawInput)?.text);
             if (text.trim()) turn.sent.set(callId, text);
           }
+          // MCP application errors can arrive as completed calls.
+          if (object(update.rawOutput)?.isError === true)
+            turn.errored.add(callId);
           const { diffs, output } = toolContent(update);
           if (output) item.output = output;
           if (diffs.length) item.diffs = diffs;
@@ -664,6 +670,7 @@ function buildTranscript(
       const {
         tools: _tools,
         sent,
+        errored,
         plan: _plan,
         piStartup: _piStartup,
         payloadThread,
@@ -671,10 +678,14 @@ function buildTranscript(
         ...turn
       } = draft;
       // A Buzz message a tool posted reads as the agent's reply, as the local
-      // harnesses' transcripts show it. A failed or unfinished send stays a tool.
+      // harnesses' transcripts show it. A failed, erroring or unfinished send
+      // stays a tool, with its error.
       turn.items = turn.items.map((item) => {
         const text = item.type === "tool" && sent.get(item.toolCallId);
-        return text && item.status === "completed" && postsMessage(item.title)
+        return text &&
+          item.status === "completed" &&
+          !errored.has(item.toolCallId) &&
+          postsMessage(item.title)
           ? { id: item.id, at: item.at, type: "message", text, posted: true }
           : item;
       });

@@ -76,10 +76,11 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     exact: true,
   });
   // The composer shows no standing notice (#2948); the failed read offers
-  // Retry in the Choose agent picker.
-  const choose = page.getByRole("button", {
-    name: "Choose agent",
-    exact: true,
+  // Retry in its picker. Until the agent's profile loads, the chat cannot
+  // tell it is an agent, so the picker opens from the mention button rather
+  // than the agent pill. Either is right while the inventory is missing.
+  const picker = page.getByRole("button", {
+    name: /^(Choose agent|Mention a member)$/,
   });
   const retry = page.getByRole("button", {
     name: "Retry agent list",
@@ -105,7 +106,7 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     const snapshot = await held.promise;
     expect(snapshot.headers()["x-buzz-read-priority"]).toBe("background");
     // Without complete inventory the chat offers Retry and tags nobody.
-    await choose.click();
+    await picker.click();
     await expect(retry).toBeVisible();
     expect(refused).toBeGreaterThan(0);
     await expect(pill).toHaveCount(0);

@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { createRef, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -363,4 +364,23 @@ it("disables editing controls and leaves read-mode content with the plugin", () 
   expect(
     screen.queryByRole("group", { name: "Document formatting" }),
   ).not.toBeInTheDocument();
+});
+
+it("keeps Shift+Enter after a typed backslash as a hard break", async () => {
+  const h = mount({}, { initialValue: "" });
+  act(() => h.ref.current?.focusEnd());
+  await userEvent.setup().keyboard("C:\\{Shift>}{Enter}{/Shift}next");
+  const source = h.change.mock.lastCall?.[0] as string;
+  expect(fromMarkdown(source)).toMatchObject({
+    children: [
+      {
+        type: "paragraph",
+        children: [
+          { type: "text", value: "C:\\" },
+          { type: "break" },
+          { type: "text", value: "next" },
+        ],
+      },
+    ],
+  });
 });

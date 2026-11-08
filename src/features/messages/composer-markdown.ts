@@ -666,6 +666,18 @@ function paragraphMarkdown(
         value = value.replace(/[`\\]+$/, (tail) =>
           tail.replace(/[\\`]/g, "\\$&"),
         );
+      // An odd authored slash must not escape the generated hard-break slash.
+      if (
+        mode === "document" &&
+        parent &&
+        "children" in parent &&
+        parent.children[
+          parent.children.findIndex((child) => child === node) + 1
+        ]?.type === "break"
+      )
+        value = value.replace(/\\+$/, (tail) =>
+          tail.length % 2 ? `${tail}\\` : tail,
+        );
       return value;
     }
     const value = defaultHandlers.text(node, parent, state, info);

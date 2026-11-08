@@ -109,3 +109,25 @@ it("keeps structural paragraphs even in a list item with tight defaults", () => 
     semanticTree(fromMarkdown("- First\n\n  Second")),
   );
 });
+
+it.each([1, 2, 3])(
+  "preserves a typed trailing backslash run of %s before a hard break",
+  (count) => {
+    const prefix = `C:${"\\".repeat(count)}`;
+    const doc = schema.nodes.doc.create(
+      null,
+      schema.nodes.paragraph.create(null, [
+        schema.text(prefix),
+        schema.nodes.hard_break.create(),
+        schema.text("next"),
+      ]),
+    );
+    expect(
+      semanticTree(
+        fromMarkdown(
+          documentEditorMarkdown(projectComposerDocument(doc).draft),
+        ),
+      ),
+    ).toEqual(semanticTree(fromMarkdown(`${prefix}  \nnext`)));
+  },
+);

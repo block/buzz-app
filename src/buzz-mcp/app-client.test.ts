@@ -455,3 +455,68 @@ it("offers the handle's owner reads with the turn's signal, withholding answers 
   expect(() => client.ownerAccess?.held(execution)).toThrow("ended");
   expect(ownerAccess.held).toHaveBeenCalledOnce();
 });
+
+it("gives owner changes this call's caller, and none on a host without a turn check", async () => {
+  const memories = async () => ({ entries: [], partial: false });
+  const result = { status: "confirmed" } as never;
+  const change = () =>
+    vi.fn(async (_request: unknown, _caller?: unknown) => result);
+  const ownerAccess = {
+    addMember: change(),
+    removeMember: change(),
+    setMemberRole: change(),
+  };
+  let ended = false;
+  let protectedOut = false;
+  const controller = new AbortController();
+  const client = appClient(
+    {
+      pubkey: "agent",
+      ownerAccess,
+      protection: {
+        assertAvailable: () => {
+          if (protectedOut) throw new Error("Protection unavailable");
+        },
+      },
+    } as unknown as AgentHandle,
+    {
+      read: vi.fn(),
+      memories,
+      signal: controller.signal,
+      check: () => {
+        if (ended) throw new Error("The turn has ended");
+      },
+    },
+  );
+  const add = { channel: "c", pubkey: "p" };
+  await client.ownerAccess?.addMember(add);
+  await client.ownerAccess?.removeMember(add);
+  await client.ownerAccess?.setMemberRole({
+    ...add,
+    role: "guest",
+    expectedRole: "member",
+  });
+  const caller = ownerAccess.addMember.mock.calls[0]?.at(1) as {
+    signal?: AbortSignal;
+    check(): void;
+  };
+  expect(caller.signal).toBe(controller.signal);
+  expect(ownerAccess.removeMember.mock.calls[0]?.at(1)).toBe(caller);
+  expect(ownerAccess.setMemberRole.mock.calls[0]?.at(1)).toBe(caller);
+  expect(() => caller.check()).not.toThrow();
+  // The caller's check follows the turn and the agent's protection.
+  protectedOut = true;
+  expect(() => caller.check()).toThrow("Protection unavailable");
+  protectedOut = false;
+  ended = true;
+  expect(() => caller.check()).toThrow("ended");
+  await expect(client.ownerAccess?.addMember(add)).rejects.toThrow("ended");
+  expect(ownerAccess.addMember).toHaveBeenCalledOnce();
+
+  const unchecked = appClient(
+    { pubkey: "agent", ownerAccess } as unknown as AgentHandle,
+    { read: vi.fn(), memories },
+  );
+  await unchecked.ownerAccess?.addMember(add);
+  expect(ownerAccess.addMember).toHaveBeenLastCalledWith(add, undefined);
+});

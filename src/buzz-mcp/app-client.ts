@@ -2,7 +2,7 @@
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memories } from "./client";
+import type { BuzzClient, Memories, OwnerMutationCaller } from "./client";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
@@ -55,6 +55,18 @@ export function appClient(
     check();
     return result;
   };
+  // A change is admitted only while this call is: its turn's signal or check,
+  // and the agent's protection. A host that gives neither admits no change.
+  const caller: OwnerMutationCaller | undefined =
+    options.signal || options.check
+      ? {
+          signal: options.signal,
+          check: () => {
+            check();
+            agent.protection?.assertAvailable();
+          },
+        }
+      : undefined;
   return {
     ...(agent.protection
       ? {
@@ -102,6 +114,18 @@ export function appClient(
           owned((signal) => ownerAccess.canvas(channel, revision, signal)),
         canvasHistory: (channel, cursor) =>
           owned((signal) => ownerAccess.canvasHistory(channel, cursor, signal)),
+        addMember: async (request) => {
+          check();
+          return ownerAccess.addMember(request, caller);
+        },
+        removeMember: async (request) => {
+          check();
+          return ownerAccess.removeMember(request, caller);
+        },
+        setMemberRole: async (request) => {
+          check();
+          return ownerAccess.setMemberRole(request, caller);
+        },
         held: (execution) => {
           check();
           ownerAccess.held(execution);

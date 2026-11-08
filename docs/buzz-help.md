@@ -539,6 +539,13 @@ revokes all of them, and a pairing unused for 30 days expires.
   before allowing a fresh participation invitation; failed checks keep the original.
   If the original invitation was applied and the person was later removed, Retry
   clears the old row without re-adding them. Use **Add** in People to invite them again.
+  Owner membership tools refuse removal or role changes while an invitation is sending or
+  its delivery is unresolved. Check the invitation in Outbox and reconcile membership
+  before trying the change again. A current roster entry alone does not confirm an older
+  invitation's delivery. Retrying people individually does not clear an unresolved batch
+  invitation; its original delivery must be confirmed first.
+  A saved Bot invitation must be resumed through
+  the agent's profile, not as a person invitation.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose

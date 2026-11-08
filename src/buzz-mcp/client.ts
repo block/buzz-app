@@ -193,9 +193,54 @@ export type OwnerCanvasHistory = Readonly<{
   /** A page of revisions, newest first. */
   revisions: readonly BuzzEvent[];
 }>;
-/** Read-only operations the app runs with its signed-in human's access, for
- * that human's own agent in that agent's community. Typed operations only:
- * no filters, signing or client of the owner's. */
+/** A change's host-internal caller: the tool call's cancellation and its
+ * synchronous check that the call is still live. No argument supplies it. */
+export type OwnerMutationCaller = Readonly<{
+  signal?: AbortSignal | undefined;
+  check(): void;
+}>;
+/** A member change and its outcome. `confirmed`: the relay-signed roster read
+ * for this call shows it. `rejected`: refused before anything was sent, or by
+ * the relay with no effect. `unconfirmed`: sent, or possibly sent, without an
+ * authoritative answer; check the roster before asking again. */
+export type OwnerMemberResult = Readonly<{
+  execution: OwnerExecution;
+  status: "confirmed" | "rejected" | "unconfirmed";
+  channel: string;
+  pubkey: string;
+  /** Whom the change was routed as: an agent from the owner's library, or a
+   * person. */
+  target?: "agent" | "person";
+  /** Their role in the roster read for this call; `null` when not a member. */
+  role?: OwnerRole | "unknown" | null;
+  /** The sent command's event ID, which a repeated call resumes. */
+  operation?: string;
+  /** The addition was already in the owner's Outbox; this call resumed or
+   * waited for it rather than sending a new one. */
+  existing?: true;
+  reason?: string;
+}>;
+export type OwnerMemberAdd = Readonly<{
+  channel: string;
+  pubkey: string;
+  /** A person added as a guest, who can read but not post. */
+  role?: "guest";
+}>;
+export type OwnerMemberRemove = Readonly<{
+  channel: string;
+  pubkey: string;
+  expectedRole?: OwnerRole;
+}>;
+export type OwnerMemberRole = Readonly<{
+  channel: string;
+  pubkey: string;
+  role: "admin" | "member" | "guest";
+  expectedRole: OwnerRole;
+}>;
+/** Operations the app runs with its signed-in human's access, for that human's
+ * own agent in that agent's community. Typed operations only: no filters,
+ * signing or client of the owner's. Changes go through the owner's existing
+ * services, which sign them; `caller` is supplied by the host. */
 export type OwnerAccess = Readonly<{
   channels(signal?: AbortSignal): Promise<OwnerChannelList>;
   channel(id: string, signal?: AbortSignal): Promise<OwnerChannelDetails>;
@@ -219,6 +264,18 @@ export type OwnerAccess = Readonly<{
     cursor: Readonly<{ before?: number; beforeId?: string }>,
     signal?: AbortSignal,
   ): Promise<OwnerCanvasHistory>;
+  addMember(
+    request: OwnerMemberAdd,
+    caller?: OwnerMutationCaller,
+  ): Promise<OwnerMemberResult>;
+  removeMember(
+    request: OwnerMemberRemove,
+    caller?: OwnerMutationCaller,
+  ): Promise<OwnerMemberResult>;
+  setMemberRole(
+    request: OwnerMemberRole,
+    caller?: OwnerMutationCaller,
+  ): Promise<OwnerMemberResult>;
   /** Throws unless the binding that answered with `execution` still holds,
    * as checked just before its answer is released; reads nothing. */
   held(execution: OwnerExecution): void;
@@ -272,7 +329,7 @@ export interface BuzzClient {
   ): void;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
-  /** Reads with the owner's access, only in the owner's app-hosted run of
+  /** Acts with the owner's access, only in the owner's app-hosted run of
    * the agent by a bundled harness where the build enables it. Never given to
    * plugins, including installed harness plugins. */
   readonly ownerAccess?: OwnerAccess;

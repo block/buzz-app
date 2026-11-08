@@ -287,6 +287,38 @@ it.each(["admin", "guest"] as const)(
     expect(h.owner.capability.snapshot(id).operation?.status).toBe("uncertain");
   },
 );
+it("does not sign when caller admission is withdrawn during the first authorization read", async () => {
+  const h = harness();
+  const controller = new AbortController();
+  let eligible = true;
+  const started = deferred(),
+    gate = deferred();
+  h.read.mockImplementationOnce(async () => {
+    started.resolve();
+    await gate.promise;
+    return h.events();
+  });
+  const running = h.owner.capability.run(
+    id,
+    change,
+    controller.signal,
+    () => eligible,
+  );
+  try {
+    await started.promise;
+    eligible = false;
+  } finally {
+    gate.resolve();
+  }
+  await running;
+  expect(controller.signal.aborted).toBe(false);
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.owner.capability.snapshot(id)).toMatchObject({
+    operation: { status: "failed" },
+    error: "Member change cancelled",
+  });
+});
 it("publishes no member change once the caller's guard turns false during signing", async () => {
   const h = harness();
   let eligible = true;
@@ -307,7 +339,7 @@ it("publishes no member change once the caller's guard turns false during signin
   await h.owner.capability.run(id, change);
   expect(h.owner.capability.snapshot(id).operation?.status).toBe("confirmed");
 });
-it("checks the guard only after the final re-authorization read settles", async () => {
+it("rechecks the guard after the final re-authorization read settles", async () => {
   const h = harness();
   let eligible = true;
   const active = vi.fn(() => eligible);
@@ -325,13 +357,13 @@ it("checks the guard only after the final re-authorization read settles", async 
   const running = h.owner.capability.run(id, change, undefined, active);
   try {
     await started.promise;
-    expect(active).not.toHaveBeenCalled();
+    expect(active).toHaveBeenCalledOnce();
     eligible = false;
   } finally {
     gate.resolve();
   }
   await running;
-  expect(active).toHaveBeenCalledOnce();
+  expect(active).toHaveBeenCalledTimes(2);
   expect(h.publish).not.toHaveBeenCalled();
   expect(h.owner.capability.snapshot(id).operation?.status).toBe("failed");
   eligible = true;
@@ -373,6 +405,10 @@ it("allows removing a bot without changing its role or invoking agent deletion",
       ["p", target],
     ],
   });
+  // The operation records the signed command it sent.
+  expect(h.owner.capability.snapshot(id).operation?.event).toBe(
+    h.publish.mock.calls[0]?.[0].id,
+  );
 });
 it.each(["member", "guest", "bot"])(
   "rejects explicit bot promotion by a %s viewer",
@@ -1204,6 +1240,16 @@ it("administers one member change from a fresh roster read", async () => {
     expectedRole: "member",
     role: "remove",
   });
+
+  // A caller's cancellation and admission reach the run.
+  const caller = { signal: new AbortController().signal, active: () => true };
+  await administerMember(admin, id, target, remove, undefined, caller);
+  expect(admin.run).toHaveBeenLastCalledWith(
+    id,
+    { pubkey: target, expectedRole: "member", role: "remove" },
+    caller.signal,
+    caller.active,
+  );
 
   // The roster already shows the result: nothing is sent.
   admin.run.mockClear();

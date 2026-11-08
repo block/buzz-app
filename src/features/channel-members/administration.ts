@@ -24,6 +24,8 @@ export type MemberAdministrationState = Readonly<{
   operation?: Readonly<{
     change: MemberChange;
     status: "pending" | "uncertain" | "confirmed" | "failed";
+    /** The signed command's ID, once signed: what a later readback checks. */
+    event?: string;
   }>;
   error?: string | undefined;
 }>;
@@ -170,7 +172,7 @@ export function createMemberAdministration({
           });
       });
     },
-    /** `active` is checked synchronously right before publishing; false publishes nothing. */
+    /** `active` is checked synchronously before signing and publishing. */
     async run(
       id: string,
       intent: MemberChange,
@@ -188,6 +190,7 @@ export function createMemberAdministration({
         const signal = caller ? AbortSignal.any([owned, caller]) : owned;
         const previous = snapshot(id);
         let publicationStarted = false;
+        let event: string | undefined;
         emit(id, {
           ...previous,
           operation: { change, status: "pending" },
@@ -237,6 +240,9 @@ export function createMemberAdministration({
           await authorize();
           const template = memberAdministrationTemplate(id, change);
           validateMemberAdministrationTemplate(template, viewer);
+          signal.throwIfAborted();
+          if (active?.() === false)
+            throw new DOMException("Member change cancelled", "AbortError");
           const signed = await writer.sign(structuredClone(template), signal);
           signal.throwIfAborted();
           if (
@@ -248,6 +254,7 @@ export function createMemberAdministration({
             getEventHash(signed) !== signed.id
           )
             throw new Error("Signer changed the member administration command");
+          event = signed.id;
           await authorize();
           signal.throwIfAborted();
           if (active?.() === false)
@@ -266,7 +273,11 @@ export function createMemberAdministration({
           emit(id, {
             status: "ready",
             authority: result.authority,
-            operation: { change, status: "confirmed" },
+            operation: {
+              change,
+              status: "confirmed",
+              ...(event ? { event } : {}),
+            },
           });
         } catch (error) {
           if (current())
@@ -279,6 +290,7 @@ export function createMemberAdministration({
                   publicationStarted && !(error instanceof PublishRejected)
                     ? "uncertain"
                     : "failed",
+                ...(event ? { event } : {}),
               },
               error:
                 publicationStarted && !(error instanceof PublishRejected)
@@ -354,6 +366,8 @@ export async function administerMember(
     role: MemberRole | undefined,
   ) => Omit<MemberChange, "pubkey"> | undefined,
   unavailable = "Roles unavailable",
+  /** A caller's cancellation and admission, passed to `run`. */
+  caller?: Readonly<{ signal?: AbortSignal; active?: () => boolean }>,
 ): Promise<MemberResult> {
   await admin.refresh(channel);
   const read = admin.snapshot(channel);
@@ -363,7 +377,9 @@ export async function administerMember(
   if (!intent) return { status: "confirmed" };
   const change = { pubkey, ...intent };
   try {
-    await admin.run(channel, change);
+    await (caller
+      ? admin.run(channel, change, caller.signal, caller.active)
+      : admin.run(channel, change));
   } catch (error) {
     return {
       status: "failed",

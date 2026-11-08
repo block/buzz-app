@@ -83,6 +83,31 @@ function owned() {
       channel: id,
       revisions: [message("9", { kind: 40100, content: "# Plan\nShip it" })],
     })),
+    addMember: vi.fn<OwnerAccess["addMember"]>(async (request) => ({
+      execution: executedAs,
+      status: "confirmed",
+      channel: request.channel,
+      pubkey: request.pubkey,
+      target: "person",
+      role: request.role ?? "member",
+      operation: hex("e"),
+    })),
+    removeMember: vi.fn<OwnerAccess["removeMember"]>(async (request) => ({
+      execution: executedAs,
+      status: "confirmed",
+      channel: request.channel,
+      pubkey: request.pubkey,
+      role: null,
+      operation: hex("e"),
+    })),
+    setMemberRole: vi.fn<OwnerAccess["setMemberRole"]>(async (request) => ({
+      execution: executedAs,
+      status: "confirmed",
+      channel: request.channel,
+      pubkey: request.pubkey,
+      role: request.role,
+      operation: hex("e"),
+    })),
     held: vi.fn<OwnerAccess["held"]>(),
   };
 }
@@ -447,7 +472,7 @@ describe("callOwnerTool", () => {
     });
   });
 
-  it("names only the read tools", () => {
+  it("names the read tools and the member changes, annotated as such", () => {
     expect(OWNER_TOOLS.map(({ name }) => name)).toEqual([
       "owner_channel_list",
       "owner_channel_get",
@@ -455,16 +480,155 @@ describe("callOwnerTool", () => {
       "owner_read",
       "owner_canvas_get",
       "owner_canvas_history",
+      "owner_member_add",
+      "owner_member_remove",
+      "owner_member_set_role",
     ]);
     expect(
       OWNER_TOOLS.every(
-        (tool) =>
-          tool.annotations?.readOnlyHint === true &&
-          tool.inputSchema.additionalProperties === false,
+        (tool) => tool.inputSchema.additionalProperties === false,
       ),
     ).toBe(true);
+    const hints = Object.fromEntries(
+      OWNER_TOOLS.map((tool) => [tool.name, tool.annotations]),
+    );
+    expect(hints.owner_read).toEqual({ readOnlyHint: true });
+    expect(hints.owner_member_add).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+    });
+    for (const name of ["owner_member_remove", "owner_member_set_role"])
+      expect(hints[name]).toEqual({
+        readOnlyHint: false,
+        destructiveHint: true,
+      });
     expect(isOwnerTool("owner_channel_list")).toBe(true);
     expect(isOwnerTool("owner_send")).toBe(false);
+  });
+
+  it("routes member changes with checked arguments and shows the outcome with who it ran as", async () => {
+    const ownerAccess = owned();
+    const client = clientWith({ ownerAccess });
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await callOwnerTool(client, name, args);
+      result.held();
+      return JSON.parse(result.text);
+    };
+    expect(
+      await call("owner_member_add", {
+        channel: id,
+        pubkey: person,
+        role: "guest",
+      }),
+    ).toEqual({
+      executedAs,
+      status: "confirmed",
+      channel: id,
+      pubkey: person,
+      target: "person",
+      role: "guest",
+      operation: hex("e"),
+    });
+    expect(ownerAccess.addMember).toHaveBeenLastCalledWith({
+      channel: id,
+      pubkey: person,
+      role: "guest",
+    });
+    await call("owner_member_remove", {
+      channel: id,
+      pubkey: person,
+      expected_role: "bot",
+    });
+    expect(ownerAccess.removeMember).toHaveBeenLastCalledWith({
+      channel: id,
+      pubkey: person,
+      expectedRole: "bot",
+    });
+    await call("owner_member_remove", { channel: id, pubkey: person });
+    expect(ownerAccess.removeMember).toHaveBeenLastCalledWith({
+      channel: id,
+      pubkey: person,
+    });
+    expect(
+      await call("owner_member_set_role", {
+        channel: id,
+        pubkey: person,
+        role: "admin",
+        expected_role: "member",
+      }),
+    ).toMatchObject({ status: "confirmed", role: "admin" });
+    expect(ownerAccess.setMemberRole).toHaveBeenLastCalledWith({
+      channel: id,
+      pubkey: person,
+      role: "admin",
+      expectedRole: "member",
+    });
+    expect(ownerAccess.held).toHaveBeenCalledWith(executedAs);
+  });
+
+  it.each([
+    ["owner_member_add", { channel: id }, "pubkey must be"],
+    ["owner_member_add", { channel: id, pubkey: "pat" }, "pubkey must be"],
+    [
+      "owner_member_add",
+      { channel: id, pubkey: person, role: "admin" },
+      "role must be guest",
+    ],
+    ["owner_member_add", { pubkey: person }, "channel is required"],
+    [
+      "owner_member_add",
+      { channel: id, pubkey: person, as: person },
+      "cannot be used",
+    ],
+    [
+      "owner_member_remove",
+      { channel: id, pubkey: person, expected_role: "owner" },
+      "expected_role must be",
+    ],
+    [
+      "owner_member_set_role",
+      { channel: id, pubkey: person, role: "owner", expected_role: "member" },
+      "role must be admin",
+    ],
+    [
+      "owner_member_set_role",
+      { channel: id, pubkey: person, role: "bot", expected_role: "member" },
+      "role must be admin",
+    ],
+    [
+      "owner_member_set_role",
+      { channel: id, pubkey: person, role: "admin" },
+      "expected_role is required",
+    ],
+  ])("refuses %s %j before changing anything", async (name, args, message) => {
+    const ownerAccess = owned();
+    await expect(
+      callOwnerTool(clientWith({ ownerAccess }), name, args),
+    ).rejects.toThrow(message);
+    for (const change of [
+      ownerAccess.addMember,
+      ownerAccess.removeMember,
+      ownerAccess.setMemberRole,
+    ])
+      expect(change).not.toHaveBeenCalled();
+  });
+
+  it("withholds a change's outcome when the binding changed, saying it may have happened", async () => {
+    const ownerAccess = owned();
+    const result = await callOwnerTool(
+      clientWith({ ownerAccess }),
+      "owner_member_remove",
+      {
+        channel: id,
+        pubkey: person,
+      },
+    );
+    ownerAccess.held.mockImplementation(() => {
+      throw new Error("changed");
+    });
+    expect(() => result.held()).toThrow(
+      `so its result is not shown (operation ${hex("e")}). It may have taken effect`,
+    );
   });
 });
 

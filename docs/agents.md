@@ -91,8 +91,8 @@ owner's channels and says `partial` while their list is incomplete. Other
 channels' matches still fill its page, so `limited` with few results means
 narrowing it by channel or time. A message shows its newest edit by its author
 or, as in the app, by the author's verified owner. One read fetches a page's edits;
-when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
-nothing: no membership, subscription, read state, post, agent start or Canvas
+when they fill it, the answer says `edits_limited` and some messages may show earlier text. These reads
+write nothing: no membership, subscription, read state, post, agent start or Canvas
 change. Content comes from the relay's own answer, not the owner's open views,
 so it changes no unread counts. They do not save the owner's attachments: a
 saved file would be readable before the call's final checks. The app
@@ -107,6 +107,28 @@ has these tools too; as its setup warns of all tool output, members serving its
 model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See
 [configuration](configuration.md#owner-mcp-community-flag).
+
+The same runs also list three membership changes, made with the owner's rights
+through the services the app's own Members and agent-library actions use:
+`owner_member_add` adds a person, or an agent from the owner's agent library, to
+one of the owner's channels (people optionally as guests); `owner_member_remove`
+removes a member; and `owner_member_set_role` makes a member an admin, member or
+guest. The owner's session signs each command; the agent gets no signer. A
+change runs only while the turn, the agent's run and the owner's binding all
+still hold, checked again just before signing and publishing. Each answer is
+`confirmed` when a relay-signed roster read for the call shows the result, with
+the role it shows; `rejected` when nothing was changed; or `unconfirmed` when it
+may have taken effect, with the sent command's `operation` ID. Repeating an
+addition resumes its existing Outbox item rather than sending another, and a
+removal or role change is refused while an addition of that member is still
+sending or has unresolved delivery. A saved Bot invitation cannot resume as a person addition. They
+refuse DMs, archived and system channels, the owner as a target, the agent's own
+role, role changes in Solo chats (removal there is allowed), Owner and Bot as
+target roles, and admin for anyone not confirmed as a person by a complete agent
+inventory and a profile that names no agent. Agents outside the owner's library
+and people without a profile are not added. A run that gives Buzz neither the
+tool call's cancellation nor a check that it is still running lists the tools
+but refuses every change.
 
 ## External app authorization
 

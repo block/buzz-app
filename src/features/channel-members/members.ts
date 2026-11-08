@@ -6,6 +6,19 @@ import type { RelayEvent } from "../relay/events";
 
 const keyPattern = /^[0-9a-f]{64}$/;
 
+/** The session services a member addition uses. */
+export type MemberSession = Pick<
+  RelaySession,
+  | "viewer"
+  | "outbox"
+  | "channels"
+  | "agentChoices"
+  | "profiles"
+  | "archives"
+  | "channelWrites"
+  | "memberAdministration"
+>;
+
 /** Channel types whose members may add people. A system channel's members
  * are its readers, for example the agents a plugin shares its records with. */
 const expandable = new Set(["stream", "forum", "system"]);
@@ -33,7 +46,7 @@ export function canAddMembers(
 /** A session share adds only to this session. It never opens ordinary Members UI
  * or inherits parent-channel membership. */
 export function canShareSoloChat(
-  session: RelaySession,
+  session: Pick<RelaySession, "viewer" | "outbox">,
   channel?: ChannelSummary,
 ) {
   return !!(
@@ -47,11 +60,14 @@ export function canShareSoloChat(
   );
 }
 
-const channelOf = (session: RelaySession, channelId: string) =>
+const channelOf = (
+  session: Pick<RelaySession, "channels">,
+  channelId: string,
+) =>
   session.channels.list().channels.find((item) => item.id === channelId) ??
   session.channels.get?.(channelId);
 
-const knownAgent = (session: RelaySession, pubkey: string) =>
+const knownAgent = (session: MemberSession, pubkey: string) =>
   session.agentChoices
     .snapshot()
     .identities.some((agent) => agent.pubkey === pubkey) ||
@@ -61,7 +77,7 @@ const knownAgent = (session: RelaySession, pubkey: string) =>
  * private-channel invitations grant participation explicitly, independently
  * of the admission default for public visitors. */
 function additionRole(
-  session: RelaySession,
+  session: MemberSession,
   channelId: string,
   pubkey: string,
   soloParticipant: boolean,
@@ -142,20 +158,27 @@ export async function addChannelMember(
   }
 }
 
+/** `active`, when given, is a caller's admission: checked before each step and
+ * carried into the outbox's send, retry and replacement, which check it again
+ * before signing and before publishing. A caller passing it has confirmed
+ * `pubkey` is a person; a saved Bot grant cannot resume under it. */
 async function addOneMember(
-  session: RelaySession,
+  session: MemberSession,
   channelId: string,
   pubkey: string,
   signal: AbortSignal,
   intent: MemberAdditionIntent = {},
   receipts: LocalEvents | undefined = session.outbox,
   soloParticipant = false,
+  active?: () => boolean,
 ): Promise<void> {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
   const channel = () => channelOf(session, channelId);
   const checkAccess = () => {
     signal.throwIfAborted();
+    if (active?.() === false)
+      throw new DOMException("Member addition cancelled", "AbortError");
     if (
       !(soloParticipant
         ? canShareSoloChat(session, channel())
@@ -210,6 +233,10 @@ async function addOneMember(
         : undefined));
   // A saved addition finishes only with the role this one asks for.
   const savedRole = pending?.event.tags.find(([tag]) => tag === "role")?.[1];
+  if (active && savedRole === "bot")
+    throw new Error(
+      "An agent addition for this key is still in Outbox; resume it from the agent's profile instead.",
+    );
   const sameRole = intent.role
     ? savedRole === intent.role
     : savedRole === undefined || savedRole === "bot" || savedRole === "member";
@@ -250,10 +277,24 @@ async function addOneMember(
     check();
     intent.confirmed = true;
   };
-  if (pending?.guarded && !channel()?.members?.includes(pubkey))
-    throw new Error(
-      "Retry this invitation from the agent’s profile so its eligibility can be checked.",
-    );
+  // A guarded receipt resumes only under a live admission: the caller's own,
+  // or, for a person, this explicit Add's. An agent's needs its profile's.
+  let gate = active;
+  if (pending?.guarded && !channel()?.members?.includes(pubkey) && !gate) {
+    if (!(await personTarget(session, pubkey, pending.event)))
+      throw new Error(
+        "Retry this invitation from the agent’s profile so its eligibility can be checked.",
+      );
+    check();
+    gate = () => {
+      try {
+        checkAccess();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  }
   if (soloParticipant && pending && noRole(pending.event))
     intent.id = pending.event.id;
   if (pending && !sameRole && !channel()?.members?.includes(pubkey))
@@ -294,6 +335,7 @@ async function addOneMember(
           queued: (id) => {
             replacement = id;
           },
+          ...(active ? { active } : {}),
         },
       );
       if (replacement) return confirmAddition(replacement);
@@ -311,6 +353,7 @@ async function addOneMember(
         intent,
         receipts,
         soloParticipant,
+        active,
       );
     }
     await session.memberAdministration.refresh(channelId);
@@ -356,9 +399,15 @@ async function addOneMember(
       "This addition expired. Remove its Not sent item in Outbox, then try again.",
     );
 
-  const id = pending?.event.id ?? outbox.send(invitation(), recovery);
-  if (pending?.delivery === "failed" || pending?.delivery === "unknown")
-    outbox.retry(id);
+  const id =
+    pending?.event.id ??
+    (active
+      ? outbox.send(invitation(), recovery, active)
+      : outbox.send(invitation(), recovery));
+  if (pending?.delivery === "failed" || pending?.delivery === "unknown") {
+    if (gate) outbox.retry(id, gate);
+    else outbox.retry(id);
+  }
   return confirmAddition(id);
 
   function invitation() {
@@ -381,11 +430,31 @@ async function addOneMember(
   }
 }
 
+/** Whether a guarded invitation's target is positively a person, so an
+ * explicit Add may resume it: the agent inventory is complete, neither it nor
+ * the target's loaded profile names an agent, and the invitation is no Bot
+ * grant. Missing evidence is not a person. */
+async function personTarget(
+  session: MemberSession,
+  pubkey: string,
+  event: Pick<RelayEvent, "tags">,
+) {
+  if (event.tags.some(([tag, value]) => tag === "role" && value === "bot"))
+    return false;
+  await session.profiles.ensure([pubkey], "foreground");
+  return (
+    session.agentChoices.snapshot().complete &&
+    !!session.profiles.snapshot().get(pubkey) &&
+    !knownAgent(session, pubkey)
+  );
+}
+
 /** A batch is the only durable record of the people it names until each is
  * in the roster or has their own addition pending, so only then is it
- * acknowledged. Batches still sending are left to their own sender. */
+ * acknowledged. Sending or unknown batches can still arrive after a fallback;
+ * retain their receipt until the original delivery is known. */
 export async function settleBatchAdditions(
-  session: RelaySession,
+  session: Pick<MemberSession, "outbox" | "channels">,
   channelId: string,
 ) {
   const outbox = session.outbox;
@@ -410,6 +479,7 @@ export async function settleBatchAdditions(
     if (
       isBatchAddition(item) &&
       item.delivery !== "sending" &&
+      item.delivery !== "unknown" &&
       named(item).every((key) => covered.has(key))
     )
       await outbox.acknowledge(item.event.id).catch(() => {});

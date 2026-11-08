@@ -1,16 +1,25 @@
-// The owner tools' host side: read-only operations the app runs with its
-// signed-in human's own session, for that human's agent, in the agent's own
-// community. Every call resolves the binding again and checks it once more
-// before returning anything, so a sign-out, account switch or reconnect during
-// a call returns nothing.
+// The owner tools' host side: operations the app runs with its signed-in
+// human's own session, for that human's agent, in the agent's own community.
+// Every call resolves the binding again and checks it once more before
+// returning anything, so a sign-out, account switch or reconnect during a read
+// returns nothing. Changes are admitted only while the binding, the caller and
+// the host's run of the agent all still hold.
 import type {
   BuzzEvent,
   OwnerAccess,
   OwnerChannel,
   OwnerExecution,
+  OwnerMemberResult,
+  OwnerMutationCaller,
   OwnerReadRequest,
   OwnerRole,
 } from "../../buzz-mcp/client";
+import {
+  addOwnerMember,
+  type OwnerMemberContext,
+  removeOwnerMember,
+  setOwnerMemberRole,
+} from "./owner-members";
 import { MESSAGES, rootOf, SEARCH, THREAD } from "../../buzz-mcp/tools";
 import { memberAuthority } from "../channel-members/administration-protocol";
 import { CANVAS_HISTORY_PAGE } from "../channel-templates/canvas-limits";
@@ -43,12 +52,18 @@ export function ownerMcpEnabled(community: string | null | undefined) {
 export type OwnerSession = Pick<
   RelaySession,
   | "relayAuthor"
+  | "viewer"
   | "channels"
   | "readRemote"
   | "names"
   | "profiles"
   | "channelLifecycle"
   | "snapshotRead"
+  | "agentChoices"
+  | "archives"
+  | "outbox"
+  | "channelWrites"
+  | "memberAdministration"
 >;
 /** The owner's live session for the agent's community, as the host binds it
  * now. `signal` aborts when that binding is replaced. */
@@ -75,11 +90,44 @@ const changed = () =>
     "Your owner's connection changed during the call, so nothing was returned. Try again.",
   );
 
-/** `agent`'s owner reads. `bind` answers the owner's current binding for the
- * agent's community, or undefined when it may not be used now. */
+/** A change's admission: true only while its caller still runs, the host's
+ * run of the agent (`lifetime`) lives, and the owner's current binding is still
+ * `binding`. Synchronous, so the services that sign and publish can check it
+ * immediately before each step. */
+export function ownerMutationActive(
+  owner: string,
+  bind: () => OwnerBinding | undefined,
+  binding: OwnerBinding,
+  caller: OwnerMutationCaller,
+  lifetime?: AbortSignal,
+): () => boolean {
+  return () => {
+    if (caller.signal?.aborted || binding.signal.aborted || lifetime?.aborted)
+      return false;
+    try {
+      caller.check();
+    } catch {
+      return false;
+    }
+    const now = bind();
+    return (
+      !!now &&
+      !now.signal.aborted &&
+      now.session === binding.session &&
+      now.viewer === binding.viewer &&
+      now.origin === binding.origin &&
+      now.viewer === owner
+    );
+  };
+}
+
+/** `agent`'s owner access. `bind` answers the owner's current binding for the
+ * agent's community, or undefined when it may not be used now. `lifetime` is
+ * the host's run of the agent; changes need it live. */
 export function createOwnerAccess(
   agent: Readonly<{ pubkey: string; owner: string }>,
   bind: () => OwnerBinding | undefined,
+  lifetime?: AbortSignal,
 ): OwnerAccess {
   /** The binding each answer was read with. */
   const answered = new WeakMap<OwnerExecution, OwnerBinding>();
@@ -258,6 +306,56 @@ export function createOwnerAccess(
       throw new Error("channel must be a channel ID.");
     }
   };
+
+  /** Runs a change on the current binding, admitted by `caller` for as long
+   * as `ownerMutationActive` holds. Nothing runs without a caller check. */
+  async function change(
+    id: string,
+    caller: OwnerMutationCaller | undefined,
+    work: (context: OwnerMemberContext) => Promise<OwnerMemberResult>,
+  ) {
+    if (!caller)
+      throw new Error(
+        "Owner changes need a check that this tool call is still running, which this host does not give; nothing was changed.",
+      );
+    caller.signal?.throwIfAborted();
+    caller.check();
+    if (lifetime?.aborted) throw unavailable();
+    const binding = current();
+    const channel = channelId(id);
+    const admitted = ownerMutationActive(
+      agent.owner,
+      bind,
+      binding,
+      caller,
+      lifetime,
+    );
+    // Still an active owner channel, never an archived or system one.
+    const active = () => {
+      if (!admitted()) return false;
+      const item = listed(binding.session, channel);
+      return !!item && !item.archived;
+    };
+    if (!admitted()) throw unavailable();
+    const signal = AbortSignal.any(
+      [binding.signal, caller.signal, lifetime].filter(
+        (each): each is AbortSignal => !!each,
+      ),
+    );
+    return work({
+      agent: agent.pubkey,
+      binding,
+      channel,
+      signal,
+      active,
+      execution: execution(binding),
+      authority: async () => {
+        known(binding.session, channel);
+        const { rights, metadata } = await authority(binding, channel, signal);
+        return { rights, metadata };
+      },
+    });
+  }
 
   /** `events` with their edits and their authors' names. */
   const page = async (
@@ -534,6 +632,18 @@ export function createOwnerAccess(
           revisions: revisions.filter((event) => tag(event, "h") === id),
         };
       }),
+    addMember: (request, caller) =>
+      change(request.channel, caller, (context) =>
+        addOwnerMember(context, request),
+      ),
+    removeMember: (request, caller) =>
+      change(request.channel, caller, (context) =>
+        removeOwnerMember(context, request),
+      ),
+    setMemberRole: (request, caller) =>
+      change(request.channel, caller, (context) =>
+        setOwnerMemberRole(context, request),
+      ),
     held: (answer: OwnerExecution) => {
       const binding = answered.get(answer);
       if (!binding) throw changed();

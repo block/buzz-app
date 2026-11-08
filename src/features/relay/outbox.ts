@@ -55,6 +55,8 @@ type OutboxInput = Pick<EventTemplate, "kind" | "content" | "tags"> & {
 type Replacement = {
   input(): OutboxInput | undefined;
   queued(id: string): void;
+  /** The caller's admission, carried to the replacement as `send` takes it. */
+  active?: () => boolean;
 };
 export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
@@ -1009,7 +1011,7 @@ export function createOutbox(
             );
           const input = replacement?.input();
           if (input) {
-            const next = enqueue(input, item.recovery, undefined, id);
+            const next = enqueue(input, item.recovery, replacement?.active, id);
             await next.persisted;
             replacement?.queued(next.id);
           } else await persist(id, "acknowledge");

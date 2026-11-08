@@ -1,13 +1,16 @@
-// The owner tools (`owner_*`): read with the signed-in human's access instead
-// of the agent's, only where the host gives the client `ownerAccess`. The host
-// decides who the owner, agent and community are; no argument names them.
+// The owner tools (`owner_*`): read and change membership with the signed-in
+// human's access instead of the agent's, only where the host gives the client
+// `ownerAccess`. The host decides who the owner, agent and community are; no
+// argument names them.
 import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import type {
   BuzzClient,
   OwnerAccess,
   OwnerExecution,
+  OwnerMemberResult,
   OwnerReadRequest,
+  OwnerRole,
 } from "./client";
 import {
   bound,
@@ -46,6 +49,7 @@ const tool = (
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
+  destructive?: boolean,
 ): Tool => ({
   name,
   description,
@@ -55,8 +59,22 @@ const tool = (
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   },
-  annotations: { readOnlyHint: true },
+  annotations:
+    destructive === undefined
+      ? { readOnlyHint: true }
+      : { readOnlyHint: false, destructiveHint: destructive },
 });
+const member = {
+  type: "string",
+  description: "The member's hex pubkey or npub, from owner_member_list.",
+} as const;
+const expectedRole = {
+  type: "string",
+  enum: ["admin", "member", "guest", "bot"],
+  description: "Their role now, from owner_member_list.",
+} as const;
+const outcome =
+  " confirmed: the roster read for this call shows it. rejected: nothing was changed (see reason). unconfirmed: it may have taken effect; check owner_member_list before trying again.";
 
 export const OWNER_TOOLS: readonly Tool[] = [
   tool(
@@ -128,6 +146,43 @@ export const OWNER_TOOLS: readonly Tool[] = [
     { channel, before, before_id: beforeId },
     ["channel"],
   ),
+  tool(
+    "owner_member_add",
+    `Add a person or an agent from your owner's agent library to one of your owner's channels, with their access; you may add yourself. A person added to a private channel can read its whole history. Agents are added as your owner adds them; role guest adds a person who can read but not post. Repeating a call resumes its earlier addition, never sending a second one.${outcome}`,
+    {
+      channel,
+      pubkey: {
+        type: "string",
+        description: "The person's or agent's hex pubkey or npub.",
+      },
+      role: {
+        type: "string",
+        enum: ["guest"],
+        description: "People only. Omit for the channel's usual role.",
+      },
+    },
+    ["channel", "pubkey"],
+    false,
+  ),
+  tool(
+    "owner_member_remove",
+    `Remove a member from one of your owner's channels, with their access; you may remove yourself. They lose access to a private channel.${outcome}`,
+    { channel, pubkey: member, expected_role: expectedRole },
+    ["channel", "pubkey"],
+    true,
+  ),
+  tool(
+    "owner_member_set_role",
+    `Change a member's role in one of your owner's channels, with their access: admin, member or guest (guests read but cannot post). Not your own or your owner's role, not in Solo chats, and only a confirmed person can be made admin.${outcome}`,
+    {
+      channel,
+      pubkey: member,
+      role: { type: "string", enum: ["admin", "member", "guest"] },
+      expected_role: expectedRole,
+    },
+    ["channel", "pubkey", "role", "expected_role"],
+    true,
+  ),
 ];
 
 export const isOwnerTool = (name: string) =>
@@ -145,7 +200,7 @@ export async function callOwnerTool(
   const { ownerAccess } = client;
   if (!ownerAccess)
     throw new Error(
-      "Owner tools are not available to this agent here; nothing was read.",
+      "Owner tools are not available to this agent here; nothing was read or changed.",
     );
   const extra = Object.keys(args).filter(
     (arg) => !Object.hasOwn(tool.inputSchema.properties, arg),
@@ -172,6 +227,12 @@ export async function callOwnerTool(
   if (name === "owner_read") return read(ownerAccess, args);
   const id = optionalText(args.channel, "channel");
   if (!id) throw new Error("channel is required.");
+  if (
+    name === "owner_member_add" ||
+    name === "owner_member_remove" ||
+    name === "owner_member_set_role"
+  )
+    return change(ownerAccess, name, id, args);
   if (name === "owner_canvas_get") {
     const revision = eventId(args.id, "id");
     const { execution, channel, canvas } = await ownerAccess.canvas(
@@ -336,6 +397,70 @@ async function read(
     ...(page.editsLimited ? { edits_limited: true } : {}),
     ...(page.partial ? { partial: true } : {}),
   });
+}
+
+/** A member change's arguments, checked before anything runs, and its
+ * outcome. Its answer is released only while the binding it ran with holds;
+ * otherwise the error says that the change may have happened. */
+async function change(
+  ownerAccess: OwnerAccess,
+  name: string,
+  channel: string,
+  args: Readonly<Record<string, unknown>>,
+) {
+  let target: string;
+  try {
+    target = pubkey(String(args.pubkey ?? ""));
+  } catch {
+    throw new Error("pubkey must be a hex pubkey or npub.");
+  }
+  const expected = args.expected_role;
+  if (
+    expected !== undefined &&
+    !["admin", "member", "guest", "bot"].includes(expected as string)
+  )
+    throw new Error("expected_role must be admin, member, guest or bot.");
+  const expectedRole = expected as OwnerRole | undefined;
+  let result: OwnerMemberResult;
+  if (name === "owner_member_add") {
+    if (args.role !== undefined && args.role !== "guest")
+      throw new Error("role must be guest, or omitted.");
+    result = await ownerAccess.addMember({
+      channel,
+      pubkey: target,
+      ...(args.role === "guest" ? { role: "guest" as const } : {}),
+    });
+  } else if (name === "owner_member_remove")
+    result = await ownerAccess.removeMember({
+      channel,
+      pubkey: target,
+      ...(expectedRole ? { expectedRole } : {}),
+    });
+  else {
+    const role = args.role;
+    if (role !== "admin" && role !== "member" && role !== "guest")
+      throw new Error("role must be admin, member or guest.");
+    if (!expectedRole) throw new Error("expected_role is required.");
+    result = await ownerAccess.setMemberRole({
+      channel,
+      pubkey: target,
+      role,
+      expectedRole,
+    });
+  }
+  const { execution, ...fields } = result;
+  return {
+    text: JSON.stringify({ executedAs: execution, ...fields }),
+    held: () => {
+      try {
+        ownerAccess.held(execution);
+      } catch {
+        throw new Error(
+          `This call ended or your owner's connection changed during it, so its result is not shown${result.operation ? ` (operation ${result.operation})` : ""}. It may have taken effect: check owner_member_list before trying again.`,
+        );
+      }
+    },
+  };
 }
 
 /** The answer's text, and a check that the binding it was read with still

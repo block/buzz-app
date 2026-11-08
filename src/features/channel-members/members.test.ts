@@ -47,6 +47,7 @@ function setup(
   type = "stream",
   visibility: "private" | "public" = "private",
   joinRole: "member" | "guest" = "member",
+  load?: () => Promise<readonly OutgoingEvent[]>,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -61,6 +62,7 @@ function setup(
   let apply = true;
   let foreign = false;
   let agent = false;
+  let profile = false;
   let echo = false;
   let failRoster = false;
   let rolesAvailable = true;
@@ -132,6 +134,15 @@ function setup(
             throw new Error("Roster unavailable");
           return [
             ...(echo ? published : []),
+            ...(profile
+              ? [
+                  signed(person, {
+                    kind: 0,
+                    content: JSON.stringify({ name: "Pat" }),
+                    tags: [],
+                  }),
+                ]
+              : []),
             signed(relay, {
               kind: 39000,
               content: "",
@@ -182,7 +193,7 @@ function setup(
       },
       {
         outboxStorage: {
-          load: () => structuredClone(records),
+          load: load ?? (() => structuredClone(records)),
           save: (next) => {
             if (
               failSave ||
@@ -283,6 +294,9 @@ function setup(
     removeViewer: () => {
       members = [];
       clock++;
+    },
+    setProfile: () => {
+      profile = true;
     },
     setAgent: async () => {
       agent = true;
@@ -867,6 +881,108 @@ it("does not bypass profile eligibility when recovering a guarded invitation aft
   t.setFail("");
   await expect(t.managedAdd()).rejects.toThrow(/agent’s profile/);
   expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([first]);
+});
+
+it("resumes a person's guarded invitation from an explicit Add, never a second one", async () => {
+  const t = setup();
+  await t.ready();
+  t.setProfile();
+  t.setFail("Receipt lost", true);
+  await expect(t.managedAdd()).rejects.toThrow();
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("unknown"));
+  const first = t.records()[0]?.event.id;
+  t.guard();
+  t.restart();
+  await t.ready();
+  await t.session.agentChoices.refresh();
+  t.setFail("");
+  await t.managedAdd();
+  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+    first,
+    first,
+  ]);
+  expect(t.session.channels.list().channels[0]?.members).toContain(
+    t.person.pubkey,
+  );
+});
+
+it("does not resume a Bot grant hydrated after a person add was admitted", async () => {
+  let restore!: (items: readonly OutgoingEvent[]) => void;
+  const loaded = new Promise<readonly OutgoingEvent[]>((resolve) => {
+    restore = resolve;
+  });
+  const t = setup("stream", "private", "member", () => loaded);
+  await t.ready();
+  const event = signed(t.viewer, {
+    kind: 9000,
+    content: "",
+    tags: [
+      ["h", t.id],
+      ["p", t.person.pubkey],
+      ["role", "bot"],
+    ],
+  });
+  const adding = addChannelMember(
+    t.session,
+    t.id,
+    t.person.pubkey,
+    new AbortController().signal,
+    {},
+    t.session.outbox,
+    false,
+    () => true,
+  );
+  const refused = expect(adding).rejects.toThrow(/agent addition/);
+  try {
+    expect(t.publish).not.toHaveBeenCalled();
+  } finally {
+    restore([{ event, signed: event, delivery: "unknown", guarded: true }]);
+  }
+  await refused;
+  expect(t.publish).not.toHaveBeenCalled();
+  expect(t.session.channels.list().channels[0]?.members).not.toContain(
+    t.person.pubkey,
+  );
+  expect(t.session.outbox?.snapshot()).toMatchObject([
+    { event: { id: event.id }, delivery: "unknown" },
+  ]);
+});
+
+it("resumes a guarded invitation under a caller's admission, which can still stop it", async () => {
+  const t = setup();
+  await t.ready();
+  t.setFail("Receipt lost", true);
+  await expect(t.managedAdd()).rejects.toThrow();
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("unknown"));
+  const first = t.records()[0]?.event.id;
+  t.guard();
+  t.restart();
+  await t.ready();
+  t.setFail("");
+  const add = (active: () => boolean) =>
+    addChannelMember(
+      t.session,
+      t.id,
+      t.person.pubkey,
+      new AbortController().signal,
+      {},
+      t.session.outbox,
+      false,
+      active,
+    );
+  await expect(add(() => false)).rejects.toThrow(/cancelled/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  // Admitted at the start, withdrawn before the outbox publishes.
+  let admitted = true;
+  const stopped = add(() => admitted);
+  admitted = false;
+  await expect(stopped).rejects.toThrow();
+  expect(t.publish).toHaveBeenCalledOnce();
+  await add(() => true);
+  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+    first,
+    first,
+  ]);
 });
 
 it.each([false, true])(

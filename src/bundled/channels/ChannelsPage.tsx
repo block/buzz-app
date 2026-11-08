@@ -2087,6 +2087,7 @@ function ChannelWorkspace({
         (!current.readOnly || current.cached) && (
           <ConversationComposer
             key={`composer:${current.id}`}
+            slashCommands
             onFocusedRemoval={focusArchivedHistory}
             autoFocus={
               // Remote unarchive restores controls within the reader's current visit.

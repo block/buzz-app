@@ -3,6 +3,8 @@ import emojiManifest from "../bundled/emoji/manifest.json";
 import * as emoji from "../bundled/emoji";
 import mentionsManifest from "../bundled/mentions/manifest.json";
 import * as mentions from "../bundled/mentions";
+import commandsManifest from "../bundled/commands/manifest.json";
+import * as commands from "../bundled/commands";
 import { PLUGIN_REQUEST_REVIEWER } from "../plugins/review-access";
 import * as pluginRequests from "./plugin-request-feature";
 
@@ -20,4 +22,5 @@ export const conversationFeatures: readonly BundledPlugin[] = [
     },
     module: pluginRequests,
   },
+  { manifest: { ...commandsManifest, apiVersion: 1 }, module: commands },
 ];

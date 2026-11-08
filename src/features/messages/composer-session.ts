@@ -52,6 +52,18 @@ export type ComposerSession = Pick<
     RelaySession["channelWrites"],
     "refreshMembership" | "addAgents"
   >;
+  /** Join for /join and the permission read behind /leave; a detached editor
+   * has none. */
+  channelLifecycle?: Pick<
+    RelaySession["channelLifecycle"],
+    "available" | "load"
+  > & {
+    run(action: "join", channelId: string, signal?: AbortSignal): Promise<void>;
+  };
+  memberAdministration?: Pick<
+    RelaySession["memberAdministration"],
+    "available" | "refresh" | "run" | "snapshot"
+  >;
   outbox:
     | Pick<
         NonNullable<RelaySession["outbox"]>,

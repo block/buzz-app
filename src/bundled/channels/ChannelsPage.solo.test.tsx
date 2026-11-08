@@ -10,7 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { keypair, signed } from "../../features/relay/testing";
@@ -37,6 +37,8 @@ import {
   type ReadShortcut,
 } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
+import { membershipCommands } from "../commands/membership";
+import type { SlashCommand } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadTarget } from "../../features/relay/read-state-model";
 
@@ -75,6 +77,7 @@ function fixture({
   viewOnly = false,
   canLeave,
   preview,
+  commands,
 }: {
   /** Observed unread messages in this chat; fakes the read state when given. */
   unread?: number;
@@ -84,6 +87,8 @@ function fixture({
   canLeave?: boolean;
   /** An unjoined reader of an open chat, including legacy admission defaults. */
   preview?: { joinRole?: "member" | "guest" };
+  /** Slash commands the page's composer offers. */
+  commands?: (navigator: Navigation) => readonly SlashCommand[];
   /** Other Solo chats listed after this one in the sidebar's Chats. */
   others?: readonly string[];
   /** The viewer's own profile has loaded too. */
@@ -416,7 +421,23 @@ function fixture({
           requestOpen: () => false,
           handleOpenRequests: () => () => {},
         }}
-        extensions={extensions}
+        extensions={
+          commands
+            ? {
+                ...extensions,
+                commands: {
+                  snapshot: () =>
+                    commands(navigator).map((command) => ({
+                      ...command,
+                      key: `test/${command.id}`,
+                      pluginId: "test",
+                      revision: "one",
+                    })),
+                  subscribe: () => () => {},
+                },
+              }
+            : extensions
+        }
         navigation={navigation}
         navigator={navigator}
         archive={archive}
@@ -1562,4 +1583,56 @@ it("leaves Escape to a text field outside the composer", async () => {
   field.focus();
   expect(f.read.current?.available()).toBe(false);
   field.remove();
+});
+
+describe("/part in the real page", () => {
+  const open = async () => {
+    const f = fixture({
+      type: "stream",
+      canLeave: true,
+      commands: membershipCommands,
+    });
+    f.mountWithToasts();
+    const user = userEvent.setup();
+    const editor = await screen.findByRole("textbox", {
+      name: "Message #Planning",
+    });
+    await user.click(editor);
+    await user.keyboard("/part{Enter}");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Leave channel: Planning",
+    });
+    return { f, user, editor, dialog };
+  };
+
+  it("asks the Leave confirmation instead of leaving at once", async () => {
+    const { f, user, editor, dialog } = await open();
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(dialog).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(editor).toHaveFocus());
+    expect(f.run).not.toHaveBeenCalled();
+    expect(editor).toHaveTextContent("/part");
+  });
+
+  it("leaves once the confirmation is accepted and spends the draft", async () => {
+    const { f, user, dialog } = await open();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Leave channel" }),
+    );
+    await waitFor(() =>
+      expect(f.run).toHaveBeenCalledExactlyOnceWith(
+        "leave",
+        id,
+        expect.any(AbortSignal),
+      ),
+    );
+    expect(f.send).not.toHaveBeenCalled();
+    expect(
+      readView<{ text?: string } | null>(f.scope, `draft:${id}`, null)?.text ??
+        "",
+    ).toBe("");
+  });
 });

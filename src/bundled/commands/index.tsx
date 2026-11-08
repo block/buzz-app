@@ -1,11 +1,12 @@
 import type { PluginModule } from "../../plugins/api";
 import { CommandCompletion } from "./CommandCompletion";
+import { membershipCommands } from "./membership";
 import { slashQuery } from "./slash-query";
 import { shrug } from "./shrug";
 import { choosePresence } from "./presence";
 import { runStatus } from "./status";
 
-export const inject = ["conversation", "presence", "statusSheet"];
+export const inject = ["conversation", "presence", "statusSheet", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const { conversation, presence, statusSheet } = ctx;
   conversation.registerCompletion({
@@ -54,4 +55,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return notice ? { done: true, notice } : { done: true };
     },
   });
+  for (const command of membershipCommands(ctx.navigation))
+    conversation.registerCommand(command);
 };

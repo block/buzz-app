@@ -2361,6 +2361,20 @@ export function EditableInput({
               !paragraph.firstChild?.marks.length
                 ? paragraph.textContent
                 : undefined;
+            const { $from, $to } = editor.state.selection;
+            if (
+              current.current.markdownMode === "document" &&
+              $from.sameParent($to) &&
+              $from.parent.type === composerSchema.nodes.paragraph &&
+              /[\r\n]/.test($from.parent.textContent) &&
+              (hasPlain || prose !== undefined)
+            ) {
+              // A fragment of raw source can parse as blocks or soft-broken prose.
+              // Keep it literal inside its raw destination instead of reparsing it.
+              const text = hasPlain ? plain : prose;
+              if (text) insertPastedText(text);
+              return true;
+            }
             if (copy && prose === undefined) {
               // Only the pasted content is offered: an item-start paste lands
               // after the item's text, whose display-only links stay so.

@@ -533,3 +533,51 @@ it.each(
     );
   },
 );
+
+it.each(
+  [
+    {
+      name: "task list",
+      source: "- [x] a\n- [ ] b\n- [ ] c",
+      selection: "a\n- [ ] b",
+    },
+    {
+      name: "table body rows",
+      source:
+        "| Column | Value |\n| --- | --- |\n| A | B |\n| C | D |\n| E | F |",
+      selection: "| A | B |\n| C | D |",
+    },
+  ].flatMap((sample) => [true, false].map((rich) => ({ ...sample, rich }))),
+)(
+  "preserves a partial $name selection through the document clipboard (rich=$rich)",
+  ({ source, selection, rich }) => {
+    const h = mount({}, { initialValue: source });
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    const start = source.indexOf(selection);
+    act(() => {
+      input.focus();
+      input.setSelectionRange(start, start + selection.length);
+    });
+    const values = new Map<string, string>();
+    fireEvent.copy(input, {
+      clipboardData: {
+        setData: (type: string, value: string) => values.set(type, value),
+      },
+    });
+    expect(values.get("text/plain")).toBe(selection);
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        types: rich ? ["text/plain", "text/html"] : ["text/plain"],
+        getData: (type: string) =>
+          !rich && type === "text/html" ? "" : (values.get(type) ?? ""),
+      },
+    });
+    h.rerender({ source: true });
+    expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+      source,
+    );
+  },
+);

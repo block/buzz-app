@@ -183,7 +183,8 @@ Inject `panels` to use these host members:
   place `handle` beside its secondary pane, and use CSS variable
   `--secondary-panel-width` for that pane's width. Your page owns responsive
   layout and scrolling. Use the current session's `scope` and a stable name
-  prefixed with your plugin ID. Width is saved per scope/name and follows saves
+  prefixed with your plugin ID. Plugin widths have a separate host namespace;
+  plugin-ID prefixes keep different plugins from sharing a name. Width is saved per scope/name and follows saves
   from other windows; undefined scope keeps it in memory. Double-click resets
   the preferred width. `primary`, when supplied, is `{ defaultWidth, maxRatio }`.
 

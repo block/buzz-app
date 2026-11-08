@@ -6,7 +6,7 @@ import {
   usePanelTabTitle,
   type PanelWorkspaceProps,
 } from "./PanelWorkspace";
-import { usePanelSplit } from "./usePanelSplit";
+import { usePluginPanelSplit } from "./usePanelSplit";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import {
@@ -125,7 +125,7 @@ export type Panels = {
   ui: {
     Workspace: ComponentType<PanelWorkspaceProps>;
     /** Stable names should include the plugin ID; scope is the session workspace. */
-    useSplit: typeof usePanelSplit;
+    useSplit: typeof usePluginPanelSplit;
     /** Publish the selected document's title while inside a host workspace. */
     useTabTitle: typeof usePanelTabTitle;
   };
@@ -149,7 +149,7 @@ declare module "@deepseek-ai/cordis" {
 export class PanelsService extends Service implements Panels {
   readonly ui: Panels["ui"] = Object.freeze({
     Workspace: PanelWorkspace,
-    useSplit: usePanelSplit,
+    useSplit: usePluginPanelSplit,
     useTabTitle: usePanelTabTitle,
   });
   private readonly panels;

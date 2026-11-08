@@ -4,7 +4,7 @@ import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
 import { PanelsService } from "./service";
 import { PanelWorkspace, usePanelTabTitle } from "./PanelWorkspace";
-import { usePanelSplit } from "./usePanelSplit";
+import { usePluginPanelSplit } from "./usePanelSplit";
 import { ConversationService } from "../conversation/service";
 import { SettingsCardsService } from "../settings/service";
 import { ShortcutsService } from "../shortcuts/service";
@@ -351,7 +351,7 @@ it("injects the host workspace and hooks into installed plugins", async () => {
     apply(ctx) {
       expect(ctx.panels.ui).toBe(panels.ui);
       expect(ctx.panels.ui.Workspace).toBe(PanelWorkspace);
-      expect(ctx.panels.ui.useSplit).toBe(usePanelSplit);
+      expect(ctx.panels.ui.useSplit).toBe(usePluginPanelSplit);
       expect(ctx.panels.ui.useTabTitle).toBe(usePanelTabTitle);
       ctx.panels.register({
         id: "reader",

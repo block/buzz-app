@@ -52,7 +52,10 @@ type World = {
   };
   /** Settles the confirmation `/leave` asks for. */
   confirm: Mock<
-    (action: "leave", id: string) => Promise<"completed" | "cancelled">
+    (
+      action: "leave" | "archive",
+      id: string,
+    ) => Promise<"completed" | "cancelled">
   >;
   add: ReturnType<typeof vi.fn>;
   navigation: {
@@ -135,7 +138,10 @@ function world(
     }),
   };
   const confirm = vi.fn<
-    (action: "leave", id: string) => Promise<"completed" | "cancelled">
+    (
+      action: "leave" | "archive",
+      id: string,
+    ) => Promise<"completed" | "cancelled">
   >(async () => "completed");
   const add = vi.fn(async (id: string, pubkey: string) => {
     const reason = refused.get(pubkey);

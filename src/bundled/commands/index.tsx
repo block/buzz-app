@@ -1,4 +1,5 @@
 import type { PluginModule } from "../../plugins/api";
+import { channelAdminCommands } from "./channel-admin";
 import { CommandCompletion } from "./CommandCompletion";
 import { membershipCommands } from "./membership";
 import { slashQuery } from "./slash-query";
@@ -56,5 +57,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
   for (const command of membershipCommands(ctx.navigation))
+    conversation.registerCommand(command);
+  for (const command of channelAdminCommands(ctx.navigation))
     conversation.registerCommand(command);
 };

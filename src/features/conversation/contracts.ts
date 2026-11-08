@@ -261,7 +261,7 @@ export type SlashCommandContext = Readonly<{
    * declined; rejects with the failure. Absent where the app has no such host. */
   confirmChannelAction?:
     | ((
-        action: "leave",
+        action: "leave" | "archive",
         channelId: string,
       ) => Promise<"completed" | "cancelled">)
     | undefined;

@@ -1,12 +1,24 @@
+//! Styled QR codes for pairing and community invites.
 //! Visual geometry matches the original Buzz StyledQrCode component.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use qrcode::{Color, EcLevel, QrCode};
 use std::fmt::Write;
 
-pub(super) fn render(value: &str) -> Result<String, String> {
+/// Longest value `qr_code` renders; matches the invite link parser's bound.
+const MAX_VALUE_LEN: usize = 4096;
+
+/// Renders a shareable, non-secret value such as a community invite link.
+#[tauri::command]
+pub fn qr_code(value: String) -> Result<String, String> {
+    if value.is_empty() || value.len() > MAX_VALUE_LEN {
+        return Err("Couldn’t create the QR code.".into());
+    }
+    render(&value).map_err(|()| "Couldn’t create the QR code.".into())
+}
+
+pub(crate) fn render(value: &str) -> Result<String, ()> {
     // Match the original component’s correction level and bounded logo area.
-    let code = QrCode::with_error_correction_level(value.as_bytes(), EcLevel::M)
-        .map_err(|_| "Couldn’t create the pairing code.")?;
+    let code = QrCode::with_error_correction_level(value.as_bytes(), EcLevel::M).map_err(|_| ())?;
     let size = code.width();
     let mut center = ((size * size) as f64 * 0.1).sqrt().floor() as usize;
     if center.is_multiple_of(2) {
@@ -38,7 +50,7 @@ pub(super) fn render(value: &str) -> Result<String, String> {
     for (x, y) in [(0, 0), (size - 7, 0), (0, size - 7)] {
         write!(svg, r#"<rect x="{x}" y="{y}" width="7" height="7" rx="2" fill="black"/><rect x="{}" y="{}" width="5" height="5" rx="0.8" fill="white"/><rect x="{}" y="{}" width="3" height="3" rx="0.4" fill="black"/>"#, x + 1, y + 1, x + 2, y + 2).unwrap();
     }
-    let icon = STANDARD.encode(include_bytes!("../../../public/app-icon.png"));
+    let icon = STANDARD.encode(include_bytes!("../../public/app-icon.png"));
     write!(svg, r##"<defs><clipPath id="logo"><rect x="{icon_start}" y="{icon_start}" width="{icon_size}" height="{icon_size}" rx="2"/></clipPath></defs><rect x="{icon_start}" y="{icon_start}" width="{icon_size}" height="{icon_size}" rx="2" fill="black"/><image href="data:image/png;base64,{icon}" x="{icon_start}" y="{icon_start}" width="{icon_size}" height="{icon_size}" clip-path="url(#logo)"/></svg>"##).unwrap();
     Ok(svg)
 }
@@ -56,5 +68,13 @@ mod tests {
         assert_eq!(svg.matches("width=\"7\" height=\"7\"").count(), 3);
         assert!(svg.contains("data:image/png;base64,"));
         assert!(!svg.contains("href=\"http"));
+    }
+    #[test]
+    fn command_renders_bounded_values_only() {
+        assert!(qr_code("https://example.org/invite/abc".into())
+            .unwrap()
+            .starts_with("<svg"));
+        assert!(qr_code(String::new()).is_err());
+        assert!(qr_code("a".repeat(MAX_VALUE_LEN + 1)).is_err());
     }
 }

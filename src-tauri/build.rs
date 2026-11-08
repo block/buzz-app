@@ -70,6 +70,7 @@ fn main() {
             "pairing_confirm",
             "pairing_deny",
             "pairing_cancel",
+            "qr_code",
             "identity_restore",
             "identity_import",
             "identity_legacy_available",

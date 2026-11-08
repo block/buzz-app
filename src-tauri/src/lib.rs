@@ -12,6 +12,7 @@ use oauth_callback::OAuthCallbackHost;
 #[cfg(test)]
 mod browser_permissions_tests;
 mod pairing;
+mod qr;
 #[cfg(unix)]
 mod quit_signal;
 use browser::{
@@ -701,6 +702,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_confirm,
         pairing::pairing_deny,
         pairing::pairing_cancel,
+        qr::qr_code,
         identity_restore,
         identity_import,
         identity_legacy_available,

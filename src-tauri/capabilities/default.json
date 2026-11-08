@@ -16,6 +16,7 @@
     "allow-pairing-confirm",
     "allow-pairing-deny",
     "allow-pairing-cancel",
+    "allow-qr-code",
     "allow-identity-restore",
     "allow-identity-import",
     "allow-identity-legacy-available",

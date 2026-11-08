@@ -747,6 +747,7 @@ mod tests {
         pairings.set(made.clone()).ok();
         let relay = "wss://relay.example";
         made.set_communities(vec![relay.into()]).await;
+        made.prompt(true);
         let pairing = tokio::spawn({
             let made = made.clone();
             async move {

@@ -18,15 +18,25 @@ type ActivityRun = {
 export type ActivityPresentation = ActivityRun & {
   /** Retires the live treatment only; coordination history remains readable. */
   retired: boolean;
+  outcomes: Pick<
+    ReturnType<typeof requestWork>[number],
+    "agent" | "state" | "reason"
+  >[];
   /** Only the latest update run for an agent/request owns live work and Stop. */
   liveParticipants: string[];
+  /** Agents whose current work or outcome this group can actually present. */
+  presentedParticipants: string[];
   working: boolean;
+  /** Latest recorded update belonging to a participant still working here. */
+  workingUpdate: ChannelMessage | undefined;
   standalone: boolean;
 };
 export type ActivityRowPresentation = {
   requestId: string | undefined;
   active: boolean;
   ownsLive: boolean;
+  /** Keep a failure's author visible in history shared with other agents. */
+  showAuthor?: boolean;
   container: "history" | "bubble" | "standalone";
 };
 const noSubscribe = () => () => {};
@@ -135,10 +145,26 @@ function activityStatus(
       .filter((entry) => entry.working)
       .map((entry) => entry.agent),
   );
-  return {
-    retired,
-    working,
-  };
+  const known = new Map(
+    [...work, ...pending].map((entry) => [entry.agent, entry]),
+  );
+  const outcomes: ActivityPresentation["outcomes"] = [...known.values()].filter(
+    (entry) => !entry.dismissed && ["error", "stopped"].includes(entry.state),
+  );
+  // The signed failure message remains evidence after live lifecycle data expires.
+  for (const row of group.history)
+    if (
+      row.notice === "execution-failure" &&
+      !row.edited &&
+      !row.attachments.length &&
+      (!known.has(row.authorId) || known.get(row.authorId)?.state === "unknown")
+    )
+      outcomes.push({
+        agent: row.authorId,
+        state: "error",
+        reason: row.content,
+      });
+  return { retired, working, outcomes };
 }
 
 /** Shared projection for timeline and thread; hosts own scrolling and disclosure state. */
@@ -147,6 +173,7 @@ export function activityPresentation(
   snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
+  canAbsorbFailure: (failure: ChannelMessage) => boolean = () => true,
 ) {
   const following = new Map(
     rows.map((row, index) => [row.id, rows[index + 1]]),
@@ -215,7 +242,24 @@ export function activityPresentation(
   );
   const bubbleAnchors = new Set<string>();
   const byRow = new Map<string, ActivityRowPresentation>();
-  for (const history of activityRuns(rows, requests)) {
+  for (const run of activityRuns(rows, requests)) {
+    const end = run.at(-1);
+    const failure = end && following.get(end.id);
+    const history =
+      failure?.notice === "execution-failure" &&
+      !failure.edited &&
+      !failure.attachments.length &&
+      failure.replyParentId &&
+      canAbsorbFailure(failure) &&
+      end &&
+      run.some((row) => row.authorId === failure.authorId) &&
+      failure.channelId === end.channelId &&
+      failure.threadRootId === end.threadRootId &&
+      new Date(failure.createdAt * 1000).toDateString() ===
+        new Date(end.createdAt * 1000).toDateString() &&
+      requests.get(failure.id) === requests.get(end.id)
+        ? [...run, failure]
+        : run;
     const first = history[0];
     const latest = history.at(-1);
     if (!first || !latest) continue;
@@ -235,7 +279,7 @@ export function activityPresentation(
       requestId: requests.get(first.id) ?? first.threadRootId,
       followingMessage: following.get(latest.id),
     };
-    const { retired, working } = activityStatus(
+    const { retired, working, outcomes } = activityStatus(
       group,
       snapshot,
       agents,
@@ -265,13 +309,30 @@ export function activityPresentation(
           !retired &&
           (working.has(row.authorId) || !group.followingMessage),
         container: row.id === first.id && standalone ? "standalone" : "bubble",
+        showAuthor:
+          participants.length > 1 && row.notice === "execution-failure",
       });
     }
     groups.push({
       ...group,
       retired,
       liveParticipants,
+      outcomes: outcomes.filter((entry) =>
+        liveParticipants.includes(entry.agent),
+      ),
+      presentedParticipants: liveParticipants.filter(
+        (agent) =>
+          working.has(agent) || outcomes.some((entry) => entry.agent === agent),
+      ),
       working: liveParticipants.some((agent) => working.has(agent)),
+      workingUpdate: history
+        .filter(
+          (row) =>
+            row.audience === "agents" &&
+            liveParticipants.includes(row.authorId) &&
+            working.has(row.authorId),
+        )
+        .at(-1),
       standalone,
     });
   }
@@ -323,6 +384,7 @@ export function useStableRowActivity() {
           prior.requestId === next.requestId &&
           prior.active === next.active &&
           prior.ownsLive === next.ownsLive &&
+          prior.showAuthor === next.showAuthor &&
           prior.container === container
         )
           return prior;

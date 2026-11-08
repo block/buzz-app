@@ -3569,12 +3569,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 :where(html[data-message-density="compact"]) .audienceRow {
   padding-block: calc(var(--space-1) + var(--space-half));
 }
-.failureNotice {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-}
 .audienceRow[data-layout="timeline"],
 .feed .audienceRow[data-layout="continuation"] {
   --activity-avatar-size: var(--size-control);

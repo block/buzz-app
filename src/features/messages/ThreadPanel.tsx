@@ -1481,6 +1481,8 @@ function ThreadMessages({
       activitySnapshot,
       agentPubkeys,
       parent ?? rootId,
+      // A failure with replies needs its own visible branch controls.
+      (failure) => !tree.children.get(failure.id)?.length,
     );
     const groups = presentation.groups.filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),

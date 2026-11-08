@@ -166,6 +166,15 @@ export async function prepareFixtureDependencies() {
 // Playwright's globalSetup.
 export default prepareFixtureDependencies;
 
+// A fixture page that reaches the whole app has over a thousand modules to
+// transform on its first load. Transform its static import graph before
+// navigating, as prepareFixtureDependencies does for dependencies, so no server
+// does that work inside a navigation budget.
+export async function warmUp(server, entry) {
+  await server.warmupRequest(entry);
+  await server.waitForRequestsIdle();
+}
+
 // Parallel fixture servers must not invalidate each other's optimized imports,
 // so each one gets its own copy of the prepared cache.
 export async function createServer(config) {

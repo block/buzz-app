@@ -1,5 +1,6 @@
 /** Owner-only display projection of observer telemetry into turns and items.
  * Raw session retention is unchanged; this reads allowlisted ACP fields only. */
+import { isMessageTool } from "../../buzz-mcp/session-tools";
 import { readEventBody } from "../agent-harness/turn-records";
 import { terminalOutcome } from "./observer";
 
@@ -88,6 +89,12 @@ const object = (value: unknown): Json | undefined =>
     ? (value as Json)
     : undefined;
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+/** Whether a tool title names a Buzz message tool, as goose (and so kgoose)
+ * names it, `buzz__send`, or as Claude Code does, `mcp__buzz__send`. */
+const postsMessage = (title: string) => {
+  const name = /^(?:mcp__)?buzz__(\w+)$/.exec(title.trim())?.[1];
+  return !!name && isMessageTool(name);
+};
 const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const eventId = (value: unknown) =>
@@ -348,6 +355,8 @@ function buildTranscript(
 
   type Draft = TranscriptTurn & {
     tools: Map<string, ToolItem>;
+    /** Text of each call's arguments, for calls that may post a message. */
+    sent: Map<string, string>;
     plan?: Extract<TranscriptItem, { type: "plan" }>;
     piStartup?: string;
     payloadThread?: string;
@@ -428,6 +437,7 @@ function buildTranscript(
         partial: true,
         items: [],
         tools: new Map(),
+        sent: new Map(),
       };
       turns.set(turnId, turn);
     }
@@ -576,8 +586,11 @@ function buildTranscript(
           if (str(update.title)) item.title = str(update.title);
           if (str(update.kind)) item.kind = str(update.kind);
           if (str(update.status)) item.status = str(update.status);
-          if (update.rawInput !== undefined)
+          if (update.rawInput !== undefined) {
             item.input = display(update.rawInput);
+            const text = str(object(update.rawInput)?.text);
+            if (text.trim()) turn.sent.set(callId, text);
+          }
           const { diffs, output } = toolContent(update);
           if (output) item.output = output;
           if (diffs.length) item.diffs = diffs;
@@ -650,12 +663,21 @@ function buildTranscript(
     turns: drafts.map((draft) => {
       const {
         tools: _tools,
+        sent,
         plan: _plan,
         piStartup: _piStartup,
         payloadThread,
         promptThread: prompt,
         ...turn
       } = draft;
+      // A Buzz message a tool posted reads as the agent's reply, as the local
+      // harnesses' transcripts show it. A failed or unfinished send stays a tool.
+      turn.items = turn.items.map((item) => {
+        const text = item.type === "tool" && sent.get(item.toolCallId);
+        return text && item.status === "completed" && postsMessage(item.title)
+          ? { id: item.id, at: item.at, type: "message", text, posted: true }
+          : item;
+      });
       // Older harnesses omit threadRootEventId; the prompt context still names it.
       turn.threadRootId = payloadThread ?? prompt;
       return turn;

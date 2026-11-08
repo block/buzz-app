@@ -345,6 +345,30 @@ it("fences an aborted save preflight before accepting its old-session result", a
   expect(sign).not.toHaveBeenCalled();
 });
 
+it("signs and publishes nothing once the caller cancels a save during its fresh read", async () => {
+  let finish!: (events: RelayEvent[]) => void;
+  const read = vi.fn<RelayReader["read"]>((_, options) =>
+    options?.fresh
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : Promise.resolve([]),
+  );
+  const { queries, sign, publish } = setup({ read });
+  const cancel = new AbortController();
+  const saving = queries.save({ text: "New", emoji: "" }, cancel.signal);
+  const rejected = expect(saving).rejects.toThrow();
+  cancel.abort();
+  finish([]);
+  await rejected;
+  expect(sign).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+  const retry = queries.save({ text: "New", emoji: "" });
+  finish([]);
+  await retry;
+  expect(publish).toHaveBeenCalledOnce();
+});
+
 it("trims local status edits before checking limits but bounds incoming wire text before trimming", async () => {
   const { owner, queries, publish } = setup();
   await queries.save({ text: ` ${"x".repeat(100)}\n`, emoji: " 🚌\r" });

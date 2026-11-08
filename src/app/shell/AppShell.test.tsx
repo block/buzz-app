@@ -32,6 +32,7 @@ import { BackdropsService } from "../../features/backdrops/service";
 import { ShellBackdrops } from "../../features/backdrops/ShellBackdrops";
 
 const testAppearance = createAppearance(window);
+const noStatusBinding = () => () => {};
 
 vi.mock("../../bundled", () => ({ bundledPlugins: [] }));
 
@@ -109,6 +110,7 @@ it("hides and shows the channel sidebar without re-rendering its content", async
         sidebar={sidebar}
         communities={current.communities}
         accountActions={current.accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={testAppearance}
       >
         content
@@ -176,6 +178,7 @@ it.each([true, false])(
           sidebar={() => <aside aria-label="Message sidebar">Messages</aside>}
           communities={current.communities}
           accountActions={current.accountActions}
+          bindStatusSheet={noStatusBinding}
           appearance={testAppearance}
         >
           Main app content
@@ -219,6 +222,7 @@ it("renders the default shell unchanged until a plugin registers a backdrop, and
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={testAppearance}
         backdrop={backdrop}
       >
@@ -264,6 +268,7 @@ it("keeps built-in sidebar controls available before page contributions load", (
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={testAppearance}
       >
         content
@@ -313,6 +318,7 @@ it("keeps the narrow Messages sidebar in the existing Escape-dismissed navigatio
         sidebar={sidebar}
         communities={current.communities}
         accountActions={current.accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={testAppearance}
       >
         content
@@ -386,6 +392,7 @@ it.each([
           tone="default"
           communities={current.communities}
           accountActions={current.accountActions}
+          bindStatusSheet={noStatusBinding}
           appearance={testAppearance}
           searchServices={current}
           creationInSidebar={creationInSidebar}
@@ -477,6 +484,7 @@ it("shows global pages in the side dock and keeps the conversation mounted acros
         tone="default"
         communities={current.communities}
         accountActions={current.accountActions}
+        bindStatusSheet={noStatusBinding}
         appearance={testAppearance}
       >
         <Conversation />
@@ -762,6 +770,7 @@ it.each(["sidebar", "dock", "topbar", "toolbar"] as const)(
           sidebar={(links) => <aside>{links}</aside>}
           communities={current.communities}
           accountActions={current.accountActions}
+          bindStatusSheet={noStatusBinding}
           appearance={testAppearance}
         >
           Retained content
@@ -868,6 +877,7 @@ it.each(["sidebar", "topbar"] as const)(
           )}
           communities={current.communities}
           accountActions={current.accountActions}
+          bindStatusSheet={noStatusBinding}
           appearance={testAppearance}
         >
           content

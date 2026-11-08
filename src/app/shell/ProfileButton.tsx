@@ -75,6 +75,7 @@ export function ProfileButton({
   settingsSelected,
   pluginRecommendations = 0,
   onSettings,
+  bindStatusSheet,
 }: {
   communities: Communities;
   accountActions: AccountActionsService;
@@ -83,6 +84,8 @@ export function ProfileButton({
   pluginRecommendations?: number;
   /** Opens Settings, optionally at one of its own sections. */
   onSettings(section?: "profile" | "plugins"): void;
+  /** Lets a slash command open the set-status sheet this menu renders. */
+  bindStatusSheet: (open: () => boolean) => () => void;
 }) {
   const {
     profile: localProfile,
@@ -211,6 +214,18 @@ export function ProfileButton({
     };
   }, [statusAvailable]);
   const profileTrigger = useRef<HTMLButtonElement>(null);
+  const sheetFocus = useRef<HTMLButtonElement>(null);
+  const statusWritable = session?.statuses?.writable === true;
+  const openSheet = statusEditor.open;
+  useEffect(
+    () =>
+      bindStatusSheet(() => {
+        if (!statusWritable || !openSheet()) return false;
+        sheetFocus.current = null;
+        return true;
+      }),
+    [bindStatusSheet, statusWritable, openSheet],
+  );
   const appearanceTrigger = useRef<HTMLDivElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -422,6 +437,7 @@ export function ProfileButton({
                 disabled={!session.statuses.writable}
                 onClick={() => {
                   if (statusEditor.open()) {
+                    sheetFocus.current = profileTrigger.current;
                     openingStatus.current = true;
                     setMenuOpen(false);
                   }
@@ -553,7 +569,7 @@ export function ProfileButton({
           current={statusEditor.editor.current}
           viewer={statusEditor.editor.viewer}
           close={statusEditor.close}
-          finalFocus={profileTrigger}
+          finalFocus={sheetFocus}
         />
       )}
     </>

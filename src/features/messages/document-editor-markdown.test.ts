@@ -80,6 +80,10 @@ it.each([
   "- First\\\n  Second",
   "**First\\\nSecond**",
   "[First\\\nSecond](https://example.com)",
+  "First\\\nSecond `code`",
+  "First\\\n`code`",
+  "> First\\\n> Second `code`",
+  "- First\\\n  Second `code`",
 ])(
   "preserves CommonMark paragraph and hard-break structure: %s",
   (markdown) => {

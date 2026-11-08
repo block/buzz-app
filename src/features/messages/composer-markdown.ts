@@ -524,7 +524,7 @@ function paragraphMarkdown(
       if (from >= to) continue;
       const value = text.slice(from, to);
       if (format.type === "inlineCode") {
-        children.push(...source(offset, from, marked, linked));
+        children.push(...content(offset, from, depth + 1, marked, linked));
         // CommonMark folds newlines inside a code span to spaces. Separate spans
         // preserve authored line breaks without inventing a fenced block.
         value.split("\n").forEach((line, index) => {

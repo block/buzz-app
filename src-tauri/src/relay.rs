@@ -1001,13 +1001,27 @@ async fn send(
 }
 
 /// What the whole community refused, as `http-admission.ts` reads it: the
-/// relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`) and the
-/// sign-in this device no longer has. Anything else stays with its caller.
+/// relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`), a
+/// community without NIP-FI refusing a key that isn't a member or is banned
+/// (buzz-relay `api/mod.rs` `admit_member`), and the sign-in this device no
+/// longer has. Anything else stays with its caller.
 fn community_refusal(result: &Result<RelayResponse>) -> Option<&'static str> {
     match result {
         Ok(response) => match (response.status, response.body.as_str()) {
             (401, "authentication required\n") | (403, "evidence rejected\n") => Some("sign-in"),
             (403, "authorization denied\n") => Some("access"),
+            (403, body) => serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .filter(|body| {
+                    matches!(
+                        body["error"].as_str(),
+                        Some(
+                            "relay_membership_required"
+                                | "blocked: you are banned from this community"
+                        )
+                    )
+                })
+                .map(|_| "access"),
             _ => None,
         },
         Err(error) if error == SIGNED_OUT => Some("sign-in"),

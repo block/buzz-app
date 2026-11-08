@@ -806,8 +806,9 @@ function failureSummary(error) {
   return `${category}${code ? ` (${code})` : ""}`;
 }
 /** A community refusal in a relay 401/403, read from a copy of its body. Only
- * the relay's short denial text counts, so a longer body stops being read at
- * once; its route still owns, reads or cancels the original. */
+ * the relay's short denial (its NIP-FI text, or a membership refusal's JSON)
+ * counts, so a longer body stops being read at once; its route still owns,
+ * reads or cancels the original. */
 async function refusalOf(response) {
   const reader = response.clone().body?.getReader();
   if (!reader) return undefined;
@@ -816,7 +817,7 @@ async function refusalOf(response) {
     const { value, done } = await reader.read();
     if (done) break;
     bytes += value.byteLength;
-    if (bytes > 64) {
+    if (bytes > 256) {
       // A tee'd copy's cancel settles only once the original's does too.
       void reader.cancel().catch(() => {});
       return undefined;

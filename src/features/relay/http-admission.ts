@@ -73,13 +73,39 @@ const COMMUNITY_REFUSALS: ReadonlyMap<
     },
   ],
 ]);
+/** A community without NIP-FI refuses a key it doesn't admit with JSON, before
+ * any route (buzz-relay `api/mod.rs` `admit_member`): one that isn't a member,
+ * or one it banned. Exact status and `error` only, keyed by that `error`. */
+const MEMBERSHIP_REFUSALS: ReadonlyMap<
+  string,
+  { status: number; error: string; admission: CommunityRefusal }
+> = new Map([
+  [
+    "relay_membership_required",
+    {
+      status: 403,
+      error: "restricted: not a relay member",
+      admission: "access",
+    },
+  ],
+  [
+    "blocked: you are banned from this community",
+    {
+      status: 403,
+      error: "blocked: you are banned from this community",
+      admission: "access",
+    },
+  ],
+]);
+const REFUSALS = [
+  ...COMMUNITY_REFUSALS.values(),
+  ...MEMBERSHIP_REFUSALS.values(),
+];
 /** The refusal a read's error reports, when it was the relay's community-wide
  * one (its `ApiFailure.error`): a refusal met while connecting. */
 export function refusalOfError(error: unknown): CommunityRefusal | undefined {
   const text = error instanceof Error ? error.message : String(error);
-  return [...COMMUNITY_REFUSALS.values()].find(
-    (refusal) => refusal.error === text,
-  )?.admission;
+  return REFUSALS.find((refusal) => refusal.error === text)?.admission;
 }
 /** Native classifies the same bodies in `relay.rs` (`community_refusal`). */
 function communityRefusal(
@@ -133,13 +159,18 @@ export function apiFailure(status: number, value: unknown): ApiFailure {
     "Live stream capacity reached",
     "Relay unreachable",
   ];
-  // The broker forwards a community refusal it already classified as JSON.
-  const forwarded = [...COMMUNITY_REFUSALS.values()].find(
-    (refusal) =>
-      refusal.status === status &&
-      refusal.error === reason &&
-      refusal.admission === body.admission,
-  );
+  // A community's own membership refusal, or one the broker already classified
+  // and forwarded as JSON.
+  const member = MEMBERSHIP_REFUSALS.get(reason);
+  const forwarded =
+    member?.status === status
+      ? member
+      : REFUSALS.find(
+          (refusal) =>
+            refusal.status === status &&
+            refusal.error === reason &&
+            refusal.admission === body.admission,
+        );
   if (forwarded)
     return {
       error: forwarded.error,

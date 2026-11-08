@@ -4488,6 +4488,20 @@ async fn community_refusals_reach_the_window_from_any_signed_request() {
         (response(401, "authentication required\n"), Some("sign-in")),
         (response(403, "evidence rejected\n"), Some("sign-in")),
         (response(403, "authorization denied\n"), Some("access")),
+        (
+            response(
+                403,
+                r#"{"error":"relay_membership_required","message":"You must be a relay member to access this relay"}"#,
+            ),
+            Some("access"),
+        ),
+        (
+            response(
+                403,
+                r#"{"error":"blocked: you are banned from this community"}"#,
+            ),
+            Some("access"),
+        ),
         (Err(SIGNED_OUT.into()), Some("sign-in")),
         // Exact bytes and status only: an item's refusal or an edge page stays
         // with whoever asked for it.
@@ -4498,6 +4512,15 @@ async fn community_refusals_reach_the_window_from_any_signed_request() {
             None,
         ),
         (response(503, "authorization unavailable\n"), None),
+        (
+            response(401, r#"{"error":"relay_membership_required"}"#),
+            None,
+        ),
+        (
+            response(403, r#"{"error":"restricted: not a channel member"}"#),
+            None,
+        ),
+        (response(403, "relay_membership_required"), None),
         (Err("Relay request could not be confirmed".into()), None),
     ] {
         assert_eq!(community_refusal(&result), expected);

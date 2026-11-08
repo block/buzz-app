@@ -5,6 +5,7 @@ import {
   ApiPaused,
   createApiAdmission,
   readApiFailure,
+  refusalOfError,
 } from "./http-admission";
 
 afterEach(() => vi.useRealTimers());
@@ -257,6 +258,31 @@ it.each([
   expect(failure.admission).toBeUndefined();
   expect(failure.denied).toBeUndefined();
 });
+it.each([
+  [
+    {
+      error: "relay_membership_required",
+      message: "You must be a relay member to access this relay",
+    },
+    "restricted: not a relay member",
+  ],
+  [
+    { error: "blocked: you are banned from this community" },
+    "blocked: you are banned from this community",
+  ],
+])(
+  "reads a community's membership refusal %j as a community refusal",
+  async (body, error) => {
+    const failure = await readApiFailure(Response.json(body, { status: 403 }));
+    expect(failure).toEqual({ error, denied: true, admission: "access" });
+    // The broker forwards it as JSON; reading that again keeps the refusal.
+    expect(apiFailure(403, failure)).toEqual(failure);
+    // A refusal met while connecting keeps its reason.
+    expect(refusalOfError(new Error(failure.error))).toBe("access");
+    // Under another status it isn't the relay's front door.
+    expect(apiFailure(401, body).admission).toBeUndefined();
+  },
+);
 it("keeps one item's JSON refusal with its feature", async () => {
   const failure = await readApiFailure(
     Response.json({ error: "restricted: p-gated" }, { status: 403 }),

@@ -388,6 +388,73 @@ it.each(["messages", "manual", "threads"] as const)(
   },
 );
 
+it("keeps the collapsed DM dot consistent with the active filter and expanded roster", async () => {
+  const user = userEvent.setup();
+  let mode: SidebarFilterMode = "active";
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+      filters: { dms: mode },
+      activeWindowSeconds: { dms: 3600 },
+    }),
+  });
+  await preferences.queries.ensure();
+  const now = Math.floor(Date.now() / 1000);
+  const f = fixture(preferences.queries, "ready", [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    {
+      id: "old-dm",
+      name: "Old friend",
+      channelType: "dm",
+      lastActivityAt: now - 7200,
+    },
+    {
+      id: "recent-dm",
+      name: "Recent friend",
+      channelType: "dm",
+      lastActivityAt: now,
+    },
+  ]);
+  const original = f.session.unread;
+  const unread = {
+    ...original.snapshot({ kind: "channel", channelId: "old-dm" }),
+    observedCount: 1,
+  };
+  f.session.unread = {
+    ...original,
+    snapshot: (target) =>
+      target.channelId === "old-dm" ? unread : original.snapshot(target),
+  };
+  render(f.view("alpha"));
+  const header = await screen.findByLabelText("Direct messages");
+  expect(screen.getByRole("button", { name: "Recent friend" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Old friend/ })).toBeNull();
+  await user.click(header);
+  const dot = () =>
+    within(header).queryByRole("img", { name: "Unread direct messages" });
+  expect(dot()).toBeNull();
+
+  mode = "all";
+  await act(() => preferences.queries.refresh());
+  expect(dot()).toBeVisible();
+  await user.click(header);
+  expect(screen.getByRole("button", { name: /^Old friend/ })).toBeVisible();
+  await user.click(header);
+
+  mode = "active";
+  await act(() => preferences.queries.refresh());
+  expect(dot()).toBeNull();
+  f.publish("old-dm", { lastActivityAt: now });
+  expect(dot()).toBeVisible();
+  await user.click(header);
+  expect(screen.getByRole("button", { name: /^Old friend/ })).toBeVisible();
+  preferences.dispose();
+});
+
 it("keeps visibility recovery quiet, then offers the existing retry after exhaustion", async () => {
   vi.useFakeTimers();
   const random = vi.spyOn(Math, "random").mockReturnValue(0.5);

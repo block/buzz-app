@@ -375,7 +375,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   can't start DMs, New message still shows the earlier messages but Send is
   disabled, and search opens a one-to-one DM without bringing it back.
 - **Collapsed direct messages** show a dot beside the section heading when an
-  unmuted conversation has unread messages, a manual unread mark, or unread threads.
+  unmuted conversation matching the section filter has unread messages, a manual
+  unread mark, or unread threads.
   Expand the section to see the conversations.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,

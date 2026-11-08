@@ -1403,7 +1403,7 @@ export function ChannelInventory({
                 section.key === "dms" ? (
                   <CollapsedDmUnread
                     session={queries}
-                    channelIds={section.allRows.map(({ id }) => id)}
+                    channelIds={section.rows.map(({ id }) => id)}
                   />
                 ) : undefined
               }

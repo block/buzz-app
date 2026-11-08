@@ -581,3 +581,83 @@ it.each(
     );
   },
 );
+
+it.each(
+  [true, false].flatMap((hardBreak) =>
+    [true, false].map((rich) => ({ hardBreak, rich })),
+  ),
+)(
+  "pastes structured blocks into supported prose (hardBreak=$hardBreak, rich=$rich)",
+  ({ hardBreak, rich }) => {
+    const h = mount({}, { initialValue: "- one\n- two" });
+    const copiedInput = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    act(() => {
+      copiedInput.focus();
+      copiedInput.setSelectionRange(0, copiedInput.value.length);
+    });
+    const values = new Map<string, string>();
+    fireEvent.copy(copiedInput, {
+      clipboardData: {
+        setData: (type: string, value: string) => values.set(type, value),
+      },
+    });
+    const destination = hardBreak ? "First\\\nSecond" : "First Second";
+    h.rerender({ source: true });
+    fireEvent.change(screen.getByRole("textbox", { name: "Markdown" }), {
+      target: { value: destination },
+    });
+    h.rerender({ source: false });
+    act(() => h.ref.current?.focusEnd());
+    fireEvent.paste(screen.getByRole("textbox", { name: "Document body" }), {
+      clipboardData: {
+        items: [],
+        types: rich ? ["text/plain", "text/html"] : ["text/plain"],
+        getData: (type: string) =>
+          !rich && type === "text/html" ? "" : (values.get(type) ?? ""),
+      },
+    });
+    h.rerender({ source: true });
+    expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+      `${destination}\n\n- one\n- two`,
+    );
+  },
+);
+
+it.each(
+  [true, false].flatMap((hardBreak) =>
+    [true, false].map((rich) => ({ hardBreak, rich })),
+  ),
+)(
+  "links selected prose when pasting a URL (hardBreak=$hardBreak, rich=$rich)",
+  ({ hardBreak, rich }) => {
+    const prefix = hardBreak ? "First\\\n" : "First ";
+    const h = mount({}, { initialValue: `${prefix}Second` });
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    const start = input.value.indexOf("Second");
+    act(() => {
+      input.focus();
+      input.setSelectionRange(start, start + "Second".length);
+    });
+    const url = "https://example.org/page";
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        types: rich ? ["text/plain", "text/html"] : ["text/plain"],
+        getData: (type: string) =>
+          type === "text/plain"
+            ? url
+            : rich
+              ? `<a href="${url}">${url}</a>`
+              : "",
+      },
+    });
+    h.rerender({ source: true });
+    expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+      `${prefix}[Second](${url})`,
+    );
+  },
+);

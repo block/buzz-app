@@ -2366,7 +2366,9 @@ export function EditableInput({
               current.current.markdownMode === "document" &&
               $from.sameParent($to) &&
               $from.parent.type === composerSchema.nodes.paragraph &&
-              /[\r\n]/.test($from.parent.textContent) &&
+              $from.parent.content.content.some(
+                (node) => node.isText && /[\r\n]/.test(node.textContent),
+              ) &&
               (hasPlain || prose !== undefined)
             ) {
               // A fragment of raw source can parse as blocks or soft-broken prose.

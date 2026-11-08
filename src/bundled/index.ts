@@ -17,6 +17,8 @@ import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
+import agentUiManifest from "./agent-ui/manifest.json";
+import * as agentUi from "./agent-ui";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -140,6 +142,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...mermaidManifest, apiVersion: 1 },
     module: mermaid,
+    enabledByDefault: true,
+  },
+  {
+    manifest: { ...agentUiManifest, apiVersion: 1 },
+    module: agentUi,
     enabledByDefault: true,
   },
   {

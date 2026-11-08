@@ -15,6 +15,15 @@ Keep a first explanation brief: Solo, Team, agents, and one useful next step.
 Offer more detail when asked. Do not pretend to highlight controls or navigate
 the interface unless an available tool actually supports that action.
 
+## Agent cards
+
+With the Agent cards plugin enabled, a message can include a `buzz-ui` code block
+containing a card with text, a table or editable draft fields. **Copy draft**
+copies the current field values. Edits stay on this device and reset when the
+message is edited or the card is unmounted; they are not sent back to the agent.
+The card cannot send mail, approve work or run commands.
+Unknown or invalid formats and disabled plugins show the code instead.
+
 ## Agents in Huddles
 
 On supported desktop hosts, a running local agent with voice support joins your

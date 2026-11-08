@@ -1,0 +1,7 @@
+{
+  "id": "buzz.agent-ui",
+  "name": "Agent cards",
+  "apiVersion": 1,
+  "description": "Render bounded buzz-ui code blocks as editable cards.",
+  "discovery": { "category": "communication" }
+}

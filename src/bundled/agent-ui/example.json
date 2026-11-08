@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "root": "draft",
+  "state": {
+    "subject": "A draft you can edit in Buzz",
+    "body": "Hello,\n\nHere is a draft to review. Edit it here and copy your changes."
+  },
+  "elements": {
+    "draft": {
+      "type": "Card",
+      "props": {
+        "title": "Review a draft"
+      },
+      "children": ["intro", "comparison", "subject", "body", "copy"]
+    },
+    "intro": {
+      "type": "Text",
+      "props": {
+        "text": "Edit the draft here, then copy it. Your edits stay local to this card; copying does not send an email."
+      },
+      "children": []
+    },
+    "comparison": {
+      "type": "Table",
+      "props": {
+        "columns": ["Control", "What it does"],
+        "rows": [
+          ["Subject and body", "Editable fields inside the message"],
+          ["Copy draft", "Copies your current edits to the clipboard"]
+        ]
+      },
+      "children": []
+    },
+    "subject": {
+      "type": "TextInput",
+      "props": {
+        "label": "Subject",
+        "value": {
+          "$bindState": "/subject"
+        }
+      },
+      "children": []
+    },
+    "body": {
+      "type": "TextInput",
+      "props": {
+        "label": "Body",
+        "value": {
+          "$bindState": "/body"
+        },
+        "multiline": true
+      },
+      "children": []
+    },
+    "copy": {
+      "type": "Button",
+      "props": {
+        "label": "Copy draft",
+        "action": "copyDraft"
+      },
+      "children": []
+    }
+  }
+}

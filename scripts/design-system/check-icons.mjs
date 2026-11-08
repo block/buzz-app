@@ -22,6 +22,8 @@ const nonIconDependencies = new Set([
   "@fontsource/jetbrains-mono",
   "@hypothesi/tauri-mcp-server", // Native MCP client (docs/native-mcp.md).
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
+  "@json-render/core", // Data-only card catalog and specification types.
+  "@json-render/react", // Render validated cards with Buzz-owned controls.
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@playwright/test",
@@ -86,6 +88,7 @@ const nonIconDependencies = new Set([
   "vitest",
   "ws", // The native MCP client's loopback relay.
   "yaml",
+  "zod", // Validate the bounded agent-card payload, not an icon catalog.
 ]);
 const allowedDependencies = new Set([...approved, ...nonIconDependencies]);
 const dependencyFields = [

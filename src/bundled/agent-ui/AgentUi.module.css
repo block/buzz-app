@@ -1,0 +1,33 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-4);
+  font-family: var(--font-sans);
+  color: var(--text-standard);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.text {
+  white-space: pre-wrap;
+}
+.actions {
+  display: flex;
+  min-width: 0;
+}
+.buttonLabel {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.source {
+  padding: var(--space-3);
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  line-height: var(--text-mono--line-height);
+  letter-spacing: var(--text-mono--letter-spacing);
+  font-weight: var(--text-mono--font-weight);
+}

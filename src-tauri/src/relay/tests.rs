@@ -4502,6 +4502,11 @@ async fn community_refusals_reach_the_window_from_any_signed_request() {
             ),
             Some("access"),
         ),
+        // Media routes spell a non-member's or a banned key's refusal apart.
+        (
+            response(403, r#"{"error":"relay membership required"}"#),
+            Some("access"),
+        ),
         (Err(SIGNED_OUT.into()), Some("sign-in")),
         // Exact bytes and status only: an item's refusal or an edge page stays
         // with whoever asked for it.
@@ -4512,6 +4517,10 @@ async fn community_refusals_reach_the_window_from_any_signed_request() {
             None,
         ),
         (response(503, "authorization unavailable\n"), None),
+        (
+            response(503, r#"{"error":"media service temporarily unavailable"}"#),
+            None,
+        ),
         (
             response(401, r#"{"error":"relay_membership_required"}"#),
             None,

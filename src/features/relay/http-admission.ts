@@ -75,13 +75,23 @@ const COMMUNITY_REFUSALS: ReadonlyMap<
 ]);
 /** A community without NIP-FI refuses a key it doesn't admit with JSON, before
  * any route (buzz-relay `api/mod.rs` `admit_member`): one that isn't a member,
- * or one it banned. Exact status and `error` only, keyed by that `error`. */
+ * or one it banned. Its media routes refuse both with their own spelling
+ * (buzz-relay `api/media.rs` `membership_denial`). Exact status and `error`
+ * only, keyed by that `error`. */
 const MEMBERSHIP_REFUSALS: ReadonlyMap<
   string,
   { status: number; error: string; admission: CommunityRefusal }
 > = new Map([
   [
     "relay_membership_required",
+    {
+      status: 403,
+      error: "restricted: not a relay member",
+      admission: "access",
+    },
+  ],
+  [
+    "relay membership required",
     {
       status: 403,
       error: "restricted: not a relay member",

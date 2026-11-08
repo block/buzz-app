@@ -247,8 +247,9 @@ it.each([
   },
 );
 it.each([
-  // An outage, not a refusal.
+  // An outage, not a refusal: NIP-FI's, and the media route's own.
   [503, "authorization unavailable\n"],
+  [503, JSON.stringify({ error: "media service temporarily unavailable" })],
   // A known body under the wrong status, or not exactly the relay's bytes.
   [403, "authentication required\n"],
   [403, "authorization denied"],
@@ -270,6 +271,8 @@ it.each([
     { error: "blocked: you are banned from this community" },
     "blocked: you are banned from this community",
   ],
+  // Media routes refuse a non-member or a banned key with their own spelling.
+  [{ error: "relay membership required" }, "restricted: not a relay member"],
 ])(
   "reads a community's membership refusal %j as a community refusal",
   async (body, error) => {

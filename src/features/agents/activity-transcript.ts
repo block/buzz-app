@@ -1,6 +1,6 @@
 /** Owner-only display projection of observer telemetry into turns and items.
  * Raw session retention is unchanged; this reads allowlisted ACP fields only. */
-import { isMessageTool } from "../../buzz-mcp/session-tools";
+import { isMessageTool } from "../../buzz-mcp/message-tools";
 import { readEventBody } from "../agent-harness/turn-records";
 import { terminalOutcome } from "./observer";
 

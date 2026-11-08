@@ -7,9 +7,19 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Select } from "../shared/design-system/ui/Select";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { usePermissionCheck } from "./usePermissionCheck";
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { NotificationsService } from "../features/notifications/service";
-import type { SoundPack } from "../features/notifications/sounds";
+import {
+  isLocalSoundRef,
+  localSoundRef,
+  type SoundPack,
+} from "../features/notifications/sounds";
 import type { NotificationCategory } from "../features/notifications/preferences";
 import {
   CATEGORY_SOUND_LABELS,
@@ -26,28 +36,38 @@ const SOUND_ROWS: readonly NotificationCategory[] = [
   "thread",
   "agent",
 ];
+// Not a SoundRef: picking it opens the file chooser instead of saving.
+const CHOOSE_FILE = "choose-file";
 
 function AlertSoundRow({
   category,
   value,
   available,
   packs,
+  localLabel,
   disabled,
   onChange,
+  onChooseFile,
 }: {
   category: NotificationCategory;
   value: SoundRef;
   available: boolean;
   packs: readonly SoundPack[];
+  localLabel: string | undefined;
   disabled: boolean;
   onChange: (next: SoundRef) => void;
+  onChooseFile: () => void;
 }) {
   const recommended = RECOMMENDED_SOUND_BY_CATEGORY[category];
   const packSound = packs
     .flatMap((pack) => pack.sounds)
     .find((sound) => sound.ref === value);
   // A listed sound keeps its own option even after its audio failed to load.
-  const unavailable = available || packSound ? null : `${value} (unavailable)`;
+  const unavailable =
+    available || packSound
+      ? null
+      : `${isLocalSoundRef(value) ? "Sound file" : value} (unavailable)`;
+  const localRef = localSoundRef(category);
 
   const names = [
     "silent",
@@ -67,12 +87,14 @@ function AlertSoundRow({
           valueLabel={
             value === "silent"
               ? "Silent"
-              : (unavailable ?? packSound?.label ?? value)
+              : (unavailable ??
+                packSound?.label ??
+                (value === localRef ? localLabel : undefined) ??
+                value)
           }
           groups={[
             {
-              // Unlabelled until a pack adds a second group.
-              label: packs.length ? "Buzz" : "",
+              label: "Buzz",
               options: names.map((name) => ({
                 value: name,
                 label:
@@ -95,8 +117,17 @@ function AlertSoundRow({
                 label: sound.label,
               })),
             })),
+            {
+              label: "Your sounds",
+              options: [
+                ...(localLabel ? [{ value: localRef, label: localLabel }] : []),
+                { value: CHOOSE_FILE, label: "Choose file…" },
+              ],
+            },
           ]}
-          onValueChange={(next) => onChange(next as SoundRef)}
+          onValueChange={(next) =>
+            next === CHOOSE_FILE ? onChooseFile() : onChange(next as SoundRef)
+          }
         />
       }
     />
@@ -119,6 +150,13 @@ export function NotificationSettings({
     notifications.soundRegistry.subscribe,
     notifications.soundRegistry.snapshot,
   );
+  const localSounds = useSyncExternalStore(
+    notifications.soundRegistry.subscribe,
+    notifications.soundRegistry.localSounds,
+  );
+  const fileInput = useRef<HTMLInputElement>(null);
+  const fileCategory = useRef<NotificationCategory | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [checking, checkPermission] = usePermissionCheck(() =>
     notifications.refreshPermission(),
   );
@@ -300,6 +338,33 @@ export function NotificationSettings({
                 />
                 {preferences.sound && (
                   <div className={styles.soundRows}>
+                    <input
+                      ref={fileInput}
+                      type="file"
+                      className="sr-only"
+                      tabIndex={-1}
+                      aria-label="Choose sound file"
+                      accept="audio/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        const category = fileCategory.current;
+                        if (!file || !category) return;
+                        setFileError(null);
+                        notifications
+                          .chooseCustomSound(category, file)
+                          .then(() =>
+                            previewSound(category, localSoundRef(category)),
+                          )
+                          .catch((error: unknown) =>
+                            setFileError(
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                            ),
+                          );
+                      }}
+                    />
                     {SOUND_ROWS.map((category) => (
                       <AlertSoundRow
                         key={category}
@@ -310,6 +375,11 @@ export function NotificationSettings({
                           preferences.sounds[category],
                         )}
                         packs={soundPacks}
+                        localLabel={localSounds.get(localSoundRef(category))}
+                        onChooseFile={() => {
+                          fileCategory.current = category;
+                          fileInput.current?.click();
+                        }}
                         onChange={(next) => {
                           if (next === preferences.sounds[category]) return;
                           notifications.updatePreferences({
@@ -352,6 +422,13 @@ export function NotificationSettings({
               Reload saved choices
             </Button>
           </ToastNotice>
+        )}
+        {active && fileError && (
+          <ToastNotice
+            title="Couldn’t use that sound file"
+            description={fileError}
+            onDismiss={() => setFileError(null)}
+          />
         )}
         {active && state.error && (
           <ToastNotice

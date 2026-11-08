@@ -570,3 +570,90 @@ it("lists plugin sound packs as groups, previews them, and keeps an unavailable 
     ).toHaveTextContent(/^Chime$/),
   );
 });
+
+it("chooses a sound file from this machine for one row and previews it", async () => {
+  const audios: { src: string }[] = [];
+  vi.stubGlobal(
+    "Audio",
+    class {
+      currentTime = 0;
+      pause = vi.fn();
+      play = vi.fn(async () => {});
+      constructor(public src: string) {
+        audios.push(this);
+      }
+    },
+  );
+  vi.stubGlobal(
+    "URL",
+    class extends URL {
+      static override createObjectURL = () => "blob:test/file";
+      static override revokeObjectURL = () => {};
+    },
+  );
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  const save = vi.fn(async () => {});
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission: async () => "granted",
+      requestPermission: async () => "granted",
+      show: async () => {},
+      dispose() {},
+    },
+    undefined,
+    undefined,
+    undefined,
+    { load: async () => [], save },
+  );
+  service.selectViewer("a".repeat(64));
+  render(<NotificationSettings notifications={service} />, {
+    wrapper: ToastProvider,
+  });
+  const user = userEvent.setup();
+  const input = screen.getByLabelText("Choose sound file");
+  const opened = vi.spyOn(input, "click");
+  await user.click(screen.getByRole("combobox", { name: "@Mentions" }));
+  expect(
+    await screen.findByRole("group", { name: "Your sounds" }),
+  ).toContainElement(screen.getByRole("option", { name: "Choose file…" }));
+  await user.click(screen.getByRole("option", { name: "Choose file…" }));
+  expect(opened).toHaveBeenCalledOnce();
+  expect(service.snapshot().preferences.sounds.mention).toBe("flutter");
+
+  // `accept` is only a hint to the system picker; the service still checks.
+  await userEvent
+    .setup({ applyAccept: false })
+    .upload(
+      input,
+      new File([new Uint8Array(4)], "notes.txt", { type: "text/plain" }),
+    );
+  expect(await screen.findByText(/512 KiB or less/)).toBeInTheDocument();
+  expect(save).not.toHaveBeenCalled();
+
+  await user.upload(
+    input,
+    new File([new Uint8Array(4)], "bell.wav", { type: "audio/wav" }),
+  );
+  await vi.waitFor(() =>
+    expect(service.snapshot().preferences.sounds.mention).toBe(
+      "_local/mention",
+    ),
+  );
+  expect(save).toHaveBeenCalledOnce();
+  expect(screen.getByRole("combobox", { name: "@Mentions" })).toHaveTextContent(
+    /^bell\.wav$/,
+  );
+  expect(audios.at(-1)?.src).toBe("blob:test/file");
+  // Each row keeps its own file.
+  await user.click(screen.getByRole("combobox", { name: "Direct messages" }));
+  await screen.findByRole("option", { name: "Choose file…" });
+  expect(
+    screen.queryByRole("option", { name: "bell.wav" }),
+  ).not.toBeInTheDocument();
+});

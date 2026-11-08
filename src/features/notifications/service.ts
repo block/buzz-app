@@ -5,6 +5,7 @@ import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
 import type { Navigation } from "../navigation/controller";
 import {
   createNotificationPreferences,
+  type NotificationCategory,
   type NotificationPreferences,
 } from "./preferences";
 import {
@@ -14,7 +15,13 @@ import {
 } from "./platform";
 import { afterPresentation } from "./presentation";
 import { DEFAULT_SOUND, resolveCategorySound, type SoundRef } from "./sound";
-import { createSoundRegistry, type SoundPackDescriptor } from "./sounds";
+import { createCustomSoundStore, type CustomSoundStore } from "./custom-sounds";
+import {
+  createSoundRegistry,
+  localSoundRef,
+  MAX_SOUND_BYTES,
+  type SoundPackDescriptor,
+} from "./sounds";
 import { pluginNotificationText, type NotificationText } from "./content";
 
 export type NotificationCategoryDescriptor = Readonly<{
@@ -115,6 +122,7 @@ export class NotificationsService extends Service implements Notifications {
     private readonly authorized: (target: OpenTarget) => boolean = (target) =>
       !("scope" in target && target.scope),
     playSound?: (ref: SoundRef) => void,
+    private readonly customSounds: CustomSoundStore = createCustomSoundStore(),
   ) {
     super(ctx, "notifications");
     this.playSound = playSound ?? ((ref) => void this.soundRegistry.play(ref));
@@ -122,6 +130,16 @@ export class NotificationsService extends Service implements Notifications {
       createContributions<NotificationCategoryDescriptor>(ctx);
     this.gates = createContributions<NotificationGate>(ctx);
     this.soundRegistry = createSoundRegistry(ctx);
+    void customSounds
+      .load()
+      .then((sounds) => {
+        if (this.closed) return;
+        for (const sound of sounds)
+          this.soundRegistry.setLocal(sound.category, sound.name, sound.audio);
+      })
+      .catch(() => {
+        // Unreadable files leave their rows on the default sound.
+      });
     this.state = Object.freeze({
       viewer: undefined,
       ...preferences.snapshot(),
@@ -267,6 +285,20 @@ export class NotificationsService extends Service implements Notifications {
       this.state.preferences.sound &&
       resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
     );
+  }
+  /** Copies an audio file into this device and selects it for the category. */
+  async chooseCustomSound(category: NotificationCategory, file: File) {
+    if (!file.type.startsWith("audio/") || file.size > MAX_SOUND_BYTES)
+      throw new Error("Choose an audio file of 512 KiB or less.");
+    await this.customSounds.save({ category, name: file.name, audio: file });
+    if (this.closed) return;
+    this.soundRegistry.setLocal(category, file.name, file);
+    this.updatePreferences({
+      sounds: {
+        ...this.state.preferences.sounds,
+        [category]: localSoundRef(category),
+      },
+    });
   }
   /** Plays the category's saved sound, or the default while its plugin pack is
    * unavailable; the saved choice is kept so re-enabling the pack restores it. */

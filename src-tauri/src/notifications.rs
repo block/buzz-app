@@ -1,6 +1,6 @@
 //! Running-session desktop clicks. Policy and navigation remain in the host service.
 //! Maintained OS backends own delivery; Linux uses their standard D-Bus interface.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{ipc::Channel, Manager};
 
@@ -129,20 +129,33 @@ fn validate(id: &str, title: &str, body: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Presentation {
+    id: String,
+    title: String,
+    body: String,
+    foreground_banner: bool,
+}
+
 #[tauri::command]
 pub(crate) async fn notification_show<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     window: tauri::WebviewWindow<R>,
     state: tauri::State<'_, Notifications>,
-    id: String,
-    title: String,
-    body: String,
+    presentation: Presentation,
     on_event: Channel<Response>,
 ) -> Result<Option<String>, String> {
     if window.label() != "main" {
         return Err("Desktop notifications belong to the main window".into());
     }
-    validate(&id, &title, &body)?;
+    validate(&presentation.id, &presentation.title, &presentation.body)?;
+    let Presentation {
+        id,
+        title,
+        body,
+        foreground_banner,
+    } = presentation;
     let responder = app.clone();
     let request_id = id.clone();
     #[cfg(target_os = "macos")]
@@ -162,7 +175,7 @@ pub(crate) async fn notification_show<R: tauri::Runtime>(
     }))?;
     // Admission returns promptly. Submission errors arrive on the pre-registered
     // channel; no platform's return value is claimed as proof of a visible banner.
-    show(app, request_id, title, body, pending);
+    show(app, request_id, title, body, foreground_banner, pending);
     #[cfg(target_os = "macos")]
     drop(admission);
     Ok(retired)
@@ -177,9 +190,10 @@ fn show<R: tauri::Runtime>(
     id: String,
     title: String,
     body: String,
+    foreground_banner: bool,
     pending: Arc<Pending>,
 ) {
-    macos::show(id, title, body, pending);
+    macos::show(id, title, body, foreground_banner, pending);
 }
 
 #[cfg(target_os = "linux")]
@@ -191,6 +205,7 @@ fn show<R: tauri::Runtime>(
     _id: String,
     title: String,
     body: String,
+    _foreground_banner: bool,
     pending: Arc<Pending>,
 ) {
     tauri::async_runtime::spawn(async move {
@@ -204,6 +219,7 @@ fn show<R: tauri::Runtime>(
     _id: String,
     title: String,
     body: String,
+    _foreground_banner: bool,
     pending: Arc<Pending>,
 ) {
     use tauri_winrt_notification::{Toast, ToastDismissalReason};
@@ -260,6 +276,7 @@ fn show<R: tauri::Runtime>(
     _id: String,
     _title: String,
     _body: String,
+    _foreground_banner: bool,
     pending: Arc<Pending>,
 ) {
     pending.finish(Outcome::Failed(

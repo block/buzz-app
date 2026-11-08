@@ -11,9 +11,8 @@ import {
   completionTarget,
   completionTitle,
   completionToast,
-  shouldShowForegroundCompletion,
+  isViewingCompletedWork,
 } from "./agent-completions";
-import { playNotificationSound, resolveCategorySound } from "./sound";
 
 export function AgentCompletionNotifications({
   services,
@@ -41,28 +40,24 @@ export function AgentCompletionNotifications({
               target,
             },
             () => true,
-            () => true,
+            () =>
+              !(
+                document.hasFocus() &&
+                isViewingCompletedWork(
+                  services.navigation.snapshot().entry.target,
+                  target,
+                )
+              ),
             () => ({
               title: completionTitle(name, work),
               body: completionBody(work),
             }),
-          );
-        },
-        foreground: (work, target) => {
-          const state = services.notifications.snapshot();
-          const { preferences } = state;
-          if (!shouldShowForegroundCompletion(state)) return;
-          if (preferences.sound)
-            playNotificationSound(
-              resolveCategorySound(preferences.sounds, "agent"),
-            );
-          notify(
-            completionToast(agentName(services, work.agent), work),
-            work.state === "error" ? "error" : "success",
-            {
-              label: "View",
-              onClick: () => void services.navigation.open(target),
-            },
+            (activate) =>
+              notify(
+                completionToast(name, work),
+                work.state === "error" ? "error" : "success",
+                { label: "View", onClick: activate },
+              ),
           );
         },
       }),

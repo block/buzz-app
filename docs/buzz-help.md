@@ -273,7 +273,10 @@ revokes all of them, and a pairing unused for 30 days expires.
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
   Solo chats can also be shared with other people; do not describe every Solo
-  chat as visible only to its creator.
+  chat as visible only to its creator. When an agent finishes outside the Solo
+  chat you are viewing,
+  Buzz uses a desktop notification; if desktop delivery is unavailable, an
+  in-app message offers **View** instead.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or

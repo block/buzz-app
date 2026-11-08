@@ -169,7 +169,7 @@ export function createServices() {
     navigation,
     undefined,
     undefined,
-    (target) => notificationAuthorized(communities, target),
+    (target, category) => notificationAuthorized(communities, target, category),
   );
   ctx.effect(() =>
     bindMessageNotifications(notifications, communities, localActivity.reader),

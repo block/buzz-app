@@ -211,6 +211,103 @@ describe("callOwnerTool", () => {
       expect(read).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["owner_workspace_get", {}, "workspace is required"],
+    ["owner_workspace_create", {}, "name is required"],
+    ["owner_workspace_create", { name: "A", resume: hex("1") }, "resume needs"],
+    [
+      "owner_workspace_create",
+      { name: "A", workspace: id, resume: "x" },
+      "resume must be",
+    ],
+    [
+      "owner_workspace_update",
+      { workspace: id, instructions: "A" },
+      "revision must be",
+    ],
+    [
+      "owner_workspace_update",
+      { workspace: id, revision: null },
+      "instructions must be",
+    ],
+    [
+      "owner_workspace_move",
+      { chat: id, revision: null },
+      "workspace is required",
+    ],
+    [
+      "owner_workspace_remove",
+      { workspace: id, revision: "v1" },
+      "revision must be",
+    ],
+    // The host decides the owner and community; nothing names them.
+    [
+      "owner_workspace_remove",
+      { workspace: id, revision: null, owner: "x" },
+      "cannot be used",
+    ],
+  ])("rejects %s %j before writing", async (name, args, message) => {
+    const workspaces = {
+      get: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      move: vi.fn(),
+      remove: vi.fn(),
+    };
+    await expect(
+      callOwnerTool(
+        clientWith({ ownerAccess: { ...owned(), workspaces } }),
+        name,
+        args,
+      ),
+    ).rejects.toThrow(message);
+    for (const operation of Object.values(workspaces))
+      expect(operation).not.toHaveBeenCalled();
+  });
+
+  it("releases a write's answer, with its operation, even after the owner's connection changes", async () => {
+    const result = {
+      execution: executedAs,
+      workspace: id,
+      outcome: "unconfirmed" as const,
+      groups: { outcome: "unconfirmed" as const, operation: hex("2") },
+    };
+    const workspaces = {
+      get: vi.fn(),
+      create: vi.fn(async () => result),
+      update: vi.fn(),
+      move: vi.fn(),
+      remove: vi.fn(),
+    };
+    const ownerAccess = { ...owned(), workspaces };
+    ownerAccess.held.mockImplementation(() => {
+      throw new Error("changed during the call");
+    });
+    const answer = await callOwnerTool(
+      clientWith({ ownerAccess }),
+      "owner_workspace_create",
+      {
+        workspace: id,
+        name: " Launch ",
+        instructions: "Plan.",
+        resume: hex("2"),
+      },
+    );
+    expect(workspaces.create).toHaveBeenCalledWith({
+      id,
+      name: "Launch",
+      instructions: "Plan.",
+      resume: hex("2"),
+    });
+    expect(() => answer.held()).not.toThrow();
+    expect(JSON.parse(answer.text)).toEqual({
+      executedAs,
+      workspace: id,
+      outcome: "unconfirmed",
+      groups: { outcome: "unconfirmed", operation: hex("2") },
+    });
+  });
+
   it("reads nothing for a client without owner access", async () => {
     for (const { name } of OWNER_TOOLS)
       await expect(
@@ -447,7 +544,7 @@ describe("callOwnerTool", () => {
     });
   });
 
-  it("names only the read tools", () => {
+  it("names the read tools and the Solo workspace tools, marking which write", () => {
     expect(OWNER_TOOLS.map(({ name }) => name)).toEqual([
       "owner_channel_list",
       "owner_channel_get",
@@ -455,14 +552,29 @@ describe("callOwnerTool", () => {
       "owner_read",
       "owner_canvas_get",
       "owner_canvas_history",
+      "owner_workspace_get",
+      "owner_workspace_create",
+      "owner_workspace_update",
+      "owner_workspace_move",
+      "owner_workspace_remove",
     ]);
     expect(
       OWNER_TOOLS.every(
-        (tool) =>
-          tool.annotations?.readOnlyHint === true &&
-          tool.inputSchema.additionalProperties === false,
+        (tool) => tool.inputSchema.additionalProperties === false,
       ),
     ).toBe(true);
+    expect(
+      Object.fromEntries(
+        OWNER_TOOLS.filter((tool) => !tool.annotations?.readOnlyHint).map(
+          (tool) => [tool.name, tool.annotations],
+        ),
+      ),
+    ).toEqual({
+      owner_workspace_create: { readOnlyHint: false, destructiveHint: false },
+      owner_workspace_update: { readOnlyHint: false, destructiveHint: false },
+      owner_workspace_move: { readOnlyHint: false, destructiveHint: false },
+      owner_workspace_remove: { readOnlyHint: false, destructiveHint: true },
+    });
     expect(isOwnerTool("owner_channel_list")).toBe(true);
     expect(isOwnerTool("owner_send")).toBe(false);
   });

@@ -523,7 +523,7 @@ export type RunnerHost = {
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
   /** Owner reads for a run of the agent, where this build enables them. */
-  ownerAccess?(agent: Agent): AgentHandle["ownerAccess"];
+  ownerAccess?(agent: Agent, lifetime: AbortSignal): AgentHandle["ownerAccess"];
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2844,7 +2844,7 @@ export class AgentRunners {
     // with its owner's access.
     const ownerAccess =
       run && runner.type?.revision === "bundled"
-        ? this.host.ownerAccess?.(agent)
+        ? this.host.ownerAccess?.(agent, lifetime)
         : undefined;
     const handle = guarded(
       {

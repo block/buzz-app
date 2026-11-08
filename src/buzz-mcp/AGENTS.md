@@ -20,10 +20,12 @@ deliberately.
   `settings_set`). The settings themselves are the host's catalog
   (`src/app/device-settings.ts`); the tools never name one.
 - `owner.ts`: the owner tools (`owner_channel_list`, `owner_channel_get`,
-  `owner_member_list`, `owner_read`, `owner_canvas_get`, `owner_canvas_history`),
-  which read with the owner's access where the host gives
-  the client `ownerAccess`; `src/features/agents/owner-access.ts` owns the
-  reads and their binding. Plugins' clients never have it.
+  `owner_member_list`, `owner_read`, `owner_canvas_get`, `owner_canvas_history`,
+  and `owner_workspace_*`), which read, and write Solo workspaces, with the
+  owner's access where the host gives the client `ownerAccess`;
+  `src/features/agents/owner-access.ts` owns the reads and their binding, and
+  `owner-workspaces.ts` beside it the workspace operations. Plugins' clients
+  never have it.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base

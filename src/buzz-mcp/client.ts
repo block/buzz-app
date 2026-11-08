@@ -193,9 +193,92 @@ export type OwnerCanvasHistory = Readonly<{
   /** A page of revisions, newest first. */
   revisions: readonly BuzzEvent[];
 }>;
-/** Read-only operations the app runs with its signed-in human's access, for
- * that human's own agent in that agent's community. Typed operations only:
- * no filters, signing or client of the owner's. */
+/** The calling turn as its host checks it, never a model argument: a write is
+ * admitted only while `check` passes and `signal` has not aborted. */
+export type OwnerMutationCaller = Readonly<{
+  signal?: AbortSignal | undefined;
+  check(): void;
+}>;
+/** One saved record of a write. `confirmed` was read back; `unconfirmed` may
+ * have been sent, so `operation` resumes it rather than starting another;
+ * `rejected` was refused before anything was sent. */
+export type OwnerWriteStep = Readonly<{
+  outcome: "confirmed" | "unconfirmed" | "rejected";
+  revision?: string | null;
+  operation?: string;
+  reason?: string;
+}>;
+/** A Solo workspace write that may have changed something: the steps it
+ * took, its Solo groups and its new-chat defaults. `partial` when one was
+ * confirmed and the other was not. A write refused before anything was sent
+ * throws instead. `workspace` is null for a chat moved out of every one. */
+export type OwnerWorkspaceWrite = Readonly<{
+  execution: OwnerExecution;
+  workspace: string | null;
+  outcome: "confirmed" | "unconfirmed" | "partial";
+  groups?: OwnerWriteStep;
+  defaults?: OwnerWriteStep;
+}>;
+/** One of the owner's private Solo workspaces. `revision` is their Solo
+ * groups' and `defaults.revision` its new-chat defaults', as writes expect
+ * them; `null` when there are none. */
+export type OwnerWorkspace = Readonly<{
+  execution: OwnerExecution;
+  workspace: string;
+  name: string;
+  revision: string | null;
+  defaults: Readonly<{
+    revision: string | null;
+    /** Undefined when the owner hand-edited the folder instructions. */
+    instructions?: string;
+    folders: readonly string[];
+  }>;
+}>;
+/** The owner's private Solo workspaces by exact ID, through their encrypted
+ * preferences, as the host runs them: each write is admitted by its
+ * `caller`. Writes never list workspaces, place new chats, change agents or
+ * folders, or touch files. */
+export type OwnerWorkspaceHost = Readonly<{
+  get(id: string, signal?: AbortSignal): Promise<OwnerWorkspace>;
+  create(
+    input: Readonly<{
+      id: string;
+      name: string;
+      instructions?: string | undefined;
+      resume?: string | undefined;
+    }>,
+    caller: OwnerMutationCaller,
+  ): Promise<OwnerWorkspaceWrite>;
+  update(
+    input: Readonly<{
+      id: string;
+      revision: string | null;
+      instructions: string;
+      resume?: string | undefined;
+    }>,
+    caller: OwnerMutationCaller,
+  ): Promise<OwnerWorkspaceWrite>;
+  move(
+    input: Readonly<{
+      chat: string;
+      workspace: string | null;
+      revision: string | null;
+      resume?: string | undefined;
+    }>,
+    caller: OwnerMutationCaller,
+  ): Promise<OwnerWorkspaceWrite>;
+  remove(
+    input: Readonly<{
+      id: string;
+      revision: string | null;
+      resume?: string | undefined;
+    }>,
+    caller: OwnerMutationCaller,
+  ): Promise<OwnerWorkspaceWrite>;
+}>;
+/** Operations the app runs with its signed-in human's access, for that human's
+ * own agent in that agent's community. Typed operations only: no filters,
+ * signing or client of the owner's. */
 export type OwnerAccess = Readonly<{
   channels(signal?: AbortSignal): Promise<OwnerChannelList>;
   channel(id: string, signal?: AbortSignal): Promise<OwnerChannelDetails>;
@@ -222,7 +305,20 @@ export type OwnerAccess = Readonly<{
   /** Throws unless the binding that answered with `execution` still holds,
    * as checked just before its answer is released; reads nothing. */
   held(execution: OwnerExecution): void;
+  /** Where the host can check the calling turn. */
+  workspaces?: OwnerWorkspaceHost;
 }>;
+/** The workspace operations as a tool calls them, its turn bound in. */
+export type OwnerWorkspaces = Readonly<{
+  [Operation in keyof OwnerWorkspaceHost]: Operation extends "get"
+    ? OwnerWorkspaceHost[Operation]
+    : (
+        input: Parameters<OwnerWorkspaceHost[Operation]>[0],
+      ) => ReturnType<OwnerWorkspaceHost[Operation]>;
+}>;
+/** Owner access as a tool client offers it. */
+export type OwnerClientAccess = Omit<OwnerAccess, "workspaces"> &
+  Readonly<{ workspaces?: OwnerWorkspaces }>;
 
 export interface BuzzClient {
   protect?(action: ProtectionAction): Promise<void>;
@@ -275,7 +371,7 @@ export interface BuzzClient {
   /** Reads with the owner's access, only in the owner's app-hosted run of
    * the agent by a bundled harness where the build enables it. Never given to
    * plugins, including installed harness plugins. */
-  readonly ownerAccess?: OwnerAccess;
+  readonly ownerAccess?: OwnerClientAccess;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
   readonly signingAuthority?: string | undefined;

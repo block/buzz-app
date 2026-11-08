@@ -5,9 +5,10 @@ import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import type {
   BuzzClient,
-  OwnerAccess,
+  OwnerClientAccess,
   OwnerExecution,
   OwnerReadRequest,
+  OwnerWorkspaceWrite,
 } from "./client";
 import {
   bound,
@@ -46,6 +47,7 @@ const tool = (
   description: string,
   properties: Readonly<Record<string, object>>,
   required: readonly string[] = [],
+  annotations: NonNullable<Tool["annotations"]> = { readOnlyHint: true },
 ): Tool => ({
   name,
   description,
@@ -55,8 +57,23 @@ const tool = (
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   },
-  annotations: { readOnlyHint: true },
+  annotations,
 });
+const workspace = {
+  type: "string",
+  description: "Solo workspace ID.",
+} as const;
+const revision = (of: string) =>
+  ({
+    type: ["string", "null"],
+    description: `${of} revision from owner_workspace_get; null when it has none.`,
+  }) as const;
+const resume = {
+  type: "string",
+  description:
+    "An unconfirmed answer's operation: confirms that save instead of making another. Repeat the call's other arguments.",
+} as const;
+const writes = { readOnlyHint: false, destructiveHint: false } as const;
 
 export const OWNER_TOOLS: readonly Tool[] = [
   tool(
@@ -128,6 +145,61 @@ export const OWNER_TOOLS: readonly Tool[] = [
     { channel, before, before_id: beforeId },
     ["channel"],
   ),
+  tool(
+    "owner_workspace_get",
+    "One of your owner's private Solo workspaces by ID, read with their access: its name, its new-chat instructions and folders, and the revisions writes need.",
+    { workspace },
+    ["workspace"],
+  ),
+  tool(
+    "owner_workspace_create",
+    "Create a private Solo workspace for your owner, with optional instructions for its new chats. It starts with no agents or folders. An unconfirmed or partial answer is resumed with the same workspace ID and its operation.",
+    {
+      workspace: {
+        type: "string",
+        description: "A new lowercase UUID; omit for one to be made.",
+      },
+      name: { type: "string", description: "1 to 80 characters." },
+      instructions: {
+        type: "string",
+        description: "Canvas instructions new chats start with.",
+      },
+      resume,
+    },
+    ["name"],
+    writes,
+  ),
+  tool(
+    "owner_workspace_update",
+    "Replace the instructions new chats in one of your owner's Solo workspaces start with. Its name, agents and folders stay.",
+    {
+      workspace,
+      revision: revision("Its defaults"),
+      instructions: { type: "string" },
+      resume,
+    },
+    ["workspace", "revision", "instructions"],
+    writes,
+  ),
+  tool(
+    "owner_workspace_move",
+    "Move one of your owner's existing Solo chats into one of their Solo workspaces, or out of every workspace with null.",
+    {
+      chat: { type: "string", description: "The Solo chat's channel ID." },
+      workspace: { ...workspace, type: ["string", "null"] },
+      revision: revision("The workspaces'"),
+      resume,
+    },
+    ["chat", "workspace", "revision"],
+    writes,
+  ),
+  tool(
+    "owner_workspace_remove",
+    "Remove one of your owner's Solo workspaces. Its chats stay, outside any workspace.",
+    { workspace, revision: revision("The workspaces'"), resume },
+    ["workspace", "revision"],
+    { readOnlyHint: false, destructiveHint: true },
+  ),
 ];
 
 export const isOwnerTool = (name: string) =>
@@ -170,6 +242,8 @@ export async function callOwnerTool(
     });
   }
   if (name === "owner_read") return read(ownerAccess, args);
+  if (name.startsWith("owner_workspace_"))
+    return workspaceTool(ownerAccess, name, args);
   const id = optionalText(args.channel, "channel");
   if (!id) throw new Error("channel is required.");
   if (name === "owner_canvas_get") {
@@ -229,10 +303,96 @@ export async function callOwnerTool(
   });
 }
 
+/** The owner_workspace_* tools. A write's answer is released even after
+ * the owner's connection changes, so its operation can still be resumed. */
+async function workspaceTool(
+  ownerAccess: OwnerClientAccess,
+  name: string,
+  args: Readonly<Record<string, unknown>>,
+) {
+  const { workspaces } = ownerAccess;
+  if (!workspaces)
+    throw new Error(
+      "Your owner's Solo workspaces are not available to this agent here; nothing was read or changed.",
+    );
+  const operation = eventId(args.resume, "resume");
+  const resumed = operation ? { resume: operation } : {};
+  if (name === "owner_workspace_create") {
+    if (operation && args.workspace === undefined)
+      throw new Error("resume needs the workspace ID from the same answer.");
+    const instructions = optionalText(args.instructions, "instructions");
+    return written(
+      await workspaces.create({
+        id:
+          args.workspace === undefined
+            ? crypto.randomUUID()
+            : text(args.workspace, "workspace"),
+        name: text(args.name, "name"),
+        ...(instructions ? { instructions: args.instructions as string } : {}),
+        ...resumed,
+      }),
+    );
+  }
+  if (name === "owner_workspace_move")
+    return written(
+      await workspaces.move({
+        chat: text(args.chat, "chat"),
+        workspace:
+          args.workspace === null ? null : text(args.workspace, "workspace"),
+        revision: priorRevision(args.revision),
+        ...resumed,
+      }),
+    );
+  const id = text(args.workspace, "workspace");
+  if (name === "owner_workspace_get") {
+    const { execution, ...found } = await workspaces.get(id);
+    return answer(ownerAccess, execution, found);
+  }
+  if (name === "owner_workspace_update") {
+    if (typeof args.instructions !== "string")
+      throw new Error("instructions must be text.");
+    return written(
+      await workspaces.update({
+        id,
+        revision: priorRevision(args.revision),
+        instructions: args.instructions,
+        ...resumed,
+      }),
+    );
+  }
+  return written(
+    await workspaces.remove({
+      id,
+      revision: priorRevision(args.revision),
+      ...resumed,
+    }),
+  );
+}
+
+function written({ execution, ...result }: OwnerWorkspaceWrite) {
+  return {
+    text: JSON.stringify({ executedAs: execution, ...result }),
+    held: () => {},
+  };
+}
+
+function priorRevision(value: unknown) {
+  if (value === null) return null;
+  if (typeof value !== "string" || !HEX.test(value))
+    throw new Error("revision must be a 64-character event ID or null.");
+  return value;
+}
+
+function text(value: unknown, name: string) {
+  const found = optionalText(value, name);
+  if (!found) throw new Error(`${name} is required.`);
+  return found;
+}
+
 /** owner_read: `read`'s arguments, limits and continuation, with no
  * default to the current conversation. */
 async function read(
-  ownerAccess: OwnerAccess,
+  ownerAccess: OwnerClientAccess,
   args: Readonly<Record<string, unknown>>,
 ) {
   let channel = optionalText(args.channel, "channel");
@@ -341,7 +501,7 @@ async function read(
 /** The answer's text, and a check that the binding it was read with still
  * holds. */
 function answer(
-  ownerAccess: OwnerAccess,
+  ownerAccess: OwnerClientAccess,
   execution: OwnerExecution,
   fields: object,
 ) {

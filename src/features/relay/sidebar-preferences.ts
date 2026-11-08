@@ -7,6 +7,7 @@ import {
 import type { ReadFilter } from "./events.ts";
 import type { RelayEvent } from "./events.ts";
 import type { RelayReader } from "./reader.ts";
+import type { Resume } from "../channel-templates/capability.ts";
 
 export const SIDEBAR_COORDINATES = [
   "channel-sections",
@@ -103,13 +104,24 @@ export type SidebarAssignmentIntent = Readonly<{
   sectionId?: string;
   createSection?: Readonly<{ id: string; name: string; position?: "first" }>;
 }>;
+/** A caller's Solo groups write: admitted only while `active` holds, at the
+ * groups revision it read (`null` for none), or confirming the earlier save in
+ * `resume`. */
+export type SidebarWriteGuard = Readonly<{
+  active(): boolean;
+  signal?: AbortSignal | undefined;
+  expected?: string | null | undefined;
+  resume?: Resume | undefined;
+}>;
 export type SidebarAssignmentMutator = (
   intent: SidebarAssignmentIntent,
   signal: AbortSignal,
+  guard?: SidebarWriteGuard,
 ) => Promise<SidebarGroups>;
 export type SidebarSectionRemovalMutator = (
   sectionId: string,
   signal: AbortSignal,
+  guard?: SidebarWriteGuard,
 ) => Promise<SidebarGroups>;
 export type SidebarSectionRenameMutator = (
   intent: Readonly<{ sectionId: string; name: string }>,
@@ -123,6 +135,7 @@ export type SidebarSectionOrderMutator = (
 export type SidebarSectionCreationMutator = (
   section: Readonly<{ id: string; name: string }>,
   signal: AbortSignal,
+  guard?: SidebarWriteGuard,
 ) => Promise<SidebarGroups>;
 export type SidebarStarMutator = (
   intent: Readonly<{ channelId: string; starred: boolean }>,

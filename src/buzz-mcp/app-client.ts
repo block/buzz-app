@@ -2,7 +2,12 @@
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memories } from "./client";
+import type {
+  BuzzClient,
+  Memories,
+  OwnerWorkspaceHost,
+  OwnerWorkspaces,
+} from "./client";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
@@ -55,6 +60,24 @@ export function appClient(
     check();
     return result;
   };
+  /** The owner's workspaces, written only while the turn and its
+   * protection still hold. */
+  const ownedWorkspaces = (workspaces: OwnerWorkspaceHost): OwnerWorkspaces => {
+    const caller = {
+      ...(options.signal ? { signal: options.signal } : {}),
+      check: () => {
+        check();
+        agent.protection?.assertAvailable();
+      },
+    };
+    return {
+      get: (id) => owned((signal) => workspaces.get(id, signal)),
+      create: (input) => workspaces.create(input, caller),
+      update: (input) => workspaces.update(input, caller),
+      move: (input) => workspaces.move(input, caller),
+      remove: (input) => workspaces.remove(input, caller),
+    };
+  };
   return {
     ...(agent.protection
       ? {
@@ -106,6 +129,11 @@ export function appClient(
           check();
           ownerAccess.held(execution);
         },
+        // Writes need a turn the host can check at each send.
+        ...(ownerAccess.workspaces &&
+          (options.signal || options.check) && {
+            workspaces: ownedWorkspaces(ownerAccess.workspaces),
+          }),
       },
     }),
     relayAuthor: options.relayAuthor,

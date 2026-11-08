@@ -91,7 +91,7 @@ owner's channels and says `partial` while their list is incomplete. Other
 channels' matches still fill its page, so `limited` with few results means
 narrowing it by channel or time. A message shows its newest edit by its author
 or, as in the app, by the author's verified owner. One read fetches a page's edits;
-when they fill it, the answer says `edits_limited` and some messages may show earlier text. They write
+when they fill it, the answer says `edits_limited` and some messages may show earlier text. These reads write
 nothing: no membership, subscription, read state, post, agent start or Canvas
 change. Content comes from the relay's own answer, not the owner's open views,
 so it changes no unread counts. They do not save the owner's attachments: a
@@ -102,7 +102,34 @@ to that community now and fails, returning nothing, when the account, community
 or connection changes during it or the turn ends or is stopped, including while
 protection reviews its result. Installed harness plugins, plugins' tools, plugin
 MCP connections and external apps never get this access, and a plugin cannot add
-a tool whose name starts with `owner_`. A [Mesh agent](../src/bundled/mesh-compute/MESH_AGENT.md)
+a tool whose name starts with `owner_`.
+
+The same runs also list the owner's private Solo workspace tools, which act
+by exact workspace ID through the owner's Solo groups and new-chat defaults,
+as New workspace and Workspace settings save them. `owner_workspace_get` reads
+one workspace's name, new-chat instructions, folders and revisions.
+`owner_workspace_create` makes one, with optional instructions and no agents or
+folders; `owner_workspace_update` replaces its new-chat instructions, keeping
+its name, agents and folders; `owner_workspace_move` moves one of the owner's
+existing Solo chats into a workspace or out of all of them; and
+`owner_workspace_remove` removes a workspace, leaving its chats outside any
+workspace and its defaults record in place. Writes never list workspaces,
+place new chats, rename, change agents or folders, or touch files;
+instructions holding any part of a folder block are refused. Each write
+names the revision it read and is refused, sending nothing, once that revision
+changed, including when the app reads newer settings while the save is still
+being prepared; a save on another device that the app has not yet read is not
+detected. Its sends are admitted only while the turn, the agent's run and the
+owner's binding still hold, checked again before each is signed and published;
+a save stopped there is released, never left to block the owner's next save. A
+write whose send may have happened answers `unconfirmed` with its `operation`;
+repeating the call with `resume` confirms that save instead of making another.
+An `unconfirmed` answer without an `operation` can no longer be resumed: read
+the workspace again. Creating a
+workspace with instructions saves its Solo group and then its defaults;
+`partial` means the group was saved and the defaults were not. A resumed save is
+the agent's own: Outbox does not offer Retry for it. A
+[Mesh agent](../src/bundled/mesh-compute/MESH_AGENT.md)
 has these tools too; as its setup warns of all tool output, members serving its
 model can read what they return. Protection reviews these calls and their
 results as it does other Buzz tools. See

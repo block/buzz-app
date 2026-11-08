@@ -8,6 +8,7 @@ import type {
   OwnerAccess,
   OwnerChannel,
   OwnerExecution,
+  OwnerMutationCaller,
   OwnerReadRequest,
   OwnerRole,
 } from "../../buzz-mcp/client";
@@ -26,6 +27,7 @@ import {
 } from "../relay/channel-lifecycle-protocol";
 import { soloLabels } from "../solo/labels";
 import type { RelaySession } from "../relay/session";
+import { createOwnerWorkspaces } from "./owner-workspaces";
 
 /** Whether this build lets agents read with their owner's access in
  * `community`: its exact canonical origin is in the build's list. */
@@ -49,6 +51,9 @@ export type OwnerSession = Pick<
   | "profiles"
   | "channelLifecycle"
   | "snapshotRead"
+  | "soloPreferences"
+  | "channelKit"
+  | "scope"
 >;
 /** The owner's live session for the agent's community, as the host binds it
  * now. `signal` aborts when that binding is replaced. */
@@ -58,6 +63,34 @@ export type OwnerBinding = Readonly<{
   session: OwnerSession;
   signal: AbortSignal;
 }>;
+
+/** Whether a caller's owner write may still be signed and sent: its turn
+ * checks, nothing it was admitted under has ended, and the binding it began
+ * on is still the owner's current one. Checked again at each send. */
+export function ownerMutationActive(
+  agent: Readonly<{ owner: string }>,
+  bind: () => OwnerBinding | undefined,
+  binding: OwnerBinding,
+  lifetime: AbortSignal,
+  caller: OwnerMutationCaller,
+): () => boolean {
+  return () => {
+    try {
+      caller.check();
+    } catch {
+      return false;
+    }
+    if (caller.signal?.aborted || binding.signal.aborted || lifetime.aborted)
+      return false;
+    const now = bind();
+    return (
+      binding.viewer === agent.owner &&
+      now?.session === binding.session &&
+      now.viewer === binding.viewer &&
+      now.origin === binding.origin
+    );
+  };
+}
 
 /** One edit read serves a whole page; the relay reader's cap. */
 const EDITS = 500;
@@ -76,10 +109,12 @@ const changed = () =>
   );
 
 /** `agent`'s owner reads. `bind` answers the owner's current binding for the
- * agent's community, or undefined when it may not be used now. */
+ * agent's community, or undefined when it may not be used now. Owner writes
+ * need the run's `lifetime`, which ends them with the run. */
 export function createOwnerAccess(
   agent: Readonly<{ pubkey: string; owner: string }>,
   bind: () => OwnerBinding | undefined,
+  lifetime?: AbortSignal,
 ): OwnerAccess {
   /** The binding each answer was read with. */
   const answered = new WeakMap<OwnerExecution, OwnerBinding>();
@@ -281,7 +316,35 @@ export function createOwnerAccess(
     };
   };
 
+  /** Channel `id`, checked against the relay's fresh records as one of the
+   * owner's Solo chats that they belong to. */
+  const soloChat = async (
+    binding: OwnerBinding,
+    id: string,
+    signal: AbortSignal,
+  ) => {
+    known(binding.session, channelId(id));
+    const { rights, metadata } = await authority(binding, id, signal);
+    if (
+      channelTypeTag(metadata) !== "stream" ||
+      !soloLabels(channelIdentity(metadata).labels) ||
+      !rights.roles[binding.viewer]
+    )
+      throw new Error(`Channel ${id} is not one of your owner's Solo chats.`);
+  };
+
   return Object.freeze({
+    ...(lifetime && {
+      workspaces: createOwnerWorkspaces({
+        run,
+        current,
+        execution,
+        soloChat,
+        active: (binding: OwnerBinding, caller: OwnerMutationCaller) =>
+          ownerMutationActive(agent, bind, binding, lifetime, caller),
+        lifetime,
+      }),
+    }),
     channels: (signal?: AbortSignal) =>
       run(signal, (binding) => {
         const { channels } = binding.session;

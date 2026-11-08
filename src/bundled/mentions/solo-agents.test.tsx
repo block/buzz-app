@@ -3415,6 +3415,9 @@ function teamFixture(
     },
     ensure() {},
     async refresh() {},
+    async recovery() {
+      return undefined;
+    },
     async save() {
       return "head";
     },
@@ -3675,6 +3678,9 @@ function spaceFixture(
     subscribe: () => () => {},
     ensure() {},
     async refresh() {},
+    async recovery() {
+      return undefined;
+    },
     async save() {
       return "head";
     },

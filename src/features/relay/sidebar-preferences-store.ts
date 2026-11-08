@@ -17,6 +17,7 @@ import type {
   SidebarFilterMode,
   SidebarFilterMutator,
   SidebarFilterSettings,
+  SidebarWriteGuard,
 } from "./sidebar-preferences";
 
 type MoveDestination =
@@ -410,6 +411,7 @@ export function createSidebarPreferencesStore({
     channelId: string,
     destination: MoveDestination,
     signal?: AbortSignal,
+    guard?: SidebarWriteGuard,
   ): Promise<SidebarPreferences> {
     if (
       !writable() ||
@@ -419,11 +421,13 @@ export function createSidebarPreferencesStore({
       !write ||
       (!writeStar && !groupsOnly) ||
       (groupsOnly && "starred" in destination)
-    )
-      return rejectMove(
-        channelId,
-        "Sidebar group moves are unavailable; refresh saved sidebar preferences before retrying",
-      );
+    ) {
+      const message =
+        "Sidebar group moves are unavailable; refresh saved sidebar preferences before retrying";
+      return guard
+        ? Promise.reject(new Error(message))
+        : rejectMove(channelId, message);
+    }
     const writeGeneration = generation;
     const writeSignal = AbortSignal.any([
       writeLifetime.signal,
@@ -433,7 +437,8 @@ export function createSidebarPreferencesStore({
     const intent: MoveIntent = { id: ++nextMove, channelId, destination };
     pendingMoves.set(intent.id, intent);
     latestMove.set(channelId, intent.id);
-    failedMoves.delete(channelId);
+    // A caller's guarded move leaves this window's failed move to its Retry.
+    if (!guard) failedMoves.delete(channelId);
     mutation++;
     const check = () => {
       if (closed || generation !== writeGeneration)
@@ -452,7 +457,9 @@ export function createSidebarPreferencesStore({
           // placement has no assignment. Another device may have changed it.
           const groups = starring
             ? undefined
-            : await write({ channelId, ...destination }, writeSignal);
+            : await (guard
+                ? write({ channelId, ...destination }, writeSignal, guard)
+                : write({ channelId, ...destination }, writeSignal));
           check();
           const stars =
             !groupsOnly && writeStar
@@ -470,7 +477,10 @@ export function createSidebarPreferencesStore({
           };
           return retained(confirmed);
         } catch (error) {
+          // A caller's guarded move is its own to resume; Retry here would
+          // replay it as this window's write.
           if (
+            !guard &&
             !closed &&
             generation === writeGeneration &&
             !writeSignal.aborted &&
@@ -662,12 +672,18 @@ export function createSidebarPreferencesStore({
           ? writable() && !snapshot.cached && !!removeSection
           : this.removeSectionWritable;
       },
-      removeSection(sectionId: string, callerSignal?: AbortSignal) {
+      removeSection(
+        sectionId: string,
+        callerSignal?: AbortSignal,
+        guard?: SidebarWriteGuard,
+      ) {
         if (!groupsOnly) return removeSectionMutation(sectionId, callerSignal);
         if (!writable() || snapshot.cached || !removeSection)
           return Promise.reject(new Error("Section deletion is unavailable"));
         return writeGroups("Section deletion is unavailable", (signal) =>
-          removeSection(sectionId, signal),
+          guard
+            ? removeSection(sectionId, signal, guard)
+            : removeSection(sectionId, signal),
         );
       },
       get sectionRenameWritable() {
@@ -688,7 +704,10 @@ export function createSidebarPreferencesStore({
           !!(createSection || write)
         );
       },
-      createSection(section: Readonly<{ id: string; name: string }>) {
+      createSection(
+        section: Readonly<{ id: string; name: string }>,
+        guard?: SidebarWriteGuard,
+      ) {
         const failure = groupsOnly
           ? "Workspaces are unavailable"
           : "Section creation is unavailable";
@@ -698,25 +717,29 @@ export function createSidebarPreferencesStore({
             ? (
                 section: Readonly<{ id: string; name: string }>,
                 signal: AbortSignal,
-              ) => write({ createSection: section }, signal)
+                guard?: SidebarWriteGuard,
+              ) =>
+                guard
+                  ? write({ createSection: section }, signal, guard)
+                  : write({ createSection: section }, signal)
             : undefined);
         if (!writable() || creationUncertain || snapshot.cached || !create)
           return Promise.reject(new Error(failure));
         const writeGeneration = generation;
-        return writeGroups(failure, (signal) => create(section, signal)).catch(
-          async (error) => {
-            if (!closed && generation === writeGeneration) {
-              // The relay may have accepted the creation. Reconcile before
-              // the form can discard its ID, without replaying the write or
-              // joining a read that began before publication.
-              active?.controller.abort();
-              active = undefined;
-              creationUncertain = true;
-              await refresh();
-            }
-            throw error;
-          },
-        );
+        return writeGroups(failure, (signal) =>
+          guard ? create(section, signal, guard) : create(section, signal),
+        ).catch(async (error) => {
+          if (!closed && generation === writeGeneration) {
+            // The relay may have accepted the creation. Reconcile before
+            // the form can discard its ID, without replaying the write or
+            // joining a read that began before publication.
+            active?.controller.abort();
+            active = undefined;
+            creationUncertain = true;
+            await refresh();
+          }
+          throw error;
+        });
       },
       get sectionOrderWritable() {
         return orderWritable();
@@ -1009,8 +1032,13 @@ export function createSidebarPreferencesStore({
       get writable() {
         return writable();
       },
-      assign(channelId: string, sectionId?: string, signal?: AbortSignal) {
-        return move(channelId, sectionId ? { sectionId } : {}, signal);
+      assign(
+        channelId: string,
+        sectionId?: string,
+        signal?: AbortSignal,
+        guard?: SidebarWriteGuard,
+      ) {
+        return move(channelId, sectionId ? { sectionId } : {}, signal, guard);
       },
       createAndAssign(
         channelId: string,

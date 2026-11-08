@@ -30,7 +30,9 @@ export type CanvasHistoryPage = {
   next: CanvasHistoryCursor | undefined;
 };
 
-export const selectedHead = (events: readonly RelayEvent[]) =>
+export const selectedHead = <T extends Pick<RelayEvent, "created_at" | "id">>(
+  events: readonly T[],
+) =>
   [...events].sort(
     (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
   )[0];
@@ -71,7 +73,7 @@ export function createChannelKit({
   signal: AbortSignal;
   canWrite(channel: string): boolean;
   canRead?(channel: string): boolean;
-  delivered(id: string): Promise<void>;
+  delivered(id: string, active?: () => boolean): Promise<void>;
 }) {
   let state: Snapshot = { status: host ? "idle" : "unavailable", entries: [] };
   let pending: Promise<void> | undefined;
@@ -87,6 +89,34 @@ export function createChannelKit({
   };
   const fresh = (filters: readonly ReadFilter[], readSignal = signal) =>
     reader.read(filters, { signal: readSignal, fresh: true });
+  // The newest head this window has read for each record, and the head each of
+  // its saves replaces. The final publication check compares the two.
+  const observed = new Map<string, Pick<RelayEvent, "created_at" | "id">>();
+  const expectations = new Map<string, string | null>();
+  const stale = new Set<string>();
+  function observe(events: readonly RelayEvent[], generation: number) {
+    if (generation !== epoch) return;
+    for (const event of events) {
+      const d = event.tags.find((t) => t[0] === "d")?.[1];
+      if (event.kind !== 30078 || event.pubkey !== viewer || !d) continue;
+      const old = observed.get(d);
+      if (!old || selectedHead([event, old])?.id === event.id)
+        observed.set(d, { id: event.id, created_at: event.created_at });
+    }
+  }
+  const STALE =
+    "This record changed before the save was sent; read it again. Nothing was sent.";
+  // Keep private instructions out of journal metadata. The existing journal
+  // binds the fingerprint to the encrypted event and original expected head.
+  async function recoveryKey(d: string, intent: string) {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(JSON.stringify([viewer, community, d, intent])),
+    );
+    return `kit-owner:${Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("")}`;
+  }
   /** `after: true` never joins a read that began before this call, so the
    * result reflects every change visible when the caller asked. */
   async function refresh({ after = false } = {}) {
@@ -112,6 +142,7 @@ export function createChannelKit({
             limit: 500,
           },
         ]);
+        observe(events, generation);
         if (events.length >= 500)
           throw new Error(
             "Recipe catalog reached its read limit; no partial catalog will be used",
@@ -181,8 +212,13 @@ export function createChannelKit({
     })();
     return pending;
   }
-  async function confirm(id: string) {
+  async function confirm(id: string, active?: () => boolean) {
     try {
+      if (active && !active())
+        throw new DOMException(
+          "The call ended before confirmation",
+          "AbortError",
+        );
       if (
         (await fresh([{ ids: [id], limit: 1, consistency: "strong" }])).some(
           (e) => e.id === id,
@@ -191,12 +227,12 @@ export function createChannelKit({
         return;
       const saved = local?.snapshot().find((e) => e.event.id === id);
       if (!saved || Date.now() / 1000 - saved.event.created_at >= 15 * 60)
-        throw new Error(
+        throw new SaveSettled(
           "This operation could not be confirmed and is too old to replay. Keep your draft and inspect the current result before making a new save.",
         );
       // A proven Canvas CAS refusal cannot become valid by replaying these bytes.
       if (isDefinitiveCanvasConflict(saved)) throw new Error(saved.error);
-      await delivered(id);
+      await delivered(id, active);
       if (
         !(await fresh([{ ids: [id], limit: 1, consistency: "strong" }])).some(
           (e) => e.id === id,
@@ -217,7 +253,9 @@ export function createChannelKit({
   }
   /** One replaceable private-record write: fresh head check, unresolved-save
    * guard, enqueue, exact confirmation and selected-head readback. With
-   * `resume.id` it confirms that earlier event instead of enqueueing again. */
+   * `resume.id` it confirms that earlier event instead of enqueueing again.
+   * `active` admits a caller's write: the outbox checks it before signing and
+   * publication, including on a resumed retry. */
   async function publish(
     record: KitRecord,
     d: string,
@@ -225,33 +263,71 @@ export function createChannelKit({
     expected: string | undefined,
     resume: Resume | undefined,
     operationSignal: AbortSignal | undefined,
+    callerActive: (() => boolean) | undefined,
   ) {
     // Before enqueue, the caller can cancel preparation. After enqueue, the
     // durable outbox and session own delivery; caller cancellation cannot undo it.
     const preparing = operationSignal
       ? AbortSignal.any([signal, operationSignal])
       : signal;
+    const generation = epoch;
+    const active = callerActive
+      ? () => generation === epoch && !preparing.aborted && callerActive()
+      : undefined;
     preparing.throwIfAborted();
     if (!host || !outbox || saving)
       throw new Error("Recipe saving is unavailable or already in progress");
     saving = true;
     try {
       await ready;
-      const head = async (readSignal = signal) =>
-        selectedHead(
-          await fresh(
-            [
-              {
-                kinds: [30078],
-                authors: [viewer],
-                "#d": [d],
-                limit: 1,
-              },
-            ],
-            readSignal,
-          ),
+      const head = async (readSignal = signal) => {
+        const events = await fresh(
+          [{ kinds: [30078], authors: [viewer], "#d": [d], limit: 1 }],
+          readSignal,
         );
+        observe(events, generation);
+        return selectedHead(events);
+      };
+      const find = (id: string) =>
+        local?.snapshot().find((e) => e.event.id === id);
+      const key =
+        active && resume?.intent
+          ? await recoveryKey(d, resume.intent)
+          : undefined;
       let id = resume?.id;
+      if (!id && key) {
+        id = (await outbox.recovery(key))?.event.id;
+        if (id) resume?.enqueued(id);
+      }
+      if (id && active) {
+        // A caller resumes only its own record's earlier admitted save, never
+        // another record's or an unguarded one it would newly admit.
+        const receipt = find(id);
+        if (!receipt)
+          throw new SaveSettled(
+            "The original operation is unavailable. Inspect the current result before making another save.",
+          );
+        if (
+          !key ||
+          receipt.recovery?.key !== key ||
+          !receipt.guarded ||
+          receipt.event.kind !== 30078 ||
+          !receipt.event.tags.some((t) => t[0] === "d" && t[1] === d)
+        )
+          throw new SaveRefused(
+            "That operation is not an earlier agent save of this record with this original intent.",
+          );
+        const original = JSON.parse(receipt.recovery.value) as {
+          expected: string | null;
+        };
+        const current = await head(preparing);
+        if (current?.id !== id && (current?.id ?? null) !== original.expected) {
+          if (receipt.delivery === "failed") await outbox.dismiss(id);
+          throw new SaveSettled(
+            "Another recipe save is selected. The original operation is not replayed; inspect its possible publication before saving again.",
+          );
+        }
+      }
       if (!id) {
         preparing.throwIfAborted();
         const current = await head(preparing);
@@ -260,18 +336,34 @@ export function createChannelKit({
           throw new Error(
             "This saved recipe changed. Refresh the catalog and review your draft before replacing it.",
           );
-        const previous = local
-          ?.snapshot()
-          .find(
-            (e) =>
-              e.event.kind === 30078 &&
-              e.event.tags.some((t) => t[0] === "d" && t[1] === d) &&
-              !["accepted", "seen"].includes(e.delivery),
-          );
-        if (previous)
+        for (const previous of local?.snapshot() ?? []) {
+          if (
+            previous.event.kind !== 30078 ||
+            !previous.event.tags.some((t) => t[0] === "d" && t[1] === d)
+          )
+            continue;
+          if (["accepted", "seen"].includes(previous.delivery)) {
+            if (previous.recovery?.key.startsWith("kit-owner:"))
+              await outbox.acknowledge(previous.event.id);
+            continue;
+          }
+          if (previous.guarded && previous.delivery === "failed") {
+            await outbox.dismiss(previous.event.id);
+            if (!find(previous.event.id)) continue;
+          }
+          // A selected, newer replaceable event cannot be displaced by this
+          // older receipt. Retain unknown publication evidence, never replay it.
+          if (
+            previous.guarded &&
+            previous.delivery === "unknown" &&
+            current &&
+            selectedHead([current, previous.event])?.id === current.id
+          )
+            continue;
           throw new Error(
             "A save for this recipe is unresolved. Inspect Outbox and refresh before replacing it.",
           );
+        }
         // Replaceable records use seconds. Do not create an ambiguous equal-time replacement.
         if (current && current.created_at >= Math.floor(Date.now() / 1000))
           throw new Error(
@@ -279,19 +371,48 @@ export function createChannelKit({
           );
         const content = await host.prepare(record, preparing);
         preparing.throwIfAborted();
-        id = outbox.send({
-          kind: 30078,
-          content,
-          tags: [
-            ["d", d],
-            ["t", tag],
-          ],
-        });
+        id = outbox.send(
+          {
+            kind: 30078,
+            content,
+            tags: [
+              ["d", d],
+              ["t", tag],
+            ],
+          },
+          key
+            ? { key, value: JSON.stringify({ expected: expected ?? null }) }
+            : undefined,
+          active,
+        );
+        expectations.set(id, expected ?? null);
         resume?.enqueued(id);
       }
-      await confirm(id);
+      try {
+        await confirm(id, active);
+      } catch (error) {
+        // A stale save, or a caller's save its gate stopped, was never
+        // published; release it so it cannot block the next save here.
+        const receipt = find(id);
+        const reason = stale.has(id)
+          ? STALE
+          : active && !active() && receipt?.guarded
+            ? "The call ended before it was saved; nothing was sent."
+            : undefined;
+        if (outbox && reason && receipt?.delivery === "failed") {
+          await outbox.dismiss(id);
+          if (!find(id)) {
+            stale.delete(id);
+            expectations.delete(id);
+            throw new SaveRefused(reason);
+          }
+        }
+        throw error;
+      }
+      stale.delete(id);
+      expectations.delete(id);
       if ((await head())?.id !== id)
-        throw new Error(
+        throw new SaveSettled(
           "Another recipe save is selected. Your draft is kept; refresh and review before saving again.",
         );
       return id;
@@ -312,12 +433,24 @@ export function createChannelKit({
       if (state.status === "idle") void refresh();
     },
     refresh,
+    async recovery(value: KitValue, intent: string) {
+      const record: KitRecord = {
+        version: 1,
+        community,
+        deleted: false,
+        value,
+      };
+      return (
+        await outbox?.recovery(await recoveryKey(coordinate(record), intent))
+      )?.event.id;
+    },
     async save(
       value: KitValue,
       expected: string | undefined,
       deleted = false,
       operationSignal?: AbortSignal,
       resume?: Resume,
+      active?: () => boolean,
     ) {
       const record = parseKitRecord(
         {
@@ -335,6 +468,7 @@ export function createChannelKit({
         expected,
         resume,
         operationSignal,
+        active,
       );
       await refresh();
       return id;
@@ -470,6 +604,28 @@ export function createChannelKit({
     capability,
     canvas,
     confirm,
+    /** The final synchronous check before a save of this window's record is
+     * published: refuse it once this window has read a newer head than the one
+     * it replaces. A local observation, not a relay compare-and-swap. */
+    validatePublish(event: RelayEvent) {
+      const d = event.tags.find((t) => t[0] === "d")?.[1];
+      if (event.kind !== 30078 || event.pubkey !== viewer || !d) return;
+      let expected = expectations.get(event.id);
+      if (expected === undefined) {
+        const recovery = local
+          ?.snapshot()
+          .find((e) => e.event.id === event.id)?.recovery;
+        if (!recovery?.key.startsWith("kit-owner:")) return;
+        expected = (JSON.parse(recovery.value) as { expected: string | null })
+          .expected;
+      }
+      return () => {
+        const head = observed.get(d);
+        if (!head || head.id === event.id || head.id === expected) return;
+        stale.add(event.id);
+        throw new Error(STALE);
+      };
+    },
     clear() {
       epoch++;
       pending = undefined;
@@ -483,8 +639,18 @@ export function createChannelKit({
     },
   };
 }
+/** A save refused before anything of it was sent. */
+export class SaveRefused extends Error {}
+/** A save that may have been sent but can no longer be confirmed or resumed:
+ * read the record again. */
+export class SaveSettled extends Error {}
 /** Lets a retry confirm the exact event an earlier attempt enqueued. */
-export type Resume = { id?: string | undefined; enqueued(id: string): void };
+export type Resume = {
+  id?: string | undefined;
+  /** Canonical semantic arguments, including the caller's original revision. */
+  intent?: string | undefined;
+  enqueued(id: string): void;
+};
 export type ChannelKit = ReturnType<typeof createChannelKit>["capability"];
 export type ChannelCanvas = ReturnType<typeof createChannelKit>["canvas"];
 /** Canvas and Todos show a channel read-only until the viewer can write it. */

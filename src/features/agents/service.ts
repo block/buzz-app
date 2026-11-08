@@ -2460,21 +2460,25 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
-      ownerAccess: (agent) =>
+      ownerAccess: (agent, lifetime) =>
         ownerMcpEnabled(agent.relay)
-          ? createOwnerAccess(agent, () => {
-              const binding = this.bindingOf(agent);
-              return binding &&
-                ownerMcpEnabled(binding.origin) &&
-                this.communities.snapshot().viewer === agent.owner
-                ? {
-                    viewer: binding.viewer,
-                    origin: binding.origin,
-                    session: binding.session,
-                    signal: binding.controller.signal,
-                  }
-                : undefined;
-            })
+          ? createOwnerAccess(
+              agent,
+              () => {
+                const binding = this.bindingOf(agent);
+                return binding &&
+                  ownerMcpEnabled(binding.origin) &&
+                  this.communities.snapshot().viewer === agent.owner
+                  ? {
+                      viewer: binding.viewer,
+                      origin: binding.origin,
+                      session: binding.session,
+                      signal: binding.controller.signal,
+                    }
+                  : undefined;
+              },
+              lifetime,
+            )
           : undefined,
       classifier: () => this.classifier(),
       decisions: () => this.decisions,

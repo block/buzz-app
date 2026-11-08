@@ -7078,6 +7078,11 @@ it.each([true, false])(
             "owner_read",
             "owner_canvas_get",
             "owner_canvas_history",
+            "owner_workspace_get",
+            "owner_workspace_create",
+            "owner_workspace_update",
+            "owner_workspace_move",
+            "owner_workspace_remove",
           ].map((name) => expect.objectContaining({ name, deferLoading: true }))
         : [],
     );

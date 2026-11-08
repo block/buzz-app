@@ -373,11 +373,13 @@ export function createRelaySession(
                 event,
                 signal,
               );
+              const checkKit = channelKit.validatePublish(event);
               return () => {
                 validateChannelWrite(event);
                 workflows.validate(event);
                 validateCanvasWrite(event);
                 checkMentions?.();
+                checkKit?.();
               };
             },
           },

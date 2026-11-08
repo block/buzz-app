@@ -9,6 +9,7 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import type {
   SidebarAssignmentIntent,
   SidebarGroups,
+  SidebarWriteGuard,
 } from "./sidebar-preferences";
 
 export function soloGroups(entries: readonly KitEntry[]) {
@@ -68,8 +69,17 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     );
     return next;
   };
-  async function current(signal = lifetime, fresh = true) {
-    const active = AbortSignal.any([lifetime, generation.signal, signal]);
+  async function current(
+    signal = lifetime,
+    fresh = true,
+    guard?: SidebarWriteGuard,
+  ) {
+    const active = AbortSignal.any([
+      lifetime,
+      generation.signal,
+      signal,
+      ...(guard?.signal ? [guard.signal] : []),
+    ]);
     active.throwIfAborted();
     if (fresh || kit.snapshot().status !== "ready") await kit.refresh();
     active.throwIfAborted();
@@ -77,6 +87,21 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     if (state.status !== "ready")
       throw new Error(state.error ?? "Solo groups are unavailable");
     const entry = soloGroups(state.entries);
+    if (guard && !guard.active())
+      throw new DOMException(
+        "The call ended before it was saved",
+        "AbortError",
+      );
+    // Checked against this queued write's own fresh head, so a save queued
+    // ahead of it, from this window or another, is never overwritten.
+    if (
+      guard?.expected !== undefined &&
+      !guard.resume?.id &&
+      (entry?.eventId ?? null) !== guard.expected
+    )
+      throw new Error(
+        "Solo workspaces changed since that revision; read them again. Nothing was changed.",
+      );
     return {
       entry,
       value:
@@ -90,9 +115,17 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     value: Groups,
     entry: KitEntry | undefined,
     active: AbortSignal,
+    guard?: SidebarWriteGuard,
   ) {
     admit(value, entry);
-    await kit.save(value, entry?.eventId, false, active);
+    await kit.save(
+      value,
+      entry?.eventId,
+      false,
+      active,
+      guard?.resume,
+      guard ? () => !active.aborted && guard.active() : undefined,
+    );
     active.throwIfAborted();
     const confirmed = soloGroups(kit.snapshot().entries);
     if (
@@ -111,9 +144,9 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
       muted: [],
     }),
     available: kit.available,
-    write: (intent: SidebarAssignmentIntent, signal) =>
+    write: (intent: SidebarAssignmentIntent, signal, guard) =>
       serialize(async () => {
-        const { value, entry, active } = await current(signal);
+        const { value, entry, active } = await current(signal, true, guard);
         const target = intent.createSection?.id ?? intent.sectionId;
         let groups = value.groups;
         if (intent.createSection) {
@@ -137,17 +170,21 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           else delete assignments[intent.channelId];
         }
         if (
+          !guard?.resume?.id &&
           groups === value.groups &&
           (intent.channelId === undefined ||
             value.assignments[intent.channelId] === target)
         )
           return project(value);
-        return save({ ...value, groups, assignments }, entry, active);
+        return save({ ...value, groups, assignments }, entry, active, guard);
       }),
-    removeSection: (id, signal) =>
+    removeSection: (id, signal, guard) =>
       serialize(async () => {
-        const { value, entry, active } = await current(signal);
-        if (!value.groups.some((group) => group.id === id))
+        const { value, entry, active } = await current(signal, true, guard);
+        if (
+          !guard?.resume?.id &&
+          !value.groups.some((group) => group.id === id)
+        )
           return project(value);
         return save(
           {
@@ -161,12 +198,13 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           },
           entry,
           active,
+          guard,
         );
       }),
     groupsOnly: true,
-    createSection: (section, signal) =>
+    createSection: (section, signal, guard) =>
       serialize(async () => {
-        const { value, entry, active } = await current(signal);
+        const { value, entry, active } = await current(signal, true, guard);
         const name = section.name.trim();
         const existing = value.groups.find((group) => group.id === section.id);
         if (existing) {
@@ -174,7 +212,8 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
             throw new Error(
               "The new Solo workspace changed; refresh before retrying",
             );
-          return project(value);
+          if (!guard?.resume?.id) return project(value);
+          return save(value, entry, active, guard);
         }
         return save(
           {
@@ -186,6 +225,7 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
           },
           entry,
           active,
+          guard,
         );
       }),
   });

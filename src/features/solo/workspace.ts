@@ -91,6 +91,10 @@ export function workspaceCanvas(input: Workspace): string {
   return canvas;
 }
 
+/** Whether `text` holds any part of a workspace block's markers. */
+export const hasWorkspaceBlock = (text: string) =>
+  text.includes(prefix.trim()) || text.includes(end);
+
 export function readWorkspace(content: string): Workspace {
   if (!content.startsWith(prefix)) return { folders: [], canvas: content };
   const value = parseWorkspace(content);

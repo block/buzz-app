@@ -147,6 +147,14 @@ computer access, then select **Install plugin**. Opening the link does not insta
 enable, or grant access. You can close the dialog while the preview loads. A late
 result is discarded. Confirmed installation remains protected from dismissal.
 
+A link that carries both `commit` and `path` can also update a plugin already
+installed from the same Git repository and folder, under the same rules as a Git
+`requestInstall`: the review shows **Update** with the access changes and any change
+to the tracked branch or tag (native saves the requested `ref` for later updates), keeps the
+plugin's enabled or disabled state, and refuses a plugin installed from another
+source. Without both keys, a link to an installed plugin offers only **Open in Buzz**.
+If the installed plugin changes before you confirm, the update is refused.
+
 SSH uses known hosts and, unless a [repository access rule](repository-access.md)
 selects another agent, the desktop process's inherited `SSH_AUTH_SOCK`. The importer
 disables SSH config and interactive prompts. If terminal Git uses an `IdentityAgent`,

@@ -1285,8 +1285,12 @@ for (const rejected of [false, true]) {
             : "Remove agent from channel",
         exact: true,
       });
+      // Enter confirms a reversible change; a removal starts on Cancel.
       await expect(
-        confirmation.getByRole("button", { name: "Cancel", exact: true }),
+        confirmation.getByRole("button", {
+          name: item === "Viewing only" ? "Set to viewing only" : "Cancel",
+          exact: true,
+        }),
       ).toBeFocused();
       await expect(confirmation.locator(".buzz-dialog-step")).toHaveCount(1);
       // Sample every frame from before the step leaves until it has gone.
@@ -1352,6 +1356,50 @@ for (const rejected of [false, true]) {
     expect(errors).toEqual([]);
   });
 }
+
+// Paging is a browser layout: removing the only member on the last page
+// moves the list back a page, where the member before it takes focus.
+test("removing the last page's only member focuses the member before it", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(`${url}?administration&last-page-alone`);
+  await page.getByRole("button", { name: "Access", exact: true }).click();
+  const members = page.getByRole("dialog", {
+    name: "Manage members",
+    exact: true,
+  });
+  const list = members.getByRole("region", { name: "Member list" });
+  await expect(list).toHaveAttribute("data-refreshing", "false");
+  const pages = list.getByRole("navigation", { name: "Agents member pages" });
+  const agents = list
+    .getByRole("region", { name: "Agents", exact: true })
+    .getByRole("button", { name: /^Actions for / });
+  await expect(agents).toHaveCount(50);
+  const previous = await agents.last().getAttribute("aria-label");
+  await pages.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(pages.getByText("2 of 2")).toBeVisible();
+  await expect(agents).toHaveCount(1);
+  const target = await agents.first().getAttribute("aria-label");
+  await members.getByRole("button", { name: target, exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Remove from channel", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Remove agent from channel", exact: true })
+    .getByRole("button", { name: "Remove agent", exact: true })
+    .click();
+  await page.evaluate(() => window.focusFixture.published);
+  await page.evaluate(() => window.focusFixture.confirm());
+  await expect(
+    members.getByRole("button", { name: target, exact: true }),
+  ).toHaveCount(0);
+  await expect(agents).toHaveCount(50);
+  await expect(
+    members.getByRole("button", { name: previous, exact: true }),
+  ).toBeFocused();
+  expect(errors).toEqual([]);
+});
 
 // Browser layout is required to prove the helper inset and role-label geometry.
 test("member helper aligns with content and Owner stays beside a person's name", async ({

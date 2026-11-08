@@ -621,7 +621,15 @@ export function ChannelMembersDialog({
   // Set when the step is left by confirming. That member's Actions are then
   // watched until its row leaves and until the change settles.
   const confirmed = useRef(false);
-  const handOff = useRef<{ button: HTMLElement; at: number }>(undefined);
+  const handOff = useRef<{
+    button: HTMLElement;
+    at: number;
+    /** The members beside it in the whole list, not only the shown page. */
+    next?: string | undefined;
+    before?: string | undefined;
+  }>(undefined);
+  // Every listed member in order, across pages, for a removal's hand-off.
+  const listedMembers = useRef<readonly string[]>([]);
   const keepInView = useRef<{ button: HTMLElement; scrollTop: number }>(
     undefined,
   );
@@ -671,12 +679,21 @@ export function ChannelMembersDialog({
     const button = actions[at];
     (button ?? input.current)?.focus();
     if (button && confirmed.current) {
-      handOff.current = { button, at };
+      const order = listedMembers.current;
+      const index = order.indexOf(previous.change.pubkey);
+      handOff.current = {
+        button,
+        at,
+        next: index < 0 ? undefined : order[index + 1],
+        before: index < 0 ? undefined : order[index - 1],
+      };
       keepInView.current = { button, scrollTop: list.scrollTop };
     }
   }, [shownIntent, session, channelId]);
   // A removed row takes its focused Actions with it. Hand off to the member
-  // now at its index, the one before, or Search.
+  // after it, the one before, or Search. Neighbours are found by identity, so
+  // a removal that empties the last page lands on the previous page's last
+  // member rather than its first; index is the fallback for unlisted rows.
   useLayoutEffect(() => {
     const previous = handOff.current;
     if (!previous || previous.button.isConnected) return;
@@ -686,7 +703,13 @@ export function ChannelMembersDialog({
       ...(scrollport.current?.querySelectorAll<HTMLElement>("[data-member]") ??
         []),
     ];
+    const shown = (pubkey: string | undefined) =>
+      pubkey === undefined
+        ? undefined
+        : actions.find((item) => item.dataset.member === pubkey);
     (
+      shown(previous.next) ??
+      shown(previous.before) ??
       actions[previous.at] ??
       actions[previous.at - 1] ??
       input.current
@@ -1119,6 +1142,10 @@ export function ChannelMembersDialog({
       (roleFilter === "All" || group.name === roleFilter) &&
       group.keys.length > 0,
   );
+  const listedOrder = filteredGroups.flatMap((group) => group.keys).join("\n");
+  useLayoutEffect(() => {
+    listedMembers.current = listedOrder ? listedOrder.split("\n") : [];
+  }, [listedOrder]);
   const [memberPages, setMemberPages] = useState({
     text,
     roleFilter,

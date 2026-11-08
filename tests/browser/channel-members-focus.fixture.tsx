@@ -67,14 +67,22 @@ const inventory =
     : solo
       ? [{ pubkey: person.pubkey, name: "Morgan" }]
       : [];
-const searchScale = new URLSearchParams(location.search).has("search-scale");
+// One agent past a page, so a removal from the last page empties it.
+const lastPageAlone = new URLSearchParams(location.search).has(
+  "last-page-alone",
+);
+const searchScale =
+  new URLSearchParams(location.search).has("search-scale") || lastPageAlone;
 const idleOverlap = new URLSearchParams(location.search).has("idle-overlap");
 const managed =
   searchScale || idleOverlap
-    ? Array.from({ length: idleOverlap ? 2 : 60 }, (_, index) => ({
-        key: keypair(),
-        name: `Agent ${index + 1}`,
-      }))
+    ? Array.from(
+        { length: idleOverlap ? 2 : lastPageAlone ? 51 : 60 },
+        (_, index) => ({
+          key: keypair(),
+          name: `Agent ${index + 1}`,
+        }),
+      )
     : [];
 const managedProfiles = await Promise.all(
   managed.map(async ({ key, name }) => {

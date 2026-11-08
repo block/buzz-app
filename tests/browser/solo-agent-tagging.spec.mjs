@@ -75,8 +75,16 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     name: `Sending to ${agent.name}. Change agents`,
     exact: true,
   });
-  const retry = page.getByRole("button", { name: "Retry agents", exact: true });
-  const alert = page.getByRole("alert").filter({ has: retry });
+  // The composer shows no standing notice (#2948); the failed read offers
+  // Retry in the Choose agent picker.
+  const choose = page.getByRole("button", {
+    name: "Choose agent",
+    exact: true,
+  });
+  const retry = page.getByRole("button", {
+    name: "Retry agent list",
+    exact: true,
+  });
   try {
     const started = page.waitForResponse(
       (response) =>
@@ -97,7 +105,8 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     const snapshot = await held.promise;
     expect(snapshot.headers()["x-buzz-read-priority"]).toBe("background");
     // Without complete inventory the chat offers Retry and tags nobody.
-    await expect(alert).toBeVisible();
+    await choose.click();
+    await expect(retry).toBeVisible();
     expect(refused).toBeGreaterThan(0);
     await expect(pill).toHaveCount(0);
     // The relay answers again. The snapshot is still running, so this read
@@ -106,11 +115,11 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     await retry.click();
     // Alone with one agent, the composer addresses it without a mention.
     await expect(pill).toBeVisible();
-    await expect(alert).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
   } finally {
     gate.resolve();
   }
   // The snapshot completing changes nothing about the addressed agent.
   await expect(pill).toBeVisible();
-  await expect(alert).toHaveCount(0);
+  await expect(retry).toHaveCount(0);
 });

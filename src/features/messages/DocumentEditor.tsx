@@ -213,7 +213,7 @@ export function DocumentEditor({
                 placeholder={placeholder}
                 aria-label={label}
                 maxLength={maxLength}
-                serializeDraft={documentEditorMarkdown}
+                markdownMode="document"
                 decorationsFor={noDecorations}
                 onDraftChange={(next) => {
                   if (syncing.current) return;

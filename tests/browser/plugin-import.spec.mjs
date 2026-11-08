@@ -2417,6 +2417,98 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
   await expect(body.locator(":scope > p")).toHaveCount(2);
   await expect(body.locator(":scope > p br")).toHaveCount(1);
 
+  // Exercise the installed module's browser clipboard handlers in both flavors.
+  // DataTransfer stays inside this page; the operating-system clipboard is untouched.
+  await reader.getByRole("button", { name: "Edit Guide", exact: true }).click();
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  const clipboardSource =
+    "First\\\nSecond `code`\n\n> Quote first\n>\n> Quote second\n\n- One\n\n- Two";
+  await markdownSource.fill(clipboardSource);
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+  await richEditor.press("!");
+  for (const rich of [true, false]) {
+    await richEditor.evaluate((field, rich) => {
+      field.focus();
+      field.setSelectionRange(0, field.value.length);
+      const copied = new DataTransfer();
+      field.dispatchEvent(
+        new ClipboardEvent("copy", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: copied,
+        }),
+      );
+      const pasted = new DataTransfer();
+      pasted.setData("text/plain", copied.getData("text/plain"));
+      if (rich) pasted.setData("text/html", copied.getData("text/html"));
+      field.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: pasted,
+        }),
+      );
+    }, rich);
+    await reader
+      .getByRole("button", { name: "Read Guide", exact: true })
+      .click();
+    await expect(body.locator(":scope > p br")).toHaveCount(1);
+    await expect(body.locator(":scope > p code")).toHaveText("code");
+    await expect(body.locator(":scope > blockquote p")).toHaveText([
+      "Quote first",
+      "Quote second",
+    ]);
+    await expect(body.locator(":scope > ul > li > p")).toHaveText([
+      "One",
+      "Two!",
+    ]);
+    await reader
+      .getByRole("button", { name: "Edit Guide", exact: true })
+      .click();
+  }
+
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await markdownSource.fill("**Hello**");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    const data = new DataTransfer();
+    data.setData("text/plain", " next");
+    field.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: data,
+      }),
+    );
+  });
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("**Hello next**");
+  await markdownSource.fill("");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.pressSequentially("C:" + "\\");
+  await richEditor.press("Shift+Enter");
+  await richEditor.pressSequentially("next");
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("C:" + "\\".repeat(3) + "\nnext");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+  await expect(body.locator(":scope > p br")).toHaveCount(1);
+  await expect(body.locator(":scope > p")).toHaveText(/C:\\\s*next/);
+
   const handle = reader.getByRole("separator");
   await handle.focus();
   await page.keyboard.press("Home");

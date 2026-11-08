@@ -122,7 +122,10 @@ conflicts, permissions and pending navigation remain the plugin's responsibility
 Rich mode uses CommonMark paragraph and hard-break semantics like the document
 reader: Enter starts a paragraph and Shift+Enter inserts a hard break (lists and
 code retain their existing structural editing). The serialized length budget uses
-the same document format as `onChange`.
+the same document format as `onChange`. Copy/paste retains that structure in both
+plain Markdown and the app's rich HTML payload, including hard breaks and loose
+lists. Normal plain-text paste reads Markdown; paste-as-plain-text keeps the
+existing literal-text behavior.
 
 ```js
 const [value, onChange] = ctx.react.useState("A **document**.");

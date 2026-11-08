@@ -45,6 +45,8 @@ const strike: Handle & { peek?: Handle } = (node, parent, state, info) => {
 };
 strike.peek = () => "~";
 
+export type ComposerMarkdownMode = "chat" | "document";
+
 /** Plain portions are authored Markdown, not rich-editor literal text. Keeping
  * their source verbatim avoids normalizing formats this slice does not edit.
  * Marked content uses CommonMark/GFM delimiter escaping and flanking rules.
@@ -52,7 +54,7 @@ strike.peek = () => "~";
  * the typed source without the namesake qualifiers a send adds. */
 export function composerMarkdown(
   draft: MentionDraft,
-  mode: "chat" | "document" = "chat",
+  mode: ComposerMarkdownMode = "chat",
   { authored = false }: { authored?: boolean } = {},
 ): string {
   const project = (node: EditorNode): EditorNode =>
@@ -155,7 +157,7 @@ function qualifyNamesakes(
   return visit(doc);
 }
 
-function blocksMarkdown(doc: EditorNode, mode: "chat" | "document"): string {
+function blocksMarkdown(doc: EditorNode, mode: ComposerMarkdownMode): string {
   const blocks: string[] = [];
   let previous: EditorNode | undefined;
   const authored = authoredLiteralRanges(doc, mode);
@@ -243,7 +245,7 @@ function blocksMarkdown(doc: EditorNode, mode: "chat" | "document"): string {
 
 /** Parse each contiguous paragraph run once, lazily. Rich text is masked so
  * only authored source defines code, links and HTML; offsets stay unchanged. */
-function authoredLiteralRanges(doc: EditorNode, mode: "chat" | "document") {
+function authoredLiteralRanges(doc: EditorNode, mode: ComposerMarkdownMode) {
   const ranges = new Map<number, () => SourceRange[]>();
   let run: { source: string; ranges?: SourceRange[] } | undefined;
   doc.forEach((block, offset) => {
@@ -305,7 +307,7 @@ function authoredLiteralRanges(doc: EditorNode, mode: "chat" | "document") {
 function paragraphMarkdown(
   block: EditorNode,
   authoredLiterals?: () => SourceRange[],
-  mode: "chat" | "document" = "chat",
+  mode: ComposerMarkdownMode = "chat",
 ): string {
   let text = "";
   const formats = [

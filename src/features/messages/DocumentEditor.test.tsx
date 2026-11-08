@@ -384,3 +384,101 @@ it("keeps Shift+Enter after a typed backslash as a hard break", async () => {
     ],
   });
 });
+
+const clipboardTree = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(clipboardTree)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .filter(([key]) => key !== "position")
+            .map(([key, child]) => [key, clipboardTree(child)]),
+        )
+      : value;
+
+it.each(
+  [
+    "First\\\nSecond",
+    "First\n\nSecond\n\n> Quote first\n>\n> Quote second",
+    "- First\n\n- Second",
+    "- Item\n\n  > First\\\n  > Second\n\n- Next",
+  ].flatMap((initialValue) =>
+    [true, false].map((rich) => ({ initialValue, rich })),
+  ),
+)(
+  "preserves document clipboard structure (rich=$rich): $initialValue",
+  ({ initialValue, rich }) => {
+    const h = mount({}, { initialValue });
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    act(() => {
+      input.focus();
+      input.setSelectionRange(0, input.value.length);
+    });
+    const values = new Map<string, string>();
+    fireEvent.copy(input, {
+      clipboardData: {
+        setData: (type: string, value: string) => values.set(type, value),
+      },
+    });
+    const expected = clipboardTree(fromMarkdown(initialValue));
+    if (!rich)
+      expect(
+        clipboardTree(fromMarkdown(values.get("text/plain") ?? "")),
+      ).toEqual(expected);
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        types: rich ? ["text/plain", "text/html"] : ["text/plain"],
+        getData: (type: string) =>
+          !rich && type === "text/html" ? "" : (values.get(type) ?? ""),
+      },
+    });
+    h.rerender({ source: true });
+    const saved = (
+      screen.getByRole("textbox", { name: "Markdown" }) as HTMLTextAreaElement
+    ).value;
+    expect(clipboardTree(fromMarkdown(saved))).toEqual(expected);
+  },
+);
+
+it("budgets plain document pastes using document serialization", () => {
+  const h = mount({ maxLength: 12 }, { initialValue: "Start" });
+  const input = screen.getByRole("textbox", {
+    name: "Document body",
+  }) as ComposerInputElement;
+  act(() => {
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+  });
+  fireEvent.paste(input, {
+    clipboardData: {
+      items: [],
+      types: ["text/plain"],
+      getData: (type: string) =>
+        type === "text/plain" ? "First\n\nSecond" : "",
+    },
+  });
+  expect(h.change).not.toHaveBeenCalled();
+  expect(input.value).toBe("Start");
+});
+
+it("keeps the caret's formatting for plain prose pasted in a document", () => {
+  const h = mount({}, { initialValue: "**Hello**" });
+  const input = screen.getByRole("textbox", {
+    name: "Document body",
+  }) as ComposerInputElement;
+  act(() => {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  fireEvent.paste(input, {
+    clipboardData: {
+      items: [],
+      types: ["text/plain"],
+      getData: (type: string) => (type === "text/plain" ? " next" : ""),
+    },
+  });
+  expect(h.change).toHaveBeenLastCalledWith("**Hello next**");
+});

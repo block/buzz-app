@@ -14,6 +14,7 @@ import { HuddleCapsule } from "./HuddleCapsule";
 import { HuddleLauncher, SoloHuddleMenu } from "./HuddleLauncher";
 import { HuddleCard, huddleTarget, parseHuddleTarget } from "./HuddleCard";
 import { HuddlePanel } from "./HuddlePanel";
+import { huddleCommand } from "./slash-huddle";
 
 export const inject = [
   "panels",
@@ -82,6 +83,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       />
     ),
   });
+  ctx.conversation.registerCommand(
+    huddleCommand({ relay: ctx.relay, huddles, showWindow: companion.open }),
+  );
   ctx.effect(() => async () => {
     stopRing();
     await Promise.all([stopVoices(), companion.dispose(), huddles.dispose()]);

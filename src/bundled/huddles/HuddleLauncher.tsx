@@ -30,6 +30,7 @@ import {
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import styles from "./Huddles.module.css";
 import { writeClipboardText } from "../../shared/clipboard";
+import { showActiveHuddle } from "./show-active-huddle";
 
 type Props = Pick<
   ChannelLauncherProps,
@@ -41,7 +42,6 @@ type Props = Pick<
   menu?: boolean;
   agents?: Agents;
 };
-const focusPlayer = () => document.getElementById("huddle-capsule")?.focus();
 
 /** The same call action, contributed to Solo's existing action menus. */
 export function SoloHuddleMenu({
@@ -145,10 +145,8 @@ export function HuddleLauncher(props: Props) {
   const activate = () => {
     if (!available()) return;
     if (call.phase === "connecting") void huddles.leave();
-    else if (active) {
-      if (document.getElementById("huddle-capsule")) focusPlayer();
-      else void props.showWindow().catch(() => {});
-    } else if (joinable) void huddles.join(context, incoming.id);
+    else if (active) void showActiveHuddle(props.showWindow).catch(() => {});
+    else if (joinable) void huddles.join(context, incoming.id);
     else void huddles.start(context);
   };
   if (props.menu)

@@ -315,7 +315,10 @@ it("recovers a failed first history read through Retry, then notifies", async ()
         },
       },
       navigation: {},
-      conversation: { registerMessageAction: vi.fn() },
+      conversation: {
+        registerMessageAction: vi.fn(),
+        registerCommand: vi.fn(),
+      },
       effect: (body: () => void) => body(),
     } as unknown as Parameters<typeof apply>[0]);
     render(<Page />);
@@ -382,7 +385,10 @@ it("ages due labels while open, with no reminder or live events", async () => {
         },
       },
       navigation: {},
-      conversation: { registerMessageAction: vi.fn() },
+      conversation: {
+        registerMessageAction: vi.fn(),
+        registerCommand: vi.fn(),
+      },
       effect: (body: () => void) => body(),
     } as unknown as Parameters<typeof apply>[0]);
     render(<Page />);

@@ -247,6 +247,7 @@ export function DocumentEditor({
                       );
                   }
                   if (
+                    destinations?.length &&
                     event.key === "[" &&
                     input.current?.value[input.current.selectionStart - 1] ===
                       "["

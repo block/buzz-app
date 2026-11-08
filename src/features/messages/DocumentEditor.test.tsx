@@ -321,6 +321,32 @@ it("uses the existing link validator and retains the selected document text", as
   );
 });
 
+it.each([{ destinations: undefined }, { destinations: [] }])(
+  "allows literal double brackets without destinations: $destinations",
+  async ({ destinations }) => {
+    const h = mount(destinations ? { destinations } : {}, {
+      initialValue: "See",
+    });
+    act(() => h.ref.current?.focusEnd());
+    await userEvent.setup().keyboard(" [[[[x");
+    expect(h.change).toHaveBeenLastCalledWith("See [[x");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  },
+);
+
+it("keeps the double-bracket shortcut when destinations are supplied", async () => {
+  const h = mount(
+    { destinations: [{ label: "Reference", href: "https://example.com" }] },
+    { initialValue: "See " },
+  );
+  act(() => h.ref.current?.focusEnd());
+  await userEvent.setup().keyboard("[[[[");
+  expect(await screen.findByRole("dialog", { name: "Add link" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Text" })).toHaveFocus(),
+  );
+});
+
 it("disables editing controls and leaves read-mode content with the plugin", () => {
   const h = mount({ disabled: true });
   expect(screen.getByRole("button", { name: /^Bold$/ })).toBeDisabled();

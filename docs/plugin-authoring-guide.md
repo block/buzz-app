@@ -146,7 +146,8 @@ Formatting is inline by default; `toolbarTarget` can portal it into the plugin's
 existing toolbar slot. The host supplies the controls and link dialog, so do not
 wrap those in another modal or reproduce their chrome. Optional `destinations`
 are loaded choices for the existing link dialog; their URLs still pass the host
-link validator. Read-mode `children` can render `conversation.ui.Markdown`.
+link validator. Typing `[[` opens that dialog only when `destinations` is nonempty;
+without choices, brackets are ordinary text. Read-mode `children` can render `conversation.ui.Markdown`.
 Supported formatting loads into the editor; unsupported syntax remains editable
 literal source. Switching to `source: true` exposes the controlled Markdown value.
 

@@ -60,7 +60,7 @@ export function SecuritySettings({
       <Header
         id="security-settings-title"
         title="Security"
-        subtitle="Manage tools and applications that can act as you."
+        subtitle="Tools paired on this device, and applications you authorize to act as you."
       />
       <InlineHeader id="paired-tools-title" title="Paired command-line tools" />
       {error && (

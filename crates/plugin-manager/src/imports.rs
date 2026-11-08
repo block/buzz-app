@@ -19,6 +19,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Windows' CREATE_NO_WINDOW: a console child (git, taskkill) opens no window of its own, as
+/// src-tauri's host_command does for the app's other processes.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_ENTRIES: usize = 20_000;
 const MAX_PLUGINS: usize = 32;
 const MAX_PREVIEW_BYTES: usize = 32 * 1024 * 1024;
@@ -698,6 +702,11 @@ impl Git {
     }
     fn command(&self) -> Command {
         let mut command = Command::new("git");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
         command.env_clear();
         // Retain SSH-agent authentication and platform tool lookup, but not Git's ambient
         // repository/config/transport overrides. No credential helpers or interactive prompts.
@@ -823,8 +832,10 @@ impl Git {
             }
             #[cfg(windows)]
             {
+                use std::os::windows::process::CommandExt;
                 let _ = Command::new("taskkill")
                     .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output();
             }
             let _ = child.kill();

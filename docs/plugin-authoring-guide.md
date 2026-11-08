@@ -152,7 +152,8 @@ are loaded choices for the existing link dialog; their URLs still pass the host
 link validator. Typing `[[` opens that dialog only when `destinations` is nonempty;
 without choices, brackets are ordinary text. Read-mode `children` can render `conversation.ui.Markdown`.
 Supported formatting loads into the editor; unsupported syntax remains editable
-literal source. Switching to `source: true` exposes the controlled Markdown value.
+literal source, including verbatim line breaks through both clipboard flavors.
+Switching to `source: true` exposes the controlled Markdown value.
 
 The optional ref has `focusEnd()`, `selection()` and `focusSelection(selection)`.
 `selection()` returns `{start, end, source}` only while the field has focus.

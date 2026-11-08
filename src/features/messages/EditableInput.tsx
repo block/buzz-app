@@ -2432,13 +2432,18 @@ export function EditableInput({
                 const parsed = readComposerDocument(draft, []);
                 const paragraph =
                   parsed.childCount === 1 ? parsed.firstChild : null;
-                // Plain prose still inherits the caret's active marks.
+                // Fallback blocks keep embedded source newlines; supported prose
+                // has already folded them and still inherits the caret's marks.
                 if (
                   paragraph?.type === composerSchema.nodes.paragraph &&
                   paragraph.childCount <= 1 &&
                   !paragraph.firstChild?.marks.length
                 )
-                  insertPastedText(text.replace(/\r\n?|\n/g, " "));
+                  insertPastedText(
+                    /[\r\n]/.test(paragraph.textContent)
+                      ? text
+                      : text.replace(/\r\n?|\n/g, " "),
+                  );
                 else insertDocument(parsed);
                 return true;
               }

@@ -482,3 +482,54 @@ it("keeps the caret's formatting for plain prose pasted in a document", () => {
   });
   expect(h.change).toHaveBeenLastCalledWith("**Hello next**");
 });
+
+it.each(
+  [
+    {
+      name: "task list",
+      source: "- [x] completed\n- [ ] pending",
+      expected: "- [x] completed\n- [ ] pending",
+    },
+    {
+      name: "table",
+      source: "| Column | Value |\n| --- | --- |\n| A | B |",
+      expected: "| Column | Value |\n| --- | --- |\n| A | B |",
+    },
+    {
+      name: "supported prose",
+      source: "First\nSecond",
+      expected: "First Second",
+    },
+  ].flatMap((sample) => [true, false].map((rich) => ({ ...sample, rich }))),
+)(
+  "preserves $name through the document clipboard (rich=$rich)",
+  ({ source, expected, rich }) => {
+    const h = mount({}, { initialValue: source });
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    act(() => {
+      input.focus();
+      input.setSelectionRange(0, input.value.length);
+    });
+    const values = new Map<string, string>();
+    fireEvent.copy(input, {
+      clipboardData: {
+        setData: (type: string, value: string) => values.set(type, value),
+      },
+    });
+    expect(values.get("text/plain")).toBe(expected);
+    fireEvent.paste(input, {
+      clipboardData: {
+        items: [],
+        types: rich ? ["text/plain", "text/html"] : ["text/plain"],
+        getData: (type: string) =>
+          !rich && type === "text/html" ? "" : (values.get(type) ?? ""),
+      },
+    });
+    h.rerender({ source: true });
+    expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+      expected,
+    );
+  },
+);

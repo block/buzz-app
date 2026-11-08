@@ -178,14 +178,21 @@ export function composerClipboard(
       !node.parentElement?.closest("pre")
     )
       breaks.push(node as Text);
-  for (const text of breaks)
-    text.replaceWith(
-      ...text.data
-        .split("\n")
-        .flatMap((line, index) =>
-          index ? [document.createElement("br"), line] : [line],
-        ),
-    );
+  for (const text of breaks) {
+    const lines = text.data
+      .split("\n")
+      .flatMap((line, index) =>
+        index ? [document.createElement("br"), line] : [line],
+      );
+    if (mode === "document") {
+      // Embedded source lines are not semantic hard-break nodes. The existing
+      // source-span importer restores these bytes instead of interpreting <br>.
+      const source = document.createElement("span");
+      source.setAttribute("data-source", text.data);
+      source.append(...lines);
+      text.replaceWith(source);
+    } else text.replaceWith(...lines);
+  }
   const container = document.createElement("div");
   container.appendChild(fragment);
   return {

@@ -16,9 +16,11 @@ import type {
   ComposerInputElement,
   ComposerLinkEdit,
 } from "./composer-dom";
-import { composerMarkdown } from "./composer-markdown";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
-import { documentEditorDraft } from "./document-editor-markdown";
+import {
+  documentEditorDraft,
+  documentEditorMarkdown,
+} from "./document-editor-markdown";
 import styles from "./DocumentEditor.module.css";
 
 const noDecorations = () => [];
@@ -211,11 +213,12 @@ export function DocumentEditor({
                 placeholder={placeholder}
                 aria-label={label}
                 maxLength={maxLength}
+                serializeDraft={documentEditorMarkdown}
                 decorationsFor={noDecorations}
                 onDraftChange={(next) => {
                   if (syncing.current) return;
                   setDraft(next);
-                  const markdown = composerMarkdown(next);
+                  const markdown = documentEditorMarkdown(next);
                   if (markdown !== value) {
                     emitted.current = markdown;
                     onChange(markdown);
@@ -235,12 +238,13 @@ export function DocumentEditor({
                     editLink();
                   }
 
-                  if (
-                    (event.metaKey || event.ctrlKey) &&
-                    event.key === "Enter"
-                  ) {
+                  if (event.key === "Enter") {
                     event.preventDefault();
-                    onSave();
+                    if (event.metaKey || event.ctrlKey) onSave();
+                    else
+                      input.current?.insertLineBreak(
+                        event.shiftKey ? "hard" : "paragraph",
+                      );
                   }
                   if (
                     event.key === "[" &&

@@ -1,7 +1,13 @@
 import { expect, it } from "vitest";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { composerMarkdown } from "./composer-markdown";
-import { documentEditorDraft } from "./document-editor-markdown";
+import {
+  composerSchema as schema,
+  projectComposerDocument,
+} from "./composer-document";
+import {
+  documentEditorDraft,
+  documentEditorMarkdown,
+} from "./document-editor-markdown";
 
 it("loads formatting into the existing editor and retains its meaning on save", () => {
   const markdown =
@@ -18,7 +24,7 @@ it("loads formatting into the existing editor and retains its meaning on save", 
               .map(([key, item]) => [key, strip(item)]),
           )
         : value;
-  expect(strip(fromMarkdown(composerMarkdown(draft)))).toEqual(
+  expect(strip(fromMarkdown(documentEditorMarkdown(draft)))).toEqual(
     strip(fromMarkdown(markdown)),
   );
 });
@@ -37,7 +43,7 @@ it.each([
   "[Unsafe](javascript:alert%281%29)",
   "\\*literal stars\\* and `inline`",
 ])("preserves unsupported or literal source: %s", (markdown) => {
-  expect(composerMarkdown(documentEditorDraft(markdown))).toBe(markdown);
+  expect(documentEditorMarkdown(documentEditorDraft(markdown))).toBe(markdown);
 });
 
 it("keeps oversized and deeply nested input as literal source without Markdown parsing", () => {
@@ -46,4 +52,56 @@ it("keeps oversized and deeply nested input as literal source without Markdown p
     expect(draft.text).toBe(markdown);
     expect(draft.document).toBeUndefined();
   }
+});
+
+const semanticTree = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(semanticTree)
+    : value && typeof value === "object"
+      ? Object.fromEntries(
+          Object.entries(value)
+            .filter(([key]) => key !== "position")
+            .map(([key, child]) => [key, semanticTree(child)]),
+        )
+      : value;
+
+it.each([
+  "> First point\n>\n> Second point\n\nEnd",
+  "> > Nested first\n> >\n> > Nested second\n>\n> Outer last",
+  "- First item\n\n  Second paragraph\n\n- Next item",
+  "- One\n\n- Two",
+  "- Outer\n  - Inner\n  - Next",
+  "> - One\n>   - Nested\n> - Two",
+  "- Item\n  > First\n  >\n  > Second",
+  "1. Item\n\n   > First\n   >\n   > Second\n\n2. Next",
+  "First  \nSecond",
+  "First\\\nSecond",
+  "> First  \n> Second",
+  "- First\\\n  Second",
+  "**First\\\nSecond**",
+  "[First\\\nSecond](https://example.com)",
+])(
+  "preserves CommonMark paragraph and hard-break structure: %s",
+  (markdown) => {
+    expect(
+      semanticTree(
+        fromMarkdown(documentEditorMarkdown(documentEditorDraft(markdown))),
+      ),
+    ).toEqual(semanticTree(fromMarkdown(markdown)));
+  },
+);
+
+it("keeps structural paragraphs even in a list item with tight defaults", () => {
+  const item = schema.nodes.list_item.create(null, [
+    schema.nodes.paragraph.create(null, schema.text("First")),
+    schema.nodes.paragraph.create(null, schema.text("Second")),
+  ]);
+  const doc = schema.nodes.doc.create(
+    null,
+    schema.nodes.bullet_list.create(null, item),
+  );
+  const markdown = documentEditorMarkdown(projectComposerDocument(doc).draft);
+  expect(semanticTree(fromMarkdown(markdown))).toEqual(
+    semanticTree(fromMarkdown("- First\n\n  Second")),
+  );
 });

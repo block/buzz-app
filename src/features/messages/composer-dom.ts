@@ -147,7 +147,7 @@ export type ComposerInputElement = HTMLDivElement & {
     range: { start: number; end: number },
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
-  insertLineBreak(): boolean;
+  insertLineBreak(kind?: "paragraph" | "hard"): boolean;
   editLink(): ComposerLinkEdit | null;
   removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;

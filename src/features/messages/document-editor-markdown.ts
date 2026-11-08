@@ -10,7 +10,8 @@ import {
   projectComposerDocument,
 } from "./composer-document";
 import { composerLinkUrl } from "./composer-link";
-import { mentionDraft } from "./mention-draft";
+import { mentionDraft, type MentionDraft } from "./mention-draft";
+import { composerMarkdown } from "./composer-markdown";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
 
 /** Use the existing editor schema; unsupported syntax remains editable source. */
@@ -36,7 +37,7 @@ export function documentEditorDraft(markdown: string) {
   ): EditorNode[] => {
     if (node.type === "text")
       return text(
-        node.value,
+        node.value.replace(/\n/g, " "),
         raw(node) === node.value
           ? marks
           : [...marks, schema.marks.literal.create()],
@@ -45,7 +46,8 @@ export function documentEditorDraft(markdown: string) {
       return marks.length
         ? text(raw(node), marks)
         : text(node.value, [schema.marks.code.create()]);
-    if (node.type === "break") return [schema.nodes.hard_break.create()];
+    if (node.type === "break")
+      return [schema.nodes.hard_break.create(null, null, marks)];
     const mark =
       node.type === "strong"
         ? schema.marks.bold
@@ -91,36 +93,29 @@ export function documentEditorDraft(markdown: string) {
       !/^\s*[-*+]\s+\[[ xX]\]/m.test(raw(node))
     )
       return schema.nodes[node.ordered ? "ordered_list" : "bullet_list"].create(
-        node.ordered ? { order: node.start ?? 1 } : null,
+        {
+          ...(node.ordered ? { order: node.start ?? 1 } : {}),
+          spread: node.spread,
+        },
         node.children.map((item) =>
-          schema.nodes.list_item.create(null, item.children.map(block)),
+          schema.nodes.list_item.create(
+            { spread: item.spread },
+            item.children.map(block),
+          ),
         ),
       );
     return schema.nodes.paragraph.create(null, text(raw(node)));
   };
-  // The source adapter uses single newlines between paragraph nodes.
-  const blocks: EditorNode[] = [];
-  for (const [index, node] of tree.children.entries()) {
-    const converted = block(node);
-    const previous = tree.children[index - 1];
-    if (
-      previous &&
-      converted.type === schema.nodes.paragraph &&
-      blocks.at(-1)?.type === schema.nodes.paragraph
-    ) {
-      const gap = markdown.slice(
-        previous.position?.end.offset ?? 0,
-        node.position?.start.offset ?? 0,
-      );
-      for (let breaks = (gap.match(/\n/g) ?? []).length; breaks > 1; breaks--)
-        blocks.push(schema.nodes.paragraph.create());
-    }
-    blocks.push(converted);
-  }
+  const blocks = tree.children.map(block);
   const doc = schema.nodes.doc.create(
     null,
     blocks.length ? blocks : schema.nodes.paragraph.create(),
   );
   doc.check();
   return projectComposerDocument(doc).draft;
+}
+
+/** CommonMark document structure; bounded-parser fallbacks stay exact source. */
+export function documentEditorMarkdown(draft: MentionDraft) {
+  return composerMarkdown(draft, draft.document ? "document" : "chat");
 }

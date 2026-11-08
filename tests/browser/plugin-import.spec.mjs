@@ -2370,7 +2370,52 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
   await linkDialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(linkDialog).toBeHidden();
   await expect(richEditor).toBeFocused();
+  // Native keyboard edits must preserve the CommonMark structure the host reads,
+  // including when the changed text is outside a nested block.
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  const quoted = "> First point\n>\n> Second point\n\nEnd";
+  await markdownSource.fill(quoted);
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => {
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+  });
+  await richEditor.press("!");
   await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+  const body = reader.getByRole("region", {
+    name: "Document content",
+    exact: true,
+  });
+  await expect(body.locator(":scope > blockquote p")).toHaveText([
+    "First point",
+    "Second point",
+  ]);
+  await expect(body.locator(":scope > p").last()).toHaveText("End!");
+  await reader.getByRole("button", { name: "Edit Guide", exact: true }).click();
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await markdownSource.fill("FirstSecond");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => field.setSelectionRange(5, 5));
+  await richEditor.press("Enter");
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("First\n\nSecond");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await richEditor.evaluate((field) => field.setSelectionRange(1, 1));
+  await richEditor.press("Shift+Enter");
+  await reader
+    .getByRole("button", { name: "Markdown source", exact: true })
+    .click();
+  await expect(markdownSource).toHaveValue("F\\\nirst\n\nSecond");
+  await reader.getByRole("button", { name: "Rich text", exact: true }).click();
+  await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
+  await expect(body.locator(":scope > p")).toHaveCount(2);
+  await expect(body.locator(":scope > p br")).toHaveCount(1);
 
   const handle = reader.getByRole("separator");
   await handle.focus();

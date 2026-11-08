@@ -30,6 +30,7 @@ import {
   joinForward,
   deleteSelection,
   selectAll,
+  splitBlockKeepMarks,
 } from "prosemirror-commands";
 import { sinkListItem, liftListItem } from "prosemirror-schema-list";
 import {
@@ -405,6 +406,8 @@ export type EditableInputProps = Omit<
   disabled: boolean;
   placeholder: string;
   maxLength: number;
+  /** The owner's wire format determines the serialized editing budget. */
+  serializeDraft?(draft: MentionDraft): string;
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onEditLink?(edit: ComposerLinkEdit): void;
@@ -427,6 +430,7 @@ export function EditableInput({
   disabled,
   placeholder,
   maxLength,
+  serializeDraft = composerMarkdown,
   onDraftChange,
   onFormatsChange,
   onEditLink,
@@ -445,6 +449,7 @@ export function EditableInput({
     draft,
     decorationsFor,
     maxLength,
+    serializeDraft,
     onDraftChange,
     onFormatsChange,
     onEditLink,
@@ -459,6 +464,7 @@ export function EditableInput({
     draft,
     decorationsFor,
     maxLength,
+    serializeDraft,
     onDraftChange,
     onFormatsChange,
     onEditLink,
@@ -593,8 +599,8 @@ export function EditableInput({
       filterTransaction(tr) {
         return (
           !tr.docChanged ||
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
-            current.current.maxLength
+          current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+            .length <= current.current.maxLength
         );
       },
       appendTransaction(transactions, old, state) {
@@ -874,8 +880,9 @@ export function EditableInput({
         // Like inline input rules, keep the typed source as the undo target.
         const typed = editor.state.tr.insertText(terminator);
         if (
-          composerMarkdown(projectComposerDocument(typed.doc).draft).length >
-          current.current.maxLength
+          current.current.serializeDraft(
+            projectComposerDocument(typed.doc).draft,
+          ).length > current.current.maxLength
         )
           return false;
         const previous = editor.state;
@@ -944,8 +951,8 @@ export function EditableInput({
       )
         tr.setStoredMarks(marks);
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       ) {
         onTooLong?.();
         return !!terminator; // The typed colon landed even if conversion cannot.
@@ -1036,8 +1043,8 @@ export function EditableInput({
         }
       }
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       ) {
         current.current.onPasteTooLong?.();
         return null;
@@ -1090,7 +1097,7 @@ export function EditableInput({
       const next = projectComposerDocument(tr.doc).draft;
       if (
         next.recipients.length > 32 ||
-        composerMarkdown(next).length > current.current.maxLength
+        current.current.serializeDraft(next).length > current.current.maxLength
       )
         return false;
       tr.setSelection(editor.state.selection.map(tr.doc, tr.mapping));
@@ -1142,8 +1149,8 @@ export function EditableInput({
         Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
       );
       if (
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-        current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       )
         return false;
       const before = editor.state;
@@ -1199,8 +1206,8 @@ export function EditableInput({
       // A longer current name can overrun the limit; the typed text then stands.
       if (
         recipient &&
-        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-          current.current.maxLength
+        current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+          .length > current.current.maxLength
       )
         tr = convert(null);
       editor.dispatch(tr);
@@ -1358,7 +1365,10 @@ export function EditableInput({
       const next = projectComposerDocument(tr.doc);
       if (next.tokens.filter((token) => token.node.attrs.resource).length > 32)
         return "Add at most 32 links to one message";
-      if (composerMarkdown(next.draft).length > current.current.maxLength)
+      if (
+        current.current.serializeDraft(next.draft).length >
+        current.current.maxLength
+      )
         return "Message is too long to add this link";
       if (brokenResources(tr.doc, next).length)
         return "Links can't be added inside code or other Markdown here";
@@ -1608,8 +1618,8 @@ export function EditableInput({
             ),
         );
         if (
-          composerMarkdown(projectComposerDocument(tr.doc).draft).length >
-          current.current.maxLength
+          current.current.serializeDraft(projectComposerDocument(tr.doc).draft)
+            .length > current.current.maxLength
         )
           return false;
         applied = true;
@@ -2510,7 +2520,7 @@ export function EditableInput({
       toggleFormat: { configurable: true, value: toggleFormat },
       insertLineBreak: {
         configurable: true,
-        value: () => {
+        value: (kind?: "paragraph" | "hard") => {
           if (!editable() || composing.current || editor.composing)
             return false;
           // Mac WebKit can keep painting a stale caret after a line break:
@@ -2521,7 +2531,20 @@ export function EditableInput({
           // (1.41.0). Remove once upstream repaints it.
           if (editor.state.selection.empty && editor.hasFocus() && macWebKit())
             editor.dom.ownerDocument.getSelection()?.removeAllRanges();
-          const tr = composerBlockLineBreak(editor.state);
+          let tr: Transaction | undefined;
+          if (kind === "hard")
+            tr = editor.state.selection.$from.parent.type.spec.code
+              ? editor.state.tr.insertText("\n")
+              : editor.state.tr.replaceSelectionWith(
+                  composerSchema.nodes.hard_break.create(),
+                );
+          else {
+            tr = composerBlockLineBreak(editor.state);
+            if (!tr && kind === "paragraph") {
+              const next = editor.state.tr;
+              if (apply(next, splitBlockKeepMarks)) tr = next;
+            }
+          }
           if (tr) editor.dispatch(closeHistory(tr).scrollIntoView());
           const inserted = !!tr || insert("\n");
           editor.focus();

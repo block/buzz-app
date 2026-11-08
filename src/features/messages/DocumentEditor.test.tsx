@@ -98,6 +98,67 @@ it("round-trips rich formatting into controlled source and accepts external repl
   ).toHaveTextContent("replacement");
 });
 
+it.each([
+  ["{Enter}", "First\n\nSecond"],
+  ["{Shift>}{Enter}{/Shift}", "First\\\nSecond"],
+])(
+  "saves %s with the reader's paragraph/break semantics",
+  async (key, expected) => {
+    const h = mount({}, { initialValue: "FirstSecond" });
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    act(() => {
+      input.focus();
+      input.setSelectionRange(5, 5);
+    });
+    await userEvent.setup().keyboard(key);
+    expect(h.change).toHaveBeenLastCalledWith(expected);
+  },
+);
+
+it.each(["{Enter}", "{Shift>}{Enter}{/Shift}"])(
+  "budgets the document serialization of %s",
+  async (key) => {
+    const h = mount({ maxLength: 12 }, { initialValue: "FirstSecond" });
+    const input = screen.getByRole("textbox", {
+      name: "Document body",
+    }) as ComposerInputElement;
+    act(() => {
+      input.focus();
+      input.setSelectionRange(5, 5);
+    });
+    await userEvent.setup().keyboard(key);
+    expect(h.change).not.toHaveBeenCalled();
+    expect(input.value).toBe("FirstSecond");
+  },
+);
+
+it("shows CommonMark soft breaks as spaces in rich mode", () => {
+  mount({}, { initialValue: "First\nSecond" });
+  expect(
+    screen.getByRole("textbox", { name: "Document body" }).textContent,
+  ).toBe("First Second");
+});
+
+it("keeps quoted paragraphs when editing outside their quote", () => {
+  const h = mount(
+    {},
+    { initialValue: "> First point\n>\n> Second point\n\nEnd" },
+  );
+  const input = screen.getByRole("textbox", {
+    name: "Document body",
+  }) as ComposerInputElement;
+  act(() => {
+    h.ref.current?.focusEnd();
+    input.insertText("!");
+  });
+  expect(h.change).toHaveBeenLastCalledWith(
+    "> First point\n>\n> Second point\n\nEnd!",
+  );
+  expect(input.querySelectorAll("blockquote p")).toHaveLength(2);
+});
+
 it("restores a declined rich edit to the controlled value", async () => {
   const change = vi.fn();
   const h = mount({ onChange: change });

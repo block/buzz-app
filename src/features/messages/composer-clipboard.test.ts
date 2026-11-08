@@ -74,9 +74,11 @@ it("reads its own blocks and marks back as nodes, with anchors and breaks as tex
       },
       {
         type: "bullet_list",
+        attrs: { spread: false },
         content: [
           {
             type: "list_item",
+            attrs: { spread: false },
             content: [
               {
                 type: "paragraph",

@@ -119,6 +119,10 @@ Keeping `value` unchanged declines a change; both modes restore that accepted
 value, including when returning from source to rich text.
 The component performs no relay writes and stores no drafts; saving, byte limits,
 conflicts, permissions and pending navigation remain the plugin's responsibility.
+Rich mode uses CommonMark paragraph and hard-break semantics like the document
+reader: Enter starts a paragraph and Shift+Enter inserts a hard break (lists and
+code retain their existing structural editing). The serialized length budget uses
+the same document format as `onChange`.
 
 ```js
 const [value, onChange] = ctx.react.useState("A **document**.");

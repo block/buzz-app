@@ -418,3 +418,87 @@ it("still mints invite links natively", async () => {
   expect(invoke).toHaveBeenCalledOnce();
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it("shows the minted invite link as a native QR code", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  let release: (svg: string) => void = () => {};
+  let fail = false;
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "qr_code") {
+      if (fail) throw "Couldn’t create the QR code.";
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    }
+    expect(command).toBe("relay_http");
+    const { max_uses } = JSON.parse((args as { body: string }).body) as {
+      max_uses: number | null;
+    };
+    const code = max_uses ? "limited" : "open";
+    return {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        code,
+        url: `https://primary.example/invite/${code}`,
+      }),
+    };
+  });
+  render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Invite members" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Add or invite people",
+  });
+  await within(dialog).findByDisplayValue(
+    "https://primary.example/invite/open",
+  );
+  const show = within(dialog).getByRole("button", { name: "Show QR code" });
+  await user.click(show);
+  // The host renders the link itself; the button waits for it.
+  expect(invoke).toHaveBeenLastCalledWith("qr_code", {
+    value: "https://primary.example/invite/open",
+  });
+  const hide = within(dialog).getByRole("button", { name: "Hide QR code" });
+  expect(hide).toHaveAttribute("aria-busy", "true");
+  expect(within(dialog).queryByRole("img")).toBeNull();
+  release("<svg/>");
+  const code = await within(dialog).findByRole("img", {
+    name: "Scan this QR code to open the invite link",
+  });
+  expect(code).toHaveAttribute(
+    "src",
+    `data:image/svg+xml,${encodeURIComponent("<svg/>")}`,
+  );
+  expect(hide).toHaveAttribute("aria-expanded", "true");
+  expect(code.parentElement).toHaveAttribute(
+    "id",
+    hide.getAttribute("aria-controls"),
+  );
+  // A new link hides the code for the old one.
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose maximum invite uses" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "1 use" }));
+  await within(dialog).findByDisplayValue(
+    "https://primary.example/invite/limited",
+  );
+  expect(within(dialog).queryByRole("img")).toBeNull();
+  fail = true;
+  await user.click(
+    within(dialog).getByRole("button", { name: "Show QR code" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Couldn’t create the QR code.",
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Show QR code" }),
+  ).toBeEnabled();
+  expect(fetch).not.toHaveBeenCalled();
+});

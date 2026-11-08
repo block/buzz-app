@@ -117,7 +117,9 @@ with the role read from the relay-signed roster through the selected
 community's existing session rather than a further session request. The
 Membership settings card applies the same role gate in both development and
 native builds. Owners and admins in both builds read the relay-signed member
-list, mint invite links, add members directly and change or remove members. Each
+list, mint invite links, add members directly and change or remove members.
+Native builds can also show a minted invite link as a QR code, drawn by the
+host's `qr_code` renderer that pairing uses; a new link hides the previous code. Each
 change is one NIP-43 command (kind 9030 add, 9031 remove, 9032 role) signed by
 the viewer: the broker signs it in development, and the native host signs only
 that exact shape and posts it to the relay's `/events`. The relay alone decides

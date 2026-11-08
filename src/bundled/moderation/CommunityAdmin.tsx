@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { communityFromScope } from "../../features/relay/gifs";
 import {
   useProfileGeneration,
@@ -13,6 +19,7 @@ import {
 } from "../../shared/identity/public-key";
 import {
   CaretDownIcon,
+  CaretUpIcon,
   CrownIcon,
   DotsThreeIcon,
   ShieldIcon,
@@ -50,6 +57,8 @@ import {
 } from "./membership";
 import { avatarMedia } from "../../shared/avatar-source";
 import { writeClipboardText } from "../../shared/clipboard";
+import { nativeIdentityEnabled } from "../../features/identity/service";
+import { QrCode, renderQrCode } from "../../shared/QrCode";
 
 const DAY = 24 * 60 * 60;
 const EXPIRY = [1, 3, 7, 30].map((days) => ({
@@ -517,6 +526,9 @@ function InviteDialog({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
+  // The QR code shown for one link; another link hides it.
+  const [qr, setQr] = useState<{ url: string; svg?: string } | null>(null);
+  const qrId = useId();
   // One minted link per settings; a missing entry for these settings mints.
   const settings = `${ttl}:${uses}`;
   const [link, setLink] = useState<{
@@ -557,6 +569,23 @@ function InviteDialog({
   }, [copied]);
   const url = current?.url;
   const pending = !!current && !url && !current.failed;
+  const shownQr = url && qr?.url === url ? qr : null;
+  function toggleQr() {
+    if (!url) return;
+    if (shownQr) {
+      setQr(null);
+      return;
+    }
+    setQr({ url });
+    setError("");
+    renderQrCode(url).then(
+      (svg) => setQr((shown) => (shown?.url === url ? { url, svg } : shown)),
+      (reason) => {
+        setQr((shown) => (shown?.url === url ? null : shown));
+        setError(message(reason));
+      },
+    );
+  }
   let directKey: string | null = null;
   let identityError = "";
   if (identity.trim()) {
@@ -592,6 +621,7 @@ function InviteDialog({
         minting.current++;
         requested.current = "";
         setLink(null);
+        setQr(null);
         setTtl(String(3 * DAY));
         setUses("");
         setIdentity("");
@@ -697,6 +727,33 @@ function InviteDialog({
               {current?.failed ? "Retry" : copied ? "Copied" : "Copy link"}
             </Button>
           </InputGroup>
+          {url && nativeIdentityEnabled() && (
+            <div className="mt-3 mb-3 flex flex-col items-center gap-3">
+              <Button
+                variant="plain"
+                size="sm"
+                aria-expanded={!!shownQr}
+                aria-controls={qrId}
+                loading={!!shownQr && !shownQr.svg}
+                onClick={toggleQr}
+              >
+                {shownQr ? "Hide QR code" : "Show QR code"}
+                {shownQr ? (
+                  <CaretUpIcon size={14} aria-hidden="true" />
+                ) : (
+                  <CaretDownIcon size={14} aria-hidden="true" />
+                )}
+              </Button>
+              <div id={qrId} hidden={!shownQr?.svg}>
+                {shownQr?.svg && (
+                  <QrCode
+                    svg={shownQr.svg}
+                    alt="Scan this QR code to open the invite link"
+                  />
+                )}
+              </div>
+            </div>
+          )}
           <div className="flex flex-col gap-1">
             <div className="flex items-center justify-between gap-4">
               <span className="text-label-sm">Expires after</span>

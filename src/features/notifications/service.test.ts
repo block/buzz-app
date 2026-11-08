@@ -5,6 +5,8 @@ import type { PluginModule } from "../../plugins/api";
 import { provideNavigation } from "../navigation/service";
 import { NotificationsService, type Notifications } from "./service";
 import { createNotificationPreferences } from "./preferences";
+// @ts-expect-error -- example plugins ship as untyped, prebuilt JavaScript.
+import * as examplePack from "../../../examples/plugins/sound-pack/plugin.js";
 import type {
   NotificationPlatform,
   NotificationPermissionState,
@@ -20,6 +22,7 @@ const contexts: Context[] = [];
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 function setup() {
   const ctx = new Context();
@@ -353,6 +356,27 @@ it("plays the selected per-category sound once delivery is accepted", async () =
   await flush();
   expect(t.plays).toEqual(["ping", "flutter"]);
 });
+it("a plugin sound that is not installed plays the default and keeps the choice", async () => {
+  const t = setup();
+  t.service.updatePreferences({
+    sounds: {
+      mention: "example.sound-pack/chime",
+      direct: "unison",
+      thread: "doop",
+      agent: "silent",
+    },
+  });
+  await t.submit("one");
+  await flush();
+  expect(t.plays).toEqual(["flutter"]);
+  expect(t.service.snapshot().preferences.sounds.mention).toBe(
+    "example.sound-pack/chime",
+  );
+  // Solo chat completions share the same resolution.
+  t.service.playCategorySound("agent");
+  t.service.playCategorySound("thread");
+  expect(t.plays).toEqual(["flutter", "doop"]);
+});
 it("sound off delivers silently and a failed submission never plays", async () => {
   const t = setup();
   t.service.updatePreferences({ sound: false });
@@ -543,4 +567,213 @@ it("plugin display text is flattened and bounded, with the category text as fall
   expect(rich.body.startsWith("Call Ana <b>raw</b> bbb")).toBe(true);
   expect(Array.from(rich.body)).toHaveLength(200);
   expect(shown[1]).toMatchObject({ title: "Buzz", body: "New updates" });
+});
+function soundPack(id = "pack", sounds = ["chime"], bytes = 4) {
+  return {
+    id,
+    label: "Example pack",
+    sounds: sounds.map((sound) => ({
+      id: sound,
+      label: `Sound ${sound}`,
+      audio: new Blob([new Uint8Array(bytes)], { type: "audio/wav" }),
+    })),
+  };
+}
+it("plugin sound packs join the alert path and leave with their plugin", async () => {
+  const created = vi.spyOn(URL, "createObjectURL");
+  const revoked = vi.spyOn(URL, "revokeObjectURL");
+  const t = setup();
+  let register: Notifications["sounds"]["register"] | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      register = (pack) => ctx.notifications.sounds.register(pack);
+      ctx.notifications.sounds.register(soundPack("pack", ["chime", "done"]));
+    },
+  });
+  await vi.waitFor(() =>
+    expect(t.service.soundRegistry.snapshot()).toHaveLength(1),
+  );
+  expect(t.service.soundRegistry.snapshot()).toEqual([
+    {
+      key: "test.plugin/pack",
+      label: "Example pack",
+      sounds: [
+        { ref: "test.plugin/chime", label: "Sound chime" },
+        { ref: "test.plugin/done", label: "Sound done" },
+      ],
+    },
+  ]);
+  const chime = t.service.soundRegistry.source("test.plugin/chime");
+  expect(chime).toMatch(/^blob:/);
+  t.service.updatePreferences({
+    sounds: {
+      ...t.service.snapshot().preferences.sounds,
+      mention: "test.plugin/chime",
+    },
+  });
+  await t.submit("one");
+  await flush();
+  expect(t.plays).toEqual(["test.plugin/chime"]);
+
+  const remove = register?.(soundPack("extra", ["bell"]));
+  expect(t.service.soundRegistry.snapshot()).toHaveLength(2);
+  remove?.();
+  expect(t.service.soundRegistry.snapshot()).toHaveLength(1);
+  expect(t.service.soundRegistry.isAvailable("test.plugin/bell")).toBe(false);
+
+  t.disable();
+  await flush();
+  expect(t.service.soundRegistry.snapshot()).toEqual([]);
+  expect(t.service.soundRegistry.isAvailable("test.plugin/chime")).toBe(false);
+  expect(revoked.mock.calls.map(([url]) => url).sort()).toEqual(
+    created.mock.results.map((result) => result.value).sort(),
+  );
+  await t.submit("two");
+  await flush();
+  expect(t.plays).toEqual(["test.plugin/chime", "flutter"]);
+  expect(t.service.snapshot().preferences.sounds.mention).toBe(
+    "test.plugin/chime",
+  );
+});
+it("an invalid sound pack registers nothing", async () => {
+  const created = vi.spyOn(URL, "createObjectURL");
+  const t = setup();
+  let register: Notifications["sounds"]["register"] | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      register = (pack) => ctx.notifications.sounds.register(pack);
+    },
+  });
+  await vi.waitFor(() => expect(register).toBeDefined());
+  const tooLarge = soundPack("big", ["huge"], 512 * 1024 + 1);
+  const notAudio = {
+    ...soundPack("text"),
+    sounds: [{ id: "chime", label: "Chime", audio: "chime.mp3" }],
+  } as unknown as ReturnType<typeof soundPack>;
+  for (const pack of [
+    soundPack("Bad Id"),
+    { ...soundPack(), label: "" },
+    soundPack("empty", []),
+    soundPack(
+      "many",
+      Array.from({ length: 33 }, (_, i) => `s${i}`),
+    ),
+    soundPack("twice", ["chime", "chime"]),
+    tooLarge,
+  ])
+    expect(() => register?.(pack)).toThrow(RangeError);
+  expect(() => register?.(notAudio)).toThrow(TypeError);
+  expect(created).not.toHaveBeenCalled();
+
+  register?.(soundPack("pack", ["chime"]));
+  expect(() => register?.(soundPack("pack", ["other"]))).toThrow(
+    "duplicate pack id",
+  );
+  // Refs are `<pluginId>/<soundId>`, so ids are unique across a plugin's packs.
+  expect(() => register?.(soundPack("second", ["chime"]))).toThrow(RangeError);
+  for (let i = 1; i < 8; i++) register?.(soundPack(`p${i}`, [`s${i}`]));
+  expect(() => register?.(soundPack("ninth", ["s9"]))).toThrow(RangeError);
+  expect(t.service.soundRegistry.snapshot()).toHaveLength(8);
+});
+it("a plugin's sound packs share a 4 MiB audio budget", async () => {
+  const t = setup();
+  let register: Notifications["sounds"]["register"] | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      register = (pack) => ctx.notifications.sounds.register(pack);
+    },
+  });
+  await vi.waitFor(() => expect(register).toBeDefined());
+  const half = 512 * 1024;
+  register?.(soundPack("one", ["a1", "a2", "a3", "a4"], half));
+  register?.(soundPack("two", ["b1", "b2", "b3", "b4"], half));
+  expect(() => register?.(soundPack("three", ["c1"], 1))).toThrow(
+    "at most 4 MiB",
+  );
+});
+it("a plugin sound that fails to load warns once and alerts fall back to the default", async () => {
+  const instances: { onerror: (() => void) | null }[] = [];
+  vi.stubGlobal(
+    "Audio",
+    class {
+      currentTime = 0;
+      onerror: (() => void) | null = null;
+      play = vi.fn(async () => {});
+      constructor() {
+        instances.push(this);
+      }
+    },
+  );
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const t = setup();
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      ctx.notifications.sounds.register(soundPack());
+    },
+  });
+  await vi.waitFor(() =>
+    expect(t.service.soundRegistry.isAvailable("test.plugin/chime")).toBe(true),
+  );
+  t.service.soundRegistry.play("test.plugin/chime");
+  instances[0]?.onerror?.();
+  instances[0]?.onerror?.();
+  expect(warn).toHaveBeenCalledOnce();
+  expect(warn.mock.calls[0]?.[0]).toContain("test.plugin/chime");
+  expect(t.service.soundRegistry.isAvailable("test.plugin/chime")).toBe(false);
+  t.service.updatePreferences({
+    sounds: {
+      ...t.service.snapshot().preferences.sounds,
+      mention: "test.plugin/chime",
+    },
+  });
+  await t.submit("one");
+  await flush();
+  expect(t.plays).toEqual(["flutter"]);
+});
+it("the example Starship pack registers playable WAV sounds", async () => {
+  const blobs: Blob[] = [];
+  vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+    blobs.push(blob as Blob);
+    return `blob:test/${blobs.length}`;
+  });
+  const t = setup();
+  t.install(examplePack as PluginModule);
+  await vi.waitFor(() =>
+    expect(t.service.soundRegistry.snapshot()).toHaveLength(1),
+  );
+  const [pack] = t.service.soundRegistry.snapshot();
+  expect(pack?.label).toBe("Starship");
+  expect(pack?.sounds.map((sound) => sound.ref)).toEqual([
+    "test.plugin/shield-recharge",
+    "test.plugin/plasma-shot",
+    "test.plugin/comms-ping",
+    "test.plugin/mission-complete",
+  ]);
+  for (const blob of blobs) {
+    expect(blob.type).toBe("audio/wav");
+    const header = new Uint8Array(await blob.arrayBuffer()).subarray(0, 12);
+    expect(new TextDecoder().decode(header)).toMatch(/^RIFF.{4}WAVE$/s);
+  }
+});
+it("registering after the plugin's scope ended leaves no media URL behind", async () => {
+  const created = vi.spyOn(URL, "createObjectURL");
+  const revoked = vi.spyOn(URL, "revokeObjectURL");
+  const t = setup();
+  let notifications: Notifications | undefined;
+  t.install({
+    inject: ["notifications"],
+    apply(ctx) {
+      notifications = ctx.notifications;
+    },
+  });
+  await vi.waitFor(() => expect(notifications).toBeDefined());
+  t.disable();
+  await flush();
+  expect(() => notifications?.sounds.register(soundPack())).toThrow();
+  expect(t.service.soundRegistry.snapshot()).toEqual([]);
+  expect(revoked).toHaveBeenCalledTimes(created.mock.calls.length);
 });

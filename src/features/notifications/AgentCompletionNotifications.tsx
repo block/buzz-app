@@ -13,7 +13,6 @@ import {
   completionToast,
   shouldShowForegroundCompletion,
 } from "./agent-completions";
-import { playNotificationSound, resolveCategorySound } from "./sound";
 
 export function AgentCompletionNotifications({
   services,
@@ -53,9 +52,7 @@ export function AgentCompletionNotifications({
           const { preferences } = state;
           if (!shouldShowForegroundCompletion(state)) return;
           if (preferences.sound)
-            playNotificationSound(
-              resolveCategorySound(preferences.sounds, "agent"),
-            );
+            services.notifications.playCategorySound("agent");
           notify(
             completionToast(agentName(services, work.agent), work),
             work.state === "error" ? "error" : "success",

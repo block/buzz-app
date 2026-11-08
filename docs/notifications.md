@@ -10,9 +10,12 @@ gate never rewrites saved preferences. Settings shows the pause and how to remov
 it; normal behavior still honors account choices and system permission.
 Production builds ignore this variable.
 Notification sound is app-owned on browser and desktop: Buzz bundles a set of
-alert sounds under `public/sounds/`, and the notifications service plays the
+alert sounds under `public/sounds/`, plugins can add
+[sound packs](plugin-architecture.md), and the notifications service plays the
 per-category selection (with a shared default) in the running app after a
-banner submission is accepted. OS banners are always submitted silent, so the
+banner submission is accepted. A selected plugin sound whose pack is disabled
+or failed to load plays the default sound and stays selected. OS banners are
+always submitted silent, so the
 system never plays a second sound: the browser banner sets `silent: true`, the
 Windows toast is built with silent audio (`sound(None)`), Linux Notify sends
 the standard `suppress-sound` hint, and the macOS backend never sets a sound

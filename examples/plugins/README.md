@@ -6,6 +6,9 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+G /
   Control+Shift+G increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.
+- `sound-pack`: Starship Sound Pack, four synthesized sci-fi alert sounds in the
+  sound menus in Settings → Notifications. Requires `notifications`; see
+  [sound packs](../../docs/plugin-architecture.md) to ship your own audio.
 
 ## Try the offline playgrounds
 

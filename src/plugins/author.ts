@@ -142,6 +142,10 @@ export type {
   NotificationCategoryDescriptor,
   NotificationGate,
 } from "../features/notifications/service";
+export type {
+  SoundDefinition,
+  SoundPackDescriptor,
+} from "../features/notifications/sounds";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
 

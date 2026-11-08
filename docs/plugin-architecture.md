@@ -807,6 +807,23 @@ plugin removes its gates. Gates never widen the host's own access and
 preference checks. A refused alert is dropped, not queued. Focus registers one
 only while Focus is on.
 
+`notifications.sounds.register({ id, label, sounds: [{ id, label, audio }] })`
+adds a sound pack. Each category's sound menu in Settings lists the pack as a
+group headed by `label`, and a chosen sound plays through the same alert path,
+gating and Sound switch as bundled sounds. `audio` is a `Blob` or `ArrayBuffer`
+of encoded audio the system webview can decode (mp3, m4a, wav or ogg); external
+plugins have no asset files, so a pack inlines its audio in `plugin.js` and the
+host plays it from a `blob:` URL. Pack and sound ids match `[a-z0-9-]{1,32}`;
+sound ids are unique across the plugin's packs because a saved choice is
+`<pluginId>/<soundId>`. Labels are at most 32 characters. A plugin may register
+8 packs of 1 to 32 sounds, each sound at most 512 KiB and 4 MiB in total.
+Registration validates the whole pack first and throws `RangeError` (or
+`TypeError` for other `audio` values) without registering any of it. It returns
+a remover, and disabling the plugin removes its packs. A saved choice whose
+pack is gone stays saved and shown as unavailable; alerts play the default
+sound until the pack returns. A sound that fails to load logs one warning and
+falls back the same way. `examples/plugins/sound-pack` is a working pack.
+
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
 render it as a decorative image, with the generic icon when it is absent or fails

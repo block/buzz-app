@@ -9,12 +9,13 @@ import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { usePermissionCheck } from "./usePermissionCheck";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
+import type { SoundPack } from "../features/notifications/sounds";
 import type { NotificationCategory } from "../features/notifications/preferences";
 import {
   CATEGORY_SOUND_LABELS,
   RECOMMENDED_SOUND_BY_CATEGORY,
   SOUND_NAMES,
-  type SoundName,
+  type SoundRef,
 } from "../features/notifications/sound";
 import styles from "./NotificationSettings.module.css";
 
@@ -29,15 +30,24 @@ const SOUND_ROWS: readonly NotificationCategory[] = [
 function AlertSoundRow({
   category,
   value,
+  available,
+  packs,
   disabled,
   onChange,
 }: {
   category: NotificationCategory;
-  value: SoundName;
+  value: SoundRef;
+  available: boolean;
+  packs: readonly SoundPack[];
   disabled: boolean;
-  onChange: (next: SoundName) => void;
+  onChange: (next: SoundRef) => void;
 }) {
   const recommended = RECOMMENDED_SOUND_BY_CATEGORY[category];
+  const packSound = packs
+    .flatMap((pack) => pack.sounds)
+    .find((sound) => sound.ref === value);
+  // A listed sound keeps its own option even after its audio failed to load.
+  const unavailable = available || packSound ? null : `${value} (unavailable)`;
 
   const names = [
     "silent",
@@ -54,10 +64,15 @@ function AlertSoundRow({
           variant="compact"
           disabled={disabled}
           value={value}
-          valueLabel={value === "silent" ? "Silent" : value}
+          valueLabel={
+            value === "silent"
+              ? "Silent"
+              : (unavailable ?? packSound?.label ?? value)
+          }
           groups={[
             {
-              label: "",
+              // Unlabelled until a pack adds a second group.
+              label: packs.length ? "Buzz" : "",
               options: names.map((name) => ({
                 value: name,
                 label:
@@ -68,8 +83,20 @@ function AlertSoundRow({
                       : name,
               })),
             },
+            // A choice whose pack is disabled stays listed and selected, so
+            // Select never replaces it and re-enabling the pack restores it.
+            ...(unavailable
+              ? [{ label: "", options: [{ value, label: unavailable }] }]
+              : []),
+            ...packs.map((pack) => ({
+              label: pack.label,
+              options: pack.sounds.map((sound) => ({
+                value: sound.ref,
+                label: sound.label,
+              })),
+            })),
           ]}
-          onValueChange={(next) => onChange(next as SoundName)}
+          onValueChange={(next) => onChange(next as SoundRef)}
         />
       }
     />
@@ -88,12 +115,16 @@ export function NotificationSettings({
     notifications.snapshot,
   );
   const { preferences, permission } = state;
+  const soundPacks = useSyncExternalStore(
+    notifications.soundRegistry.subscribe,
+    notifications.soundRegistry.snapshot,
+  );
   const [checking, checkPermission] = usePermissionCheck(() =>
     notifications.refreshPermission(),
   );
   const preview = useRef<{
     category: NotificationCategory;
-    name: SoundName;
+    name: SoundRef;
   } | null>(null);
   const previewAudio = useRef<HTMLAudioElement | null>(null);
   const stopPreview = useCallback((owner?: HTMLAudioElement) => {
@@ -109,11 +140,12 @@ export function NotificationSettings({
     preview.current = null;
   }, []);
   const previewSound = useCallback(
-    (category: NotificationCategory, name: SoundName) => {
+    (category: NotificationCategory, name: SoundRef) => {
       stopPreview();
-      if (name === "silent") return;
+      const source = notifications.soundRegistry.source(name);
+      if (!source) return;
       try {
-        const audio = new Audio(`/sounds/${name}.mp3`);
+        const audio = new Audio(source);
         previewAudio.current = audio;
         preview.current = { category, name };
         const stop = () => stopPreview(audio);
@@ -125,7 +157,7 @@ export function NotificationSettings({
         stopPreview();
       }
     },
-    [stopPreview],
+    [notifications, stopPreview],
   );
   useEffect(
     () => () => {
@@ -274,6 +306,10 @@ export function NotificationSettings({
                         category={category}
                         disabled={preferences.categories[category] === false}
                         value={preferences.sounds[category]}
+                        available={notifications.soundRegistry.isAvailable(
+                          preferences.sounds[category],
+                        )}
+                        packs={soundPacks}
                         onChange={(next) => {
                           if (next === preferences.sounds[category]) return;
                           notifications.updatePreferences({

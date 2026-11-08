@@ -590,6 +590,7 @@ export function ChannelInventory({
                     kind: "channel",
                     channelId: channel.id,
                   }),
+                workingChannels.has(channel.id),
               ),
             }));
             const sorted = sortSidebarRows(
@@ -602,7 +603,14 @@ export function ChannelInventory({
               : { ...section, rows: sorted.map(({ channel }) => channel) };
           })
         : sections,
-    [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
+    [
+      sections,
+      rowSortModes,
+      sectionSort,
+      rowUnread,
+      queries.unread,
+      workingChannels,
+    ],
   );
   const filteredSections = useSidebarFilters(
     sortedSections,

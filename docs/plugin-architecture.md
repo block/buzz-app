@@ -455,8 +455,8 @@ Focus is the first caller and registers its restriction only while Focus is on.
 ### Decorating host sidebar rows and adding sort modes
 
 `ctx.reflect.get("sidebarRows")` is an optional version-1 capability for host
-Team channel and direct-message rows, including rows moved into custom groups.
-Solo conversations are not supported yet. Use the reflective lookup rather than
+Team channel and direct-message rows, including rows moved into custom groups,
+and for Solo chats. Use the reflective lookup rather than
 required `inject` so the plugin still activates on older hosts.
 
 ```tsx
@@ -471,7 +471,9 @@ ctx.reflect.get("sidebarRows")?.register({
 });
 ```
 
-`row` contains `id`, `kind` (`team` or `dm`), `label`, `sectionKey`, the current
+`row` contains `id`, `kind` (`team`, `dm` or `solo`), `label`, `sectionKey`
+(Team: the section key; Solo: the workspace id, or `""` for unfiled chats),
+`working` (an agent is working in the channel), the current
 `channel` summary (including available labels, visibility and activity data), and
 its current `unread` snapshot. Unknown unread counts remain `null`; activity
 fields retain their existing units and unknown values. This is the host's
@@ -519,6 +521,9 @@ ctx.reflect.get("sidebarRows")?.register({
 ```
 
 Modes appear beside A–Z and Recent in each Team section's existing Sort menu.
+Each Solo workspace menu, and the unfiled Chats menu, gets the same Sort submenu
+once a mode is registered; Solo stays recent-first by default and saves the
+choice per workspace locally. An unavailable saved mode uses the default order.
 Their persisted values are `plugin:<plugin-id>/<contribution-id>/<mode-id>`;
 ids use lowercase ASCII letters, digits, dots, underscores and hyphens, starting
 with a letter or digit, with a combined value limit of 512 characters. A registration
@@ -559,6 +564,34 @@ The extension has its own 104-entry limit, separate from the 104 projected
 built-in sort groups. Writers must retain the extension when editing other
 sections. There is no automatic reorder-without-menu hook and no insertion hook
 in this version; use `sidebarSections` for new rows.
+
+Solo-only `group(row)` returns `{ id, label }` to fold a chat under a
+collapsible heading, or `null`/`undefined` to leave it ungrouped. Contributions
+are asked in lexical order and the first valid result wins; a throw, an id that
+breaks the id pattern, or a blank label is ignored. Grouped rows gather
+contiguously at their first member's position after sorting, start collapsed,
+and open for the selected or renamed chat. Grouped rows bypass a workspace's
+Show more cap and rows in a closed group are skipped as neighbors. Team sections
+ignore `group` for now. Rows are never removed by grouping.
+
+```ts
+ctx.reflect.get("sidebarRows")?.register({
+  version: 1,
+  id: "attention",
+  sortModes: [{
+    id: "unread-first",
+    label: "Unread first",
+    compare: (a, b) =>
+      Number((b.unread.attentionCount ?? 0) > 0) -
+        Number((a.unread.attentionCount ?? 0) > 0) ||
+      a.id.localeCompare(b.id),
+  }],
+  group: (row) =>
+    row.kind === "solo" && row.working
+      ? { id: "working", label: "Working" }
+      : null,
+});
+```
 
 A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.pages.register({ id, title, layout?, companion?, primary?, placement?, icon?, component, sidebar? })`. Panels register with

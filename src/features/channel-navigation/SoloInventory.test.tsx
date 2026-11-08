@@ -14,6 +14,12 @@ import { writeView } from "../../shared/view-state";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import type { Contribution } from "../../plugins/contributions";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
+import type {
+  RegisteredSidebarRows,
+  SidebarRow,
+  SidebarRowContribution,
+  SidebarRows,
+} from "./sidebar-rows-service";
 
 import {
   fixture,
@@ -410,4 +416,196 @@ it("shows plugin actions in the primary sidebar right-click menu", async () => {
   expect(
     await screen.findByRole("menuitem", { name: "Unlink pull request" }),
   ).toBeVisible();
+});
+
+const registered = (
+  contribution: Partial<SidebarRowContribution>,
+): SidebarRows => {
+  const entries = [
+    {
+      id: "rows",
+      key: "test/rows",
+      pluginId: "test",
+      revision: "1",
+      version: 1,
+      ...contribution,
+    },
+  ] as unknown as readonly RegisteredSidebarRows[];
+  return {
+    version: 1,
+    snapshot: () => entries,
+    subscribe: () => () => {},
+    register: () => {},
+  };
+};
+const withRows = (contribution: Partial<SidebarRowContribution>) => {
+  const f = fixture(
+    false,
+    false,
+    undefined,
+    undefined,
+    0,
+    undefined,
+    undefined,
+    { sidebarRows: registered(contribution) },
+  );
+  return {
+    ...f,
+    work() {
+      f.activity({
+        ...f.activitySnapshot,
+        status: "listening",
+        turns: [
+          {
+            channelId: id,
+            agent,
+            turnId: "one",
+            timestamp: Date.now(),
+            state: "working",
+          },
+        ],
+      });
+    },
+  };
+};
+const rowIds = () =>
+  Array.from(document.querySelectorAll("[data-solo-channel-id]")).map((row) =>
+    row.getAttribute("data-solo-channel-id"),
+  );
+
+it("keeps Solo order and DOM unchanged without contributions", () => {
+  fixture();
+  const expected = rowIds();
+  const stable = () =>
+    document.body.innerHTML.replace(/(base-ui-_r_|Dnd\w+-)\w+/g, "$1");
+  const html = stable();
+  cleanup();
+  fixture(false, false, undefined, undefined, 0, undefined, undefined, {
+    sidebarRows: registered({}),
+  });
+  expect(rowIds()).toEqual(expected);
+  expect(stable()).toBe(html);
+  expect(document.querySelector("[data-solo-group]")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /Actions for Chats/ }),
+  ).toBeNull();
+});
+
+it("decorates Solo rows, falls back when a renderer throws and hides on null", () => {
+  withRows({
+    render: (row, Default) =>
+      row.kind === "solo" && row.id === id ? (
+        <div data-decorated={String(row.working)}>{Default}</div>
+      ) : (
+        Default
+      ),
+  });
+  expect(document.querySelector("[data-decorated]")).toHaveAttribute(
+    "data-decorated",
+    "false",
+  );
+  expect(rowIds()).toEqual([id, other]);
+  cleanup();
+  withRows({
+    render: () => {
+      throw new Error("boom");
+    },
+  });
+  expect(rowIds()).toEqual([id, other]);
+  cleanup();
+  withRows({ render: (row, Default) => (row.id === id ? null : Default) });
+  expect(rowIds()).toEqual([other]);
+});
+
+it("offers plugin sort modes in the Chats menu and remembers the choice", async () => {
+  const user = userEvent.setup();
+  const modes = {
+    sortModes: [
+      {
+        id: "other-first",
+        label: "Other first",
+        compare: (a: SidebarRow, b: SidebarRow) =>
+          Number(b.id === other) - Number(a.id === other),
+      },
+    ],
+  };
+  withRows(modes);
+  expect(rowIds()).toEqual([id, other]);
+  await user.click(screen.getByRole("button", { name: "Actions for Chats" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Sort" }));
+  fireEvent.click(
+    await screen.findByRole("menuitemradio", { name: "Other first" }),
+  );
+  expect(rowIds()).toEqual([other, id]);
+  cleanup();
+  withRows(modes);
+  expect(rowIds()).toEqual([other, id]);
+  cleanup();
+  withRows({});
+  expect(rowIds()).toEqual([id, other]);
+});
+
+it("collapses grouped Solo chats, persists the open state and keeps the selected group open", async () => {
+  const user = userEvent.setup();
+  const group = {
+    group: (row: SidebarRow) =>
+      row.working ? { id: "working", label: "1 working" } : null,
+  };
+  const f = withRows(group);
+  expect(document.querySelector("[data-solo-group]")).toBeNull();
+  f.work();
+  const header = screen.getByRole("button", { name: /1 working/ });
+  expect(header).toHaveAttribute("aria-expanded", "false");
+  expect(rowIds()).toEqual([other]);
+  await user.click(header);
+  expect(header).toHaveAttribute("aria-expanded", "true");
+  expect(rowIds()).toEqual([id, other]);
+  cleanup();
+  const again = withRows(group);
+  again.work();
+  expect(screen.getByRole("button", { name: /1 working/ })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  cleanup();
+  localStorage.clear();
+  withRows({
+    group: (row: SidebarRow) =>
+      row.id === other ? { id: "open", label: "Open" } : null,
+  });
+  expect(screen.getByRole("button", { name: /Open/ })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  expect(rowIds()).toContain(other);
+});
+
+it("ignores a saved sort when no plugin offers sort modes", () => {
+  writeView(scope, "solo:sort", { "": "alpha" });
+  fixture();
+  expect(rowIds()).toEqual([id, other]);
+});
+
+it("keeps grouped chats out of Show more and Show less", () => {
+  fixture(false, false, undefined, undefined, 9, undefined, undefined, {
+    sidebarRows: registered({
+      group: (row: SidebarRow) =>
+        row.id.startsWith("newer-") ? { id: "newer", label: "Newer" } : null,
+    }),
+  });
+  expect(screen.getByRole("button", { name: "Newer" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  expect(document.querySelector("[data-solo-show-more]")).toBeNull();
+});
+
+it("drops a group heading when every member is hidden", () => {
+  withRows({
+    group: (row: SidebarRow) =>
+      row.id === other ? { id: "open", label: "Open" } : null,
+    render: (row: SidebarRow, Default) => (row.id === other ? null : Default),
+  });
+  expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
+  expect(rowIds()).toEqual([id]);
 });

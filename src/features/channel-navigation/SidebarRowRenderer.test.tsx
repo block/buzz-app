@@ -20,6 +20,7 @@ it("leaves host output identical with no plugin", () => {
     kind: "team",
     label: "Host row",
     sectionKey: "channels",
+    working: false,
     channel: { id: "row", name: "Host row" },
     unread: {
       target: { kind: "channel", channelId: "row" },

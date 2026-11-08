@@ -48,12 +48,18 @@ import {
 import creationStyles from "./SoloInventory.module.css";
 import { PlusIcon, ChatCircleIcon } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import type {
+  RegisteredSidebarRows,
+  SidebarRows,
+} from "./sidebar-rows-service";
 import type { ContributionReader } from "../conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 
 const noSubscription = () => () => {};
+const emptyRows: readonly RegisteredSidebarRows[] = [];
+const noSidebarRows = () => emptyRows;
 const chatIcon = (
   <span className={styles.conversationIcon} aria-hidden="true">
     <ChatCircleIcon size={16} />
@@ -68,6 +74,7 @@ export function SoloInventory({
   target,
   chatIcons,
   chatMenus,
+  sidebarRows,
   renderContents,
 }: {
   session: RelaySession;
@@ -77,6 +84,7 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  sidebarRows?: SidebarRows | undefined;
   /** Places the conversations in a host that titles them; creation then
    * belongs to the host's own New menu, so only the standalone header has it. */
   renderContents?: (
@@ -121,6 +129,11 @@ export function SoloInventory({
   const menus = useSyncExternalStore(
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
+  );
+  const rowEntries = useSyncExternalStore(
+    sidebarRows?.subscribe ?? noSubscription,
+    sidebarRows?.snapshot ?? noSidebarRows,
+    sidebarRows?.snapshot ?? noSidebarRows,
   );
   const workingChannels = useMemo(
     () => new Set<string>(JSON.parse(workingIds)),
@@ -346,9 +359,13 @@ export function SoloInventory({
               ?.focus({ preventScroll: true });
           });
         }}
+        sidebarRows={rowEntries}
         chats={conversations.map((item) => ({
           id: item.id,
           title: item.name,
+          channel: item,
+          working: workingChannels.has(item.id),
+          selected: selected === item.id,
           pinned:
             selected === item.id ||
             workingChannels.has(item.id) ||

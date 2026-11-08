@@ -28,7 +28,6 @@ import {
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-  ArrowsDownUpIcon,
   CaretDownIcon,
   ChatsCircleIcon,
   ChatUnreadIcon,
@@ -36,7 +35,6 @@ import {
   Filter2Icon,
   PencilSimpleIcon,
   PlusIcon,
-  TextAaIcon,
   TimerIcon,
   TrashIcon,
 } from "../../shared/design-system/icons";
@@ -49,6 +47,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { SidebarSortMode } from "../../features/relay/sidebar-sort";
 import type { SidebarFilter } from "./useSidebarFilters";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
+import { SortSubmenu } from "./SortSubmenu";
 import { SidebarStarIcon } from "./SidebarStarIcon";
 import { ChannelSidebarMenuItem } from "./ChannelSidebarMenuItem";
 import styles from "./Channels.module.css";
@@ -309,49 +308,15 @@ export function SidebarSection({
                     </MenuSubmenu>
                   )}
                   {sort && (
-                    <MenuSubmenu>
-                      <MenuSubmenuTrigger>
-                        <MenuIcon>
-                          <ArrowsDownUpIcon size={14} />
-                        </MenuIcon>
-                        Sort
-                      </MenuSubmenuTrigger>
-                      <MenuSubmenuPopup
-                        aria-label={`Sort ${title}`}
-                        finalFocus={false}
-                      >
-                        <MenuRadioGroup
-                          value={sort.value}
-                          onValueChange={(mode) => {
-                            sort.change(mode as SidebarSortMode);
-                            setMenuOpen(false);
-                          }}
-                        >
-                          <MenuRadioItem closeOnClick={false} value="recent">
-                            <MenuIcon>
-                              <TimerIcon size={14} />
-                            </MenuIcon>
-                            Recent
-                          </MenuRadioItem>
-                          <MenuRadioItem closeOnClick={false} value="alpha">
-                            <MenuIcon>
-                              <TextAaIcon size={14} />
-                            </MenuIcon>
-                            A–Z
-                          </MenuRadioItem>
-                          {sort.modes?.map((mode) => (
-                            <MenuRadioItem
-                              key={mode.id}
-                              closeOnClick={false}
-                              value={mode.id}
-                            >
-                              <MenuIcon>{null}</MenuIcon>
-                              {mode.label}
-                            </MenuRadioItem>
-                          ))}
-                        </MenuRadioGroup>
-                      </MenuSubmenuPopup>
-                    </MenuSubmenu>
+                    <SortSubmenu
+                      title={title}
+                      value={sort.value}
+                      modes={sort.modes}
+                      onChange={(mode) => {
+                        sort.change(mode);
+                        setMenuOpen(false);
+                      }}
+                    />
                   )}
                   {createSection && (
                     <>

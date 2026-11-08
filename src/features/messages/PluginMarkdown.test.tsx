@@ -20,6 +20,37 @@ function fixture() {
   return { root, runtime, Markdown };
 }
 
+it.each([
+  `buzz://repo?owner=${"b".repeat(64)}&d=example`,
+  "buzz://agent/new?card=example",
+  "buzz://project",
+])(
+  "reports unavailable for viewerless internal navigation: %s",
+  async (url) => {
+    const { root, runtime, Markdown } = fixture();
+    const open = vi.fn(async () => ({ status: "opened" as const }));
+    root.provide("navigation", {
+      open,
+    } as unknown as import("../navigation/controller").Navigation);
+    const session = {
+      viewer: undefined,
+      scope: "undefined:undefined",
+    } as unknown as RelaySession;
+    try {
+      render(<Markdown session={session} content={`[Open](${url})`} />);
+      await userEvent.click(screen.getByRole("link", { name: "Open" }));
+      expect(
+        await screen.findByText("This Buzz link couldn’t be opened here."),
+      ).toBeVisible();
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      await runtime.dispose();
+      await root.fiber.dispose();
+    }
+  },
+);
+
 it("injected Markdown preserves safe URLs, formatted Buzz links and image-as-text policy", async () => {
   const { root, runtime, Markdown } = fixture();
   const openLink = vi.fn(() => true);

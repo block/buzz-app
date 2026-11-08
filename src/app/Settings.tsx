@@ -1486,7 +1486,9 @@ export function Settings({
             lastActive={lastActive}
           />
         )}
-        {selected === "security" && <SecuritySettings />}
+        {selected === "security" && (
+          <SecuritySettings viewer={identity ? client.viewer : undefined} />
+        )}
         {developerMode && (
           <div hidden={selected !== "developer"}>
             <DeveloperSettings relay={communities.relay} />

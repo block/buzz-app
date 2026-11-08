@@ -2,7 +2,7 @@
 
 ## Authorize an external agent identity
 
-Settings → Buzz → Identity → Authorize external identity accepts an application's
+Settings → Buzz → Security → Authorize external identity accepts an application's
 existing public key as 64 hexadecimal characters. An explicit **Authorize
 identity** action opens a confirmation showing the exact npub and explaining
 that the key can direct the owner's coding agents to run commands as them.

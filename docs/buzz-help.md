@@ -98,7 +98,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   **Add people** and after `@` in a message. The **private key**, shown as an
   `nsec`, lets someone act as that identity. Never ask anyone to paste a
   private key into a conversation or send it to you.
-- In native desktop builds, **Settings → Buzz → Identity → Authorize external identity** creates an
+- In native desktop builds, **Settings → Buzz → Security → Authorize external identity** creates an
   ownership proof for an application such as Nexus that holds its own agent key.
   Enter that application's public key in hex, select **Authorize identity**,
   review the exact identity and permission in the confirmation, then select

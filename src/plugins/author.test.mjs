@@ -269,6 +269,21 @@ export function apply(ctx: Context) {
       React.createElement(ctx.panels.ui.Workspace, props));
   }
   void Workspace;
+  // @ts-expect-error Channels tab menus are host-owned.
+  const tabMenu: PanelWorkspaceProps = { items: [], value: "", select: () => {}, tabMenu: undefined };
+  // @ts-expect-error Channels drag plumbing is host-owned.
+  const drag: PanelWorkspaceProps = { items: [], value: "", select: () => {}, drag: undefined };
+  // @ts-expect-error Conversation identity is host-owned.
+  const identity: PanelWorkspaceProps = { items: [], value: "", select: () => {}, identity: undefined };
+  // @ts-expect-error Native Close ownership is not a plugin option.
+  const main: PanelWorkspaceProps = { items: [], value: "", select: () => {}, main: true };
+  // @ts-expect-error Channels selection adoption is host-owned.
+  const adoption: PanelWorkspaceProps = { items: [], value: "", select: () => {}, adoptSelection: undefined };
+  // @ts-expect-error The injected component has the same narrow contract.
+  React.createElement(ctx.panels.ui.Workspace, { items: [], value: "", select: () => {}, main: true });
+  // @ts-expect-error Host opening identities are not plugin tab data.
+  const instance: PanelWorkspaceItem = { id: "page", label: "Page", content: null, instance: {} };
+  void [tabMenu, drag, identity, main, adoption, instance];
   // @ts-expect-error Host link dispatch must synchronously report acceptance.
   const bad: MarkdownProps = { content: "", openLink: async () => true };
   // @ts-expect-error Tab content is required.

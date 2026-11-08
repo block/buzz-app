@@ -4,7 +4,8 @@ import type { ComponentType } from "react";
 import {
   PanelWorkspace,
   usePanelTabTitle,
-  type PanelWorkspaceProps,
+  type PanelWorkspaceProps as HostPanelWorkspaceProps,
+  type PanelWorkspaceItem as HostPanelWorkspaceItem,
 } from "./PanelWorkspace";
 import { usePluginPanelSplit } from "./usePanelSplit";
 import type { ChannelSummary } from "../relay/contracts";
@@ -15,6 +16,16 @@ import {
   type Contribution,
   type MatchOrder,
 } from "../../plugins/contributions";
+
+/** Plugin tab data; host opening, drag and menu lifetimes stay private. */
+export type PanelWorkspaceItem = Pick<
+  HostPanelWorkspaceItem,
+  "id" | "label" | "icon" | "content" | "close" | "toolbar"
+>;
+export type PanelWorkspaceProps = Pick<
+  HostPanelWorkspaceProps,
+  "value" | "select" | "actions" | "label" | "focusOnMount"
+> & { items: PanelWorkspaceItem[] };
 
 export type PanelContext = Readonly<{
   /** Originating conversation, not a claim of thread-level scope or access. */

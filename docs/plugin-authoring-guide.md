@@ -170,8 +170,8 @@ behavior. Existing URL safety and external browser handling remain host-owned.
 
 Inject `panels` to use these host members:
 
-- `ctx.panels.ui.Workspace({ items, value, select, ... })` is the existing tab
-  workspace. Each item has `{ id, label, content, close? }`; content remains
+- `ctx.panels.ui.Workspace({ items, value, select, label?, actions?, focusOnMount? })`
+  is the existing tab workspace. Each item has `{ id, label, content, icon?, close?, toolbar? }`; content remains
   mounted while another tab is selected. `close` may return false to retain a
   tab, for example while edits need confirmation. The host owns tab controls,
   focus and nested detail presentation; your page owns selection, admission,

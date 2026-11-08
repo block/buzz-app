@@ -57,11 +57,9 @@ export type {
   Panels,
   ChannelPanelContext,
   ChannelLauncherProps,
-} from "../features/panels/service";
-export type {
   PanelWorkspaceItem,
   PanelWorkspaceProps,
-} from "../features/panels/PanelWorkspace";
+} from "../features/panels/service";
 export type { PanelSplit } from "../features/panels/usePanelSplit";
 export type { MarkdownProps } from "../features/messages/PluginMarkdown";
 export type { Conversation } from "../features/conversation/service";

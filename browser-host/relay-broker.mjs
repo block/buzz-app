@@ -848,6 +848,7 @@ const json = (res, code, body) => {
 /** @returns {import('vite').Plugin} */
 export function relayBrokerPlugin({
   authorizedViewer,
+  browserOrigin,
   relayUrl,
   communityAliases,
   identity = () => loadIdentity(authorizedViewer),
@@ -860,6 +861,24 @@ export function relayBrokerPlugin({
   // Tests that hold EOSE on purpose lengthen this real-time deadline.
   liveSetupTimeoutMs,
 } = {}) {
+  const publicOrigin =
+    browserOrigin === undefined
+      ? undefined
+      : typeof browserOrigin === "string"
+        ? URL.parse(browserOrigin)
+        : null;
+  if (
+    browserOrigin !== undefined &&
+    (publicOrigin?.protocol !== "https:" ||
+      publicOrigin.username ||
+      publicOrigin.password ||
+      publicOrigin.pathname !== "/" ||
+      publicOrigin.search ||
+      publicOrigin.hash)
+  )
+    throw new Error(
+      "browserOrigin must be an HTTPS origin without credentials, path, query, or fragment.",
+    );
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
   return {
@@ -1010,7 +1029,8 @@ export function relayBrokerPlugin({
           else if (res.statusCode >= 400) log.warn(line);
           else log.debug(line);
         });
-        const origin = `http://${req.headers.host ?? ""}`;
+        const origin =
+          publicOrigin?.origin ?? `http://${req.headers.host ?? ""}`;
         // Same-origin browser access only; trusted plugins/local processes are not sandboxed.
         if (!/^(localhost|127\.0\.0\.1):\d+$/.test(req.headers.host ?? ""))
           return json(res, 403, { error: "Host rejected" });

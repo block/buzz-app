@@ -779,6 +779,8 @@ available rather than silently discarding it.
   minutes. Agents that run on someone's computer, and people, keep their badge
   from recent Buzz activity, so a local agent goes grey when its owner's Buzz
   is closed.
+- A shared agent image in a desktop conversation shows **Add agent** beneath
+  its name. Choose it to review and import the agent; the preview omits the model.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you

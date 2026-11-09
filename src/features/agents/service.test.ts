@@ -17751,6 +17751,8 @@ async function relayAttentionSetup(
     history?: RelayEvent[];
     /** The record's attention here, on this device. */
     device?: Record<string, unknown>;
+    /** The relay does not advertise NIP-AR sync. */
+    noSync?: boolean;
   } = {},
 ) {
   const relayKey = generateSecretKey();
@@ -17833,7 +17835,7 @@ async function relayAttentionSetup(
             }
           },
         },
-        artifactSync: true,
+        artifactSync: !options.noSync,
         artifacts: {
           follow(
             _channels: readonly string[],
@@ -18867,6 +18869,51 @@ it("refuses to adopt the community's attention while it holds objects it can't r
   expect(Object.keys(f.service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
   ]);
+});
+
+it("never writes a move over a community record it can't read", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  // Another client's form of the same slug, which this build can't read.
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "",
+  } as AttentionValue);
+  const before = [...f.heads.values()].map((event) => event.id);
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: false,
+    skipped: ["interest/default"],
+  });
+  expect(f.ownerWrites).toHaveLength(0);
+  expect([...f.heads.values()].map((event) => event.id)).toEqual(before);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+});
+
+it("creates no attention channel where the relay has no artifact sync", async () => {
+  const f = await relayAttentionSetup({
+    noSync: true,
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await expect(f.service.migrateAttention(bot)).rejects.toThrow(
+    "This community can't store attention",
+  );
+  expect(f.ownerWrites).toHaveLength(0);
+  expect(
+    f.native?.publish.mock.calls.some(([, event]) => event.kind === 9007),
+  ).toBe(false);
 });
 
 it("refuses to move attention with unreadable objects", async () => {

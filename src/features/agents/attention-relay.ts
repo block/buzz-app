@@ -645,7 +645,8 @@ export type AttentionMigration = Readonly<{
 }>;
 
 /** Publishes each object of `attention` the relay does not already hold
- * (Rollout 3), then reads the set back and compares it. It also deletes
+ * (Rollout 3), never over a record it skipped, then reads the set back
+ * and compares it. It also deletes
  * each object in `prune` (slug to the head the owner saw) that the relay
  * still holds at that head, only there or skipped (Rollback: "deletes them
  * only when asked"). One added or changed since the owner saw it stays, and
@@ -658,8 +659,8 @@ export async function publishAll(
   attention: AgentRecord["attention"],
   options: Readonly<{
     prune?: Readonly<Record<string, string>>;
-    /** Publish only objects the relay has in neither its set nor its
-     * skipped records, so the relay's own versions stay. */
+    /** Publish only objects the relay does not hold, so the relay's own
+     * versions stay. */
     missingOnly?: boolean;
   }> = {},
 ): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
@@ -672,7 +673,10 @@ export async function publishAll(
     ...Object.values(attention)
       .filter(({ slug, value }) => {
         const there = before.attention[slug];
-        if (options.missingOnly) return !there && !before.skipped[slug];
+        // Never over a record it can't read: the move is refused with it
+        // listed, and only a prune the owner confirms replaces it.
+        if (before.skipped[slug]) return false;
+        if (options.missingOnly) return !there;
         return !there || !sameValue(there.value, value);
       })
       .map(({ slug, value }) => ({ slug, value })),

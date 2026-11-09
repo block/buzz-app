@@ -9249,7 +9249,7 @@ export class AgentsService extends Service implements Agents {
       const artifacts = session?.configArtifactWriter;
       if (!identity || !native || !binding || !session || !controller)
         throw new Error("Connect this agent's community to move its attention");
-      if (!relayAuthor || !read || !artifacts)
+      if (!relayAuthor || !read || !artifacts || !session.artifactSync)
         throw new Error("This community can't store attention");
       // The community's set replaces this device's, unreadable records too.
       const skipped = options.adopt ? [] : Object.keys(saved.skipped ?? {});

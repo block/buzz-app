@@ -16,6 +16,7 @@ import {
   relayRefusal,
 } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
+import { formatItemTimestamp } from "../../shared/datetime";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
 it.each([
@@ -291,6 +292,18 @@ it.each([
     expect(isRelayRefusal(await refusal(403, { error }))).toBe(words);
   },
 );
+it("shows a 403 timeout refusal's unix-seconds expiry as a local date and time", async () => {
+  const until = 1794000000;
+  const error = `restricted: you are timed out until ${until}`;
+  const result = await refusal(403, { error });
+  expect(result).toMatchObject({
+    message: `You are timed out until ${until}`,
+    reason: error,
+  });
+  expect(relayRefusal(result)).toBe(
+    `You are timed out until ${formatItemTimestamp(until, { withTime: true })}`,
+  );
+});
 it("keeps a long refusal's whole reason but clips its display words", async () => {
   // Admission keeps up to 4 KB of `{error}` text, so the bound is the display's.
   const error = `invalid: ${"x".repeat(1000)}`;

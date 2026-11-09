@@ -6,6 +6,7 @@ import type { RelayWriter } from "./transport";
 import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { channelRowKind } from "./membership";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { MessageClock } from "./message-order";
 import {
   bytes,
@@ -150,10 +151,22 @@ export function isRelayRefusal(error: unknown): error is PublishRejected {
   );
 }
 
+/** The relay's refusal of a timed-out member's write, in its ingest's exact
+ * form: `restricted: you are timed out until <unix seconds>`. */
+const TIMEOUT_REFUSAL = /^restricted:\s*you are timed out until (\d{1,12})$/;
+
 /** The relay's refusal words to show, clipped like stored diagnostics, or
- * undefined when `error` is not the relay's own refusal. */
+ * undefined when `error` is not the relay's own refusal. A timeout's expiry
+ * is shown as a local date and time; other text is shown as the relay sent
+ * it. */
 export function relayRefusal(error: unknown): string | undefined {
-  return isRelayRefusal(error) ? clip(error.message) : undefined;
+  if (!isRelayRefusal(error)) return undefined;
+  const until = TIMEOUT_REFUSAL.exec(error.reason?.trim() ?? "")?.[1];
+  return clip(
+    until
+      ? `You are timed out until ${formatItemTimestamp(Number(until), { withTime: true })}`
+      : error.message,
+  );
 }
 
 /** The relay's words, without their prefix and clipped like relayRefusal,

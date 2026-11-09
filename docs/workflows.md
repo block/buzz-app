@@ -120,8 +120,9 @@ See the [capability contract](../src/features/workflows/types.ts).
 The outbox journals intent/signature before publication. A verified echo does
 not replace the result-bearing receipt. Restored commands never run automatically;
 result text stays ephemeral, outside the journal. A command the relay refuses
-with its own reason shows that reason in this session only; the journal keeps
-fixed copy, because relay text can quote event content. Other failures keep the
+with its own reason shows that reason in this session only, with a timeout's
+unix-seconds expiry shown as a local date and time; the journal keeps fixed
+copy, because relay text can quote event content. Other failures keep the
 fixed copy, and a refusal after a verified echo leaves the result unknown. On the
 browser host, the broker reports a socket `forbidden:`, `blocked:` or
 `restricted:` refusal as not sent, so those keep the fixed copy there, including

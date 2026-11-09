@@ -160,7 +160,10 @@ add. The signed echo must match the template before publishing, the accepted set
 joins the palette immediately, and failures surface as the reference
 `Failed to add emoji.` / `Timed out while adding emoji.` copy. On the native
 host, a relay refusal appends the relay's reason, clipped to 256 characters,
-such as `Failed to add emoji. You are banned from this community`. The browser
+such as `Failed to add emoji. You are banned from this community`. A timeout
+refusal (`restricted: you are timed out until <unix seconds>`) shows its expiry
+as a local date and time, such as `You are timed out until Tue, Nov 10 at
+2:19 PM`; other refusal text is shown as the relay sent it. The browser
 host's broker reports a socket `forbidden:`, `blocked:` or `restricted:` refusal
 as not sent, so that host shows `Failed to add emoji.` for those and appends
 only `invalid:` reasons; this host difference is unresolved. The development

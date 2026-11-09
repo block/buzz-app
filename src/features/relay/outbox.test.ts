@@ -13,6 +13,7 @@ import {
 import type { EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "./events";
 import { byteSize } from "./budget";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { LIVE_CANVAS_BYTES } from "../channel-templates/canvas-limits.ts";
 import {
   bounds,
@@ -1441,6 +1442,38 @@ it.each([
 ])("%s is a relay refusal: %s", (_, refused, error) => {
   expect(isRelayRefusal(error)).toBe(refused);
   expect(relayRefusal(error)).toBe(refused ? error.message : undefined);
+});
+it("shows a timeout refusal's expiry as a local date and time", () => {
+  vi.useFakeTimers();
+  // At :10 past the hour, the local clock is nowhere near midnight in any zone,
+  // so a minute later is still today and reads as a bare clock time.
+  const now = Date.UTC(2026, 10, 7, 12, 10);
+  vi.setSystemTime(now);
+  const until = now / 1000 + 60;
+  const refusal = (reason: string) =>
+    relayRefusal(
+      new PublishRejected(
+        reason.replace(/^\w+(?:-\w+)?:\s*(.)/, (_, c: string) =>
+          c.toUpperCase(),
+        ),
+        reason,
+      ),
+    );
+  const shown = refusal(`restricted: you are timed out until ${until}`);
+  expect(shown).toMatch(/^You are timed out until \d{1,2}:\d{2}(?: [AP]M)?$/);
+  expect(shown).toBe(
+    `You are timed out until ${formatItemTimestamp(until, { withTime: true })}`,
+  );
+  // Only the relay's exact form is a timeout; other text is shown as sent.
+  expect(refusal("restricted: you are timed out until soon")).toBe(
+    "You are timed out until soon",
+  );
+  expect(refusal(`restricted: timed out until ${until}`)).toBe(
+    `Timed out until ${until}`,
+  );
+  expect(refusal(`blocked: you are timed out until ${until}`)).toBe(
+    `You are timed out until ${until}`,
+  );
 });
 it.each([
   [

@@ -12,6 +12,7 @@ import { createRelaySession } from "./session";
 import { foldMessages } from "./fold";
 import { PublishNotSent, PublishRejected } from "./outbox";
 import { ReadError } from "./errors";
+import { formatItemTimestamp } from "../../shared/datetime";
 import {
   flush,
   keypair,
@@ -741,6 +742,24 @@ it("rejects invalid names before any read and maps publish failure to reference 
     /^Failed to add emoji\. You are banned$/,
   );
   expect(h.emoji.snapshot().mine).toEqual([]);
+  // The relay's timeout refusal carries its expiry in unix seconds, which is
+  // shown as a local date and time.
+  const until = 1794000000;
+  h.publish.mockRejectedValueOnce(
+    new PublishRejected(
+      `You are timed out until ${until}`,
+      `restricted: you are timed out until ${until}`,
+    ),
+  );
+  const timedOut = h.emoji.add?.("party", url);
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  h.ownRead().respond([]);
+  await expect(timedOut).rejects.toThrow(
+    new Error(
+      `Failed to add emoji. You are timed out until ${formatItemTimestamp(until, { withTime: true })}`,
+    ),
+  );
+  await expect(timedOut).rejects.not.toThrow(/1794000000/);
   // A long reason is clipped as the outbox clips it.
   const words = `You are banned ${"x".repeat(1000)}`;
   h.publish.mockRejectedValueOnce(
@@ -772,7 +791,7 @@ it("rejects invalid names before any read and maps publish failure to reference 
   await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.ownRead().fail(new Error("offline"));
   await expect(failedRead).rejects.toThrow(/^Failed to add emoji\.$/);
-  expect(h.publish).toHaveBeenCalledTimes(5);
+  expect(h.publish).toHaveBeenCalledTimes(6);
 });
 it("removes only from the fresh own set and preserves another member's colliding emoji", async () => {
   const h = authoring();

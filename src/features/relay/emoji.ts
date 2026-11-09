@@ -94,13 +94,13 @@ export const linkPart = (part: string) => /^https?:\/\//.test(part);
 /** Message parts outside reference definitions, which render no emoji. */
 function sentParts(content: string) {
   if (!/:[\w-]{1,64}:/.test(content)) return messageParts(content);
-  let text = "";
+  const parts: string[] = [];
   let offset = 0;
   for (const { start, end } of definitionRanges(content)) {
-    text += `${content.slice(offset, start)}\n`;
+    parts.push(...messageParts(content.slice(offset, start)));
     offset = end;
   }
-  return messageParts(text + content.slice(offset));
+  return [...parts, ...messageParts(content.slice(offset))];
 }
 const shortcodePattern = () => /(?=(:([a-zA-Z0-9_-]{1,64}):))/g;
 export function* emojiMatches(

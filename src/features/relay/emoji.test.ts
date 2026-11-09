@@ -92,6 +92,8 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "价格<100看这个https://example.com，:party:",
     "[a](HTTPS://example.com)，:party:",
     "[a](HTTPS://example.com)，:party:https://b.com",
+    "Check this\n[x]: https://example.com，:party:",
+    "](\n\n[x]: https://example.com\n\nhttps://example.com，:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([
       ["emoji", "party", url],
@@ -127,23 +129,28 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     expect(referencedEmoji(content)).toEqual([]);
   }
   expect(referencedEmoji("see :http://")).toEqual(["http"]);
-  // A paragraph line that only looks like a definition stays prose.
-  const prose = "Check this\n[x]: https://example.com，:party:";
-  expect(contentEmojiTags(prose, entries)).toEqual([["emoji", "party", url]]);
   expect(
     referencedEmoji("[ref]: https://example.com/a，:party:\n:other:"),
   ).toEqual(["other"]);
 });
 it("sends a reference definition's shortcode without the catalog", async () => {
   const h = session();
-  const content = "[ref]: https://example.com/a，:party:";
-  const sent = () => {
-    const id = h.session.messages.send("c", content);
-    return h.session.outbox
-      ?.snapshot()
-      .find((item) => item.event.id === id)
-      ?.event.tags.filter(([name]) => name === "emoji");
-  };
+  // The app stores trimmed text, where these are definitions too.
+  const contents = [
+    "[ref]: https://example.com/a，:party:",
+    "\u3000[ref]: https://example.com/a，:party:",
+    "    [ref]: https://example.com/a，:party:",
+  ];
+  const sent = () =>
+    contents.flatMap((content) => {
+      const id = h.session.messages.send("c", content);
+      return (
+        h.session.outbox
+          ?.snapshot()
+          .find((item) => item.event.id === id)
+          ?.event.tags.filter(([name]) => name === "emoji") ?? [["missing"]]
+      );
+    });
   expect(sent()).toEqual([]);
   expect(h.session.emoji.snapshot().status).not.toBe("ready");
   for (const pending of h.wire.pending.splice(0)) pending.respond([]);

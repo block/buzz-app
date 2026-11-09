@@ -16139,6 +16139,18 @@ describe("oversized paste feedback", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("retires feedback when an edit replaces the draft", () => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    pasteText(h.input(), "x".repeat(16001));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /This paste would make your message too long/,
+    );
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveValue("Original message");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("offers a file only when the composer supports attachments", () => {
     const h = mount();
     h.retarget({ session: { ...h.session, attachments: { upload: vi.fn() } } });

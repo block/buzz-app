@@ -31,6 +31,8 @@ export function messageEditText(
 ) {
   const { attachmentSeams: _seams, ...source } = row;
   const content = row.sourceContent ?? row.content;
+  const parts = profileMentionParts({ ...source, content }, profiles, agents);
+  if (!parts.some((part) => part.target)) return content;
   // A link inside a reference definition would become part of its URL.
   const definitions: { start: number; end: number }[] = [];
   const pending = [scanMarkdown(content).tree];
@@ -43,7 +45,7 @@ export function messageEditText(
     } else for (const child of node.children ?? []) pending.push(child);
   }
   let offset = 0;
-  return profileMentionParts({ ...source, content }, profiles, agents)
+  return parts
     .map(({ text, target }) => {
       const start = offset;
       offset += text.length;

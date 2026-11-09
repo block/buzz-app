@@ -6,6 +6,7 @@ import { AttentionError } from "./attention-objects";
 import {
   ATTENTION_LABEL,
   ATTENTION_TYPE,
+  addWritten,
   agentDelivery,
   attentionChanges,
   attentionD,
@@ -375,10 +376,11 @@ describe("the mirror", () => {
       attentionChanges(record, next),
     );
     // A set made before the writes: they stay until a set shows them.
-    const stale = pendingSet(before, next, replaced);
+    const written = addWritten(undefined, replaced);
+    const stale = pendingSet(before, next, written);
     expect(Object.keys(stale.set.attention)).toEqual(["interest/y"]);
     expect(stale.settled).toEqual([]);
-    const after = pendingSet(await r.set(), next, replaced);
+    const after = pendingSet(await r.set(), next, written);
     expect([...after.settled].sort()).toEqual(["interest/x", "interest/y"]);
     expect(Object.keys(after.set.attention)).toEqual(["interest/y"]);
   });

@@ -244,6 +244,19 @@ export function attentionChanges(
 /** What a write replaced, by slug: the head it revised, or undefined for a
  * create. */
 export type Replaced = ReadonlyMap<string, string | undefined>;
+/** What several writes replaced, by slug. */
+export type Written = ReadonlyMap<string, readonly (string | undefined)[]>;
+
+/** `written` with `replaced` added. */
+export const addWritten = (
+  written: Written | undefined,
+  replaced: Replaced,
+) => {
+  const next = new Map(written);
+  for (const [slug, head] of replaced)
+    next.set(slug, [...(next.get(slug) ?? []), head]);
+  return next;
+};
 
 /** Publishes `changes` over `set`, the writer's fresh read, one revision at a
  * time (Writer steps 4 to 6). Stops at the first that fails; those before it
@@ -270,18 +283,18 @@ export async function publishChanges(
 }
 
 /** `set` with the objects of `record` this device wrote kept, while `set`
- * still holds the heads those writes replaced: a set made before a write
+ * still holds a head those writes replaced: a set made before a write
  * landed must not undo it. Returns the slugs whose writes `set` shows. */
 export function pendingSet(
   set: AttentionSet,
   record: AgentRecord,
-  replaced: Replaced,
+  written: Written,
 ): Readonly<{ set: AttentionSet; settled: readonly string[] }> {
   const settled: string[] = [];
   let attention = set.attention;
   let skipped = set.skipped;
-  for (const [slug, head] of replaced) {
-    if (set.heads[slug]?.id !== head) {
+  for (const [slug, heads] of written) {
+    if (!heads.includes(set.heads[slug]?.id)) {
       settled.push(slug);
       continue;
     }
@@ -697,7 +710,9 @@ export function relayAttention(input: {
     report(reason);
     if (refind) channel = undefined;
     clearTimeout(retry);
-    if (!signal.aborted) retry = setTimeout(start, delay);
+    // Equal jitter: never sooner than half the delay.
+    if (!signal.aborted)
+      retry = setTimeout(start, delay * (0.5 + Math.random() / 2));
   };
   async function start() {
     const run = ++generation;

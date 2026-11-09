@@ -308,6 +308,7 @@ import { soloChat } from "./solo-chat";
 import { localSkills } from "./local-skills";
 import { COMMUNITY_SESSION } from "../agent-harness/session-scope";
 import {
+  addWritten,
   agentSender,
   attentionChanges,
   mirrored,
@@ -316,7 +317,7 @@ import {
   publishChanges,
   relayAttention,
   type RelayAttention,
-  type Replaced,
+  type Written,
 } from "./attention-relay";
 import {
   readCheckpoints,
@@ -2878,7 +2879,7 @@ export class AgentsService extends Service implements Agents {
    * removal looks the same in a set as a set made before it was created. */
   private readonly attentionWritten = new Map<
     AgentKey,
-    { replaced: Replaced; at: number }
+    { written: Written; at: number }
   >();
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
@@ -8830,8 +8831,6 @@ export class AgentsService extends Service implements Agents {
         ) {
           const relay = this.relayWriter(key, writer);
           const set = await relay.attention.read();
-          // The read is newer than any write before it.
-          this.attentionWritten.delete(key);
           // What the read found shows, even when the change then fails.
           const fresh = mirrored(base, set);
           if (fresh !== base) {
@@ -8842,8 +8841,15 @@ export class AgentsService extends Service implements Agents {
           }
           const changes = next ? attentionChanges(base, next) : [];
           const replaced = await publishChanges(relay.io, set, changes);
+          // Kept with earlier writes: the live view can be behind this read.
           if (replaced.size)
-            this.attentionWritten.set(key, { replaced, at: Date.now() });
+            this.attentionWritten.set(key, {
+              written: addWritten(
+                this.attentionWritten.get(key)?.written,
+                replaced,
+              ),
+              at: Date.now(),
+            });
         }
         await this.commit(key, base, next);
         saved?.(next);
@@ -9039,12 +9045,12 @@ export class AgentsService extends Service implements Agents {
               this.attentionWritten.delete(key);
               return mirrored(saved, set);
             }
-            const shown = pendingSet(set, saved, written.replaced);
-            const left = new Map(written.replaced);
+            const shown = pendingSet(set, saved, written.written);
+            const left = new Map(written.written);
             for (const slug of shown.settled) left.delete(slug);
             if (left.size)
               this.attentionWritten.set(key, {
-                replaced: left,
+                written: left,
                 at: written.at,
               });
             else this.attentionWritten.delete(key);

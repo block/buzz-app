@@ -1,3 +1,4 @@
+import { sessionTools } from "../../buzz-mcp/session-tools";
 // goose on the shared ACP client: one `goose-acp` process, with goose's
 // extensions for the system prompt, steering, and per-turn provider and model
 // picks. Each session's Buzz tools reach goose over HTTP MCP, never a Buzz key.
@@ -56,6 +57,11 @@ const CONFIGURED = "goose";
  * model, which goose would prefer to each session's. */
 export const ENV: Readonly<Record<string, string | null>> = {
   GOOSE_MODE: "auto",
+  GOOSE_TOOL_DEFERRAL: "lookup",
+  GOOSE_TOOL_DEFERRAL_ALWAYS_LOAD: sessionTools()
+    .filter((tool) => tool.load === "always")
+    .map((tool) => `buzz__${tool.name}`)
+    .join(","),
   BUZZ_PRIVATE_KEY: null,
   BUZZ_AUTH_TAG: null,
   BUZZ_RELAY_URL: null,

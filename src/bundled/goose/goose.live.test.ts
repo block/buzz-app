@@ -230,6 +230,41 @@ const homeSetup = () =>
   });
 
 describe.skipIf(!BIN)("goose-acp", () => {
+  it("enables a deferred Buzz tool before executing it", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools, calls } = await live();
+    try {
+      const session = await goose.open({
+        cwd,
+        tools,
+        systemPrompt:
+          "You are a Buzz agent. Follow the user's tool instructions exactly. Do not send messages or use developer tools.",
+      });
+      const result = await session.send(
+        "Enable buzz__interest_list with enable_tools, then call buzz__interest_list with {}. After it returns, reply done in plain text.",
+      );
+      expect(result.ok).toBe(true);
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "tools/call" &&
+            (call.params as Send).name === "interest_list",
+        ),
+      ).toBe(true);
+      const exported = (await goose.request("_goose/unstable/session/export", {
+        sessionId: session.id,
+        format: "json",
+      })) as { data: string };
+      const history = JSON.parse(exported.data);
+      const serialized = JSON.stringify(history);
+      expect(serialized).toContain("enable_tools");
+      expect(serialized).toContain("buzz__interest_list");
+    } finally {
+      await goose.kill();
+    }
+  });
+
   it("answers with the Buzz tools, the Buzz prompt and a title", {
     timeout: 180_000,
   }, async () => {

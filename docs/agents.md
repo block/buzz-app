@@ -1361,13 +1361,15 @@ tasks unknown.
 
 ### Activity updates in the conversation
 
-When no live activity bubble on the triggering message shows an agent, the live
-conversation indicator remains visible while it works, even when recorded
-activity is collapsed or expanded. While that bubble shows, it is the agent's
-working indicator and the conversation adds no second one; the conversation cue
-returns once recorded history owns the work. The indicator keeps dots beside
-current tool labels; reduced motion leaves the dots static. Activity text may
-shimmer too, but does not replace that persistent working cue.
+An agent's work has one working indicator. While a live activity bubble on the
+triggering message shows the agent, that bubble is its indicator. Once mounted
+recorded history presents the request's work, that history is its indicator:
+dots in the collapsed summary, or on the active update when expanded, beside the
+shimmering text. The conversation indicator adds no second one, but it stays
+visible for any request of that agent here that nothing mounted presents, and
+returns when that history unmounts or is closed. History that is mounted but
+scrolled out of view still counts, as the live bubble does. Reduced motion
+leaves the dots static.
 When local request evidence is available, old activity does not inherit the
 working/thinking state of a different request in the same thread.
 
@@ -1390,8 +1392,7 @@ retire the old live treatment without claiming that execution completed. Current
 work continues to appear in the conversation indicator.
 
 A public reply alone does not replace the request's live indicator. Mounted
-update history can own the current step and request controls while the live
-conversation indicator remains available. When public replies
+update history can own the current step, its working dots and request controls. When public replies
 split one request's updates into several runs, only the latest run for each agent
 owns its live shimmer and Stop control; earlier runs remain readable history.
 Other agents and requests retain their own live presentation.

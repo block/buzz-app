@@ -1905,7 +1905,7 @@ it("lets a thread root's live bubble replace that thread's indicator", () => {
   }
 });
 
-it("shows thinking once across the live bubble, recorded history and conversation indicator", () => {
+it("shows thinking and its dots once, moving from the live bubble into recorded history", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
   const owner = createRelaySession(null);
@@ -2002,24 +2002,35 @@ it("shows thinking once across the live bubble, recorded history and conversatio
     expect(
       screen.queryByRole("button", { name: /Activity: .*working/ }),
     ).toBeNull();
+    // History then owns the work: one working row, its dots included.
+    const dots = () => document.querySelectorAll('[data-state="working"]');
     view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
     expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeVisible();
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
+    expect(dots()).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    ).toContainElement(dots()[0] as HTMLElement);
     view.rerender(ui(true, true));
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
     expect(
-      screen.getByRole("button", { name: "Activity: Blossom working" }),
-    ).toBeVisible();
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
+    expect(dots()).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: /Blossom: Thinking/ }),
+    ).toContainElement(dots()[0] as HTMLElement);
     act(() => work.finish({ ok: true }));
     expect(screen.getByText("Thinking")).not.toHaveAttribute("data-active");
     expect(
-      screen.queryByRole("button", { name: "Activity: Blossom working" }),
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
     ).toBeNull();
+    expect(dots()).toHaveLength(0);
   } finally {
     view.unmount();
     owner.dispose();
@@ -2224,6 +2235,8 @@ it("hands a follow-up's live work to the update its run published to the thread 
 
 it("hands a remote follow-up's live work to the update that claims it, leaving older root updates as history", () => {
   const f = fixture();
+  const owner = createRelaySession(null);
+  const session = { ...owner.session, ...f.props.session };
   f.send(A, "t0", 1, "turn_started", { triggeringEventIds: [root] });
   f.send(A, "t0", 2, "turn_completed");
   f.send(A, "t1", 1, "turn_started", {
@@ -2267,13 +2280,14 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
       <ActivityIndicatorPresentation>
         <ActivityAccessory
           {...f.props}
+          session={session}
           message={followUp}
           messageLayout="thread"
         />
         {presentation.groups.map((group) => (
           <ActivityGroupPreview
             key={group.ids[0]}
-            session={f.props.session}
+            session={session}
             group={group}
             profiles={f.profiles}
             media={() => undefined}
@@ -2281,6 +2295,12 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
             onToggle={() => {}}
           />
         ))}
+        <TypingIndicator
+          session={session}
+          channelId="c"
+          threadRootId={root}
+          inFlow
+        />
       </ActivityIndicatorPresentation>
     );
   }
@@ -2293,6 +2313,11 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
       "data-active",
       "true",
     );
+    // One working presentation: the history row, its dots included.
+    expect(
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
+    expect(document.querySelectorAll('[data-state="working"]')).toHaveLength(1);
     expect(screen.getByText("Checking the root")).not.toHaveAttribute(
       "data-active",
     );
@@ -2305,6 +2330,7 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
     ).toBeNull();
   } finally {
     view.unmount();
+    owner.dispose();
     f.dispose();
   }
 });

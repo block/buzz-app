@@ -1861,6 +1861,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                     active={active}
                   />
                 )}
+                {!open && active && <TypingDots size="message" />}
                 {open && bubble && "Collapse"}
                 {!open && (
                   <span className={styles.audiencePreviewText}>

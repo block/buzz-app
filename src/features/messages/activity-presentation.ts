@@ -26,6 +26,8 @@ export type ActivityPresentation = ActivityRun & {
   liveParticipants: string[];
   /** Agents whose current work or outcome this group can actually present. */
   presentedParticipants: string[];
+  /** Agents whose current work this group presents as their working cue. */
+  workingParticipants: string[];
   working: boolean;
   /** Latest recorded update belonging to a participant still working here. */
   workingUpdate: ChannelMessage | undefined;
@@ -365,6 +367,9 @@ export function activityPresentation(
       presentedParticipants: liveParticipants.filter(
         (agent) =>
           working.has(agent) || outcomes.some((entry) => entry.agent === agent),
+      ),
+      workingParticipants: liveParticipants.filter((agent) =>
+        working.has(agent),
       ),
       working: liveParticipants.some((agent) => working.has(agent)),
       workingUpdate: history

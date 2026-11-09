@@ -614,16 +614,17 @@ export type AttentionMigration = Readonly<{
 }>;
 
 /** Publishes each object of `attention` the relay does not already hold
- * (Rollout 3), then reads the set back and compares it. With `prune`, it
- * also deletes the objects only the relay holds (Rollback: "deletes them
- * only when asked"). Removed watches go first, then Interests, then
+ * (Rollout 3), then reads the set back and compares it. It also deletes
+ * each slug in `prune` that only the relay holds, or that it skipped, (Rollback: "deletes them
+ * only when asked"): only those named, so one added since the owner saw the
+ * list stays, and the move is refused again. Removed watches go first, then Interests, then
  * watches, then removed Interests, so no watch is left without its
  * Interest. */
 export async function publishAll(
   io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
   read: () => Promise<AttentionSet>,
   attention: AgentRecord["attention"],
-  options: Readonly<{ prune?: boolean }> = {},
+  options: Readonly<{ prune?: readonly string[] }> = {},
 ): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
   const before = await read();
   const rank = ({ slug, value }: AttentionEdit) => {
@@ -638,11 +639,13 @@ export async function publishAll(
           !sameValue(before.attention[slug].value, value),
       )
       .map(({ slug, value }) => ({ slug, value })),
-    ...(options.prune
-      ? Object.keys(before.attention)
-          .filter((slug) => !attention[slug])
-          .map((slug) => ({ slug, value: null }))
-      : []),
+    // A record the relay skipped can be pruned too, by its key there.
+    ...[...new Set(options.prune)]
+      .filter(
+        (slug) =>
+          (before.attention[slug] || before.skipped[slug]) && !attention[slug],
+      )
+      .map((slug) => ({ slug, value: null })),
   ];
   changes.sort((a, b) =>
     rank(a) !== rank(b) ? rank(a) - rank(b) : a.slug < b.slug ? -1 : 1,

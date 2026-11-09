@@ -571,28 +571,31 @@ test("a cold link to an absorbed failure expands its activity history once the w
     exact: true,
   });
   const row = thread.locator(`[data-message-id="${failure.id}"]`);
-  await page.goto(
-    `${app.origin}/#buzz=${encodeURIComponent(
-      JSON.stringify({
-        version: 1,
-        kind: "conversation",
-        channelId: "alpha",
-        messageId: failure.id,
-        threadRootId: root.id,
-        scope: {
-          viewer: app.viewer,
-          communityOrigin: "https://primary.example",
-        },
-      }),
-    )}`,
-  );
-  await windowRead.promise;
-  // The verified failure shows alone: no history has absorbed it yet.
-  await expect(row).toBeAttached();
-  await expect(
-    thread.getByRole("button", { name: /^Collapse activity history:/ }),
-  ).toHaveCount(0);
-  held.resolve();
+  try {
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(
+        JSON.stringify({
+          version: 1,
+          kind: "conversation",
+          channelId: "alpha",
+          messageId: failure.id,
+          threadRootId: root.id,
+          scope: {
+            viewer: app.viewer,
+            communityOrigin: "https://primary.example",
+          },
+        }),
+      )}`,
+    );
+    await windowRead.promise;
+    // The verified failure shows alone: no history has absorbed it yet.
+    await expect(row).toBeAttached();
+    await expect(
+      thread.getByRole("button", { name: /^Collapse activity history:/ }),
+    ).toHaveCount(0);
+  } finally {
+    held.resolve();
+  }
   await expect(
     thread.getByRole("button", { name: /^Collapse activity history:/ }),
   ).toBeVisible();

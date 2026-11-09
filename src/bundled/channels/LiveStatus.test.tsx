@@ -216,14 +216,13 @@ it("a recovering global cannot hide a selected channel failure", async () => {
   ).toContain("Selected stream stopped");
 });
 it("keeps partial roster coverage visible even with healthy established routes", async () => {
-  expect(await render({}, true)).toContain("Some channels are missing");
-  // Automatic recovery cannot add missing channels: say so without promising it.
   expect(await render({}, true)).toContain(
-    "Only currently accessible messages remain readable.",
+    "Some channels may be missing from your list.",
   );
-  expect(await render({}, true)).not.toContain("retrying");
+  // Automatic recovery cannot add missing channels: say so without promising it.
+  expect(await render({}, true)).not.toContain("keep trying");
   expect(await render({ routes: [recovering] }, true)).toContain(
-    "Some channels are missing",
+    "Some channels may be missing",
   );
 });
 
@@ -346,7 +345,7 @@ it("stays empty while recovery runs, before and after its notice shows", async (
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
 
-it("hands focus on when the recovery notice replaces a focused Retry live updates", () => {
+it("hands focus on when the recovery notice replaces a focused Check again", () => {
   const denied: Snapshot = {
     ...base,
     status: "error",
@@ -363,7 +362,7 @@ it("hands focus on when the recovery notice replaces a focused Retry live update
     />
   );
   const view = mount(content("idle"));
-  screen.getByRole("button", { name: "Retry live updates" }).focus();
+  screen.getByRole("button", { name: "Check again" }).focus();
   view.rerender(content("shown"));
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   expect(onRecovered).toHaveBeenCalledTimes(1);
@@ -397,12 +396,18 @@ it("shows a permanent live failure even while other reads recover", () => {
       onRecovered={onRecovered}
     />,
   );
-  expect(
-    screen.getByRole("status", { name: "Live updates limited" }),
-  ).toHaveTextContent("Relay rejected live authentication");
-  // Recovery skips a terminal failure, so the user keeps an explicit retry
-  // for after they fix the signer or access problem.
-  const retry = screen.getByRole("button", { name: "Retry live updates" });
+  const notice = screen.getByRole("status", { name: "Live updates limited" });
+  expect(notice).toHaveTextContent(
+    "New messages won’t appear here automatically. Buzz couldn’t confirm your sign-in.",
+  );
+  // There is no sign-in control here, so the notice names none.
+  expect(notice).not.toHaveTextContent(/sign in again/i);
+  expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
+  // Its own words stay in Diagnostics.
+  expect(notice).not.toHaveTextContent("Relay rejected live authentication");
+  // Recovery skips a terminal failure, so the user keeps a way to check
+  // again once they have signed in.
+  const retry = screen.getByRole("button", { name: "Check again" });
   retry.focus();
   retry.click();
   expect(live.retry).toHaveBeenCalledTimes(1);
@@ -417,7 +422,7 @@ it.each([
     {
       ...base,
       status: "error",
-      error: "Relay rejected live authentication",
+      error: "restricted: insufficient scope",
     } as Snapshot,
     { ...base, status: "connecting" } as Snapshot,
   ],
@@ -438,7 +443,7 @@ it.each([
     } as Snapshot,
   ],
 ])(
-  "keeps the notice and Retry through a slow retry of %s, and hands focus on once it succeeds",
+  "keeps the notice and Check again through a slow retry of %s, and hands focus on once it succeeds",
   (_, failed, retrying) => {
     const onRecovered = vi.fn();
     const content = (view: Snapshot) => (
@@ -452,18 +457,17 @@ it.each([
         partialRoster={false}
         recovery={recoveryIn("idle")}
         onRecovered={onRecovered}
+        refreshAccess={() => {}}
       />
     );
     const notice = () =>
       screen.queryByRole("status", { name: "Live updates limited" });
     const view = mount(content(failed));
     const reason = notice()?.textContent;
-    screen.getByRole("button", { name: "Retry live updates" }).focus();
+    screen.getByRole("button", { name: "Check again" }).focus();
     view.rerender(content(retrying));
     expect(notice()).toHaveTextContent(reason ?? "");
-    expect(
-      screen.getByRole("button", { name: "Retry live updates" }),
-    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Check again" })).toHaveFocus();
     view.rerender(content(failed));
     view.rerender(content(retrying));
     expect(onRecovered).not.toHaveBeenCalled();
@@ -473,14 +477,14 @@ it.each([
     // Success ends the hold: a later attempt alone offers no Retry.
     view.rerender(content(retrying));
     expect(
-      screen.queryByRole("button", { name: "Retry live updates" }),
+      screen.queryByRole("button", { name: "Check again" }),
     ).not.toBeInTheDocument();
     // Focus the user moved elsewhere stays there.
     const elsewhere = document.createElement("button");
     document.body.append(elsewhere);
     try {
       view.rerender(content(failed));
-      screen.getByRole("button", { name: "Retry live updates" }).focus();
+      screen.getByRole("button", { name: "Check again" }).focus();
       elsewhere.focus();
       view.rerender(content(base));
       expect(onRecovered).toHaveBeenCalledTimes(1);
@@ -495,7 +499,7 @@ it.each([
   ["roster", { roster: { state: "pending" } }],
   ["head", { heads: [{ channelId: "a", state: "pending" }] }],
 ] as const)(
-  "keeps a focused Retry while a routine %s refresh runs",
+  "keeps a focused Check again while a routine %s refresh runs",
   (_, refresh) => {
     const failed: Snapshot = {
       ...base,
@@ -515,10 +519,11 @@ it.each([
         partialRoster={false}
         recovery={recoveryIn("idle")}
         onRecovered={onRecovered}
+        refreshAccess={() => {}}
       />
     );
     const view = mount(content(failed));
-    const retry = screen.getByRole("button", { name: "Retry live updates" });
+    const retry = screen.getByRole("button", { name: "Check again" });
     retry.focus();
     view.rerender(content({ ...failed, ...refresh } as Snapshot));
     expect(retry.isConnected).toBe(true);
@@ -580,10 +585,11 @@ it.each([
         partialRoster={false}
         recovery={recoveryIn("idle")}
         onRecovered={onRecovered}
+        refreshAccess={() => {}}
       />
     );
     const view = mount(content(failed));
-    screen.getByRole("button", { name: "Retry live updates" }).focus();
+    screen.getByRole("button", { name: "Check again" }).focus();
     view.rerender(content({ ...base, ...elsewhere } as Snapshot));
     expect(
       screen.queryByRole("status", { name: "Live updates limited" }),
@@ -629,7 +635,7 @@ it.each([
     },
   ],
 ] as const)(
-  "drops the held Retry when this channel recovers to %s",
+  "drops the held Check again when this channel recovers to %s",
   (_, partialRoster, recovered) => {
     const failed: Snapshot = {
       ...base,
@@ -647,18 +653,17 @@ it.each([
         channelId="a"
         partialRoster={partialRoster}
         recovery={recoveryIn("idle")}
+        refreshAccess={() => {}}
       />
     );
     const view = mount(content(failed));
-    expect(
-      screen.getByRole("button", { name: "Retry live updates" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
     view.rerender(content({ ...base, ...recovered } as Snapshot));
     expect(
       screen.getByRole("status", { name: "Live updates limited" }),
     ).not.toHaveTextContent("blocked: channel archived");
     expect(
-      screen.queryByRole("button", { name: "Retry live updates" }),
+      screen.queryByRole("button", { name: "Check again" }),
     ).not.toBeInTheDocument();
   },
 );
@@ -697,6 +702,224 @@ it("keeps capacity and partial-roster notices passive", () => {
   );
   expect(
     screen.getByRole("status", { name: "Live updates limited" }),
-  ).toHaveTextContent("Some channels are missing");
+  ).toHaveTextContent("Some channels may be missing from your list.");
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
+
+it.each([
+  [
+    "a permission refusal",
+    "restricted: insufficient scope",
+    "New messages won’t appear here automatically. You may not have access to live updates in this conversation.",
+  ],
+  [
+    "a sign-in failure",
+    "Live signer does not match viewer",
+    "New messages won’t appear here automatically. Buzz couldn’t confirm your sign-in.",
+  ],
+  // Session recovery does not retry a terminal connection error, so these
+  // promise nothing.
+  [
+    "a broker refusal",
+    "Live broker rejected subscription (403)",
+    "New messages may not appear here automatically.",
+  ],
+  [
+    "a stringified local failure",
+    "Invalid live channel interests",
+    "New messages may not appear here automatically.",
+  ],
+])(
+  "says what %s means for new messages, not its own words",
+  (_, error, message) => {
+    const text = render({ status: "error", error });
+    expect(text).toContain(message);
+    expect(text).not.toContain(error);
+    // Diagnostics keeps the reason as it came.
+    expect(render({ status: "error", error }, false, true)).toContain(error);
+  },
+);
+
+it.each([
+  [
+    403,
+    "permission",
+    "New messages won’t appear here automatically. You may not have access to live updates in this conversation.",
+  ],
+  [
+    401,
+    "sign-in",
+    "New messages won’t appear here automatically. Buzz couldn’t confirm your sign-in.",
+  ],
+] as const)(
+  "says what a %s from live updates asks of the person, from its kind rather than its words",
+  (status, denied, message) => {
+    const error = `Live broker rejected subscription (${status})`;
+    const text = render({
+      status: "error",
+      error,
+      refusal: { error, denied },
+    });
+    expect(text).toContain(message);
+    expect(text).not.toContain(error);
+    // A later error that replaced it keeps the old refusal, which no
+    // longer explains it.
+    expect(
+      render({
+        status: "error",
+        error: "Invalid live channel interests",
+        refusal: { error, denied },
+      }),
+    ).toContain("New messages may not appear here automatically.");
+  },
+);
+
+it("offers Check again for a permission refusal, which reads access and live updates again", () => {
+  const refused: Snapshot = {
+    ...base,
+    routes: [{ ...channel, status: "error", error: "blocked: no access" }],
+  };
+  const live = {
+    snapshot: () => refused,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+  };
+  const refreshAccess = vi.fn();
+  mount(
+    <LiveStatus
+      live={live}
+      channelId="a"
+      partialRoster={false}
+      recovery={recoveryIn("idle")}
+      refreshAccess={refreshAccess}
+    />,
+  );
+  screen.getByRole("button", { name: "Check again" }).click();
+  expect(refreshAccess).toHaveBeenCalledTimes(1);
+  expect(live.retry).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ["a sign-in failure", "Relay rejected live authentication"],
+  ["a failure recovery won’t retry", "Live broker rejected subscription (403)"],
+])("offers Check again for %s", (_, error) => {
+  const failed: Snapshot = { ...base, status: "error", error };
+  const live = {
+    snapshot: () => failed,
+    subscribe: () => () => {},
+    retry: vi.fn(),
+  };
+  mount(
+    <LiveStatus
+      live={live}
+      channelId="a"
+      partialRoster={false}
+      recovery={recoveryIn("idle")}
+      refreshAccess={() => {}}
+    />,
+  );
+  const status = screen.getByRole("status", { name: "Live updates limited" });
+  expect(status).not.toHaveTextContent(/keep trying/);
+  screen.getByRole("button", { name: "Check again" }).click();
+  expect(live.retry).toHaveBeenCalledTimes(1);
+});
+
+it("keeps quiet about retrying while recovery still retries a failure", () => {
+  // A transient head failure is one session recovery retries on its own.
+  const text = render({
+    heads: [
+      {
+        channelId: "a",
+        state: "error",
+        error: "Relay read failed (502)",
+        transient: true,
+      },
+    ],
+  });
+  expect(text).toContain("New messages may be late. Buzz will keep trying.");
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
+
+it.each([
+  [
+    "a 401 roster read",
+    { roster: { state: "error", error: "Relay read failed (401)" } },
+    "Buzz couldn’t confirm your sign-in.",
+  ],
+  [
+    "a 403 roster read",
+    { roster: { state: "error", error: "Relay read failed (403)" } },
+    "You may not have access to live updates in this conversation.",
+  ],
+  [
+    "a 401 head read",
+    {
+      heads: [
+        { channelId: "a", state: "error", error: "Relay read failed (401)" },
+      ],
+    },
+    "Buzz couldn’t confirm your sign-in.",
+  ],
+  [
+    "a head read the server denied in its own words",
+    {
+      heads: [
+        {
+          channelId: "a",
+          state: "error",
+          error: "Please sign in to read this channel",
+          denied: "sign-in",
+        },
+      ],
+    },
+    "Buzz couldn’t confirm your sign-in.",
+  ],
+  [
+    "a roster read the server denied in its own words",
+    {
+      roster: {
+        state: "error",
+        error: "You are not a member",
+        denied: "permission",
+      },
+    },
+    "You may not have access to live updates in this conversation.",
+  ],
+] as [string, Partial<Snapshot>, string][])(
+  "reads %s as a denial, with Check again",
+  (_, patch, message) => {
+    const text = render(patch);
+    expect(text).toContain(message);
+    expect(text).not.toContain("Relay read failed");
+    expect(text).not.toContain("keep trying");
+    expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+  },
+);
+
+it("promises nothing for a failure Buzz won’t retry", () => {
+  const stopped: Snapshot = {
+    ...base,
+    status: "error",
+    error: "Unsupported live cooldown; automatic setup stopped",
+  };
+  mount(
+    <LiveStatus
+      live={{
+        snapshot: () => stopped,
+        subscribe: () => () => {},
+        retry() {},
+      }}
+      channelId="a"
+      partialRoster={false}
+      recovery={recoveryIn("idle")}
+      refreshAccess={() => {}}
+    />,
+  );
+  const status = screen.getByRole("status", { name: "Live updates limited" });
+  expect(status).toHaveTextContent(
+    "New messages won’t appear here automatically.",
+  );
+  expect(status).not.toHaveTextContent(/keep trying|cooldown/);
+  // It stays until someone checks again.
+  expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
 });

@@ -4,11 +4,17 @@ import type { LiveSnapshot } from "./live";
 /** The parts of a session's live view that recovery classifies. */
 export type LiveRecoveryView = LiveSnapshot &
   Readonly<{
-    roster: Readonly<{ state: string; transient?: true }>;
+    roster: Readonly<{
+      state: string;
+      transient?: true;
+      /** A denied read's ask (errors.ts deniedRead). */
+      denied?: "sign-in" | "permission";
+    }>;
     heads: readonly Readonly<{
       channelId?: string;
       state: string;
       transient?: true;
+      denied?: "sign-in" | "permission";
     }>[];
     previews?: "checking" | "suspended";
   }>;
@@ -93,4 +99,50 @@ export function headRecovering(view: LiveRecoveryView, channelId: string) {
       heads: view.heads.filter((head) => head.channelId === channelId),
     }) !== "settled"
   );
+}
+
+/** Terminal live sign-in failures (live.ts). Signing in again clears them. */
+const SIGN_IN_FAILURES = new Set([
+  "Live signer does not match viewer",
+  "Live authentication signing failed",
+  "Relay rejected live authentication",
+  "Federated sign-in is required",
+  "Federated identity is not configured for this community",
+  "Federated relay authorization unavailable",
+]);
+
+/** What the live connection's own refusal asks of the person, while its
+ * error is still the one the refusal explains (live.ts LiveSnapshot). */
+export function liveDenied(
+  snapshot: Pick<LiveSnapshot, "error" | "refusal">,
+): "sign-in" | "permission" | undefined {
+  const refusal = snapshot.refusal;
+  return refusal && refusal.error === snapshot.error
+    ? refusal.denied
+    : undefined;
+}
+
+/** What a live failure asks of the person: access they may not have, a new
+ * sign-in, or nothing in particular. "stopped" is a local failure Buzz won't
+ * retry, since it would send the same thing. `denied` is a denied read's own
+ * answer, whatever its text (errors.ts deniedRead). */
+export function liveFailureKind(
+  reason: string | undefined,
+  denied?: "sign-in" | "permission",
+): "permission" | "sign-in" | "stopped" | "other" {
+  if (denied) return denied;
+  const text = reason?.trim() ?? "";
+  // A finite read refused over HTTP (errors.ts httpReadError).
+  const status = /^Relay read failed \((401|403)\)$/.exec(text)?.[1];
+  if (status) return status === "401" ? "sign-in" : "permission";
+  if (/^(?:restricted|blocked):/.test(text)) return "permission";
+  if (PERMANENT_LOCAL.has(text)) return "stopped";
+  if (
+    text.startsWith("auth-required:") ||
+    SIGN_IN_FAILURES.has(text) ||
+    // A policy close survives one reconnect with fresh sign-in evidence.
+    text.startsWith("Live connection closed (1008")
+  )
+    return "sign-in";
+  return "other";
 }

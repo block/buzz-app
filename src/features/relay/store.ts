@@ -3,7 +3,12 @@ import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
-import { isTransientFailure, ReadError, readErrorKind } from "./errors";
+import {
+  deniedRead,
+  isTransientFailure,
+  ReadError,
+  readErrorKind,
+} from "./errors";
 import type {
   ChannelReference,
   ChannelList,
@@ -334,6 +339,8 @@ export function createChannelStore(
     error?: string;
     /** Set with an error that a later retry can fix; see isTransientFailure. */
     transient?: true;
+    /** Set with a denied read's error; see deniedRead. */
+    denied?: "sign-in" | "permission";
   }>;
   let rosterRefresh: RosterRefresh = Object.freeze({ state: "idle" });
   let list: ChannelList = transport
@@ -2074,12 +2081,14 @@ export function createChannelStore(
       }
     } catch (error) {
       if (disposed || generation !== epoch) return;
+      const denied = deniedRead(error);
       outcome = isAbort(error)
         ? { state: "deferred" }
         : {
             state: "error",
             error: describe(error),
             ...(isTransientFailure(error) ? { transient: true as const } : {}),
+            ...(denied ? { denied } : {}),
           };
       if (error instanceof ReadError && error.retryAfterMs !== undefined)
         listRetryAt = performance.now() + error.retryAfterMs;

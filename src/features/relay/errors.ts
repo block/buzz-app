@@ -38,6 +38,20 @@ export function readErrorKind(error: unknown): ReadErrorKind {
     return "denied";
   return "unavailable";
 }
+/** What a denied read asks of the person: a new sign-in for 401, otherwise
+ * access they may not have. Undefined for a read that wasn't denied. */
+export function deniedRead(
+  error: unknown,
+): "sign-in" | "permission" | undefined {
+  if (readErrorKind(error) !== "denied") return undefined;
+  const status =
+    error instanceof ReadError
+      ? error.status
+      : error instanceof Error && error.message.endsWith("(401)")
+        ? 401
+        : undefined;
+  return status === 401 ? "sign-in" : "permission";
+}
 /** Native IPC rejects with plain strings, so its transport failures are known
  * by message (src-tauri/src/relay.rs `send` and `read_response`), plus the
  * NIP-11 discovery read that every native connection starts with. */

@@ -108,7 +108,13 @@ import {
   type EventData,
 } from "./events";
 import { accessOnce, eventVisibility } from "./event-access";
-import { isTransientFailure, ReadError, readErrorKind } from "./errors";
+import { errorMessage } from "../../shared/error-message";
+import {
+  deniedRead,
+  isTransientFailure,
+  ReadError,
+  readErrorKind,
+} from "./errors";
 import {
   PublishBlocked,
   PublishRejected,
@@ -1461,6 +1467,8 @@ export function createRelaySession(
     state: "pending" | "verified" | "deferred" | "error";
     error?: string | undefined;
     transient?: boolean;
+    /** See deniedRead. */
+    denied?: "sign-in" | "permission" | undefined;
     retryAt?: number;
   };
   const catchups = new Map<string, Catchup>();
@@ -1475,6 +1483,7 @@ export function createRelaySession(
         state: "pending" | "verified" | "deferred" | "error";
         error?: string;
         transient?: true;
+        denied?: "sign-in" | "permission";
       }>[];
       /** Public previews closed by the relay, awaiting a metadata recheck. A
        * failed recheck keeps them suspended; recovery retries it. */
@@ -1497,12 +1506,13 @@ export function createRelaySession(
         : {}),
       roster: channels.roster(),
       heads: Object.freeze(
-        [...catchups].map(([channelId, { state, error, transient }]) =>
+        [...catchups].map(([channelId, { state, error, transient, denied }]) =>
           Object.freeze({
             channelId,
             state,
             ...(error ? { error } : {}),
             ...(error && transient ? { transient: true as const } : {}),
+            ...(error && denied ? { denied } : {}),
           }),
         ),
       ),
@@ -3381,7 +3391,11 @@ export function createRelaySession(
       traffic?.prioritize?.(channels.demandedChannels());
       traffic?.update(ids, joined);
     } catch (error) {
-      liveSnapshot = { ...liveSnapshot, status: "error", error: String(error) };
+      liveSnapshot = {
+        ...liveSnapshot,
+        status: "error",
+        error: errorMessage(error),
+      };
     }
     publishLive();
     warmRoster();
@@ -3567,8 +3581,9 @@ export function createRelaySession(
     } catch (error) {
       if (!valid()) return;
       job.state = readErrorKind(error) === "cancelled" ? "deferred" : "error";
-      job.error = job.state === "error" ? String(error) : undefined;
+      job.error = job.state === "error" ? errorMessage(error) : undefined;
       job.transient = isTransientFailure(error);
+      job.denied = deniedRead(error);
       if (error instanceof ReadError && error.retryAfterMs !== undefined) {
         job.retryAt = performance.now() + error.retryAfterMs;
         // Keep lightweight obligations, not paced requests inside reader deadlines.
@@ -3578,6 +3593,7 @@ export function createRelaySession(
             queued.state = "error";
             queued.error = job.error;
             queued.transient = job.transient;
+            queued.denied = job.denied;
             queued.retryAt = job.retryAt;
             channels.catchUpFailed(id, error);
           }

@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
-import { isTransientFailure, ReadError } from "./errors";
+import { deniedRead, isTransientFailure, ReadError } from "./errors";
 import {
   headRecovering,
+  liveFailureKind,
   liveRecoveryStatus,
   rosterRecovering,
   type LiveRecoveryView,
@@ -196,4 +197,40 @@ it("owns a surface's read exactly when recovery counts it failed or busy", () =>
   });
   expect(headRecovering(failedRoute("error: interrupted"), "a")).toBe(true);
   expect(headRecovering(failedRoute("restricted: no access"), "a")).toBe(false);
+});
+
+it("sorts a live failure by what it asks of the person", () => {
+  expect(liveFailureKind("restricted: insufficient scope")).toBe("permission");
+  expect(liveFailureKind("blocked: not a member")).toBe("permission");
+  expect(liveFailureKind("auth-required: sign in")).toBe("sign-in");
+  expect(liveFailureKind("Live signer does not match viewer")).toBe("sign-in");
+  expect(liveFailureKind("Live connection closed (1008): policy")).toBe(
+    "sign-in",
+  );
+  expect(
+    liveFailureKind("Unsupported live cooldown; automatic setup stopped"),
+  ).toBe("stopped");
+  expect(liveFailureKind("Live connection closed (1006)")).toBe("other");
+  expect(liveFailureKind("Broker stream failed (503)")).toBe("other");
+  expect(liveFailureKind(undefined)).toBe("other");
+  // A finite read refused over HTTP.
+  expect(liveFailureKind("Relay read failed (401)")).toBe("sign-in");
+  expect(liveFailureKind("Relay read failed (403)")).toBe("permission");
+  expect(liveFailureKind("Relay read failed (502)")).toBe("other");
+  // A denied read carries its own ask, whatever its words.
+  expect(liveFailureKind("Please sign in", "sign-in")).toBe("sign-in");
+  expect(liveFailureKind("Not a member", "permission")).toBe("permission");
+});
+
+it("reads a denied read's ask from its status", () => {
+  expect(deniedRead(new ReadError("denied", "Please sign in", 401))).toBe(
+    "sign-in",
+  );
+  expect(deniedRead(new ReadError("denied", "Not a member", 403))).toBe(
+    "permission",
+  );
+  expect(deniedRead(new Error("Relay read failed (401)"))).toBe("sign-in");
+  expect(deniedRead(new Error("Relay read failed (403)"))).toBe("permission");
+  expect(deniedRead(new Error("Relay read failed (502)"))).toBeUndefined();
+  expect(deniedRead(new Error("connection lost"))).toBeUndefined();
 });

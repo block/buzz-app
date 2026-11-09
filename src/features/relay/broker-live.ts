@@ -149,8 +149,17 @@ export function subscribeBrokerTraffic(
         );
       });
   }
-  const state = (status: LiveSnapshot["status"], error?: string) =>
-    publish({ status, routes: [], ...(error ? { error } : {}) });
+  const state = (
+    status: LiveSnapshot["status"],
+    error?: string,
+    denied?: "sign-in" | "permission",
+  ) =>
+    publish({
+      status,
+      routes: [],
+      ...(error ? { error } : {}),
+      ...(error && denied ? { refusal: { error, denied } } : {}),
+    });
   function start() {
     if (closed) return;
     loseSyncs("disconnected: live broker restarted");
@@ -211,9 +220,16 @@ export function subscribeBrokerTraffic(
         ) {
           if ([400, 401, 403, 413].includes(response.status)) {
             // A broker restart drops registrations, so even a 4xx can clear.
+            // Its status, not its words, says whether it asks for a new
+            // sign-in or for access; a bad or oversized request asks neither.
             state(
               "error",
               `Live broker rejected subscription (${response.status})`,
+              response.status === 401
+                ? "sign-in"
+                : response.status === 403
+                  ? "permission"
+                  : undefined,
             );
             retryTimer = setTimeout(start, liveSlowRetryDelay(++refusals));
             return;

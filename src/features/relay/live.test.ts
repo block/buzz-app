@@ -4590,7 +4590,7 @@ it("a rejected AUTH is settled for session recovery, retries on its own slow tim
     ).toBe("settled");
     await vi.advanceTimersByTimeAsync(59_000);
     expect(h.sockets).toHaveLength(1);
-    // The conversation's Retry live updates calls this after the user fixes
+    // The conversation's Check again calls this after the user fixes
     // the signer or access problem.
     h.owner.retry();
     expect(h.sockets).toHaveLength(2);

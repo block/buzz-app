@@ -182,6 +182,11 @@ export type LiveSnapshot = Readonly<{
   status: "unavailable" | "connecting" | "connected" | "retrying" | "error";
   routes: readonly LiveRoute[];
   error?: string;
+  /** What a refused subscription asks of the person, whatever its words: a
+   * new sign-in or access. It explains `error` only while that is still the
+   * error it names: a later error can replace `error` and keep this
+   * (live-recovery.ts liveDenied). */
+  refusal?: Readonly<{ error: string; denied: "sign-in" | "permission" }>;
 }>;
 /** Transport provenance, not a history-completeness claim or permission to alert. */
 export type LiveProvenance = Readonly<{

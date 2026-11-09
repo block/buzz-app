@@ -2079,6 +2079,10 @@ function ChannelWorkspace({
           recovery={queries.recovery}
           channelId={current?.id}
           partialRoster={list.coverage === "partial"}
+          // Access comes from the signed member list, so read it again.
+          refreshAccess={() =>
+            queries.channels.refreshList?.({ consistency: "strong" })
+          }
           // Recovery removes the focused retry control. Hand focus on
           // explicitly; previews have no composer, so use their history.
           onRecovered={

@@ -794,9 +794,14 @@ it("resets the reconnect backoff once a stream stayed up a minute", async () => 
     owner.dispose();
   }
 });
-it.each([400, 401, 403, 413])(
+it.each([
+  [400, undefined],
+  [401, "sign-in"],
+  [403, "permission"],
+  [413, undefined],
+] as const)(
   "keeps a %s stream rejection visible and retries it slowly, doubling the wait",
-  async (status) => {
+  async (status, denied) => {
     vi.useFakeTimers();
     const f = fixture();
     const t = await connectBrokerTransport();
@@ -805,10 +810,15 @@ it.each([400, 401, 403, 413])(
       for (const [index, wait] of [60_000, 120_000].entries()) {
         required(f.headers[index]).resolve(new Response(null, { status }));
         await tick();
-        expect(f.snapshots.at(-1)).toMatchObject({
-          status: "error",
-          error: `Live broker rejected subscription (${status})`,
-        });
+        const error = `Live broker rejected subscription (${status})`;
+        expect(f.snapshots.at(-1)).toMatchObject({ status: "error", error });
+        // Its status says what it asks of the person, not its words; a bad
+        // or oversized request asks neither.
+        if (denied)
+          expect(f.snapshots.at(-1)).toMatchObject({
+            refusal: { error, denied },
+          });
+        else expect(f.snapshots.at(-1)).not.toHaveProperty("refusal");
         await vi.advanceTimersByTimeAsync(wait - 1);
         expect(f.headers).toHaveLength(index + 1);
         await vi.advanceTimersByTimeAsync(1);
@@ -819,6 +829,7 @@ it.each([400, 401, 403, 413])(
       f.publish(2);
       await tick();
       expect(f.snapshots.at(-1)).toMatchObject({ status: "connected" });
+      expect(f.snapshots.at(-1)).not.toHaveProperty("refusal");
     } finally {
       owner.dispose();
     }

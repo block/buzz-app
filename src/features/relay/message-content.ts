@@ -118,6 +118,29 @@ export function scanMarkdown(content: string): MarkdownScan {
   return { tree, tooDeep, definitions, images, links };
 }
 
+/** Source ranges of reference definitions, in order. They render no text. */
+export function definitionRanges(
+  content: string,
+): readonly { start: number; end: number }[] {
+  if (!content.includes("]:") || content.length > MAX_MARKDOWN_LENGTH)
+    return [];
+  const { tree, tooDeep } = scanMarkdown(content);
+  if (tooDeep) return [];
+  const ranges: { start: number; end: number }[] = [];
+  const pending = [tree];
+  for (let node = pending.pop(); node; node = pending.pop()) {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type === "definition" && start !== undefined && end !== undefined)
+      ranges.push({ start, end });
+    for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
+      const child = node.children?.[index];
+      if (child) pending.push(child);
+    }
+  }
+  return ranges;
+}
+
 function resolvedNodeUrl(
   node: MarkdownNode,
   definitions: ReadonlyMap<string, string>,

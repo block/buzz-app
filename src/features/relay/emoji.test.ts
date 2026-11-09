@@ -119,11 +119,41 @@ it("tags a shortcode after a link and CJK punctuation, but not inside links", ()
     "[a](<https://x.com/a\\\u2029https://y.com/a，:party:>)",
     "[a](\u2028<x>https://y.com/a，:party:)",
     "https://github。COM/:party:",
+    "[ref]: https://example.com/a，:party:",
+    "Hi\n\n> [ref]: https://example.com/a，:party:",
+    "- [ref]:\n  https://example.com/a，:party:",
   ]) {
     expect(contentEmojiTags(content, entries)).toEqual([]);
     expect(referencedEmoji(content)).toEqual([]);
   }
   expect(referencedEmoji("see :http://")).toEqual(["http"]);
+  // A paragraph line that only looks like a definition stays prose.
+  const prose = "Check this\n[x]: https://example.com，:party:";
+  expect(contentEmojiTags(prose, entries)).toEqual([["emoji", "party", url]]);
+  expect(
+    referencedEmoji("[ref]: https://example.com/a，:party:\n:other:"),
+  ).toEqual(["other"]);
+});
+it("sends a reference definition's shortcode without the catalog", async () => {
+  const h = session();
+  const content = "[ref]: https://example.com/a，:party:";
+  const sent = () => {
+    const id = h.session.messages.send("c", content);
+    return h.session.outbox
+      ?.snapshot()
+      .find((item) => item.event.id === id)
+      ?.event.tags.filter(([name]) => name === "emoji");
+  };
+  expect(sent()).toEqual([]);
+  expect(h.session.emoji.snapshot().status).not.toBe("ready");
+  for (const pending of h.wire.pending.splice(0)) pending.respond([]);
+  await flush();
+  const ready = h.session.emoji.ensure();
+  await flush();
+  h.wire.next().fail(new Error("offline"));
+  await ready;
+  expect(h.session.emoji.snapshot().status).toBe("error");
+  expect(sent()).toEqual([]);
 });
 it("unions latest complete member sets; empty replacements and ties survive stale reads", async () => {
   const h = session();

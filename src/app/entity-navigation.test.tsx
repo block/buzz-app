@@ -904,6 +904,7 @@ it("lists active primary pages in the app dock", async () => {
   await within(
     await screen.findByRole("navigation", { name: "Pages" }),
   ).findByRole("button", { name: "Activity" });
+  expect(screen.queryByRole("tab", { name: "Activity" })).toBeNull();
   expect(screen.getByRole("tab", { name: "Bestie" })).toBeInTheDocument();
 
   expect(

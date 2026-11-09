@@ -37,5 +37,4 @@ it("swaps the sidebar Activity row's bell for the latest reaction emoji", () => 
   // The emoji is decoration; the row keeps its name.
   expect(screen.getByRole("button", { name: "Activity" })).toBe(button);
   expect(button.querySelector("[data-active]")).toHaveTextContent("🎉");
-  expect(button.querySelector("[data-size='row']")).toBeInTheDocument();
 });

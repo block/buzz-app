@@ -588,7 +588,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   on the right. Compact avatars sit before the name on the left; Solo chats show
   the included agents.
 - **App navigation**: use the left dock to switch apps. Bestie is first,
-  Activity second, followed by the other apps. Community and profile controls
+  followed by Messages and the other apps. Activity is the first row of the
+  Messages sidebar. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
   view unless they provide their own sidebar. Pages listed in the Messages

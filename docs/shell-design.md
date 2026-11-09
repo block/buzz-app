@@ -54,8 +54,9 @@ semantic tokens, UI authoring rules and the local component reference.
   reveals the inventory its placement belongs to unless the filter is All. Both
   inventories stay mounted when filtered, retaining section state, and share the
   channel sidebar's surface, resize owner, row treatment and section recipes.
-  Bestie and Inbox lead the left app dock, followed by Messages and the other
-  dock destinations. Sidebar-placed contributions remain in the conversation
+  Bestie leads the left app dock, followed by Messages and the other dock
+  destinations. Activity (Inbox) is host-placed as the first Messages sidebar
+  row. Sidebar-placed contributions remain in the conversation
   sidebar; while one is open, `navigationOwner` keeps Messages selected in the
   dock and the conversation sidebar stays open unless the page supplies its own
   sidebar, which replaces it. The conversation sidebar's plus opens New for

@@ -744,6 +744,11 @@ function MembershipContent({
                 size="sm"
                 loading={pending}
                 disabled={current?.failed ? locked : !url}
+                // Copying with a pointer should not move focus into the field.
+                // Keyboard activation keeps the shared visible-focus treatment.
+                onMouseDown={(event) => {
+                  if (event.button === 0) event.preventDefault();
+                }}
                 onClick={() => {
                   if (current?.failed) {
                     setLink(null);
@@ -753,7 +758,6 @@ function MembershipContent({
                   writeClipboardText(url)
                     .then(() => {
                       setCopied(true);
-                      setNotice("Invite link copied.");
                     })
                     .catch(() => setError("Could not copy the invite link."));
                 }}

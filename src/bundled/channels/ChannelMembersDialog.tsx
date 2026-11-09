@@ -120,6 +120,7 @@ import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
 import { channelIcon, channelText } from "../../features/channels/channel-icon";
+import { useOpeningBlocked } from "../../features/channels/use-opening-blocked";
 import { writeClipboardText } from "../../shared/clipboard";
 import { messagePersonLink } from "../../features/direct-messages/message-person";
 
@@ -889,6 +890,7 @@ export function ChannelMembersDialog({
   const channel =
     list.channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
+  const openingBlocked = useOpeningBlocked(session, channel?.members);
   const solo = channel?.channelType === "solo";
   const dm = channel?.channelType === "dm";
   const place = solo ? "chat" : dm ? "DM" : "channel";
@@ -2326,6 +2328,7 @@ export function ChannelMembersDialog({
           administration.status !== "ready" ||
           Object.values(administration.authority.roles).includes("guest")
         }
+        openingBlocked={openingBlocked}
       />
     ) : null;
   const dialog = (

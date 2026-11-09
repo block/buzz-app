@@ -111,8 +111,9 @@ export function createSettingsTab(
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  Usage and billing
+                  See usage and billing
                 </a>
+                .
               </>
             }
           />

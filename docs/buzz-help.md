@@ -718,7 +718,7 @@ available rather than silently discarding it.
   A Builderlab agent runs on your Builderlab account; the creation form links
   that Builderlab server's site, where the account's usage and billing are.
   The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
-  also links to **Usage and billing** on that site.
+  also links to **See usage and billing** on that site.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab

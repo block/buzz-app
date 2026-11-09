@@ -1100,7 +1100,7 @@ it("shows the remote execution hint only while the shared account is signed in",
   expect(within(note).getByText("Remote agent")).toBeVisible();
   expect(within(note).getByText(/Runs on a Builderlab machine/)).toBeVisible();
   expect(
-    within(note).getByRole("link", { name: "Usage and billing" }),
+    within(note).getByRole("link", { name: "See usage and billing" }),
   ).toBeVisible();
   expect(note).not.toHaveTextContent("It can’t open files on this computer.");
   act(() => h.session.signOut());
@@ -1115,14 +1115,14 @@ it.each(["https://builderlab.example", "https://login.example/deployment/"])(
     renderTabs(h);
     await loadedInstructions();
     const link = within(screen.getByRole("note")).getByRole("link", {
-      name: "Usage and billing",
+      name: "See usage and billing",
     });
     expect(link).toHaveAttribute("href", server);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
     expect(link.parentElement).toHaveClass("buzz-preference-row-description");
     expect(link.parentElement).toHaveTextContent(
-      "Runs on a Builderlab machine. Usage and billing",
+      "Runs on a Builderlab machine. See usage and billing.",
     );
   },
 );

@@ -296,6 +296,9 @@ export function CommunityDialog({
         // This submission uses it directly; the state serves later retries.
         const inviteCode = entered.code || code;
         if (entered.code) {
+          // The code moves to Invite code, where it can be edited; leaving it
+          // in the address would bring it back on the next Continue.
+          setUrl(next.url);
           setCode(entered.code);
           setNeedsInvite(true);
         }

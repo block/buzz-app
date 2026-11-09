@@ -1,6 +1,6 @@
 import { useSoloNavigation } from "../channel-navigation/solo-navigation-react";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import {
   CaretDownIcon,
@@ -13,8 +13,10 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuRoot,
+  MenuSeparator,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import { NewWorkspace } from "./NewWorkspace";
 import styles from "./WorkspaceControl.module.css";
 import { useRegionWorkspace } from "./chat-workspace";
 
@@ -44,6 +46,8 @@ export function WorkspaceControl({
   }, [session]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const projectId =
     value ??
     (filed
@@ -87,6 +91,7 @@ export function WorkspaceControl({
         }}
       >
         <MenuTrigger
+          ref={trigger}
           disabled={
             disabled ||
             snapshot.status === "idle" ||
@@ -133,9 +138,25 @@ export function WorkspaceControl({
               Retry workspaces
             </MenuItem>
           )}
+          <MenuSeparator />
+          <MenuItem
+            disabled={!session.soloPreferences.sectionCreationWritable}
+            onClick={() => setCreating(true)}
+          >
+            New workspace
+          </MenuItem>
         </MenuPopup>
       </MenuRoot>
       {error && <span role="alert">{error}</span>}
+      {creating && (
+        <NewWorkspace
+          session={session}
+          create={(section) => session.soloPreferences.createSection(section)}
+          close={() => setCreating(false)}
+          finalFocus={trigger}
+          onCreated={choose}
+        />
+      )}
     </span>
   );
 }

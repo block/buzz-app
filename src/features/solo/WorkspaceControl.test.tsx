@@ -1,16 +1,30 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { webcrypto } from "node:crypto";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-testing";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
-function fixture() {
-  const assign = vi.fn(async () => {});
+function fixture(sectionCreationWritable = true) {
+  const assign = vi.fn(async (_channelId: string, _sectionId?: string) => {});
+  const createSection = vi.fn(
+    async (_section: { id: string; name: string }) => {},
+  );
   const snapshot = {
     status: "ready" as const,
     data: {
@@ -26,9 +40,11 @@ function fixture() {
       subscribe: () => () => {},
       assign,
       refresh: vi.fn(async () => {}),
+      sectionCreationWritable,
+      createSection,
     },
   } as unknown as RelaySession;
-  return { session, assign };
+  return { session, assign, createSection };
 }
 
 it("moves a saved chat without changing project defaults", async () => {
@@ -175,4 +191,64 @@ it("keeps hiding a region chat whose region offers no workspace", async () => {
   } finally {
     await h.dispose();
   }
+});
+
+it.each([
+  { chat: "a new chat", trigger: "Add workspace", channelId: undefined },
+  { chat: "a saved chat", trigger: "Workspace: Buzz App", channelId: "chat" },
+])(
+  "creates a workspace from the composer and picks it for $chat",
+  async ({ trigger, channelId }) => {
+    vi.stubGlobal("crypto", webcrypto);
+    const { session, assign, createSection } = fixture();
+    const change = vi.fn();
+    const user = userEvent.setup();
+    render(
+      channelId ? (
+        <WorkspaceControl session={session} channelId={channelId} />
+      ) : (
+        <WorkspaceControl session={session} value="" onChange={change} />
+      ),
+    );
+    const control = screen.getByRole("button", { name: trigger });
+    const open = async () => {
+      await user.click(control);
+      await user.click(
+        await screen.findByRole("menuitem", { name: "New workspace" }),
+      );
+      return screen.findByRole("dialog", { name: "New workspace" });
+    };
+    await open();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(control).toHaveFocus());
+    const dialog = await open();
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Name" }),
+      "Planning",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(createSection).toHaveBeenCalledWith({
+      id: expect.any(String),
+      name: "Planning",
+    });
+    const id = createSection.mock.calls[0]?.[0].id;
+    if (channelId) {
+      expect(assign).toHaveBeenCalledWith(channelId, id);
+      expect(change).not.toHaveBeenCalled();
+    } else {
+      expect(change).toHaveBeenCalledWith(id);
+      expect(assign).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it("offers New workspace disabled while workspaces can't be created", async () => {
+  const { session } = fixture(false);
+  const user = userEvent.setup();
+  render(<WorkspaceControl session={session} value="" onChange={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Add workspace" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "New workspace" }),
+  ).toHaveAttribute("aria-disabled", "true");
 });

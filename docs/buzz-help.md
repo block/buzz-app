@@ -493,6 +493,8 @@ and are asked to sign in again in Buzz.
   lists agents eligible to run the task on this device.
   Without Nexus, chat creation remains available in the global **+** menu,
   Solo and each workspace; creating a workspace opens a chat draft filed there.
+  Besides **New → New workspace**, the composer's workspace control offers
+  **New workspace**, which creates one and puts the chat in it.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off. In **New chat**, typing **#**

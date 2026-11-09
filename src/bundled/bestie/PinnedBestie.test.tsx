@@ -499,6 +499,7 @@ async function fixture({
     ),
     rootId: root.id,
     replyId: response.id,
+    linkId: link.id,
     stepId: step.id,
     release: {
       head: reads.head.resolve,
@@ -707,7 +708,12 @@ it("keeps the promoted verified DM usable through discovery failure until absenc
 // A link to the promoted DM from another page, as App's page switch shows it:
 // Messages takes conversation visits and hands the promoted DM's to Bestie.
 async function linkedVisit(
-  visit: (ids: { rootId: string; replyId: string; stepId: string }) => {
+  visit: (ids: {
+    rootId: string;
+    replyId: string;
+    linkId: string;
+    stepId: string;
+  }) => {
     messageId: string;
     threadRootId?: string;
   },
@@ -716,6 +722,7 @@ async function linkedVisit(
     holdThread?: boolean;
     olderRoot?: boolean;
     holdOlder?: boolean;
+    withLink?: boolean;
     withActivity?: boolean;
   } = {},
 ) {
@@ -870,20 +877,43 @@ it("opens a reply linked without its thread as its thread in Bestie's page", asy
   bestieVisit(h, { messageId: h.f.replyId });
 });
 
+// A link's thread hint is not trusted: the root marked in the chat history is
+// the one the thread's reader verifies, so an unrelated hinted message is
+// never revealed, and the reply's real thread opens.
+it("reveals a reply's verified root, not the unrelated message its link hinted", async () => {
+  const h = await linkedVisit(
+    ({ replyId, linkId }) => ({ messageId: replyId, threadRootId: linkId }),
+    { withLink: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(within(thread).getByText("Are you there?")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  expect(h.revealed(h.f.linkId)).toBeUndefined();
+});
+
 // The linked reply keeps focus whichever reveal finishes last; the root in the
 // chat history is context, shown without taking focus.
-it("keeps focus in the thread when its root is revealed first", async () => {
+it("keeps focus in the thread when its root is revealed as the thread arrives", async () => {
   const h = await linkedVisit(
     ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
     { holdThread: true },
   );
-  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
-  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
   const thread = await screen.findByLabelText("Thread");
+  // The loaded history holds the root, but it is only a hint until the held
+  // thread verifies it: nothing is revealed yet.
+  await waitFor(() => expect(chatRow(h.f.rootId)).toBeDefined());
+  await act(() => frames(2));
+  expect(h.revealed(h.f.rootId)).toBeUndefined();
   await act(async () => h.f.release.thread());
   expect(
     await within(thread).findByText("Yep, here. What’s up?"),
   ).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
   await waitFor(() => expect(inThreadPane()).toBe(true));
 });
 

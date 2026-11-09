@@ -27,6 +27,7 @@ import {
   tabPane,
   panelTabId,
   entryPane,
+  threadTab,
   useChannelTabState,
   type ConversationTab,
 } from "../channels/useChannelTabState";
@@ -208,8 +209,23 @@ export function BestieConversation({
   const visits = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new visit asks again for the same message.
   const visit = useMemo(() => ++visits.current, [navigation?.entryId]);
+  // A thread visit's address names its root as the link's hint. The context
+  // reveal follows the root the thread's reader verifies, recorded for the
+  // visit by the tab store, so a hint naming an unrelated message never marks
+  // it; until then nothing is sought.
+  const recordedRoot =
+    routed && navigation
+      ? state.routedVisits?.[navigation.entryId]?.rootId
+      : undefined;
+  const routedTab = recordedRoot
+    ? threadTab(state.tabs, channel.id, recordedRoot)
+    : undefined;
+  const verifiedRoot =
+    routedTab?.kind === "thread" ? routedTab.rootId : undefined;
   const sought = handedOff
-    ? (routed?.threadRootId ?? exact?.messageId)
+    ? routed
+      ? verifiedRoot
+      : exact?.messageId
     : undefined;
   // The reader's own move in the chat during a thread visit, a scroll or a
   // send, ends its context reveal: the root is no longer sought. A message
@@ -218,7 +234,7 @@ export function BestieConversation({
   const [movedOn, setMovedOn] = useState<number>();
   const stayed = movedOn !== visit;
   const context = useRef<number>(undefined);
-  context.current = sought && stayed && !exact ? visit : undefined;
+  context.current = handedOff && routed && stayed ? visit : undefined;
   const moveOn = useCallback(() => {
     if (context.current !== undefined) setMovedOn(context.current);
   }, []);

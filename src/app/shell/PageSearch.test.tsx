@@ -403,8 +403,9 @@ it("opens conversation-scoped search with Command F and returns to overall searc
   }
 });
 
-/** A connected community whose promoted Bestie DM is with Pollen, shown
- * through the shell's Bestie projection, on a navigation target that can change. */
+/** A connected community whose promoted Bestie DM is with Pollen, beside an
+ * ordinary DM with Ada, shown through the shell's Bestie projection, on a
+ * navigation target that can change. */
 async function bestieSearch() {
   const root = new Context();
   root.provide("pluginStatus", {
@@ -415,8 +416,10 @@ async function bestieSearch() {
   const shortcuts = new ShortcutsService(root, window, bindings);
   const viewer = keypair(),
     relay = keypair(),
-    pollen = keypair();
+    pollen = keypair(),
+    ada = keypair();
   const bestieDm = "11111111-1111-4111-8111-111111111111";
+  const adaDm = "22222222-2222-4222-8222-222222222222";
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
@@ -424,11 +427,16 @@ async function bestieSearch() {
     query: async (filters) =>
       filters.flatMap((filter) =>
         filter.kinds?.includes(0)
-          ? [profile(pollen, { name: "Pollen" })]
+          ? [profile(pollen, { name: "Pollen" }), profile(ada, { name: "Ada" })]
           : filter.kinds?.includes(39000)
-            ? [metadata(relay, bestieDm, "", 1_700_000_000, [["t", "dm"]])]
+            ? [bestieDm, adaDm].map((id) =>
+                metadata(relay, id, "", 1_700_000_000, [["t", "dm"]]),
+              )
             : filter.kinds?.includes(39002)
-              ? [roster(relay, bestieDm, [viewer.pubkey, pollen.pubkey])]
+              ? [
+                  roster(relay, bestieDm, [viewer.pubkey, pollen.pubkey]),
+                  roster(relay, adaDm, [viewer.pubkey, ada.pubkey]),
+                ]
               : [],
       ),
   });
@@ -470,6 +478,9 @@ async function bestieSearch() {
       relay: { subscribe: () => () => {}, snapshot: () => connection },
     },
   } as unknown as SearchServices;
+  // In production, AppShell mounts BestieNavigationProvider above PageSearch,
+  // and both read the same relay (searchServices.communities.relay), so the
+  // context's session is the one search compares against. This stands in for it.
   render(
     <BestieConversationContext
       value={{ session: owner.session, channelId: bestieDm }}
@@ -492,6 +503,7 @@ async function bestieSearch() {
   );
   const apple = isApplePlatform(navigator.platform);
   return {
+    adaDm,
     press: (key: string) =>
       fireEvent.keyDown(window, { key, metaKey: apple, ctrlKey: !apple }),
     navigate(target: object) {
@@ -539,6 +551,29 @@ it("scopes Command F and Command K's conversation row to the Bestie page's DM", 
         name: "Remove Pollen search scope",
       }),
     ).toBeVisible();
+  } finally {
+    await f.dispose();
+  }
+});
+
+it("scopes Command F to another conversation, not the Bestie DM, while a Bestie DM exists", async () => {
+  const f = await bestieSearch();
+  try {
+    f.navigate({ kind: "conversation", channelId: f.adaDm });
+    f.press("f");
+    const scoped = await screen.findByRole("dialog", {
+      name: "Search this conversation",
+    });
+    expect(
+      await within(scoped).findByRole("button", {
+        name: "Remove Ada search scope",
+      }),
+    ).toBeVisible();
+    expect(
+      within(scoped).queryByRole("button", {
+        name: "Remove Pollen search scope",
+      }),
+    ).toBeNull();
   } finally {
     await f.dispose();
   }

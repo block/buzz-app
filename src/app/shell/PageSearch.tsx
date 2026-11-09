@@ -1,6 +1,6 @@
 import { useSearchSettings } from "./SearchSettings";
 import { usePagePresentation } from "./BestieNavigation";
-import { useBestieConversation } from "./bestie-context";
+import { isBestiePage, useBestieConversation } from "./bestie-context";
 import {
   useCallback,
   useEffect,
@@ -116,9 +116,7 @@ export function PageSearch({
   const currentChannelId =
     currentTarget?.kind === "conversation"
       ? currentTarget.channelId
-      : currentTarget?.kind === "page" &&
-          currentTarget.pluginId === "buzz.bestie" &&
-          currentTarget.pageId === "bestie"
+      : isBestiePage(currentTarget)
         ? bestieChannelId
         : undefined;
   const input = useRef<HTMLElement>(null);

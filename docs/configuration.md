@@ -16,6 +16,7 @@ Build defaults are readable binary data, **never secret storage**.
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Native build: default [repository access rules](repository-access.md#default-rules), in `repository-access.json`'s schema. Unset means none. |
 | `BUZZ_DEFAULT_COMMUNITY_URL` | Packaged frontend build: secure relay origin to select once, after identity setup, only when this viewer has no saved community record. Saved choices, including Personal space, always win. Unset in OSS builds. |
 | `BUZZ_DATABRICKS_HOST` | Frontend build and dev server: `https://` Databricks workspace URL passed as `DATABRICKS_HOST` to every bundled `goose-acp`, which then prefers it to the host in goose's config. Unset in OSS builds. See [Databricks host](#databricks-host). |
+| `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Frontend build: `https://` store listings for the build's mobile app, shown with QR codes on the mobile Settings card to people whose Builderlab account holds this device's backed-up key. Unset in OSS builds. See [Mobile app links](#mobile-app-links). |
 | `BUZZ_RELAY_URL` | Live development broker's default community, not an agent relay override or a packaged default. |
 | `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` | Presence-only alias for fresh-viewer community selection in live development only. Saved viewer choice wins. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | Native and frontend build: sign-in servers added to the built-in one, each with its adapter prefix and community hosts; empty opts out. See below. |
@@ -97,6 +98,24 @@ plugin starts receives it as `DATABRICKS_HOST`, so goose reports Databricks as
 configured and ignores a host saved in goose's config. Only the host is set:
 the model, thinking level and sign-in stay goose's own. Leave it unset for OSS
 builds.
+
+## Mobile app links
+
+Packagers that publish a Buzz mobile app can link its store listings:
+
+```sh
+BUZZ_MOBILE_APP_IOS_URL=https://apps.example.com/ios \
+BUZZ_MOBILE_APP_ANDROID_URL=https://apps.example.com/android bin/pnpm tauri build
+```
+
+The frontend reads each from repository-root `.env.local` or the process
+environment (process wins) and compiles it in. Each must be an `https://` URL
+without credentials; invalid values fail the build. When the Builderlab session
+is signed in and this device's key is the account's linked, backed-up key (so
+the phone restores it), the mobile Settings card says to install the app and
+sign in with Builderlab, with a link and QR code for each listing that is set. With neither
+set it gives the same instructions without links. Other identities keep the
+pairing flow.
 
 ## Builderlab URL build input
 

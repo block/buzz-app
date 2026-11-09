@@ -7,7 +7,7 @@ import {
   resolveConfig,
 } from "vite";
 import { constants } from "node:fs";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -220,13 +220,43 @@ export async function prepareFixtureDependencies() {
 // Playwright's globalSetup.
 export default prepareFixtureDependencies;
 
+// A module script's `src`, with `type="module"` before or after it.
+const moduleScript = /<script\b(?=[^>]*\btype="module")[^>]*\bsrc="([^"]+)"/g;
+
 // A fixture page that reaches the whole app has over a thousand modules to
-// transform on its first load. Transform its static import graph before
-// navigating, as prepareFixtureDependencies does for dependencies, so no server
-// does that work inside a navigation budget.
-export async function warmUp(server, entry) {
-  await server.warmupRequest(entry);
-  await server.waitForRequestsIdle();
+// transform on its first load. Transform the static import graph of each entry
+// before navigating, as prepareFixtureDependencies does for dependencies, so no
+// server does that work inside a navigation budget. An entry is a module URL or
+// an HTML page, whose module scripts are its entries. The walk awaits every
+// module itself: Vite's waitForRequestsIdle settles once per server, after its
+// first crawl, so it cannot show that a later warm-up has finished.
+export async function warmUp(server, ...entries) {
+  const environment = server.environments.client;
+  const seen = new Set();
+  const visit = async (url) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    await environment.warmupRequest(url);
+    const module = await environment.moduleGraph.getModuleByUrl(url);
+    await Promise.all([...(module?.staticImportedUrls ?? [])].map(visit));
+  };
+  await Promise.all(
+    entries.flat().map(async (entry) => {
+      if (!entry.endsWith(".html")) return visit(entry);
+      const html = await readFile(join(server.config.root, entry), "utf8");
+      const sources = Array.from(html.matchAll(moduleScript), ([, src]) => src);
+      // A page warmed through nothing would load cold again, and silently.
+      if (!sources.length)
+        throw new Error(
+          `${entry} has no <script type="module" src> to warm up`,
+        );
+      await Promise.all(
+        sources.map((src) =>
+          visit(new URL(src, `http://fixture${entry}`).pathname),
+        ),
+      );
+    }),
+  );
 }
 
 // Parallel fixture servers must not invalidate each other's optimized imports,

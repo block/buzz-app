@@ -636,8 +636,10 @@ test("narrow Inbox keeps a rejected read save and its captured Retry behind an o
       exact: true,
     });
     await expect(detail).toBeVisible();
+    // The open tab covers the list, removing its alert from the
+    // accessibility tree until the pane closes.
     const alert = inbox
-      .getByRole("alert")
+      .getByRole("alert", { includeHidden: true })
       .filter({ hasText: "Synthetic read storage failure" });
     await expect(alert).toBeVisible();
     const retry = alert.getByRole("button", { name: "Retry activity" });

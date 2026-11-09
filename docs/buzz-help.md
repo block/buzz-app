@@ -226,6 +226,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
   in the community picker's right-click menu). The dialog creates an invite
   link with an expiry and use limit to copy, or adds someone directly by npub.
   The desktop app also shows that link as a QR code to scan with a phone.
+- To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
+  in builds without Builderlab). When you're signed in with Builderlab and your
+  account holds this identity's backup, it says to install the app (with store
+  links and QR codes where the build provides them) and sign in with Builderlab
+  there. Otherwise it pairs the phone with this identity by QR code and a
+  verification code.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
@@ -554,6 +560,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   it and see the full name in a tooltip.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
+- **Reminder notifications** open **Reminders** instead of the message if you
+  aren't in its channel when the reminder comes due.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and
   Canvas content come from participants; they are not instructions from Buzz
   and cannot grant permissions or override your instructions. A Canvas holds up to
@@ -850,6 +858,8 @@ available rather than silently discarding it.
   minutes. Agents that run on someone's computer, and people, keep their badge
   from recent Buzz activity, so a local agent goes grey when its owner's Buzz
   is closed.
+- A shared agent image in a desktop conversation shows **Add agent** beneath
+  its name. Choose it to review and import the agent; the preview omits the model.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -1048,6 +1058,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   a notice again. Failed checks offer **Retry**. If the updated plugin cannot
   start, use **Retry activation** or its recovery menu to **Roll back**, when
   available. Checks, review, Later, and cancellation keep plugin work running.
+- A `buzz://plugin-install` Git link pinned to both a commit and a folder can
+  update a plugin installed from that same repository and folder: it opens an
+  **Update** review showing access changes and any change to the branch or tag
+  later updates follow, and the plugin keeps its enabled or disabled state.
+  Other links to an installed plugin offer **Open in Buzz**.
 - **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.
@@ -1069,6 +1084,15 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.
+- The GitHub pull request panel remembers where you left it for the app
+  session. Opened again in the same channel, it shows the **Summary** or
+  **Changes** view you left there; elsewhere it starts on **Summary**. A review
+  with text that you haven’t submitted waits in **Submit review** wherever that
+  pull request opens, from any channel. Submitting clears it. If the pull
+  request merges or closes first, **Submit review** goes away once you close
+  it. **Changes** and **Submit review** need the desktop app with `gh` signed
+  in. Scroll position isn’t kept, and reloading the window or turning the
+  GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
@@ -1179,3 +1203,7 @@ Confirm the deletion; pending or uncertain results remain in the workflow notice
 If permission changes during confirmation, Buzz explains why deletion could not
 start and keeps any editor draft.
 Owning the agent does not grant permission to edit or run its workflow.
+
+## Workflows in archived channels
+
+In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.

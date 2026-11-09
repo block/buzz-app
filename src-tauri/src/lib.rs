@@ -1326,19 +1326,23 @@ mod tests {
     async fn a_url_download_holds_the_import_slot_until_it_settles() {
         let imports = super::Imports::default();
         let (release, gate) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let (started, downloading) = tokio::sync::oneshot::channel();
         let first = tokio::spawn(super::import_url(
             imports.clone(),
             "https://plugins.example.org/a.json".into(),
             "ab".repeat(32),
-            async move { gate.await.map_err(|e| e.to_string()) },
+            // The download runs inside the slot, so its start shows the slot
+            // is held. Polling the slot instead could take it at the moment the
+            // download tried to, and the download would then fail as busy.
+            async move {
+                let _ = started.send(());
+                gate.await.map_err(|e| e.to_string())
+            },
         ));
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while imports.0.try_lock().is_ok() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the download never took the import slot");
+        tokio::time::timeout(std::time::Duration::from_secs(5), downloading)
+            .await
+            .expect("the download never took the import slot")
+            .expect("the import ended without starting its download");
         let second = super::prepare_import(imports.clone(), || Ok(None)).await;
         assert_eq!(
             second.err().as_deref(),

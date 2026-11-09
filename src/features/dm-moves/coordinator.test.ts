@@ -337,6 +337,34 @@ it("gets all approvals before membership/copying, preserves authors and recovers
   expect(
     f.published.filter((e) => moveControl(e)?.control.type === "done"),
   ).toHaveLength(2);
+  const again = await restarted.moves.start(DM, TARGET, 24);
+  await vi.waitFor(() =>
+    expect(
+      b.moves.snapshot().moves.some((m) => m.request.event.id === again),
+    ).toBe(true),
+  );
+  // A fresh request needs fresh consent even when the destination is unchanged.
+  expect(f.published.filter((e) => movedSource(e))).toHaveLength(2);
+  await b.moves.respond(again, true);
+  await vi.waitFor(
+    () =>
+      expect(
+        restarted.moves
+          .snapshot()
+          .moves.find((m) => m.request.event.id === again)?.status,
+      ).toBe("complete"),
+    { timeout: 5000 },
+  );
+  const repeated = restarted.moves
+    .snapshot()
+    .moves.find((m) => m.request.event.id === again);
+  assert.exists(repeated);
+  const copiedAgain = f.published.filter(
+    (e) => movedSource(e)?.move === repeated.request.control.move,
+  );
+  expect(copiedAgain.map((e) => e.content).sort()).toEqual(["First", "Second"]);
+  expect(copiedAgain.some((e) => movedSource(e)?.original === id)).toBe(false);
+  expect(copiedAgain.every((e) => !moveControl(e))).toBe(true);
 });
 
 it("lets the initiator cancel without posting and blocks cancellation by another participant", async () => {

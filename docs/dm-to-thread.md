@@ -4,6 +4,8 @@ The channels plugin owns this feature. Its menu and message action open the
 shared Dialog form; request cards render inside the existing conversation host.
 Navigation owns the addressable `dmMove` dialog and its dismissal visits. The
 feature service stays mounted for the community even when the DM is not open.
+Partial conversion starts only from a top-level DM message. Thread replies cannot
+start a conversion; whole-DM conversion still preserves existing reply structure.
 
 ## Consent and publication
 
@@ -24,7 +26,8 @@ participation and is rejected before approval.
 Each app signs its human's copies with the existing session outbox. Local-agent
 copies use native custody and authenticated agent publication, with prepared
 signed bytes retained before publication. No private keys cross IPC. Hosted
-agents, attachments and patches are unsupported. A move is currently bounded to
+agents and patches are unsupported. Attachments retain their current file links
+and metadata within the same community, including attachment edits. A move is currently bounded to
 5,000 loaded source events; oversized or incomplete reads stop the conversion.
 
 Source reads use writer consistency and the production edit/delete fold. The
@@ -55,6 +58,10 @@ errors back off exponentially up to five minutes. Each owned active pass reads
 its controls and destination metadata; ready/posting phases also read bounded
 source history and accepted copies. Pending and unowned requests do no background
 per-request reads. A failed request does not stop another request from advancing.
+
+Each new conversion requests fresh consent and creates a separate thread. Earlier
+conversion notices are excluded in every state, including completed and cancelled
+requests. They do not offer the message action to convert from that point.
 
 Coordination events are kind 9 with a versioned topic. Only request events become
 cards; other valid controls are omitted by the message fold and excluded from

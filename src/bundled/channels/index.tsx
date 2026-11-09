@@ -1,4 +1,4 @@
-import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
 import { bindDmMoves } from "../../features/dm-moves/coordinator";
 import { nativeMoveAgentHost } from "../../features/dm-moves/native";
 import {
@@ -15,7 +15,11 @@ import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
+import {
+  ChatCircleIcon,
+  CopyIcon,
+  MessageReplyIcon,
+} from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
 import {
@@ -62,8 +66,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "dm-move-from-message",
     title: "Convert to thread from here",
     placement: "menu",
+    icon: () => <MessageReplyIcon size={16} aria-hidden="true" />,
     matches: (message, session) =>
-      !message.dmMove && canConvertDm(session, message.channelId),
+      !message.dmMove &&
+      !message.threadRootId &&
+      canConvertDm(session, message.channelId),
     component: ({ message, session, close }) => (
       <DmMoveFromHere
         message={message}
@@ -203,6 +210,9 @@ function DmMoveFromHere({
         openDmMove(navigation, session, message.channelId, message.id);
       }}
     >
+      <MenuIcon>
+        <MessageReplyIcon size={16} aria-hidden="true" />
+      </MenuIcon>
       Convert to thread from here
     </MenuItem>
   );

@@ -12,10 +12,12 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { RelayData } from "../relay/service";
 import { conversationTarget } from "../channel-navigation/routes";
 import { eventMs } from "../relay/message-order";
+import { threadReference } from "../relay/thread-reference";
 import {
   namedChannel,
   useChannelReference,
 } from "../conversation/channel-reference";
+import { BuzzLinkPreview } from "../conversation/BuzzLinkPreview";
 import { dmMoves, type DmMoves, type MoveSnapshot } from "./coordinator";
 import type { MoveState } from "./protocol";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -177,7 +179,6 @@ export function DmMoveDialog({
     session.channels.list,
   );
   const [target, setTarget] = useState("");
-  const [scope, setScope] = useState(fromId === "all" ? "all" : "from");
   const [hours, setHours] = useState("24");
   const [from, setFrom] = useState<{ id: string; ms: number }>();
   const [error, setError] = useState("");
@@ -198,6 +199,10 @@ export function DmMoveDialog({
             throw new Error(
               "The selected message is unavailable. Choose another message.",
             );
+          if (threadReference(events[0]))
+            throw new Error(
+              "Conversion cannot start from a thread reply. Choose a message in the main DM.",
+            );
           if (!lifetime.signal.aborted)
             setFrom({ id: events[0].id, ms: eventMs(events[0]) });
         })
@@ -217,8 +222,23 @@ export function DmMoveDialog({
       !c.archived &&
       !!c.visibility,
   );
+  const disabledReason = pending
+    ? "Sending approval request…"
+    : !moves
+      ? "Conversion is unavailable on this connection."
+      : !channels.length
+        ? "Join a text channel before converting this DM."
+        : !target
+          ? "Choose a destination channel first."
+          : fromId !== "all" && !from
+            ? error || "Loading the starting message…"
+            : !Number.isFinite(Number(hours)) ||
+                Number(hours) < 1 / 60 ||
+                Number(hours) > 720
+              ? "Choose an approval window between one minute and 30 days."
+              : undefined;
   const submit = async () => {
-    if (!moves || pending || (scope === "from" && !from)) return;
+    if (!moves || disabledReason) return;
     setPending(true);
     setError("");
     try {
@@ -226,7 +246,7 @@ export function DmMoveDialog({
         channelId,
         target,
         Number(hours),
-        scope === "from" ? from : undefined,
+        fromId !== "all" ? from : undefined,
       );
       close();
     } catch (e) {
@@ -243,6 +263,7 @@ export function DmMoveDialog({
       title="Convert to thread"
       description="Everyone in the DM must approve before any messages are copied or anyone is added to the channel."
       size="compact"
+      headerGap="compact"
       preventClose={pending}
       onOpenChange={(open) => {
         if (!open) close();
@@ -259,15 +280,9 @@ export function DmMoveDialog({
           <Button
             variant="prominent"
             loading={pending}
-            disabled={
-              !moves ||
-              !target ||
-              pending ||
-              (scope === "from" && !from) ||
-              !Number.isFinite(Number(hours)) ||
-              Number(hours) < 1 / 60 ||
-              Number(hours) > 720
-            }
+            disabled={!!disabledReason}
+            focusableWhenDisabled
+            title={disabledReason}
             onClick={() => void submit()}
           >
             Request approval
@@ -298,24 +313,21 @@ export function DmMoveDialog({
             Join a text channel before converting this DM.
           </p>
         )}
-        <Select
-          variant="field"
+        <Field
           label="Messages"
-          value={scope}
-          onValueChange={setScope}
-          disabled={pending}
-          groups={[
-            {
-              label: "",
-              options: [
-                { value: "all", label: "Whole conversation" },
-                ...(fromId !== "all"
-                  ? [{ value: "from", label: "From this message onward" }]
-                  : []),
-              ],
-            },
-          ]}
-        />
+          nativeLabel={false}
+          description={
+            fromId === "all"
+              ? "To start later, open a message’s menu and choose Convert to thread from here."
+              : undefined
+          }
+        >
+          <p className="text-body text-primary">
+            {fromId === "all"
+              ? "Whole conversation"
+              : "From this message onward"}
+          </p>
+        </Field>
         <Field
           label="Approval window (hours)"
           description="Only approvals expire. Once everyone approves, the move waits until everyone is online."
@@ -331,8 +343,8 @@ export function DmMoveDialog({
           />
         </Field>
         <p className="text-body-sm text-subtle">
-          Latest edits are included and deleted messages are left out.
-          Attachments and hosted agents aren’t supported yet.
+          Latest edits are included and deleted messages are left out. Hosted
+          agents and patches aren’t supported yet.
         </p>
         {error && (
           <p role="alert" className="text-body-sm text-danger">
@@ -448,6 +460,34 @@ export function DmMoveCard({
         to a thread in{" "}
         <strong>{name ? `#${name}` : "the destination channel"}</strong>.
       </p>
+      {req.from && (
+        <div className={styles.form}>
+          <p className="text-caption text-subtle">Starting message</p>
+          {state.status === "pending" && (
+            <BuzzLinkPreview
+              session={session}
+              channelId={state.request.dm}
+              messageId={req.from.id}
+            />
+          )}
+          <div>
+            <Button
+              size="inline"
+              variant="link"
+              onClick={() => {
+                const target = conversationTarget(
+                  session.scope,
+                  state.request.dm,
+                );
+                if (target.kind === "conversation" && req.from)
+                  void navigation.open({ ...target, messageId: req.from.id });
+              }}
+            >
+              View message
+            </Button>
+          </div>
+        </div>
+      )}
       {!name && (
         <p role="status" className="text-body-sm text-subtle">
           {destination.state === "withheld"

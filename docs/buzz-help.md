@@ -212,10 +212,18 @@ revokes all of them, and a pairing unused for 30 days expires.
   the action stays gated until its requirements are met.
 
 - In a DM, choose **Channel actions → Convert to thread**, or a message’s
-  **Convert to thread from here** action. Choose a joined text channel, the
-  messages to include, and an approval window (24 hours by default). Everyone
-  must approve before anyone is added or any messages are copied. A local
-  agent’s owner approves for it; hosted agents and attachments are unsupported.
+  **Convert to thread from here** action. Choose a joined text channel and an
+  approval window (24 hours by default).
+  Opening from Channel actions includes the whole conversation. To start
+  partway through, use the starting message’s **Convert to thread from here**
+  action. The dialog shows which range will be included.
+  Conversion can start only from a message in the main DM, not a thread reply.
+  Whole-DM conversion still includes existing threads and their replies.
+  Hover or focus an unavailable **Request approval** button to see what is missing.
+  A request starting partway through shows the starting message’s preview, author
+  and time before approval. **View message** opens it in the original DM.
+  Everyone must approve before anyone is added or any messages are copied. A local
+  agent’s owner approves for it; hosted agents and patches are unsupported.
   Private destinations require everyone to be a member already. Public
   destinations add missing participants only after approval. Guests cannot
   convert into a channel where they cannot post.
@@ -223,12 +231,16 @@ revokes all of them, and a pairing unused for 30 days expires.
   approval deadline no longer applies. Keep the approving apps running. Each
   person’s app posts their own messages, and owners’ apps post for their local
   agents. Latest edits are included, deleted messages are omitted, and replies
-  retain their structure. If a deleted message makes that structure impossible
-  to verify, Buzz stops the move and explains why. The initiator can cancel
+  retain their structure. Attachments keep their file links and current metadata.
+  If a deleted message makes that structure impossible to verify, Buzz stops
+  the move and explains why. The initiator can cancel
   until posting starts. The request card shows progress, retry, and the new
   thread’s link. Reopening the app resumes saved work without posting it twice.
   Each copy shows **Originally sent** with its original date and time in your
   local time zone. Its normal message timestamp shows when the copy was posted.
+  You can convert the DM again into another thread, including in another channel.
+  Conversion notices are left out, including completed and cancelled requests.
+  Those notices do not offer **Convert to thread from here**.
 
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into

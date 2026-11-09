@@ -24,6 +24,11 @@ export function planMove(
   ancestry: Readonly<Record<string, string | undefined>> = {},
 ): MovedMessage[] {
   const byId = new Map(events.map((e) => [e.id, e]));
+  const start = request.from && byId.get(request.from.id);
+  if (start && threadReference(start))
+    throw new Error(
+      "Conversion cannot start from a thread reply. Choose a message in the main DM.",
+    );
   const rows = foldMessages(dm, relay, events, {
     includeReplies: true,
     agentOwner: owner,
@@ -40,9 +45,9 @@ export function planMove(
       (ms === request.from.ms && row.id >= request.from.id)
     );
   });
-  if (messages.some((row) => row.attachments.length || row.diff))
+  if (messages.some((row) => row.diff))
     throw new Error(
-      "Conversations containing attachments or patches cannot be converted yet.",
+      "Conversations containing patches cannot be converted yet.",
     );
   const included = new Set(messages.map((row) => row.id));
   const participants = new Set(request.authors.map((pair) => pair[0]));
@@ -52,6 +57,9 @@ export function planMove(
     .map((row) => {
       const event = byId.get(row.id);
       if (!event) throw new Error("The original message is unavailable.");
+      const attachmentEvent = byId.get(row.attachmentSourceId ?? row.id);
+      if (!attachmentEvent)
+        throw new Error("The original attachment metadata is unavailable.");
       const reference = threadReference(event);
       let parent = reference?.parentId;
       const visited = new Set([row.id]);
@@ -78,6 +86,9 @@ export function planMove(
         ...(parent ? { parent } : {}),
         // Do not notify the source recipients again; retain identity bindings as display metadata.
         tags: [
+          // Destinations are in the same community. Keep its existing blob
+          // references and the metadata selected by the production edit fold.
+          ...attachmentEvent.tags.filter(([name]) => name === "imeta"),
           ...[
             ...new Set([...row.mentions, ...(row.mentionReferences ?? [])]),
           ].map((key) => ["mention", key]),

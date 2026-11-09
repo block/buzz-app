@@ -3992,6 +3992,56 @@ it("links Import an agent to Manage plugins while no agent type plugin is on", a
   ).not.toBeInTheDocument();
 });
 
+it("keeps Manage plugins plain text while an import is still running", async () => {
+  const user = userEvent.setup();
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const { agents, change } = setup([], { page: { navigator } });
+  let finish = () => {};
+  agents.port.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ agent: agent("Ada", 1), notes: [] });
+      }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Import them now/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Import an agent" });
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Import as Echo, Ada" }),
+  );
+  // The last agent plugin goes off while Ada is still importing.
+  const none: RegisteredAgentType[] = [];
+  agents.types = () => none;
+  act(() => change({}));
+  expect(
+    within(dialog).getByText(/No agent plugin is turned on/),
+  ).toHaveTextContent(
+    "No agent plugin is turned on. Turn one on in Manage plugins.",
+  );
+  // Opening Settings would close the dialog over the import, which Close
+  // and Escape may not do either, so the link waits as plain text.
+  expect(
+    within(dialog).queryByRole("button", { name: "Manage plugins" }),
+  ).not.toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.getByRole("dialog", { name: "Import an agent" })).toBeVisible();
+  finish();
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Manage plugins" }),
+  );
+  expect(navigator.open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+  expect(
+    screen.queryByRole("dialog", { name: "Import an agent" }),
+  ).not.toBeInTheDocument();
+});
+
 it("links a Marketplace agent's Import to Manage plugins while no agent type plugin is on", async () => {
   const user = userEvent.setup();
   const navigator = {

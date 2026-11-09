@@ -627,13 +627,15 @@ export function SharedImportDialog({
         {types.length === 0 ? (
           <NoImportTypes
             agents={agents}
-            // Settings opens in place of the dialog, not over it.
+            // Settings opens in place of the dialog, not over it, so while
+            // an import keeps the dialog open the link is plain text.
             openSettings={
-              openSettings &&
-              ((section) => {
-                onClose();
-                openSettings(section);
-              })
+              openSettings && !pending
+                ? (section) => {
+                    onClose();
+                    openSettings(section);
+                  }
+                : undefined
             }
           />
         ) : (

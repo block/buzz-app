@@ -575,6 +575,67 @@ it("says why a shared agent can't be imported here, and links Manage plugins", a
   ).not.toBeInTheDocument();
 });
 
+it("keeps Manage plugins plain text while a shared agent is still importing", async () => {
+  const read = vi.fn().mockResolvedValue([shared]);
+  const props = importing();
+  let fail = () => {};
+  props.agents.port.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        fail = () => reject(new Error("Keychain access was denied"));
+      }),
+  );
+  const openSettings = vi.fn();
+  const view = render(
+    <AgentBrowse
+      relay={community(read)}
+      {...props}
+      openSettings={openSettings}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Shared helper" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  const dialog = screen.getByRole("dialog", { name: "Shared helper" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+  expect(props.agents.port).toHaveBeenCalledTimes(1);
+  // The last agent plugin goes off while the import is still running.
+  const gone = importing([]);
+  view.rerender(
+    <AgentBrowse
+      relay={community(read)}
+      {...props}
+      agents={gone.agents}
+      types={gone.types}
+      openSettings={openSettings}
+    />,
+  );
+  expect(
+    within(dialog).getByText(/No agent plugin is turned on/),
+  ).toHaveTextContent(
+    "No agent plugin is turned on. Turn one on in Manage plugins.",
+  );
+  // Opening Settings would close the dialog over the import, which Close
+  // may not do either, so the link waits as plain text.
+  expect(
+    within(dialog).queryByRole("button", { name: "Manage plugins" }),
+  ).not.toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+  await act(async () => {
+    fail();
+  });
+  // The import's outcome still lands in the dialog, and the link is back.
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Keychain access was denied",
+  );
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Manage plugins" }),
+  );
+  expect(openSettings).toHaveBeenCalledExactlyOnceWith("plugins");
+  expect(
+    screen.queryByRole("dialog", { name: "Shared helper" }),
+  ).not.toBeInTheDocument();
+});
+
 it("tells a browser that shared agents import only in the desktop app", async () => {
   // Outside the desktop app Agents is unavailable and no type registers.
   const dialog = await noTypes("unavailable");

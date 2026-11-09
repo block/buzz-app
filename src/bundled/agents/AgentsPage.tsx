@@ -990,13 +990,15 @@ export function AgentsPage({
               flow === "import" ? () => changeTab("yours") : returnTo("teams")
             }
             onPendingChange={setImporting}
-            // Settings opens in place of the dialog, not over it.
+            // Settings opens in place of the dialog, not over it, so while
+            // an import keeps the dialog open the link is plain text.
             openSettings={
-              openSettings &&
-              ((section) => {
-                setFlow(undefined);
-                openSettings(section);
-              })
+              openSettings && !importing
+                ? (section) => {
+                    setFlow(undefined);
+                    openSettings(section);
+                  }
+                : undefined
             }
           />
         </Dialog>

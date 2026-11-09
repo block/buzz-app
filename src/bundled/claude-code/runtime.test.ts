@@ -1097,7 +1097,12 @@ it("refuses a synced effort it can't confirm, keeping the saved session for the 
 });
 it("refuses a watch's standalone turn on a synced effort its model lacks", async () => {
   const { runtime, claudes, agent } = setup();
-  const config = { ...DEFAULT_CONFIG, model: "haiku", effort: "medium" };
+  const config = {
+    ...DEFAULT_CONFIG,
+    model: "haiku",
+    effort: "medium",
+    instructions: "Initial rule.",
+  };
   runtime.sync([{ pubkey: self, config } as Agent]);
   const prompt = vi.fn(() => "check the build");
   const turn = (synced?: Record<string, string>) =>
@@ -1113,7 +1118,11 @@ it("refuses a watch's standalone turn on a synced effort its model lacks", async
       "This agent's synced effort \"medium\" isn't offered by Haiku 5.5. Change it in Settings.",
   });
   expect(prompt).not.toHaveBeenCalled();
+  config.instructions = "Admitted standalone rule.";
   await expect(turn()).resolves.toMatchObject({ ok: true });
+  expect(
+    systemPromptOf(claudes().find((process) => process.prompts.length)),
+  ).toContain(config.instructions);
   expect(claudes().some((process) => process.prompts.length)).toBe(true);
   runtime.dispose();
 });
@@ -1139,7 +1148,10 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
       trigger: { type: "mention", event: mention(id) },
       channelId: channel,
       agent,
-      config: DEFAULT_CONFIG,
+      config: {
+        ...DEFAULT_CONFIG,
+        instructions: id === "2" ? "Initial rule." : "Admitted ordinary rule.",
+      },
       ...(team ? { team } : {}),
       signal: new AbortController().signal,
       workingUntil: () => undefined,
@@ -1164,6 +1176,7 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   expect(first?.killed).toBe(true);
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).not.toContain("<team>");
+  expect(system(second)).toContain("Admitted ordinary rule.");
   runtime.dispose();
 });
 
@@ -2981,10 +2994,21 @@ it("hands no Canvas to a shared channel's turns", async () => {
 it("controls an idle Claude session without sending a message, and rejects reset while active", async () => {
   const f = setup([], { hold: true });
   const root = message("1", "hello");
+  const followup = (id: string, text: string) =>
+    message(id, text, {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const config = {
+    ...DEFAULT_CONFIG,
+    instructions: "Owner baseline.\nAgent rule.",
+  };
   const place = { channelId: channel, root: root.id };
   const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
   try {
-    await f.deliver({ type: "mention", event: root });
+    await f.deliver({ type: "mention", event: root }, { config });
     // The start reads the agent's recent notes first.
     await flush(10);
     const process = f.claudes()[0];
@@ -2994,32 +3018,42 @@ it("controls an idle Claude session without sending a message, and rejects reset
     await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
       "active turn",
     );
+    config.instructions = "Agent rule.";
+    await f.deliver(
+      { type: "mention", event: followup("3", "steer") },
+      { config },
+    );
+    await vi.waitFor(() => expect(process.prompts).toHaveLength(2));
     process.finish();
     await vi.waitFor(() =>
       expect(f.runtime.sessionState(agent, place)).toBe("idle"),
     );
+    expect(process.killed).toBe(false);
     const compacted = f.runtime.session(agent, place, "compact");
     await vi.waitFor(() =>
-      expect(process.prompts).toEqual([expect.any(String), "/compact"]),
+      expect(process.prompts).toEqual([
+        expect.any(String),
+        expect.any(String),
+        "/compact",
+      ]),
     );
     expect(f.runtime.sessionState(agent, place)).toBe("compacting");
+    expect(systemPromptOf(process)).toContain("Owner baseline.");
+    expect(systemPromptOf(process)).toContain("Agent rule.");
     process.finish();
     await compacted;
     await f.runtime.session(agent, place, "new");
     expect(process.killed).toBe(true);
     expect(f.claudes()).toHaveLength(1);
-    await f.deliver({
-      type: "mention",
-      event: message("2", "hello again", {
-        tags: [
-          ["h", channel],
-          ["e", root.id, "", "reply"],
-        ],
-      }),
-    });
+    await f.deliver(
+      { type: "mention", event: followup("2", "hello again") },
+      { config },
+    );
     await flush(10);
     expect(f.claudes()).toHaveLength(2);
     expect(f.claudes()[1]?.options.args).not.toContain("--resume");
+    expect(systemPromptOf(f.claudes()[1])).not.toContain("Owner baseline.");
+    expect(systemPromptOf(f.claudes()[1])).toContain("Agent rule.");
   } finally {
     f.runtime.dispose();
   }

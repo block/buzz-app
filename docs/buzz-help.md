@@ -822,6 +822,13 @@ available rather than silently discarding it.
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- **Settings → Agent setup → Shared instructions** saves baseline preferences
+  for Claude, Codex, goose and Pi across your communities on this device. Each
+  agent's own instructions and your current request take precedence. Edits and
+  Clear apply at the next session refresh or ordinary turn; active steering and
+  Compact keep the admitted instructions. Codex voice picks them up when a session
+  opens. Buzz-controlled remote Claude and Codex use them; provider-hosted agents
+  do not. This setting does not sync to other devices.
 - **Settings → Agent details** says where an agent's configuration lives:
   **Synced in** its community, or **Only on this Mac** with why (the relay
   doesn't sync agent settings, or the first copy failed and Buzz will try

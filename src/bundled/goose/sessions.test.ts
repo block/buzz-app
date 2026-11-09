@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  GOOSE,
   type Choice,
   REQUEST_TIMEOUT_MS,
   type ServeMcp,
@@ -80,7 +81,10 @@ const setup = (
         store,
       }),
       ...(started && { started }),
-      launch: async () => settings,
+      launch: async (instructions) => ({
+        ...settings,
+        systemPrompt: instructions ?? settings.systemPrompt,
+      }),
       choice: () => choice,
       fingerprint: () =>
         JSON.stringify([settings.workspace, settings.systemPrompt]),
@@ -224,20 +228,57 @@ describe("AgentSessions", () => {
   });
 
   it("interrupts the turn running in a conversation, and no other", async () => {
-    const { fake, sessions } = setup({}, true);
-    const one = sessions.deliver("a", "one", 1);
+    const cancelling = gated("session/cancel");
+    const { fake, sessions } = setup({}, true, { wrap: cancelling.wrap });
+    const one = sessions.deliver("a", "one", 1, { instructions: "A" });
     const other = sessions.deliver("b", "other", 2);
     // Both turns are running before the interrupt.
     await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(2));
     const [first, second] = fake.geese[0]?.turns ?? [];
     expect(first?.text).toContain("one");
     expect(second?.text).toContain("other");
-    await sessions.interrupt("a");
-    await flush();
-    expect(fake.geese[0]?.cancelled).toEqual([first?.sessionId]);
-    await expect(one).resolves.toEqual({ ok: true, stopped: true });
-    second?.finish();
-    await expect(other).resolves.toMatchObject({ ok: true });
+    const next = { model: "gpt-4.1", instructions: "B" };
+    const before = sessions.deliver("a", "B", 3, next);
+    const stop = sessions.interrupt("a");
+    try {
+      await vi.waitFor(() => expect(cancelling.waiting()).toHaveLength(1));
+      const between = sessions.deliver("a", "C", 4, next);
+      const again = sessions.interrupt("a");
+      await vi.waitFor(() => expect(cancelling.waiting()).toHaveLength(2));
+      const after = sessions.deliver("a", "D", 5, next);
+      const completed = tracked(after);
+      cancelling.release();
+      await Promise.all([stop, again]);
+      expect(fake.geese[0]?.cancelled).toEqual([
+        first?.sessionId,
+        first?.sessionId,
+      ]);
+      await expect(one).resolves.toEqual({ ok: true, stopped: true });
+      await expect(Promise.all([before, between])).resolves.toEqual([
+        { ok: true, undelivered: true },
+        { ok: true, undelivered: true },
+      ]);
+      await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(3));
+      const goose = fake.geese[0];
+      const delivered = goose?.turns[2];
+      expect(goose?.turns.map((turn) => turn.text)).toEqual([
+        "one",
+        "other",
+        "D",
+      ]);
+      expect(goose?.prompts.get(delivered?.sessionId ?? "")).toBe("B");
+      expect(goose?.configured.at(-1)).toBe(
+        `${delivered?.sessionId} model=gpt-4.1`,
+      );
+      expect(completed.settled).toBe(false);
+      delivered?.finish();
+      await expect(after).resolves.toEqual({ ok: true });
+      second?.finish();
+      await expect(other).resolves.toMatchObject({ ok: true });
+    } finally {
+      cancelling.release();
+      await sessions.shutdown();
+    }
   });
 
   it("interrupts a conversation once the session opening for it has its message", async () => {
@@ -363,20 +404,160 @@ describe("AgentSessions", () => {
     expect(fake.geese).toHaveLength(1);
   });
 
-  it("runs a turn on the model its message asked for, and the next on the agent's", async () => {
-    const { fake, sessions, choose } = setup();
-    choose({ provider: "openai", model: "" });
-    await sessions.deliver("a", "one", 1, { model: "gpt-4.1" });
-    await sessions.deliver("a", "two", 2);
-    expect(fake.geese[0]?.configured).toEqual([
-      "session-1 model=gpt-4.1",
-      "session-1 model=gpt-default",
-    ]);
-    expect(fake.geese[0]?.turns.map((turn) => turn.sessionId)).toEqual([
-      "session-1",
-      "session-1",
-    ]);
-  });
+  it.each([
+    { stop: false, instructions: "", succeeds: false },
+    { stop: true, instructions: "", succeeds: false },
+    { stop: false, instructions: "A", succeeds: false },
+    { stop: true, instructions: "A", succeeds: false },
+    { stop: false, instructions: "A", succeeds: true },
+  ])(
+    "runs queued captured instructions in order (stop: $stop, instructions: $instructions, steer: $succeeds)",
+    async ({ stop, instructions, succeeds }) => {
+      const selecting = gated("session/set_config_option");
+      const { fake, sessions, choose } = setup({}, true, {
+        wrap: selecting.wrap,
+      });
+      choose({ provider: "openai", model: "" });
+      const one = sessions.deliver("a", "one", 1, {
+        model: "gpt-4.1",
+        instructions: "A",
+      });
+      await vi.waitFor(() =>
+        expect(selecting.waiting()).toEqual(["session-1"]),
+      );
+      selecting.release();
+      await vi.waitFor(() => expect(fake.geese[0]?.turns).toHaveLength(1));
+      const goose = fake.geese[0];
+      if (!goose || !GOOSE.steering) throw new Error("fixture");
+      let refuse!: () => void;
+      const refused = new Promise<void>((resolve) => {
+        refuse = resolve;
+      });
+      const originalSteer = GOOSE.steering.steer;
+      const steering = vi
+        .spyOn(GOOSE.steering, "steer")
+        .mockImplementationOnce(async (...args) => {
+          await refused;
+          if (succeeds) return originalSteer(...args);
+          throw new Error("The turn no longer takes steering");
+        });
+      const delivered = vi.fn();
+      const two = sessions.deliver("a", "two", 2, {
+        model: "gpt-4.1",
+        instructions: "B",
+        delivered,
+      });
+      try {
+        await vi.waitFor(() => expect(steering).toHaveBeenCalledOnce());
+        const backlog = instructions === "A" && !succeeds;
+        const later = backlog
+          ? sessions.deliver("a", "later B", 3, {
+              model: "gpt-4.1",
+              instructions: "B",
+            })
+          : undefined;
+        const clear = sessions.deliver("a", "clear", 4, {
+          model: "gpt-default",
+          instructions,
+        });
+        const another = backlog
+          ? sessions.deliver("a", "another A", 5, {
+              model: "gpt-default",
+              instructions,
+            })
+          : undefined;
+        const completedB = tracked(two);
+        const completedClear = tracked(clear);
+        refuse();
+        if (succeeds)
+          await expect(
+            steering.mock.results[0]?.value,
+          ).resolves.toBeUndefined();
+        else
+          await expect(steering.mock.results[0]?.value).rejects.toThrow(
+            "The turn no longer takes steering",
+          );
+        const after = backlog
+          ? sessions.deliver("a", "after failure", 6, {
+              model: "gpt-default",
+              instructions,
+            })
+          : undefined;
+        goose.turns[0]?.finish();
+        await vi.waitFor(() =>
+          expect(selecting.waiting().length + goose.turns.length).toBe(2),
+        );
+        expect(goose.turns).toHaveLength(1);
+        expect(selecting.waiting()).toEqual([
+          succeeds ? "session-1" : "session-2",
+        ]);
+        if (stop) {
+          goose.hold = false;
+          vi.spyOn(GOOSE, "select").mockResolvedValueOnce(undefined);
+          await sessions.interrupt("a");
+        }
+        selecting.release();
+        const turns = succeeds
+          ? ["clear"]
+          : backlog
+            ? ["two", "later B", "clear", "another A", "after failure"]
+            : ["two", "clear"];
+        if (!stop)
+          for (const [index, text] of turns.entries()) {
+            await vi.waitFor(() =>
+              expect(goose.turns.length + selecting.waiting().length).toBe(
+                index + 2,
+              ),
+            );
+            selecting.release();
+            await vi.waitFor(() => expect(goose.turns).toHaveLength(index + 2));
+            const turn = goose.turns[index + 1];
+            expect(turn?.text).toBe(text);
+            expect(turn?.sessionId).toBe(
+              text === "two" || text === "later B"
+                ? "session-2"
+                : succeeds
+                  ? "session-1"
+                  : "session-3",
+            );
+            expect(goose.prompts.get(turn?.sessionId ?? "")).toBe(
+              text === "two" || text === "later B"
+                ? "B"
+                : instructions || undefined,
+            );
+            if (text === "two") expect(completedB.settled).toBe(false);
+            if (text === "clear") expect(completedClear.settled).toBe(false);
+            turn?.finish();
+          }
+        const waiting = [two, later, clear, another, after].filter(
+          (work) => work !== undefined,
+        );
+        expect(await Promise.all([one, ...waiting])).toEqual([
+          { ok: true },
+          ...waiting.map(() =>
+            stop ? { ok: true, undelivered: true } : { ok: true },
+          ),
+        ]);
+        expect(goose.turns.map((turn) => turn.text)).toEqual(
+          stop ? ["one"] : ["one", ...turns],
+        );
+        expect(goose.turns[0]?.steered).toEqual(succeeds ? ["two"] : []);
+        expect(steering).toHaveBeenCalledOnce();
+        expect(delivered).toHaveBeenCalledTimes(stop ? 0 : 1);
+        expect(goose.configured[0]).toBe("session-1 model=gpt-4.1");
+        const serving = stop || succeeds ? "session-1" : "session-3";
+        expect(sessions.serving("a")?.sessionId).toBe(serving);
+        if (!stop)
+          expect(goose.configured.at(-1)).toBe(`${serving} model=gpt-default`);
+      } finally {
+        refuse();
+        selecting.release();
+        steering.mockRestore();
+        vi.restoreAllMocks();
+        await sessions.shutdown();
+      }
+    },
+  );
 
   it("puts the live session on a chosen thinking level, and a new one on goose's own", async () => {
     const { fake, sessions, choose } = setup();
@@ -795,10 +976,11 @@ describe("AgentSessions", () => {
     expect(pool.size).toBe(0);
   });
 
-  it("stops waiting for a session that opens too late, and keeps it for the next message", async () => {
-    const { fake, sessions, change } = setup();
-    await sessions.deliver("a", "one", 1);
-    change({ systemPrompt: "newer" }, false);
+  it("retains the admitted session when a replacement opens too late", async () => {
+    const { fake, sessions, pool } = setup({}, false, {
+      pool: new ServerPool(1),
+    });
+    await sessions.deliver("a", "one", 1, { instructions: "A" });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -810,6 +992,7 @@ describe("AgentSessions", () => {
     const abort = new AbortController();
     const late = sessions.deliver("a", "two", 2, {
       fresh,
+      instructions: "B",
       signal: abort.signal,
     });
     await flush(30);
@@ -821,12 +1004,14 @@ describe("AgentSessions", () => {
     });
     release();
     await flush(30);
-    await sessions.deliver("a", "three", 3);
+    expect(sessions.serving("a")?.sessionId).toBe("session-1");
+    await sessions.deliver("a", "three", 3, { instructions: "B" });
     const [goose] = fake.geese;
-    expect(goose?.opened).toHaveLength(2);
+    expect(goose?.opened).toHaveLength(3);
+    expect(pool.size).toBe(1);
     expect(goose?.turns.map((turn) => [turn.sessionId, turn.text])).toEqual([
       ["session-1", "one"],
-      ["session-2", "three"],
+      ["session-3", "three"],
     ]);
   });
 
@@ -882,6 +1067,85 @@ describe("AgentSessions", () => {
     expect(fake.servers.map((server) => server.closed)).toEqual([true]);
     expect(pool.size).toBe(0);
   });
+
+  it.each([
+    [-32000, undefined, false, "none"],
+    [-32000, null, false, "none"],
+    [-32601, "session/prompt", false, "none"],
+    [-32000, { reason: "turn_failed" }, true, "none"],
+    [-32000, {}, true, "none"],
+    [-32601, "other", true, "none"],
+    [-32000, undefined, true, "update"],
+    [-32000, undefined, true, "tool"],
+    [-32000, undefined, true, "permission"],
+    [-32000, undefined, true, "stop"],
+  ] as const)(
+    "decides replacement admission for error %s/%j (commit %s, evidence %s)",
+    async (code, data, committed, evidence) => {
+      const store = new Map<string, SavedConversation>();
+      const { fake, agent } = setup({}, false, { store });
+      const { sessions } = agent({}, async (...args) => {
+        expect(sessions.seen("a")).toBe(150);
+        return tools(...args);
+      });
+      await sessions.deliver("a", "seed", 200, { instructions: "A" });
+      const prior = store.get("a");
+      const [goose] = fake.geese;
+      if (!goose) throw new Error("Goose did not start");
+      goose.silent.add("session/prompt");
+      const pending = sessions.deliver("a", "replacement", 150, {
+        instructions: "B",
+      });
+      try {
+        await vi.waitFor(() =>
+          expect(goose.received.at(-1)).toMatchObject({
+            method: "session/prompt",
+            params: { sessionId: "session-2" },
+          }),
+        );
+        expect(goose.closed).toEqual([]);
+        expect(store.get("a")).toEqual(prior);
+        expect(sessions.seen("a")).toBe(200);
+        const request = goose.received.at(-1);
+        if (!request) throw new Error("The replacement prompt was not sent");
+        if (evidence === "update") {
+          goose.update("session-2", { sessionUpdate: "agent_message_chunk" });
+          await vi.waitFor(() => expect(sessions.seen("a")).toBe(150));
+        }
+        if (evidence === "tool") await goose.mcp("session-2", "tools/call");
+        if (evidence === "permission")
+          await goose.ask("session/request_permission", {
+            sessionId: "session-2",
+          });
+        if (evidence === "stop") {
+          await sessions.interrupt("a");
+          expect(goose.cancelled).toContain("session-2");
+        }
+        goose.options.onStdout?.(
+          `${JSON.stringify({ id: request.id, error: { code, data, message: "Rejected" } })}\n`,
+        );
+        await expect(pending).resolves.toEqual({
+          ok: false,
+          error: typeof data === "string" ? `Rejected: ${data}` : "Rejected",
+          code,
+          ...(!committed && { undelivered: true }),
+        });
+        const retained = committed ? "session-2" : "session-1";
+        expect(sessions.serving("a")?.sessionId).toBe(retained);
+        expect(sessions.seen("a")).toBe(committed ? 150 : 200);
+        expect(store.get("a")?.sessions?.[0]).toBe(retained);
+        if (!committed) expect(store.get("a")).toEqual(prior);
+        goose.silent.delete("session/prompt");
+        await sessions.reset("a", "compact");
+        expect(goose.turns.map((turn) => [turn.sessionId, turn.text])).toEqual([
+          ["session-1", "seed"],
+          [retained, "/compact"],
+        ]);
+      } finally {
+        await sessions.shutdown();
+      }
+    },
+  );
 
   it("closes the least recently used idle session of any agent to make room", async () => {
     const pool = new ServerPool(2);
@@ -943,7 +1207,13 @@ describe("AgentSessions", () => {
     // Other plugins hold the host's other servers.
     const { release, serve } = host(1);
     const { fake, sessions } = setup({}, false, { serve });
-    await sessions.deliver("a", "one", 1);
+    await sessions.deliver("a", "one", 1, { instructions: "A" });
+    await expect(
+      sessions.deliver("a", "blocked", 2, { instructions: "B" }),
+    ).resolves.toMatchObject({ ok: false, undelivered: true });
+    expect(sessions.serving("a")?.sessionId).toBe("session-1");
+    await sessions.reset("a", "compact");
+    expect(fake.geese[0]?.turns[1]?.text).toBe("/compact");
     const second = sessions.deliver("b", "two", 2);
     await flush(30);
     expect(fake.geese[0]?.closed).toEqual(["session-1"]);
@@ -957,17 +1227,29 @@ describe("AgentSessions", () => {
     const { fake, sessions, agent } = setup();
     const other = agent();
     await other.sessions.deliver("a", "one", 1);
+    await sessions.deliver("a", "seed", 1, { instructions: "A" });
     const [goose] = fake.geese;
-    if (goose) goose.hold = true;
-    const working = sessions.deliver("a", "two", 2);
-    await flush(30);
+    goose?.silent.add("session/prompt");
+    const controller = new AbortController();
+    const working = sessions.deliver("a", "two", 2, {
+      instructions: "B",
+      signal: controller.signal,
+    });
+    await vi.waitFor(() =>
+      expect(goose?.received.at(-1)).toMatchObject({
+        method: "session/prompt",
+        params: { sessionId: "session-3" },
+      }),
+    );
+    controller.abort(new Error("Handover deadline"));
+    await flush(100);
     sessions.dispose();
     await expect(working).resolves.toEqual({
       ok: false,
       error: "The session was closed",
     });
     await flush(30);
-    expect(goose?.closed).toEqual(["session-2"]);
+    expect(goose?.closed).toEqual(["session-2", "session-3"]);
     expect(goose?.killed).toBe(false);
     await expect(sessions.deliver("a", "three", 3)).resolves.toMatchObject({
       ok: false,

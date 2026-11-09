@@ -221,12 +221,12 @@ function setup(
   const deliver = (event: RelayEvent, extra: Partial<Delivery> = {}) =>
     run({ type: "mention", event }, extra);
   const goose = () => fake.geese.find((process) => process.turns.length);
-  const runOnce = (key: string, prompt: string) =>
+  const runOnce = (key: string, prompt: string, config = DEFAULT_CONFIG) =>
     runtime.runOnce({
       delivery: {
         agent,
         channelId: channel,
-        config: DEFAULT_CONFIG,
+        config,
       },
       key,
       signal: new AbortController().signal,
@@ -826,17 +826,80 @@ describe("GooseRuntime", () => {
     ]);
   });
 
-  it("hands the host a stopper that cancels the mention's running turn", async () => {
-    const { deliver, goose } = setup({ hold: true });
+  it("stops a pending replacement while retaining the admitted session", async () => {
+    const held = gated("session/set_config_option");
+    const history = message("5", "history at 175", { created_at: 175 });
+    const replacement = {
+      ...DEFAULT_CONFIG,
+      instructions: "Replacement rule.",
+    };
+    const { deliver, goose, runtime, agent } = setup({
+      solo: new Set([channel]),
+      wrap: held.wrap,
+      reply: "Compaction complete",
+      thread: [history],
+    });
+    const controlled = { ...agent, config: DEFAULT_CONFIG } as unknown as Agent;
+    const idle = () =>
+      vi.waitFor(() =>
+        expect(runtime.sessionState(controlled, { channelId: channel })).toBe(
+          "idle",
+        ),
+      );
+    await deliver(message("1", "seed", { created_at: 200 }));
+    await idle();
+    expect(goose()?.turns[0]?.text).toContain(history.content);
     const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
-    await deliver(message("1", "@Gander hi"), { interruptible });
-    await flush(100);
-    expect(interruptible).toHaveBeenCalledTimes(1);
-    const process = goose();
-    expect(process?.cancelled).toEqual([]);
-    await interruptible.mock.calls[0]?.[0]();
-    await flush(100);
-    expect(process?.cancelled).toEqual([process?.turns[0]?.sessionId]);
+    await deliver(message("2", "replacement", { created_at: 150 }), {
+      config: replacement,
+      model: "gpt-4.1",
+      interruptible,
+    });
+    await vi.waitFor(() => expect(held.waiting()).toHaveLength(1));
+    const waiting = vi.fn<Delivery["workingUntil"]>();
+    const joined = vi.spyOn(AgentSessions.prototype, "deliver");
+    let stopped: Promise<unknown> | undefined;
+    try {
+      await deliver(message("7", "waiting C", { created_at: 160 }), {
+        config: replacement,
+        workingUntil: waiting,
+      });
+      await vi.waitFor(() => expect(joined).toHaveBeenCalledOnce());
+      stopped = Promise.resolve(interruptible.mock.calls[0]?.[0]());
+      await vi.waitFor(() => expect(goose()?.closed).toContain("session-2"));
+      await stopped;
+      expect(goose()?.turns).toHaveLength(1);
+    } finally {
+      joined.mockRestore();
+      held.release();
+      await stopped;
+    }
+    await expect(waiting.mock.calls[0]?.[0]).resolves.toEqual({
+      ok: true,
+      undelivered: true,
+    });
+    await idle();
+    expect(goose()?.turns).toHaveLength(1);
+    await runtime.session(controlled, { channelId: channel }, "compact");
+    expect(goose()?.turns[1]?.text).toBe("/compact");
+    expect(goose()?.turns[1]?.sessionId).toBe(goose()?.turns[0]?.sessionId);
+    await deliver(message("3", "still A", { created_at: 201 }));
+    await idle();
+    expect(goose()?.turns.at(-1)?.sessionId).toBe(goose()?.turns[0]?.sessionId);
+    expect(goose()?.turns.at(-1)?.text).not.toContain(history.content);
+    await deliver(message("4", "delayed B", { created_at: 150 }), {
+      config: replacement,
+    });
+    await idle();
+    const admitted = goose()?.turns.at(-1);
+    expect(admitted?.sessionId).not.toBe(goose()?.turns[0]?.sessionId);
+    expect(admitted?.text).not.toContain(history.content);
+    await deliver(message("6", "next B", { created_at: 202 }), {
+      config: replacement,
+    });
+    await idle();
+    expect(goose()?.turns.at(-1)?.sessionId).toBe(admitted?.sessionId);
+    expect(goose()?.turns.at(-1)?.text).toContain(history.content);
   });
 
   it("returns no owner read that the owner's Stop overtook", async () => {
@@ -1071,13 +1134,25 @@ describe("GooseRuntime", () => {
   });
 
   it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {
-    const { runOnce, goose } = setup();
+    const { runOnce, goose, core, runtime, agent } = setup();
     await expect(
       runOnce("timer/daily", "Post the daily summary."),
     ).resolves.toEqual({ ok: true });
     expect(goose()?.turns.map((turn) => turn.text)).toEqual([
       standalonePrompt(self, "Post the daily summary."),
     ]);
+    core.mockImplementationOnce(async () => {
+      runtime.sync([{ ...agent, config: DEFAULT_CONFIG } as unknown as Agent]);
+      return undefined;
+    });
+    await runOnce("timer/next", "Next summary.", {
+      ...DEFAULT_CONFIG,
+      instructions: "Admitted standalone rule.",
+    });
+    const process = goose();
+    expect(
+      process?.prompts.get(process.turns.at(-1)?.sessionId ?? ""),
+    ).toContain("Admitted standalone rule.");
   });
 
   it("switches a saved provider in the live session without restarting goose", async () => {
@@ -1723,7 +1798,7 @@ it("keeps the notes of a turn goose never started for the next, ahead of newer o
 });
 
 it("gives a turn refused before its prompt its notes back, and the next turn sends them", async () => {
-  const f = setup();
+  const f = setup({ solo: new Set([channel]) });
   const pending: Record<string, string[]> = { [channel]: ["(plugin note)"] };
   const notes = vi.fn((at: string) => (pending[at] ?? []).splice(0));
   const restoreNotes = vi.fn((at: string, kept: readonly string[]) => {
@@ -1745,6 +1820,55 @@ it("gives a turn refused before its prompt its notes back, and the next turn sen
   } as unknown as Partial<Delivery>);
   await flush(100);
   expect(f.goose()?.turns.at(-1)?.text).toContain("(plugin note)");
+  const goose = f.goose();
+  if (!goose) throw new Error("Goose did not start");
+  pending[channel] = ["(submitted note)"];
+  restoreNotes.mockClear();
+  goose.silent.add("session/prompt");
+  const controller = new AbortController();
+  const workingUntil = vi.fn<Delivery["workingUntil"]>();
+  const prompts = goose.received.filter(
+    (row) => row.method === "session/prompt",
+  ).length;
+  await f.deliver(message("3", "replacement"), {
+    agent,
+    config: { ...DEFAULT_CONFIG, instructions: "B" },
+    signal: controller.signal,
+    workingUntil,
+  } as unknown as Partial<Delivery>);
+  await vi.waitFor(() =>
+    expect(
+      goose.received.filter((row) => row.method === "session/prompt"),
+    ).toHaveLength(prompts + 1),
+  );
+  const request = goose.received.at(-1);
+  expect(JSON.stringify(request)).toContain("(submitted note)");
+  const finished = vi.fn();
+  const actual = workingUntil.mock.calls[0]?.[0];
+  void actual?.then(finished);
+  controller.abort(new Error("Handover deadline"));
+  await flush(100);
+  expect(finished).not.toHaveBeenCalled();
+  expect(restoreNotes).not.toHaveBeenCalled();
+  goose.silent.delete("session/prompt");
+  goose.options.onStdout?.(
+    `${JSON.stringify({ id: request?.id, error: { code: -32603, message: "Actual turn failure" } })}\n`,
+  );
+  await expect(actual).resolves.toEqual({
+    ok: false,
+    error: "Actual turn failure",
+    code: -32603,
+  });
+  expect(pending[channel]).toEqual([]);
+  await f.deliver(message("4", "next"), {
+    agent,
+  } as unknown as Partial<Delivery>);
+  await flush(100);
+  expect(goose.turns.at(-1)?.text).not.toContain("(submitted note)");
+  expect(
+    goose.received.filter((row) => row.method === "session/prompt"),
+  ).toHaveLength(3);
+  f.runtime.dispose();
 });
 
 it("hands a Solo chat's Canvas to each turn, and a shared channel's to none", async () => {
@@ -1774,7 +1898,9 @@ it("compacts idle Goose immediately, keeps active controls through the turn, and
   const place = { channelId: channel, root: root.id };
   const agent = { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent;
   try {
-    await f.deliver(root);
+    const installed = { ...DEFAULT_CONFIG, instructions: "Installed rule." };
+    f.runtime.sync([{ ...agent, config: installed }]);
+    await f.deliver(root, { config: installed });
     await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
     const goose = f.goose();
     if (!goose) throw new Error("Expected Goose process");
@@ -1782,6 +1908,18 @@ it("compacts idle Goose immediately, keeps active controls through the turn, and
     await expect(f.runtime.session(agent, place, "new")).rejects.toThrow(
       "active turn",
     );
+    const edited = { ...DEFAULT_CONFIG, instructions: "Edited rule." };
+    f.runtime.sync([{ ...agent, config: edited }]);
+    await f.deliver(
+      message("3", "steer", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      }),
+      { config: edited },
+    );
+    await vi.waitFor(() => expect(goose.turns[0]?.steered).toHaveLength(1));
     goose.turns[0]?.finish();
     await vi.waitFor(() =>
       expect(f.runtime.sessionState(agent, place)).toBe("idle"),
@@ -1789,13 +1927,16 @@ it("compacts idle Goose immediately, keeps active controls through the turn, and
     const compacted = f.runtime.session(agent, place, "compact");
     await vi.waitFor(() => expect(goose.turns[1]?.text).toBe("/compact"));
     expect(goose.turns).toHaveLength(2);
+    expect(goose.turns[1]?.sessionId).toBe(goose.turns[0]?.sessionId);
+    expect(goose.prompts.get(goose.turns[1]?.sessionId ?? "")).toContain(
+      "Installed rule.",
+    );
     expect(f.runtime.sessionState(agent, place)).toBe("compacting");
     expect(
       f.runtime.sessionState(agent, { ...place, root: "another-thread" }),
     ).toBe("idle");
     goose.turns[1]?.finish();
     await compacted;
-    await f.runtime.session(agent, place, "new");
     await f.deliver(
       message("2", "next", {
         tags: [
@@ -1806,6 +1947,15 @@ it("compacts idle Goose immediately, keeps active controls through the turn, and
     );
     await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
     expect(goose.turns[2]?.sessionId).not.toBe(goose.turns[0]?.sessionId);
+    expect(goose.prompts.get(goose.turns[2]?.sessionId ?? "")).not.toContain(
+      "Installed rule.",
+    );
+    goose.turns[2]?.finish();
+    await vi.waitFor(() =>
+      expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+    );
+    await f.runtime.session(agent, place, "new");
+    expect(goose.closed).toContain(goose.turns[2]?.sessionId);
   } finally {
     f.runtime.dispose();
   }
@@ -1860,6 +2010,7 @@ it.each(["completed", "stopped"])(
       });
       const admitted = f
         .deliver(reply, {
+          config: { ...DEFAULT_CONFIG, instructions: "Queued delivery rule." },
           signal: handover.signal,
           workingUntil: (done) => held.push(done),
         })
@@ -1868,6 +2019,13 @@ it.each(["completed", "stopped"])(
         });
       try {
         await vi.waitFor(() => expect(returned).toBe(true));
+        if (outcome === "completed") {
+          await f.deliver(message("4", "Other conversation"), {
+            config: { ...DEFAULT_CONFIG, instructions: "Other delivery rule." },
+          });
+          await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
+          goose.turns[2]?.finish();
+        }
         handover.abort(new Error("Handover expired"));
       } finally {
         if (outcome === "stopped") f.runtime.sync([]);
@@ -1883,9 +2041,12 @@ it.each(["completed", "stopped"])(
         expect(f.fake.geese).toHaveLength(1);
         return;
       }
-      await vi.waitFor(() => expect(goose.turns).toHaveLength(3));
-      expect(goose.turns[2]?.text).toContain("queued after compact");
-      goose.turns[2]?.finish();
+      await vi.waitFor(() => expect(goose.turns).toHaveLength(4));
+      expect(goose.turns[3]?.text).toContain("queued after compact");
+      expect(goose.prompts.get(goose.turns[3]?.sessionId ?? "")).toContain(
+        "Queued delivery rule.",
+      );
+      goose.turns[3]?.finish();
       await Promise.all(held);
     } finally {
       f.runtime.dispose();

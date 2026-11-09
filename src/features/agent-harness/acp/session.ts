@@ -46,6 +46,7 @@ export class AcpSession {
   private runWaiters: ((runId: string | undefined) => void)[] = [];
   /** A `session/prompt` is in flight. */
   private prompting = false;
+  private admission: ActivityReceipt["admission"];
   private readonly steering = new Set<Waiter>();
   private steered = Promise.resolve();
   /** Turns to run, each with the model and level it was asked for, if any. */
@@ -58,6 +59,8 @@ export class AcpSession {
     refresh?: ActivityReceipt["refresh"];
     waiter?: Waiter;
     delivered?: () => void;
+    admission?: ActivityReceipt["admission"];
+    handover?: (waitingOnly?: boolean) => boolean;
   }[] = [];
   /** The model the running turn runs on; empty is its provider's default. */
   private model = "";
@@ -149,15 +152,29 @@ export class AcpSession {
     effort?: string,
     /** A synced level the turn must run on, or it fails before its prompt. */
     kept?: string,
+    queued?: (waitingOnly?: boolean) => Promise<Settled> | undefined,
   ): Promise<Settled> {
     if (this.closed)
       return Promise.resolve({ ok: false, error: "The session was closed" });
     this.pending++;
     let waiter!: Waiter;
-    const settled = new Promise<Settled>((resolve) => {
+    let failed!: (error: unknown) => void;
+    const settled = new Promise<Settled>((resolve, reject) => {
+      failed = reject;
       waiter = resolve;
       this.waiters.push(resolve);
     });
+    const handover = (waitingOnly = false) => {
+      const handed = queued?.(waitingOnly);
+      if (!handed) return false;
+      this.withdraw(waiter);
+      this.waiters = this.waiters.filter((pending) => pending !== waiter);
+      this.pending = this.waiters.length;
+      if (this.owner === waiter) this.owner = this.waiters.at(-1);
+      void handed.then(waiter, failed);
+      this.wake();
+      return true;
+    };
     // A steer cannot change the model or level, and must not pass a queued
     // turn.
     if (
@@ -169,11 +186,13 @@ export class AcpSession {
       (!model || model === this.model) &&
       (!effort || effort === this.level)
     )
-      void this.steer(text, activity, waiter, model, effort, kept);
+      void this.steer(text, activity, waiter, model, effort, kept, handover);
     else {
       this.queue.push({
         text,
+        handover,
         ...(activity.delivered ? { delivered: activity.delivered } : {}),
+        ...(activity.admission ? { admission: activity.admission } : {}),
         ...(activity.current ? { current: activity.current } : {}),
         ...(activity.refresh ? { refresh: activity.refresh } : {}),
         waiter,
@@ -209,7 +228,10 @@ export class AcpSession {
    * apart. A turn not yet sent is never sent. The work then ends as the
    * harness ends it; a message sent before it has runs as a new turn after. */
   interrupt() {
+    this.admit();
     if (!this.working || this.closed) return;
+    // Transfer unsent replacements before their manager snapshots this Stop.
+    for (const turn of this.queue) turn.handover?.();
     this.generation++;
     this.queue.length = 0;
     this.steered = Promise.resolve();
@@ -225,8 +247,16 @@ export class AcpSession {
     this.acted = true;
   }
 
+  /** Decides the in-flight first prompt once, before routing any of its work. */
+  admit(committed = true) {
+    const admission = this.admission;
+    this.admission = undefined;
+    admission?.(committed);
+  }
+
   /** Called by the process with each `session/update` for this session. */
   update(update: Record<string, unknown>) {
+    this.admit();
     const kind = update.sessionUpdate;
     // A cancel before goose has the final message's result would save that
     // call as interrupted. goose reports a batch's results together, once
@@ -272,6 +302,7 @@ export class AcpSession {
 
   /** Ends the session's work with `error`; nothing more is sent to it. */
   fail(error: string) {
+    this.admit();
     this.closed = true;
     this.queue.length = 0;
     this.settle({ ok: false, error });
@@ -284,6 +315,7 @@ export class AcpSession {
     model?: string,
     effort?: string,
     kept?: string,
+    handover?: (waitingOnly?: boolean) => boolean,
   ) {
     this.steering.add(waiter);
     const prior = this.steered;
@@ -296,7 +328,7 @@ export class AcpSession {
       this.waiters.includes(waiter) && !this.stopped?.waiters.includes(waiter);
     try {
       await prior;
-      if (!live()) return;
+      if (!live() || handover?.(true)) return;
       const runId =
         this.runId ??
         (this.prompting
@@ -311,7 +343,12 @@ export class AcpSession {
         return;
       }
       const { steering } = this.acp.hooks;
-      if (runId && steering) {
+      const earlier = this.queue.some(
+        (turn) =>
+          turn.waiter &&
+          this.waiters.indexOf(turn.waiter) < this.waiters.indexOf(waiter),
+      );
+      if (runId && steering && !earlier) {
         try {
           await steering.steer(this.acp, this.id, runId, text);
           if (live()) {
@@ -331,7 +368,9 @@ export class AcpSession {
         );
         this.queue.splice(next < 0 ? this.queue.length : next, 0, {
           text,
+          ...(handover ? { handover } : {}),
           ...(activity.delivered ? { delivered: activity.delivered } : {}),
+          ...(activity.admission ? { admission: activity.admission } : {}),
           ...(activity.current ? { current: activity.current } : {}),
           ...(activity.refresh ? { refresh: activity.refresh } : {}),
           waiter,
@@ -354,7 +393,7 @@ export class AcpSession {
    * unsent, or failed with `error` when it was refused before its prompt.
    * Either way it is undelivered, so what it carried comes back for the next
    * turn. */
-  private discard(waiter: Waiter, error?: string) {
+  private discard(waiter: Waiter, error?: string, code?: number) {
     this.withdraw(waiter);
     this.waiters = this.waiters.filter((pending) => pending !== waiter);
     this.pending = this.waiters.length;
@@ -363,7 +402,12 @@ export class AcpSession {
       if (receipt.current && !receipt.current()) this.active.delete(scope);
     waiter(
       error
-        ? { ok: false, error, undelivered: true }
+        ? {
+            ok: false,
+            error,
+            ...(code === undefined ? {} : { code }),
+            undelivered: true,
+          }
         : { ok: true, undelivered: true },
     );
   }
@@ -393,11 +437,14 @@ export class AcpSession {
           refresh,
           waiter,
           delivered,
+          admission,
+          handover,
         } = this.queue.shift() ?? {
           text: "",
         };
         let sent = false;
         try {
+          if (handover?.()) continue;
           await this.select(model, effort);
           // A harness may ignore a level its model lacks, and keep one across
           // a model switch without its being set again.
@@ -421,6 +468,7 @@ export class AcpSession {
             if (waiter) this.discard(waiter);
             continue;
           }
+          this.admission = admission;
           delivered?.();
           sent = true;
           if (waiter) this.sent(waiter);
@@ -431,6 +479,7 @@ export class AcpSession {
               { type: "text", text: lead ? `${lead}\n\n${prompt}` : prompt },
             ],
           })) as { stopReason?: string };
+          this.admit();
           // A rejected prompt never reached the model: the next one leads.
           this.preamble = "";
           if (stopReason === "cancelled") this.cancelEnded();
@@ -445,6 +494,16 @@ export class AcpSession {
             continue;
           }
           const code = codeOf(error);
+          if (
+            this.admission &&
+            waiter &&
+            this.acp.hooks.rejectedPrompt?.(error)
+          ) {
+            this.discard(waiter, errorMessage(error), code);
+            this.admit(false);
+            continue;
+          }
+          this.admit();
           this.lastFailure = {
             error: errorMessage(error),
             ...(code === undefined ? {} : { code }),

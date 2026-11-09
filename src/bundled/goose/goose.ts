@@ -76,6 +76,15 @@ export const GOOSE: AcpHooks = {
   env: ENV,
   // goose is asked to close every session, advertised or not.
   closeSession: "always",
+  // Pinned 1.57.0: agent creation returns bare auth_required; turn failures
+  // carry data.reason=turn_failed. SDK dispatch names an unhandled method.
+  rejectedPrompt: (error) => {
+    const { code, data } = (error ?? {}) as { code?: unknown; data?: unknown };
+    return (
+      (code === -32000 && data == null) ||
+      (code === -32601 && data === "session/prompt")
+    );
+  },
   // goose names an untitled session with a model call, unless its config
   // sets `GOOSE_DISABLE_SESSION_NAMING`.
   names: (goose) =>

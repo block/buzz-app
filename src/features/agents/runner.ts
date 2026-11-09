@@ -1,3 +1,4 @@
+import { abortable } from "../agent-harness/core-memory";
 import { interestPaused } from "./attention";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
@@ -841,7 +842,11 @@ export class AgentRunners {
       throw new Error("This agent is no longer running");
     // Huddle seats close on protectionRevision changes, so this gate is reapplied.
     this.assertProtected(agent, type, handle);
-    const start = await this.host.start(agent);
+    seat.signal.throwIfAborted();
+    const start = await abortable(
+      Promise.resolve().then(() => this.host.start(agent)),
+      seat.signal,
+    );
     if (!start.ok) throw new Error(start.reason);
     const team = this.host.team(agent.key);
     seat.signal.throwIfAborted();
@@ -2675,7 +2680,11 @@ export class AgentRunners {
     const completion = Promise.resolve().then(async () => {
       this.assertProtected(agent, type, handle);
       const pick = await pickFor(job.trigger, agent, type);
-      const start = await this.host.start(agent);
+      signal.throwIfAborted();
+      const start = await abortable(
+        Promise.resolve().then(() => this.host.start(agent)),
+        signal,
+      );
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
       signal.throwIfAborted();
@@ -2708,6 +2717,7 @@ export class AgentRunners {
           (!destination ||
             this.host.member(agent, wakeAnchor(destination)) === true),
       });
+      if (!delivery.current()) return;
       const runOnce = type.runOnce?.bind(type);
       if (addressed(trigger)) return invoke(delivery);
       if (anchor) {

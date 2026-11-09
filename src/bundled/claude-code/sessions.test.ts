@@ -72,12 +72,12 @@ function sessions(
     strictResume: !!options.strictResume,
     ...(options.spare ? { spare: options.spare } : {}),
     store,
-    launch: async () => {
+    launch: async (_key, instructions) => {
       const current = model;
       await options.launched;
       return {
         cwd: "/work",
-        systemPrompt: "prompt",
+        systemPrompt: instructions ?? "prompt",
         model: current,
         ...(options.tools ? { tools: options.tools } : {}),
         ...(options.agent ? { agent: options.agent } : {}),
@@ -513,18 +513,39 @@ it("starts over when a saved session no longer loads", async () => {
   expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 9 });
 });
 
-it("compacts a quiet conversation's saved session in place", async () => {
-  vi.useFakeTimers();
-  const store = memoryStore();
-  const { pool, claudes } = sessions({ store });
-  await pool.deliver("c/root", "first", 4);
-  vi.advanceTimersByTime(IDLE_MS + 1);
-  await expect(pool.compact("c/root")).resolves.toEqual({ ok: true });
-  const resumed = claudes().at(-1);
-  expect(resumed?.options.args).toContain("--resume");
-  expect(resumed?.prompts).toEqual(["/compact"]);
-  expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 4 });
-});
+it.each([undefined, "", "Admitted A"])(
+  "compacts a quiet saved conversation after restart (%s)",
+  async (instructions) => {
+    const store = memoryStore();
+    const known = new Set<string>();
+    const first = sessions({ store, known });
+    await first.pool.deliver(
+      "c/root",
+      "first",
+      4,
+      instructions === undefined ? {} : { instructions },
+    );
+    await first.pool.shutdown();
+    const restored = sessions({
+      store,
+      known,
+    });
+    try {
+      await expect(restored.pool.compact("c/root")).resolves.toEqual({
+        ok: true,
+      });
+      const resumed = restored.claudes().at(-1);
+      expect(resumed?.options.args).toContain("--resume");
+      expect(resumed?.prompts).toEqual(["/compact"]);
+      expect(resumed?.received[0]).toMatchObject({
+        request: { appendSystemPrompt: instructions ?? "prompt" },
+      });
+      expect(store.get("c/root")).toMatchObject({ id: "new-1", seen: 4 });
+    } finally {
+      await restored.pool.shutdown();
+    }
+  },
+);
 
 it("has no session to compact before a conversation starts", async () => {
   const { pool, claudes } = sessions();
@@ -900,7 +921,7 @@ const mapStore = (data: Map<string, string>) =>
 /** Waits for the saves already started. */
 const settled = () => new Promise((resolve) => setTimeout(resolve));
 
-it("keeps saved sessions per agent in storage", () => {
+it("keeps saved sessions per agent and under the native byte budget", async () => {
   const data = new Map<string, string>();
   const storage = mapStore(data);
   const one = localSessions(storage, "one");
@@ -916,6 +937,34 @@ it("keeps saved sessions per agent in storage", () => {
     "buzz.claude-code.sessions.v1:one",
     "buzz.claude-code.sessions.v1:two",
   ]);
+  const limit = 4 * 1024 * 1024;
+  const bytes = (text: string) => new TextEncoder().encode(text).byteLength;
+  const instructions = "é\\".repeat(6144);
+  const records = Object.fromEntries(
+    Array.from({ length: 170 }, (_, at) => [
+      String(at),
+      { id: String(at), instructions, seen: at, at },
+    ]),
+  );
+  const initial = JSON.stringify(records);
+  expect(bytes(initial)).toBeLessThan(limit);
+  data.set("buzz.claude-code.sessions.v1:one", initial);
+  const bounded = localSessions(storage, "one", undefined, true);
+  await bounded.set("new", { id: "new", instructions, seen: 1, at: 0 });
+  expect(
+    bytes(storage.get("buzz.claude-code.sessions.v1:one") ?? ""),
+  ).toBeLessThanOrEqual(limit);
+  expect(bounded.get("new")?.instructions).toBe(instructions);
+  expect(bounded.get("0")).toBeUndefined();
+  await expect(async () =>
+    bounded.set("huge", {
+      id: "huge",
+      instructions: "x".repeat(limit),
+      seen: 1,
+      at: 3,
+    }),
+  ).rejects.toThrow("too large");
+  expect(bounded.get("new")?.id).toBe("new");
   data.set("buzz.claude-code.sessions.v1:one", "not json");
   expect(one.get("c/root")).toBeUndefined();
 });
@@ -1109,11 +1158,21 @@ it.each([false, true])(
   },
 );
 
-it.each([false, true])(
+it.each([false, true, "refresh", "save"])(
   "reopens a process reconfigured during Attention refresh (existing: %s)",
   async (existing) => {
     const f = sessions();
-    if (existing) await f.pool.deliver("c/root", "warm", 1);
+    if (existing)
+      await f.pool.deliver("c/root", "warm", 1, { instructions: "A" });
+    const captured = typeof existing === "string";
+    let active: Promise<unknown> | undefined;
+    if (captured) {
+      const old = f.live()[0];
+      if (!old) throw new Error("fixture");
+      old.hold = true;
+      active = f.pool.deliver("c/root", "running", 1, { instructions: "A" });
+      await vi.waitFor(() => expect(old.prompts).toContain("running"));
+    }
     let ready!: () => void;
     const entered = new Promise<void>((resolve) => {
       ready = resolve;
@@ -1127,18 +1186,42 @@ it.each([false, true])(
       await gate;
       return "refreshed wake";
     });
-    const done = f.pool.deliver("c/root", "wake", 2, { refresh });
+    if (existing === "save") {
+      const write = f.store.set;
+      f.store.set = (key, value) => {
+        if (value.seen !== 2) return write(key, value);
+        ready();
+        return gate.then(() => write(key, value));
+      };
+    }
+    const done = f.pool.deliver("c/root", "wake", 2, {
+      ...(existing === "save" ? {} : { refresh }),
+      ...(captured ? { instructions: "" } : {}),
+    });
     try {
       await entered;
       const old = f.live()[0];
       if (!old) throw new Error("fixture");
-      f.setModel("sonnet");
-      f.pool.reconfigure();
+      if (captured) {
+        old.finish();
+        old.hold = false;
+        await active;
+      } else {
+        f.setModel("sonnet");
+        f.pool.reconfigure();
+      }
       release();
       await expect(done).resolves.toEqual({ ok: true });
-      expect(old.prompts).not.toContain("refreshed wake");
-      expect(f.live()[0]?.prompts).toEqual(["refreshed wake"]);
-      expect(f.live()[0]?.options.args).toContain("sonnet");
+      const text = existing === "save" ? "wake" : "refreshed wake";
+      expect(old.prompts).not.toContain(text);
+      expect(f.live()[0]?.prompts).toEqual([text]);
+      expect(f.live()[0]?.options.args).toContain(captured ? "opus" : "sonnet");
+      if (captured) {
+        const next = f.live()[0];
+        expect(next?.received[0]).toMatchObject({
+          request: { appendSystemPrompt: "" },
+        });
+      }
     } finally {
       release();
       f.pool.dispose();
@@ -1280,13 +1363,48 @@ it("retries an unsent remote session in the same pool after restart", async () =
   store.set = write;
   const restored = sessions({ store, strictResume: true });
   try {
-    await expect(restored.pool.deliver("room", "retry", 2)).resolves.toEqual({
+    await expect(
+      restored.pool.deliver("room", "retry", 2, {
+        instructions: "A",
+        contextRoot: "thread",
+      }),
+    ).resolves.toEqual({
       ok: true,
     });
     expect(restored.claudes().flatMap((process) => process.prompts)).toEqual([
       "retry",
     ]);
     expect(store.get("room")?.pending).toBeUndefined();
+    const admitted = store.get("room");
+    let saved!: () => void;
+    const saving = new Promise<void>((resolve) => {
+      saved = resolve;
+    });
+    store.set = (key, value) => {
+      write(key, value);
+      if (value.seen === 10) return saving;
+    };
+    current = true;
+    const stale = restored.pool.deliver("room", "unsent", 10, {
+      instructions: "A",
+      contextRoot: "thread",
+      current: () => current,
+    });
+    try {
+      await vi.waitFor(() => expect(store.get("room")?.seen).toBe(10));
+      current = false;
+    } finally {
+      saved();
+    }
+    await expect(stale).resolves.toMatchObject({ undelivered: true });
+    expect(store.get("room")).toEqual(admitted);
+    expect(restored.pool.seen("room", "thread")).toBe(2);
+    await restored.pool.compact("room");
+    expect(restored.claudes()).toHaveLength(1);
+    expect(restored.claudes()[0]?.prompts).toEqual(["retry", "/compact"]);
+    expect(restored.claudes()[0]?.received[0]).toMatchObject({
+      request: { appendSystemPrompt: "A" },
+    });
   } finally {
     await restored.pool.shutdown();
   }
@@ -1325,30 +1443,69 @@ it("uses current settings after a remote session save waits", async () => {
   }
 });
 
-it("settles a failed remote save and permits the next delivery", async () => {
+it("settles a failed baseline save and preserves completed results", async () => {
   const store = memoryStore();
+  store.set("room", { id: "saved", seen: 1, at: 1, instructions: "A" });
   const write = store.set;
   let fail = true;
   store.set = (key, value) => {
-    if (fail && !value.pending) {
+    if (fail && value.instructions === "B") {
       return Promise.reject(new Error("disk unavailable"));
     }
     return write(key, value);
   };
-  const f = sessions({ store, strictResume: true });
+  const f = sessions({ store, known: new Set(["saved"]) });
+  const logging = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
-    await expect(f.pool.deliver("room", "one", 1)).resolves.toMatchObject({
+    await expect(
+      f.pool.deliver("room", "one", 1, { instructions: "B" }),
+    ).resolves.toMatchObject({
       ok: false,
       error: "disk unavailable",
+      undelivered: true,
     });
     expect(f.pool.active("room")).toBe(false);
     expect(f.claudes().flatMap((process) => process.prompts)).toEqual([]);
+    expect(store.get("room")?.instructions).toBe("A");
+    await f.pool.compact("room");
+    expect(f.claudes().at(-1)?.received[0]).toMatchObject({
+      request: { appendSystemPrompt: "A" },
+    });
     fail = false;
-    await expect(f.pool.deliver("room", "two", 2)).resolves.toEqual({
+    await expect(
+      f.pool.deliver("room", "two", 2, { instructions: "B" }),
+    ).resolves.toEqual({
       ok: true,
     });
-    expect(f.claudes().flatMap((process) => process.prompts)).toEqual(["two"]);
+    expect(f.claudes().flatMap((process) => process.prompts)).toEqual([
+      "/compact",
+      "two",
+    ]);
+    expect(store.get("room")?.instructions).toBe("B");
+    const live = f.live()[0];
+    if (!live) throw new Error("fixture");
+    live.hold = true;
+    for (const error of [undefined, "actual harness failure"]) {
+      fail = false;
+      const text = `completed:${error ?? "success"}`;
+      const completed = f.pool.deliver("room", text, 3, {
+        instructions: "B",
+      });
+      await vi.waitFor(() => expect(live.prompts).toContain(text));
+      fail = true;
+      if (error) f.setModel("haiku");
+      live.finish(error ? { error } : {});
+      await expect(completed).resolves.toEqual(
+        error ? { ok: false, error } : { ok: true },
+      );
+      expect(logging).toHaveBeenCalledWith(
+        "Claude session room was not saved",
+        expect.objectContaining({ message: "disk unavailable" }),
+      );
+    }
+    expect(live.killed).toBe(true);
   } finally {
     await f.pool.shutdown();
+    logging.mockRestore();
   }
 });

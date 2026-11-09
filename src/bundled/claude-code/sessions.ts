@@ -23,10 +23,13 @@ import type { AgentStore } from "../../features/agents/store";
 export const IDLE_MS = 15 * 60_000;
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
+/** Native agent storage accepts at most 4 MiB per value. */
+const SAVED_BYTES = 4 * 1024 * 1024;
 
 /** What is saved for one conversation. */
 export type SavedSession = Readonly<{
   protection?: string;
+  instructions?: string;
   id: string;
   pending?: true;
   /** created_at of the newest event this session has been shown. */
@@ -49,7 +52,10 @@ export type SessionsOptions = Readonly<{
   store: SessionStore;
   /** How to start a process with the agent's current settings, for the
    * conversation `key` when given. */
-  launch(key?: string): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
+  launch(
+    key?: string,
+    instructions?: string,
+  ): Promise<Omit<ClaudeLaunch, "resume" | "sessionId">>;
   /** Changes when a setting that a running process fixed has changed, for the
    * conversation `key` when given. */
   fingerprint(key?: string): string;
@@ -64,6 +70,7 @@ export type SessionsOptions = Readonly<{
 }>;
 
 type DeliveryOptions = Readonly<{
+  instructions?: string;
   steer?: string;
   current?: () => boolean;
   refresh?: (fresh?: boolean) => Promise<string>;
@@ -85,6 +92,8 @@ type Live = {
   process: ClaudeProcess;
   submitted?: boolean;
   fingerprint: string;
+  instructions?: string | undefined;
+  admittedInstructions?: string | undefined;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
 };
@@ -268,6 +277,7 @@ export class AgentSessions {
       acknowledged,
       superseded,
       activityScope,
+      instructions,
     }: DeliveryOptions,
     handed: () => void,
   ): Promise<Settled> {
@@ -277,59 +287,109 @@ export class AgentSessions {
       const opening = this.opening.get(key);
       if (opening) await opening;
       if (current && !current()) return { ok: true, undelivered: true };
+      const prior = this.options.store.get(key);
+      let candidate: Live | undefined;
+      const restore = async (failure: unknown) => {
+        if (candidate) this.drop(key, candidate);
+        try {
+          if (prior) await this.options.store.set(key, prior);
+          else await this.options.store.delete(key);
+        } catch (error) {
+          if (failure === undefined) throw error;
+          console.error("Claude could not restore its admitted session", error);
+        }
+      };
       let live = this.live.get(key);
       if (
         live &&
         (!live.process.running ||
-          (live.fingerprint !== this.options.fingerprint(key) &&
-            !live.process.busy))
+          (!live.process.busy &&
+            (live.fingerprint !== this.options.fingerprint(key) ||
+              (instructions !== undefined &&
+                instructions !== live.instructions))))
       ) {
         this.drop(key, live);
         live = undefined;
       }
       const saved = live ? undefined : this.options.store.get(key);
       if (!live) {
-        const opened = await this.open(key, saved?.id, 0);
+        const opened = await this.open(
+          key,
+          saved?.id,
+          0,
+          undefined,
+          instructions,
+        );
         if (!("process" in opened)) return opened;
-        live = opened;
+        live = candidate = opened;
       }
-      if (refresh) {
-        text = await refresh();
-        steer = steerPrompt(text);
-      }
-      // Last, after every wait: a new turn starts only on settings that still
-      // hold. A busy process steers on the settings it already runs.
-      if (admit && !live.process.busy)
-        try {
-          await admit();
-        } catch (error) {
-          return { ok: false, error: message(error), undelivered: true };
+      let accepted = false;
+      let failure: unknown;
+      try {
+        if (refresh) {
+          text = await refresh();
+          steer = steerPrompt(text);
         }
-      if (current && !current()) return { ok: true, undelivered: true };
-      if (this.disposed)
-        return { ok: false, error: "Claude was stopped", undelivered: true };
-      // Refresh can outlive the process or the settings it was opened with.
-      if (
-        this.live.get(key) !== live ||
-        !live.process.running ||
-        (live.fingerprint !== this.options.fingerprint(key) &&
-          !live.process.busy)
-      )
-        continue;
-      if (this.options.strictResume) live.submitted = true;
-      const savedState = this.touch(key, live, seen, contextRoot);
-      if (this.options.strictResume) {
-        await savedState;
+        // Last, after every wait: a new turn starts only on settings that still
+        // hold. A busy process steers on the settings it already runs.
+        if (admit && !live.process.busy)
+          try {
+            await admit();
+          } catch (error) {
+            failure = error;
+            return { ok: false, error: message(error), undelivered: true };
+          }
         if (current && !current()) return { ok: true, undelivered: true };
         if (this.disposed)
           return { ok: false, error: "Claude was stopped", undelivered: true };
+        // Refresh can outlive the process or the settings it was opened with.
         if (
           this.live.get(key) !== live ||
           !live.process.running ||
-          (live.fingerprint !== this.options.fingerprint(key) &&
-            !live.process.busy)
+          (!live.process.busy &&
+            (live.fingerprint !== this.options.fingerprint(key) ||
+              (instructions !== undefined &&
+                instructions !== live.instructions)))
         )
           continue;
+        if (this.options.strictResume) live.submitted = true;
+        if (!live.process.busy) live.admittedInstructions = live.instructions;
+        try {
+          const savedState = this.touch(key, live, seen, contextRoot);
+          if (this.options.strictResume || instructions !== undefined)
+            await savedState;
+        } catch (error) {
+          failure = error;
+          return { ok: false, error: message(error), undelivered: true };
+        }
+        if (this.options.strictResume || instructions !== undefined) {
+          if (current && !current()) {
+            return { ok: true, undelivered: true };
+          }
+          if (this.disposed) {
+            return {
+              ok: false,
+              error: "Claude was stopped",
+              undelivered: true,
+            };
+          }
+          if (
+            this.live.get(key) !== live ||
+            !live.process.running ||
+            (!live.process.busy &&
+              (live.fingerprint !== this.options.fingerprint(key) ||
+                (instructions !== undefined &&
+                  instructions !== live.instructions)))
+          ) {
+            continue;
+          }
+        }
+        accepted = true;
+      } catch (error) {
+        failure = error;
+        throw error;
+      } finally {
+        if (!accepted) await restore(failure);
       }
       const activity = {
         ...pick,
@@ -374,6 +434,7 @@ export class AgentSessions {
         }
         return this.deliver(key, retry, seen, {
           pick,
+          ...(instructions !== undefined ? { instructions } : {}),
           ...(current ? { current } : {}),
           ...(admit ? { admit } : {}),
           ...(refresh ? { refresh: () => refresh(true) } : {}),
@@ -399,7 +460,17 @@ export class AgentSessions {
     const saved = this.options.store.get(key);
     if (!live && !saved) return { ok: true };
     if (!live) {
-      const opened = await this.open(key, saved?.id, 0);
+      const instructions =
+        typeof saved?.instructions === "string"
+          ? saved.instructions
+          : undefined;
+      const opened = await this.open(
+        key,
+        saved?.id,
+        0,
+        undefined,
+        instructions,
+      );
       if (!("process" in opened)) return opened;
       live = opened;
     }
@@ -437,6 +508,7 @@ export class AgentSessions {
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
     signal?: AbortSignal,
+    instructions?: string,
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
     if (signal?.aborted) return { ok: false, error: message(signal.reason) };
@@ -449,10 +521,15 @@ export class AgentSessions {
     let over = false;
     try {
       const live = await abortable(
-        this.start(undefined, undefined, (process) => {
-          spawned = process;
-          if (over) void process.kill();
-        }),
+        this.start(
+          undefined,
+          undefined,
+          (process) => {
+            spawned = process;
+            if (over) void process.kill();
+          },
+          instructions,
+        ),
         signal,
       );
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
@@ -522,19 +599,27 @@ export class AgentSessions {
     resume: string | undefined,
     seen: number,
     contextRoot?: string,
+    instructions?: string,
   ): Promise<Live | Settled> {
-    const opened = this.start(resume, key).then(
+    const prior = this.options.store.get(key);
+    const opened = this.start(resume, key, undefined, instructions).then(
       async (live): Promise<Live | Settled> => {
         if (this.disposed) {
           if (this.opening.get(key) === opened) this.opening.delete(key);
           void live.process.kill();
           return { ok: false, error: "Claude was stopped", undelivered: true };
         }
+        live.admittedInstructions =
+          typeof prior?.instructions === "string"
+            ? prior.instructions
+            : undefined;
         try {
           await this.adopt(key, live, seen, contextRoot);
         } catch (error) {
           this.drop(key, live);
           if (this.opening.get(key) === opened) this.opening.delete(key);
+          if (instructions !== undefined)
+            return { ok: false, error: message(error), undelivered: true };
           throw error;
         }
         if (this.opening.get(key) === opened) this.opening.delete(key);
@@ -559,21 +644,22 @@ export class AgentSessions {
     resume: string | undefined,
     key?: string,
     spawned?: (process: ClaudeProcess) => void,
+    instructions?: string,
   ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
-    const launch = await this.options.launch(key);
+    const launch = await this.options.launch(key, instructions);
     const process = resume
       ? await ClaudeProcess.start(this.spawn, { ...launch, resume })
       : await this.fresh(launch, spawned);
     if (fingerprint === this.options.fingerprint(key) || this.disposed) {
       if (!resume && process.sessionId)
         this.options.started?.(process.sessionId, launch.systemPrompt);
-      return { process, fingerprint, used: this.now() };
+      return { process, fingerprint, instructions, used: this.now() };
     }
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume, key, spawned);
+    return this.start(resume, key, spawned, instructions);
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(
@@ -636,7 +722,7 @@ export class AgentSessions {
       try {
         await this.touch(key, live);
       } catch (error) {
-        return { ok: false, error: message(error) };
+        console.error(`Claude session ${key} was not saved`, error);
       }
       if (
         live.fingerprint !== this.options.fingerprint(key) &&
@@ -668,6 +754,9 @@ export class AgentSessions {
     }
     return this.options.store.set(key, {
       id,
+      ...(live.admittedInstructions !== undefined
+        ? { instructions: live.admittedInstructions }
+        : {}),
       ...(this.options.strictResume &&
       !live.submitted &&
       !live.process.started &&
@@ -842,13 +931,27 @@ export function localSessions(
       ? (object(storage.get(name))[agent] ?? {})
       : object(own);
   };
-  const update = (change: (sessions: Record<string, SavedSession>) => void) => {
+  const update = (
+    change: (sessions: Record<string, SavedSession>) => void,
+    retain?: string,
+  ) => {
     const sessions = { ...read() };
     change(sessions);
     const kept = Object.entries(sessions)
-      .sort(([, a], [, b]) => b.at - a.at)
+      .sort(
+        ([left, a], [right, b]) =>
+          Number(right === retain) - Number(left === retain) || b.at - a.at,
+      )
       .slice(0, SAVED_LIMIT);
-    const own = storage.set(key, JSON.stringify(Object.fromEntries(kept)));
+    let value = JSON.stringify(Object.fromEntries(kept));
+    const bytes = new TextEncoder();
+    while (bytes.encode(value).byteLength > SAVED_BYTES && kept.length > 1) {
+      kept.pop();
+      value = JSON.stringify(Object.fromEntries(kept));
+    }
+    if (bytes.encode(value).byteLength > SAVED_BYTES)
+      throw new Error("Claude session is too large to save");
+    const own = storage.set(key, value);
     // Drop the legacy copy only after the agent's own value is durable.
     return own.then(async () => {
       const legacy = object(storage.get(name));
@@ -873,7 +976,7 @@ export function localSessions(
     set: (conversation, session) => {
       const saved = update((sessions) => {
         sessions[conversation] = session;
-      });
+      }, conversation);
       if (durable) return saved;
       void saved.catch((error) =>
         console.warn("Claude sessions were not saved", error),

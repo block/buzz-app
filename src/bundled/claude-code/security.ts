@@ -1,9 +1,13 @@
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Spawn } from "./claude";
+import type { TranscriptSource } from "./protection-transcript";
 export const PROTECTED_CLAUDE_VERSION = "2.1.305";
 export type ClaudeProtection = Readonly<{
   gate: AgentProtection;
-  history(path: string, signal: AbortSignal): Promise<unknown>;
+  history(
+    path: string,
+    signal: AbortSignal,
+  ): Promise<unknown[] | TranscriptSource>;
 }>;
 /** Native request logs repeat tool catalogues; retain all conversation evidence. */
 export function protectionHistoryEntry(entry: unknown): unknown {

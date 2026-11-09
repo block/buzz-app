@@ -1014,10 +1014,15 @@ export class ClaudeProcess {
                   value: this.protectedInstructions,
                 },
               },
-              ...[
-                ...(Array.isArray(history) ? history : [history]),
-                ...this.protectedEvents,
-              ].flatMap((value) => protectionSources(value)),
+              ...(Array.isArray(history)
+                ? history.flatMap((value) => protectionSources(value))
+                : (["context", "tool-result"] as const).map((phase) => ({
+                    kind: phase,
+                    content: { source: "message", value: history.phase(phase) },
+                  }))),
+              ...this.protectedEvents.flatMap((value) =>
+                protectionSources(value),
+              ),
               ...protectionSources(
                 incoming,
                 "hook",

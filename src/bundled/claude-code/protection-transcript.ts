@@ -4,8 +4,15 @@ import {
 } from "../../features/agent-protection/json-stream";
 import type { ProcessProtection } from "../../features/host/service";
 import type { Spawn } from "./claude";
-import { protectionHistoryEntry } from "./security";
+import { protectionHistoryEntry, protectionSources } from "./security";
 import reader from "./protection-transcript.py?raw";
+
+/** A large transcript snapshot, replayable whole or one review phase at a time. */
+export type TranscriptSource = TextSource & {
+  dispose(): void;
+  retain(): () => void;
+  phase(kind: "context" | "tool-result"): TextSource;
+};
 
 /** Keeps one private native snapshot; each replay pulls one bounded chunk. */
 export async function protectionTranscript(
@@ -14,7 +21,7 @@ export async function protectionTranscript(
   path: string,
   signal: AbortSignal,
   protection: ProcessProtection,
-): Promise<unknown> {
+): Promise<unknown[] | TranscriptSource> {
   signal.throwIfAborted();
   let output = "",
     error = "",
@@ -149,45 +156,59 @@ export async function protectionTranscript(
         if (retired && !readers) stop();
       };
     };
-    const source: TextSource & { dispose(): void; retain(): () => void } = {
+    async function* records() {
+      const release = retain();
+      try {
+        let line = "";
+        for await (const part of readSnapshot()) {
+          line += part;
+          for (
+            let end = line.indexOf("\n");
+            end >= 0;
+            end = line.indexOf("\n")
+          ) {
+            const row = line.slice(0, end);
+            line = line.slice(end + 1);
+            if (row.trim()) yield protectionHistoryEntry(JSON.parse(row));
+          }
+        }
+        if (line.trim()) {
+          let value: unknown;
+          try {
+            value = JSON.parse(line);
+          } catch {
+            return;
+          } // Claude can still be appending its last record.
+          yield protectionHistoryEntry(value);
+        }
+      } finally {
+        release();
+      }
+    }
+    const source: TranscriptSource = {
       retain,
       dispose: () => {
         retired = true;
         if (!readers) stop();
       },
       read: async function* () {
-        const release = retain();
-        try {
-          let line = "";
-          for await (const part of readSnapshot()) {
-            line += part;
-            for (
-              let end = line.indexOf("\n");
-              end >= 0;
-              end = line.indexOf("\n")
-            ) {
-              const row = line.slice(0, end);
-              line = line.slice(end + 1);
-              if (row.trim()) {
-                yield* jsonPieces(protectionHistoryEntry(JSON.parse(row)));
-                yield "\n";
-              }
-            }
-          }
-          if (line.trim()) {
-            let value: unknown;
-            try {
-              value = JSON.parse(line);
-            } catch {
-              return;
-            } // Claude can still be appending its last record.
-            yield* jsonPieces(protectionHistoryEntry(value));
-            yield "\n";
-          }
-        } finally {
-          release();
+        for await (const record of records()) {
+          yield* jsonPieces(record);
+          yield "\n";
         }
       },
+      // Routes each record's sources as a small history would, so a policy's
+      // phases apply the same on both sides of the buffering threshold.
+      phase: (kind) => ({
+        read: async function* () {
+          for await (const record of records())
+            for (const input of protectionSources(record))
+              if (input.kind === kind) {
+                yield* jsonPieces(input.content);
+                yield "\n";
+              }
+        },
+      }),
     };
     // Small projected histories retain their per-message cache identities.
     // Crossing this buffering threshold selects replay, never rejects evidence.

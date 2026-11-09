@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { protectionTranscript } from "./protection-transcript";
+import { protectionHistoryEntry, protectionSources } from "./security";
 import { isTextSource } from "../../features/agent-protection/json-stream";
 import type { Spawn } from "./claude";
 const native: Spawn = async (id, options = {}) => {
@@ -86,6 +87,58 @@ it("replays an immutable transcript snapshot in bounded pieces", async () => {
     await expect(
       source.read()[Symbol.asyncIterator]().next(),
     ).rejects.toThrow();
+  } finally {
+    lifetime.abort();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+it("streams each record under the phase a small history gives it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "buzz-transcript-test-"));
+  const path = join(root, "history.jsonl");
+  const lifetime = new AbortController();
+  const records = [
+    { type: "user", message: { role: "user", content: "x".repeat(70000) } },
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }],
+      },
+    },
+    {
+      type: "user",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "out" }],
+      },
+    },
+  ];
+  try {
+    await writeFile(path, records.map((r) => JSON.stringify(r)).join("\n"));
+    const source = await protectionTranscript(
+      native,
+      root,
+      path,
+      lifetime.signal,
+      { readOnlyPaths: [], hiddenPaths: [] },
+    );
+    if (Array.isArray(source)) throw new Error("Expected a streamed history");
+    const small = records.flatMap((record) =>
+      protectionSources(protectionHistoryEntry(record)),
+    );
+    for (const kind of ["context", "tool-result"] as const) {
+      let text = "";
+      for await (const part of source.phase(kind).read()) text += part;
+      const streamed = text
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const expected = small.filter((input) => input.kind === kind);
+      expect(expected.length).toBeGreaterThan(0);
+      expect(streamed).toEqual(expected.map((input) => input.content));
+    }
+    source.dispose();
   } finally {
     lifetime.abort();
     await rm(root, { recursive: true, force: true });

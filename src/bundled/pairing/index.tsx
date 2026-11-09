@@ -15,9 +15,7 @@ export const inject = [
 export const apply: PluginModule["apply"] = (ctx) => {
   const communities = ctx.communityReader;
   const federatedIdentity = builderlab ? ctx.federatedIdentity : undefined;
-  const restoresOnPhone = builderlab
-    ? ctx.builderlabPhone.restoresOnPhone
-    : undefined;
+  const phone = builderlab ? ctx.builderlabPhone : undefined;
   ctx.settingsCards.register({
     id: "mobile",
     title: builderlab ? "Mobile app" : "Pair mobile",
@@ -29,7 +27,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         communities={communities}
         active={active}
         federatedIdentity={federatedIdentity}
-        restoresOnPhone={restoresOnPhone}
+        phone={phone}
       />
     ),
   });

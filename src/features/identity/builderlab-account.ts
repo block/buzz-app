@@ -413,6 +413,10 @@ export type BuilderlabPhone = Readonly<{
    * (`backedUpLinkedKey`). Signed out, a failed or unavailable read, or no
    * identity answers false; it never rejects. */
   restoresOnPhone(viewer: string): Promise<boolean>;
+  /** Watches this device's key backup, so a finished backup can ask again. */
+  subscribe(listener: () => void): () => void;
+  /** Whether this device's latest key backup finished. */
+  backupComplete(): boolean;
 }>;
 
 declare module "@deepseek-ai/cordis" {
@@ -447,6 +451,8 @@ export function builderlabPhone(
         () => false,
       );
     },
+    subscribe: (listener) => identity?.backup.subscribe(listener) ?? (() => {}),
+    backupComplete: () => identity?.backup.snapshot()?.status === "complete",
   };
 }
 

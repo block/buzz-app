@@ -5,6 +5,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
+import type { BuilderlabPhone } from "../../features/identity/builderlab-account";
 import { QrCode, renderQrCode, useQrVariant } from "../../shared/QrCode";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PairingSettings } from "./PairingSettings";
@@ -32,7 +33,7 @@ type Store = { name: string; url: string };
  */
 export function MobileSettings({
   federatedIdentity,
-  restoresOnPhone,
+  phone,
   stores = mobileAppStores(),
   ...pairing
 }: ComponentProps<typeof PairingSettings> & {
@@ -43,7 +44,7 @@ export function MobileSettings({
     | undefined;
   /** The app-owned account check (`BuilderlabPhone`): whether a phone signed
    * in with Builderlab restores `viewer`. */
-  restoresOnPhone?: ((viewer: string) => Promise<boolean>) | undefined;
+  phone?: BuilderlabPhone | undefined;
   stores?: readonly Store[];
 }) {
   const session = useSyncExternalStore(
@@ -54,42 +55,83 @@ export function MobileSettings({
     pairing.communities.subscribe,
     pairing.communities.snapshot,
   ).viewer;
+  // A backup finishing after the read may have just backed up the linked key.
+  const backedUp = useSyncExternalStore(
+    phone?.subscribe ?? noSubscription,
+    () => phone?.backupComplete() ?? false,
+  );
   const signedIn =
     session?.status === "signed-in" && session.authority ? session : undefined;
+  // Restoring or signing in may still end signed in, so neither decides yet.
+  const settling =
+    !!phone &&
+    (session?.status === "restoring" || session?.status === "signing-in");
   const check =
-    signedIn && viewer && restoresOnPhone
-      ? `${signedIn.revision}:${viewer}`
+    signedIn && viewer && phone
+      ? `${signedIn.revision}:${viewer}:${backedUp}`
       : "";
   const [restores, setRestores] = useState<{ check: string; ok: boolean }>();
   useEffect(() => {
-    if (!check || !viewer || !restoresOnPhone) return;
+    if (!check || !viewer || !phone) return;
     let current = true;
-    restoresOnPhone(viewer)
+    phone
+      .restoresOnPhone(viewer)
       .catch(() => false)
       .then((ok) => current && setRestores({ check, ok }));
     return () => {
       current = false;
     };
-  }, [check, restoresOnPhone, viewer]);
-  if (!check) return <PairingSettings {...pairing} />;
+  }, [check, phone, viewer]);
   const answer = restores?.check === check ? restores.ok : undefined;
-  // Pairing starts a session as it mounts, so it waits for the answer.
-  if (answer === undefined)
-    return (
-      <LoadingRegion
-        pending
-        label="Checking your Builderlab account…"
-        statusVisibility="screen-reader"
-      >
-        {null}
-      </LoadingRegion>
-    );
-  return answer ? (
-    <GetTheApp email={signedIn?.email ?? null} stores={stores} />
-  ) : (
-    <PairingSettings {...pairing} />
+  const decided: View | undefined =
+    settling || (check && answer === undefined)
+      ? undefined
+      : answer
+        ? "app"
+        : "pair";
+  // Whose app view was shown: the same account, not only the same session.
+  const account = session?.authority
+    ? `${session.authority.id}:${session.email ?? ""}`
+    : "";
+  // The view last decided, kept while the account is read again so a recheck
+  // never tears down pairing (which cancels it) or flashes the app view.
+  const [shown, setShown] = useState<Shown>();
+  useEffect(() => {
+    if (decided)
+      setShown((last) =>
+        last?.view === decided &&
+        last.viewer === viewer &&
+        last.account === account
+          ? last
+          : { view: decided, viewer, account },
+      );
+  }, [decided, viewer, account]);
+  // Pairing stays for the same identity; the app view only for its account.
+  const kept =
+    shown &&
+    shown.viewer === viewer &&
+    (shown.view === "pair" || (!!account && shown.account === account))
+      ? shown.view
+      : undefined;
+  const view = decided ?? kept;
+  if (view === "pair") return <PairingSettings {...pairing} />;
+  if (view === "app")
+    return <GetTheApp email={session?.email ?? null} stores={stores} />;
+  // Pairing starts a session as it mounts, so it waits for the answer; the
+  // card's heading holds its place meanwhile.
+  return (
+    <LoadingRegion pending label="Checking your Builderlab account…">
+      <section aria-labelledby="mobile-app-title" className="min-w-0">
+        <h2 id="mobile-app-title" className="mt-0 mb-2 text-label">
+          Mobile app
+        </h2>
+      </section>
+    </LoadingRegion>
   );
 }
+
+type View = "pair" | "app";
+type Shown = { view: View; viewer: string | undefined; account: string };
 
 const noSubscription = () => () => {};
 

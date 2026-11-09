@@ -63,11 +63,33 @@ function session(state: SessionSnapshot["status"]) {
 const restores = (answer: () => Promise<boolean> = async () => true) =>
   vi.fn(async (_viewer: string) => answer());
 
+/** This device's key backup, which a test can finish. */
+function backups() {
+  let complete = false;
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    backupComplete: () => complete,
+    finish() {
+      complete = true;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 function pairing() {
+  let status: PairingStatus = { phase: "idle" };
   const native = {
     account: vi.fn(async () => "a".repeat(64)),
-    start: vi.fn(async () => {}),
-    status: vi.fn(async (): Promise<PairingStatus> => ({ phase: "idle" })),
+    start: vi.fn(async () => {
+      status = { phase: "qr", svg: "<svg/>", uri: "nostrpair://fixture" };
+    }),
+    status: vi.fn(async (): Promise<PairingStatus> => status),
     cancel: vi.fn(async (): Promise<PairingStatus> => ({ phase: "cancelled" })),
     confirm: vi.fn(async () => {}),
     deny: vi.fn(async () => {}),
@@ -97,15 +119,17 @@ function renderCard(
   federatedIdentity: ReturnType<typeof session> | undefined,
   cardStores: readonly { name: string; url: string }[] = stores,
   restoresOnPhone: ReturnType<typeof restores> | undefined = restores(),
+  backup: ReturnType<typeof backups> = backups(),
+  available = false,
 ) {
   const { native, props } = pairing();
   render(
     <MobileSettings
       {...props}
       native={native}
-      available={false}
+      available={available}
       federatedIdentity={federatedIdentity}
-      restoresOnPhone={federatedIdentity ? restoresOnPhone : undefined}
+      phone={federatedIdentity ? { ...backup, restoresOnPhone } : undefined}
       stores={cardStores}
     />,
   );
@@ -159,6 +183,8 @@ it("while the account is read, shows neither view, so pairing never mounts", asy
   );
   renderCard(session("signed-in"), stores, check);
   await waitFor(() => expect(check).toHaveBeenCalledOnce());
+  // The card's heading holds its place; the surface is never blank.
+  expect(screen.getByRole("heading", { name: "Mobile app" })).toBeTruthy();
   expect(screen.queryByRole("heading", PAIR)).toBeNull();
   expect(screen.queryByRole("heading", GET_THE_APP)).toBeNull();
   await act(async () => answer(true));
@@ -182,6 +208,54 @@ it("reads the account again for a new Builderlab session", async () => {
   expect(await screen.findByRole("heading", GET_THE_APP)).toBeTruthy();
   await act(async () => federated.publish({ revision: "r2" }));
   await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+});
+
+it("reads the account again when a backup finishes, and offers the app once it holds this key", async () => {
+  const backup = backups();
+  const check = vi.fn(async () => backup.backupComplete());
+  renderCard(session("signed-in"), [], check, backup);
+  expect(await screen.findByRole("heading", PAIR)).toBeTruthy();
+  await act(async () => backup.finish());
+  expect(await screen.findByRole("heading", GET_THE_APP)).toBeTruthy();
+  expect(check).toHaveBeenCalledTimes(2);
+});
+
+it.each(["restoring", "signing-in"] as const)(
+  "while Builderlab is %s, waits instead of starting pairing",
+  async (status) => {
+    const federated = session(status);
+    const check = restores();
+    const native = renderCard(federated, [], check, backups(), true);
+    expect(screen.getByRole("heading", { name: "Mobile app" })).toBeTruthy();
+    expect(screen.queryByRole("heading", PAIR)).toBeNull();
+    await act(async () => federated.publish({ status: "signed-in" }));
+    expect(await screen.findByRole("heading", GET_THE_APP)).toBeTruthy();
+    expect(native.start).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps a shown pairing while a new session reads the account again", async () => {
+  const federated = session("signed-in");
+  let answer: ((ok: boolean) => void) | undefined;
+  const check = vi.fn(
+    (_viewer: string) =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve;
+      }),
+  );
+  const native = renderCard(federated, [], check, backups(), true);
+  await waitFor(() => expect(check).toHaveBeenCalledOnce());
+  await act(async () => answer?.(false));
+  expect(screen.getByRole("heading", PAIR)).toBeTruthy();
+  await waitFor(() => expect(native.start).toHaveBeenCalledOnce());
+  await act(async () => federated.publish({ revision: "r2" }));
+  await waitFor(() => expect(check).toHaveBeenCalledTimes(2));
+  // Still pairing while r2 is read, and after it answers the same.
+  expect(screen.getByRole("heading", PAIR)).toBeTruthy();
+  await act(async () => answer?.(false));
+  expect(screen.getByRole("heading", PAIR)).toBeTruthy();
+  expect(native.start).toHaveBeenCalledOnce();
+  expect(native.cancel).not.toHaveBeenCalled();
 });
 
 it("without store links, gives the same instructions without links", async () => {

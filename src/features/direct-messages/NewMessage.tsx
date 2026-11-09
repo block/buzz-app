@@ -35,13 +35,20 @@ import {
   useVerifiedNames,
   withVerifiedNames,
 } from "../profiles/useVerifiedNames";
-import { RecipientPicker } from "./RecipientPicker";
+import { addressableChannels, RecipientPicker } from "./RecipientPicker";
+import { Tabs } from "../../shared/design-system/ui/Tabs";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { PlusIcon } from "../../shared/design-system/icons";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
+import type { ReactNode } from "react";
 import type { Recipient } from "./usePeople";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
 import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
 
 const draftKey = "direct-message:new-draft";
+const channelViewKey = "direct-message:channel";
+type Kind = "solo" | "team";
 const recoveryKey = "direct-message:new";
 
 type Pending = {
@@ -142,7 +149,16 @@ export function NewMessage({
   onOpenThread,
   onStarted,
   visit,
+  allowChannels = false,
+  renderSolo,
+  onOpenChat,
 }: {
+  /** To may also name a channel: Send posts a new message there. */
+  allowChannels?: boolean;
+  /** A New chat composer for one agent; without it an agent gets a DM. */
+  renderSolo?: ((agent: string, focusRequest: number) => ReactNode) | undefined;
+  /** Continue an earlier Solo chat listed beside a chosen agent. */
+  onOpenChat?: ((channelId: string) => void) | undefined;
   session: RelaySession;
   scope: string;
   /** The visit presenting this composer, a Back stop only once drafted. */
@@ -173,6 +189,14 @@ export function NewMessage({
   const [recipients, setRecipients] = useState(() =>
     savedRecipients(scope, session.viewer),
   );
+  const [channelId, setChannelId] = useState<string | undefined>(() => {
+    const saved = allowChannels
+      ? readView<unknown>(scope, channelViewKey, null)
+      : null;
+    return typeof saved === "string" ? saved : undefined;
+  });
+  // A lone agent starts a Solo chat unless Team was picked for it.
+  const [teamFor, setTeamFor] = useState<string>();
   // Recipients keep the facts they were chosen with; their labels follow the
   // current verification and otherwise the current profile name, falling back
   // to those facts.
@@ -322,10 +346,80 @@ export function NewMessage({
     prepared.current = undefined;
     setRecipients(people);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
+    if (channelId) {
+      setChannelId(undefined);
+      writeView(scope, channelViewKey, null);
+    }
     setError("");
     setUploadFailed(false);
   }
+  function chooseChannel(channel: ChannelSummary | undefined) {
+    if (locked || attempt.current) return;
+    prepared.current = undefined;
+    setChannelId(channel?.id);
+    writeView(scope, channelViewKey, channel?.id ?? null);
+    if (channel) {
+      setRecipients([]);
+      writeView(scope, "direct-message:recipients", []);
+    }
+    setError("");
+    setUploadFailed(false);
+  }
+  /** A new top-level message in a channel, which starts its thread. */
+  async function post(
+    channel: ChannelSummary,
+    draft: MentionDraft,
+    files?: AttachmentDraft,
+  ) {
+    const content = composerMarkdown(draft);
+    if (
+      attempt.current ||
+      !ready ||
+      (!content.trim() && !files?.snapshot().length)
+    )
+      return;
+    const controller = new AbortController();
+    attempt.current = controller;
+    setBusy(
+      files?.snapshot().some((file) => !file.uploaded)
+        ? "uploading"
+        : "sending",
+    );
+    setError("");
+    setUploadFailed(false);
+    let preparingFiles = !!files;
+    try {
+      const uploaded = files
+        ? await files.prepareForSend(controller.signal)
+        : [];
+      controller.signal.throwIfAborted();
+      preparingFiles = false;
+      setBusy("sending");
+      const messageId = session.messages.send(
+        channel.id,
+        content,
+        draft.recipients.map((person) => person.pubkey),
+        uploaded,
+      );
+      clearView(scope, draftKey, "direct-message:recipients", channelViewKey);
+      setChannelId(undefined);
+      retire();
+      onStarted(channel.id, messageId);
+    } catch (reason) {
+      if (!controller.signal.aborted && preparingFiles) setUploadFailed(true);
+      else if (!controller.signal.aborted)
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "Could not send your message. Try again.",
+        );
+    } finally {
+      if (!controller.signal.aborted) setBusy(undefined);
+      if (attempt.current === controller) attempt.current = null;
+    }
+  }
   async function send(draft: MentionDraft, files?: AttachmentDraft) {
+    if (target) return post(target, draft, files);
     const content = composerMarkdown(draft);
     if (
       attempt.current ||
@@ -482,6 +576,70 @@ export function NewMessage({
     }
     return match;
   }, [channels, recipients, session.viewer]);
+  const channelChoices = useMemo(
+    () => (allowChannels ? addressableChannels(channels) : []),
+    [allowChannels, channels],
+  );
+  const target = channelId
+    ? channelChoices.find((channel) => channel.id === channelId)
+    : undefined;
+  const lone = recipients.length === 1 ? recipients[0] : undefined;
+  const loneAgent =
+    renderSolo &&
+    !target &&
+    lone &&
+    (lone.isAgent || profiles.get(lone.pubkey)?.isAgent)
+      ? lone.pubkey
+      : undefined;
+  const kind: Kind | null =
+    loneAgent && teamFor !== loneAgent
+      ? "solo"
+      : target || recipients.length
+        ? "team"
+        : null;
+  const soloAgent = kind === "solo" ? loneAgent : undefined;
+  const agentLabel = soloAgent ? named[0]?.name : undefined;
+  const recent = useMemo(
+    () =>
+      soloAgent
+        ? channels
+            .filter(
+              (channel) =>
+                channel.channelType === "solo" &&
+                !channel.archived &&
+                !channel.pending &&
+                channel.members?.includes(soloAgent),
+            )
+            .sort(
+              (left, right) =>
+                (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0),
+            )
+            .slice(0, 3)
+        : [],
+    [channels, soloAgent],
+  );
+  const kindControl =
+    renderSolo || allowChannels ? (
+      <div className={styles.kind}>
+        <Tabs<Kind>
+          variant="segmented"
+          size="sm"
+          label="Conversation"
+          value={kind}
+          showSelection={kind !== null}
+          items={[
+            { value: "solo", label: "Solo", disabled: !loneAgent },
+            { value: "team", label: "Team", disabled: kind === null },
+          ]}
+          onValueChange={(next) => {
+            if (!loneAgent) return;
+            setTeamFor(next === "team" ? loneAgent : undefined);
+          }}
+        />
+      </div>
+    ) : undefined;
+  const displayed = target ?? existing;
+  const composerName = target ? `#${target.name}` : recipientNames;
   return (
     <section
       className={styles.page}
@@ -497,105 +655,163 @@ export function NewMessage({
         onChange={change}
         onComplete={focusComposer}
         onTyped={setTyped}
+        channelOptions={channelChoices}
+        selectedChannel={target}
+        onChooseChannel={allowChannels ? chooseChannel : undefined}
+        trailing={kindControl}
       />
-      <div className={styles.blank} data-new-message-body="">
-        {existing ? (
-          <ExistingDiscussion
-            key={existing.id}
-            session={session}
-            scope={scope}
-            channel={existing}
-            extensions={extensions}
-            host={host}
-            onRecovered={focusComposer}
-            onOpen={(messageId, threadRootId, intent) =>
-              onOpenThread(existing.id, messageId, threadRootId, intent)
-            }
-          />
-        ) : recipients.length > 0 ? (
-          <div className={styles.introduction}>
+      {soloAgent && renderSolo ? (
+        <>
+          <div className={styles.solo} data-new-message-body="">
             <AvatarStack
               animateEntrance
               size="hero-large"
-              max={5}
+              max={1}
               items={named.map((person) => ({
                 id: person.pubkey,
                 name: person.name,
                 src: avatarMedia(person.picture, session.media),
-                shape: person.isAgent ? "squircle" : "circle",
+                shape: "squircle",
               }))}
             />
+            {recent.length > 0 && (
+              <nav
+                className={styles.recent}
+                aria-label={`Recent chats with ${agentLabel}`}
+              >
+                <h3>Recent with {agentLabel}</h3>
+                <NavigationItem
+                  selected
+                  aria-current="true"
+                  icon={<PlusIcon size={16} aria-hidden="true" />}
+                  label="New chat"
+                  onClick={focusComposer}
+                />
+                {recent.map((chat) => (
+                  <NavigationItem
+                    key={chat.id}
+                    label={chat.name}
+                    trailing={
+                      chat.lastActivityAt ? (
+                        <span className={styles.agent}>
+                          {relativeTimestamp(chat.lastActivityAt)}
+                        </span>
+                      ) : undefined
+                    }
+                    onClick={() => onOpenChat?.(chat.id)}
+                  />
+                ))}
+              </nav>
+            )}
           </div>
-        ) : null}
-      </div>
-      <div className={styles.feedback}>
-        {busy && (
-          <p role="status">
-            {busy === "uploading" ? "Uploading files…" : "Sending message…"}
-          </p>
-        )}
-        {uploadFailed && (
-          <p role="status">
-            A file couldn’t upload. Retry or remove it, then send again.
-          </p>
-        )}
-        {!session.directMessages.available && (
-          <p role="status">
-            Starting direct messages is unavailable on this connection.
-          </p>
-        )}
-        {pending && !failed && !busy && !error && (
-          <Button
-            type="button"
-            onClick={() => pending && void send(pending.draft)}
-          >
-            Retry send
-          </Button>
-        )}
-        {error && (
-          <div role="alert">
-            <p>{error}</p>
-            {pending && !failed && (
+          <div className={styles.soloComposer}>
+            {renderSolo(soloAgent, composerFocus)}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={styles.blank} data-new-message-body="">
+            {displayed ? (
+              <ExistingDiscussion
+                key={displayed.id}
+                session={session}
+                scope={scope}
+                channel={displayed}
+                extensions={extensions}
+                host={host}
+                onRecovered={focusComposer}
+                onOpen={(messageId, threadRootId, intent) =>
+                  onOpenThread(displayed.id, messageId, threadRootId, intent)
+                }
+              />
+            ) : recipients.length > 0 ? (
+              <div className={styles.introduction}>
+                <AvatarStack
+                  animateEntrance
+                  size="hero-large"
+                  max={5}
+                  items={named.map((person) => ({
+                    id: person.pubkey,
+                    name: person.name,
+                    src: avatarMedia(person.picture, session.media),
+                    shape: person.isAgent ? "squircle" : "circle",
+                  }))}
+                />
+              </div>
+            ) : null}
+          </div>
+          <div className={styles.feedback}>
+            {busy && (
+              <p role="status">
+                {busy === "uploading" ? "Uploading files…" : "Sending message…"}
+              </p>
+            )}
+            {uploadFailed && (
+              <p role="status">
+                A file couldn’t upload. Retry or remove it, then send again.
+              </p>
+            )}
+            {!target && !session.directMessages.available && (
+              <p role="status">
+                Starting direct messages is unavailable on this connection.
+              </p>
+            )}
+            {pending && !failed && !busy && !error && (
               <Button
                 type="button"
-                disabled={!!busy}
                 onClick={() => pending && void send(pending.draft)}
               >
                 Retry send
               </Button>
             )}
+            {error && (
+              <div role="alert">
+                <p>{error}</p>
+                {pending && !failed && (
+                  <Button
+                    type="button"
+                    disabled={!!busy}
+                    onClick={() => pending && void send(pending.draft)}
+                  >
+                    Retry send
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <DraftMentionRoster.Provider value={roster}>
-        <MessageComposer
-          key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
-          session={session}
-          scope={scope}
-          extensions={extensions}
-          channelId={draftChannel}
-          focusRequest={composerFocus}
-          channelName={recipientNames || "new message"}
-          label={recipientNames ? `Message ${recipientNames}` : "New message"}
-          placeholder={recipientNames ? undefined : ""}
-          disabled={!recipients.length}
-          submission={{
-            draftKey,
-            attachments: true,
-            allowAttachmentOnly: true,
-            recoveredDraft: restoredDraft,
-            onDraftChange: draftEdited,
-            locked,
-            disabled:
-              !ready ||
-              !!busy ||
-              !recipients.length ||
-              typed ||
-              !session.directMessages.available,
-            submit: (draft, files) => void send(draft, files),
-          }}
-        />
-      </DraftMentionRoster.Provider>
+          <DraftMentionRoster.Provider value={roster}>
+            <MessageComposer
+              key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
+              session={session}
+              scope={scope}
+              extensions={extensions}
+              channelId={draftChannel}
+              focusRequest={composerFocus}
+              channelName={composerName || "new message"}
+              label={composerName ? `Message ${composerName}` : "New message"}
+              placeholder={composerName ? undefined : ""}
+              disabled={!recipients.length && !target}
+              submission={{
+                draftKey,
+                attachments: true,
+                allowAttachmentOnly: true,
+                recoveredDraft: restoredDraft,
+                onDraftChange: draftEdited,
+                locked,
+                disabled:
+                  !ready ||
+                  !!busy ||
+                  (target
+                    ? false
+                    : !recipients.length ||
+                      !session.directMessages.available) ||
+                  typed,
+                submit: (draft, files) => void send(draft, files),
+              }}
+            />
+          </DraftMentionRoster.Provider>
+        </>
+      )}
     </section>
   );
 }

@@ -15,6 +15,11 @@
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border-standard);
 }
+.recipientRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
 .toField {
   display: flex;
   align-items: center;
@@ -27,6 +32,10 @@
   @apply text-body-sm;
   color: var(--text-subtle);
   margin-right: var(--space-1);
+}
+.recipientRow > .toField {
+  flex: 1;
+  min-width: 0;
 }
 .toInput {
   @apply text-body-sm;
@@ -310,4 +319,55 @@
   overflow: auto;
   place-items: center;
   padding: var(--space-6);
+}
+
+/* A channel chip's mark sits where a person's avatar would. */
+.channelMark,
+.channelOptionMark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  color: var(--text-subtle);
+}
+.channelMark {
+  width: 1.375rem;
+  height: 1.375rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+}
+.channelOptionMark {
+  width: 2rem;
+  height: 2rem;
+}
+/* The kind of conversation To makes; it follows the chips. */
+.kind {
+  flex-shrink: 0;
+}
+.solo {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-6);
+}
+.recent {
+  width: min(26rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.recent > h3 {
+  @apply text-caption;
+  color: var(--text-subtle);
+  padding-inline: var(--space-control-inset);
+  margin-bottom: var(--space-1);
+}
+.soloComposer {
+  padding: 0 var(--space-6) var(--space-4);
 }

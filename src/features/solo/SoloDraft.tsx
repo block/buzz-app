@@ -174,7 +174,10 @@ export function SoloDraft({
   linkedId,
   source,
   visit,
+  embedded = false,
 }: {
+  /** Only the composer, inside a host's own page (New message's To). */
+  embedded?: boolean;
   /** The visit presenting this draft, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   linkedId?: string | undefined;
@@ -749,6 +752,7 @@ export function SoloDraft({
       {error && <p role="alert">{error}</p>}
     </div>
   );
+  if (embedded) return composer;
   return (
     <SoloDraftView
       actions={

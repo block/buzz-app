@@ -1,6 +1,15 @@
 import { Virtualizer } from "virtua";
 import { Popover } from "@base-ui/react/popover";
-import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type { ChannelSummary } from "../relay/contracts";
 import { useAgentChoices } from "../agents/use-choices";
 import { canMessageAgent } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
@@ -22,7 +31,7 @@ import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { XIcon } from "../../shared/design-system/icons/index";
+import { HashIcon, XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
 import {
   useVerifiedNames,
@@ -38,6 +47,20 @@ import { avatarMedia } from "../../shared/avatar-source";
 
 const noExclusions: readonly string[] = [];
 const personKey = (pubkey: string) => `person:${pubkey}`;
+const channelKey = (id: string) => `channel:${id}`;
+const noChannels: readonly ChannelSummary[] = [];
+/** Channels To can address: ones the viewer can post a new message in. */
+export function addressableChannels(channels: readonly ChannelSummary[]) {
+  return channels.filter(
+    (channel) =>
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
+      !channel.archived &&
+      !channel.readOnly &&
+      !channel.cached &&
+      !channel.pending &&
+      !channel.huddle,
+  );
+}
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** At most 24 characters, cut between characters rather than inside one. */
 function shortened(text: string) {
@@ -60,10 +83,22 @@ export function RecipientPicker({
   initiallyOpen = true,
   maxRecipients = 8,
   appearance = "header",
+  channelOptions = noChannels,
+  selectedChannel,
+  onChooseChannel,
+  trailing,
   onChange,
   onComplete,
   onTyped,
 }: {
+  /** Channels To may address instead of people; empty offers only people. */
+  channelOptions?: readonly ChannelSummary[];
+  /** A chosen channel, shown as To's only chip. */
+  selectedChannel?: ChannelSummary | undefined;
+  /** Choosing a channel replaces the people; undefined removes it. */
+  onChooseChannel?: ((channel: ChannelSummary | undefined) => void) | undefined;
+  /** Beside the To field in the header row. */
+  trailing?: ReactNode | undefined;
   session: RelaySession;
   /** View-state partition whose DM visits and earlier choices rank people. */
   scope: string;
@@ -100,7 +135,9 @@ export function RecipientPicker({
     key: query,
     settled: !directory.loading,
   });
-  const agents = useAgentChoices(session, false);
+  // The composer lists every agent you run, so it loads them; elsewhere the
+  // picker observes the ones already known.
+  const agents = useAgentChoices(session, !!onChooseChannel, !!onChooseChannel);
   const removal = useChipRemoval();
   const atLimit = selected.length >= maxRecipients;
   const needle = query.trim().toLowerCase();
@@ -319,6 +356,55 @@ export function RecipientPicker({
     excludedPubkeys,
     session.profiles,
   ]);
+  // Channels, above people: the closest names while typing, else the most
+  // recently active few.
+  const channelRows = useMemo(() => {
+    if (!onChooseChannel || !channelOptions.length) return [];
+    const open = channelOptions.filter(
+      (channel) => channel.id !== selectedChannel?.id,
+    );
+    if (!needle)
+      return [...open]
+        .sort(
+          (left, right) =>
+            (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0),
+        )
+        .slice(0, 3);
+    return open
+      .flatMap((channel) => {
+        const match = matchPerson(channel.name, needle);
+        return match ? [{ channel, tier: match.tier }] : [];
+      })
+      .sort(
+        (left, right) =>
+          left.tier - right.tier ||
+          (right.channel.lastActivityAt ?? 0) -
+            (left.channel.lastActivityAt ?? 0),
+      )
+      .slice(0, 4)
+      .map((row) => row.channel);
+  }, [onChooseChannel, channelOptions, selectedChannel?.id, needle]);
+  const channelById = new Map(
+    channelRows.map((channel) => [channelKey(channel.id), channel]),
+  );
+  const rowKeys = [
+    ...channelRows.map((channel) => channelKey(channel.id)),
+    ...keys,
+  ];
+  const optionCount = channelRows.length + candidates.length;
+  function chooseKey(key: string) {
+    const channel = channelById.get(key);
+    if (channel) {
+      chooseChannel(channel);
+      return true;
+    }
+    const person = byPubkey.get(key);
+    if (person) {
+      choose(person);
+      return true;
+    }
+    return false;
+  }
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
   // Only a community-verified identity supplies the detail beside the name.
   const verifiedDetail = (person: VerifiedPerson<Recipient>) =>
@@ -336,10 +422,9 @@ export function RecipientPicker({
   const listed = open && !disabled && !atLimit;
   const highlight = useSearchHighlight({
     query,
-    keys,
-    onChoose: (pubkey) => {
-      const person = byPubkey.get(pubkey);
-      if (person) choose(person);
+    keys: rowKeys,
+    onChoose: (key) => {
+      chooseKey(key);
     },
     open: listed,
     onOpen: () => setOpen(true),
@@ -401,6 +486,22 @@ export function RecipientPicker({
     if (maxRecipients === 1 && selection.current.length >= maxRecipients)
       setOpen(false);
   }
+  function chooseChannel(channel: ChannelSummary) {
+    if (disabled || !onChooseChannel) return;
+    recordChoice(scope, typed, channelKey(channel.id));
+    selection.current = [];
+    onChooseChannel(channel);
+    setQuery("");
+    onTyped(false);
+    focus();
+  }
+  const channelChip = useRef<HTMLButtonElement>(null);
+  function removeChannel(point?: { x: number; y: number }) {
+    if (disabled || !selectedChannel || !onChooseChannel) return;
+    if (channelChip.current) removal.play(channelChip.current, point);
+    onChooseChannel(undefined);
+    focus();
+  }
   function remove(pubkey: string, point?: { x: number; y: number }) {
     if (
       disabled ||
@@ -434,8 +535,8 @@ export function RecipientPicker({
       verified={verifiedDetail(person)}
       query={needle}
       media={session.media}
-      position={index + 1}
-      count={candidates.length}
+      position={channelRows.length + index + 1}
+      count={optionCount}
     />
   );
   return (
@@ -473,144 +574,184 @@ export function RecipientPicker({
             setOpen(false);
         }}
       >
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: the composite field delegates clicks to its labelled input. */}
-        <div
-          ref={anchor}
-          className={styles.toField}
-          onClick={focus}
-          onKeyDown={(event) => {
-            // Escape closes an open list; otherwise it is the host's.
-            if (event.key === "Escape" && open && !disabled) {
-              event.stopPropagation();
-              setOpen(false);
-            }
-          }}
-        >
-          <label htmlFor={id}>To:</label>
-          {labels.map((person) => (
-            <span className={styles.chip} key={person.pubkey}>
-              <button
-                type="button"
-                className={styles.remove}
-                aria-label={`Remove ${label(person)}`}
-                disabled={disabled}
-                ref={(element) => {
-                  if (element) controls.current.set(person.pubkey, element);
-                  else controls.current.delete(person.pubkey);
-                }}
-                onPointerDown={(event) => {
-                  if (event.button === 0) event.preventDefault();
-                }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  remove(
-                    person.pubkey,
-                    event.detail > 0
-                      ? { x: event.clientX, y: event.clientY }
-                      : undefined,
-                  );
-                }}
-              >
-                {avatar(person, true)}
-                <span className={styles.removeIcon}>
-                  <XIcon size={12} aria-hidden="true" />
-                </span>
-              </button>
-              <span className={styles.chipName}>{person.name}</span>
-              {discriminator(person) && (
-                <span className={styles.agent}>{discriminator(person)}</span>
-              )}
-              {person.isAgent && <span className={styles.agent}>Agent</span>}
-            </span>
-          ))}
-          <input
-            id={id}
-            ref={input}
-            className={styles.toInput}
-            aria-label="Message recipients"
-            role="combobox"
-            aria-expanded={open && !disabled}
-            aria-controls={listed ? highlight.listId : undefined}
-            aria-autocomplete="list"
-            aria-describedby={invalid ? errorId : undefined}
-            {...highlight.fieldProps}
-            placeholder={
-              selected.length
-                ? atLimit
-                  ? `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
-                  : "Add another person…"
-                : "Find a person…"
-            }
-            value={query}
-            disabled={disabled}
-            readOnly={atLimit}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            maxLength={100}
-            onFocus={() => setOpen(true)}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              onTyped(!!event.target.value.trim());
-              setOpen(true);
-            }}
+        <div className={styles.recipientRow}>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: the composite field delegates clicks to its labelled input. */}
+          <div
+            ref={anchor}
+            className={styles.toField}
+            onClick={focus}
             onKeyDown={(event) => {
-              // The picker's own keys, Backspace and Escape, skip these too.
-              if (
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.altKey
-              )
-                return;
-              if (event.key === "Backspace" && !query && selected.length) {
-                event.preventDefault();
-                const last = selected.at(-1);
-                if (last) remove(last.pubkey);
-              } else if (event.key === "Escape") {
-                if (open && !disabled) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setOpen(false);
-                }
-              } else if (
-                event.key === "Tab" &&
-                !event.shiftKey &&
-                !query.trim() &&
-                selected.length > 0
-              ) {
-                event.preventDefault();
+              // Escape closes an open list; otherwise it is the host's.
+              if (event.key === "Escape" && open && !disabled) {
+                event.stopPropagation();
                 setOpen(false);
-                onComplete();
-              } else if (atLimit) {
-                if (event.key === "Enter" && open) event.preventDefault();
-              } else if (event.key === " " && !event.shiftKey) {
-                const person = exactRecipient();
-                if (person) {
-                  event.preventDefault();
-                  choose(person);
-                }
-              } else if (event.key === "Tab" && !event.shiftKey) {
-                // Tab picks the highlighted row, as in @ mentions. With no
-                // highlight it moves focus as usual.
-                const person = listed
-                  ? byPubkey.get(highlight.active)
-                  : undefined;
-                if (person) {
-                  event.preventDefault();
-                  choose(person);
-                }
-              } else if (
-                !highlight.keyDown(event) &&
-                open &&
-                event.key === "Enter"
-              ) {
-                event.preventDefault();
               }
             }}
-          />
+          >
+            <label htmlFor={id}>To:</label>
+            {selectedChannel && (
+              <span className={styles.chip}>
+                <button
+                  type="button"
+                  className={styles.remove}
+                  aria-label={`Remove #${selectedChannel.name}`}
+                  disabled={disabled}
+                  ref={channelChip}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) event.preventDefault();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    removeChannel(
+                      event.detail > 0
+                        ? { x: event.clientX, y: event.clientY }
+                        : undefined,
+                    );
+                  }}
+                >
+                  <span className={styles.channelMark}>
+                    <HashIcon size={12} aria-hidden="true" />
+                  </span>
+                  <span className={styles.removeIcon}>
+                    <XIcon size={12} aria-hidden="true" />
+                  </span>
+                </button>
+                <span className={styles.chipName}>{selectedChannel.name}</span>
+                <span className={styles.agent}>Channel</span>
+              </span>
+            )}
+            {labels.map((person) => (
+              <span className={styles.chip} key={person.pubkey}>
+                <button
+                  type="button"
+                  className={styles.remove}
+                  aria-label={`Remove ${label(person)}`}
+                  disabled={disabled}
+                  ref={(element) => {
+                    if (element) controls.current.set(person.pubkey, element);
+                    else controls.current.delete(person.pubkey);
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) event.preventDefault();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    remove(
+                      person.pubkey,
+                      event.detail > 0
+                        ? { x: event.clientX, y: event.clientY }
+                        : undefined,
+                    );
+                  }}
+                >
+                  {avatar(person, true)}
+                  <span className={styles.removeIcon}>
+                    <XIcon size={12} aria-hidden="true" />
+                  </span>
+                </button>
+                <span className={styles.chipName}>{person.name}</span>
+                {discriminator(person) && (
+                  <span className={styles.agent}>{discriminator(person)}</span>
+                )}
+                {person.isAgent && <span className={styles.agent}>Agent</span>}
+              </span>
+            ))}
+            <input
+              id={id}
+              ref={input}
+              className={styles.toInput}
+              aria-label="Message recipients"
+              role="combobox"
+              aria-expanded={open && !disabled}
+              aria-controls={listed ? highlight.listId : undefined}
+              aria-autocomplete="list"
+              aria-describedby={invalid ? errorId : undefined}
+              {...highlight.fieldProps}
+              placeholder={
+                selectedChannel
+                  ? "Switch to a person or channel…"
+                  : selected.length
+                    ? atLimit
+                      ? `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
+                      : "Add another person…"
+                    : onChooseChannel
+                      ? "Find a person, agent or channel…"
+                      : "Find a person…"
+              }
+              value={query}
+              disabled={disabled}
+              readOnly={atLimit}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              maxLength={100}
+              onFocus={() => setOpen(true)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                onTyped(!!event.target.value.trim());
+                setOpen(true);
+              }}
+              onKeyDown={(event) => {
+                // The picker's own keys, Backspace and Escape, skip these too.
+                if (
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.altKey
+                )
+                  return;
+                if (event.key === "Backspace" && !query && selectedChannel) {
+                  event.preventDefault();
+                  removeChannel();
+                } else if (
+                  event.key === "Backspace" &&
+                  !query &&
+                  selected.length
+                ) {
+                  event.preventDefault();
+                  const last = selected.at(-1);
+                  if (last) remove(last.pubkey);
+                } else if (event.key === "Escape") {
+                  if (open && !disabled) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setOpen(false);
+                  }
+                } else if (
+                  event.key === "Tab" &&
+                  !event.shiftKey &&
+                  !query.trim() &&
+                  (selected.length > 0 || !!selectedChannel)
+                ) {
+                  event.preventDefault();
+                  setOpen(false);
+                  onComplete();
+                } else if (atLimit) {
+                  if (event.key === "Enter" && open) event.preventDefault();
+                } else if (event.key === " " && !event.shiftKey) {
+                  const person = exactRecipient();
+                  if (person) {
+                    event.preventDefault();
+                    choose(person);
+                  }
+                } else if (event.key === "Tab" && !event.shiftKey) {
+                  // Tab picks the highlighted row, as in @ mentions. With no
+                  // highlight it moves focus as usual.
+                  if (listed && highlight.active && chooseKey(highlight.active))
+                    event.preventDefault();
+                } else if (
+                  !highlight.keyDown(event) &&
+                  open &&
+                  event.key === "Enter"
+                ) {
+                  event.preventDefault();
+                }
+              }}
+            />
+          </div>
+          {trailing}
         </div>
         {/* Text left in To holds Send, so say why once the list closes, not
             while a name is typed. Below the list's anchor, so the list keeps
@@ -658,7 +799,9 @@ export function RecipientPicker({
                   className={styles.people}
                   id={highlight.listId}
                   role="listbox"
-                  aria-label="People"
+                  aria-label={
+                    channelRows.length ? "People and channels" : "People"
+                  }
                   onPointerMove={(event) => {
                     const key = optionKey(event.target);
                     if (key) highlight.rowProps(key).onPointerMove(event);
@@ -674,8 +817,7 @@ export function RecipientPicker({
                     if (key) highlight.rowProps(key).onKeyDown(event);
                   }}
                   onClick={(event) => {
-                    const person = byPubkey.get(optionKey(event.target) ?? "");
-                    if (person) choose(person);
+                    chooseKey(optionKey(event.target) ?? "");
                   }}
                   onScroll={(event) => {
                     const list = event.currentTarget;
@@ -688,17 +830,55 @@ export function RecipientPicker({
                       directory.loadMore();
                   }}
                 >
+                  {channelRows.map((channel, index) => (
+                    <NavigationItem
+                      key={channel.id}
+                      id={highlight.rowId(channelKey(channel.id))}
+                      data-recipient-key={channelKey(channel.id)}
+                      variant="option"
+                      role="option"
+                      aria-posinset={index + 1}
+                      aria-setsize={optionCount}
+                      aria-label={`${channel.name}, Channel`}
+                      tabIndex={-1}
+                      selected={channelKey(channel.id) === highlight.active}
+                      aria-selected={
+                        channelKey(channel.id) === highlight.active
+                      }
+                      aria-current={false}
+                      icon={
+                        <span className={styles.channelOptionMark}>
+                          <HashIcon size={16} aria-hidden="true" />
+                        </span>
+                      }
+                      label={
+                        <MatchedLabel
+                          label={channel.name}
+                          positions={
+                            needle
+                              ? matchPerson(channel.name, needle)?.positions
+                              : undefined
+                          }
+                        />
+                      }
+                      trailing={<span className={styles.agent}>Channel</span>}
+                      onMouseDown={(event) => event.preventDefault()}
+                    />
+                  ))}
                   <Virtualizer
                     data={candidates}
                     keepMounted={
-                      highlight.active ? [keys.indexOf(highlight.active)] : []
+                      highlight.active && keys.includes(highlight.active)
+                        ? [keys.indexOf(highlight.active)]
+                        : []
                     }
                   >
                     {renderOption}
                   </Virtualizer>
                   {!directory.loading &&
                     !directory.error &&
-                    !candidates.length && (
+                    !candidates.length &&
+                    !channelRows.length && (
                       <p>
                         {directory.tooShort
                           ? `Type at least ${SEARCH_MIN_CHARS} characters to search people.`

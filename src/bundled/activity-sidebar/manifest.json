@@ -1,0 +1,7 @@
+{
+  "id": "buzz.activity-sidebar",
+  "name": "Activity sidebar",
+  "apiVersion": 1,
+  "description": "Prototype: Messages lists your conversations newest first, with Solo and Team views, in place of its own sidebar.",
+  "discovery": { "category": "communication", "tags": ["Essentials"] }
+}

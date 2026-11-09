@@ -33,6 +33,13 @@ import type {
   SidebarScope,
 } from "../../features/channel-navigation/sidebar-scope-service";
 import styles from "./PrimarySidebar.module.css";
+import {
+  ActivityFilters,
+  ActivityScopeTabs,
+  ActivitySidebar,
+  activityViewFor,
+  useActivityView,
+} from "./ActivitySidebar";
 
 import { useRelayConnection } from "../../features/relay/react";
 import { relayPartition } from "../../features/relay/partition";
@@ -207,6 +214,30 @@ function ScopedSidebar({
   useEffect(() => {
     writeView(scope, "navigation-scope", view);
   }, [scope, view]);
+  // PROTOTYPE: the Activity sidebar plugin replaces this sidebar while on.
+  const activityMode = useSyncExternalStore(
+    props.sidebarScope?.subscribeViews ?? noSubscription,
+    () =>
+      !!props.sidebarScope
+        ?.views?.()
+        .some((entry) => entry.sidebar === "activity"),
+  );
+  const [activityView, setActivityView] = useActivityView(scope);
+  // Opening a conversation from elsewhere shows the scope it belongs to.
+  const [activityLocation, setActivityLocation] = useState(location);
+  if (location !== activityLocation) {
+    setActivityLocation(location);
+    const next =
+      target.kind === "conversation"
+        ? activityViewFor(
+            channels?.list().channels,
+            target.channelId,
+            activityView,
+          )
+        : undefined;
+    if (next) setActivityView(next);
+  }
+  const showActivity = activityMode && !restriction;
   const filter = restriction ? "solo" : view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
   // Without the tabs there is no tab to label the panel.
@@ -220,6 +251,8 @@ function ScopedSidebar({
               entry={restriction}
               registry={props.sidebarScope}
             />
+          ) : showActivity ? (
+            <ActivityScopeTabs view={activityView} onChange={setActivityView} />
           ) : (
             <Tabs
               label="Navigation scope"
@@ -241,7 +274,11 @@ function ScopedSidebar({
         </div>
         {props.creationAction}
       </div>
-      {props.children && !restriction && (
+      {showActivity && (
+        <ActivityFilters view={activityView} onChange={setActivityView} />
+      )}
+      {/* PROTOTYPE: the Activity sidebar leaves out Drafts & sent. */}
+      {props.children && !restriction && !showActivity && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
@@ -252,8 +289,34 @@ function ScopedSidebar({
       header={header}
       panelId={panelId}
     >
-      {connection.session &&
+      {showActivity &&
+      connection.session &&
+      connection.viewer &&
       (connection.status === "ready" || connection.cached) ? (
+        <ResizableSidebar scope={scope} className="shell-sidebar">
+          <SidebarFrame label="Sidebar" header={header}>
+            {!connection.cached && (
+              <RecoveryNotice recovery={connection.session.recovery} />
+            )}
+            <SidebarList>
+              <ActivitySidebar
+                session={connection.session}
+                navigator={props.navigator}
+                scope={{
+                  viewer: connection.viewer,
+                  communityOrigin: scope.slice(
+                    0,
+                    -(connection.viewer.length + 1),
+                  ),
+                }}
+                target={props.target}
+                view={activityView}
+              />
+            </SidebarList>
+          </SidebarFrame>
+        </ResizableSidebar>
+      ) : connection.session &&
+        (connection.status === "ready" || connection.cached) ? (
         <ChannelInventory
           relay={props.relay}
           navigator={props.navigator}

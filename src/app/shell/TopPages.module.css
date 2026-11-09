@@ -1,0 +1,61 @@
+/* PROTOTYPE: the top bar's app icons. Tile and gap match TopPages.tsx. */
+.pages {
+  --top-tile: 2rem;
+  --top-gap: 0.25rem;
+  /* Room for focus rings and badges inside the clipped strip. */
+  --top-bleed: 3px;
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  gap: var(--top-gap);
+}
+.strip {
+  /* Shrinks, clipping, when even the expanded row has too little room. */
+  flex: 0 1 auto;
+  min-width: calc(var(--top-tile) + 2 * var(--top-bleed));
+  max-width: calc(
+    var(--top-pages-visible) *
+    (var(--top-tile) + var(--top-gap)) -
+    var(--top-gap) +
+    2 *
+    var(--top-bleed)
+  );
+  margin: calc(-1 * var(--top-bleed));
+  padding: var(--top-bleed);
+  overflow: hidden;
+  transition: max-width var(--duration-settle) cubic-bezier(0.2, 0, 0, 1);
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules reach the Tabs parts. */
+.strip :global(.buzz-tabs-list) {
+  flex-wrap: nowrap;
+  gap: var(--top-gap);
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules reach the Tabs parts. */
+.strip :global(.buzz-tabs-tab) {
+  width: var(--top-tile);
+  height: var(--top-tile);
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules reach the Tabs parts. */
+.strip :global(.buzz-tabs-icon) {
+  flex-basis: 1.125rem;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+.more {
+  display: flex;
+  flex: none;
+  transition:
+    rotate var(--duration-settle) cubic-bezier(0.2, 0, 0, 1),
+    opacity var(--duration-settle) ease;
+}
+.pages[data-expanded] .more {
+  rotate: 90deg;
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .strip,
+  .more {
+    transition: none;
+  }
+}

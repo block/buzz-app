@@ -1,10 +1,10 @@
 import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
+import { TopPages } from "./TopPages";
 import { navigationOwner, orderPages, pagePlacement } from "./presentation";
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -127,53 +127,9 @@ function AppShellContent({
   children: ReactNode;
 }) {
   const header = useRef<HTMLElement>(null);
-  const historyRef = useRef<HTMLDivElement>(null);
-  const actionsRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const element = header.current;
-    const history = historyRef.current;
-    const actions = actionsRef.current;
-    const search = searchRef.current;
-    if (!element || !history || !actions || !search) return;
-    const measure = () => {
-      // Equal wings keep Search centered even when the native controls or launchers differ.
-      const wing = Math.max(history.offsetWidth, actions.offsetWidth);
-      const style = getComputedStyle(element);
-      const available =
-        element.clientWidth -
-        parseFloat(style.paddingLeft) -
-        parseFloat(style.paddingRight);
-      const searchStyle = getComputedStyle(search);
-      const controls =
-        history.offsetWidth +
-        actions.offsetWidth +
-        2 * parseFloat(style.columnGap);
-      element.dataset.searchFluid = String(
-        available < controls + parseFloat(searchStyle.maxWidth),
-      );
-      element.style.setProperty("--shell-header-wing", `${wing}px`);
-      element.dataset.searchWrapped = String(
-        available < controls + parseFloat(searchStyle.minWidth),
-      );
-    };
-    // Header wrapping resizes the workspace below it. Apply it outside resize
-    // delivery so timeline observers do not receive a second layout mid-cycle.
-    let frame: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        frame = undefined;
-        measure();
-      });
-    });
-    for (const target of [element, history, actions]) observer.observe(target);
-    measure();
-    return () => {
-      observer.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
-    };
-  }, []);
+  // PROTOTYPE: the app icons live in the top bar; Search folds to its icon
+  // while the icons' overflow is open.
+  const [pagesExpanded, setPagesExpanded] = useState(false);
   const fillsWorkspace = workspace || selected === "settings";
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
@@ -305,9 +261,10 @@ function AppShellContent({
         data-tauri-drag-region={macDesktop ? undefined : true}
         {...titleBarDragProps}
         className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
+        data-top-pages=""
+        data-pages-expanded={pagesExpanded || undefined}
       >
         <div
-          ref={historyRef}
           className="shell-history"
           data-buzz-window-drag={
             macDesktop || hasIntegratedWindowControls() || undefined
@@ -336,7 +293,15 @@ function AppShellContent({
           )}
           {navigationControls}
         </div>
-        <div ref={searchRef} className="shell-menu-search">
+        <TopPages
+          pages={dockPages}
+          selected={owner}
+          currentPage={selected}
+          onSelect={onSelect}
+          previews
+          onExpandedChange={setPagesExpanded}
+        />
+        <div className="shell-menu-search">
           <PageSearch
             pages={pages}
             onSelect={onSelect}
@@ -344,31 +309,12 @@ function AppShellContent({
           />
         </div>
         <div
-          ref={actionsRef}
           className="shell-actions"
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
           <div className="shell-actions-fixed">
             {launchers}
-            <WindowControls />
-          </div>
-        </div>
-      </header>
-
-      <div className="shell-workspace">
-        <nav className="shell-side-dock" aria-label="Apps dock">
-          <div className="shell-dock-pages">
-            <PageNavigation
-              pages={dockPages}
-              selected={owner}
-              currentPage={selected}
-              onSelect={onSelect}
-              placement="dock"
-              previews
-            />
-          </div>
-          <div className="shell-community-switcher">
             <CommunityPicker
               communities={communities}
               invite={invite}
@@ -379,6 +325,7 @@ function AppShellContent({
               onOpenTarget={onOpenTarget}
               open={switcherOpen}
               onOpenChange={setSwitcherOpen}
+              side="bottom"
             />
             <ProfileButton
               communities={communities}
@@ -389,9 +336,14 @@ function AppShellContent({
               onSettings={(section) =>
                 onSelect("settings", section ? { section } : undefined)
               }
+              side="bottom"
             />
+            <WindowControls />
           </div>
-        </nav>
+        </div>
+      </header>
+
+      <div className="shell-workspace">
         <div
           ref={workspaceRef}
           className="shell-dialog-frame"

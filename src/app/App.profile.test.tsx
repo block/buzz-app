@@ -792,8 +792,9 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const workspace = frame?.parentElement;
   expect(workspace).toContainElement(composing);
   expect(workspace).toContainElement(panel);
-  // The dock remains in the workspace alongside the Settings frame.
-  expect(workspace).toContainElement(communities);
+  // The community switcher stays in the top bar, beside the Settings frame.
+  expect(communities).toBeInTheDocument();
+  expect(frame).not.toContainElement(communities);
   expect(modal.closest('[aria-hidden="true"], [inert]')).toBeNull();
   await waitFor(() =>
     expect(modal).toContainElement(document.activeElement as HTMLElement),

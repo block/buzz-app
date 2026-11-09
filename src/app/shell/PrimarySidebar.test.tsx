@@ -285,7 +285,10 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   expect(team).toHaveAttribute("aria-selected", "true");
   await user.click(all);
   expect(f.open).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   expect(
     (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
   ).toEqual([
@@ -298,7 +301,10 @@ it("filters the combined sidebar without navigating or resetting Solo sections",
   await user.click(screen.getByRole("menuitem", { name: "New chat" }));
   expect(f.open).toHaveBeenCalledWith(soloDraftTarget(scope));
   await user.click(solo);
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   await user.click(await screen.findByRole("menuitem", { name: "New DM" }));
   expect(f.open).toHaveBeenLastCalledWith({
     version: 1,
@@ -428,7 +434,7 @@ it.each([
     fixture(true, true);
     await user.click(screen.getByRole("tab", { name: "Team" }));
     const trigger = screen.getByRole("button", { name: "New" });
-    await user.click(trigger);
+    await user.pointer({ keys: "[MouseRight]", target: trigger });
     await user.click(await screen.findByRole("menuitem", { name: item }));
     const dialog = await screen.findByRole("dialog", { name: title });
     await waitFor(() =>
@@ -449,7 +455,10 @@ it("creates a sidebar section from New without moving or opening a conversation"
     .mockResolvedValue(undefined);
   const assign = vi.spyOn(f.session.sidebarPreferences, "assign");
   f.connection({});
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   await user.click(
     await screen.findByRole("menuitem", { name: "New section" }),
   );
@@ -477,7 +486,10 @@ it("creates a sidebar section from New without moving or opening a conversation"
 it("keeps unavailable creation actions disabled", async () => {
   const user = userEvent.setup();
   fixture(true);
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   expect(
     await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");
@@ -503,7 +515,10 @@ it.each([["New", "New workspace"]])(
     const create = vi
       .spyOn(f.session.soloPreferences, "createSection")
       .mockReturnValue(pending);
-    await user.click(screen.getByRole("button", { name: triggerName }));
+    await user.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: triggerName }),
+    });
     await user.click(await screen.findByRole("menuitem", { name: itemName }));
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
     await user.type(
@@ -567,7 +582,10 @@ it.each([
     const f = fixture(true, true);
     const user = userEvent.setup();
     f.connection({ status: "connecting", cached: true });
-    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "New" }),
+    });
     await user.click(await screen.findByRole("menuitem", { name: item }));
     const input = within(
       await screen.findByRole("dialog", { name: title }),
@@ -612,7 +630,10 @@ it("header channel creation expands the saved destination without changing other
     .spyOn(f.session.channelCreation, "create")
     .mockResolvedValue("new-channel");
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   await user.click(
     await screen.findByRole("menuitem", { name: "New channel" }),
   );
@@ -650,7 +671,10 @@ it("reveals Solo when New chat reopens the same destination after filtering it o
     "aria-selected",
     "true",
   );
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
   expect(screen.getByRole("tab", { name: "Solo" })).toHaveAttribute(
     "aria-selected",
@@ -709,7 +733,10 @@ it("does not reveal or open a channel when its creation completes in a replaced 
     .spyOn(f.session.channelCreation, "create")
     .mockReturnValue(pending);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New" }));
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   await user.click(
     await screen.findByRole("menuitem", { name: "New channel" }),
   );
@@ -773,10 +800,10 @@ it.each(["empty", "chats", "projects", "both"])(
     }
     await user.click(screen.getByRole("tab", { name: "Solo" }));
     const trigger = screen.getByRole("button", { name: "New" });
-    await user.click(trigger);
+    await user.pointer({ keys: "[MouseRight]", target: trigger });
     await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
     expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
-    await user.click(trigger);
+    await user.pointer({ keys: "[MouseRight]", target: trigger });
     await user.click(
       await screen.findByRole("menuitem", { name: "New workspace" }),
     );
@@ -786,10 +813,26 @@ it.each(["empty", "chats", "projects", "both"])(
   },
 );
 
-it("keeps new Solo chats available when project creation is unavailable", async () => {
+it("opens the To composer when + is clicked", async () => {
   const user = userEvent.setup();
   const f = fixture(true);
   await user.click(screen.getByRole("button", { name: "New" }));
+  expect(f.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      pluginId: "buzz.channels",
+      route: { version: 1, params: "new-message" },
+    }),
+  );
+  expect(screen.queryByRole("menu")).toBeNull();
+});
+
+it("keeps new Solo chats available when project creation is unavailable", async () => {
+  const user = userEvent.setup();
+  const f = fixture(true);
+  await user.pointer({
+    keys: "[MouseRight]",
+    target: screen.getByRole("button", { name: "New" }),
+  });
   expect(
     await screen.findByRole("menuitem", { name: "New workspace" }),
   ).toHaveAttribute("aria-disabled", "true");

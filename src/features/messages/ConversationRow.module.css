@@ -1,0 +1,170 @@
+/* PROTOTYPE: ConversationRow. Every list shares one two-line anatomy:
+ *
+ *   avatar | (icon) place ……… time / ✓
+ *   avatar | preview …………… state
+ *
+ * The --conversation-row-* properties are the knobs the row specimen sheet
+ * (tests/fixtures/row-gallery) exposes; the fallbacks are the proposal. */
+/* Defaults are the "comfortable" density: minimums for the narrowest
+ * sidebar. A wider sidebar gives the extra width to the preview. */
+.frame {
+  --row-avatar-size: var(--conversation-row-avatar, 2.25rem);
+  --row-pad-block: var(
+    --conversation-row-pad-block,
+    calc(var(--space-2) + var(--space-half) / 2)
+  );
+  --row-pad-inline: var(--conversation-row-pad-inline, var(--space-2));
+  position: relative;
+  min-width: 0;
+}
+[data-conversation-row] {
+  height: auto;
+  min-height: 0;
+  padding: var(--row-pad-block) var(--row-pad-inline);
+  align-items: stretch;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--conversation-row-column-gap, var(--space-3));
+  min-width: 0;
+}
+[data-avatar-align="top"] .row {
+  align-items: flex-start;
+}
+
+.avatar {
+  display: grid;
+  flex: none;
+  width: var(--row-avatar-size);
+  height: var(--row-avatar-size);
+}
+
+.lines {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--conversation-row-line-gap, var(--space-1));
+  min-width: 0;
+}
+/* Each line ends in its own right-hand slot, so the preview runs on under
+ * the time instead of stopping at the time's width. */
+.line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.title {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+  /* The place leads every row: medium weight in full ink, read or not. */
+  font-weight: var(--type-weight-medium);
+  color: var(--navigation-item-text, var(--text-navigation));
+}
+[data-conversation-row]:not([data-selected]) .title {
+  color: var(--text-standard);
+}
+.placeIcon {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  color: var(--text-metadata);
+}
+.place {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.time {
+  flex: none;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  color: var(--text-metadata);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.preview {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: var(--conversation-row-preview-lines, 1);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  color: var(--text-subtle);
+}
+[data-preview-size="small"] .preview {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.sender {
+  color: var(--text-standard);
+}
+
+.state {
+  display: grid;
+  flex: none;
+  align-self: center;
+  place-items: center;
+  min-width: var(--space-2);
+}
+.unreadDot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--text-navigation-unread);
+}
+
+/* Unread changes nothing but the dot: a read row looks the same without it. */
+
+/* A selected row takes the sidebar's accent; every part follows its ink. */
+[data-conversation-row][data-selected]
+:is(.time, .placeIcon, .preview, .sender) {
+  color: inherit;
+}
+[data-conversation-row][data-selected] .unreadDot {
+  background: currentColor;
+}
+
+/* Mark as read: over the time, on hover or keyboard focus, on unread rows;
+ * always shown without a hover pointer. */
+.action {
+  position: absolute;
+  /* An xs button (24px) centred on the 20px title line. */
+  inset-block-start: calc(var(--row-pad-block) - var(--space-half));
+  inset-inline-end: calc(var(--row-pad-inline) - var(--space-1));
+  display: flex;
+  opacity: 0;
+}
+.frame:hover .action,
+.frame:focus-within .action {
+  opacity: 1;
+}
+.frame[data-action]:hover .time,
+.frame[data-action]:focus-within .time {
+  visibility: hidden;
+}
+@media (hover: none), (pointer: coarse) {
+  .action {
+    opacity: 1;
+  }
+  .frame[data-action] .time {
+    visibility: hidden;
+  }
+}

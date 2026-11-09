@@ -73,7 +73,10 @@ export function CommunityPicker({
   settingsCards,
   open,
   onOpenChange,
+  side = "right",
 }: {
+  /** Where the switcher opens: beside a dock, or below the top bar. */
+  side?: "right" | "bottom";
   communities: Communities;
   federatedIdentity?: FederatedIdentity | undefined;
   invite?: (JoinRequest & { requestId: number }) | undefined;
@@ -265,7 +268,7 @@ export function CommunityPicker({
                       rows.length;
               rows[next]?.focus();
             }}
-            side="right"
+            side={side}
             align="end"
             padding="list"
             finalFocus={() =>

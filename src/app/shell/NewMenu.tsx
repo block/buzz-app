@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Agents } from "../../features/agents/service";
 import { CreateSidebarSection } from "../../bundled/channels/CreateSidebarSection";
 import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
@@ -16,7 +16,6 @@ import { soloDraftTarget } from "../../features/channel-navigation/routes";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
-  MenuTrigger,
   MenuPopup,
   MenuItem,
   MenuGroup,
@@ -68,30 +67,52 @@ function ReadyNewMenu({
   const trigger = useRef<HTMLButtonElement>(null);
   const scope = splitPartition(session.scope);
   const current = () => relay.snapshot().session === session;
+  // + opens the To composer; its context menu keeps the other creations.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const compose = () => {
+    if (scope && current())
+      void navigator.open({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+        scope,
+        route: { version: 1, params: "new-message" },
+      });
+  };
+  // The shell's Cmd/Ctrl+N asks to open creation: that is the composer now.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new request composes.
+  useEffect(() => {
+    if (!open) return;
+    onOpenChange?.(false);
+    if (available) compose();
+  }, [open]);
   const menuTrigger = (
-    <MenuTrigger
-      render={
-        <IconButton
-          hint="familiar"
-          ref={trigger}
-          disabled={!available}
-          aria-label="New"
-          title="New"
-          variant="inset"
-          shape="round"
-          size="sm"
-          icon={<PlusIcon className={styles.createIcon} size={16} />}
-        />
-      }
+    <IconButton
+      hint="familiar"
+      ref={trigger}
+      disabled={!available || !scope}
+      aria-label="New"
+      aria-haspopup="menu"
+      title="New message (right-click for more)"
+      variant="inset"
+      shape="round"
+      size="sm"
+      icon={<PlusIcon className={styles.createIcon} size={16} />}
+      onClick={compose}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenuOpen(true);
+      }}
     />
   );
   return (
     <>
-      <MenuRoot open={open} onOpenChange={onOpenChange}>
-        {triggerContainer === undefined
-          ? menuTrigger
-          : triggerContainer && createPortal(menuTrigger, triggerContainer)}
-        <MenuPopup>
+      {triggerContainer === undefined
+        ? menuTrigger
+        : triggerContainer && createPortal(menuTrigger, triggerContainer)}
+      <MenuRoot open={menuOpen} onOpenChange={setMenuOpen}>
+        <MenuPopup anchor={trigger}>
           <MenuGroup>
             <MenuGroupLabel emphasis="quiet">Solo</MenuGroupLabel>
             <MenuItem

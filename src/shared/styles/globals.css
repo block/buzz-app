@@ -468,6 +468,40 @@
   .shell-header[data-search-wrapped="true"] .shell-menu-search > .buzz-button {
     max-width: 32rem;
   }
+  /* PROTOTYPE: app icons in the top bar. One row, left to right: history, the
+     app icons, a compact Search on the right, then the actions. While the
+     icons' overflow is open, Search folds to its icon to make room. */
+  .shell-header[data-top-pages] {
+    display: flex;
+    gap: var(--space-3);
+  }
+  .shell-header[data-top-pages] .shell-menu-search {
+    flex: 0 1 15rem;
+    width: auto;
+    max-width: 15rem;
+    min-width: var(--size-control-sm);
+    transition:
+      flex-basis var(--duration-settle) cubic-bezier(0.2, 0, 0, 1),
+      max-width var(--duration-settle) cubic-bezier(0.2, 0, 0, 1);
+  }
+  .shell-header[data-top-pages][data-pages-expanded] .shell-menu-search {
+    flex-basis: var(--size-control-sm);
+    max-width: var(--size-control-sm);
+  }
+  @container (width < 3rem) {
+    .shell-background .shell-menu-search > .buzz-button {
+      padding-inline: 0;
+    }
+    .shell-background .shell-menu-search .buzz-button-label,
+    .shell-search-content {
+      justify-content: center;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .shell-header[data-top-pages] .shell-menu-search {
+      transition: none;
+    }
+  }
   /* Keep this in sync with AppShell's matchMedia navigation owner. */
   @media (max-width: 650px) {
     .shell-sidebar,

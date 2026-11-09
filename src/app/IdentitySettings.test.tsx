@@ -671,7 +671,9 @@ it("names as using a server only the communities that require its sign-in", asyn
     "https://will.communities.buzz.xyz",
     "https://kalvin.communities.buzz.xyz",
   ]);
-  await waitFor(() => expect(screen.queryByRole("img", { name: "will" })).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByRole("img", { name: "will" })).toBeNull(),
+  );
 });
 
 it("keeps the first server's sign-in row when no server is signed in", async () => {

@@ -11,34 +11,41 @@ export async function settle(page, scroller = history(page)) {
   // Each read follows two rendering updates: a DOM write lands before the
   // frame whose ResizeObserver measures it, and Linux WebKit can go longer
   // than the stable window without rendering, so unpaced reads can mistake an
-  // unmeasured estimate for settled geometry.
+  // unmeasured estimate for settled geometry. Playwright's clock fakes
+  // requestAnimationFrame, so a paused clock would stop rAF pacing; a new
+  // ResizeObserver's first notification comes from the real rendering update.
   let previous;
   let stable = 0;
   await expect
     .poll(
       async () => {
-        const value = await scroller.evaluate(
-          (element) =>
-            new Promise((resolve) =>
-              requestAnimationFrame(() =>
-                requestAnimationFrame(() =>
-                  resolve(
-                    JSON.stringify([
-                      element.scrollTop,
-                      element.scrollHeight,
-                      element.clientHeight,
-                      ...Array.from(
-                        element.querySelectorAll("[data-message-id]"),
-                      ).map((row) => [
-                        row.dataset.messageId,
-                        row.getBoundingClientRect().y,
-                      ]),
-                    ]),
-                  ),
-                ),
-              ),
+        const value = await scroller.evaluate(async (element) => {
+          const rendered = () =>
+            new Promise((resolve) => {
+              const observer = new ResizeObserver(() => {
+                observer.disconnect();
+                // Leave the delivery loop before observing again; a same-depth
+                // observation added inside it is skipped and reported as a loop error.
+                const channel = new MessageChannel();
+                channel.port1.onmessage = () => {
+                  channel.port1.close();
+                  resolve();
+                };
+                channel.port2.postMessage(null);
+              });
+              observer.observe(document.documentElement);
+            });
+          await rendered();
+          await rendered();
+          return JSON.stringify([
+            element.scrollTop,
+            element.scrollHeight,
+            element.clientHeight,
+            ...Array.from(element.querySelectorAll("[data-message-id]")).map(
+              (row) => [row.dataset.messageId, row.getBoundingClientRect().y],
             ),
-        );
+          ]);
+        });
         stable = value === previous ? stable + 1 : 0;
         previous = value;
         return stable;

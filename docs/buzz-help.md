@@ -127,7 +127,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   `nsec`, lets someone act as that identity. Never ask anyone to paste a
   private key into a conversation or send it to you.
 - In native desktop builds, **Settings → Buzz → Security → Authorize external identity** creates an
-  ownership proof for an application such as Nexus that holds its own agent key.
+  ownership proof for an application that holds its own agent key.
   Enter that application's public key in hex, select **Authorize identity**,
   review the exact identity and permission in the confirmation, then select
   **Authorize this key** and copy the proof into its owner attestation field.
@@ -242,7 +242,7 @@ Other communities cannot grant access.
 Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, then select **Authorize**. The app
 gets full access as that agent: every Buzz tool the agent has, including tools
-plugins add later, the Nexus workers the agent may run, and changes to Buzz
+plugins add later, the Solo workers the agent may run, and changes to Buzz
 settings on this device. It gets the agent's Git access to its community's
 repositories, can wake the agent in its conversations, and can post any file
 your account can read on this device, including outside the agent's workspace;

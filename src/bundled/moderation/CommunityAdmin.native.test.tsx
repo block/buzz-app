@@ -393,7 +393,13 @@ it.each([
 it("still mints invite links natively", async () => {
   const user = userEvent.setup();
   const url = "https://primary.example/invite/native";
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
   vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "qr_code") return "<svg/>";
     expect(command).toBe("relay_http");
     expect(args).toEqual({
       community: "https://primary.example",
@@ -415,31 +421,34 @@ it("still mints invite links natively", async () => {
     name: "Add or invite people",
   });
   expect(await within(dialog).findByDisplayValue(url)).toBeVisible();
-  expect(invoke).toHaveBeenCalledOnce();
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "relay_http"),
+  ).toHaveLength(1);
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it("shows the minted invite link as a native QR code", async () => {
+it("always shows the minted invite link as a dark native QR code", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
     addEventListener() {},
     removeEventListener() {},
   }));
-  let release: (svg: string) => void = () => {};
-  let fail = false;
+  const drawn = new Map<string, (svg: string) => void>();
   vi.mocked(invoke).mockImplementation(async (command, args) => {
     if (command === "qr_code") {
-      if (fail) throw "Couldn’t create the QR code.";
-      return new Promise((resolve) => {
-        release = resolve;
-      });
+      const { value } = args as { value: string };
+      if (value.endsWith("/1-day")) throw "Couldn’t create the QR code.";
+      return new Promise((resolve) => drawn.set(value, resolve));
     }
     expect(command).toBe("relay_http");
-    const { max_uses } = JSON.parse((args as { body: string }).body) as {
-      max_uses: number | null;
-    };
-    const code = max_uses ? "limited" : "open";
+    const { ttl_secs, max_uses } = JSON.parse(
+      (args as { body: string }).body,
+    ) as { ttl_secs: number; max_uses: number | null };
+    const code =
+      ttl_secs === 24 * 60 * 60 ? "1-day" : max_uses ? "limited" : "open";
     return {
       status: 200,
       headers: {},
@@ -456,32 +465,31 @@ it("shows the minted invite link as a native QR code", async () => {
   const dialog = await screen.findByRole("dialog", {
     name: "Add or invite people",
   });
+  // The link section leads; adding directly follows it.
+  expect(
+    within(dialog)
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent),
+  ).toEqual(["Invite with a link", "Add directly"]);
   await within(dialog).findByDisplayValue(
     "https://primary.example/invite/open",
   );
-  const show = within(dialog).getByRole("button", { name: "Show QR code" });
-  await user.click(show);
-  // The host renders the link itself; the button waits for it.
+  // No toggle: the host draws the dark code as soon as the link exists.
+  expect(within(dialog).queryByRole("button", { name: /QR code/ })).toBeNull();
   expect(invoke).toHaveBeenLastCalledWith("qr_code", {
     value: "https://primary.example/invite/open",
+    variant: "dark",
   });
-  const hide = within(dialog).getByRole("button", { name: "Hide QR code" });
-  expect(hide).toHaveAttribute("aria-busy", "true");
   expect(within(dialog).queryByRole("img")).toBeNull();
-  release("<svg/>");
+  drawn.get("https://primary.example/invite/open")?.("<svg>open</svg>");
   const code = await within(dialog).findByRole("img", {
     name: "Scan this QR code to open the invite link",
   });
   expect(code).toHaveAttribute(
     "src",
-    `data:image/svg+xml,${encodeURIComponent("<svg/>")}`,
+    `data:image/svg+xml,${encodeURIComponent("<svg>open</svg>")}`,
   );
-  expect(hide).toHaveAttribute("aria-expanded", "true");
-  expect(code.parentElement).toHaveAttribute(
-    "id",
-    hide.getAttribute("aria-controls"),
-  );
-  // A new link hides the code for the old one.
+  // A new link never shows the old link's code, and draws its own.
   await user.click(
     within(dialog).getByRole("button", { name: "Choose maximum invite uses" }),
   );
@@ -490,15 +498,26 @@ it("shows the minted invite link as a native QR code", async () => {
     "https://primary.example/invite/limited",
   );
   expect(within(dialog).queryByRole("img")).toBeNull();
-  fail = true;
-  await user.click(
-    within(dialog).getByRole("button", { name: "Show QR code" }),
+  drawn.get("https://primary.example/invite/limited")?.("<svg>limited</svg>");
+  expect(
+    await within(dialog).findByRole("img", {
+      name: "Scan this QR code to open the invite link",
+    }),
+  ).toHaveAttribute(
+    "src",
+    `data:image/svg+xml,${encodeURIComponent("<svg>limited</svg>")}`,
   );
+  // A renderer failure shows its error and no stale code.
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose invite expiry" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "1 day" }));
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(
     "Couldn’t create the QR code.",
   );
   expect(
-    within(dialog).getByRole("button", { name: "Show QR code" }),
-  ).toBeEnabled();
+    within(dialog).getByRole("textbox", { name: "Community invite link" }),
+  ).toHaveValue("https://primary.example/invite/1-day");
+  expect(within(dialog).queryByRole("img")).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
 });

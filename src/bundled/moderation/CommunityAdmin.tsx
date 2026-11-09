@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { communityFromScope } from "../../features/relay/gifs";
 import {
   useProfileGeneration,
@@ -19,7 +13,6 @@ import {
 } from "../../shared/identity/public-key";
 import {
   CaretDownIcon,
-  CaretUpIcon,
   CrownIcon,
   DotsThreeIcon,
   ShieldIcon,
@@ -526,9 +519,8 @@ function InviteDialog({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
-  // The QR code shown for one link; another link hides it.
-  const [qr, setQr] = useState<{ url: string; svg?: string } | null>(null);
-  const qrId = useId();
+  // The QR code drawn for one link; it never shows for another.
+  const [qr, setQr] = useState<{ url: string; svg: string } | null>(null);
   // One minted link per settings; a missing entry for these settings mints.
   const settings = `${ttl}:${uses}`;
   const [link, setLink] = useState<{
@@ -569,23 +561,19 @@ function InviteDialog({
   }, [copied]);
   const url = current?.url;
   const pending = !!current && !url && !current.failed;
-  const shownQr = url && qr?.url === url ? qr : null;
-  function toggleQr() {
-    if (!url) return;
-    if (shownQr) {
-      setQr(null);
-      return;
-    }
-    setQr({ url });
-    setError("");
-    renderQrCode(url).then(
-      (svg) => setQr((shown) => (shown?.url === url ? { url, svg } : shown)),
-      (reason) => {
-        setQr((shown) => (shown?.url === url ? null : shown));
-        setError(message(reason));
-      },
+  const qrSvg = url && qr?.url === url ? qr.svg : undefined;
+  const showQr = nativeIdentityEnabled() && (pending || !!url);
+  useEffect(() => {
+    if (!url || !nativeIdentityEnabled()) return;
+    let live = true;
+    renderQrCode(url, "dark").then(
+      (svg) => live && setQr({ url, svg }),
+      (reason) => live && setError(message(reason)),
     );
-  }
+    return () => {
+      live = false;
+    };
+  }, [url]);
   let directKey: string | null = null;
   let identityError = "";
   if (identity.trim()) {
@@ -632,9 +620,89 @@ function InviteDialog({
       }}
       preventClose={adding}
       title="Add or invite people"
-      description="Add someone by their exact identity, or share a link they can use to join."
+      description="Share a link someone can use to join, or add them by their exact identity."
     >
       <div className="flex flex-col gap-6">
+        <section aria-labelledby="invite-with-link">
+          <h3 id="invite-with-link" className="m-0 text-label">
+            Invite with a link
+          </h3>
+          <p className="mt-1 mb-3 text-body-sm text-muted">
+            Anyone with this link can use it to join until it expires.
+          </p>
+          <InputGroup>
+            <Input
+              aria-label="Community invite link"
+              readOnly
+              value={url ?? ""}
+              placeholder={
+                current?.failed
+                  ? "Couldn’t create invite link"
+                  : locked && !current
+                    ? "Retry the member list to create a link"
+                    : "Creating invite link…"
+              }
+            />
+            <Button
+              size="sm"
+              loading={pending}
+              disabled={current?.failed ? locked : !url}
+              onClick={() => {
+                if (current?.failed) {
+                  setLink(null);
+                  return;
+                }
+                if (!url) return;
+                writeClipboardText(url)
+                  .then(() => {
+                    setCopied(true);
+                    setNotice("Invite link copied.");
+                  })
+                  .catch(() => setError("Could not copy the invite link."));
+              }}
+            >
+              {current?.failed ? "Retry" : copied ? "Copied" : "Copy link"}
+            </Button>
+          </InputGroup>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4">
+            <div className="flex items-center gap-1">
+              <span className="text-label-sm">Expires after</span>
+              <Choice
+                label="Choose invite expiry"
+                value={ttl}
+                options={EXPIRY}
+                onChange={setTtl}
+                disabled={pending || locked}
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-label-sm">Max uses</span>
+              <Choice
+                label="Choose maximum invite uses"
+                value={uses}
+                options={USES}
+                onChange={setUses}
+                disabled={pending || locked}
+              />
+            </div>
+          </div>
+          {showQr && (
+            <div className="mt-3 flex justify-center">
+              {qrSvg ? (
+                <QrCode
+                  svg={qrSvg}
+                  alt="Scan this QR code to open the invite link"
+                />
+              ) : (
+                // Holds the code's place while the link or its code is made.
+                <div
+                  aria-hidden="true"
+                  className="size-60 max-w-full shrink-0 bg-surface-inset"
+                />
+              )}
+            </div>
+          )}
+        </section>
         <section aria-labelledby="add-member-directly">
           <h3 id="add-member-directly" className="m-0 text-label">
             Add directly
@@ -686,96 +754,7 @@ function InviteDialog({
             </Button>
           </form>
         </section>
-        <section aria-labelledby="invite-with-link">
-          <h3 id="invite-with-link" className="m-0 text-label">
-            Invite with a link
-          </h3>
-          <p className="mt-1 mb-3 text-body-sm text-muted">
-            Anyone with this link can use it to join until it expires.
-          </p>
-          <InputGroup>
-            <Input
-              aria-label="Community invite link"
-              readOnly
-              value={url ?? ""}
-              placeholder={
-                current?.failed
-                  ? "Couldn’t create invite link"
-                  : locked && !current
-                    ? "Retry the member list to create a link"
-                    : "Creating invite link…"
-              }
-            />
-            <Button
-              size="sm"
-              loading={pending}
-              disabled={current?.failed ? locked : !url}
-              onClick={() => {
-                if (current?.failed) {
-                  setLink(null);
-                  return;
-                }
-                if (!url) return;
-                writeClipboardText(url)
-                  .then(() => {
-                    setCopied(true);
-                    setNotice("Invite link copied.");
-                  })
-                  .catch(() => setError("Could not copy the invite link."));
-              }}
-            >
-              {current?.failed ? "Retry" : copied ? "Copied" : "Copy link"}
-            </Button>
-          </InputGroup>
-          {url && nativeIdentityEnabled() && (
-            <div className="mt-3 mb-3 flex flex-col items-center gap-3">
-              <Button
-                variant="plain"
-                size="sm"
-                aria-expanded={!!shownQr}
-                aria-controls={qrId}
-                loading={!!shownQr && !shownQr.svg}
-                onClick={toggleQr}
-              >
-                {shownQr ? "Hide QR code" : "Show QR code"}
-                {shownQr ? (
-                  <CaretUpIcon size={14} aria-hidden="true" />
-                ) : (
-                  <CaretDownIcon size={14} aria-hidden="true" />
-                )}
-              </Button>
-              <div id={qrId} hidden={!shownQr?.svg}>
-                {shownQr?.svg && (
-                  <QrCode
-                    svg={shownQr.svg}
-                    alt="Scan this QR code to open the invite link"
-                  />
-                )}
-              </div>
-            </div>
-          )}
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-label-sm">Expires after</span>
-              <Choice
-                label="Choose invite expiry"
-                value={ttl}
-                options={EXPIRY}
-                onChange={setTtl}
-                disabled={pending || locked}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-label-sm">Limit number of uses</span>
-              <Choice
-                label="Choose maximum invite uses"
-                value={uses}
-                options={USES}
-                onChange={setUses}
-                disabled={pending || locked}
-              />
-            </div>
-          </div>
+        <div className="flex flex-col gap-2 empty:hidden">
           {error && (
             <p role="alert" className="m-0 text-body-sm">
               {error}
@@ -801,7 +780,7 @@ function InviteDialog({
               {notice}
             </p>
           )}
-        </section>
+        </div>
       </div>
     </Dialog>
   );

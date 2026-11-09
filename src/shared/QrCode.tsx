@@ -2,12 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 /** Styled QR code SVG for a shareable, non-secret value, drawn by the native
- * host renderer that pairing uses (src-tauri/src/qr.rs). */
-export const renderQrCode = (value: string) =>
-  invoke<string>("qr_code", { value });
+ * host renderer that pairing uses (src-tauri/src/qr.rs). Dark draws light dots
+ * on black. */
+export const renderQrCode = (value: string, variant: "light" | "dark") =>
+  invoke<string>("qr_code", { value, variant });
 
-/** A native QR code SVG at its fixed scannable size. Reduced motion drops its
- * reveal animation. */
+/** A native QR code SVG at its fixed scannable size; the SVG paints its own
+ * background. Reduced motion drops its reveal animation. */
 export function QrCode({ svg, alt }: { svg: string; alt: string }) {
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -21,7 +22,7 @@ export function QrCode({ svg, alt }: { svg: string; alt: string }) {
   }, []);
   return (
     <img
-      className="block size-60 max-w-full shrink-0 bg-white"
+      className="block size-60 max-w-full shrink-0"
       src={`data:image/svg+xml,${encodeURIComponent(reducedMotion ? svg.replace(/<style>[\s\S]*?<\/style>/g, "") : svg)}`}
       alt={alt}
       width={240}

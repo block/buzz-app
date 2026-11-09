@@ -1,7 +1,6 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
-import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
 import {
   addChannelMember,
@@ -15,8 +14,12 @@ import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
 import {
   createChannelSetup,
+  SetupIncomplete,
+  setupMissing,
   setupWork,
+  TEMPLATE_AGENTS_UNCHECKED,
   type ChannelCreationInput,
+  type SetupMissing,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
 import { createAgentMemories } from "../agents/memory";
@@ -2023,7 +2026,11 @@ export function createRelaySession(
       void soloPreferences.queries.refresh();
     }
   });
-  type SetupNotice = Readonly<{ id: string; name: string; error: string }>;
+  type SetupNotice = Readonly<{
+    id: string;
+    name: string;
+    missing: SetupMissing;
+  }>;
   let setupNotices: readonly SetupNotice[] = [];
   const setupListeners = new Set<() => void>();
   const notifySetup = () =>
@@ -2126,15 +2133,11 @@ export function createRelaySession(
             lifetime.signal.throwIfAborted();
             if (setup.agents.length) {
               const choices = agentChoices.snapshot();
-              if (choices.archives.status !== "ready")
-                throw new Error(
-                  "Agent archive state is unavailable; refresh before creating this lineup",
-                );
-              if (choices.templates.status !== "ready")
-                throw new Error(
-                  choices.templates.error ??
-                    "Agent inventory is unavailable; refresh before creating this lineup",
-                );
+              if (
+                choices.archives.status !== "ready" ||
+                choices.templates.status !== "ready"
+              )
+                throw new Error(TEMPLATE_AGENTS_UNCHECKED);
               // Re-read the shared selection after awaits; process status is not eligibility.
               const available = new Set(
                 templateAgentChoices(choices, channels.queries.list()).map(
@@ -2144,14 +2147,33 @@ export function createRelaySession(
               const unavailable = setup.agents.filter(
                 (key) => !available.has(key),
               );
-              if (unavailable.length)
-                throw new Error(
-                  `Selected agents are unavailable in this community: ${unavailable.map(npubEncode).join(", ")}. Refresh agents or remove them before creating the channel.`,
+              if (unavailable.length) {
+                const names = unavailable.map(
+                  (key) =>
+                    identityNames.resolve(
+                      key,
+                      choices.identities.find((agent) => agent.pubkey === key)
+                        ?.name,
+                    ) ?? "",
                 );
+                // The template's "Adds …" line follows the refreshed
+                // choices, so it already leaves these out.
+                throw new Error(
+                  `${
+                    names.every(Boolean)
+                      ? new Intl.ListFormat(undefined, {
+                          type: "conjunction",
+                        }).format(names)
+                      : unavailable.length > 1
+                        ? `${unavailable.length} of this template’s agents`
+                        : "One of this template’s agents"
+                  } ${unavailable.length > 1 ? "aren’t" : "isn’t"} available in this community anymore. Create the channel without them, or choose another template.`,
+                );
+              }
             }
             if (setup.starred && !sidebarPreferences.queries.starWritable)
               throw new Error(
-                "Starred placement is unavailable; refresh your sidebar before creating the channel",
+                "Buzz can’t star channels right now. Try again in a moment.",
               );
             if (setup.groupId) {
               const state = sidebarPreferences.queries.snapshot();
@@ -2160,16 +2182,14 @@ export function createRelaySession(
                 !state.data?.sections.some((g) => g.id === setup.groupId)
               )
                 throw new Error(
-                  "The destination group is unavailable; refresh your sidebar before creating the channel",
+                  "This sidebar group isn’t available anymore. Close this dialog and create the channel from another group.",
                 );
             }
           },
           async star(id) {
             await settledPreferences();
             if (!sidebarPreferences.queries.starWritable)
-              throw new Error(
-                "Starred placement is unavailable; keep the partial channel and star it separately",
-              );
+              throw new Error("Buzz can’t star channels right now.");
             if (
               sidebarPreferences.queries.snapshot().data?.starred.includes(id)
             )
@@ -2183,9 +2203,7 @@ export function createRelaySession(
               !sidebarPreferences.queries.writable ||
               !state.data?.sections.some((g) => g.id === groupId)
             )
-              throw new Error(
-                "The destination group changed or is unavailable; keep the partial channel and choose its group separately",
-              );
+              throw new Error("This sidebar group isn’t available anymore.");
             if (state.data.assignments[id] === groupId) return;
             await sidebarPreferences.queries.assign(id, groupId);
           },
@@ -2238,11 +2256,18 @@ export function createRelaySession(
         if (unsupported) throw channelIdentityUnsupported();
         const run = channelSetup.run(input, transport.viewer);
         let opened: string | undefined;
-        void run.completion.catch((error) => {
+        void run.completion.catch((error: unknown) => {
           if (!opened || lifetime.signal.aborted) return;
+          // A failure with nothing left undone, such as clearing its own
+          // record, needs no notice.
+          const missing =
+            error instanceof SetupIncomplete
+              ? error.missing
+              : { canvas: false, agents: [] };
+          if (!setupMissing(missing)) return;
           setupNotices = [
             ...setupNotices,
-            { id: opened, name: input.name, error: String(error) },
+            { id: opened, name: input.name, missing },
           ];
           notifySetup();
         });

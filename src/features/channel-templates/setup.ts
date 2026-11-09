@@ -1,5 +1,66 @@
 import type { Outbox, LocalEvents } from "../relay/outbox";
 import { isDefinitiveCanvasConflict } from "./canvas-conflict";
+import { errorMessage } from "../../shared/error-message";
+
+/** Create's answer when it can't tell which of a template's agents are
+ * available. The dialog's template field shows it with its Retry. */
+export const TEMPLATE_AGENTS_UNCHECKED =
+  "Buzz couldn’t check this template’s agents. Try again, or choose None to create the channel without them.";
+
+/** What a template's setup left undone once its channel exists. */
+export type SetupMissing = Readonly<{
+  /** The sidebar place it was meant to go. */
+  placement?: "starred" | "group" | undefined;
+  canvas: boolean;
+  /** Agents it didn't add. */
+  agents: readonly string[];
+  /** Buzz only rechecked the channel, so these may have happened anyway. */
+  uncertain?: true | undefined;
+}>;
+
+/** The channel exists, but some of its setup didn't finish. People see
+ * what's missing, by name (describeMissingSetup); the message, which only
+ * logs show, keeps why. */
+export class SetupIncomplete extends Error {
+  constructor(
+    readonly missing: SetupMissing,
+    why: unknown,
+    options?: ErrorOptions,
+  ) {
+    super(
+      [why]
+        .flat()
+        .map((reason) => errorMessage(reason))
+        .join("; "),
+      options,
+    );
+  }
+}
+
+/** Everything a setup still had to do, from what it recorded as done. */
+function missingSetup(
+  setup: ChannelSetup | undefined,
+  viewer: string,
+  done: Pick<Progress, "groupDone" | "canvasDone" | "added">,
+): SetupMissing {
+  return {
+    placement: done.groupDone
+      ? undefined
+      : setup?.starred
+        ? "starred"
+        : setup?.groupId
+          ? "group"
+          : undefined,
+    canvas: !!setup?.canvas && !done.canvasDone,
+    agents: (setup?.agents ?? []).filter(
+      (agent) => agent !== viewer && !done.added.includes(agent),
+    ),
+  };
+}
+
+/** Whether anything is missing at all. */
+export const setupMissing = (missing: SetupMissing) =>
+  !!missing.placement || missing.canvas || missing.agents.length > 0;
 export type ChannelSetup = {
   canvas: string;
   agents: string[];
@@ -219,12 +280,26 @@ export function createChannelSetup({
         pending = undefined;
         changed();
         opened(checking.id);
-        await save(checking);
-        if (setupWork(checking.input.setup))
-          throw new Error(
-            "Channel confirmed. Template setup was not continued; check its sidebar placement, Canvas and members before finishing them manually.",
-          );
-        await retire(checking);
+        // Only the Create is rechecked, so the rest is left for the person.
+        // A placement started before its admission failed may have landed.
+        const uncertain = () => ({
+          ...missingSetup(checking.input.setup, viewer, checking),
+          uncertain: true as const,
+        });
+        try {
+          await save(checking);
+          if (setupWork(checking.input.setup))
+            throw new SetupIncomplete(
+              uncertain(),
+              "Channel confirmed. Template setup was not continued.",
+            );
+          await retire(checking);
+        } catch (error) {
+          // As on the main path: once the channel exists, every failure is
+          // setup it didn't finish, so its notice still shows.
+          if (error instanceof SetupIncomplete) throw error;
+          throw new SetupIncomplete(uncertain(), error, { cause: error });
+        }
         return;
       }
       await preflight(input);
@@ -391,14 +466,27 @@ export function createChannelSetup({
               await persist();
             }
           } catch (error) {
-            if (placementError)
-              throw new Error(`${String(placementError)}; ${String(error)}`);
-            throw error;
+            const why = placementError ? [placementError, error] : error;
+            throw new SetupIncomplete(missingSetup(setup, viewer, p), why, {
+              cause: why,
+            });
           }
-          if (placementError) throw placementError;
+          if (placementError)
+            throw new SetupIncomplete(
+              missingSetup(setup, viewer, p),
+              placementError,
+              { cause: placementError },
+            );
           await retire(p);
         } catch (error) {
           writable = false;
+          // Once the channel exists, every failure is setup it didn't finish.
+          if (p.created && !(error instanceof SetupIncomplete))
+            throw new SetupIncomplete(
+              missingSetup(p.input.setup, viewer, p),
+              error,
+              { cause: error },
+            );
           if (!p.created && storageHealthy) {
             const operation = p.operations.create;
             const failed =
@@ -440,4 +528,45 @@ export function createChannelSetup({
     void retire(abandoned).catch(() => {});
   }
   return Object.freeze({ run, forget });
+}
+
+/** "a", "a or b", "a, b, or c". */
+function orList(items: readonly string[]) {
+  return items.length < 3
+    ? items.join(" or ")
+    : `${items.slice(0, -1).join(", ")}, or ${items.at(-1)}`;
+}
+
+/** What a setup left undone, in one sentence: "Buzz couldn’t add Atlas or
+ * start the Canvas." `nameOf` names an agent when Buzz knows them. */
+export function describeMissingSetup(
+  missing: SetupMissing,
+  nameOf: (pubkey: string) => string | undefined,
+) {
+  const { agents, uncertain } = missing;
+  // Each step as "Buzz couldn’t …" and "Buzz may not have …" finish it.
+  const steps: (readonly [string, string])[] = [];
+  if (agents.length) {
+    const names = agents.map(nameOf);
+    const who = names.every(Boolean)
+      ? new Intl.ListFormat(undefined, { type: "conjunction" }).format(
+          names as string[],
+        )
+      : agents.length > 1
+        ? `${agents.length} agents`
+        : "an agent";
+    steps.push([`add ${who}`, `added ${who}`]);
+  }
+  if (missing.canvas) steps.push(["start the Canvas", "started the Canvas"]);
+  if (missing.placement === "starred")
+    steps.push(["star the channel", "starred the channel"]);
+  if (missing.placement === "group")
+    steps.push([
+      "put the channel in its sidebar group",
+      "put the channel in its sidebar group",
+    ]);
+  if (!steps.length) return "";
+  return `${uncertain ? "Buzz may not have" : "Buzz couldn’t"} ${orList(
+    steps.map(([undone, unsure]) => (uncertain ? unsure : undone)),
+  )}.`;
 }

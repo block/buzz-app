@@ -1,4 +1,8 @@
-import type { ChannelCreationInput } from "../../features/channel-templates/setup";
+import {
+  TEMPLATE_AGENTS_UNCHECKED,
+  type ChannelCreationInput,
+} from "../../features/channel-templates/setup";
+import { errorMessage } from "../../shared/error-message";
 import type { RelaySession } from "../../features/relay/session";
 import type { Agents } from "../../features/agents/service";
 import {
@@ -156,8 +160,15 @@ function OpenCreateChannelDialog({
   const [retrying, setRetrying] = useState(false);
   const templateField = useRef<HTMLDivElement>(null);
   const retryButton = useRef<HTMLButtonElement>(null);
+  // Create's own check can find the agents unchecked too; the field's Retry
+  // answers both, so its message shows there once.
+  const agentsUnchecked =
+    (unresolved && !checkingAgents) ||
+    (needsAgents && retrying) ||
+    (needsAgents && error === TEMPLATE_AGENTS_UNCHECKED);
   const retryAgents = async () => {
     setRetrying(true);
+    setError((value) => (value === TEMPLATE_AGENTS_UNCHECKED ? "" : value));
     try {
       await session.agentChoices.refresh("templates");
     } finally {
@@ -278,11 +289,7 @@ function OpenCreateChannelDialog({
       if (mounted.current) onOpenChange(false);
     } catch (reason) {
       if (mounted.current)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : "The channel could not be created.",
-        );
+        setError(errorMessage(reason, "Buzz couldn’t create the channel."));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -473,12 +480,9 @@ function OpenCreateChannelDialog({
                     : templateNote
                 }
                 error={
-                  (unresolved && !checkingAgents) ||
-                  (needsAgents && retrying) ? (
+                  agentsUnchecked ? (
                     <>
-                      Its agents can’t be checked right now, so they can’t be
-                      added. Retry, or choose None to create the channel without
-                      them.{" "}
+                      {TEMPLATE_AGENTS_UNCHECKED}{" "}
                       <Button
                         ref={retryButton}
                         size="xs"
@@ -521,11 +525,12 @@ function OpenCreateChannelDialog({
               setError("");
             }}
           />
-          {error && (
-            <p role="alert" className={styles.error}>
-              {error}
-            </p>
-          )}
+          {error &&
+            !(agentsUnchecked && error === TEMPLATE_AGENTS_UNCHECKED) && (
+              <p role="alert" className={styles.error}>
+                {error}
+              </p>
+            )}
         </form>
       )}
     </Dialog>

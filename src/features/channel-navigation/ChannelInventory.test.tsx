@@ -3483,3 +3483,55 @@ it("updates decorated unread data and a selected unread sort without rewriting p
     prefs.dispose();
   }
 });
+
+it("says what a channel’s setup left undone, by name, with Manage members only for missing agents", async () => {
+  const h = fixture();
+  const atlas = "b".repeat(64);
+  const dismissNotice = vi.fn();
+  h.session.profiles = {
+    ...h.session.profiles,
+    snapshot: () => new Map([[atlas, { name: "Atlas" }]]),
+  } as unknown as typeof h.session.profiles;
+  const notices = [
+    {
+      id: "beta",
+      name: "launch",
+      missing: { canvas: true, agents: [atlas] },
+    },
+    {
+      id: "gamma",
+      name: "notes",
+      missing: { placement: "starred" as const, canvas: false, agents: [] },
+    },
+  ];
+  h.session.channelCreation = {
+    ...h.session.channelCreation,
+    notices: () => notices,
+    subscribe: () => () => {},
+    dismissNotice,
+  };
+  render(h.view("alpha"));
+  expect(
+    await screen.findByText("#launch was created, but setup didn’t finish"),
+  ).toBeVisible();
+  expect(
+    screen.getByText("Buzz couldn’t add Atlas or start the Canvas."),
+  ).toBeVisible();
+  expect(screen.getByText("Buzz couldn’t star the channel.")).toBeVisible();
+  // Only missing agents have somewhere to go.
+  const manage = screen.getAllByRole("button", { name: "Manage members" });
+  expect(manage).toHaveLength(1);
+  fireEvent.click(manage[0] as HTMLElement);
+  expect(dismissNotice).toHaveBeenCalledWith("beta");
+  expect(h.navigator.open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "conversation",
+    channelId: "beta",
+    scope: {
+      viewer: "a".repeat(64),
+      communityOrigin: "https://relay.test",
+    },
+    panel: "members",
+  });
+  expect(document.body).not.toHaveTextContent(/Error:|relay|lineup/i);
+});

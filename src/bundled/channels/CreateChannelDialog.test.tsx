@@ -899,7 +899,7 @@ it("reports a failed agent list and creates without the template only on request
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
-    "Its agents can’t be checked right now, so they can’t be added. Retry, or choose None to create the channel without them.",
+    "Buzz couldn’t check this template’s agents. Try again, or choose None to create the channel without them.",
   );
   expect(
     screen.queryByText(/None of its agents are in this community/),
@@ -973,7 +973,9 @@ it("retries a failed archive read without dropping the template", async () => {
   release();
   await waitFor(() => expect(retry).not.toHaveAttribute("aria-busy"));
   expect(retry).toHaveFocus();
-  expect(screen.getByRole("alert")).toHaveTextContent(/can’t be checked/);
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    /couldn’t check this template’s agents/,
+  );
   expect(create).toBeDisabled();
 
   // A retry that reads the evidence resolves the field and hands focus back.

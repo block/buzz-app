@@ -4,6 +4,8 @@ import {
   createChannelSetup,
   type ChannelCreationInput,
   type ChannelSetup,
+  describeMissingSetup,
+  SetupIncomplete,
 } from "./setup";
 import type { Outbox, OutgoingEvent } from "../relay/outbox";
 import { keypair, metadata, roster, signed } from "../relay/testing";
@@ -182,7 +184,7 @@ it.each(["ready", "unavailable", "failed", "conflicting"] as const)(
       if (status === "unavailable" || status === "conflicting") {
         await expect(creation).rejects.toThrow(
           status === "unavailable"
-            ? "Starred placement is unavailable"
+            ? "Buzz can’t star channels right now. Try again in a moment."
             : "Invalid template or group selection",
         );
         expect(events.filter((event) => event.kind === 9007)).toEqual([]);
@@ -192,10 +194,11 @@ it.each(["ready", "unavailable", "failed", "conflicting"] as const)(
       if (status === "failed") {
         await vi.waitFor(() =>
           expect(owner.session.channelCreation.notices()).toEqual([
-            expect.objectContaining({
+            {
               id,
-              error: expect.stringContaining("Star publication failed"),
-            }),
+              name: "Starred channel",
+              missing: { placement: "starred", canvas: false, agents: [] },
+            },
           ]),
         );
       } else {
@@ -528,10 +531,17 @@ it("keeps a delivered Create's placement through failed admission and its identi
     );
     await vi.waitFor(() =>
       expect(owner.session.channelCreation.notices()).toEqual([
-        expect.objectContaining({
+        {
           id,
-          error: expect.stringContaining("Template setup was not continued"),
-        }),
+          name: "Placed",
+          // Its placement landed, but Buzz only rechecked the channel.
+          missing: {
+            placement: "group",
+            canvas: false,
+            agents: [],
+            uncertain: true,
+          },
+        },
       ]),
     );
     expect(owner.session.channels.list().channels.map((c) => c.id)).toContain(
@@ -618,12 +628,11 @@ it.each([true, false])(
       } else {
         await vi.waitFor(() =>
           expect(owner.session.channelCreation.notices()).toEqual([
-            expect.objectContaining({
+            {
               id,
-              error: expect.stringContaining(
-                "awaiting exact relay confirmation",
-              ),
-            }),
+              name: "Daily",
+              missing: { placement: undefined, canvas: true, agents: [] },
+            },
           ]),
         );
         expect(
@@ -730,6 +739,32 @@ it.each([false, true])(
     expect(f.opts.place).not.toHaveBeenCalled();
   },
 );
+
+it("reports the setup a recheck left undone when saving it fails", async () => {
+  const f = fixture();
+  f.opts.delivered.mockRejectedValueOnce(new Error("Unknown delivery"));
+  const run = f.setup.run(input, viewer.pubkey);
+  await expect(run.admission).rejects.toThrow("Unknown delivery");
+  await expect(run.completion).rejects.toThrow("Unknown delivery");
+  const saved = JSON.parse(localStorage.getItem(firstReceipt()) ?? "null");
+  // The channel opens before its record is saved again.
+  const setItem = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementationOnce(() => {
+      throw new Error("Storage full");
+    });
+  try {
+    const next = f.setup.run(input, viewer.pubkey);
+    await expect(next.admission).resolves.toBe(saved.id);
+    const failure = await next.completion.catch((error: unknown) => error);
+    // Not a bare storage error the channel's notice would drop.
+    assert.instanceOf(failure, SetupIncomplete);
+    expect(failure.message).toContain("Storage full");
+    expect(failure.missing).toMatchObject({ canvas: true, uncertain: true });
+  } finally {
+    setItem.mockRestore();
+  }
+});
 
 it("abandons an uncertain attempt for a changed request or a closed form", async () => {
   const f = fixture();
@@ -1086,4 +1121,58 @@ it("releases a pending attempt when read-only confirmation proves it failed", as
   await expect(check.completion).rejects.toThrow("Rejected");
   expect(receipts()).toHaveLength(0);
   expect(f.opts.create).toHaveBeenCalledOnce();
+});
+
+it("says what a setup left undone, by name", () => {
+  const names: Record<string, string> = { atlas: "Atlas", scout: "Scout" };
+  const nameOf = (key: string) => names[key];
+  expect(
+    describeMissingSetup(
+      { placement: "starred", canvas: true, agents: ["atlas", "scout"] },
+      nameOf,
+    ),
+  ).toBe(
+    "Buzz couldn’t add Atlas and Scout, start the Canvas, or star the channel.",
+  );
+  expect(
+    describeMissingSetup(
+      { placement: "starred", canvas: true, agents: ["atlas"] },
+      nameOf,
+    ),
+  ).toBe("Buzz couldn’t add Atlas, start the Canvas, or star the channel.");
+  expect(
+    describeMissingSetup({ canvas: true, agents: ["atlas"] }, nameOf),
+  ).toBe("Buzz couldn’t add Atlas or start the Canvas.");
+  expect(
+    describeMissingSetup({ canvas: false, agents: ["atlas"] }, nameOf),
+  ).toBe("Buzz couldn’t add Atlas.");
+  expect(
+    describeMissingSetup(
+      { placement: "group", canvas: false, agents: ["atlas"] },
+      nameOf,
+    ),
+  ).toBe("Buzz couldn’t add Atlas or put the channel in its sidebar group.");
+  expect(
+    describeMissingSetup(
+      { canvas: false, agents: ["unknown", "atlas"] },
+      nameOf,
+    ),
+  ).toBe("Buzz couldn’t add 2 agents.");
+  expect(
+    describeMissingSetup({ canvas: true, agents: ["unknown"] }, nameOf),
+  ).toBe("Buzz couldn’t add an agent or start the Canvas.");
+  expect(
+    describeMissingSetup(
+      { canvas: true, agents: ["atlas"], uncertain: true },
+      nameOf,
+    ),
+  ).toBe("Buzz may not have added Atlas or started the Canvas.");
+  expect(
+    describeMissingSetup(
+      { placement: "group", canvas: true, agents: ["atlas"], uncertain: true },
+      nameOf,
+    ),
+  ).toBe(
+    "Buzz may not have added Atlas, started the Canvas, or put the channel in its sidebar group.",
+  );
 });

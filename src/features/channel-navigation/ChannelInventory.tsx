@@ -17,6 +17,8 @@ import { inTeamInventory } from "./team-inventory";
 import type { RelayData } from "../relay/service";
 import type { Agents } from "../agents/service";
 import type { RelaySession } from "../relay/session";
+import { describeMissingSetup } from "../channel-templates/setup";
+import { memberName } from "../channel-members/members";
 import { useChannelList } from "../relay/react";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
@@ -1260,10 +1262,31 @@ export function ChannelInventory({
         {setupNotices.map((notice) => (
           <ToastNotice
             key={notice.id}
-            title={`Channel setup couldn’t finish: ${notice.name}`}
-            description={notice.error}
+            title={`#${notice.name} was created, but setup didn’t finish`}
+            description={describeMissingSetup(notice.missing, (key) =>
+              memberName(queries, key),
+            )}
             tone="warning"
           >
+            {notice.missing.agents.length > 0 && viewer && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  const parts = splitPartition(scope);
+                  if (!parts) return;
+                  queries.channelCreation.dismissNotice(notice.id);
+                  void navigator.open({
+                    version: 1,
+                    kind: "conversation",
+                    channelId: notice.id,
+                    scope: { viewer, communityOrigin: parts.communityOrigin },
+                    panel: "members",
+                  });
+                }}
+              >
+                Manage members
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => queries.channelCreation.dismissNotice(notice.id)}

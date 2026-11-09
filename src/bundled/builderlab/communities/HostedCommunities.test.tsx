@@ -16,6 +16,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { HostedCommunities } from "./HostedCommunities";
 import { Dialog } from "../../../shared/design-system/ui/Dialog";
 import { brokerApi, DELETION_PENDING_KEY } from "./api";
+import { deferred } from "../test-helpers";
 
 const local = "a".repeat(64);
 const other = "b".repeat(64);
@@ -269,6 +270,48 @@ it("pauses create and offers a warned switch when the account uses another ident
     order.indexOf("/api/builderlab/bind"),
   );
 });
+
+it.each(["move focus", "cancel"])(
+  "preserves %s while direct creation is loading",
+  async (action) => {
+    const started = deferred<void>();
+    const ready = deferred<void>();
+    const reply = routes["/api/builderlab/list"];
+    routes["/api/builderlab/list"] = async (body) => {
+      started.resolve();
+      await ready.promise;
+      return reply?.(body);
+    };
+    render(
+      <HostedCommunities api={brokerApi} active={() => true} initialCreate />,
+    );
+    let input: HTMLElement;
+    let cancel: HTMLElement;
+    try {
+      await act(async () => started.promise);
+      input = await screen.findByRole("textbox", { name: "Community address" });
+      expect(input).toBeDisabled();
+      cancel = screen.getByRole("button", { name: /^Cancel$/ });
+      if (action === "move focus") cancel.focus();
+      else await userEvent.click(cancel);
+    } finally {
+      await act(() => ready.resolve());
+    }
+    if (action === "move focus") {
+      await waitFor(() => expect(input).toBeEnabled());
+      expect(cancel).toHaveFocus();
+    } else {
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Create community" }),
+        ).toBeEnabled(),
+      );
+      expect(
+        screen.queryByRole("dialog", { name: "Create community" }),
+      ).toBeNull();
+    }
+  },
+);
 
 it("checks availability after a pause and creates a valid community", async () => {
   routes["/api/builderlab/availability"] = () => ({ available: true });

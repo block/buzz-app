@@ -37,6 +37,8 @@ test("creating a hosted community joins it and lists it in the picker", async ({
     normalized_host: "secondary.example",
   };
   let communities = [];
+  const listStarted = Promise.withResolvers();
+  const listReady = Promise.withResolvers();
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
     if (action === "auth")
@@ -45,7 +47,9 @@ test("creating a hosted community joins it and lists it in the picker", async ({
       });
     if (action === "identity")
       return route.fulfill({ json: { identity: { pubkey_hex: viewer } } });
-    if (action === "list")
+    if (action === "list") {
+      listStarted.resolve();
+      await listReady.promise;
       return route.fulfill({
         json: {
           communities,
@@ -54,6 +58,7 @@ test("creating a hosted community joins it and lists it in the picker", async ({
           can_create: true,
         },
       });
+    }
     if (action === "availability")
       return route.fulfill({ json: { available: true } });
     if (action === "create") {
@@ -73,10 +78,21 @@ test("creating a hosted community joins it and lists it in the picker", async ({
   ).toHaveCount(0);
   await settleDialogMotion(picker);
   await shot("1-picker-before.png");
-  await picker.getByRole("button", { name: "Create community" }).click();
-
   const address = page.getByPlaceholder("north-star");
+  const create = page.getByRole("dialog", {
+    name: "Create community",
+    exact: true,
+  });
+  try {
+    await picker.getByRole("button", { name: "Create community" }).click();
+    await listStarted.promise;
+    await expect(address).toBeDisabled();
+    await settleDialogMotion(create);
+  } finally {
+    listReady.resolve();
+  }
   await expect(address).toBeEnabled();
+  await expect(address).toBeFocused();
   await address.fill("secondary");
   await expect(page.getByText("That address is available.")).toBeVisible();
   await shot("2-create-form.png");

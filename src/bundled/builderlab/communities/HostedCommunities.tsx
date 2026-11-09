@@ -1442,6 +1442,19 @@ function CreateCommunity({
 }) {
   const formId = useId();
   const addressInput = useRef<HTMLInputElement>(null);
+  const deferredFocus = useRef<Element | null>(null);
+  useEffect(() => {
+    if (!open) deferredFocus.current = null;
+    else if (enabled && !busy) {
+      // Only finish the opening focus attempt if the user has not moved it.
+      if (
+        deferredFocus.current &&
+        deferredFocus.current === document.activeElement
+      )
+        addressInput.current?.focus();
+      deferredFocus.current = null;
+    }
+  }, [open, enabled, busy]);
   const availability = useCallback(
     async (name: string) =>
       Boolean(
@@ -1465,7 +1478,11 @@ function CreateCommunity({
       size="default"
       headerGap="compact"
       footerGap="compact"
-      initialFocus={addressInput}
+      initialFocus={() => {
+        const input = addressInput.current;
+        deferredFocus.current = input?.disabled ? document.activeElement : null;
+        return input ?? false;
+      }}
       preventClose={creating}
       title="Create community"
       description="Choose your community’s address."

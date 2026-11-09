@@ -47,14 +47,7 @@ export function appClient(
   };
   const handoff = agent.handoff;
   const plugins = agent.plugins;
-  const { settings, ownerAccess } = agent;
-  /** An owner read, only while the turn still holds before and after it. */
-  const owned = async <T>(read: (signal?: AbortSignal) => Promise<T>) => {
-    check();
-    const result = await read(options.signal);
-    check();
-    return result;
-  };
+  const { settings } = agent;
   return {
     ...(agent.protection
       ? {
@@ -90,24 +83,6 @@ export function appClient(
     pubkey: agent.pubkey,
     key: agent.key,
     owner: agent.owner,
-    ...(ownerAccess && {
-      ownerAccess: {
-        channels: () => owned((signal) => ownerAccess.channels(signal)),
-        channel: (id) => owned((signal) => ownerAccess.channel(id, signal)),
-        members: (id, page) =>
-          owned((signal) => ownerAccess.members(id, page, signal)),
-        messages: (request) =>
-          owned((signal) => ownerAccess.messages(request, signal)),
-        canvas: (channel, revision) =>
-          owned((signal) => ownerAccess.canvas(channel, revision, signal)),
-        canvasHistory: (channel, cursor) =>
-          owned((signal) => ownerAccess.canvasHistory(channel, cursor, signal)),
-        held: (execution) => {
-          check();
-          ownerAccess.held(execution);
-        },
-      },
-    }),
     relayAuthor: options.relayAuthor,
     signingAuthority: options.signingAuthority,
     attention: agent.attention && {

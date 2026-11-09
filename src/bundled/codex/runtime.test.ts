@@ -7032,66 +7032,46 @@ it.each(["conversation", "standalone", "preview"])(
   },
 );
 
-it.each([true, false])(
-  "lists and runs the owner tools only for a run with owner access: %s",
-  async (owned) => {
-    const f = fixture();
-    const executedAs = { agent: "agent", owner: "owner", community: "c" };
-    const ownerAccess = {
-      channels: vi.fn(async () => ({
-        execution: executedAs,
-        channels: [],
-        partial: false,
-      })),
-      channel: vi.fn(),
-      members: vi.fn(),
-      messages: vi.fn(),
-      canvas: vi.fn(),
-      canvasHistory: vi.fn(),
-      held: vi.fn(),
-    };
-    const delivery = f.delivery("@Codex list my channels");
-    await f.runtime.run({
-      ...delivery,
-      agent: {
-        ...delivery.agent,
-        ...(owned ? { ownerAccess } : {}),
-      } as typeof delivery.agent,
-    });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    const thread = f.sent.find((wire) => wire.method === "thread/start")
-      ?.params as {
-      dynamicTools: {
-        description: string;
-        tools: { name: string; deferLoading?: boolean }[];
-      }[];
-    };
-    const listed = thread.dynamicTools[0]?.tools.filter((tool) =>
-      tool.name.startsWith("owner_"),
-    );
-    expect(listed).toEqual(
-      owned
-        ? [
-            "owner_channel_list",
-            "owner_channel_get",
-            "owner_member_list",
-            "owner_read",
-            "owner_canvas_get",
-            "owner_canvas_history",
-          ].map((name) => expect.objectContaining({ name, deferLoading: true }))
-        : [],
-    );
-    // A name the model remembers or guesses is checked against the run's
-    // own access on every call.
-    const reply = (await f.tool("owner_channel_list", {}))?.result as {
+// The owner-read tools #2745 and #2881 added, listed here rather than taken
+// from the catalog under test.
+const RETIRED_OWNER_TOOLS = [
+  "owner_channel_list",
+  "owner_channel_get",
+  "owner_member_list",
+  "owner_read",
+  "owner_canvas_get",
+  "owner_canvas_history",
+];
+
+it("neither lists nor runs the retired owner-read tools, while its own reads work", async () => {
+  const f = fixture();
+  // A handle that still carries the old capability must not make it usable.
+  const ownerRead = vi.fn();
+  const ownerAccess = new Proxy({}, { get: () => ownerRead });
+  const delivery = f.delivery("OWN_CONVERSATION");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, ownerAccess } as typeof delivery.agent,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as {
+    dynamicTools: { description: string; tools: { name: string }[] }[];
+  };
+  const listed = JSON.stringify(thread.dynamicTools);
+  for (const name of RETIRED_OWNER_TOOLS) {
+    expect(listed).not.toContain(name);
+    // A name the model remembers from an earlier build is refused.
+    const reply = (await f.tool(name, { channel: "channel" }))?.result as {
       success: boolean;
       contentItems: { text: string }[];
     };
-    expect(reply.success).toBe(owned);
-    expect(reply.contentItems[0]?.text).toContain(
-      owned ? '"executedAs"' : "nothing was read",
-    );
-    expect(ownerAccess.channels).toHaveBeenCalledTimes(owned ? 1 : 0);
-    await f.complete();
-  },
-);
+    expect(reply.success).toBe(false);
+    expect(reply.contentItems[0]?.text).toContain("No active Buzz tool");
+  }
+  expect(ownerRead).not.toHaveBeenCalled();
+  expect(JSON.stringify((await f.tool("read", {}))?.result)).toContain(
+    "OWN_CONVERSATION",
+  );
+  await f.complete();
+});

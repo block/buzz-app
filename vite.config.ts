@@ -108,11 +108,6 @@ export default defineConfig(async ({ command, mode }) => {
     .filter(Boolean)
     .map(relayOrigin)
     .join(" ");
-  const ownerMcpCommunities = (env.BUZZ_OWNER_MCP_COMMUNITIES ?? "")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(relayOrigin)
-    .join(" ");
   const workflowRestrictedCommunities = (
     env.BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES ?? ""
   )
@@ -206,8 +201,6 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_EXTERNAL_MCP_COMMUNITIES": JSON.stringify(
         externalMcpCommunities,
       ),
-      "import.meta.env.VITE_BUZZ_OWNER_MCP_COMMUNITIES":
-        JSON.stringify(ownerMcpCommunities),
       "import.meta.env.VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES":
         JSON.stringify(workflowRestrictedCommunities),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(builderlabUrl),

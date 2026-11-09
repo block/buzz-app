@@ -1,5 +1,5 @@
-import { communityDestination, relayOrigin } from "./destination";
-import type { InviteLink } from "./invite-link";
+import { communityDestination } from "./destination";
+import { parsePastedInvite, type InviteLink } from "./invite-link";
 import type { PersonalProfile } from "./service";
 
 /**
@@ -75,8 +75,11 @@ export function offeredCommunity(
 ) {
   const address = joinOpening(state, community)?.community;
   if (!address) return undefined;
+  // Read as the dialog reads its address: an invite link or a bare host too.
+  const entered = parsePastedInvite(address);
+  if (!entered) return undefined;
   try {
-    return communityDestination(relayOrigin(address)).url;
+    return communityDestination(entered.community).url;
   } catch {
     return undefined;
   }

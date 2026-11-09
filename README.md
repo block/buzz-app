@@ -107,8 +107,7 @@ ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
 ## Preview limitations
 
 - Builds come straight from `main`; there's no stable release channel yet.
-- The plugin API is a preview, so updates can break plugins (see
-  [Plugins](#plugins)).
+- Updates can break plugins (see [Plugins](#plugins)).
 - The Windows installer is unsigned, and Intel macOS, Windows and Linux get
   less testing than Apple Silicon macOS.
 - Claude and Codex agents need macOS or Linux. Goose and Pi work everywhere.
@@ -120,17 +119,17 @@ ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
 
 ## Plugins
 
-Much of Buzz is built as plugins, and you can add your own from
-**Settings → Plugins**. The plugin API is a **preview**: Buzz changes quickly,
-there's no cross-version promise yet, and an update can break a plugin you
-installed or wrote.
+Much of Buzz is built from plugins, and you can add your own in
+**Settings → Plugins**. The plugin API is a preview: Buzz changes fast, and an
+update can break a plugin.
 
-Some parts are much steadier than others:
+Some parts change less than others:
 
-| | Parts |
-| --- | --- |
-| **Steady** | The plugin manifest and lifecycle, declared commands, HTTPS requests and file reads, agent tools (the tool's shape), shortcuts, notifications, settings cards, and opening plugin pages. Pages and panels you own are steady too, but where the shell places them may change. |
-| **Expect breakage** | Reading relay data through the app's session, anything added to conversations (composer tools, message renderers), sidebar sections and rows, agent hooks and harness features, and anything that adds UI to a page Buzz owns. |
+- **Steady:** the manifest, commands, network requests and file reads, agent
+  tools, shortcuts, notifications, settings cards, and plugin pages and panels
+  (though where they appear may move).
+- **Likely to break:** reading relay data, anything added to conversations or
+  the sidebar, agent hooks, and UI added to pages Buzz owns.
 
 See [plugin architecture](docs/plugin-architecture.md) to build one.
 

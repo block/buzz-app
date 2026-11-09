@@ -600,9 +600,18 @@ test("narrow Inbox keeps a rejected read save and its captured Retry behind an o
   const base = Date.now();
   await page.clock.install({ time: base });
   await open(page, app);
-  // At this width the Messages sidebar, and its Activity row, is collapsed.
-  await openPage(page, "Activity");
+  // At this width the Messages sidebar, and its Activity row, sits in the
+  // collapsed navigation drawer, which closes once Activity opens.
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
+  await activityRow(page).click();
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
+  await expect(inbox).toBeVisible();
+  await expect(activityRow(page)).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Show navigation", exact: true }),
+  ).toBeVisible();
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const filters = inbox.getByRole("button", { name: /^From / });
   await inbox

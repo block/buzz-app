@@ -423,7 +423,11 @@ it("opens the actual verified DM and sends plain text without a seeded removable
   const user = userEvent.setup();
   const view = f.mount();
   const input = await screen.findByRole("textbox", { name: "Message Pollen" });
-  expect(f.open).toHaveBeenCalledWith([pollen], expect.any(AbortSignal));
+  expect(f.open).toHaveBeenCalledWith(
+    [pollen],
+    expect.any(AbortSignal),
+    undefined,
+  );
   expect(
     f.session.channels.list().channels.find((c) => c.id === pollenDM),
   ).toMatchObject({
@@ -905,7 +909,11 @@ it("replaces a missing saved Bestie from the chooser in place", async () => {
   expect(
     await screen.findByRole("textbox", { name: "Message Fizz" }),
   ).toBeVisible();
-  expect(f.open).toHaveBeenCalledWith([fizz], expect.any(AbortSignal));
+  expect(f.open).toHaveBeenCalledWith(
+    [fizz],
+    expect.any(AbortSignal),
+    undefined,
+  );
 });
 
 it("does not use a known-archived identity's DM during partial discovery", async () => {

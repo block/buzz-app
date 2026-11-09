@@ -19,7 +19,12 @@ type Base = { id: string; at: number };
 /** ACP `diff` tool content; a missing old text is a new file. */
 export type ToolDiff = { path: string; oldText?: string; newText: string };
 /** Tool names and inputs are adapter-specific, so they are shown as sent;
- * only ACP's standard `kind`, `status`, `locations` and content are read. */
+ * only ACP's standard `kind`, `status`, `locations` and content are read.
+ * The exception is a Buzz message tool, recognized by a title of
+ * `buzz__<tool>` or `mcp__buzz__<tool>`: when it completes with a
+ * `rawInput.text` and no `rawOutput.isError`, it is shown as the agent's
+ * posted message instead of as a tool. Renaming those titles or fields in an
+ * adapter turns its sends back into tool rows. */
 export type ToolItem = Base & {
   type: "tool";
   toolCallId: string;

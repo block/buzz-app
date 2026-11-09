@@ -170,6 +170,26 @@ it("message suppression is signer/thread scoped and clears only older activity",
   ]);
   expect(snapshot()).toEqual([]);
 });
+it("a thread reply also ends and briefly quiets the signer's channel-level typing, but not other threads", () => {
+  const { owner, snapshot } = setup();
+  const thread = (root: string) => [
+    ["h", "a"],
+    ["e", root, "", "reply"],
+  ];
+  const sibling = "b".repeat(64);
+  owner.accept([pulse(), pulse(thread(sibling))], true);
+  owner.accept([
+    message(agent, "a", "reply", epoch, [["e", "a".repeat(64), "", "reply"]]),
+  ]);
+  expect(snapshot().map((e) => e.threadRootId)).toEqual([sibling]);
+  // A channel-level pulse stamped with the reply but delivered after it.
+  vi.advanceTimersByTime(1000);
+  owner.accept([pulse()], true);
+  expect(snapshot().map((e) => e.threadRootId)).toEqual([sibling]);
+  vi.advanceTimersByTime(1000);
+  owner.accept([pulse(undefined, epoch + 2)], true);
+  expect(snapshot()).toHaveLength(2);
+});
 describe("activity capacity", () => {
   let pulses: ReturnType<typeof pulse>[];
   beforeAll(() => {
@@ -223,8 +243,18 @@ for (const kind of [9]) {
                 ["e", "d".repeat(64)],
               ];
       const threaded = scope === "reply" || scope === "nested";
+      const sibling = "f".repeat(64);
       const target = pulse(threaded ? threadTags : undefined);
-      const other = pulse(threaded ? undefined : threadTags);
+      // A thread reply also ends channel-level typing, so its survivor is
+      // another thread's.
+      const other = pulse(
+        threaded
+          ? [
+              ["h", "a"],
+              ["e", sibling, "", "reply"],
+            ]
+          : threadTags,
+      );
       owner.accept([target, other], true);
       owner.accept([
         signed(agent, {
@@ -235,7 +265,7 @@ for (const kind of [9]) {
         }),
       ]);
       expect(snapshot()).toHaveLength(1);
-      expect(snapshot()[0]?.threadRootId).toBe(threaded ? undefined : root);
+      expect(snapshot()[0]?.threadRootId).toBe(threaded ? sibling : root);
       // Same-second replay and a newer pulse during the quiet period both lose.
       owner.accept([target], true);
       vi.advanceTimersByTime(1000);
@@ -298,12 +328,17 @@ describe("completion capacity", () => {
   });
   it("retains completion evidence at capacity until stale pulses have expired", () => {
     const { owner, snapshot } = setup();
+    // A scope the full table has no room for.
+    const fresh = [
+      ["h", "a"],
+      ["e", "f".repeat(64), "", "reply"],
+    ];
     owner.accept(messages);
     vi.advanceTimersByTime(3000);
-    owner.accept([pulse(undefined, epoch + 3)], true);
+    owner.accept([pulse(fresh, epoch + 3)], true);
     expect(snapshot()).toEqual([]);
     vi.advanceTimersByTime(5000);
-    owner.accept([pulse(undefined, epoch + 8)], true);
+    owner.accept([pulse(fresh, epoch + 8)], true);
     expect(snapshot()).toHaveLength(1);
     owner.dispose();
     expect(vi.getTimerCount()).toBe(0);

@@ -14,7 +14,9 @@ export const BestieConversationContext = createContext<
   { session: RelaySession; channelId: string } | undefined
 >(undefined);
 
-export function useBestieConversation(session: RelaySession) {
+export function useBestieConversation(session: RelaySession | undefined) {
   const conversation = useContext(BestieConversationContext);
-  return conversation?.session === session ? conversation.channelId : undefined;
+  return conversation?.session === session
+    ? conversation?.channelId
+    : undefined;
 }

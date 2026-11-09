@@ -27,7 +27,8 @@ function download(path, destination, attemptSeconds) {
   const result = spawnSync(
     "curl",
     [
-      "-fsSL",
+      "-fSL",
+      "--no-progress-meter",
       "--connect-timeout",
       "15",
       "--max-time",
@@ -40,6 +41,9 @@ function download(path, destination, attemptSeconds) {
       String(retries),
       "--retry-delay",
       String(retryDelaySeconds),
+      // Bounds server Retry-After waits, which override --retry-delay.
+      "--retry-max-time",
+      String(retries * attemptSeconds),
       "--retry-all-errors",
       "-o",
       destination,
@@ -52,8 +56,10 @@ function download(path, destination, attemptSeconds) {
   );
   if (result.status !== 0)
     throw new Error(
-      `Claude fixture download failed: ${result.stderr || result.error || result.status}`,
+      `Claude fixture download failed (${result.error ?? `exit ${result.status}`}): ${result.stderr}`,
     );
+  // Keep recovered transfer errors visible in the CI log.
+  process.stderr.write(result.stderr);
 }
 const manifestPath = join(root, "manifest.json");
 download("manifest.json", manifestPath, 30);

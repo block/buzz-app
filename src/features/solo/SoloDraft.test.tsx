@@ -1765,6 +1765,70 @@ it("deleting the chosen workspace while New chat is open drops it from the draft
   expect(f.saveCanvas).not.toHaveBeenCalled();
 });
 
+it("creating a workspace from New chat picks it without starting the chat or taking the dialog's pastes", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const uploadForNewChat = vi.fn(async () => notes);
+  const listeners = new Set<() => void>();
+  let sections = [{ id: "work", name: "Work" }];
+  Object.assign(f.session, {
+    attachments: { upload: vi.fn(), uploadForNewChat },
+  });
+  Object.assign(f.session.soloPreferences, {
+    snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    sectionCreationWritable: true,
+    createSection: async (section: { id: string; name: string }) => {
+      sections = [...sections, section];
+      for (const listener of listeners) listener();
+    },
+  });
+  render(
+    <SoloDraft
+      session={f.session}
+      scope="create-workspace"
+      onStarted={started}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "Plan the week");
+  await user.click(screen.getByRole("button", { name: "Add workspace" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "New workspace" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+  fireEvent.paste(
+    within(dialog).getByRole("textbox", { name: /^Instructions/ }),
+    {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            getAsFile: () =>
+              new File(["notes"], "notes.txt", { type: "text/plain" }),
+          },
+        ],
+      },
+    },
+  );
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Name" }),
+    "Planning",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  await act(async () => {});
+  expect(uploadForNewChat).not.toHaveBeenCalled();
+  expect(started).not.toHaveBeenCalled();
+  expect(f.channelWrites.create).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: "Workspace: Planning" }),
+  ).toBeVisible();
+});
+
 it("inherits the project's defaults for two consecutive new chats", async () => {
   const f = await projectSetup();
   const user = userEvent.setup();

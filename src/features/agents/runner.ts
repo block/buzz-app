@@ -2474,15 +2474,25 @@ export class AgentRunners {
   }
 
   private showWork(runner: Runner, job: Job) {
-    if (job.work || job.trigger.type !== "mention") return;
+    if (
+      job.work ||
+      (job.trigger.type !== "mention" && job.trigger.type !== "plugin")
+    )
+      return;
+    const trigger = job.trigger;
     const agent = this.host.agent(runner.key);
     const scope = agent && this.host.scope(agent);
-    const event = job.trigger.event;
+    const event =
+      trigger.type === "mention" ? trigger.event : wakeAnchor(trigger);
     const channelId =
       job.channelId ?? event.tags.find(([key]) => key === "h")?.[1];
     if (!scope || !channelId) return;
     const threadRootId = threadReference(event)?.rootId;
     const channel = this.host.channel(agent, event);
+    const thread =
+      threadRootId &&
+      (trigger.type === "mention" ||
+        (channel?.channelType !== "solo" && channel?.channelType !== "dm"));
     const soloChat =
       channel?.channelType === "solo" &&
       !channel.cached &&
@@ -2496,15 +2506,17 @@ export class AgentRunners {
         channelId,
         messageId: event.id,
         threadRootId: threadRootId ?? event.id,
-        ...(threadRootId ? { thread: true } : {}),
+        ...(thread ? { thread: true } : {}),
         ...(soloChat ? { soloChat: true } : {}),
         ...(soloChat && conversationName ? { conversationName } : {}),
       },
-      // Retry queues the same mention again. It was seen when first heard,
-      // so it is not marked again; its run saves it as working as any does.
+      // A resumed mention must not reuse its resume marker on retry.
       () =>
         void this.enqueue(runner, {
-          trigger: { type: "mention", event },
+          trigger:
+            trigger.type === "mention"
+              ? { type: "mention", event: trigger.event }
+              : trigger,
           ...(job.channelId ? { channelId: job.channelId } : {}),
         }),
     );

@@ -429,6 +429,75 @@ it("still mints invite links natively", async () => {
   expect(fetch).not.toHaveBeenCalled();
 });
 
+it("keeps the invite picker focused and the code in place while a new link is made", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  const minted = new Map<string, () => void>();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "qr_code") return "<svg/>";
+    expect(command).toBe("relay_http");
+    const { max_uses } = JSON.parse((args as { body: string }).body) as {
+      max_uses: number | null;
+    };
+    const code = max_uses ? "limited" : "open";
+    const answer = {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        code,
+        url: `https://primary.example/invite/${code}`,
+      }),
+    };
+    if (code === "open") return answer;
+    return new Promise((resolve) => minted.set(code, () => resolve(answer)));
+  });
+  render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Invite members" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Add or invite people",
+  });
+  await within(dialog).findByDisplayValue(
+    "https://primary.example/invite/open",
+  );
+  // The code's place, which must never leave the layout: dropping it for a
+  // render shrank the dialog and scrolled it back to the top.
+  const slot = (
+    await within(dialog).findByRole("img", {
+      name: "Scan this QR code to open the invite link",
+    })
+  ).parentElement;
+  const picker = within(dialog).getByRole("button", {
+    name: "Choose maximum invite uses",
+  });
+  await user.click(picker);
+  await user.click(await screen.findByRole("menuitemradio", { name: "1 use" }));
+  await waitFor(() => expect(minted.has("limited")).toBe(true));
+  // Both pickers stay usable while the new link is made, so the closing menu
+  // returns focus to the one just used rather than losing it.
+  expect(picker).toBeEnabled();
+  expect(
+    within(dialog).getByRole("button", { name: "Choose invite expiry" }),
+  ).toBeEnabled();
+  await waitFor(() => expect(picker).toHaveFocus());
+  minted.get("limited")?.();
+  await within(dialog).findByDisplayValue(
+    "https://primary.example/invite/limited",
+  );
+  expect(
+    await within(dialog).findByRole("img", {
+      name: "Scan this QR code to open the invite link",
+    }),
+  ).toBeVisible();
+  expect(slot).toBeInTheDocument();
+  expect(picker).toHaveFocus();
+});
+
 it("always shows the minted invite link as a dark native QR code", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("matchMedia", () => ({

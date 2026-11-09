@@ -561,7 +561,9 @@ function InviteDialog({
     return () => clearTimeout(timer);
   }, [copied]);
   const url = current?.url;
-  const pending = !!current && !url && !current.failed;
+  // New settings have no link until the effect mints one; count them as
+  // pending so the code's place never collapses, which scrolled the dialog.
+  const pending = current ? !url && !current.failed : !locked;
   const drawn = url && qr?.url === url ? qr : null;
   const showQr =
     nativeIdentityEnabled() && (pending || !!url) && !(drawn && !drawn.svg);
@@ -678,7 +680,9 @@ function InviteDialog({
                 value={ttl}
                 options={EXPIRY}
                 onChange={setTtl}
-                disabled={pending || locked}
+                // Stays usable while a link is made, so the closing menu can
+                // return focus to it; the newest choice's link wins.
+                disabled={locked}
               />
             </div>
             <div className="flex items-center gap-1">
@@ -688,7 +692,7 @@ function InviteDialog({
                 value={uses}
                 options={USES}
                 onChange={setUses}
-                disabled={pending || locked}
+                disabled={locked}
               />
             </div>
           </div>

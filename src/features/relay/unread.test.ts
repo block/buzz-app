@@ -53,6 +53,7 @@ function setup(
   let failNextSave = false;
   let failure: Error | undefined;
   const storage: ReadStateStorage = {
+    capture: async () => journal && readJournal(journal, viewer.pubkey),
     async update(change) {
       if (failure) {
         const error = failure;
@@ -2426,6 +2427,141 @@ it("bottom catch-up ends a manual channel unread but keeps marked messages", asy
   again.dispose();
 });
 
+it("keeps peer message-unread intent effective across an in-flight automatic read", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([metadata(h.relay, "room", "room", 11, [["t", "stream"]])]);
+  const row = message(h.alice, "room", "hello", 11, [["p", h.viewer.pubkey]]);
+  h.emit([row]);
+  await flush();
+  const unread = h.session.unread;
+  const target = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: row.id,
+  };
+  const reading = unread.reading("room");
+  const readSave = h.holdSaveStarted();
+  const automaticRead = reading.observe([row.id]);
+  let peerSave: ReturnType<typeof h.holdSaveStarted> | undefined;
+  try {
+    await readSave.started;
+    peerSave = h.holdSaveStarted();
+    const createdAt = Math.floor(Date.now() / 1000);
+    const marker = await signReadState(
+      {
+        slot: "a".repeat(32),
+        createdAt,
+        blob: {
+          v: 1,
+          client_id: "peer",
+          contexts: {
+            [`ov_s:msg:${row.id}`]: 1,
+            [`ov_c:msg:${row.id}`]: 0,
+            [`ov_b:msg:${row.id}`]: 0,
+          },
+        },
+      },
+      h.viewer.secret,
+      createdAt,
+    );
+    h.emit([marker]);
+    readSave.release();
+    await automaticRead;
+    await peerSave.started;
+  } finally {
+    readSave.release();
+    peerSave?.release();
+  }
+  await expect.poll(() => unread.snapshot(target).manual).toBe("remote");
+  expect(h.journal()?.state.overrides[`msg:${row.id}`]).toEqual({
+    set: 1,
+    clear: 0,
+    baseline: 11,
+  });
+  expect(unread.attention("room", row.id).unread).toBe(true);
+  reading.dispose();
+
+  // Explicit message/timeline reads preserve remote overrides at the same
+  // frontier; only a newer frontier ends them (the existing NIP-RS contract).
+  await unread.markMessageRead("room", row.id);
+  expect(unread.snapshot(target).manual).toBe("remote");
+  await unread.markTimelineRead("room", [row.id]);
+  expect(unread.snapshot(target).manual).toBe("remote");
+
+  clock(20);
+  await unread.markChannelRead("room");
+  await expect.poll(() => unread.snapshot(target).manual).toBe("none");
+  expect(unread.attention("room", row.id).unread).toBe(false);
+  expect(h.journal()?.state.frontiers.room).toBe(20);
+});
+
+it.each(["channel", "thread"] as const)(
+  "observing a reply respects its verified inherited %s frontier before preserving peer intent",
+  async (scope) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.viewer, "room", "root", 11);
+    const tags = scope === "thread" ? [["e", root.id, "", "reply"]] : [];
+    const earlier = message(h.alice, "room", "earlier", 12, tags);
+    const row = message(h.alice, "room", "mention", 13, [
+      ...tags,
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([root, earlier, row]);
+    const unread = h.session.unread;
+    await unread.markThrough(
+      scope === "thread"
+        ? { kind: "thread", channelId: "room", rootId: root.id }
+        : h.target,
+      earlier.id,
+    );
+    const target = {
+      kind: "message" as const,
+      channelId: "room",
+      messageId: row.id,
+    };
+    const reading = unread.reading("room");
+    const held = h.holdSaveStarted();
+    const automaticRead = reading.observe([row.id]);
+    try {
+      await held.started;
+      const createdAt = Math.floor(Date.now() / 1000);
+      h.emit([
+        await signReadState(
+          {
+            slot: "a".repeat(32),
+            createdAt,
+            blob: {
+              v: 1,
+              client_id: "peer",
+              contexts: {
+                [`ov_s:msg:${row.id}`]: 1,
+                [`ov_c:msg:${row.id}`]: 0,
+                [`ov_b:msg:${row.id}`]: 5,
+              },
+            },
+          },
+          h.viewer.secret,
+          createdAt,
+        ),
+      ]);
+      held.release();
+      await automaticRead;
+    } finally {
+      held.release();
+      reading.dispose();
+    }
+    // The merged marker is the completion barrier, not a negative snapshot before ingestion.
+    await expect
+      .poll(() => h.journal()?.state.overrides[`msg:${row.id}`]?.set)
+      .toBe(1);
+    expect(h.journal()?.state.overrides[`msg:${row.id}`]?.baseline).toBe(5);
+    expect(unread.snapshot(target).manual).toBe("none");
+    expect(unread.attention("room", row.id).unread).toBe(false);
+  },
+);
+
 it("thread bottom catch-up clears only its thread and preserves local and remote manual intent", async () => {
   const h = setup();
   h.grant("room");
@@ -4216,6 +4352,7 @@ function sharedWindows(preloaded: (journal: ReadJournal) => ReadJournal) {
     let hold: Promise<void> | undefined;
     let started = () => {};
     const storage: ReadStateStorage = {
+      capture: async () => readJournal(journal, viewer.pubkey),
       async update(change) {
         if (hold) {
           const wait = hold;

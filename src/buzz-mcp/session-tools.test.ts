@@ -28,6 +28,26 @@ it("keys the added tools whatever order plugins started in", () => {
   ).not.toBe(key);
 });
 
+// The retired owner-read tools, listed here rather than taken from a catalog.
+const RETIRED_OWNER_TOOLS = [
+  "owner_channel_list",
+  "owner_channel_get",
+  "owner_member_list",
+  "owner_read",
+  "owner_canvas_get",
+  "owner_canvas_history",
+];
+
+it("neither lists nor mentions the retired owner-read tools", () => {
+  const names = sessionTools([tool("notes_add")]).map((each) => each.name);
+  const hint = sessionHint([tool("notes_add")]);
+  for (const name of RETIRED_OWNER_TOOLS) {
+    expect(names).not.toContain(name);
+    expect(hint).not.toContain(name);
+  }
+  expect(hint).not.toMatch(/owner's (own )?access|with your access/);
+});
+
 it("loads the Buzz tools up front, and attention and plugins' tools on search", () => {
   const tools = sessionTools([tool("notes_add")]);
   const load = (name: string) => tools.find((each) => each.name === name)?.load;

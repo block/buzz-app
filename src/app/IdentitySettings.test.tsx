@@ -81,12 +81,20 @@ function backupHost(initial: BackupStatus) {
   };
 }
 
-const renderBackup = (initial: BackupStatus) => {
+const renderBackup = (initial: BackupStatus, openBuilderlab?: () => void) => {
   const host = backupHost(initial);
-  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      identity={host.identity}
+      openBuilderlab={openBuilderlab}
+    />,
+  );
   return host;
 };
 const backupRow = () => screen.queryByText("Identity sync");
+const syncRow = () =>
+  backupRow()?.closest(".buzz-preference-row") as HTMLElement;
 /** The row's live feedback and indicator, of which at most one has text. */
 const status = () =>
   screen
@@ -348,6 +356,64 @@ it.each([
   },
 );
 
+const builderlab = { name: "Builderlab" };
+
+// Builderlab's page connects this key, or switches the account to it. Native
+// reaches either only after consent, so the link starts no backup unasked.
+it.each([
+  [{ status: "waiting", reason: "not_linked" }, "not_linked"],
+  [{ status: "failed", kind: "other_key_linked" }, "other_key_linked"],
+] as const)(
+  "links Builderlab from the %o sentence to its Settings page",
+  async (progress, kind) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+    const openBuilderlab = vi.fn();
+    await renderBackup(at(1, progress), openBuilderlab).settled();
+    const sentence = status();
+    expect(sentence.textContent).toBe(BACKUP_FAILURES[kind].message);
+    const link = within(sentence).getByRole("button", builderlab);
+    expect(within(syncRow()).getAllByRole("button")).toEqual([link]);
+    await userEvent.setup().click(link);
+    expect(openBuilderlab).toHaveBeenCalledOnce();
+  },
+);
+
+// Signing in is on this page, and consent is the row's own Sync; retrying
+// failures need a new sign-in, and the rest have no fix on Builderlab's page.
+it.each([
+  { status: "waiting", reason: "no_session" },
+  { status: "waiting", reason: "no_consent" },
+  { status: "idle" },
+  { status: "running" },
+  { status: "complete" },
+  ...(
+    [
+      "signed_out",
+      "busy",
+      "unreachable",
+      "unconfirmed",
+      "storage",
+      "not_offered",
+      "invalid_service",
+      "refused",
+    ] as const
+  ).map((kind) => ({ status: "failed", kind }) as const),
+] as const)("names no Builderlab link for the %o status", async (progress) => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  await renderBackup(at(1, progress), vi.fn()).settled();
+  expect(backupRow()).toBeVisible();
+  expect(within(syncRow()).queryByRole("button", builderlab)).toBeNull();
+});
+
+it("names Builderlab as plain text where Settings can't open it", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  await renderBackup(
+    at(1, { status: "waiting", reason: "not_linked" }),
+  ).settled();
+  expect(status().textContent).toBe(BACKUP_FAILURES.not_linked.message);
+  expect(within(syncRow()).queryByRole("button")).toBeNull();
+});
+
 const sync = { name: "Sync with Builderlab" };
 const prompt = () =>
   screen.getByRole("alertdialog", {
@@ -467,7 +533,7 @@ it("follows the status store as it publishes a higher seq", async () => {
   expect(status()).toHaveTextContent(busy);
   host.push(at(4, { status: "complete" }));
   expect(status()).toHaveTextContent("Synced with Builderlab");
-  // Read-only: no consent, retry or other control beside the status.
+  // Synced leaves nothing to do: no consent, retry or Builderlab control.
   const row = status().closest(".buzz-preference-row") as HTMLElement;
   expect(within(row).queryByRole("button")).toBeNull();
   expect(within(row).queryByRole("switch")).toBeNull();
@@ -541,6 +607,35 @@ it("lists each signed-in server and signs out of one without touching the other"
   expect(block.service.snapshot().status).toBe("signed-in");
   expect(screen.queryByText("app.builderlab.xyz")).not.toBeInTheDocument();
   expect(screen.getByText("Acme (acme.builderlab.xyz)")).toBeVisible();
+});
+
+// A covered community that doesn't require NIP-FI is reached with the key
+// alone, whatever this session does.
+it("names as using a server only the communities that require its sign-in", async () => {
+  const { block, pub, root, servers } = twoServers();
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  const communityRequiresSignIn = vi.fn(
+    async (relay: string) => relay === "https://kalvin.communities.buzz.xyz",
+  );
+  const publicSession = { ...pub.service, communityRequiresSignIn };
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={{
+        ...root,
+        forServer: (id) => (id === "bb-acme" ? block.service : publicSession),
+      }}
+      memberships={memberships}
+      servers={servers}
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(await screen.findByText(/Used by: kalvin$/)).toBeVisible();
+  expect(communityRequiresSignIn.mock.calls.map(([relay]) => relay)).toEqual([
+    "https://will.communities.buzz.xyz",
+    "https://kalvin.communities.buzz.xyz",
+  ]);
+  expect(screen.queryByText(/will, kalvin/)).not.toBeInTheDocument();
 });
 
 it("keeps the first server's sign-in row when no server is signed in", async () => {

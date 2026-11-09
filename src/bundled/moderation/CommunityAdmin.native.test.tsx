@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -498,7 +499,7 @@ it("keeps the invite picker focused and the code in place while a new link is ma
   expect(picker).toHaveFocus();
 });
 
-it("always shows the minted invite link as a dark native QR code", async () => {
+it("always shows the minted invite link as a native QR code", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
@@ -543,11 +544,12 @@ it("always shows the minted invite link as a dark native QR code", async () => {
   await within(dialog).findByDisplayValue(
     "https://primary.example/invite/open",
   );
-  // No toggle: the host draws the dark code as soon as the link exists.
+  // No toggle: the host draws the code as soon as the link exists, light in
+  // light mode.
   expect(within(dialog).queryByRole("button", { name: /QR code/ })).toBeNull();
   expect(invoke).toHaveBeenLastCalledWith("qr_code", {
     value: "https://primary.example/invite/open",
-    variant: "dark",
+    variant: "light",
   });
   expect(within(dialog).queryByRole("img")).toBeNull();
   // A new link draws its own code; the old link's code, arriving late, never
@@ -608,4 +610,59 @@ it("always shows the minted invite link as a dark native QR code", async () => {
   // Neither the code nor its placeholder (both size-60) holds the space.
   expect(dialog.querySelector(".size-60")).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it("draws the invite code in the color mode's variant and redraws it when the mode changes", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  document.documentElement.dataset.colorMode = "dark";
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "qr_code") {
+      const { variant } = args as { variant: string };
+      return `<svg>${variant}</svg>`;
+    }
+    return {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        code: "open",
+        url: "https://primary.example/invite/open",
+      }),
+    };
+  });
+  try {
+    render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Invite members" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Add or invite people",
+    });
+    const name = { name: "Scan this QR code to open the invite link" };
+    const src = (variant: string) =>
+      `data:image/svg+xml,${encodeURIComponent(`<svg>${variant}</svg>`)}`;
+    expect(await within(dialog).findByRole("img", name)).toHaveAttribute(
+      "src",
+      src("dark"),
+    );
+    act(() => {
+      document.documentElement.dataset.colorMode = "light";
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("img", name)).toHaveAttribute(
+        "src",
+        src("light"),
+      ),
+    );
+    expect(invoke).toHaveBeenLastCalledWith("qr_code", {
+      value: "https://primary.example/invite/open",
+      variant: "light",
+    });
+  } finally {
+    delete document.documentElement.dataset.colorMode;
+  }
 });

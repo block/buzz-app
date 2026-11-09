@@ -20,9 +20,12 @@ test("thread stays beside the channel whenever both panes fit", async ({
 }, testInfo) => {
   await open(page, app);
   await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
+  // A narrow thread covers the channel, removing it from the accessibility
+  // tree; its geometry still applies.
   const channel = page.getByRole("article", {
     name: "Conversation",
     exact: true,
+    includeHidden: true,
   });
   const input = channel.getByRole("textbox", { name: "Message #Alpha" });
   const draft =

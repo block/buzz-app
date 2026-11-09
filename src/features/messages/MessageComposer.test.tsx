@@ -15840,6 +15840,20 @@ it("settles a pending mention into the owner's agent from another community once
 });
 
 const rocketKey = "e".repeat(64);
+/** Enter `@` and the key as a user would: hex and npub typed, a `nostr:` key
+ * pasted. Typed, the colon in `nostr:` selects or holds the name `nostr`
+ * before it, as closing punctuation does (mentions README section 5). */
+async function enterKey(
+  h: ReturnType<typeof mountDirectoryMention>,
+  typed: string,
+) {
+  if (!typed.startsWith("nostr:")) {
+    await h.user.type(h.input(), `@${typed}`);
+    return;
+  }
+  await h.user.type(h.input(), "@");
+  await h.user.paste(typed);
+}
 it.each([
   ["hex key", rocketKey],
   ["npub", npubEncode(rocketKey)],
@@ -15852,7 +15866,7 @@ it.each([
       channel: { channelType: "stream" },
     });
     h.setLibrary([], "loading");
-    await h.user.type(h.input(), `@${typed}`);
+    await enterKey(h, typed);
     // Its key holds the agent as its name does; the author lookup finds
     // no profile here first.
     await screen.findByText("Loading recipients…");
@@ -15935,7 +15949,7 @@ it.each([
       channel: { channelType: "stream" },
     });
     h.setLibrary([], "loading");
-    await h.user.type(h.input(), `@${typed}`);
+    await enterKey(h, typed);
     await screen.findByText("Loading recipients…");
     await waitFor(() => expect(h.people).toHaveBeenCalled());
     await h.release({ people: [], hasMore: false });

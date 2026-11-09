@@ -169,7 +169,7 @@ function managedFixture() {
   let configuration: StorageResult = initial;
   const imports = {
     ...f.imports,
-    checkFolder: vi.fn(async () => "new"),
+    checkFolder: vi.fn(async () => ({ revision: "new" })),
     previewFolder: vi.fn(async () => null),
     folder: vi.fn(async () => null),
     files: vi.fn(async () => null),

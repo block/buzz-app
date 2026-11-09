@@ -313,6 +313,22 @@ it("finds the agent's threads by name, reads their rollouts, and later only thos
   reads.length = 0;
   await read();
   expect(reads).toEqual(["gone.jsonl"]);
+
+  // A read reaching back two days also finds the older thread. A read from
+  // the last hour, as today's spend beside Send makes, keeps it, so reaching
+  // back again reads only the rollout that was gone.
+  const back = (ms: number) =>
+    readUsage(
+      host,
+      { ...sol, name: "Sol" },
+      hour - ms,
+      new AbortController().signal,
+    );
+  await back(2 * 86_400_000);
+  await back(HOUR);
+  reads.length = 0;
+  await back(2 * 86_400_000);
+  expect(reads).toEqual(["gone.jsonl"]);
 });
 
 it("reads at most four rollouts at once, across agents and their subagents", async () => {

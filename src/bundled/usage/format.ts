@@ -23,6 +23,11 @@ export const costText = (total: Total) =>
   total.value === undefined
     ? "Unavailable"
     : `${cost(total.value)}${total.partial ? " · partial" : ""}`;
+/** A list row's cost spelled out, for its title and accessible name. */
+export const costLabel = (total: Total) =>
+  total.value === undefined
+    ? "cost unavailable"
+    : `${cost(total.value)}${total.partial ? " · partial" : ""}`;
 /** A total's known value in `format`; `Unavailable` when none was known. */
 export const amount = (total: Total, format: (value: number) => string) =>
   total.value === undefined ? "Unavailable" : format(total.value);

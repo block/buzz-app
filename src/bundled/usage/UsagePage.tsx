@@ -27,9 +27,11 @@ import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Select } from "../../shared/design-system/ui/Select";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 import styles from "./Usage.module.css";
 import { DailyCostChart, type Series } from "./DailyCostChart";
-import { amount, cost, count, percent } from "./format";
+import { amount, cost, costLabel, count, percent } from "./format";
 import { loadPrices } from "./pricing";
 import {
   type AgentUsage,
@@ -39,6 +41,11 @@ import {
   stats,
   type Total,
 } from "./stats";
+import {
+  setSpendBesideSend,
+  useSpendBesideSend,
+  useSpendBesideSendSaveError,
+} from "./today-preference";
 
 const RANGES = [7, 30];
 /** How long after a failed read it is tried once more, before it is reported:
@@ -218,6 +225,8 @@ export function UsagePage({
   const [chosenAgent, setAgentFilter] = useState(ALL);
   const [chosenHarness, setHarnessFilter] = useState(ALL);
   const [reload, setReload] = useState(0);
+  const besideSend = useSpendBesideSend();
+  const besideSendError = useSpendBesideSendSaveError();
   const harnesses = types.filter((type) => type.usage);
   // Only agents here run sessions on this computer.
   const targets = snapshot.agents.filter(
@@ -484,6 +493,21 @@ export function UsagePage({
           )
         }
       />
+      <div className={styles.besideSend}>
+        <SettingsGroup>
+          <SwitchPreferenceRow
+            label="Show today’s spend beside Send"
+            description="Your agents’ estimated spend today on this computer. Only you see it."
+            checked={besideSend}
+            onCheckedChange={(checked) => setSpendBesideSend(checked)}
+          />
+        </SettingsGroup>
+        {besideSendError && (
+          <p className={styles.notice} role="alert">
+            {besideSendError}
+          </p>
+        )}
+      </div>
       <div aria-busy={loading}>{body}</div>
     </section>
   );
@@ -799,10 +823,6 @@ function Dashboard({
 
 const partly = (total: Total, text: string) =>
   total.partial ? `${text} · partial` : text;
-const costLabel = (total: Total) =>
-  total.value === undefined
-    ? "cost unavailable"
-    : partly(total, cost(total.value));
 
 /** A cost in a list row: `—` when unknown, marked when partial. */
 function Amount({ total }: { total: Total }) {

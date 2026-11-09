@@ -312,3 +312,49 @@ it.each(["session/list", "_goose/unstable/session/export"])(
     expect(goose.geese[0]?.killed).toBe(true);
   },
 );
+
+it("reads each caller's own range when a narrower read is under way", async () => {
+  const exports = (goose: ReturnType<typeof fakeSpawn>) =>
+    goose.geese.flatMap((one) =>
+      one.received
+        .filter(
+          (message) => message.method === "_goose/unstable/session/export",
+        )
+        .map((message) => (message.params as { sessionId: string }).sessionId),
+    );
+  const saved = (sessionId: string, updatedAt: string): FakeSession => ({
+    sessionId,
+    title: `Grok · #general · ${sessionId}`,
+    cwd: "/home/test/.buzz",
+    updatedAt,
+    conversation: [user(ask()), reply(start + 1, tokens(1, 2, 3, 0.5))],
+  });
+  const goose = fakeSpawn({
+    home: "/home/test",
+    history: [
+      saved("lastweek", "2026-06-12T08:00:00Z"),
+      saved("today", "2026-06-18T08:00:00Z"),
+    ],
+  });
+  const history = new GooseHistory(goose);
+  const read = (since: string) =>
+    readUsage(
+      history,
+      agent,
+      "~/.buzz",
+      Date.parse(since),
+      new AbortController().signal,
+    ).then((sessions) => sessions.map((session) => session.id).sort());
+  // Today's spend reads from midnight as the Usage page opens for 30 days.
+  expect(
+    await Promise.all([
+      read("2026-06-18T00:00:00Z"),
+      read("2026-06-01T00:00:00Z"),
+    ]),
+  ).toEqual([["today"], ["lastweek", "today"]]);
+  // A later read from midnight keeps what the page found before it.
+  await read("2026-06-18T00:00:00Z");
+  const before = exports(goose).length;
+  expect(await read("2026-06-01T00:00:00Z")).toEqual(["lastweek", "today"]);
+  expect(exports(goose).slice(before)).not.toContain("lastweek");
+});

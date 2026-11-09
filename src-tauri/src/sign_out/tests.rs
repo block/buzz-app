@@ -1268,14 +1268,12 @@ fn invoke(
 #[test]
 fn production_acl_lets_the_dialog_ask_why_wipe_is_unavailable() {
     let (_app, view) = production_app();
-    // Debug builds refuse wipe; release builds allow it.
+    // The ACL lets the dialog reach the command (a denial is an Err). What it
+    // answers depends on the build and environment, pinned by the `refusal`
+    // tests, so compare with the command's own answer.
     assert_eq!(
         invoke(&view, "sign_out_wipe_refusal", serde_json::json!({})).unwrap(),
-        if cfg!(debug_assertions) {
-            serde_json::json!(DEV_WIPE)
-        } else {
-            serde_json::Value::Null
-        }
+        serde_json::json!(sign_out_wipe_refusal())
     );
 }
 

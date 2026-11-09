@@ -12,8 +12,8 @@
   background: var(--affordance-subtle);
 }
 
-.tabs {
-  margin-inline: calc(-1 * (var(--space-4) + 1px));
+.tabs > :first-child {
+  margin-inline: calc(-1 * var(--settings-content-inset, var(--space-1)));
 }
 
 .searchControls {

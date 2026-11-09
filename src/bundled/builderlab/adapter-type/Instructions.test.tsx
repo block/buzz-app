@@ -168,7 +168,7 @@ async function fixture(signedIn = true, openIdentity?: () => void) {
   };
 }
 async function loadedInstructions() {
-  const field = screen.getByRole("textbox", { name: "Instructions" });
+  const field = await screen.findByRole("textbox", { name: "Instructions" });
   await waitFor(() => expect(field).toBeEnabled());
   return field;
 }

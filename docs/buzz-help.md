@@ -1072,7 +1072,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   plugin keeps working. Its row in Manage plugins says **Couldn’t check for
   updates.** with **Check again**, and Git’s own text under **Details**. Buzz
   skips background checks while offline and checks again when the connection
-  returns. If **Check again** fails, a notice says **Couldn’t check** the plugin
+  returns, including a check that failed because the connection dropped. If
+  **Check again** fails, a notice says **Couldn’t check** the plugin
   **for updates** and offers **Try again**; closing it leaves the row. When the
   repository moved or was removed, or is private and was added over HTTPS, the
   row says so and to reinstall the plugin, since checking again can’t help.

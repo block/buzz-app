@@ -85,23 +85,32 @@ export function PluginUpdates({
     // Being offline is normal, so background checks wait for a connection.
     const ready = () =>
       document.visibilityState !== "hidden" && navigator.onLine !== false;
-    const check = async () => {
+    const check = async (force = false) => {
       clearTimeout(timer);
       if (!ready()) return;
-      const delay = await updates.check();
+      const delay = await updates.check(force);
       if (delay === undefined || disposed || !ready()) return;
       clearTimeout(timer);
-      timer = setTimeout(check, delay);
+      timer = setTimeout(scheduled, delay);
     };
-    void check();
-    const unsubscribe = plugins.subscribe(check);
-    document.addEventListener("visibilitychange", check);
-    window.addEventListener("online", check);
+    const scheduled = () => void check();
+    // A check that failed when the connection dropped mid-run is throttled
+    // like any other, so the connection's return checks it again at once.
+    const reconnected = () =>
+      void check(
+        updates
+          .snapshot()
+          .some((update) => update.error && updateFailure(update).retry),
+      );
+    scheduled();
+    const unsubscribe = plugins.subscribe(scheduled);
+    document.addEventListener("visibilitychange", scheduled);
+    window.addEventListener("online", reconnected);
     return () => {
       disposed = true;
       clearTimeout(timer);
-      document.removeEventListener("visibilitychange", check);
-      window.removeEventListener("online", check);
+      document.removeEventListener("visibilitychange", scheduled);
+      window.removeEventListener("online", reconnected);
       unsubscribe();
       updates.dispose();
     };

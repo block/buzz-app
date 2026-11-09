@@ -264,7 +264,9 @@ for the current app run and candidate. The update stays in the profile menu's
 A background check that fails raises no notice. The plugin's row in Settings →
 Plugins says **Couldn’t check for updates.** with **Check again**, and keeps the
 raw Git text behind **Details**. Background checks wait while the browser reports
-offline and run on its `online` event. Only a check the user asked for
+offline and run on its `online` event. Checks are throttled to one an hour, but
+when a row holds a failure that checking again can help, `online` forces one, so
+a connection that dropped during a check is retried when it returns. Only a check the user asked for
 (**Check again**, or **Try again** on its notice) raises a notice, and closing
 that notice leaves the row. `updateFailure()` in `src/plugins/updates.ts` names
 the Git causes Buzz recognizes: a repository that moved or was removed, and a

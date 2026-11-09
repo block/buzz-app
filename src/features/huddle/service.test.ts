@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import { keypair, signed } from "../relay/testing";
-import { createRelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
+import type { OutgoingEvent } from "../relay/outbox";
 import type { HuddleAudio, OpenHuddleAudio } from "./audio";
 import type { HuddleBridge, HuddleDestination, HuddleUpdate } from "./bridge";
 import { createHuddles, provideHuddleStatus } from "./service";
@@ -35,6 +36,7 @@ function harness(
     },
   ],
   dmAgent?: Parameters<typeof createHuddles>[3],
+  outbox?: Pick<NonNullable<RelaySession["outbox"]>, "snapshot">,
 ) {
   let channels = initialChannels;
   let partial = false;
@@ -48,6 +50,7 @@ function harness(
     viewer: destination.viewer,
     session: {
       ...store.session,
+      ...(outbox ? { outbox: outbox as RelaySession["outbox"] } : {}),
       read,
       channels: {
         ...store.session.channels,
@@ -715,10 +718,12 @@ describe("automatic DM voice invitation", () => {
       await h.service.start(destination);
       h.receive({ type: "connected", room: "room", participants: [] });
       await vi.waitFor(() =>
-        expect(h.service.snapshot().error).toContain("Couldn’t add the agent"),
+        expect(h.service.snapshot().invite).toEqual({ agent: "agent" }),
       );
-      h.access([parent, { ...room, members: [destination.viewer, "agent"] }]);
+      // An invite failure is not a stopped voice.
       expect(h.service.snapshot().error).toBeUndefined();
+      h.access([parent, { ...room, members: [destination.viewer, "agent"] }]);
+      expect(h.service.snapshot().invite).toBeUndefined();
       const id = h.service.snapshot().id ?? "";
       h.service.voiceError(id, "Agent: Voice disconnected");
       h.access([parent, { ...room, members: [destination.viewer, "agent"] }]);
@@ -755,15 +760,145 @@ describe("automatic DM voice invitation", () => {
       await h.service.start(destination);
       h.receive({ type: "connected", room: "room", participants: [] });
       await vi.waitFor(() =>
-        expect(h.service.snapshot().error).toContain(
-          "Couldn’t add the agent: Offline",
-        ),
+        expect(h.service.snapshot().invite).toEqual({ agent: "agent" }),
       );
       expect(h.service.snapshot().phase).toBe("connected");
+      // The failure's own words never reach the snapshot.
+      expect(JSON.stringify(h.service.snapshot())).not.toContain("Offline");
     } finally {
       await h.dispose();
     }
   });
+  it("never invites again on its own after a dismissed failure", async () => {
+    vi.mocked(addChannelMember).mockClear();
+    vi.mocked(addChannelMember).mockRejectedValueOnce(new Error("Offline"));
+    const h = harness([parent, room], () => "agent");
+    try {
+      await h.service.start(destination);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await vi.waitFor(() => expect(h.service.snapshot().invite).toBeDefined());
+      h.service.dismissInvite(h.service.snapshot().id ?? "");
+      expect(h.service.snapshot().invite).toBeUndefined();
+      // A reconnect is not a request to try again.
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(addChannelMember).toHaveBeenCalledTimes(1);
+      expect(h.service.snapshot().invite).toBeUndefined();
+    } finally {
+      await h.dispose();
+    }
+  });
+  it("tries the invite again on request and clears the failure once it lands", async () => {
+    vi.mocked(addChannelMember).mockClear();
+    vi.mocked(addChannelMember).mockRejectedValueOnce(new Error("Offline"));
+    const h = harness([parent, room], () => "agent");
+    try {
+      await h.service.start(destination);
+      h.receive({ type: "connected", room: "room", participants: [] });
+      await vi.waitFor(() => expect(h.service.snapshot().invite).toBeDefined());
+      const id = h.service.snapshot().id ?? "";
+      h.service.retryInvite("another call");
+      expect(h.service.snapshot().invite).toBeDefined();
+      h.service.retryInvite(id);
+      expect(h.service.snapshot().invite).toBeUndefined();
+      await vi.waitFor(() => expect(addChannelMember).toHaveBeenCalledTimes(2));
+      expect(h.service.snapshot().invite).toBeUndefined();
+    } finally {
+      await h.dispose();
+    }
+  });
+  it.each([
+    [
+      "a refusal of this addition",
+      "room",
+      { refused: true as const, reason: "restricted: not allowed" },
+      "You don’t have permission.",
+    ],
+    [
+      "an addition that couldn’t be sent",
+      "room",
+      { error: "Network down" },
+      undefined,
+    ],
+    [
+      "a refusal for another room",
+      "other",
+      { refused: true as const, reason: "restricted: not allowed" },
+      undefined,
+    ],
+  ])(
+    "says why the addition failed only from %s",
+    async (_, target, failure, refusal) => {
+      vi.mocked(addChannelMember).mockRejectedValueOnce(
+        new Error("Buzz couldn’t add them. Try again."),
+      );
+      const addition = {
+        event: {
+          id: "addition",
+          kind: 9000,
+          pubkey: destination.viewer,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["h", target],
+            ["p", "agent"],
+          ],
+        },
+        delivery: "failed",
+        error: "Relay rejected the message",
+        ...failure,
+      } as unknown as OutgoingEvent;
+      const h = harness([parent, room], () => "agent", {
+        snapshot: () => [addition],
+      });
+      try {
+        await h.service.start(destination);
+        h.receive({ type: "connected", room: "room", participants: [] });
+        await vi.waitFor(() =>
+          expect(h.service.snapshot().invite).toEqual({
+            agent: "agent",
+            ...(refusal ? { refusal } : {}),
+          }),
+        );
+        expect(JSON.stringify(h.service.snapshot())).not.toMatch(
+          /restricted|Network down|Try again/,
+        );
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+  it.each([
+    ["unavailable", (): string | undefined => undefined],
+    ["room", (): string | undefined => "agent"],
+  ] as const)(
+    "names why an invite failed when Buzz knows (%s)",
+    async (reason, agentAfter) => {
+      let connected = false;
+      const h = harness(
+        [
+          parent,
+          reason === "room" ? { ...room, parentChannelId: "other" } : room,
+        ],
+        () => (connected ? agentAfter() : "agent"),
+      );
+      try {
+        await h.service.start(destination);
+        connected = true;
+        h.receive({ type: "connected", room: "room", participants: [] });
+        await vi.waitFor(() =>
+          expect(h.service.snapshot().invite).toEqual({
+            agent: "agent",
+            reason,
+          }),
+        );
+        h.service.dismissInvite(h.service.snapshot().id ?? "");
+        expect(h.service.snapshot().invite).toBeUndefined();
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
 });
 
 it("clears thinking on leave and ignores callbacks from an old call", async () => {

@@ -26,6 +26,8 @@ function harness() {
   };
   const listeners = new Set<() => void>();
   const call: Huddles = {
+    retryInvite() {},
+    dismissInvite() {},
     voiceError() {},
     voiceListening() {},
     voiceThinking() {},

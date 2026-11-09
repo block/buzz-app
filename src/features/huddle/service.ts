@@ -1,4 +1,5 @@
 import { addChannelMember } from "../channel-members/members";
+import { unsentSentence } from "../relay/refusal";
 import { createPcmSender } from "./sender";
 import type { ChannelSummary } from "../relay/contracts";
 import type { AudioSettingsState } from "./audio-settings";
@@ -23,7 +24,24 @@ export type HuddleSnapshot = Readonly<{
   listening?: readonly string[];
   thinking?: readonly string[];
   error?: string;
+  /** The agent a fresh start couldn't add to the room, apart from any voice
+   * error. `reason` is a cause Buzz can name, and `refusal` why the addition
+   * itself wasn't made, in plain words; otherwise it has none to show. */
+  invite?: Readonly<{
+    agent: string;
+    reason?: "unavailable" | "room" | undefined;
+    refusal?: string | undefined;
+  }>;
 }>;
+/** An invite failure Buzz can name, so people read a sentence rather than the
+ * failure's own words. */
+class InviteFailure extends Error {
+  constructor(
+    readonly reason: NonNullable<HuddleSnapshot["invite"]>["reason"],
+  ) {
+    super(reason);
+  }
+}
 type Attempt = {
   id: string;
   connection: RelaySnapshot;
@@ -34,6 +52,8 @@ type Attempt = {
   stopAccess?: () => void;
   stopAudioSettings?: () => void;
   sender: ReturnType<typeof createPcmSender>;
+  /** Runs this start's agent invite again after it failed. */
+  retryInvite?: () => void;
 };
 const idle: HuddleSnapshot = { phase: "idle", muted: false, participants: [] };
 const message = (error: unknown) =>
@@ -275,16 +295,14 @@ export function createHuddles(
     // Only a fresh start invites; joining someone else's room never adds a listener.
     const key = discover ? dmAgent?.(connection, destination) : undefined;
     let invited = false;
-    let inviteError: string | undefined;
     const seated = (roomId: string) =>
       !!key &&
       !!connection.session.channels.get?.(roomId)?.members?.includes(key);
-    // Clear only this invitation's warning, once the room roster shows the agent.
+    // Clear the invite failure once the room roster shows the agent.
     const confirmInvite = () => {
-      if (!inviteError || snapshot.error !== inviteError) return;
+      if (!snapshot.invite || snapshot.invite.agent !== key) return;
       if (!snapshot.room || !seated(snapshot.room)) return;
-      inviteError = undefined;
-      const { error: _invite, ...rest } = snapshot;
+      const { invite: _invite, ...rest } = snapshot;
       update(rest);
     };
     const inviteAgent = async (roomId: string) => {
@@ -294,13 +312,13 @@ export function createHuddles(
         await connection.session.channels.resolve?.([roomId]);
         if (!valid(attempt)) return;
         if (dmAgent?.(connection, destination) !== key)
-          throw new Error("The agent is no longer available for voice");
+          throw new InviteFailure("unavailable");
         const channel = connection.session.channels.get?.(roomId);
         if (
           !channel?.huddle ||
           channel.parentChannelId !== destination.channelId
         )
-          throw new Error("Couldn’t verify the Huddle room");
+          throw new InviteFailure("room");
         if (!seated(roomId))
           await addChannelMember(
             connection.session,
@@ -310,9 +328,39 @@ export function createHuddles(
           );
       } catch (error) {
         if (!valid(attempt) || seated(roomId)) return;
-        inviteError = `Couldn’t add the agent: ${message(error)}. Use Huddle options → Add someone to retry.`;
-        update({ ...snapshot, error: inviteError });
+        // A refused or blocked addition says why, as Manage members does.
+        const addition = connection.session.outbox
+          ?.snapshot()
+          .find(
+            ({ event, delivery }) =>
+              delivery === "failed" &&
+              event.kind === 9000 &&
+              event.tags.some(([tag, id]) => tag === "h" && id === roomId) &&
+              event.tags.some(([tag, id]) => tag === "p" && id === key),
+          );
+        const refusal = addition && unsentSentence(addition);
+        // The failure stays apart from voice errors. `invited` stays set, so a
+        // later connected event never invites again on its own, even once the
+        // failure is dismissed; only retryInvite asks again.
+        update({
+          ...snapshot,
+          invite: {
+            agent: key,
+            ...(error instanceof InviteFailure
+              ? { reason: error.reason }
+              : refusal
+                ? { refusal }
+                : {}),
+          },
+        });
       }
+    };
+    attempt.retryInvite = () => {
+      if (!snapshot.room || snapshot.invite?.agent !== key) return;
+      const { invite: _invite, ...rest } = snapshot;
+      update(rest);
+      invited = false;
+      void inviteAgent(snapshot.room);
     };
     attempt.stopAccess = connection.session.channels.subscribeList(() => {
       const list = connection.session.channels.list();
@@ -480,6 +528,15 @@ export function createHuddles(
     snapshot: () => snapshot,
     voiceListening: voiceSeat("listening"),
     voiceThinking: voiceSeat("thinking"),
+    /** Tries the failed agent invite of this call again. */
+    retryInvite(call: string) {
+      if (snapshot.id === call) current?.retryInvite?.();
+    },
+    dismissInvite(call: string) {
+      if (snapshot.id !== call || !snapshot.invite) return;
+      const { invite: _invite, ...rest } = snapshot;
+      update(rest);
+    },
     voiceError(call: string, error?: string) {
       if (snapshot.id !== call) return;
       const { error: _previous, ...rest } = snapshot;

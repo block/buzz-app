@@ -11,6 +11,7 @@ import type { Huddles } from "../../features/huddle/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { memberName } from "../../features/channel-members/members";
 import {
   MicrophoneIcon,
   MicrophoneSlashIcon,
@@ -185,6 +186,19 @@ function HuddleCapsuleContent({
   if (call.phase !== "connected") return null;
   return (
     <div className={styles.capsuleWrap}>
+      {call.invite && call.id && (
+        <InviteNotice
+          agent={memberName(session, call.invite.agent) ?? "the agent"}
+          reason={call.invite.reason}
+          refusal={call.invite.refusal}
+          onRetry={() => {
+            if (call.id) huddles.retryInvite(call.id);
+          }}
+          onDismiss={() => {
+            if (call.id) huddles.dismissInvite(call.id);
+          }}
+        />
+      )}
       {call.error && (
         <ToastNotice
           title="Agent voice stopped"
@@ -272,5 +286,44 @@ function HuddleCapsuleContent({
         </span>
       )}
     </div>
+  );
+}
+
+type Invite = NonNullable<ReturnType<Huddles["snapshot"]>["invite"]>;
+
+/** A fresh Huddle couldn't add its DM's agent. The call goes on, so this
+ * offers to add them again rather than reporting a stopped voice. It says
+ * why only when Buzz knows. */
+export function InviteNotice({
+  agent,
+  reason,
+  refusal,
+  onRetry,
+  onDismiss,
+}: {
+  agent: string;
+  reason: Invite["reason"];
+  refusal?: Invite["refusal"];
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  const description =
+    reason === "unavailable"
+      ? `${agent.charAt(0).toUpperCase()}${agent.slice(1)} isn’t available for voice right now.`
+      : reason === "room"
+        ? "Buzz couldn’t verify the Huddle room."
+        : refusal;
+  return (
+    <ToastNotice
+      title={`Couldn’t add ${agent} to the Huddle`}
+      {...(description ? { description } : {})}
+      tone="warning"
+      closeLabel={`Dismiss the problem adding ${agent}`}
+      onDismiss={onDismiss}
+    >
+      <Button size="sm" onClick={onRetry}>
+        Try again
+      </Button>
+    </ToastNotice>
   );
 }

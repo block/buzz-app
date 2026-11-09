@@ -904,14 +904,20 @@ impl Manager {
     }
     /// The managed plugin policy and how each recommendation stands in `catalog`.
     pub fn managed(&self, catalog: &Catalog) -> managed::Managed {
-        managed::status(
-            managed::path(&self.home, std::env::var_os(managed::PATH_ENV)),
+        managed::effective(
+            &self.home,
+            std::env::var_os(managed::PATH_ENV),
+            !managed::PACKAGED_URL.is_empty(),
             catalog,
         )
     }
     /// Repository access rules for Git imports, from the file beside the profile folders.
     pub fn repository_access(&self) -> access::AccessRules {
         access::load(&self.home, std::env::var_os(access::PATH_ENV))
+    }
+    /// Keeps a policy fetched from [`managed::PACKAGED_URL`] if Buzz can use it.
+    pub fn store_packaged_policy(&self, bytes: &[u8]) -> Result<bool> {
+        managed::store_packaged(&self.home, bytes)
     }
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root).map_err(err)?;

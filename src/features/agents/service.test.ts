@@ -18791,6 +18791,46 @@ it("prunes only the objects named, at the heads the owner saw, so one added or c
   }
 });
 
+it("adopts the community's attention as it is when the owner chooses it, publishing nothing", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+      // Unreadable here: the community's set replaces it too.
+      "interest/bad": {
+        slug: "interest/bad",
+        value: { type: "interest", instructions: "" },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Theirs.",
+  });
+  await f.seed("interest/there", { type: "interest", instructions: "There." });
+  await expect(
+    f.service.migrateAttention(bot, { adopt: true }),
+  ).resolves.toMatchObject({
+    migrated: true,
+    different: ["interest/default"],
+    extra: ["interest/there"],
+  });
+  expect(f.ownerWrites).toHaveLength(0);
+  const agent = f.service.find(bot);
+  expect(agent?.attentionStorage).toBe("relay");
+  expect(Object.keys(agent?.attention ?? {}).sort()).toEqual([
+    "interest/default",
+    "interest/there",
+  ]);
+  expect(agent?.attention["interest/default"]?.value).toMatchObject({
+    instructions: "Theirs.",
+  });
+});
+
 it("refuses to move attention with unreadable objects", async () => {
   const f = await relayAttentionSetup({
     device: {

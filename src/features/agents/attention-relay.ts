@@ -576,6 +576,72 @@ export async function publishChange(
   throw new AttentionError("conflict", `${slug} already exists; show it again`);
 }
 
+/** How a relay set differs from `attention`: objects missing or different
+ * there, objects only there, and records it skipped. */
+export function compared(
+  attention: AgentRecord["attention"],
+  set: AttentionSet,
+): AttentionMigration {
+  const sorted = (slugs: Iterable<string>) => [...slugs].sort();
+  return {
+    migrated: false,
+    different: sorted(
+      Object.values(attention)
+        .filter(
+          ({ slug, value }) =>
+            !set.attention[slug] ||
+            !sameValue(set.attention[slug].value, value),
+        )
+        .map(({ slug }) => slug),
+    ),
+    extra: sorted(
+      Object.keys(set.attention).filter((slug) => !attention[slug]),
+    ),
+    skipped: sorted(Object.keys(set.skipped)),
+  };
+}
+
+/** What moving an agent's attention to the relay found. It moved only when
+ * the relay set came back the same as the record. */
+export type AttentionMigration = Readonly<{
+  migrated: boolean;
+  /** Objects the relay is missing or holds another value of. */
+  different: readonly string[];
+  /** Objects only the relay holds. They stay; nothing removes them. */
+  extra: readonly string[];
+  /** Records skipped, here or on the relay; they are not moved. */
+  skipped: readonly string[];
+}>;
+
+/** Publishes each object of `attention` the relay does not already hold
+ * (Rollout 3), Interests first, then reads the set back and compares it. */
+export async function publishAll(
+  io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
+  read: () => Promise<AttentionSet>,
+  attention: AgentRecord["attention"],
+): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
+  const before = await read();
+  const changes = Object.values(attention)
+    .filter(
+      ({ slug, value }) =>
+        !before.attention[slug] ||
+        !sameValue(before.attention[slug].value, value),
+    )
+    .map(({ slug, value }) => ({ slug, value }))
+    .sort((a, b) =>
+      a.slug.startsWith("interest/") === b.slug.startsWith("interest/")
+        ? a.slug < b.slug
+          ? -1
+          : 1
+        : a.slug.startsWith("interest/")
+          ? -1
+          : 1,
+    );
+  await publishChanges(io, before, changes);
+  const set = await read();
+  return { set, found: compared(attention, set) };
+}
+
 /** The sync filter for one attention channel (Writing attention, step 1). */
 export const syncFilter = (channel: string) => ({
   artifact: "current" as const,

@@ -320,10 +320,14 @@ import {
   addWritten,
   agentSender,
   attentionChanges,
+  type AttentionMigration,
+  emptySet,
   mirrored,
   ownerSender,
   pendingSet,
+  publishAll,
   publishChanges,
+  readOnce,
   relayAttention,
   type AttentionSet,
   type RelayAttention,
@@ -417,6 +421,9 @@ export type Agent<Config = unknown> = Readonly<{
   /** Why the attention shown may not be its current attention: on the relay,
    * while this device is still reading it or can't. */
   attentionProblem?: string;
+  /** Where its attention is stored: absent for this device, "relay" for its
+   * community. */
+  attentionStorage?: "relay";
   /** Its type's settings, the same in each of its communities. */
   config: Config;
   /** The synced head each synced side's editor opens; Save revises it. */
@@ -1900,6 +1907,15 @@ export type Agents = {
    * device only while such a plugin is on; with none, it is off for every
    * agent. */
   controlAttention(): void;
+  /** Moves the agent's attention from this device to its community
+   * (Rollout 3): publishes each object, reads the set back and compares
+   * it. The agent switches only when they are the same; otherwise it stays
+   * on this device and the result lists what differs. Its objects here stay
+   * as a backup that `revertAttention` restores. */
+  migrateAttention(agent: AgentKey): Promise<AttentionMigration>;
+  /** Moves the agent's attention back to this device, as it was when it
+   * moved: changes made in the community since then are lost here. */
+  revertAttention(agent: AgentKey): Promise<void>;
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
    * acts as its owner. A session lists
@@ -9189,6 +9205,90 @@ export class AgentsService extends Service implements Agents {
       return mirrored(saved, shown.set);
     });
   }
+  async migrateAttention(key: AgentKey): Promise<AttentionMigration> {
+    const identity = this.liveMember(key);
+    const native = this.native;
+    const binding = identity && this.bindingOf(identity);
+    const { session, controller } = binding ?? {};
+    const relayAuthor = session?.relayAuthor;
+    const read = session?.snapshotRead;
+    const artifacts = session?.configArtifactWriter;
+    if (!identity || !native || !binding || !session || !controller)
+      throw new Error("Connect this agent's community to move its attention");
+    if (!relayAuthor || !read || !artifacts)
+      throw new Error("This community can't store attention");
+    let result: AttentionMigration | undefined;
+    await this.change(key, async (saved) => {
+      if (!saved) throw new Error("No such agent on this device");
+      if (saved.attentionStorage === "relay")
+        throw new Error("This agent's attention is already on its community");
+      const skipped = Object.keys(saved.skipped ?? {});
+      if (skipped.length)
+        throw new Error(
+          `Fix or remove its unreadable attention first: ${skipped.join(", ")}`,
+        );
+      const channel = await this.ensureAttention(
+        binding,
+        identity.pubkey,
+        controller.signal,
+      );
+      const { set, found } = await publishAll(
+        { read, send: ownerSender(artifacts, controller.signal) },
+        () => readOnce((filter) => session.artifacts.sync(filter), channel),
+        saved.attention,
+      );
+      const same =
+        !found.different.length && !found.extra.length && !found.skipped.length;
+      result = { ...found, migrated: same };
+      if (!same) return saved;
+      return {
+        ...mirrored(saved, set),
+        attentionStorage: "relay",
+        attentionBackup: saved.attention,
+      };
+    });
+    return result as AttentionMigration;
+  }
+  /** The agent's attention channel in this community, which its owner
+   * creates when there is none (Create), with the agent as a member: only
+   * an agent whose profile proves this owner joins. */
+  private async ensureAttention(
+    binding: Binding,
+    agent: string,
+    signal: AbortSignal,
+  ) {
+    const channels = attentionChannels(binding);
+    if (!channels) throw new Error("This community can't store attention");
+    const found = await channels.ensure(
+      "agent-attention",
+      agentSubject(agent),
+      "Attention",
+      signal,
+    );
+    if (!found.members?.includes(agent)) {
+      const added = await channels.addMember(found.id, agent, signal);
+      if (added.status === "failed")
+        throw new Error(
+          `The agent could not join its attention channel: ${added.error ?? "the change failed"}`,
+        );
+    }
+    return found.id;
+  }
+  async revertAttention(key: AgentKey) {
+    await this.change(key, (saved) => {
+      if (!saved) throw new Error("No such agent on this device");
+      if (saved.attentionStorage !== "relay") return saved;
+      const {
+        attentionStorage: _,
+        attentionBackup: backup,
+        ...rest
+      } = mirrored(saved, {
+        ...emptySet(""),
+        attention: saved.attentionBackup ?? saved.attention,
+      });
+      return { ...rest, skipped: {} };
+    });
+  }
   /** The relay head of `slug` in the agent's current attention set, when
    * its attention is on the relay. */
   private attentionRevision(key: AgentKey, slug: string) {
@@ -9343,6 +9443,9 @@ export class AgentsService extends Service implements Agents {
         attentionPending: true,
       }),
       ...(attentionProblem && { attentionProblem }),
+      ...(record.attentionStorage && {
+        attentionStorage: record.attentionStorage,
+      }),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
@@ -10011,6 +10114,7 @@ export class AgentsService extends Service implements Agents {
             this.attentionPending(identity.key, record) &&
           prior.attentionProblem ===
             this.attentionProblem(identity.key, record) &&
+          prior.attentionStorage === record.attentionStorage &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&

@@ -833,3 +833,25 @@ it("saves a model route beside the config, so older readers run their default", 
     JSON.parse(storage.getItem(recordKey(pubkey)) as string),
   ).not.toHaveProperty("modelRoute");
 });
+
+it("keeps where attention is stored, and its backup only while on the relay", async () => {
+  const storage = memoryStorage();
+  const backup = setAttention(
+    record,
+    "interest/default",
+    { type: "interest", instructions: "Here." },
+    7,
+  ).attention;
+  const relay: AgentRecord = {
+    ...record,
+    attentionStorage: "relay",
+    attentionBackup: backup,
+  };
+  await writeRecord(storage, relay);
+  expect(readRecords(storage)[pubkey]).toMatchObject({
+    attentionStorage: "relay",
+    attentionBackup: backup,
+  });
+  await writeRecord(storage, { ...record, attentionBackup: backup });
+  expect(readRecords(storage)[pubkey]).not.toHaveProperty("attentionBackup");
+});

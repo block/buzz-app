@@ -17749,6 +17749,8 @@ async function relayAttentionSetup(
      * now on the relay. */
     storage?: AgentStore;
     history?: RelayEvent[];
+    /** The record's attention here, on this device. */
+    device?: Record<string, unknown>;
   } = {},
 ) {
   const relayKey = generateSecretKey();
@@ -17789,8 +17791,12 @@ async function relayAttentionSetup(
     JSON.stringify({
       ...(saved
         ? JSON.parse(saved)
-        : { pubkey: bot, attention: {}, config: { reply: "ok" } }),
-      attentionStorage: "relay",
+        : {
+            pubkey: bot,
+            attention: options.device ?? {},
+            config: { reply: "ok" },
+          }),
+      ...(!options.device && { attentionStorage: "relay" }),
       ...(options.enabled && { attentionEnabled: true }),
     }),
   );
@@ -18603,6 +18609,72 @@ it("drops a watch this device created once the relay deleted it, with the channe
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("moves an agent's attention to its community only when the set comes back the same, and back", async () => {
+  const instructions = (text: string) => ({
+    slug: "interest/default",
+    value: { type: "interest", instructions: text },
+    modifiedAt: 1,
+  });
+  const f = await relayAttentionSetup({
+    device: { "interest/default": instructions("Here.") },
+  });
+  // The community holds another object: they differ, so it stays here.
+  await f.seed("interest/there", { type: "interest", instructions: "There." });
+  const refused = await f.service.migrateAttention(bot);
+  expect(refused).toEqual({
+    migrated: false,
+    different: [],
+    extra: ["interest/there"],
+    skipped: [],
+  });
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  // Published anyway, as the owner; a second try publishes nothing new.
+  expect(f.ownerWrites).toHaveLength(1);
+  await f.seed("interest/there", null);
+  const moved = await f.service.migrateAttention(bot);
+  expect(moved.migrated).toBe(true);
+  expect(f.ownerWrites).toHaveLength(1);
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
+  );
+  // An edit on the relay shows here; moving back restores the backup.
+  await f.seed("interest/default", { type: "interest", instructions: "New." });
+  await vi.waitFor(() =>
+    expect(
+      f.service.find(bot)?.attention["interest/default"]?.value,
+    ).toMatchObject({ instructions: "New." }),
+  );
+  await f.service.revertAttention(bot);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  expect(
+    f.service.find(bot)?.attention["interest/default"]?.value,
+  ).toMatchObject({ instructions: "Here." });
+  // Moving again publishes the record's objects over the relay's.
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+  });
+  expect(
+    f.service.find(bot)?.attention["interest/default"]?.value,
+  ).toMatchObject({ instructions: "Here." });
+});
+
+it("refuses to move attention with unreadable objects", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "" },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await expect(f.service.migrateAttention(bot)).rejects.toThrow(
+    "Fix or remove its unreadable attention first: interest/default",
+  );
+  expect(f.ownerWrites).toHaveLength(0);
 });
 
 it("shows why a relay agent's attention is not current", async () => {

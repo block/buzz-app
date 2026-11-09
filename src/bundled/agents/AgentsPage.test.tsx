@@ -528,6 +528,13 @@ function setup(
     gatewayHarnesses: () => {},
     registerModelRouter: () => {},
     registerSessionRouter: () => {},
+    migrateAttention: async () => ({
+      migrated: false,
+      different: [],
+      extra: [],
+      skipped: [],
+    }),
+    revertAttention: async () => {},
     registerExecution: () => {},
     bindExecution: async () => {},
     executionBinding: () => undefined,

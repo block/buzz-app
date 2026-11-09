@@ -1686,6 +1686,85 @@ it("`#` chooses New chat's workspace without leaving text, and Send files the ch
   expect(f.messages.send.mock.calls[0]?.[1]).not.toContain("#");
 });
 
+it("a new chat whose saved workspace was deleted starts without one", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const scope = "deleted-workspace";
+  writeView(scope, "solo:new-project", "work");
+  writeView(scope, "solo:settings", {
+    name: "Weekly plan",
+    ttlSeconds: 600,
+    canvas: "My own notes",
+  });
+  Object.assign(f.session.soloPreferences, {
+    snapshot: () => ({
+      status: "ready",
+      data: { sections: [{ id: "other", name: "Other" }], assignments: {} },
+    }),
+  });
+  render(<SoloDraft session={f.session} scope={scope} onStarted={started} />);
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  await user.type(screen.getByRole("textbox"), "Plan the week");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("alert")).toBeNull();
+  // Only the workspace goes; the draft's own name, lifetime and instructions stay.
+  expect(f.channelWrites.create).toHaveBeenCalledWith(
+    expect.any(String),
+    "Weekly plan",
+    600,
+    true,
+    ["a".repeat(64)],
+  );
+  await waitFor(() =>
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "My own notes",
+      undefined,
+    ),
+  );
+  expect(f.assign).not.toHaveBeenCalled();
+});
+
+it("deleting the chosen workspace while New chat is open drops it from the draft", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const scope = "workspace-deleted-live";
+  const listeners = new Set<() => void>();
+  let sections = [
+    { id: "work", name: "Work" },
+    { id: "other", name: "Other" },
+  ];
+  Object.assign(f.session.soloPreferences, {
+    snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  render(<SoloDraft session={f.session} scope={scope} onStarted={started} />);
+  await user.click(screen.getByRole("button", { name: "Add workspace" }));
+  await user.click(await screen.findByRole("menuitemradio", { name: "Work" }));
+  await user.type(screen.getByRole("textbox"), "Plan the week");
+  expect(screen.getByRole("button", { name: "Workspace: Work" })).toBeVisible();
+  act(() => {
+    sections = sections.filter((section) => section.id !== "work");
+    for (const listener of listeners) listener();
+  });
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("alert")).toBeNull();
+  // Neither the preloaded setup of the deleted workspace nor its filing.
+  await act(async () => {});
+  expect(f.assign).not.toHaveBeenCalled();
+  expect(f.saveCanvas).not.toHaveBeenCalled();
+});
+
 it("inherits the project's defaults for two consecutive new chats", async () => {
   const f = await projectSetup();
   const user = userEvent.setup();

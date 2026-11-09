@@ -272,13 +272,14 @@ export async function loadChatSetup(
 ): Promise<ChatSetup & { revision: string }> {
   const store = session.soloPreferences;
   await store.refresh();
-  const preferences = store.snapshot();
-  if (
-    !store.writable ||
-    !preferences.data?.sections.some((project) => project.id === projectId)
-  )
+  const sections = store.writable ? store.snapshot().data?.sections : undefined;
+  if (!sections)
     throw new Error(
-      "This workspace is unavailable. Refresh workspaces before starting a chat.",
+      "Workspaces can’t be read right now. Try again, or choose No workspace.",
+    );
+  if (!sections.some((project) => project.id === projectId))
+    throw new Error(
+      "This workspace was deleted. Start the chat without one, or choose another.",
     );
   await session.channelKit.refresh();
   const kit = session.channelKit.snapshot();

@@ -179,6 +179,21 @@ it("loads exact project defaults and blocks when the catalog fails", async () =>
     "defaults couldn’t load",
   );
 });
+it("tells a deleted workspace apart from an unreadable workspace list", async () => {
+  const f = fixture();
+  await expect(loadChatSetup(f.session, "deleted")).rejects.toThrow(
+    "This workspace was deleted. Start the chat without one, or choose another.",
+  );
+  const unreadable =
+    "Workspaces can’t be read right now. Try again, or choose No workspace.";
+  Object.assign(f.session.soloPreferences, { writable: false });
+  await expect(loadChatSetup(f.session, "work")).rejects.toThrow(unreadable);
+  Object.assign(f.session.soloPreferences, {
+    writable: true,
+    snapshot: () => ({ status: "error", error: "Offline" }),
+  });
+  await expect(loadChatSetup(f.session, "work")).rejects.toThrow(unreadable);
+});
 it("names the saved defaults it read, even when they change while agents load", async () => {
   const f = fixture();
   const pubkey = "a".repeat(64);

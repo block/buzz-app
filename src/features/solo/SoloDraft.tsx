@@ -342,6 +342,26 @@ export function SoloDraft({
     setup.catch(() => {});
     workspace.current = { id: selectedProject, setup };
   });
+  // A workspace deleted since it was picked, here or on another device, leaves
+  // the draft, so a start neither files into it nor uses its defaults.
+  useEffect(() => {
+    const store = session.soloPreferences;
+    if (!store || !selectedProject) return;
+    const drop = () => {
+      const preferences = store.snapshot();
+      if (
+        preferences.status !== "ready" ||
+        preferences.data?.sections.some(({ id }) => id === selectedProject)
+      )
+        return;
+      setSelectedProject("");
+      writeView(scope, `${draftKey}:new-project`, "");
+    };
+    drop();
+    return typeof store.subscribe === "function"
+      ? store.subscribe(drop)
+      : undefined;
+  }, [session, scope, draftKey, selectedProject]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;

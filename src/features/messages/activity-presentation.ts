@@ -206,7 +206,6 @@ export function activityPresentation(
   // Each agent row's exact request: its publishing run, else a signed claim
   // naming a loaded human request in the same conversation.
   const causes = publishedRequests(rows, snapshot);
-  const humanRequests = new Map<string, ChannelMessage>();
   const requests = new Map<string, string>();
   if (rootId) requests.set(rootId, rootId);
   const representedAgents = new Map<string, string[]>();
@@ -217,23 +216,25 @@ export function activityPresentation(
       .filter((row) => row.audience === "agents" || row.agentEnvelope)
       .map((row) => row.authorId),
   );
+  const isAgent = (row: ChannelMessage) =>
+    activityAuthors.has(row.authorId) || agents?.has(row.authorId);
+  const isRequest = (row: ChannelMessage) =>
+    row.audience !== "agents" &&
+    !isAgent(row) &&
+    !row.membership &&
+    !!agents &&
+    !agents.has(row.authorId);
+  // Indexed up front: a skewed clock can order a claim before its request.
+  const humanRequests = new Map(
+    rows.filter(isRequest).map((row) => [row.id, row]),
+  );
   let request = rootId;
   for (const row of rows) {
-    const isAgent =
-      activityAuthors.has(row.authorId) || agents?.has(row.authorId);
-    if (
-      row.audience !== "agents" &&
-      !isAgent &&
-      !row.membership &&
-      agents &&
-      !agents.has(row.authorId)
-    ) {
-      request = row.id;
-      humanRequests.set(row.id, row);
-    }
+    const isAgentRow = isAgent(row);
+    if (isRequest(row)) request = row.id;
     const claimed = row.request && humanRequests.get(row.request);
     if (
-      isAgent &&
+      isAgentRow &&
       claimed &&
       !causes.has(row.id) &&
       claimed.channelId === row.channelId &&
@@ -248,9 +249,9 @@ export function activityPresentation(
       (row.replyParentId
         ? (requests.get(row.replyParentId) ?? row.replyParentId)
         : undefined);
-    const rowRequest = isAgent ? (parentRequest ?? request) : request;
+    const rowRequest = isAgentRow ? (parentRequest ?? request) : request;
     if (rowRequest) requests.set(row.id, rowRequest);
-    if (rowRequest && !row.membership && isAgent) {
+    if (rowRequest && !row.membership && isAgentRow) {
       const represented = representedAgents.get(rowRequest) ?? [];
       if (!represented.includes(row.authorId)) represented.push(row.authorId);
       representedAgents.set(rowRequest, represented);

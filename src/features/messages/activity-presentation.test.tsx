@@ -192,6 +192,8 @@ it("binds an agent update to the request it claims only when that is a loaded hu
     [
       message("root", human),
       update("old", undefined),
+      // A skewed or tied clock can sort a claim before the request it names.
+      update("skewed", "followUp"),
       message("followUp", human, { threadRootId: "root" }),
       message("elsewhere", human, { threadRootId: "otherRoot" }),
       message("otherChannel", human, {
@@ -216,6 +218,7 @@ it("binds an agent update to the request it claims only when that is a loaded hu
   );
   const request = (id: string) => byRow.get(id)?.requestId;
   expect(request("exact")).toBe("followUp");
+  expect(request("skewed")).toBe("followUp");
   expect(request("toRoot")).toBe("root");
   // Untagged history and unverifiable claims keep their reply link.
   for (const id of [

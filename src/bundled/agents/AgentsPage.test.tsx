@@ -3914,6 +3914,141 @@ it.each(["error", "unavailable"] as const)(
   },
 );
 
+it("tells a browser's Import an agent that agents run in the desktop app", async () => {
+  const user = userEvent.setup();
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  // Outside the desktop app no agent type registers.
+  const { agents } = setup([], { status: "unavailable", page: { navigator } });
+  const none: RegisteredAgentType[] = [];
+  agents.types = () => none;
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Import an agent" });
+  expect(
+    within(dialog).getByText(
+      "Agents runs in the desktop app. Open Buzz there to import one.",
+    ),
+  ).toBeVisible();
+  // The page behind it says the same.
+  expect(
+    screen.getByText("Agents runs in the desktop app", { exact: true }),
+  ).toBeInTheDocument();
+  expect(within(dialog).queryByText(/Manage plugins/)).not.toBeInTheDocument();
+});
+
+it("tells Import an agent that agents could not load, as the page does", async () => {
+  const user = userEvent.setup();
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const { agents } = setup([], { status: "error", page: { navigator } });
+  const none: RegisteredAgentType[] = [];
+  agents.types = () => none;
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Import an agent" });
+  // Without a reason, the page's own fallback.
+  expect(
+    within(dialog).getByText("Agents could not load. Try again."),
+  ).toBeVisible();
+  expect(within(dialog).queryByText(/Manage plugins/)).not.toBeInTheDocument();
+});
+
+it("links Import an agent to Manage plugins while no agent type plugin is on", async () => {
+  const user = userEvent.setup();
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const { agents } = setup([agent("Ada", 1)], { page: { navigator } });
+  const none: RegisteredAgentType[] = [];
+  agents.types = () => none;
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Import an agent" });
+  expect(
+    within(dialog).getByText(/No agent plugin is turned on/),
+  ).toHaveTextContent(
+    "No agent plugin is turned on. Turn one on in Manage plugins.",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Manage plugins" }),
+  );
+  expect(navigator.open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+  // Settings opens in place of the dialog, not over it.
+  expect(
+    screen.queryByRole("dialog", { name: "Import an agent" }),
+  ).not.toBeInTheDocument();
+});
+
+it("links a Marketplace agent's Import to Manage plugins while no agent type plugin is on", async () => {
+  const user = userEvent.setup();
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const view = setup([], { page: { navigator } });
+  const none: RegisteredAgentType[] = [];
+  view.agents.types = () => none;
+  const owner = createRelaySession(null);
+  const session = {
+    ...owner.session,
+    read: vi.fn().mockResolvedValue([
+      {
+        id: "ab".repeat(32),
+        pubkey: "cd".repeat(32),
+        kind: 30175,
+        created_at: 1,
+        tags: [
+          ["d", "helper"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "Marketplace helper",
+          system_prompt: "Help with tasks.",
+        }),
+      },
+    ]),
+  };
+  const snapshot = { status: "ready" as const, generation: 1, session };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  try {
+    view.rerender(
+      <AgentsPage agents={view.agents} relay={relay} navigator={navigator} />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Marketplace" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Marketplace helper" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Import" }));
+    const dialog = screen.getByRole("dialog", { name: "Marketplace helper" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Manage plugins" }),
+    );
+    expect(navigator.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Marketplace helper" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
 it("says in Settings where an agent's config lives, and why it is only here", async () => {
   const user = userEvent.setup();
   const { agents, notify } = setup([agent("Ada", 1)]);

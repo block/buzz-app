@@ -203,6 +203,45 @@ it("names what it added, and opens it from there", async () => {
   );
 });
 
+it("links Manage plugins from a card while no agent type plugin is on", async () => {
+  const user = userEvent.setup();
+  await serve(ada());
+  const none: RegisteredAgentType[] = [];
+  const navigator = { open: vi.fn(async () => ({})) };
+  render(
+    <AgentCardAttachment
+      attachment={card}
+      source="buzz-media://ada.png"
+      agents={{ ...agents, types: () => none }}
+      relay={relay}
+      navigator={navigator as unknown as Navigation}
+      canOpen={() => false}
+      open={() => false}
+    />,
+  );
+  const button = await screen.findByRole("button", {
+    name: "Ada, shared agent",
+  });
+  await vi.waitFor(() => expect(button).toBeEnabled());
+  await user.click(button);
+  const dialog = screen.getByRole("dialog", { name: "Ada" });
+  expect(
+    within(dialog).getByText(/No agent plugin is turned on/),
+  ).toHaveTextContent(
+    "No agent plugin is turned on. Turn one on in Manage plugins.",
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Manage plugins" }),
+  );
+  expect(navigator.open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
+  // Settings opens in place of the dialog, not over it.
+  expect(screen.queryByRole("dialog", { name: "Ada" })).not.toBeInTheDocument();
+});
+
 it("refuses a card larger than the limit without reading it all", async () => {
   const chunk = new Uint8Array(1024 * 1024);
   const chunks = Array.from({ length: 20 }, () => chunk);

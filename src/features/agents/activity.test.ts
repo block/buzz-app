@@ -766,39 +766,48 @@ it("gives no request work to a rejected steer after its turn's raw start is evic
   ]).toEqual(["one"]);
   evicted.activity.dispose();
 });
-it("does not let a delayed start the lifecycle ignored hide an accepted steer's records", () => {
-  const id = (n: number) => n.toString(16).padStart(64, "0");
-  const delayed = fixture();
-  const first = "1".repeat(64),
-    steered = "3".repeat(64);
-  delayed.send(
-    delayed.item("turn_steered", "one", {
-      seq: 2,
-      payload: { triggeringEventIds: [first] },
-    }),
-  );
-  delayed.send(
-    delayed.item("turn_started", "one", {
-      timestamp: new Date(Date.now() - 1000).toISOString(),
-      payload: {
-        triggeringEventIds: Array.from({ length: 63 }, (_, i) => id(i + 1)),
-      },
-    }),
-  );
-  delayed.send(
-    delayed.item("turn_steered", "one", {
-      seq: 3,
-      payload: { triggeringEventIds: [steered] },
-    }),
-  );
-  delayed.send(delayed.item("acp_read", "one", { seq: 4 }));
-  expect(delayed.snapshot().turns[0]?.triggeringEventIds).toEqual([
-    first,
-    steered,
-  ]);
-  const [work] = requestWork(delayed.snapshot(), "a", steered);
-  expect(work?.state).toBe("working");
-  expect(work?.selected.records.length).toBeGreaterThan(0);
-  expect(requestWork(delayed.snapshot(), "a", id(1))).toEqual([]);
-  delayed.activity.dispose();
-});
+it.each(["turn_liveness", "turn_steered"])(
+  "keeps a start that arrives after its turn's %s as membership, without refreshing the turn",
+  (firstKind) => {
+    const f = fixture();
+    const origin = "1".repeat(64),
+      steered = "2".repeat(64),
+      second = "3".repeat(64);
+    f.send(
+      f.item(firstKind, "one", {
+        seq: 2,
+        payload:
+          firstKind === "turn_steered" ? { triggeringEventIds: [steered] } : {},
+      }),
+    );
+    const timestamp = f.snapshot().turns[0]?.timestamp;
+    f.send(
+      f.item("turn_started", "one", {
+        timestamp: new Date(Date.now() - 1000).toISOString(),
+        payload: { triggeringEventIds: [origin] },
+      }),
+    );
+    f.send(f.item("acp_read", "one", { seq: 3 }));
+    expect(f.snapshot().turns[0]).toMatchObject({
+      timestamp,
+      state: "working",
+      triggeringEventIds:
+        firstKind === "turn_steered" ? [steered, origin] : [origin],
+    });
+    expect(f.snapshot().turns[0]?.ambiguous).toBeUndefined();
+    const [work] = requestWork(f.snapshot(), "a", origin);
+    expect(work?.state).toBe("working");
+    expect([...(work?.selected.turnIds ?? [])]).toEqual(["one"]);
+    expect(work?.selected.records.length).toBeGreaterThanOrEqual(3);
+    // A second late start leaves the turn ambiguous, as one in order would.
+    f.send(
+      f.item("turn_started", "one", {
+        timestamp: new Date(Date.now() - 2000).toISOString(),
+        payload: { triggeringEventIds: [second] },
+      }),
+    );
+    expect(f.snapshot().turns[0]?.ambiguous).toBe(true);
+    expect(f.snapshot().turns[0]?.triggeringEventIds).not.toContain(second);
+    f.activity.dispose();
+  },
+);

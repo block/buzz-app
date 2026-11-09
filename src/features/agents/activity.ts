@@ -325,10 +325,18 @@ export function createAgentActivity(
       previous?.ended ||
       (previous && previous.timestamp > timestamp && !ends.has(item.kind))
     ) {
-      // Joining a turn is membership, not progress: a late steer still names
-      // the turn its message ran in, without reviving or refreshing it.
-      if (item.kind !== "turn_steered" || !added || !previous) return;
-      const merged = withTriggers(previous, added);
+      // Membership is not progress: a late start or steer still names the
+      // messages its turn ran for, without reviving or refreshing it. A late
+      // second start makes the turn ambiguous, as one in order would.
+      if (!added || !previous) return;
+      let merged: Turn;
+      if (item.kind === "turn_steered") merged = withTriggers(previous, added);
+      else if (item.kind !== "turn_started") return;
+      else if (previous.started)
+        merged = previous.ambiguous
+          ? previous
+          : { ...previous, ambiguous: true };
+      else merged = { ...withTriggers(previous, added), started: true };
       if (merged === previous) return;
       associate(merged);
       turns.set(key, merged);

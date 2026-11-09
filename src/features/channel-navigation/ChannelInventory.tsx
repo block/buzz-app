@@ -215,6 +215,10 @@ export function ChannelInventory({
   const readWrite = readAction.state;
   const [rowFocus, setRowFocus] = useState<string>();
   const pluginHiddenRows = useRef(new Map<string, object>());
+  // Labelled plugin-hidden rows, listed in their section's Filter menu.
+  const [hiddenLabels, setHiddenLabels] = useState<ReadonlyMap<string, string>>(
+    new Map(),
+  );
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
     queries.channelKit.snapshot,
@@ -590,6 +594,7 @@ export function ChannelInventory({
                     kind: "channel",
                     channelId: channel.id,
                   }),
+                channel.id === current?.id,
               ),
             }));
             const sorted = sortSidebarRows(
@@ -602,7 +607,14 @@ export function ChannelInventory({
               : { ...section, rows: sorted.map(({ channel }) => channel) };
           })
         : sections,
-    [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
+    [
+      sections,
+      rowSortModes,
+      sectionSort,
+      rowUnread,
+      queries.unread,
+      current?.id,
+    ],
   );
   const filteredSections = useSidebarFilters(
     sortedSections,
@@ -1006,8 +1018,10 @@ export function ChannelInventory({
   // Hidden-state callbacks run in child layout effects, before parent effects.
   currentRowMenu.current = rowMenu;
   const setRowHidden = useCallback(
-    (id: string, hidden: boolean) => {
+    (id: string, hidden: boolean, label?: string) => {
       const registration = {};
+      const labelled = hidden ? label : undefined;
+      setHiddenLabels((current) => withLabel(current, id, labelled));
       if (hidden) {
         pluginHiddenRows.current.set(id, registration);
         const menu = currentRowMenu.current;
@@ -1023,8 +1037,10 @@ export function ChannelInventory({
       } else pluginHiddenRows.current.delete(id);
       return () => {
         // An exiting placement must not clear the live placement's registration.
-        if (pluginHiddenRows.current.get(id) === registration)
+        if (pluginHiddenRows.current.get(id) === registration) {
           pluginHiddenRows.current.delete(id);
+          setHiddenLabels((current) => withLabel(current, id, undefined));
+        }
       };
     },
     [closeRowMenu, sidebar.list],
@@ -1427,6 +1443,7 @@ export function ChannelInventory({
               }
               channels={{
                 rows: section.hiddenRows,
+                hidden: labelledRows(section.rows, hiddenLabels),
                 selected: current?.id,
                 select,
               }}
@@ -1894,4 +1911,29 @@ export function ChannelInventory({
       </>
     ),
   });
+}
+
+function withLabel(
+  current: ReadonlyMap<string, string>,
+  id: string,
+  label: string | undefined,
+) {
+  if (current.get(id) === label) return current;
+  const next = new Map(current);
+  if (label === undefined) next.delete(id);
+  else next.set(id, label);
+  return next;
+}
+
+/** Section rows a plugin hid under a label, grouped by that label in row order. */
+function labelledRows(
+  rows: readonly ChannelSummary[],
+  labels: ReadonlyMap<string, string>,
+) {
+  const groups = new Map<string, ChannelSummary[]>();
+  for (const row of rows) {
+    const label = labels.get(row.id);
+    if (label) groups.set(label, [...(groups.get(label) ?? []), row]);
+  }
+  return [...groups].map(([label, rows]) => ({ label, rows }));
 }

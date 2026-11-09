@@ -2,6 +2,7 @@ import { RenameSidebarSection } from "./RenameSidebarSection";
 import { SidebarActiveDialog, activeWindowLabel } from "./SidebarActiveDialog";
 import { FadingLabel } from "./FadingLabel";
 import {
+  Fragment,
   useId,
   useRef,
   useState,
@@ -123,6 +124,13 @@ export function SidebarSection({
   channels?:
     | {
         rows: readonly ChannelSummary[];
+        /** Rows plugins hid, grouped under each plugin's label. */
+        hidden?:
+          | readonly Readonly<{
+              label: string;
+              rows: readonly ChannelSummary[];
+            }>[]
+          | undefined;
         selected?: string | undefined;
         select: (id: string) => void;
       }
@@ -157,6 +165,42 @@ export function SidebarSection({
   const [removeError, setRemoveError] = useState("");
   const canRemove = !!onRemove && sectionKey.startsWith("group:");
   const canRename = !!onRename && sectionKey.startsWith("group:");
+  const hiddenGroup = (label: string, rows: readonly ChannelSummary[]) =>
+    channels &&
+    rows.length > 0 && (
+      <Fragment key={label}>
+        <MenuSeparator />
+        <MenuGroup>
+          <MenuGroupLabel emphasis="quiet">{label}</MenuGroupLabel>
+          {rows.map((channel) => {
+            const select = () => {
+              onToggle(true);
+              channels.select(channel.id);
+              setMenuOpen(false);
+            };
+            return session ? (
+              <ChannelSidebarMenuItem
+                key={channel.id}
+                channel={channel}
+                session={session}
+                selected={channels.selected === channel.id}
+                onSelect={select}
+              />
+            ) : (
+              <MenuItem
+                key={channel.id}
+                aria-current={
+                  channels.selected === channel.id ? "page" : undefined
+                }
+                onClick={select}
+              >
+                {channel.name}
+              </MenuItem>
+            );
+          })}
+        </MenuGroup>
+      </Fragment>
+    );
   const remove = async () => {
     if (!onRemove || removing) return;
     setRemoving(true);
@@ -263,48 +307,15 @@ export function SidebarSection({
                         </MenuRadioGroup>
                         {channels &&
                           filter.value !== "all" &&
-                          channels.rows.length > 0 && (
-                            <>
-                              <MenuSeparator />
-                              <MenuGroup>
-                                <MenuGroupLabel emphasis="quiet">
-                                  {filter.value === "unreads"
-                                    ? "No unread messages"
-                                    : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`}
-                                </MenuGroupLabel>
-                                {channels.rows.map((channel) => {
-                                  const select = () => {
-                                    onToggle(true);
-                                    channels.select(channel.id);
-                                    setMenuOpen(false);
-                                  };
-                                  return session ? (
-                                    <ChannelSidebarMenuItem
-                                      key={channel.id}
-                                      channel={channel}
-                                      session={session}
-                                      selected={
-                                        channels.selected === channel.id
-                                      }
-                                      onSelect={select}
-                                    />
-                                  ) : (
-                                    <MenuItem
-                                      key={channel.id}
-                                      aria-current={
-                                        channels.selected === channel.id
-                                          ? "page"
-                                          : undefined
-                                      }
-                                      onClick={select}
-                                    >
-                                      {channel.name}
-                                    </MenuItem>
-                                  );
-                                })}
-                              </MenuGroup>
-                            </>
+                          hiddenGroup(
+                            filter.value === "unreads"
+                              ? "No unread messages"
+                              : `No activity in the last ${activeWindowLabel(filter.activeWindowSeconds)}`,
+                            channels.rows,
                           )}
+                        {channels?.hidden?.map(({ label, rows }) =>
+                          hiddenGroup(label, rows),
+                        )}
                       </MenuSubmenuPopup>
                     </MenuSubmenu>
                   )}

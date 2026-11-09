@@ -11,7 +11,9 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   TIME_PRESETS,
+  customInputs,
   formatDue,
+  nextDayAt9am,
   parseCustomDateTime,
   shiftedFrom,
   todayDateString,
@@ -31,8 +33,9 @@ export function RemindDialog({
   const fields = useRef<HTMLDivElement>(null);
   const [when, setWhen] = useState(TIME_PRESETS[0]?.label ?? "custom");
   const [note, setNote] = useState("");
-  const [date, setDate] = useState(todayDateString);
-  const [time, setTime] = useState("09:00");
+  const [start] = useState(defaultCustomInputs);
+  const [date, setDate] = useState(start.date);
+  const [time, setTime] = useState(start.time);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const notify = useToastNotification();
@@ -167,4 +170,13 @@ export function RemindDialog({
       </div>
     </Dialog>
   );
+}
+
+/**
+ * Where a custom time starts when there is no due time to keep: the next 9am,
+ * today's until it passes, then tomorrow's, so the fields never open on a past
+ * time.
+ */
+function defaultCustomInputs() {
+  return customInputs(nextDayAt9am(0));
 }

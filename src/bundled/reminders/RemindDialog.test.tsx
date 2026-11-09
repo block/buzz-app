@@ -290,6 +290,39 @@ it("reveals labelled custom fields and saves a future time with the note", async
   );
 });
 
+it("starts Custom date & time at the next 9am, so it never opens on a past time", async () => {
+  for (const [clock, date] of [
+    ["2026-11-04T08:30", "2026-11-04"],
+    ["2026-11-04T09:00", "2026-11-05"],
+    ["2026-11-04T17:45", "2026-11-05"],
+  ] as const) {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date(clock) });
+    try {
+      cleanup();
+      const user = userEvent.setup();
+      const create = vi.fn(async (..._args: unknown[]) => {});
+      dialog(create);
+      await user.click(screen.getByRole("combobox", { name: "When" }));
+      await user.click(
+        await screen.findByRole("option", { name: "Custom date & time" }),
+      );
+      expect(screen.getByLabelText("Reminder date")).toHaveValue(date);
+      expect(screen.getByLabelText("Reminder time")).toHaveValue("09:00");
+      expect(screen.queryByRole("status")).toBeNull();
+      const save = screen.getByRole("button", { name: "Set reminder" });
+      expect(save).toBeEnabled();
+      await user.click(save);
+      expect(create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ eventId: "m" }),
+        new Date(`${date}T09:00`).getTime() / 1000,
+        "",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
+
 it("confirms a saved reminder with its due time", async () => {
   const create = vi.fn(async (..._args: unknown[]) => {});
   const close = vi.fn();

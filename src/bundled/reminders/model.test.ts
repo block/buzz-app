@@ -117,7 +117,7 @@ describe("reminder grouping", () => {
       ["Today", ["today"]],
       ["Upcoming", ["later"]],
       ["No due time", ["new-undated", "undated"]],
-      ["Completed", ["done-later", "done"]],
+      ["Done", ["done-later", "done"]],
     ]);
     expect(
       groupReminders([reminder({ notBefore: 3000 })], NOW, 2000).map(

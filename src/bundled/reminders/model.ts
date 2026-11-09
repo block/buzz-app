@@ -58,7 +58,7 @@ export function pendingMessageIds(state: RemindersState) {
 
 export type ReminderGroup = Readonly<{ label: string; reminders: Reminder[] }>;
 
-/** Pending reminders by due time, then Completed newest first; cancelled is hidden. */
+/** Pending reminders by due time, then Done newest first; cancelled is hidden. */
 export function groupReminders(
   reminders: readonly Reminder[],
   now: number,
@@ -69,11 +69,11 @@ export function groupReminders(
     Today: [],
     Upcoming: [],
     "No due time": [],
-    Completed: [],
+    Done: [],
   } as Record<string, Reminder[]>;
   for (const reminder of reminders) {
     const at = reminder.notBefore;
-    if (reminder.status === "done") groups.Completed?.push(reminder);
+    if (reminder.status === "done") groups.Done?.push(reminder);
     if (reminder.status !== "pending") continue;
     const label =
       at === undefined
@@ -90,7 +90,7 @@ export function groupReminders(
     .map(([label, list]) => ({
       label,
       reminders: list.sort((a, b) =>
-        label === "Completed" || label === "No due time"
+        label === "Done" || label === "No due time"
           ? b.createdAt - a.createdAt
           : (a.notBefore ?? 0) - (b.notBefore ?? 0),
       ),

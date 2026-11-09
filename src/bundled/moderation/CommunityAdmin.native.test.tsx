@@ -503,6 +503,27 @@ it("always shows the minted invite link as a dark native QR code", async () => {
       name: "Scan this QR code to open the invite link",
     }),
   ).toHaveAttribute("src", limited);
+  // Back to no limit: a fresh /invite/open link waits for its own code and
+  // never shows the limited link's.
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose maximum invite uses" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "No limit" }),
+  );
+  await within(dialog).findByDisplayValue(
+    "https://primary.example/invite/open",
+  );
+  expect(within(dialog).queryByRole("img")).toBeNull();
+  drawn.get("https://primary.example/invite/open")?.("<svg>open</svg>");
+  expect(
+    await within(dialog).findByRole("img", {
+      name: "Scan this QR code to open the invite link",
+    }),
+  ).toHaveAttribute(
+    "src",
+    `data:image/svg+xml,${encodeURIComponent("<svg>open</svg>")}`,
+  );
   // A renderer failure shows its error and no stale code.
   await user.click(
     within(dialog).getByRole("button", { name: "Choose invite expiry" }),

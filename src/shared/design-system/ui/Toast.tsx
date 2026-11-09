@@ -130,6 +130,8 @@ function ToastCard({
 }: ToastCardProps) {
   const titleId = useId();
   const descriptionId = useId();
+  // Nothing to activate, so the pointer reaches the content beneath it.
+  const passive = !navigation && !onClose && !children;
   return (
     <div
       role="dialog"
@@ -137,6 +139,7 @@ function ToastCard({
       aria-describedby={description ? descriptionId : undefined}
       data-buzz-ui=""
       data-type={tone}
+      data-passive={passive || undefined}
       className="buzz-toast floating-surface"
     >
       {navigation && (

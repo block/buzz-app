@@ -1528,6 +1528,9 @@ It sits at the bottom right with safe-area insets, including narrow windows; do
 not add feature-specific top offsets. Surfaces docked at the bottom of the
 window (the composer, the preview's Join notice) call `useToastClearance` with
 their element, and the stack rises above them so a notice never covers Send.
+A notice with no actions, Dismiss or `navigation` lets the pointer through to
+the content it covers, so a lasting buttonless notice never blocks the messages
+above the composer; F6 still reaches it.
 F6 enters notifications, Tab reaches actions. Modals remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.

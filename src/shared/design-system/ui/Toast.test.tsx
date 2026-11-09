@@ -109,6 +109,28 @@ it("keeps notice navigation separate from its explicit actions", async () => {
   expect(open).toHaveBeenCalledTimes(1);
 });
 
+it("marks only a notice with nothing to activate as passive", async () => {
+  render(
+    <ToastProvider>
+      <ToastNotice title="Reconnecting" />
+      <ToastNotice title="Timed" timeout={4000} />
+      <ToastNotice title="Dismissible" onDismiss={() => {}} />
+      <ToastNotice title="Action">
+        <Button>Retry</Button>
+      </ToastNotice>
+      <ToastNotice
+        title="Navigation"
+        navigation={{ label: "Open", open: () => {} }}
+      />
+    </ToastProvider>,
+  );
+  const passive = async (name: string) =>
+    (await screen.findByRole("dialog", { name })).hasAttribute("data-passive");
+  expect(await passive("Reconnecting")).toBe(true);
+  for (const name of ["Timed", "Dismissible", "Action", "Navigation"])
+    expect(await passive(name)).toBe(false);
+});
+
 it("puts notice navigation first in the toast's Tab order and opens it with Enter or Space", async () => {
   const user = userEvent.setup();
   const open = vi.fn();

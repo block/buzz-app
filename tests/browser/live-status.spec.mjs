@@ -294,6 +294,71 @@ async function openDiagnostics(page) {
   await expect(summary.locator("..")).toHaveAttribute("open", "");
 }
 
+// Browser hit-testing: the buttonless notice lets the pointer reach the newest
+// message beneath it, so that row still reveals its actions and Add reaction.
+test.describe("recovery over the timeline", () => {
+  test.use({ historyCounts: { alpha: 30, beta: 1 } });
+  test("passes the pointer through to the message beneath it", async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.clock.install();
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    const timeline = page.locator("[data-channel-timeline]");
+    const newest = timeline.locator("[data-message-id]").last();
+    await expect(newest).toBeVisible();
+    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    app.relay.holdEose("alpha");
+    const requests = () =>
+      app.relay.requests.filter(
+        (r) => r.community === "primary" && r.routes.includes("alpha"),
+      ).length;
+    const before = requests();
+    app.relay.failRoute("primary", "alpha", "error: relay unavailable");
+    await expect.poll(requests).toBeGreaterThan(before);
+    await page.clock.fastForward(30_000);
+    await expect(notice(page)).toBeVisible();
+    // Sonner's hover gap above the card passes the pointer through too.
+    const gapHit = await notice(page).evaluate((card) => {
+      const item = card.closest("[data-sonner-toast]");
+      const { left, width, top } = item.getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(item).getPropertyValue("--gap"));
+      const hit = document.elementFromPoint(left + width / 2, top - gap / 2);
+      return { gap, inToaster: !!hit?.closest("[data-sonner-toaster]") };
+    });
+    expect(gapHit.gap).toBeGreaterThan(0);
+    expect(gapHit.inToaster).toBe(false);
+    // A point inside both the notice and the newest row.
+    const overlap = async () => {
+      const box = await notice(page).boundingBox();
+      const row = await newest.boundingBox();
+      if (!box || !row) return undefined;
+      const top = Math.max(box.y, row.y);
+      const bottom = Math.min(box.y + box.height, row.y + row.height);
+      const left = Math.max(box.x, row.x);
+      const right = Math.min(box.x + box.width, row.x + row.width);
+      return bottom > top && right > left
+        ? { x: (left + right) / 2, y: (top + bottom) / 2 }
+        : undefined;
+    };
+    await expect.poll(overlap).toBeTruthy();
+    const point = await overlap();
+    await page.mouse.move(point.x, point.y);
+    const react = newest.getByRole("button", {
+      name: "Add reaction",
+      exact: true,
+    });
+    await expect(react).toBeVisible();
+    await react.click();
+    await expect(page.locator("em-emoji-picker")).toBeVisible();
+    await page.keyboard.press("Escape");
+    app.relay.releaseEose("alpha");
+    await expect(notice(page)).toHaveCount(0);
+  });
+});
+
 test.describe("public preview recovery", () => {
   test.use({ openSearch: true });
   // The empty loading/error placeholder is replaced by the real timeline once

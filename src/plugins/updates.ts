@@ -43,10 +43,12 @@ export function updateFailure({
         "This plugin’s repository moved or was removed. Reinstall it from its new address.",
       retry: false,
     };
-  // HTTPS checks can't prompt or use credential helpers.
+  // HTTPS checks can't prompt or use credential helpers. Only a missing
+  // username means no credentials were sent: "Authentication failed" also
+  // follows an expired token from authorizeGit, which checking again renews.
   if (
     /^https?:/i.test(source.repository) &&
-    /could not read Username|Authentication failed for/i.test(error)
+    /could not read Username/i.test(error)
   )
     return {
       cause: "This repository is private. Reinstall it using an SSH address.",

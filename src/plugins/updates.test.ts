@@ -457,6 +457,13 @@ it.each([
     "Git could not read this repository: fatal: could not read Username for 'https://github.com': terminal prompts disabled Private repositories need an SSH URL, such as git@github.com:owner/repo.git.",
     { cause: PRIVATE, retry: false },
   ],
+  // A repository Buzz authorizes over HTTPS fails this way when its token
+  // expired or was revoked, so checking again can help.
+  [
+    "https://github.com/acme/notes",
+    "Git could not read this repository: remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/acme/notes/'",
+    { retry: true },
+  ],
   ["https://example.com/plugins.git", OFFLINE, { retry: true }],
   [
     "https://example.com/plugins.git",

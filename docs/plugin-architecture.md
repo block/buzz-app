@@ -270,8 +270,9 @@ a connection that dropped during a check is retried when it returns. Only a chec
 (**Check again**, or **Try again** on its notice) raises a notice, and closing
 that notice leaves the row. `updateFailure()` in `src/plugins/updates.ts` names
 the Git causes Buzz recognizes: a repository that moved or was removed, and a
-private repository added over HTTPS. For those it hides **Check again** and asks
-for a reinstall. Failures don't appear in the profile menu's **Plugins** submenu.
+private repository added over HTTPS (Git couldn't read a username). For those it
+hides **Check again** and asks for a reinstall. A failed authentication keeps
+**Check again**, since it also follows an expired `authorizeGit` token. Failures don't appear in the profile menu's **Plugins** submenu.
 
 An update action fetches a fresh immutable preview. The importer checks access
 and publisher data from that preview before it applies the update. It checks

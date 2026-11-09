@@ -721,6 +721,24 @@ it.each([
   },
 );
 
+it("keeps Check again and the generic sentence when an authorized HTTPS check is refused, as for an expired token", async () => {
+  const f = fixture();
+  const refused =
+    "Git could not read this repository: remote: Invalid username or token.\nfatal: Authentication failed for 'https://example.com/plugins.git/'";
+  f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+  f.imports.checkGit.mockRejectedValue(refused);
+  f.mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+  expect(await screen.findByText(noticeTitle("Notes"))).toBeVisible();
+  expect(
+    screen.getByText("Check your connection, then try again."),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  expect(screen.getByText("Couldn’t check for updates.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+  expect(screen.queryByText(/This repository is private/)).toBeNull();
+});
+
 it("doesn’t check in the background while offline, and checks when the connection returns", async () => {
   const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
   try {

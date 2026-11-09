@@ -344,10 +344,12 @@ export function SoloDraft({
     workspace.current = { id: selectedProject, setup };
   });
   // A workspace deleted since it was picked, here or on another device, leaves
-  // the draft, so a start neither files into it nor uses its defaults.
+  // the draft, so a start neither files into it nor uses its defaults. While
+  // Chat settings is open this waits: dropping would reload the dialog over its
+  // unsaved edits and hide its own "deleted" error. Closing it checks again.
   useEffect(() => {
     const store = session.soloPreferences;
-    if (!store || !selectedProject) return;
+    if (!store || !selectedProject || settingsOpen) return;
     const drop = () => {
       const preferences = store.snapshot();
       if (
@@ -362,7 +364,7 @@ export function SoloDraft({
     return typeof store.subscribe === "function"
       ? store.subscribe(drop)
       : undefined;
-  }, [session, scope, draftKey, selectedProject]);
+  }, [session, scope, draftKey, selectedProject, settingsOpen]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;

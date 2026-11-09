@@ -1765,6 +1765,74 @@ it("deleting the chosen workspace while New chat is open drops it from the draft
   expect(f.saveCanvas).not.toHaveBeenCalled();
 });
 
+function deletableWorkspaces(f: Awaited<ReturnType<typeof projectSetup>>) {
+  const listeners = new Set<() => void>();
+  let sections = [
+    { id: "work", name: "Work" },
+    { id: "other", name: "Other" },
+  ];
+  const remove = () => {
+    sections = sections.filter((section) => section.id !== "work");
+    for (const listener of listeners) listener();
+  };
+  Object.assign(f.session.soloPreferences, {
+    snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
+  return remove;
+}
+
+it("keeps Chat settings' edits when its workspace is deleted, and drops the workspace once it closes", async () => {
+  const f = await projectSetup();
+  const remove = deletableWorkspaces(f);
+  const user = userEvent.setup();
+  const scope = "deleted-under-settings";
+  writeView(scope, "solo:new-project", "work");
+  render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  const instructions = await screen.findByRole("textbox", {
+    name: /^Instructions/,
+  });
+  await waitFor(() => expect(instructions).toHaveValue("work instructions"));
+  await user.clear(instructions);
+  await user.type(instructions, "My own notes");
+  act(remove);
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "My own notes",
+  );
+  expect(readView(scope, "solo:new-project", null)).toBe("work");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+  expect(readView(scope, "solo:settings", null)).toMatchObject({
+    canvas: "My own notes",
+  });
+});
+
+it("Chat settings says its workspace was deleted when its own load finds out", async () => {
+  const f = await projectSetup();
+  const remove = deletableWorkspaces(f);
+  const user = userEvent.setup();
+  const scope = "deleted-at-settings";
+  writeView(scope, "solo:new-project", "work");
+  render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
+  await act(async () => {});
+  Object.assign(f.session.soloPreferences, { refresh: async () => remove() });
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This workspace was deleted.",
+  );
+  expect(readView(scope, "solo:new-project", null)).toBe("work");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+});
+
 it("keeps a saved workspace while workspaces can't be read, and Send says how to go on", async () => {
   const f = await projectSetup();
   const user = userEvent.setup();

@@ -712,9 +712,12 @@ function ThreadMessages({
   reportRoot.current = onResolvedRoot;
   // `messageId` is the message this reader settled on: a reply selected in
   // the shown thread is confirmed under its root only once retarget agrees.
+  // Each routed selection reports again, even one leaving both unchanged: a
+  // fresh visit to the message already shown has its own record to verify.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: navigation changes only once a routed selection is confirmed.
   useEffect(() => {
     if (resolvedRoot) reportRoot.current?.(resolvedRoot, messageId);
-  }, [resolvedRoot, messageId]);
+  }, [resolvedRoot, messageId, navigation]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
     const current = view.snapshot();

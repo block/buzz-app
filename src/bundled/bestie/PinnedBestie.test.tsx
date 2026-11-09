@@ -954,6 +954,54 @@ it("never reveals an open hinted thread's root while a reply linked into it is l
   expect(h.revealed(h.f.linkId)).toBeUndefined();
 });
 
+// A fresh link to the message a retained thread already shows retargets its
+// reader without changing its root or message. The new visit still has its
+// own record to verify, so its root is revealed once the reader confirms it.
+it("reveals the root for a fresh link to the message its retained thread shows", async () => {
+  const h = await linkedVisit(({ rootId, replyId }) => ({
+    messageId: replyId,
+    threadRootId: rootId,
+  }));
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  // The plain Bestie destination keeps the thread tab, and its reader.
+  const bestie = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.bestie",
+    pageId: "bestie",
+    scope: h.scope,
+  } as const;
+  act(() => {
+    void h.host.navigation.open(bestie);
+  });
+  await waitFor(() =>
+    expect(h.host.navigation.snapshot().entry.target).toEqual(bestieTarget(h)),
+  );
+  expect(screen.getByLabelText("Thread")).toBeInTheDocument();
+  h.f.forgetReveals();
+  // A chat permalink to the reply opens this page's own address in place,
+  // as openLink does, without remounting the page or its retained reader.
+  const route = { messageId: h.f.replyId, threadRootId: h.f.rootId };
+  act(() => {
+    void h.host.navigation.open({
+      ...bestie,
+      route: { version: 1, params: { channelId: pollenDM, ...route } },
+    });
+  });
+  await waitFor(() => bestieVisit(h, route));
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  // The thread keeps focus, on the reply the link named; the root in the chat
+  // is context, revealed without taking it.
+  await waitFor(() =>
+    expect(
+      document.activeElement?.closest('[aria-label="Thread"]'),
+    ).not.toBeNull(),
+  );
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
+});
+
 // The linked reply keeps focus whichever reveal finishes last; the root in the
 // chat history is context, shown without taking focus.
 it("keeps focus in the thread when its root is revealed as the thread arrives", async () => {

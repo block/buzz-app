@@ -68,17 +68,21 @@ let answering = 0;
  * are offered or added, which the app starts once launch ends, so the prompt
  * never opens over that dialog and decides with the communities it adds.
  * Closing the prompt saves nothing and keeps it closed until Builderlab signs
- * out or the app next starts.
+ * out or the app next starts. While it is `paused` behind another prompt,
+ * nothing is decided or asked either.
  */
 export function BackupConsent({
   identity,
   communities,
   servers = signInServers,
+  paused = false,
 }: {
   identity: Identity;
   communities: Pick<CommunityReader, "snapshot" | "subscribe">;
   /** The build's sign-in servers, for which communities its Builderlab hosts. */
   servers?: () => Promise<readonly SessionSnapshot[]>;
+  /** Another prompt is open, which this one waits behind. */
+  paused?: boolean;
 }) {
   const status = useSyncExternalStore(
     identity.backup.subscribe,
@@ -89,7 +93,7 @@ export function BackupConsent({
     subscribeLegacyImport,
     legacyImportPending,
   );
-  const held = launching || importing;
+  const held = launching || importing || paused;
   const [asking, setAsking] = useState<string>();
   const dismissed = useRef(false);
   const waiting =

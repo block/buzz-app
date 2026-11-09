@@ -53,7 +53,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   with the same **Reload**, **Restart Buzz** and **Details**.
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
-  once this computer was set up through Builderlab, **Sign in** comes first.
+  when this computer already has a Builderlab sign-in saved, **Sign in** comes first.
   **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
   With no communities yet, **Join** advances through full-page access and profile
@@ -70,9 +70,17 @@ mention anyone. Explicit agent watches on that room can still receive them.
   or hide it.
   After Builderlab sign-in, an account with no linked key is set up
   automatically: Buzz creates a key (or uses the one already on this device)
-  and links it to the signed-in account. A device set up through Builderlab asks
-  you to sign in again on relaunch; **Continue without signing in** opens Buzz
-  without it. An existing private key can be entered from **Welcome back**.
+  and links it to the signed-in account. Once a key is on this computer, Buzz
+  opens straight to the app and reuses the saved Builderlab sign-in. If that
+  account turns out to be linked to a different key, Buzz says so over the open
+  app. When Builderlab has a backup of the account's key, **Replace** removes
+  this computer's key and restarts Buzz to restore the account's; copy this
+  key from Settings → Identity first if it isn't backed up; if the browser
+  then signs in to a different account, Buzz stops and offers **Use a different
+  account**. Without such a backup, Buzz only says where the account's key is,
+  with **OK**. **Not now** or **OK** keeps this key, and Buzz doesn't ask again
+  about the same two keys, unless the account's key later gets a backup, when
+  it asks again with **Replace**. An existing private key can be entered from **Welcome back**.
   Its **Use a different account** signs Buzz out of that account; the next
   sign-in asks the browser to sign in again rather than reuse the account it
   remembers. Signing in to a different account than the one saved on this
@@ -347,7 +355,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   level rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available
-  models change. Wait for saved choices to load before sending; an unreadable
+  models change. If a loaded catalog no longer offers a saved choice, the
+  control explains what Send will use or which overrides it omits without
+  clearing the saved selection. If no supported model is listed, Send omits
+  model and effort overrides and uses the agent's defaults.
+  Wait for saved choices to load before sending; an unreadable
   store never silently falls back to defaults. If choices cannot be read, use
   **Retry saved choices** before sending. If their agent catalog cannot be loaded, retry
   or reset them in the model control. If New chat cannot clear

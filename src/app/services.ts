@@ -311,6 +311,24 @@ export function createServices() {
       );
     },
   };
+  // An opening's state lives as long as one of its visits does: closing the
+  // view beneath it, a new branch or history's capacity releases its code.
+  const joinVisits = new Map<string, string>();
+  ctx.effect(() =>
+    navigation.subscribe(() => {
+      const { entry, retainedVisits } = navigation.snapshot();
+      const before = new Set(joinVisits.values());
+      if (entry.target.join) joinVisits.set(entry.id, entry.target.join.visit);
+      else joinVisits.delete(entry.id);
+      if (retainedVisits) {
+        const retained = new Set(retainedVisits);
+        for (const id of joinVisits.keys())
+          if (!retained.has(id)) joinVisits.delete(id);
+      }
+      for (const visit of joinVisits.values()) before.delete(visit);
+      if (before.size) inviteIntent.delete((visit) => before.has(visit));
+    }),
+  );
   // Codes are the viewer's: another identity never inherits them.
   let inviteViewer = communities.snapshot().viewer;
   communities.subscribe(() => {

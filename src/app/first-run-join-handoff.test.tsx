@@ -875,10 +875,9 @@ it("closing Settings after Back from its join leaves no join to Forward to", asy
     });
   });
   await screen.findByRole("dialog", { name: "Settings" });
-  act(() =>
-    current.invites.open({ community: relayB, code: "" }, member.pubkey),
-  );
-  await screen.findByRole("dialog", { name: "Join a community" });
+  const opening = await openCoded(current, code);
+  expect(opening).toBeVisible();
+  const joining = current.navigation.snapshot().entry.target;
   act(() => current.navigation.back());
   await waitFor(() => expect(joinDialog()).toBeNull());
   const settings = screen.getByRole("dialog", { name: "Settings" });
@@ -889,12 +888,34 @@ it("closing Settings after Back from its join leaves no join to Forward to", asy
     expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
   );
   expect(current.navigation.snapshot().canGoForward).toBe(false);
+  // The retired opening's code is released with its visit.
+  expect(current.invites.state(joining, member.pubkey)).toBeUndefined();
   act(() => current.navigation.forward());
   await act(async () => {
     await vi.advanceTimersByTimeAsync(500);
   });
   expect(joinDialog()).toBeNull();
   expect(current.navigation.snapshot().entry.target.join).toBeUndefined();
+});
+
+it("a new visit after Back from a join releases that join's code", async () => {
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const current = await onRestoredCommunity(user);
+  await openCoded(current, code);
+  const joining = current.navigation.snapshot().entry.target;
+  act(() => current.navigation.back());
+  await waitFor(() => expect(joinDialog()).toBeNull());
+  // Back alone keeps it for Forward.
+  expect(current.invites.state(joining, member.pubkey)?.code).toBe(code);
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+    });
+  });
+  expect(current.navigation.snapshot().canGoForward).toBe(false);
+  expect(current.invites.state(joining, member.pubkey)).toBeUndefined();
 });
 
 /** Back, then Forward, to the same join opening. */
@@ -948,6 +969,49 @@ it("an edited invite code restores as edited", async () => {
   expect(await codeAtAccess(user, restored)).toBe("edited-Invite_9.x");
   expect(inviteRequests()).toEqual([]);
 });
+
+it.each([
+  ["edited", "replacement-Invite_3.x"],
+  ["cleared", ""],
+])(
+  "a pasted invite link's code restores as %s, not as the link's",
+  async (_, edited) => {
+    relays[relayB] = { self: keypair().pubkey, admitted: false };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const current = await onRestoredCommunity(user);
+    act(() => current.invites.start(member.pubkey));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Join a community",
+    });
+    await user.click(within(dialog).getByLabelText("Community URL"));
+    await user.paste(`${relayB}/invite/${code}`);
+    expect(await codeAtAccess(user, dialog)).toBe(code);
+    const field = within(dialog).getByLabelText("Invite code");
+    await user.clear(field);
+    if (edited) await user.type(field, edited);
+    const restored = await backAndForward(current);
+    // The link's code moved to Invite code; the address is the community's.
+    expect(within(restored).getByLabelText("Community URL")).toHaveValue(
+      relayB,
+    );
+    if (edited) expect(await codeAtAccess(user, restored)).toBe(edited);
+    else {
+      await user.click(
+        within(restored).getByRole("button", { name: "Continue" }),
+      );
+      await waitFor(() =>
+        expect(within(restored).queryByLabelText("Community URL")).toBeNull(),
+      );
+      await user.click(
+        within(restored).getByRole("button", { name: "Continue" }),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+    }
+    expect(JSON.stringify(requests)).not.toContain(code);
+  },
+);
 
 it("a profile edited before publishing is restored for the same community", async () => {
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });

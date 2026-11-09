@@ -179,7 +179,9 @@ agents are not migrated into this type.
   demand: reading the session's snapshot starts a due re-read in the background,
   and acting waits for it through `freshCredential`. Gates read the flags and
   never refresh by hand. Concurrent reads join one request; failed attempts keep
-  cached values and wait a minute before another attempt. No polling is added.
+  cached values and wait a minute before another attempt. There is no timer, but
+  a surface that keeps reading the session, such as Attention readiness, re-reads
+  `/v1/auth/me` about once a minute while it does.
 - `oauth/` names the build's Builderlab API (`oauthTarget`). `oauth/first-run.ts`
   lets the app's first-launch welcome screen run the same native NIP-FI
   sign-in before the plugin's JavaScript starts; the app's later calls go
@@ -251,11 +253,13 @@ The plugin also offers Builderlab as a Decisions API provider while the user is
 signed in. It reads `capabilities.can_use_builderlab_decisions` the same way:
 only explicit `true` makes it ready, and otherwise it needs setup, its settings
 say it is unavailable for this account, and no decision request goes to it.
-Defaults pass over a provider that needs setup, so TypeSafe answers until
-access is granted. While stale permissions refuse, its status is `checking`
-during the re-read that reading it starts; requests and Attention readiness
-already wait for `checking`, so a new grant is used by the request that
-noticed it. Live development retains refreshed flags and their cache age
+Without a choice, the first default that can answer does, so TypeSafe answers
+until access is granted; when no default can, TypeSafe is shown, since its key
+is something the user can add. While stale permissions refuse, Builderlab's
+status is `checking` during the re-read that reading it starts. That never
+moves the selection: a request is held for it only when no other default can
+answer, and then, like Attention readiness, it waits within its deadline, so
+a new grant is used by the request that noticed it. Live development retains refreshed flags and their cache age
 across page reloads.
 The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that

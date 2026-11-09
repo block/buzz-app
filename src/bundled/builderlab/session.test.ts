@@ -32,7 +32,6 @@ it("reads each native session's account once and fences requests and viewers to 
     email: "first@example.com",
     canUseRemoteAgents: true,
     canUseBuilderlabDecisions: false,
-    canDeleteBuzzCommunities: false,
   });
   expect(h.request).toHaveBeenLastCalledWith({
     path: "/api/goose/v1/auth/me",
@@ -193,7 +192,6 @@ it("keeps permissions at most a minute old as the session is read, without retir
         email: "user@example.com",
         canUseRemoteAgents: false,
         canUseBuilderlabDecisions: true,
-        canDeleteBuzzCommunities: true,
       },
     });
     expect(h.request).toHaveBeenCalledTimes(2);

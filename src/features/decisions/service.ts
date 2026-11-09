@@ -195,8 +195,8 @@ export const statusOf = (
 /** The provider that answers when no other default is registered. */
 export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
 /** Bundled providers that answer, in this order, while the user has not
- * chosen one or their choice is not registered. The first that does not need
- * setup answers; when all of them do, the first. */
+ * chosen one or their choice is not registered. The first that can answer
+ * does; see `DecisionsService.route`. */
 export const DEFAULT_DECISION_PROVIDERS: readonly string[] = [
   "block.builderlab/builderlab",
   DEFAULT_DECISION_PROVIDER,
@@ -264,23 +264,44 @@ export class DecisionsService extends Service implements Decisions {
   }
   /** Host-only: every registered provider, in Settings order. */
   providers = (): readonly RegisteredProvider[] => this.sorted;
-  private current(): RegisteredProvider | undefined {
+  /** The provider that answers now, and its status. Without a registered
+   * choice, the first default that can answer does; otherwise TypeSafe,
+   * whose setup the user can do, `checking` while another default is still
+   * finding out whether it can answer. */
+  private route():
+    | Readonly<{
+        provider: RegisteredProvider;
+        status: DecisionProviderStatus;
+      }>
+    | undefined {
     const find = (key: string) =>
       this.sorted.find((provider) => provider.key === key);
     const chosen = this.chosen === undefined ? undefined : find(this.chosen);
-    if (chosen) return chosen;
+    if (chosen) return { provider: chosen, status: statusOf(chosen) };
     if (
       this.chosen !== undefined &&
       !DEFAULT_DECISION_PROVIDERS.includes(this.chosen)
     )
       return undefined;
-    const defaults = DEFAULT_DECISION_PROVIDERS.map(find).filter(
-      (provider) => provider !== undefined,
+    const defaults = DEFAULT_DECISION_PROVIDERS.flatMap((key) => {
+      const provider = find(key);
+      return provider ? [{ provider, status: statusOf(provider) }] : [];
+    });
+    const answering = defaults.find(
+      ({ status }) => status === "ready" || status === "unconfirmed",
     );
-    return (
-      defaults.find((provider) => statusOf(provider) !== "needs-setup") ??
-      defaults[0]
-    );
+    if (answering) return answering;
+    const fallback =
+      defaults.find(
+        ({ provider }) => provider.key === DEFAULT_DECISION_PROVIDER,
+      ) ?? defaults[0];
+    if (!fallback) return undefined;
+    return defaults.some(({ status }) => status === "checking")
+      ? { provider: fallback.provider, status: "checking" }
+      : fallback;
+  }
+  private current(): RegisteredProvider | undefined {
+    return this.route()?.provider;
   }
   /** Resolves once the routed provider is not `checking`, or on `signal`. */
   private known(signal: AbortSignal): Promise<void> {
@@ -298,10 +319,8 @@ export class DecisionsService extends Service implements Decisions {
   }
   // Bound, so a caller can pass these on, as React's external stores do.
   backend = (): string | undefined => this.current()?.key;
-  status = (): DecisionProviderStatus | "unavailable" => {
-    const provider = this.current();
-    return provider ? statusOf(provider) : "unavailable";
-  };
+  status = (): DecisionProviderStatus | "unavailable" =>
+    this.route()?.status ?? "unavailable";
   /** Host-only: Settings chooses the provider. Not part of `Decisions`. */
   setBackend(key: string): void {
     if (!this.sorted.some((provider) => provider.key === key)) return;

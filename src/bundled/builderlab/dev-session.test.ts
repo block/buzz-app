@@ -457,7 +457,6 @@ it("refreshes only capabilities through the broker while preserving its owner an
       email: "A@example.com",
       canUseRemoteAgents: false,
       canUseBuilderlabDecisions: true,
-      canDeleteBuzzCommunities: true,
     });
     expect(h.session.credential()).toBe(owner);
     expect(h.session.viewerSession()).toBe(viewer);

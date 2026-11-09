@@ -25,7 +25,6 @@ const credential = (revision: string): Credential => ({
     email: "a@example.com",
     canUseRemoteAgents: true,
     canUseBuilderlabDecisions: true,
-    canDeleteBuzzCommunities: false,
   },
 });
 const request = {
@@ -155,7 +154,6 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
       email: "a@example.com",
       canUseRemoteAgents: true,
       canUseBuilderlabDecisions: false,
-      canDeleteBuzzCommunities: false,
     },
   }));
   await session.signIn();
@@ -182,7 +180,6 @@ it("offers Builderlab while signed in, ready only while the account may use deci
     account: {
       ...credential("first").account,
       canUseBuilderlabDecisions: allowed,
-      canDeleteBuzzCommunities: false,
     },
   }));
   const decide = vi.fn<BuilderlabDecide>();
@@ -332,9 +329,15 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
           .poll(() => decisions.backend())
           .toBe("block.builderlab/builderlab");
       } else {
+        // TypeSafe can answer now, so the request that notices stale
+        // permissions does not wait for them; the re-read it starts makes
+        // Builderlab the default for the next one.
         await expect(decisions.decide(request)).resolves.toMatchObject({
-          backend: "block.builderlab/builderlab",
+          backend: "buzz.typesafe/typesafe",
         });
+        await expect
+          .poll(() => decisions.backend())
+          .toBe("block.builderlab/builderlab");
       }
       expect(
         decisions
@@ -343,7 +346,7 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
       ).toBe(true);
       expect(decisions.backend()).toBe("block.builderlab/builderlab");
       expect(fallback).toHaveBeenCalledTimes(
-        entry === "settings-with-choice" ? 0 : 1,
+        { settings: 1, request: 2, "settings-with-choice": 0 }[entry],
       );
       if (entry === "settings-with-choice")
         expect(native).not.toHaveBeenCalled();

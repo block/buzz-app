@@ -227,6 +227,15 @@ function awaitCallback(signal, open, api, verifier) {
   });
 }
 
+// Only literal true grants a capability; sign-in and capability checks share this.
+const capabilityFlags = (capabilities) => ({
+  can_use_remote_agents: capabilities?.can_use_remote_agents === true,
+  can_use_builderlab_decisions:
+    capabilities?.can_use_builderlab_decisions === true,
+  can_delete_buzz_communities:
+    capabilities?.can_delete_buzz_communities === true,
+});
+
 export function createBuilderlab({
   key,
   fetch = globalThis.fetch,
@@ -325,13 +334,7 @@ export function createBuilderlab({
       )
         throw new Error("Builderlab returned invalid capabilities");
       return {
-        capabilities: {
-          can_use_remote_agents: capabilities?.can_use_remote_agents === true,
-          can_use_builderlab_decisions:
-            capabilities?.can_use_builderlab_decisions === true,
-          can_delete_buzz_communities:
-            capabilities?.can_delete_buzz_communities === true,
-        },
+        capabilities: capabilityFlags(capabilities),
       };
     }
     const { subject, email, name, expires_at, capabilities } =
@@ -347,13 +350,7 @@ export function createBuilderlab({
       email,
       name,
       expiresAt: expires_at,
-      capabilities: {
-        can_use_remote_agents: capabilities?.can_use_remote_agents === true,
-        can_use_builderlab_decisions:
-          capabilities?.can_use_builderlab_decisions === true,
-        can_delete_buzz_communities:
-          capabilities?.can_delete_buzz_communities === true,
-      },
+      capabilities: capabilityFlags(capabilities),
     };
   };
   // Sign-in and sign-out bump the generation; late results from an older one never

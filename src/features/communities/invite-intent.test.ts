@@ -89,4 +89,14 @@ it("an opening shows and offers its edited form, never its original code beside 
   expect(
     offeredCommunity({ ...opened, form: { address: "not a url", code: "" } }),
   ).toBeUndefined();
+  // The dialog also takes a bare host or an invite link as its address.
+  expect(
+    offeredCommunity({ ...opened, form: { address: "c.example", code: "" } }),
+  ).toBe("https://c.example");
+  expect(
+    offeredCommunity({
+      ...opened,
+      form: { address: "https://c.example/invite/C-CODE", code: "C-CODE" },
+    }),
+  ).toBe("https://c.example");
 });

@@ -746,7 +746,9 @@ available rather than silently discarding it.
   where it runs; received tool details take precedence.
   Available model, effort and session controls keep their gauge beside Send.
   Activity keeps its transcript and feed guidance without a separate workspace
-  note.
+  note. Opened from a conversation, it shows that conversation's turns;
+  **Show all conversations** lists the agent's other turns too. It shows only
+  turns captured while Buzz has been open.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you

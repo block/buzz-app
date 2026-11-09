@@ -144,8 +144,11 @@ including after a restart. Setup completes only once the settings save succeeds.
 Settings shows the fixed remote workspace and per-thread session behavior, with
 a link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
-open, across all of its conversations. It doesn't scope to the conversation it
-was opened from, because hosted frames don't always name their thread. It needs
+open. Opened from a conversation, it shows that conversation's turns, and
+**Show all conversations** widens it to every conversation; each new request
+for the conversation's transcript narrows it again. Hosted frames name a thread
+only for per-thread sessions, so a turn without one counts as its channel's
+conversation, the per-channel session every thread there shares. It needs
 the Agent Activity plugin, which owns the feed.
 Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile

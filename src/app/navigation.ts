@@ -522,6 +522,7 @@ export function useAppNavigation(
       const current = navigation.snapshot().entry.target;
       if (current.kind !== "settings") return;
       const {
+        route: _route,
         section: _section,
         provider: _provider,
         pluginId: _pluginId,
@@ -532,6 +533,7 @@ export function useAppNavigation(
         navigation.dismiss((target) => {
           if (target.kind !== "settings") return false;
           const {
+            route: _route,
             section: _section,
             provider: _provider,
             pluginId: _pluginId,

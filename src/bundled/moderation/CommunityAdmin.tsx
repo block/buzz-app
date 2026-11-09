@@ -173,6 +173,10 @@ function Members({
   const [pending, setPending] = useState<Pending | null>(null);
   const proceed = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (selectedMethod && selectedMethod !== "members" && !busy)
+      setPending(null);
+  }, [selectedMethod, busy]);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,

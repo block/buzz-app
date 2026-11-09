@@ -590,3 +590,34 @@ it("adds a member by a nostr: npub and refuses an npub that is not a 32-byte key
     }),
   );
 });
+
+it("clears an unsubmitted confirmation when history leaves Members", async () => {
+  const user = userEvent.setup();
+  const calls = broker({});
+  const { relay: data } = relay(owner);
+  const view = render(
+    <CommunityAdmin
+      relay={data}
+      active={() => true}
+      selectedMethod="members"
+    />,
+  );
+  const menus = await screen.findAllByRole("button", { name: /^Actions for / });
+  await user.click(menus[1] as HTMLElement);
+  await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+  expect(await screen.findByRole("alertdialog")).toBeVisible();
+  view.rerender(
+    <CommunityAdmin relay={data} active={() => true} selectedMethod="invite" />,
+  );
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByRole("tab", { name: "Members" })).toBeEnabled();
+  view.rerender(
+    <CommunityAdmin
+      relay={data}
+      active={() => true}
+      selectedMethod="members"
+    />,
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(calls.some((call) => call.route === "member")).toBe(false);
+});

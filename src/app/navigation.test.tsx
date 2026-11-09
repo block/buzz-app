@@ -871,6 +871,20 @@ it("Back closes Settings onto the view beneath and Forward reopens it; other sho
   expect(current.navigation.snapshot().entry.target).toEqual(beneath);
   fireEvent.keyDown(document.body, { ctrlKey: true, key: "]" });
   expect(await screen.findByRole("dialog", { name: "Settings" })).toBeVisible();
+  await act(async () => {
+    await current.navigation.open({
+      ...settings,
+      route: { version: 1, params: "invite" },
+    });
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Close Settings" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  await act(async () => current.navigation.back());
+  expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+  await act(async () => current.navigation.forward());
+  expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
 });
 
 it("keeps the shell's snapshot when a visit opens, and follows any other change", () => {

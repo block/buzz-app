@@ -56,6 +56,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import { ChannelJoinNotice } from "../../features/messages/ChannelJoinNotice";
+import {
+  ArchivedChannelNotice,
+  ChannelStateNotice,
+  ChannelStateRegion,
+} from "./ChannelStateNotice";
 import { ChannelLifecycleActions } from "./ChannelLifecycleActions";
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -92,7 +97,7 @@ import {
   ChatCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
-import { channelIcon } from "../../features/channels/channel-icon";
+import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -600,6 +605,51 @@ function ChannelWorkspace({
         ? { channelId: current.id, queries }
         : undefined;
   });
+  // How the open channel was last named while joined, so losing that
+  // membership while it is open is explained. Only a complete, ready roster is
+  // evidence of that loss. Your own lifecycle action explains itself, and its
+  // access loss can arrive before its navigation.
+  const ownLifecycle =
+    !!requestedChannel &&
+    handoff?.lifecycleDialog?.channel.id === requestedChannel;
+  const joinedHere = ownLifecycle
+    ? undefined
+    : channels.find(
+        (channel) =>
+          channel.id === requestedChannel &&
+          channel.channelType !== "solo" &&
+          channel.channelType !== "dm",
+      );
+  const [joinedVisit, setJoinedVisit] = useState<{
+    queries: RelaySession;
+    id: string;
+    label: string;
+  }>();
+  if (joinedHere) {
+    const label = channelText(joinedHere);
+    if (
+      joinedVisit?.queries !== queries ||
+      joinedVisit.id !== joinedHere.id ||
+      joinedVisit.label !== label
+    )
+      setJoinedVisit({ queries, id: joinedHere.id, label });
+  } else if (
+    joinedVisit &&
+    (ownLifecycle ||
+      joinedVisit.id !== requestedChannel ||
+      joinedVisit.queries !== queries)
+  )
+    setJoinedVisit(undefined);
+  const removed =
+    joinedVisit &&
+    joinedVisit.id === requestedChannel &&
+    joinedVisit.queries === queries &&
+    !joinedRequest &&
+    !resolving &&
+    list.status === "ready" &&
+    list.coverage !== "partial"
+      ? joinedVisit
+      : undefined;
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {
@@ -2060,6 +2110,52 @@ function ChannelWorkspace({
       )}
     </ChannelSettingsPanel>
   );
+  // Unarchive's confirmation returns focus to its trigger, which restoring
+  // removes; the restored composer takes focus, as after Join.
+  const unarchive = (channel: ChannelSummary, trigger: HTMLElement) =>
+    handoff?.openLifecycle(channel, "unarchive", trigger, navigation?.signal, {
+      close() {
+        if (trigger.isConnected) trigger.focus({ preventScroll: true });
+      },
+      completed() {
+        if (showing.current === channel.id)
+          setComposerFocus((value) => value + 1);
+      },
+    });
+  // Lands where Leave does: the sidebar's neighbor, else the empty route.
+  const backToChannels = (id: string) => {
+    if (handoff?.openSuccessor.current) {
+      handoff.openSuccessor.current(id);
+      return;
+    }
+    writeView(scope, "selected-channel", undefined);
+    void navigator.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      route: { version: 1, params: "empty" },
+    });
+  };
+  const removedTitle = removed && `You were removed from ${removed.label}`;
+  const archivedChannel = current?.archived && !solo ? current : undefined;
+  const stateNotice = removedTitle ? (
+    <ChannelStateNotice title={removedTitle}>
+      <Button
+        type="button"
+        size="sm"
+        onClick={() => backToChannels(removed.id)}
+      >
+        Back to channels
+      </Button>
+    </ChannelStateNotice>
+  ) : archivedChannel ? (
+    <ArchivedChannelNotice
+      channel={archivedChannel}
+      session={queries}
+      unarchive={(trigger) => unarchive(archivedChannel, trigger)}
+    />
+  ) : undefined;
   const focusArchivedHistory = useCallback(() => {
     const history = historyContainer.current;
     if (
@@ -2090,6 +2186,7 @@ function ChannelWorkspace({
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <div className={styles.conversationBody}>
+      <ChannelStateRegion>{stateNotice}</ChannelStateRegion>
       <MessageManagementStatus />
       <section
         data-channel-history
@@ -2124,7 +2221,7 @@ function ChannelWorkspace({
               sent?.channelId === current.id ? sent.id : undefined
             }
           />
-        ) : (
+        ) : removed ? null : (
           <div
             className={styles.empty}
             data-buzz-launch-pending={

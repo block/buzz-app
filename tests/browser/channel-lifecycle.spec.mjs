@@ -137,6 +137,12 @@ test("archive confirmation returns focus on cancel and retains the conversation 
   await expect(dialog).toHaveCount(0);
   await expect(row).toHaveCount(0);
   await expect(page).toHaveURL(conversationUrl);
+  // The pane names the archived state above its history, with its restore.
+  await expect(
+    page
+      .getByRole("status", { name: "Archived · view only", exact: true })
+      .getByRole("button", { name: "Unarchive", exact: true }),
+  ).toBeVisible();
   await openChannelDetails(page);
   await expect(
     page.getByRole("button", { name: "Unarchive channel", exact: true }),

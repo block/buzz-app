@@ -2265,6 +2265,31 @@ it("deleting the only row in its section opens the nearest row below it", async 
   );
 });
 
+it("leaving a channel the viewer was removed from opens its displayed neighbor", async () => {
+  const h = fixture();
+  function Back() {
+    const navigation = useChannelNavigation();
+    return (
+      <button
+        type="button"
+        onClick={() => navigation?.openSuccessor.current?.("beta")}
+      >
+        Back to channels
+      </button>
+    );
+  }
+  render(h.view("beta", <Back />));
+  await screen.findByRole("button", { name: /^gamma/ });
+  // Removal drops the open channel from the roster before anything else.
+  h.drop("beta");
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Back to channels" }));
+  expect(h.navigator.open).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ kind: "conversation", channelId: "gamma" }),
+  );
+});
+
 it("session teardown still aborts submitted lifecycle work", async () => {
   const h = pendingLifecycle("delete");
   await h.start();

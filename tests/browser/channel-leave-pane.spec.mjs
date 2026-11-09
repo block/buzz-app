@@ -140,6 +140,10 @@ test("management Leave restores focus on cancel, holds pending, and completes th
       sidebar.locator(`[data-channel-id="${channelId}"]`),
     ).toHaveCount(0);
     await expect(pending).toBeVisible();
+    // The dropped row is the barrier: own Leave is not reported as removal.
+    await expect(
+      page.getByRole("status", { name: /^You were removed from/ }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("dialog", { name: "Leave channel failed", exact: true }),
     ).toHaveCount(0);
@@ -165,6 +169,9 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
+  await expect(
+    page.getByRole("status", { name: /^You were removed from/ }),
+  ).toHaveCount(0);
   await page.reload();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
@@ -175,6 +182,92 @@ test("management Leave restores focus on cancel, holds pending, and completes th
   expect(app.report.lifecyclePublications.map((event) => event.kind)).toEqual([
     9022,
   ]);
+  expect(app.report.unexpected).toEqual([]);
+});
+
+// Browser-only boundary: a relay-signed roster without the viewer arrives live
+// through discovery while the channel is open, the public preview resolves
+// through real relay reads, and the sidebar owner chooses where Back lands.
+// Copy, suppression and degraded-roster matrices remain in mounted tests.
+test("a live removal names the open channel and leads to its sidebar neighbor", async ({
+  page,
+  app,
+}) => {
+  app.setChannelMetadata("alpha", [
+    ["name", "Alpha"],
+    ["t", "stream"],
+    ["private"],
+  ]);
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message Alpha", exact: true }),
+  ).toBeVisible();
+  app.removeViewer("alpha");
+  // A private channel leaves nothing to read: the status replaces the pane.
+  await expect(
+    page.getByRole("status", {
+      name: "You were removed from Alpha",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message Alpha", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("Select a channel to read it.", { exact: true }),
+  ).toHaveCount(0);
+
+  await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  app.removeViewer("beta");
+  const removed = page.getByRole("status", {
+    name: "You were removed from #Beta",
+    exact: true,
+  });
+  // A public channel stays readable as a preview, Join below its history.
+  const preview = page.getByRole("region", {
+    name: "Channel preview",
+    exact: true,
+  });
+  await expect(preview).toContainText("Join channel to send messages");
+  await expect(removed).toBeVisible();
+  const history = page.locator("[data-channel-history]");
+  const [notice, list, join] = await Promise.all([
+    removed.boundingBox(),
+    history.boundingBox(),
+    preview.boundingBox(),
+  ]);
+  expect(notice.y + notice.height).toBeLessThanOrEqual(list.y);
+  expect(notice.y + notice.height).toBeLessThanOrEqual(join.y);
+  // The status follows the header in the keyboard order.
+  await page
+    .getByRole("button", { name: "Channel actions", exact: true })
+    .focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    removed.getByRole("button", { name: "Back to channels", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  // Beta's nearest remaining row, as Leave would choose.
+  await expect(
+    sidebar.locator(`[data-channel-id="${channelId}"]`),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByRole("textbox", {
+      name: "Message #Lifecycle channel",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(removed).toHaveCount(0);
+  expect(app.report.lifecyclePublications ?? []).toEqual([]);
   expect(app.report.unexpected).toEqual([]);
 });
 

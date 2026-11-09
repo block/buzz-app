@@ -49,6 +49,7 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
+import { useHeaderChannel } from "../relay/listed-channel";
 import { useHeadReadPending, useRecovery } from "../relay/RecoveryNotice";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
@@ -312,6 +313,12 @@ function Timeline({
   // rows. The reader follows the bottom meanwhile; their input retires it.
   const pendingRestore = useRef<number | undefined>(undefined);
   const profiles = useRowProfiles(queries.profiles, window.rows);
+  // Archived and read-only conversations have no composer to start one in.
+  const composerless = useHeaderChannel(
+    queries.channels,
+    channelId,
+    (channel) => !!channel?.readOnly || !!channel?.archived,
+  );
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const visibleRows = useMemo(
     () =>
@@ -2322,9 +2329,7 @@ function Timeline({
               icon={<ChatCircleIcon />}
               title="No messages yet."
               description={
-                queries.channels.get?.(channelId)?.readOnly
-                  ? undefined
-                  : "Start the conversation below."
+                composerless ? undefined : "Start the conversation below."
               }
             />
           </div>

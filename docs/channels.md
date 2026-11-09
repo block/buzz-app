@@ -522,7 +522,16 @@ fallback if that entry has gone away). Archive retains the current conversation,
 messages, membership and open Settings, replacing Archive with Unarchive once
 the confirmed metadata arrives. The conversation stays selected after reload; archived
 write restrictions still apply. Archived conversations and their threads replace the
-message composer with the lower archived-channel notice. If that composer owned
+message composer with the lower archived-channel notice. Above the history, an
+archived channel also shows an **Archived · view only** status that names the
+state and says it is hidden from the sidebar until it is unarchived. Solo chats
+omit it because their header already marks them archived. Where live channel
+state already allows Unarchive (a direct owner/admin, or owner-agent evidence),
+the status offers **Unarchive**, which opens the same confirmation as Settings
+and rechecks the relay when confirmed. Cancelling returns focus to that button;
+confirming removes it, so the restored composer takes focus. Archived and
+read-only histories drop the empty state's “Start the conversation below.” hint.
+If that composer owned
 focus, focus moves to the retained message history. Nonempty unsent text, including
 an in-progress message edit, is offered through a host-owned **Copy text** toast;
 empty composers and focus elsewhere do not trigger it. Copy failure retains a retry
@@ -533,9 +542,25 @@ When refreshed Settings actions remount, focus
 returns to its persistent Settings-tab close control instead of an unrelated sidebar row;
 joined archived channels, including session conversations, remain available by name
 in search, labeled **Archived channel**, but stay out of the sidebar and Recent
-activity. After navigating away, open the search result and Settings to restore it.
+activity. After navigating away, open the search result and use the status's
+**Unarchive** (or Settings) to restore it.
 This uses the existing membership discovery and exact
 navigation, not a new archived-channel directory.
+
+When a complete, ready roster drops the viewer from the channel they have open,
+the pane names it above the history: **You were removed from [channel]**, written
+as the channel was shown while joined (`#` only for public channels), with
+**Back to channels**. That button opens the sidebar neighbor Leave would choose,
+or the empty Channels route. A private channel shows only this status in place
+of the generic empty pane. A public channel keeps its read-only preview below it,
+whose lower notice still offers Join where admission allows. The viewer's own
+lifecycle confirmation for that channel, such as Leave or Delete, suppresses it,
+because its access loss can arrive before its navigation. A failed or partial
+roster read, a pending access check, a new session, Solo chats and DMs show
+nothing. The roster cannot tell an admin's removal from the viewer leaving on
+another device, so both read the same. Both statuses render in a polite live
+region that stays mounted above the history, so a removal that arrives while the
+channel is open is announced.
 
 Search also finds active public channels the viewer has not joined, by name,
 labeled **Public channel · not joined** after joined matches. Opening one shows the

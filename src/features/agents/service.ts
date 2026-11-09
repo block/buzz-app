@@ -1912,12 +1912,12 @@ export type Agents = {
    * it. The agent switches only when they are the same; otherwise it stays
    * on this device and the result lists what differs. Its objects here stay
    * as a backup that `revertAttention` restores. It also deletes, as the
-   * owner, each slug in `prune` that only the community holds or could not
-   * read: pass the `extra` and `skipped` lists the owner confirmed, so
-   * nothing added since is deleted. */
+   * owner, each object in `prune` that only the community holds or could
+   * not read: pass the `heads` of the result the owner confirmed, so nothing
+   * added or changed since is deleted. */
   migrateAttention(
     agent: AgentKey,
-    options?: Readonly<{ prune?: readonly string[] }>,
+    options?: Readonly<{ prune?: Readonly<Record<string, string>> }>,
   ): Promise<AttentionMigration>;
   /** Moves the agent's attention back to this device, as it was when it
    * moved: changes made in the community since then are lost here. */
@@ -9213,7 +9213,7 @@ export class AgentsService extends Service implements Agents {
   }
   async migrateAttention(
     key: AgentKey,
-    options: Readonly<{ prune?: readonly string[] }> = {},
+    options: Readonly<{ prune?: Readonly<Record<string, string>> }> = {},
   ): Promise<AttentionMigration> {
     let result: AttentionMigration | undefined;
     await this.change(key, async (saved) => {

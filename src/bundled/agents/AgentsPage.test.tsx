@@ -533,6 +533,7 @@ function setup(
       different: [],
       extra: [],
       skipped: [],
+      heads: {},
     }),
     revertAttention: async () => {},
     registerExecution: () => {},

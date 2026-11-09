@@ -598,6 +598,14 @@ export function compared(
       Object.keys(set.attention).filter((slug) => !attention[slug]),
     ),
     skipped: sorted(Object.keys(set.skipped)),
+    heads: Object.fromEntries(
+      Object.keys(set.skipped)
+        .concat(Object.keys(set.attention).filter((slug) => !attention[slug]))
+        .flatMap((slug) => {
+          const id = set.heads[slug]?.id;
+          return id ? [[slug, id]] : [];
+        }),
+    ),
   };
 }
 
@@ -611,20 +619,24 @@ export type AttentionMigration = Readonly<{
   extra: readonly string[];
   /** Records skipped, here or on the relay; they are not moved. */
   skipped: readonly string[];
+  /** The relay head of each object in `extra` and `skipped`, by slug: what
+   * the owner confirms deleting when a move prunes. */
+  heads: Readonly<Record<string, string>>;
 }>;
 
 /** Publishes each object of `attention` the relay does not already hold
  * (Rollout 3), then reads the set back and compares it. It also deletes
- * each slug in `prune` that only the relay holds, or that it skipped, (Rollback: "deletes them
- * only when asked"): only those named, so one added since the owner saw the
- * list stays, and the move is refused again. Removed watches go first, then Interests, then
- * watches, then removed Interests, so no watch is left without its
+ * each object in `prune` (slug to the head the owner saw) that the relay
+ * still holds at that head, only there or skipped (Rollback: "deletes them
+ * only when asked"). One added or changed since the owner saw it stays, and
+ * the move is refused again. Removed watches go first, then Interests,
+ * then watches, then removed Interests, so no watch is left without its
  * Interest. */
 export async function publishAll(
   io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
   read: () => Promise<AttentionSet>,
   attention: AgentRecord["attention"],
-  options: Readonly<{ prune?: readonly string[] }> = {},
+  options: Readonly<{ prune?: Readonly<Record<string, string>> }> = {},
 ): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
   const before = await read();
   const rank = ({ slug, value }: AttentionEdit) => {
@@ -640,12 +652,14 @@ export async function publishAll(
       )
       .map(({ slug, value }) => ({ slug, value })),
     // A record the relay skipped can be pruned too, by its key there.
-    ...[...new Set(options.prune)]
+    ...Object.entries(options.prune ?? {})
       .filter(
-        (slug) =>
-          (before.attention[slug] || before.skipped[slug]) && !attention[slug],
+        ([slug, head]) =>
+          before.heads[slug]?.id === head &&
+          (before.attention[slug] || before.skipped[slug]) &&
+          !attention[slug],
       )
-      .map((slug) => ({ slug, value: null })),
+      .map(([slug]) => ({ slug, value: null })),
   ];
   changes.sort((a, b) =>
     rank(a) !== rank(b) ? rank(a) - rank(b) : a.slug < b.slug ? -1 : 1,

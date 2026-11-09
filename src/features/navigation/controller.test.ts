@@ -124,6 +124,37 @@ describe("navigation attempts over one history driver", () => {
     },
   );
 
+  it.each([true, false])(
+    "the join dialog opens over Members and Back returns to Members (warm: %s)",
+    (warm) => {
+      const { navigation: nav } = setup();
+      const conversation: OpenTarget = {
+        version: 1,
+        kind: "conversation",
+        scope: {
+          viewer: "a".repeat(64),
+          communityOrigin: "https://relay.example",
+        },
+        channelId: "alpha",
+      };
+      const members: OpenTarget = { ...conversation, panel: "members" };
+      if (warm) void nav.open(conversation);
+      void nav.open(members);
+      const shown = nav.snapshot().entry;
+      void nav.open({
+        ...members,
+        join: { viewer: "a".repeat(64), visit: "v1" },
+      });
+      expect(nav.snapshot().entry.target.join?.visit).toBe("v1");
+      nav.back();
+      expect(nav.snapshot().entry).toEqual(shown);
+      nav.back();
+      expect(nav.snapshot().entry.target).toEqual(
+        warm ? conversation : homeTarget,
+      );
+    },
+  );
+
   it("pushes, traverses without a push, preserves forward on retry, and truncates new branches", async () => {
     const { host, navigation: nav } = setup();
     const initial = nav.snapshot().entry;

@@ -2228,6 +2228,135 @@ it("leaves focus that left the conversation before it lost membership", async ()
   }
 });
 
+/** Focus outside the conversation, for `run`; then it goes. */
+async function withFocusElsewhere(run: (elsewhere: HTMLElement) => unknown) {
+  const elsewhere = document.createElement("button");
+  document.body.append(elsewhere);
+  try {
+    await run(elsewhere);
+  } finally {
+    elsewhere.remove();
+  }
+}
+
+it.each([
+  [
+    "joined from its preview",
+    async (f: ReturnType<typeof fixture>) => {
+      await screen.findByRole("textbox", { name: "Message Planning" });
+      // Elsewhere, so this first loss takes no focus from the pane.
+      await withFocusElsewhere(async (elsewhere) => {
+        act(() => elsewhere.focus());
+        act(() => f.remove("public"));
+        await screen.findByRole("region", { name: "Channel preview" });
+        await f.accessSettled();
+      });
+      f.run.mockImplementationOnce(async () => f.rejoin());
+      await userEvent
+        .setup()
+        .click(
+          within(
+            screen.getByRole("region", { name: "Channel preview" }),
+          ).getByRole("button", { name: "Join" }),
+        );
+      // Join hands focus to the composer once membership makes it writable.
+      await waitFor(() =>
+        expect(
+          screen.getByRole("textbox", { name: "Message Planning" }),
+        ).toHaveFocus(),
+      );
+    },
+  ],
+  [
+    "rejoined after the viewer's unconfirmed Leave took effect",
+    async (f: ReturnType<typeof fixture>) => {
+      await failLeave(f);
+      await withFocusElsewhere(async (elsewhere) => {
+        act(() => elsewhere.focus());
+        act(() => f.remove("public"));
+        await screen.findByRole("region", { name: "Channel preview" });
+        await f.accessSettled();
+      });
+      act(() => f.rejoin());
+      const composer = await screen.findByRole("textbox", {
+        name: "Message Planning",
+      });
+      act(() => composer.focus());
+    },
+  ],
+] as const)(
+  "moves focus from the composer into the history when a public channel this visit previewed, %s, is lost",
+  async (_, joinFromPreview) => {
+    const f = fixture({ type: "stream", canLeave: true });
+    f.mountWithToasts();
+    await joinFromPreview(f);
+    const header = screen.getByRole("button", { name: "Channel actions" });
+    // The visit already resolved the preview: the header and history stay,
+    // and only the composer goes.
+    act(() => f.remove("public"));
+    await screen.findByRole("region", {
+      name: "You’re no longer a member of Planning",
+    });
+    expect(header).toBeInTheDocument();
+    const history = screen.getByRole("region", { name: "Channel history" });
+    await waitFor(() =>
+      expect(history.contains(document.activeElement)).toBe(true),
+    );
+  },
+);
+
+it.each([
+  [
+    "the viewer's own unconfirmed Leave",
+    async (f: ReturnType<typeof fixture>) => {
+      await failLeave(f);
+      act(() =>
+        screen.getByRole("button", { name: "Channel actions" }).focus(),
+      );
+      act(() => f.remove("public"));
+      await screen.findByRole("region", { name: "Channel preview" });
+    },
+  ],
+  [
+    "a partial roster read",
+    async (f: ReturnType<typeof fixture>) => {
+      await screen.findByRole("textbox", { name: "Message Planning" });
+      act(() =>
+        screen.getByRole("button", { name: "Channel actions" }).focus(),
+      );
+      act(() => f.degrade({ coverage: "partial" }));
+      await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    },
+  ],
+] as const)(
+  "forgets the focus a loss explained by %s took, once the channel is back",
+  async (_, firstLoss) => {
+    const f = fixture({ type: "stream", canLeave: true });
+    f.mountWithToasts();
+    // The header goes with the channel: the history pane takes its focus,
+    // and no notice comes to place it.
+    await firstLoss(f);
+    await f.accessSettled();
+    expect(screen.queryByText(noLongerMember)).toBeNull();
+    act(() => f.rejoin());
+    act(() => f.reread());
+    await screen.findByRole("textbox", { name: "Message Planning" });
+    // A later loss, with focus outside the pane, owes it nothing.
+    await withFocusElsewhere(async (elsewhere) => {
+      act(() => elsewhere.focus());
+      act(() => {
+        elsewhere.remove();
+        f.remove("private");
+      });
+      await screen.findByRole("region", {
+        name: "You’re no longer a member of Planning",
+      });
+      await f.accessSettled();
+    });
+    expect(document.activeElement).toBe(document.body);
+  },
+);
+
 it("keeps the notice mounted while a later visit to the same channel rechecks access", async () => {
   const f = fixture({ type: "stream" });
   f.mountWithToasts();

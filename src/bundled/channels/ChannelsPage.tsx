@@ -2187,8 +2187,15 @@ function ChannelWorkspace({
       history.querySelector<HTMLElement>("[data-message-scroller]") ?? history
     ).focus({ preventScroll: true });
   }, [currentId, queries.channels]);
-  // Lost membership unmounts the composer, header and history with the
-  // channel, and focus in them falls to the body. The history pane holds it
+  // Whether the composer below renders.
+  const composing =
+    !!current &&
+    !current.archived &&
+    current.viewerRole !== "guest" &&
+    (!current.readOnly || !!current.cached);
+  // Lost membership unmounts the composer, and the header and history with
+  // it unless the channel stays open as a preview this visit already
+  // resolved. Focus in them falls to the body. The history pane holds it
   // while access is rechecked, until the notice shows and places it.
   useLayoutEffect(() => {
     const shown = shownChannel.current;
@@ -2196,7 +2203,8 @@ function ChannelWorkspace({
     const focused = paneFocus.current;
     const history = historyContainer.current;
     if (
-      currentId ||
+      // Writable still: nothing was lost.
+      composing ||
       !shown ||
       shown !== requestedChannel ||
       !focused ||
@@ -2214,14 +2222,21 @@ function ChannelWorkspace({
     paneFocus.current = history;
     focusAfterLoss.current = shown;
     history.focus({ preventScroll: true });
-  }, [currentId, requestedChannel, queries.channels]);
+  }, [currentId, requestedChannel, queries.channels, composing]);
   // A private channel's notice offers the only way on; a public preview's
   // history is readable again. Focus that moved elsewhere meanwhile stays.
   const removedId = removed?.id;
   useLayoutEffect(() => {
     const lost = focusAfterLoss.current;
-    if (lost !== requestedChannel) focusAfterLoss.current = undefined;
-    if (!lost || lost !== removedId) return;
+    if (!lost) return;
+    // No notice will place it: another channel is open, the loss is the
+    // viewer's own, or the channel is back without one. A later loss must
+    // not inherit it.
+    if (lost !== requestedChannel || ownLoss || (current && !removedId)) {
+      focusAfterLoss.current = undefined;
+      return;
+    }
+    if (lost !== removedId) return;
     focusAfterLoss.current = undefined;
     const history = historyContainer.current;
     const active = document.activeElement;
@@ -2231,7 +2246,7 @@ function ChannelWorkspace({
         history)
       : backTrigger.current
     )?.focus({ preventScroll: true });
-  }, [removedId, current, requestedChannel]);
+  }, [removedId, current, requestedChannel, ownLoss]);
   const channelNotice =
     !!current &&
     (current.archived ||

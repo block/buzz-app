@@ -240,6 +240,7 @@ it("binds an agent update to the request it claims only when that is a loaded hu
   const level = [
     update("flattened", "nested"),
     update("toElsewhere", "elsewhere"),
+    update("toOtherAgent", "otherAgent"),
   ];
   const levelRequest = (loaded?: ChannelMessage[]) => {
     const { byRow } = activityPresentation(
@@ -257,9 +258,16 @@ it("binds an agent update to the request it claims only when that is a loaded hu
     update("old", undefined),
     nested,
     message("elsewhere", human, { threadRootId: "otherRoot" }),
+    // An unknown agent's message at another level is not a human request.
+    message("otherAgent", "o".repeat(64), {
+      threadRootId: "root",
+      replyParentId: "old",
+      agentEnvelope: true,
+    }),
     ...level,
   ];
   expect(levelRequest(loaded)("flattened")).toBe("nested");
   expect(levelRequest(loaded)("toElsewhere")).toBe("root");
+  expect(levelRequest(loaded)("toOtherAgent")).toBe("root");
   expect(levelRequest()("flattened")).toBe("root");
 });

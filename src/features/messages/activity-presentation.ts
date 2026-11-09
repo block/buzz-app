@@ -216,11 +216,13 @@ export function activityPresentation(
   const representedAgents = new Map<string, string[]>();
   // Each request's latest public reply row per agent.
   const publicReplies = new Map<string, Map<string, string>>();
-  const activityAuthors = new Set(
-    rows
-      .filter((row) => row.audience === "agents" || row.agentEnvelope)
-      .map((row) => row.authorId),
-  );
+  const authorsOf = (list: readonly ChannelMessage[]) =>
+    new Set(
+      list
+        .filter((row) => row.audience === "agents" || row.agentEnvelope)
+        .map((row) => row.authorId),
+    );
+  const activityAuthors = authorsOf(rows);
   const isAgent = (row: ChannelMessage) =>
     activityAuthors.has(row.authorId) || agents?.has(row.authorId);
   const isRequest = (row: ChannelMessage) =>
@@ -230,8 +232,12 @@ export function activityPresentation(
     !!agents &&
     !agents.has(row.authorId);
   // Indexed up front: a skewed clock can order a claim before its request.
+  // An author is an agent if loaded evidence anywhere shows it acting as one.
+  const loadedAuthors = loaded === rows ? activityAuthors : authorsOf(loaded);
   const humanRequests = new Map(
-    loaded.filter(isRequest).map((row) => [row.id, row]),
+    loaded
+      .filter((row) => isRequest(row) && !loadedAuthors.has(row.authorId))
+      .map((row) => [row.id, row]),
   );
   let request = rootId;
   for (const row of rows) {

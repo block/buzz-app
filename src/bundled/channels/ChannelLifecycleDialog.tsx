@@ -19,7 +19,7 @@ export const lifecycleNoun = (
 const details = {
   channel: {
     archive:
-      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.",
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.",
     unarchive:
       "Unarchive this channel for everyone and return it to the sidebar. Members can send messages again.",
     delete: "This deletes the channel for everyone. You can’t undo this.",

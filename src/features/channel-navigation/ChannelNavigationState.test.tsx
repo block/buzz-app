@@ -211,7 +211,7 @@ it.each([true, false])(
       ),
     );
     const archive =
-      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search and open Settings to unarchive it later.";
+      "Archive this channel for everyone and remove it from the sidebar. Messages are kept. Find it in search to unarchive it later.";
     expect(
       await screen.findByRole("dialog", { name: "Archive channel: general" }),
     ).toHaveAccessibleDescription(

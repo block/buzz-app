@@ -16,7 +16,10 @@ import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { ApiPaused } from "../../features/relay/http-admission";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
-import type { ChannelSummary } from "../../features/relay/contracts";
+import type {
+  ChannelList,
+  ChannelSummary,
+} from "../../features/relay/contracts";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -78,6 +81,8 @@ function fixture({
   canLeave,
   preview,
   sidebarRows,
+  member = false,
+  emptyHistory = false,
 }: {
   sidebarRows?: readonly RegisteredSidebarRows[];
   /** Observed unread messages in this chat; fakes the read state when given. */
@@ -86,6 +91,10 @@ function fixture({
   capability?: "unsupported" | "read-only" | "frontier-sync";
   viewOnly?: boolean;
   canLeave?: boolean;
+  /** The viewer is a plain member; only its agent owns the conversation. */
+  member?: boolean;
+  /** The relay has no history at all, so the timeline settles empty. */
+  emptyHistory?: boolean;
   /** An unjoined reader of an open chat, including legacy admission defaults. */
   preview?: { joinRole?: "member" | "guest" };
   /** Other Solo chats listed after this one in the sidebar's Chats. */
@@ -145,6 +154,7 @@ function fixture({
     // The signed roster's roles: a creator owns the chat, a viewer is a guest.
     viewerRole: "owner",
     owners: canLeave ? [viewer.pubkey, agent] : [viewer.pubkey],
+    ...(member && { viewerRole: "member" as const, owners: [agent] }),
     ...(viewOnly && {
       readOnly: true as const,
       viewerRole: "guest" as const,
@@ -162,7 +172,10 @@ function fixture({
     id: other,
     name: `Other ${index + 1}`,
   }));
-  let list = { status: "ready" as const, channels: [channel, ...neighbors] };
+  let list: ChannelList = {
+    status: "ready",
+    channels: [channel, ...neighbors],
+  };
   const listListeners = new Set<() => void>();
   const emitList = () => {
     for (const listener of listListeners) listener();
@@ -171,23 +184,31 @@ function fixture({
     ...owner.session.channels.window(id),
     status: "ready" as const,
     rows: [],
+    ...(emptyHistory && { hasMore: false }),
   };
   const send = vi.fn<typeof owner.session.messages.send>(() => "d".repeat(64));
   // Like the relay, settle the roster before the confirmed action resolves.
   const run = vi.fn(
     async (action: string, _id?: string, _signal?: AbortSignal) => {
+      const { archived: _, ...restored } = channel;
       list = {
         ...list,
         channels: [
           ...(action === "archive"
             ? [{ ...channel, archived: true as const }]
-            : []),
+            : action === "unarchive"
+              ? [restored]
+              : []),
           ...list.channels.filter((chat) => chat.id !== id),
         ],
       };
       emitList();
     },
   );
+  // After removal, a public channel's relay still serves it as a preview.
+  let removal: { preview?: ChannelSummary } | undefined;
+  // Access checks the page started, so absence can wait for them to settle.
+  const accessChecks: Promise<unknown>[] = [];
   // The default agent comes first, so a named agent is distinguishable from it.
   const agents = [
     { pubkey: "b".repeat(64), name: "Helper", managed: false },
@@ -296,6 +317,23 @@ function fixture({
       refreshRoster: vi.fn(async () => true),
       window: () => window,
       ensure() {},
+      resolve: async (
+        ids: readonly string[],
+        options?: Parameters<
+          NonNullable<typeof owner.session.channels.resolve>
+        >[1],
+      ) => {
+        const check = (async () => {
+          if (!removal) return owner.session.channels.resolve?.(ids, options);
+          if (!removal.preview) throw new Error("Channel unavailable");
+        })();
+        accessChecks.push(check);
+        return check;
+      },
+      get: (channelId: string) =>
+        removal?.preview?.id === channelId
+          ? removal.preview
+          : owner.session.channels.get?.(channelId),
     },
     soloPreferences: {
       ...owner.session.soloPreferences,
@@ -353,16 +391,22 @@ function fixture({
       ),
     },
   };
-  const snapshot = {
+  let snapshot: ReturnType<RelayData["snapshot"]> = {
     status: "ready" as const,
     generation: 1,
     scope,
     viewer: viewer.pubkey,
     session,
   };
+  const relayListeners = new Set<() => void>();
   const relay: RelayData = {
     snapshot: () => snapshot,
-    subscribe: () => () => {},
+    subscribe: (listener) => {
+      relayListeners.add(listener);
+      return () => {
+        relayListeners.delete(listener);
+      };
+    },
     retry() {},
     tryAgain() {},
     disconnect() {},
@@ -472,6 +516,50 @@ function fixture({
         ),
       };
       emitList();
+    },
+    /** An admin removed the viewer: the roster drops the conversation, which
+     * stays readable as a preview only when it is public. */
+    remove(visibility: "private" | "public") {
+      const { private: _, viewerRole: __, ...open } = channel;
+      removal =
+        visibility === "public"
+          ? { preview: { ...open, members: [agent], readOnly: true } }
+          : {};
+      list = {
+        ...list,
+        channels: list.channels.filter((chat) => chat.id !== id),
+      };
+      emitList();
+    },
+    /** Every access check the page started has settled and been applied. */
+    async accessSettled() {
+      await waitFor(() => expect(accessChecks.length).toBeGreaterThan(0));
+      await act(async () => {
+        await Promise.allSettled(accessChecks);
+      });
+    },
+    /** The roster read failed, or only part of it arrived. */
+    degrade(next: { status: "error" } | { coverage: "partial" }) {
+      list = {
+        ...list,
+        ...next,
+        channels: list.channels.filter((chat) => chat.id !== id),
+      };
+      emitList();
+    },
+    /** The relay connection restarts with a session that lists none of this
+     * viewer's conversations yet. */
+    reconnect() {
+      const unlisted: ChannelList = { status: "ready", channels: [] };
+      snapshot = {
+        ...snapshot,
+        generation: 2,
+        session: {
+          ...session,
+          channels: { ...session.channels, list: () => unlisted },
+        } as unknown as RelaySession,
+      };
+      for (const listener of relayListeners) listener();
     },
     // Chat activity: a new summary object for the same chat.
     retitle(name: string) {
@@ -1670,6 +1758,10 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
     await screen.findByRole("region", { name: "Archived chat" }),
   ).toHaveTextContent("This chat is archived");
   expect(screen.queryByRole("textbox")).toBeNull();
+  // Solo chats keep their header mark; the channel banner is not repeated.
+  expect(
+    screen.queryByRole("status", { name: "Archived · view only" }),
+  ).toBeNull();
 });
 
 it.each([
@@ -1850,4 +1942,179 @@ it("leaves Escape to a text field outside the composer", async () => {
   field.focus();
   expect(f.read.current?.available()).toBe(false);
   field.remove();
+});
+
+it("names an archived channel above its history, and its owner unarchives it there", async () => {
+  const f = fixture({ type: "stream", archived: true, emptyHistory: true });
+  f.mountWithToasts();
+  const banner = await screen.findByRole("status", {
+    name: "Archived · view only",
+  });
+  expect(banner).toHaveTextContent(
+    "It’s hidden from the sidebar until it’s unarchived.",
+  );
+  const history = screen.getByRole("region", {
+    name: "Channel message history",
+  });
+  expect(
+    banner.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  // The lower notice still says what archiving does to writing.
+  expect(
+    screen.getByRole("region", { name: "Archived channel" }),
+  ).toHaveTextContent("This channel is archived");
+  expect(await screen.findByText("No messages yet.")).toBeVisible();
+  expect(screen.queryByText("Start the conversation below.")).toBeNull();
+  const user = userEvent.setup();
+  await user.click(within(banner).getByRole("button", { name: "Unarchive" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Unarchive channel: Planning",
+  });
+  expect(f.run).not.toHaveBeenCalled();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Unarchive channel" }),
+  );
+  expect(f.run).toHaveBeenCalledExactlyOnceWith(
+    "unarchive",
+    id,
+    expect.any(AbortSignal),
+  );
+  // Restoring removes the trigger; the restored composer takes focus.
+  await waitFor(() =>
+    expect(
+      screen.getByRole("textbox", { name: "Message Planning" }),
+    ).toHaveFocus(),
+  );
+  expect(
+    screen.queryByRole("status", { name: "Archived · view only" }),
+  ).toBeNull();
+  expect(screen.getByText("Start the conversation below.")).toBeVisible();
+});
+
+it("returns focus to Unarchive when its confirmation is cancelled", async () => {
+  fixture({ type: "stream", archived: true }).mountWithToasts();
+  const unarchive = await screen.findByRole("button", { name: "Unarchive" });
+  const user = userEvent.setup();
+  await user.click(unarchive);
+  const dialog = await screen.findByRole("dialog", {
+    name: "Unarchive channel: Planning",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(unarchive).toHaveFocus());
+});
+
+it("offers no Unarchive to a member of an archived channel", async () => {
+  fixture({ type: "stream", archived: true, member: true }).mount();
+  const banner = await screen.findByRole("status", {
+    name: "Archived · view only",
+  });
+  expect(within(banner).queryByRole("button")).toBeNull();
+});
+
+it.each(["private", "public"] as const)(
+  "explains removal from the open %s channel and leads back to channels",
+  async (visibility) => {
+    const f = fixture({ type: "stream" });
+    f.mountWithToasts();
+    await screen.findByRole("textbox", { name: "Message Planning" });
+    writeView(f.scope, "selected-channel", id);
+    const live = new Set(document.querySelectorAll("[aria-live]"));
+    act(() => f.remove(visibility));
+    const banner = await screen.findByRole("status", {
+      // Named as the channel was shown while joined.
+      name: "You were removed from Planning",
+    });
+    // It appears in a live region that was already mounted, so it is announced.
+    expect(live.has(banner.parentElement as Element)).toBe(true);
+    expect(banner.parentElement).toHaveAttribute("aria-live", "polite");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByText("Select a channel to read it.")).toBeNull();
+    if (visibility === "public") {
+      // The preview's lower notice still offers Join, below the history.
+      const join = await screen.findByRole("region", {
+        name: "Channel preview",
+      });
+      expect(join).toHaveTextContent("Join channel to send messages");
+      expect(
+        banner.compareDocumentPosition(join) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } else
+      expect(
+        screen.queryByRole("region", { name: "Channel preview" }),
+      ).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(banner).getByRole("button", { name: "Back to channels" }));
+    // Without a sidebar to choose a neighbor, it lands where Leave does.
+    expect(f.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      route: { version: 1, params: "empty" },
+    });
+    expect(readView(f.scope, "selected-channel", null)).toBeNull();
+  },
+);
+
+it("never shows removal for the viewer's own Leave, even before it navigates", async () => {
+  const f = fixture({ type: "stream", canLeave: true });
+  f.mountWithToasts();
+  // Every render, so even a momentary banner is caught.
+  const seen = vi.fn();
+  const observer = new MutationObserver(() => {
+    if (screen.queryByText(/^You were removed from/)) seen();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  try {
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "Message Planning" });
+    await user.click(screen.getByRole("button", { name: "Channel actions" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Leave channel" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Leave channel: Planning",
+    });
+    // The relay drops the roster before the run settles and navigation follows.
+    f.run.mockImplementationOnce(async () => f.remove("public"));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Leave channel" }),
+    );
+    await waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: /^Leave/ })).toBeNull(),
+    );
+  } finally {
+    observer.disconnect();
+  }
+  expect(seen).not.toHaveBeenCalled();
+  expect(screen.queryByText(/^You were removed from/)).toBeNull();
+});
+
+it.each([
+  ["the roster read fails", { status: "error" } as const],
+  ["the roster is incomplete", { coverage: "partial" } as const],
+])("claims no removal when %s", async (_, degraded) => {
+  const f = fixture({ type: "stream" });
+  f.mount();
+  await screen.findByRole("textbox", { name: "Message Planning" });
+  act(() => f.degrade(degraded));
+  await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+  await f.accessSettled();
+  expect(screen.queryByText(/^You were removed from/)).toBeNull();
+});
+
+it("claims no removal from a new session that has not listed the channel", async () => {
+  const f = fixture({ type: "stream" });
+  f.mount();
+  await screen.findByRole("textbox", { name: "Message Planning" });
+  act(() => f.reconnect());
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("textbox", { name: "Message Planning" }),
+    ).toBeNull(),
+  );
+  await f.accessSettled();
+  expect(screen.queryByText(/^You were removed from/)).toBeNull();
 });

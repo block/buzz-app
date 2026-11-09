@@ -113,6 +113,9 @@ type Handoff = State & {
   lifecycleCallbacks: RefObject<LifecycleCallbacks | undefined>;
   /** The Solo sidebar's shown chats nearest one, nearest first. */
   soloNeighbors: RefObject<((channelId: string) => string[]) | undefined>;
+  /** Opens where leaving a channel lands: its nearest shown sidebar
+   * neighbor, else the empty channels route. Published by the sidebar. */
+  openSuccessor: RefObject<((channelId: string) => void) | undefined>;
   activityThread: RefObject<ActivityThread | undefined>;
   activityAgent: RefObject<ActivityAgent | undefined>;
   prepareDm(members: readonly string[]): void;
@@ -151,6 +154,9 @@ export function ChannelNavigationProvider({
   const menuActions = useMemo(createMenuActions, [connection.session, scope]);
   const lifecycleCallbacks = useRef<LifecycleCallbacks | undefined>(undefined);
   const soloNeighbors = useRef<((channelId: string) => string[]) | undefined>(
+    undefined,
+  );
+  const openSuccessor = useRef<((channelId: string) => void) | undefined>(
     undefined,
   );
   const [failure, setFailure] = useState<{
@@ -228,6 +234,7 @@ export function ChannelNavigationProvider({
       muteRecovery,
       lifecycleCallbacks,
       soloNeighbors,
+      openSuccessor,
       activityThread,
       activityAgent,
       prepareDm(members) {

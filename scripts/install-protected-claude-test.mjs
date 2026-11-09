@@ -22,9 +22,8 @@ await mkdir(root, { recursive: true });
 // CDN transfers can reset mid-stream (curl 92). curl discards a failed
 // attempt's partial -o output before retrying; the checksum gates the result.
 const retries = 3;
-const attemptSeconds = 300;
 const retryDelaySeconds = 5;
-function download(path, destination) {
+function download(path, destination, attemptSeconds) {
   const result = spawnSync(
     "curl",
     [
@@ -57,7 +56,7 @@ function download(path, destination) {
     );
 }
 const manifestPath = join(root, "manifest.json");
-download("manifest.json", manifestPath);
+download("manifest.json", manifestPath, 30);
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const checksum = manifest.platforms?.[platform]?.checksum;
 if (typeof checksum !== "string" || !/^[a-f0-9]{64}$/.test(checksum))
@@ -76,7 +75,7 @@ for (const arch of ["arm64", "x64"]) {
 }
 const binary = join(root, "claude");
 console.log(`Downloading pinned Claude ${version} (${platform})`);
-download(`${platform}/claude`, binary);
+download(`${platform}/claude`, binary, 300);
 const hash = createHash("sha256");
 for await (const chunk of createReadStream(binary)) hash.update(chunk);
 if (hash.digest("hex") !== checksum)

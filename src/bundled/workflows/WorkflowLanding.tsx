@@ -1601,10 +1601,9 @@ export function WorkflowLanding({
   const ordered = [...channels].sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
   );
-  const populated = ordered.filter(
-    (channel) => snapshots[channel.id]?.data.items.length,
-  );
-  const emptyFromFilters = filtered && populated.length > 0;
+  const emptyFromFilters =
+    filtered &&
+    ordered.some((channel) => snapshots[channel.id]?.data.items.length);
   // Only the default My workflows filter hides other owners' workflows.
   const emptyFromOwnership =
     emptyFromFilters &&
@@ -1612,7 +1611,13 @@ export function WorkflowLanding({
     status === "all" &&
     triggers.length === 0 &&
     filter.length === 0;
-  const shown = populated.filter((channel) => filter.includes(channel.id));
+  // A channel with workflows is a filter choice; a chosen one stays listed
+  // when its last workflow goes, so its empty state keeps the scope.
+  const choices = ordered.filter(
+    (channel) =>
+      snapshots[channel.id]?.data.items.length || filter.includes(channel.id),
+  );
+  const shown = choices.filter((channel) => filter.includes(channel.id));
   useEffect(() => {
     if (filter.length !== shown.length)
       onFilterChange(shown.map((channel) => channel.id));
@@ -1690,14 +1695,9 @@ export function WorkflowLanding({
     if (!first) return;
     if (route.owner) setMineOnly(route.owner === viewer);
     if (!route.channel) return;
-    // Only a channel with workflows is a filter choice.
     if (routeChannel?.status !== "ready")
       setError("The linked channel's workflows could not be read.");
-    else if (routeChannel.data.items.length) onFilterChange([route.channel]);
-    else
-      setError(
-        `#${channels.find((channel) => channel.id === route.channel)?.name ?? route.channel} has no workflows.`,
-      );
+    else onFilterChange([route.channel]);
   });
   // The visit shown, tracked apart from whether its route has applied so that
   // leaving a visit is seen even when neither visit's route can apply yet.
@@ -1870,7 +1870,7 @@ export function WorkflowLanding({
             onChange={onFilterChange}
             wide
             icon={<HashIcon size={16} aria-hidden="true" />}
-            options={populated.map((channel) => ({
+            options={choices.map((channel) => ({
               value: channel.id,
               label: channel.name,
               icon: (

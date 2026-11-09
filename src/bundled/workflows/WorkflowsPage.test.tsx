@@ -1508,7 +1508,7 @@ it("combines channel selections and resets them while closing filtered details",
   ).toBeNull();
 });
 
-it("drops stale channel filters after readback and membership changes", async () => {
+it("keeps a channel filter after its last workflow goes and drops it when the channel leaves", async () => {
   const { fixture, user, openChannels, otherDefinition } =
     channelFilteredPage();
   act(() =>
@@ -1532,6 +1532,7 @@ it("drops stale channel filters after readback and membership changes", async ()
   expect(
     screen.getByRole("button", { name: /^Channels(?::|$)/ }),
   ).toHaveAccessibleDescription("Other channel");
+  // The emptied channel keeps its scope and shows the filtered empty state.
   act(() =>
     fixture.definitions.update({
       status: "ready",
@@ -1539,11 +1540,14 @@ it("drops stale channel filters after readback and membership changes", async ()
     }),
   );
   expect(
-    screen.queryByRole("button", { name: "Clear channels filter" }),
-  ).toBeNull();
+    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+  ).toHaveAccessibleDescription("Other channel");
+  expect(await screen.findByText("No matching workflows")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
   await openChannels();
-  await screen.findByRole("checkbox", { name: "Fixture channel" });
-  expect(screen.queryByRole("checkbox", { name: "Other channel" })).toBeNull();
+  expect(
+    await screen.findByRole("checkbox", { name: "Other channel" }),
+  ).toBeChecked();
   await user.keyboard("{Escape}");
   await waitFor(() =>
     expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
@@ -1554,17 +1558,14 @@ it("drops stale channel filters after readback and membership changes", async ()
       data: { partial: false, items: [fixtureDefinition, otherDefinition] },
     }),
   );
-  await openChannels();
-  await user.click(
-    await screen.findByRole("checkbox", { name: "Other channel" }),
-  );
-  await user.keyboard("{Escape}");
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Channels" })).toBeNull(),
+    expect(
+      screen.getByRole("button", { name: /^Open Other helper:/ }),
+    ).toBeVisible(),
   );
   expect(
-    screen.getByRole("button", { name: /^Channels(?::|$)/ }),
-  ).toHaveAccessibleDescription("Other channel");
+    screen.queryByRole("button", { name: /^Open Message helper:/ }),
+  ).toBeNull();
   act(() => {
     fixture.setChannels({
       status: "ready",
@@ -2103,7 +2104,7 @@ it("returns to the link visit when a workflow restored after leaving the page cl
   }
 });
 
-it("reports a routed channel that has no workflows instead of filtering by it", async () => {
+it("filters by a routed channel that has no workflows and offers to clear the filter", async () => {
   const page = navigatedPage(
     { channel: "other-channel", owner: fixtureViewer },
     fixtureViewer,
@@ -2115,9 +2116,16 @@ it("reports a routed channel that has no workflows instead of filtering by it", 
       ],
     },
   );
+  const user = userEvent.setup();
   try {
+    expect(await screen.findByText("No matching workflows")).toBeVisible();
     expect(
-      await screen.findByText("#Other channel has no workflows."),
+      screen.getByRole("button", { name: /^Channels(?::|$)/ }),
+    ).toHaveAccessibleName("Channels: Other channel");
+    expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: /^Channels(?::|$)/ }),

@@ -23,16 +23,19 @@ the parent conversation alone is insufficient. Several agents can participate.
 Starting a Huddle in a one-to-one DM with your running voice-capable agent
 adds it to the Huddle room; joining an existing Huddle does not. You can also
 add agents through the Huddle's member controls. On the hosting computer, a
-seated agent shows a smaller avatar, a rotating ring while it works (activity
-dots in the compact player), and its normal size while speaking. This state is
+seated agent starts at normal size, shrinks by 20% while you speak, and shows a
+rotating ring while it works (activity dots in the compact player). It returns
+to normal size while speaking, with the same pulse as people. This state is
 not shared with remote participants. The agent’s own client enforces who it
 hears. Each filters for audio from your connected devices
 and speaks to everyone. The current audio protocol can briefly misattribute delayed
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
 audio from your devices is mixed together.
-Voice work uses the same permissions as your text requests. Joining on another
-device does not seat an agent running here. Leaving closes its voice connection.
+Voice work uses the same permissions as your text requests. Joining your Codex agent’s DM huddle from mobile can activate that agent on
+this desktop. Keep Buzz and the Codex agent running here; the desktop microphone
+does not turn on. Other calls on another device do not seat an agent here.
+Leaving on every connected owner device closes the remote voice connection.
 If agent voice stops, the compact player and Huddle window show the reason;
 leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
@@ -767,6 +770,15 @@ available rather than silently discarding it.
   note. Opened from a conversation, it shows that conversation's turns;
   **Show all conversations** lists the agent's other turns too. It shows only
   turns captured while Buzz has been open.
+- **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar
+  shows the green Online badge to everyone in the community while its owner
+  has set it up on a remote runtime and has not deleted it. The badge means the
+  agent is configured to run remotely and wakes when mentioned; it does not
+  prove the runtime is up right now, and a working indicator still shows actual
+  work. Deleting the agent clears the badge for other viewers within a few
+  minutes. Agents that run on someone's computer, and people, keep their badge
+  from recent Buzz activity, so a local agent goes grey when its owner's Buzz
+  is closed.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -795,7 +807,8 @@ available rather than silently discarding it.
   sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
-  the side pane keeps its open threads and reply drafts.
+  the side pane keeps its open threads and reply drafts. Its header includes the
+  same DM controls and actions, including Huddle when supported and enabled.
   A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie

@@ -216,6 +216,7 @@ export function fakeRelay(origin = "https://relay.example.test") {
         ___: AbortSignal,
       ) => true,
     ),
+    presence: { remoteRuntimes: vi.fn<(keys: Iterable<string>) => void>() },
   } as unknown as RelaySession;
   let snapshot: RelaySnapshot = {
     status: "ready",

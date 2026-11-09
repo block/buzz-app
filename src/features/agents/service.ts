@@ -6704,6 +6704,12 @@ export class AgentsService extends Service implements Agents {
     }
     for (const origin of this.presence.keys())
       if (!this.bound.has(origin)) this.presence.delete(origin);
+    // Hosted agents send no presence; each community shows them by type.
+    const remote = this.types().flatMap((type) =>
+      type.remote ? [type.key] : [],
+    );
+    for (const { binding } of this.bound.values())
+      binding?.session.presence?.remoteRuntimes?.(remote);
     const now = Date.now();
     for (const [origin, entry] of this.bound) {
       const binding = entry.binding;

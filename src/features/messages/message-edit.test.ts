@@ -80,7 +80,7 @@ describe("message edit round trips", () => {
     const definition = "[ref]: https://example.test/a，@Sam";
     const sent = {
       ...original,
-      content: `https://example.test，@Sam look at [ref].\n\n> ${definition}\n\n${definition}`,
+      content: `https://example.test，@Sam look at [ref].\n\n> ${definition}\n\n${definition}\n\n${"> ".repeat(101)}${definition}`,
       tags: [
         ["h", "room"],
         ["p", person],

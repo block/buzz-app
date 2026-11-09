@@ -652,9 +652,7 @@ it("draws the invite code in the color mode's variant and redraws it when the mo
   });
   try {
     render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
-    await user.click(
-      await screen.findByRole("tab", { name: "Invite" }),
-    );
+    await user.click(await screen.findByRole("tab", { name: "Invite" }));
     const dialog = await screen.findByRole("region", {
       name: "Membership",
     });

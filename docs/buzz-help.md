@@ -409,7 +409,7 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Losing the connection**: Buzz keeps retrying on its own and says nothing
   for the first 30 seconds. If it still can't connect, a notice at the bottom
   right says "Buzz is having trouble connecting" until it reconnects. There is
-  nothing to press, and you can still point at and click whatever it covers.
+  nothing to press.
 - **Refused by a community**: if a community refuses your account, one
   notice at the bottom right says so on every page, with what fixes it. It
   doesn't retry on its own.

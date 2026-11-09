@@ -90,10 +90,10 @@ test("member action errors stay in view above a long roster", async ({
   await add.click();
   const refusal = dialog
     .getByRole("alert")
-    .filter({ hasText: "not allowed to add members" });
-  await expect(refusal).toHaveText(
-    /^Sam: blocked: you are not allowed to add members/,
-  );
+    .filter({ hasText: "You don’t have permission" });
+  // The community's raw `blocked:` reason becomes a plain one.
+  await expect(refusal).toHaveText(/^Sam: You don’t have permission\./);
+  await expect(refusal).not.toContainText("blocked:");
   await expect(list.getByRole("alert")).toHaveCount(0);
   await expect(refusal).toBeInViewport({ ratio: 1 });
   await expect(search).toBeInViewport({ ratio: 1 });

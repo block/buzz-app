@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
+import { NamedError } from "./refusal";
 import { keypair, roster, signed } from "./testing";
 import { matchesEvent } from "./projection";
 import type { RelayEvent } from "./events";
@@ -20,6 +21,7 @@ function setup(visibility: "private" | "public" = "private") {
   let libraryFailure = false;
   let afterPublish = () => {};
   let omitMembership = false;
+  let failSaves = false;
   const archived: string[] = [];
   let holdRoster: Promise<void> | undefined;
   let releaseRoster: (() => void) | undefined;
@@ -45,7 +47,10 @@ function setup(visibility: "private" | "public" = "private") {
     });
   const publish = vi.fn(async (_event: RelayEvent) => {
     const target = _event.tags.find(([name]) => name === "h")?.[1];
-    if (denied) throw new PublishRejected("Only channel admins can add agents");
+    if (denied)
+      throw new PublishRejected(
+        "restricted: only channel admins can add agents",
+      );
     if (!omitMembership && target === parent)
       members = [viewer.pubkey, agent.pubkey];
     if (!omitMembership && target === child)
@@ -115,10 +120,20 @@ function setup(visibility: "private" | "public" = "private") {
         );
       },
     },
-    { outboxStorage: { load: () => [], save: () => {} } },
+    {
+      outboxStorage: {
+        load: () => [],
+        save: () => {
+          if (failSaves) throw new Error("Storage unavailable");
+        },
+      },
+    },
   );
   return {
     owner,
+    failSaves: (value: boolean) => {
+      failSaves = value;
+    },
     parent,
     child,
     agent: agent.pubkey,
@@ -265,7 +280,7 @@ it("reports channel-specific uncertainty when an accepted addition lacks roster 
       test.agent,
     ]);
     const result = expect(adding).rejects.toThrow(
-      /Agent addition is unconfirmed.*Check channel membership/,
+      "Buzz hasn’t seen the agent join yet. Try again in a moment. Buzz won’t add them twice.",
     );
     await vi.waitFor(() => expect(test.publish).toHaveBeenCalledOnce());
     await vi.advanceTimersByTimeAsync(15000);
@@ -283,7 +298,7 @@ it("keeps channel permission failures and retries the same saved invitation", as
     test.setDenied(true);
     await expect(
       test.owner.session.channelWrites.addAgents(test.child, [test.agent]),
-    ).rejects.toThrow(/Only channel admins/);
+    ).rejects.toThrow("You don’t have permission.");
     expect(
       test.owner.session.channels
         .list()
@@ -298,7 +313,7 @@ it("keeps channel permission failures and retries the same saved invitation", as
     test.owner.dispose();
   }
 });
-it("explains how to recover an expired failed invitation without republishing it", async () => {
+it("replaces an expired failed invitation with a new one", async () => {
   const test = setup();
   try {
     await test.ready();
@@ -308,19 +323,92 @@ it("explains how to recover an expired failed invitation without republishing it
     try {
       await expect(
         test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
-      ).rejects.toThrow(/Only channel admins/);
+      ).rejects.toThrow("You don’t have permission.");
       expect(test.publish).toHaveBeenCalledOnce();
       vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
       test.setDenied(false);
-      await expect(
-        test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
-      ).rejects.toThrow(/expired.*Outbox.*remove.*add the agent again/i);
-      expect(test.publish).toHaveBeenCalledOnce();
+      // The relay no longer takes the old one, so Buzz sends a new one.
+      const first = test.publish.mock.calls[0]?.[0].id;
+      await test.owner.session.channelWrites.addAgents(test.parent, [
+        test.agent,
+      ]);
+      expect(test.publish).toHaveBeenCalledTimes(2);
+      expect(test.publish.mock.calls[1]?.[0].id).not.toBe(first);
+      expect(
+        test.owner.session.outbox
+          ?.snapshot()
+          .some((item) => item.event.id === first),
+      ).toBe(false);
     } finally {
       vi.restoreAllMocks();
       expect(Date.now).toBe(now);
     }
   } finally {
+    test.owner.dispose();
+  }
+});
+
+it("names the agent when the invitation replacing an expired one is refused again, without Retry", async () => {
+  const test = setup();
+  try {
+    await test.ready();
+    test.setDenied(true);
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    await expect(
+      test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
+    ).rejects.toThrow("You don’t have permission.");
+    const first = test.publish.mock.calls[0]?.[0].id;
+    vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
+    const error = await test.owner.session.channelWrites
+      .addAgents(test.parent, [test.agent])
+      .catch((error: unknown) => error);
+    // Name first, then why: as Manage members names each person.
+    expect(error).toBeInstanceOf(NamedError);
+    expect(error).toMatchObject({
+      message: "Buzz couldn’t add Outside agent. You don’t have permission.",
+      final: true,
+    });
+    expect(test.publish).toHaveBeenCalledTimes(2);
+    expect(test.publish.mock.calls[1]?.[0].id).not.toBe(first);
+  } finally {
+    vi.restoreAllMocks();
+    test.owner.dispose();
+  }
+});
+
+it("says to add the agent again when the expired invitation can't be cleared", async () => {
+  const test = setup();
+  try {
+    await test.ready();
+    test.setDenied(true);
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    await expect(
+      test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
+    ).rejects.toThrow("You don’t have permission.");
+    const first = test.publish.mock.calls[0]?.[0].id;
+    vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
+    test.setDenied(false);
+    test.failSaves(true);
+    const error = await test.owner.session.channelWrites
+      .addAgents(test.parent, [test.agent])
+      .catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(NamedError);
+    expect(error).toMatchObject({
+      message: "Buzz couldn’t add Outside agent. Try adding them again.",
+      final: false,
+    });
+    // Nothing new is sent while the old request is still there.
+    expect(test.publish).toHaveBeenCalledOnce();
+    expect(
+      test.owner.session.outbox
+        ?.snapshot()
+        .some((item) => item.event.id === first),
+    ).toBe(true);
+    test.failSaves(false);
+    await test.owner.session.channelWrites.addAgents(test.parent, [test.agent]);
+    expect(test.publish).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.restoreAllMocks();
     test.owner.dispose();
   }
 });
@@ -409,7 +497,7 @@ it("does not accept a foreign-signed roster as fresh membership", async () => {
     test.returnForeignRoster();
     await expect(
       test.owner.session.channelWrites.addAgents(test.child, [test.agent]),
-    ).rejects.toThrow(/refresh channel membership/);
+    ).rejects.toThrow(/can’t check who’s in this channel/);
     expect(test.publish).not.toHaveBeenCalled();
   } finally {
     test.owner.dispose();

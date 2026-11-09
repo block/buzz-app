@@ -205,12 +205,14 @@ test("overlapping idle additions restore focus when the suggestion list retires"
       );
       if (rejected) {
         const recovery = dialog.getByRole("alert").filter({
-          hasText: "Agent 2: Addition rejected",
+          hasText: "Agent 2: The community didn’t let Buzz add them.",
         });
         await expect(recovery).toBeVisible();
+        // A refusal Buzz can't place would be refused again, so there is
+        // no Retry.
         await expect(
           recovery.getByRole("button", { name: "Retry adding Agent 2" }),
-        ).toBeEnabled();
+        ).toHaveCount(0);
       } else {
         await expect(
           dialog.getByText("Agent 2 is in the channel.", { exact: true }),

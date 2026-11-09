@@ -2051,11 +2051,12 @@ it("shows action feedback above the member list so a long roster cannot hide it"
   await t.user.click(
     await screen.findByRole("button", { name: /^Add Morgan \(/ }),
   );
-  const refusal = await screen.findByText(/blocked: you are not allowed/);
+  const refusal = await screen.findByText(/You don’t have permission/);
   aboveList(refusal);
+  // The community would refuse the same request again, so there is no Retry.
   expect(
-    within(refusal).getByRole("button", { name: "Retry adding Morgan" }),
-  ).toBeEnabled();
+    within(refusal).queryByRole("button", { name: "Retry adding Morgan" }),
+  ).toBeNull();
   expect(within(list).queryByRole("alert")).toBeNull();
   expect(screen.getAllByRole("alert")).toHaveLength(3);
   expect(t.publish).not.toHaveBeenCalled();

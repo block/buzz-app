@@ -1,5 +1,6 @@
 import type { MemberAdditionIntent } from "./members";
 import type { Delivery, LocalEvents } from "../relay/outbox";
+import { failsAgain, failureText, NamedError } from "../relay/refusal";
 
 type Addition = Readonly<{
   channelId: string;
@@ -7,10 +8,11 @@ type Addition = Readonly<{
   pending: boolean;
   confirmed: boolean;
   error?: string;
+  /** `error` names the person already. */
+  named?: true;
+  /** Sending it again would fail the same way, so there is no Retry. */
+  final?: true;
 }>;
-
-const differentRole =
-  "This member is already being added with another role. Wait for it to finish or show Not sent in Outbox, then try again.";
 
 /** Session-owned continuation and recovery; closing a view never cancels intent. */
 export function createMemberAdditions(
@@ -27,6 +29,8 @@ export function createMemberAdditions(
     pubkeys: readonly string[],
     intents: ReadonlyMap<string, MemberAdditionIntent>,
   ) => Promise<ReadonlySet<string>>,
+  /** The name people know someone by, for messages about them. */
+  nameOf: (pubkey: string) => string | undefined = () => undefined,
 ) {
   let snapshot: readonly Addition[] = [];
   const listeners = new Set<() => void>();
@@ -97,12 +101,13 @@ export function createMemberAdditions(
       // An addition under way keeps the role it asked for; another role
       // waits for it rather than joining it or racing it with a second write.
       if (existing) {
-        if (intents.get(key)?.role !== options.role)
-          return Promise.reject(new Error(differentRole));
-        if (intents.get(key)?.retry !== options.retry)
+        if (
+          intents.get(key)?.role !== options.role ||
+          intents.get(key)?.retry !== options.retry
+        )
           return Promise.reject(
-            new Error(
-              "A member operation is already running. Wait for it to finish, then try again.",
+            new NamedError(
+              `Buzz is still adding ${nameOf(pubkey) ?? "this person"}. Wait for that to finish, then try again.`,
             ),
           );
         return existing;
@@ -147,10 +152,9 @@ export function createMemberAdditions(
             pubkey,
             pending: false,
             confirmed,
-            error:
-              error instanceof Error
-                ? error.message
-                : "Could not add this member. Try again.",
+            error: failureText(error, "Buzz couldn’t add them. Try again."),
+            ...(error instanceof NamedError ? { named: true as const } : {}),
+            ...(failsAgain(error) ? { final: true as const } : {}),
           });
           throw error;
         })
@@ -160,6 +164,17 @@ export function createMemberAdditions(
       pending.set(key, operation);
       update({ channelId, pubkey, pending: true, confirmed });
       return operation;
+    },
+    /** Drops a settled addition's message, as when the person is in the
+     * channel after all or has read it. An addition under way keeps its
+     * entry; what a later add would finish stays with its intent. */
+    dismiss(channelId: string, pubkey: string) {
+      if (signal.aborted || pending.has(JSON.stringify([channelId, pubkey])))
+        return;
+      const next = snapshot.filter(
+        (item) => item.channelId !== channelId || item.pubkey !== pubkey,
+      );
+      if (next.length !== snapshot.length) publish(next);
     },
   });
 }

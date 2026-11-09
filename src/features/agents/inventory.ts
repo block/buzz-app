@@ -78,12 +78,12 @@ export function inventoryReader(
       if (result.status === "rejected")
         console.warn(`${source} read failed`, result.reason);
     if (remote.status === "rejected" && (!local || saved.status === "rejected"))
-      throw new Error("Agent inventory sources unavailable");
+      throw new Error("Buzz couldn’t load agents. Try again in a moment.");
     const error =
       saved.status === "rejected"
-        ? "Local library unavailable; showing relay inventory. Refresh agents to include local identities."
+        ? "Buzz couldn’t load the agents saved on this device, so some may be missing."
         : remote.status === "rejected"
-          ? "Relay inventory unavailable; showing local library. Refresh agents to discover other identities."
+          ? "Buzz couldn’t load this community’s agents, so some may be missing."
           : undefined;
     return {
       ...combineInventory(

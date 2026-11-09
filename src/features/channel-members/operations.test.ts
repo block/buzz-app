@@ -30,6 +30,28 @@ it("coalesces reopened views and retries a failed addition", async () => {
   expect(owner.snapshot()).toEqual([]);
 });
 
+it("dismisses a settled addition's message, never one still under way", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const add = vi
+    .fn<() => Promise<void>>()
+    .mockRejectedValueOnce(new Error("Could not add"))
+    .mockImplementationOnce(() => gate);
+  const owner = createMemberAdditions(new AbortController().signal, add);
+  await expect(owner.add("channel", "person")).rejects.toThrow();
+  owner.add("channel", "other").catch(() => {});
+  expect(owner.snapshot()).toHaveLength(2);
+  owner.dismiss("channel", "person");
+  owner.dismiss("channel", "other");
+  expect(owner.snapshot()).toEqual([
+    { channelId: "channel", pubkey: "other", pending: true, confirmed: false },
+  ]);
+  release();
+  await vi.waitFor(() => expect(owner.snapshot()).toEqual([]));
+});
+
 it("session disposal cancels the continuation and clears recovery state", async () => {
   const lifetime = new AbortController();
   let release!: () => void;
@@ -79,7 +101,7 @@ it("joins an addition under way only when it asks for the same role", async () =
   expect(owner.add("channel", "agent")).toBe(first);
   await expect(
     owner.add("channel", "agent", { role: "guest" }),
-  ).rejects.toThrow(/another role/);
+  ).rejects.toThrow(/Buzz is still adding/);
   release();
   await first;
   expect(add).toHaveBeenCalledOnce();
@@ -105,7 +127,7 @@ it("keeps Retry separate from a concurrent explicit Add and clears its flag afte
     expect(owner.add("channel", "person", { retry: true })).toBe(retry);
     const explicit = owner.add("channel", "person");
     expect(explicit).not.toBe(retry);
-    await expect(explicit).rejects.toThrow(/already.*running/);
+    await expect(explicit).rejects.toThrow(/Buzz is still adding/);
   } finally {
     release();
     await retry;

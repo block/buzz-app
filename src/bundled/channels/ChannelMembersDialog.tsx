@@ -6,6 +6,11 @@ import {
 } from "../../features/profiles/useVerifiedNames";
 import { useProfileGeneration } from "../../features/relay/react";
 import { archiveHides } from "../../features/relay/identity-archives";
+import {
+  failsAgain,
+  failureText,
+  NamedError,
+} from "../../features/relay/refusal";
 import { Button as BaseButton } from "@base-ui/react/button";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
@@ -62,6 +67,8 @@ import {
 import {
   canAddMembers,
   canShareSoloChat,
+  memberName,
+  profileName,
 } from "../../features/channel-members/members";
 import { ownSolo, soloShareDisclosure } from "../../features/solo/labels";
 import { soloChatLink } from "../../features/solo/share";
@@ -737,7 +744,10 @@ export function ChannelMembersDialog({
   const [query, setQuery] = useState("");
   const [selectedRole, setSelectedRole] = useState("All");
   const [soloAdditions, setSoloAdditions] = useState<
-    Record<string, { pending: boolean; error?: string }>
+    Record<
+      string,
+      { pending: boolean; error?: string; named?: boolean; final?: boolean }
+    >
   >({});
   const soloPending = useRef(new Set<string>());
   const additions = useSyncExternalStore(
@@ -749,18 +759,6 @@ export function ChannelMembersDialog({
     ...additions.filter((item) => item.pending).map((item) => item.pubkey),
     ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.pending),
   ]);
-  // One alert per reason: a refused team add names its members together.
-  // Solo agents join directly, one at a time, so each keeps its own Retry.
-  const refusals = new Map<string, { error: string; keys: string[] }>();
-  const refuse = (group: string, error: string, key: string) => {
-    const item = refusals.get(group) ?? { error, keys: [] };
-    item.keys.push(key);
-    refusals.set(group, item);
-  };
-  for (const item of additions)
-    if (item.error) refuse(item.error, item.error, item.pubkey);
-  for (const [key, item] of Object.entries(soloAdditions))
-    if (item.error) refuse(key, item.error, key);
   const [notice, setNotice] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const copyFailure = copyStatus && copyStatus !== "Link copied";
@@ -814,6 +812,63 @@ export function ChannelMembersDialog({
     session.channels.get?.(channelId);
   const solo = channel?.channelType === "solo";
   const place = solo ? "chat" : "channel";
+  // One alert per reason: a refused team add names its members together.
+  // Solo agents join directly, one at a time, so each keeps its own Retry.
+  // A reason that names its person is already a sentence about them. One
+  // that sending again would meet the same way offers no Retry, as in Unsent
+  // changes. Every alert can be dismissed, and someone the member list shows
+  // after all, as when an admin added them, needs none.
+  const joined = new Set(
+    channel && !channel.cached ? (channel.members ?? []) : [],
+  );
+  const refusals = new Map<
+    string,
+    { error: string; keys: string[]; named: boolean; final: boolean }
+  >();
+  const refuse = (
+    group: string,
+    error: string,
+    key: string,
+    named = false,
+    final = false,
+  ) => {
+    const item = refusals.get(group) ?? { error, keys: [], named, final };
+    item.keys.push(key);
+    refusals.set(group, item);
+  };
+  for (const item of additions)
+    if (item.error && !joined.has(item.pubkey))
+      refuse(
+        item.named ? item.pubkey : `${item.final ? "final:" : ""}${item.error}`,
+        item.error,
+        item.pubkey,
+        item.named,
+        item.final,
+      );
+  for (const [key, item] of Object.entries(soloAdditions))
+    if (item.error && !joined.has(key))
+      refuse(key, item.error, key, item.named, item.final);
+  const dismissRefusal = useCallback(
+    (keys: readonly string[]) => {
+      for (const key of keys) session.memberAdditions.dismiss(channelId, key);
+      setSoloAdditions((old) => {
+        const next = { ...old };
+        for (const key of keys) if (next[key]?.error) delete next[key];
+        return next;
+      });
+    },
+    [session, channelId],
+  );
+  const joinedRefusals = [
+    ...additions.filter((item) => item.error).map((item) => item.pubkey),
+    ...Object.keys(soloAdditions).filter((key) => soloAdditions[key]?.error),
+  ]
+    .filter((key) => joined.has(key))
+    .sort()
+    .join(":");
+  useEffect(() => {
+    if (joinedRefusals) dismissRefusal(joinedRefusals.split(":"));
+  }, [joinedRefusals, dismissRefusal]);
   const readOnlyAccess =
     channel?.viewerRole === "guest" ||
     (channel?.readOnly && channel.joinRole === "guest");
@@ -1026,14 +1081,21 @@ export function ChannelMembersDialog({
   };
   const pageVerified = (key: string) =>
     profiles.get(key)?.verified ? undefined : searchVerified.get(key);
+  // A searched person's name, unless it is the part of their key a profile
+  // without a name stands in with. A verified name replaces that fragment
+  // (withVerifiedNames), so it stays.
+  const searchedName = (
+    person: { pubkey: string; name: string; nameIsFallback?: true } | undefined,
+  ) =>
+    person && verifiedOf(person.pubkey) ? person.name : profileName(person);
   const label = (key: string, fallback?: string) =>
     // A name verified for this search is the label where the shared profiles
     // show another, so the row reads as Command-K and mentions do.
     pageLabel(pageVerified(key)) ??
     resolveName(
       key,
-      profiles.get(key)?.name ??
-        searchProfiles.get(key)?.name ??
+      profileName(profiles.get(key)) ??
+        searchedName(searchProfiles.get(key)) ??
         fallback ??
         known.get(key)?.name ??
         formatPublicKey(key) ??
@@ -1312,7 +1374,7 @@ export function ChannelMembersDialog({
         const own = known.get(person.pubkey);
         return {
           ...person,
-          label: label(person.pubkey, person.name),
+          label: label(person.pubkey, searchedName(person)),
           username: person.username ?? profiles.get(person.pubkey)?.username,
           agentName: own?.managed ? own.name : undefined,
           agent: agentCandidate(person),
@@ -1488,7 +1550,9 @@ export function ChannelMembersDialog({
   const shownNames = new Map<string, number>();
   for (const name of [
     ...currentMembers.map(memberLabel),
-    ...visibleCandidates.map((person) => label(person.pubkey, person.name)),
+    ...visibleCandidates.map((person) =>
+      label(person.pubkey, searchedName(person)),
+    ),
   ])
     shownNames.set(name, (shownNames.get(name) ?? 0) + 1);
   // A confirmation can replace its Add button or retire another pending row.
@@ -1546,7 +1610,7 @@ export function ChannelMembersDialog({
             setSelectedRole("All");
           }
           setNotice(
-            `${session.names.resolve(key, session.profiles.snapshot().get(key)?.name ?? session.agentChoices.snapshot().identities.find((agent) => agent.pubkey === key)?.name ?? formatPublicKey(key) ?? "Unknown member")}${direct ? " added." : ` is in the ${place}.`}`,
+            `${memberName(session, key) ?? formatPublicKey(key) ?? "Unknown member"}${direct ? " added." : ` is in the ${place}.`}`,
           );
         }
       } catch (error: unknown) {
@@ -1555,10 +1619,9 @@ export function ChannelMembersDialog({
             ...old,
             [key]: {
               pending: false,
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Could not add this agent. Try again.",
+              error: failureText(error, "Buzz couldn’t add them. Try again."),
+              named: error instanceof NamedError,
+              final: failsAgain(error),
             },
           }));
         // Ordinary additions retain session-owned recovery.
@@ -1785,7 +1848,7 @@ export function ChannelMembersDialog({
   const selectedPicture = selection && profiles.get(selection.pubkey)?.picture;
   const selectedName =
     selection &&
-    label(selection.pubkey, candidates.get(selection.pubkey)?.name);
+    label(selection.pubkey, searchedName(candidates.get(selection.pubkey)));
   const selectedAddition =
     selection?.expectedRole === "absent"
       ? additionRoles.find((option) => option.role === selection.role)
@@ -1910,7 +1973,7 @@ export function ChannelMembersDialog({
       />
       <span className="sr-only" role="status">
         {highlightedPerson
-          ? `${label(highlightedPerson.pubkey, highlightedPerson.name)}. Press Enter to add.`
+          ? `${label(highlightedPerson.pubkey, searchedName(highlightedPerson))}. Press Enter to add.`
           : ""}
       </span>
     </div>
@@ -2074,7 +2137,7 @@ export function ChannelMembersDialog({
             messageError ||
             copyFailure) && (
             <div className={styles.feedback}>
-              {[...refusals].map(([group, { error, keys }]) => {
+              {[...refusals].map(([group, { error, keys, named, final }]) => {
                 const names = listNames(keys);
                 return (
                   <p
@@ -2082,21 +2145,37 @@ export function ChannelMembersDialog({
                     key={group}
                     className="text-body-sm text-danger"
                   >
-                    {names}: {error}{" "}
+                    {named ? error : `${names}: ${error}`}
+                    {!final && (
+                      <>
+                        {" "}
+                        <Button
+                          variant="outline"
+                          aria-label={`Retry adding ${names}`}
+                          disabled={!canAdd}
+                          onClick={() => {
+                            // Land where Add does, so the next step is the search.
+                            input.current?.focus();
+                            const [only] = keys;
+                            void (only && keys.length === 1
+                              ? add(only)
+                              : addAll(keys, `${names} are in the ${place}.`));
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </>
+                    )}{" "}
                     <Button
-                      variant="outline"
-                      aria-label={`Retry adding ${names}`}
-                      disabled={!canAdd}
+                      variant="ghost"
+                      aria-label={`Dismiss the message about ${names}`}
                       onClick={() => {
-                        // Land where Add does, so the next step is the search.
+                        // The alert takes its button with it; go on from the search.
                         input.current?.focus();
-                        const [only] = keys;
-                        void (only && keys.length === 1
-                          ? add(only)
-                          : addAll(keys, `${names} are in the ${place}.`));
+                        dismissRefusal(keys);
                       }}
                     >
-                      Retry
+                      Dismiss
                     </Button>
                   </p>
                 );
@@ -2318,7 +2397,7 @@ export function ChannelMembersDialog({
                         {group.people.map((person) =>
                           row(
                             person.pubkey,
-                            label(person.pubkey, person.name),
+                            label(person.pubkey, searchedName(person)),
                             true,
                             person.picture,
                             person.isAgent,

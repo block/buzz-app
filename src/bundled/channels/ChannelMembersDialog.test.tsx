@@ -45,6 +45,7 @@ import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { profileTarget } from "../../features/profiles/target";
 import { ChannelMembersButton } from "./ChannelMembersDialog";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import { Context } from "@deepseek-ai/cordis";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { createNavigationController } from "../../features/navigation/controller";
@@ -120,6 +121,8 @@ async function setup(
     verifiedProfiles?: VerifiedProfileAuthority;
     visibility?: "private" | "public";
     joinRole?: "member" | "guest";
+    /** The person's profile gives no name. */
+    namelessPerson?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -159,7 +162,10 @@ async function setup(
       members.push(_event.tags.find((tag) => tag[0] === "p")?.[1] ?? target);
     clock++;
   });
-  const personProfile = profile(person, { name: "Morgan" });
+  const personProfile = profile(
+    person,
+    options.namelessPerson ? {} : { name: "Morgan" },
+  );
   const stableEvents = [
     signed(relay, {
       kind: 39000,
@@ -995,10 +1001,10 @@ it("uses shared DM visit usage and picker-specific earlier choices", async () =>
 
 it("remembers successful channel additions without learning from failed writes", async () => {
   const t = await setup();
-  t.fail("Only the owner can add this agent");
+  t.fail("error: database unavailable");
   const add = await t.search();
   await t.user.click(add);
-  await screen.findByText(/Only the owner can add this agent/);
+  await screen.findByText(/The community had a problem/);
   const typed = pickerText("channel-members", "morgan");
   const key = personKey(t.person.pubkey);
   expect(
@@ -1226,8 +1232,9 @@ it("names a pasted key once a later search returns its new verified head", async
   );
   const search = screen.getByRole("searchbox");
   await t.user.type(search, npubEncode(gabi.pubkey));
-  // The missing-head lookup finishes: the row keeps its key label.
-  const label = new RegExp(`^Add ${gabi.pubkey.slice(0, 10)}`);
+  // The missing-head lookup finishes: the row keeps its key label, the short
+  // npub, never the start of the hex key a nameless profile stands in with.
+  const label = new RegExp(`^Add ${formatPublicKey(gabi.pubkey)} \\(`);
   await screen.findByRole("button", { name: label });
   await vi.waitFor(() =>
     expect(
@@ -1496,13 +1503,150 @@ it("ranks a matching agent of yours by name and keeps the highlight on its row a
 });
 it("shows the real rejection and retries without discarding the query", async () => {
   const t = await setup();
-  t.fail("Only the owner can add this agent");
+  t.fail("error: database unavailable");
   await t.user.click(await t.search());
-  await screen.findByText(/Only the owner/);
+  await screen.findByText(/The community had a problem/);
   expect(screen.getByRole("searchbox")).toHaveValue("Morgan");
   t.fail("");
   await t.user.click(screen.getByRole("button", { name: /^Retry adding / }));
   await screen.findByText("Morgan is in the channel.");
+});
+it.each([
+  ["restricted: invitation denied", "You don’t have permission.", false],
+  ["blocked: not allowed here", "You don’t have permission.", false],
+  ["invalid: bad invitation", "The community can’t accept it.", false],
+  ["auth-required: sign in again", "You need to sign in again.", true],
+  ["rate-limited: slow down", "The community asked Buzz to slow down.", true],
+  ["error: database unavailable", "The community had a problem.", true],
+  ["Addition rejected", "The community didn’t let Buzz add them.", false],
+] as const)(
+  "offers Retry for a %s refusal only when it can work",
+  async (reason, sentence, retry) => {
+    const t = await setup();
+    t.fail(reason);
+    await t.user.click(await t.search());
+    const alert = await screen.findByText(
+      (_, node) =>
+        node?.getAttribute("role") === "alert" &&
+        (node.textContent ?? "").startsWith(`Morgan: ${sentence}`),
+    );
+    expect(
+      within(alert).queryByRole("button", { name: /^Retry adding / }),
+    ).toEqual(retry ? expect.anything() : null);
+  },
+);
+it("offers no Retry for a Solo agent the community refused for good, naming it first", async () => {
+  const t = await setup("solo", false, true);
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  t.fail("restricted: permission denied");
+  await t.user.click(
+    await screen.findByRole("button", { name: /Add Fixture agent/ }),
+  );
+  const alert = await screen.findByText(
+    "Buzz couldn’t add Fixture agent. You don’t have permission.",
+  );
+  expect(alert).toHaveAttribute("role", "alert");
+  expect(
+    screen.queryByRole("button", { name: /^Retry adding / }),
+  ).not.toBeInTheDocument();
+});
+const refusalAlert = (sentence: string) =>
+  screen.findByText(
+    (_, node) =>
+      node?.getAttribute("role") === "alert" &&
+      (node.textContent ?? "").startsWith(sentence),
+  );
+it("drops a refusal once an admin adds the person, and it stays gone if they leave later", async () => {
+  const t = await setup();
+  t.fail("restricted: invitation denied");
+  await t.user.click(await t.search());
+  const alert = await refusalAlert("Morgan: You don’t have permission.");
+  expect(
+    within(alert).queryByRole("button", { name: /^Retry adding / }),
+  ).toBeNull();
+  // An admin adds Morgan; the member list shows them, so nothing is left to do.
+  t.replaceRoster([t.viewer.pubkey, t.person.pubkey]);
+  await vi.waitFor(() => expect(alert).not.toBeInTheDocument());
+  expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  // Morgan leaves; the search offers them again, without the old message.
+  t.replaceRoster([t.viewer.pubkey]);
+  await screen.findByRole("button", { name: /^Add Morgan \(/ });
+  expect(screen.queryByText(/You don’t have permission/)).toBeNull();
+});
+it.each([
+  ["restricted: invitation denied", "You don’t have permission.", false],
+  ["error: database unavailable", "The community had a problem.", true],
+] as const)(
+  "dismisses a %s refusal, with or without Retry, and goes on from the search",
+  async (reason, sentence, retry) => {
+    const t = await setup();
+    t.fail(reason);
+    await t.user.click(await t.search());
+    const alert = await refusalAlert(`Morgan: ${sentence}`);
+    expect(
+      within(alert).queryByRole("button", { name: "Retry adding Morgan" }),
+    ).toEqual(retry ? expect.anything() : null);
+    await t.user.click(
+      within(alert).getByRole("button", {
+        name: "Dismiss the message about Morgan",
+      }),
+    );
+    expect(alert).not.toBeInTheDocument();
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(t.session.memberAdditions.snapshot()).toEqual([]);
+  },
+);
+it("never shows part of the key of someone whose profile gives no name", async () => {
+  const t = await setup("stream", false, false, undefined, undefined, {
+    namelessPerson: true,
+  });
+  const short = formatPublicKey(t.person.pubkey) ?? "";
+  // The row's key label after the name can grow to tell keys apart.
+  const add = new RegExp(`^Add ${short} \\(`);
+  // A nameless profile stands in with the first ten characters of the key.
+  const fragment = new RegExp(t.person.pubkey.slice(0, 10), "i");
+  const shown = () =>
+    [
+      document.body.textContent ?? "",
+      ...[...document.querySelectorAll("[aria-label]")].map(
+        (node) => node.getAttribute("aria-label") ?? "",
+      ),
+    ].join(" ");
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: t.person.pubkey },
+  });
+  t.fail("restricted: invitation denied");
+  await t.user.click(await screen.findByRole("button", { name: add }));
+  const alert = await refusalAlert(`${short}: You don’t have permission.`);
+  expect(shown()).not.toMatch(fragment);
+  await t.user.click(
+    within(alert).getByRole("button", {
+      name: `Dismiss the message about ${short}`,
+    }),
+  );
+  t.fail("");
+  await t.user.click(await screen.findByRole("button", { name: add }));
+  await screen.findByText(`${short} is in the channel.`);
+  await within(memberData()).findByText(short);
+  expect(shown()).not.toMatch(fragment);
+});
+it("dismisses a Solo agent's refusal", async () => {
+  const t = await setup("solo", false, true);
+  await t.user.type(screen.getByRole("searchbox"), "Fixture");
+  t.fail("restricted: permission denied");
+  await t.user.click(
+    await screen.findByRole("button", { name: /Add Fixture agent/ }),
+  );
+  const alert = await refusalAlert(
+    "Buzz couldn’t add Fixture agent. You don’t have permission.",
+  );
+  await t.user.click(
+    within(alert).getByRole("button", {
+      name: "Dismiss the message about Fixture agent",
+    }),
+  );
+  expect(alert).not.toBeInTheDocument();
+  expect(screen.queryByText(/You don’t have permission/)).toBeNull();
 });
 it("DMs are view-only and never search outside their members", async () => {
   const t = await setup("dm");
@@ -1639,9 +1783,9 @@ it.each(["pending", "failed"])(
 
 it("one refresh retries every failed data source and never replays a failed invitation", async () => {
   const t = await setup("stream", true);
-  t.fail("Invitation denied");
+  t.fail("error: invitation unavailable");
   await t.user.click(await t.search());
-  await screen.findByText(/Invitation denied/);
+  await screen.findByText(/The community had a problem/);
   expect(
     screen.getByRole("button", { name: "Retry member data" }),
   ).toBeVisible();
@@ -1691,7 +1835,7 @@ it("one refresh retries every failed data source and never replays a failed invi
     ),
   ).not.toBeInTheDocument();
   expect(t.publish).toHaveBeenCalledOnce();
-  expect(screen.getByText(/Invitation denied/)).toBeVisible();
+  expect(screen.getByText(/The community had a problem/)).toBeVisible();
 });
 
 it.each(["search", "archives", "agents"])(
@@ -2692,14 +2836,14 @@ async function teamSetup(names = ["Ada", "Cy"]) {
 }
 it("groups a team's refusals with one reason into one alert whose Retry adds them all", async () => {
   const t = await teamSetup();
-  t.fail("Invitation denied");
+  t.fail("error: invitation unavailable");
   await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
   const refusals = () =>
     screen
       .getAllByRole("alert")
       .map((item) => item.textContent ?? "")
-      .filter((content) => content.includes("denied"));
-  await screen.findByText(/^Ada and Cy: Invitation denied/);
+      .filter((content) => content.includes("problem"));
+  await screen.findByText(/^Ada and Cy: The community had a problem/);
   expect(refusals()).toHaveLength(1);
   const retry = screen.getByRole("button", { name: "Retry adding Ada and Cy" });
   expect(retry).toHaveTextContent("Retry");
@@ -2717,27 +2861,27 @@ it("groups a team's refusals with one reason into one alert whose Retry adds the
 });
 it("keeps only the still-refused member in the alert after a partial retry", async () => {
   const t = await teamSetup();
-  t.fail("Invitation denied");
+  t.fail("error: invitation unavailable");
   await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
-  await screen.findByText(/^Ada and Cy: Invitation denied/);
+  await screen.findByText(/^Ada and Cy: The community had a problem/);
   const base = t.publish.getMockImplementation();
   if (!base) throw new Error("Missing publish fixture");
   t.fail("");
   t.publish.mockImplementation(async (event) => {
     if (event.tags.find((tag) => tag[0] === "p")?.[1] === t.cy)
-      throw new PublishRejected("Invitation denied");
+      throw new PublishRejected("error: invitation unavailable");
     return base(event);
   });
   await t.user.click(
     screen.getByRole("button", { name: "Retry adding Ada and Cy" }),
   );
-  await screen.findByText(/^Cy: Invitation denied/);
+  await screen.findByText(/^Cy: The community had a problem/);
   expect(
     screen
       .getAllByRole("alert")
       .map((item) => item.textContent)
-      .filter((content) => content?.includes("denied")),
-  ).toEqual([expect.stringMatching(/^Cy: Invitation denied/)]);
+      .filter((content) => content?.includes("problem")),
+  ).toEqual([expect.stringMatching(/^Cy: The community had a problem/)]);
   expect(screen.getByRole("button", { name: "Retry adding Cy" })).toBeEnabled();
   // Ada's addition has landed; the group still announces nothing.
   await vi.waitFor(() =>
@@ -2749,9 +2893,11 @@ it("keeps only the still-refused member in the alert after a partial retry", asy
 });
 it("names three refused members and counts the rest", async () => {
   const t = await teamSetup(["Di", "Ada", "Cy", "Bo"]);
-  t.fail("Invitation denied");
+  t.fail("error: invitation unavailable");
   await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
-  await screen.findByText(/^Ada, Bo, Cy, and 1 more: Invitation denied/);
+  await screen.findByText(
+    /^Ada, Bo, Cy, and 1 more: The community had a problem/,
+  );
   expect(
     screen.getByRole("button", {
       name: "Retry adding Ada, Bo, Cy, and 1 more",
@@ -2765,10 +2911,10 @@ it("shows a team's refusals with different reasons as separate alerts", async ()
   t.publish.mockImplementation(async (event) => {
     const recipients = event.tags.filter(([tag]) => tag === "p");
     if (recipients.length === 1 && recipients[0]?.[1] === t.ada)
-      throw new PublishRejected("Agent is archived");
+      throw new PublishRejected("rate-limited: slow down");
     return base(event);
   });
-  t.fail("Invitation denied");
+  t.fail("error: invitation unavailable");
   await t.user.click(screen.getByRole("button", { name: "Add team Crew" }));
   const refusals = () =>
     screen
@@ -2777,8 +2923,8 @@ it("shows a team's refusals with different reasons as separate alerts", async ()
       .filter((content) => /^(Ada|Cy): /.test(content));
   await vi.waitFor(() => expect(refusals()).toHaveLength(2));
   expect(refusals().sort()).toEqual([
-    expect.stringMatching(/^Ada: Agent is archived/),
-    expect.stringMatching(/^Cy: Invitation denied/),
+    expect.stringMatching(/^Ada: The community asked Buzz to slow down/),
+    expect.stringMatching(/^Cy: The community had a problem/),
   ]);
   expect(
     screen.getAllByRole("button", { name: /^Retry adding (Ada|Cy)$/ }),
@@ -3269,11 +3415,14 @@ it("Solo agent search keeps the query after a rejected addition, then retries th
   const t = await setup("solo", false, true);
   const input = screen.getByRole("searchbox");
   await t.user.type(input, "Fixture");
-  t.fail("Permission denied");
+  t.fail("error: database unavailable");
   await t.user.click(
     await screen.findByRole("button", { name: /Add Fixture agent/ }),
   );
-  await screen.findByText(/Fixture agent: Permission denied/);
+  // The agent comes first, then why.
+  await screen.findByText(
+    "Buzz couldn’t add Fixture agent. The community had a problem.",
+  );
   expect(input).toHaveValue("Fixture");
   expect(screen.queryByText("Fixture agent added.")).not.toBeInTheDocument();
   const original = t.publish.mock.calls[0]?.[0].id;
@@ -3359,9 +3508,9 @@ it.each([false, true])(
   "reads roster and general access after sign-in without replaying writes (sign-in before access refusal: %s)",
   async (signInBeforeRefusal) => {
     const t = await setup("stream", true);
-    t.fail("Invitation denied");
+    t.fail("restricted: invitation denied");
     await t.user.click(await t.search());
-    await screen.findByText(/Invitation denied/);
+    await screen.findByText(/You don’t have permission/);
     const publishes = t.publish.mock.calls.length;
     const query = t.query.getMockImplementation();
     if (!query) throw new Error("Missing query fixture");

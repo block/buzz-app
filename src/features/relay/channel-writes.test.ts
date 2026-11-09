@@ -15,6 +15,8 @@ import {
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { canAddMembers } from "../channel-members/members";
+import { NamedError } from "./refusal";
+import type { RelayReader } from "./reader";
 import type { ReadFilter, RelayEvent } from "./events";
 const event = message(keypair(), "chat", "Work", 1);
 
@@ -1123,7 +1125,7 @@ it.each([true, false])(
       const failure = expect(refreshing).rejects.toThrow(
         soloOnly
           ? /membership is still loading/
-          : /Agent addition is unconfirmed/,
+          : /Buzz hasn’t seen the agent join yet/,
       );
       await vi.advanceTimersByTimeAsync(14_999);
       expect(settled).toBe(false);
@@ -1153,7 +1155,7 @@ it("counts the fallback discovery against the same 15 second deadline", async ()
         settled = true;
       });
     const failure = expect(refreshing).rejects.toThrow(
-      /Agent addition is unconfirmed/,
+      /Buzz hasn’t seen the agent join yet/,
     );
     await vi.advanceTimersByTimeAsync(5_000);
     expect(test.refreshList).toHaveBeenCalledOnce();
@@ -1760,4 +1762,89 @@ it("cancels a guarded Solo create after signing starts and requires a fresh gate
   } finally {
     owner.dispose();
   }
+});
+
+const expiredChannel = "11111111-1111-4111-8111-111111111111";
+
+/** An agent addition whose saved request is too old for the relay to take,
+ * against an outbox whose dismiss resolves at once, leaving the request, as
+ * it does while that request is being sent. */
+function expiredAddition() {
+  const relay = keypair(),
+    viewer = keypair().pubkey,
+    agent = keypair().pubkey;
+  const items: OutgoingEvent[] = [
+    {
+      event: {
+        id: "e".repeat(64),
+        kind: 9000,
+        content: "",
+        created_at: Math.floor(Date.now() / 1000) - 16 * 60,
+        tags: [
+          ["h", expiredChannel],
+          ["p", agent],
+        ],
+      },
+      delivery: "failed",
+    } as OutgoingEvent,
+  ];
+  const outbox = {
+    supports: () => true,
+    snapshot: () => items,
+    subscribe: () => () => {},
+    dismiss: vi.fn(async () => {}),
+    send: vi.fn(() => "f".repeat(64)),
+    retry: vi.fn(),
+  };
+  const channel = {
+    id: expiredChannel,
+    channelType: "stream",
+    members: [viewer],
+  };
+  const writes = createChannelWrites(
+    outbox as unknown as Outbox,
+    {
+      list: () => ({ status: "ready", channels: [channel] }),
+      get: () => channel,
+    } as unknown as ChannelQueries,
+    {
+      read: async () => [roster(relay, expiredChannel, [viewer])],
+    } as unknown as RelayReader,
+    new AbortController().signal,
+    undefined,
+    undefined,
+    {
+      selectable: () => [agent],
+      archived: () => false,
+      name: () => "Atlas",
+    },
+    relay.pubkey,
+  );
+  return { writes, outbox, agent, items };
+}
+
+it("says to add the agent again when dismissing its expired request leaves it, sending nothing new", async () => {
+  const { writes, outbox, agent } = expiredAddition();
+  const error = await writes
+    .addAgents(expiredChannel, [agent])
+    .catch((error: unknown) => error);
+  expect(outbox.dismiss).toHaveBeenCalledWith("e".repeat(64));
+  expect(error).toBeInstanceOf(NamedError);
+  expect(error).toMatchObject({
+    message: "Buzz couldn’t add Atlas. Try adding them again.",
+    final: false,
+  });
+  expect(outbox.send).not.toHaveBeenCalled();
+});
+
+it("says the agent is still being added when its expired request went back to sending", async () => {
+  const { writes, outbox, agent, items } = expiredAddition();
+  outbox.dismiss.mockImplementation(async () => {
+    // Another window sent it again meanwhile.
+    items[0] = { ...(items[0] as OutgoingEvent), delivery: "sending" };
+  });
+  await expect(writes.addAgents(expiredChannel, [agent])).rejects.toThrow(
+    "Buzz is still adding Atlas. Wait for that to finish, then try again.",
+  );
+  expect(outbox.send).not.toHaveBeenCalled();
 });

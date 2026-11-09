@@ -366,9 +366,9 @@ export function MentionCompletion({
               : agents.status === "error" || agents.error
                 ? { status: "Could not load agents. Retry to refresh." }
                 : admitted && membershipMissing
-                  ? { status: "Channel membership unavailable." }
+                  ? { status: "Buzz can’t show who’s in this channel yet." }
                   : admitted && membershipError
-                    ? { status: "Could not refresh channel membership." }
+                    ? { status: "Buzz couldn’t check who’s in this channel." }
                     : // Only a failed read: a member who never set a name is
                       // a complete answer, not an error.
                       error

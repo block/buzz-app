@@ -3558,7 +3558,9 @@ it("team loading has no Retry action and never replaces a people status", async 
     status: "error",
     missingRoster: true,
   });
-  expect(missing.result()?.status).toBe("Channel membership unavailable.");
+  expect(missing.result()?.status).toBe(
+    "Buzz can’t show who’s in this channel yet.",
+  );
   missing.view.unmount();
   missing.library.dispose();
 });

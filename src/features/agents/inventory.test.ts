@@ -82,7 +82,7 @@ it("keeps either available source visible and makes partial failure explicit", a
   const read = inventoryReader(async () => data, fail);
   expect(await read(signal)).toMatchObject({
     identities: data.identities,
-    error: expect.stringContaining("Relay inventory unavailable"),
+    error: expect.stringContaining("couldn’t load this community’s agents"),
   });
   // The reason stays in the log for diagnosis, out of the notice.
   expect(warn).toHaveBeenCalledExactlyOnceWith(
@@ -91,13 +91,15 @@ it("keeps either available source visible and makes partial failure explicit", a
   );
   expect(await inventoryReader(fail, async () => data)(signal)).toMatchObject({
     identities: data.identities,
-    error: expect.stringContaining("Local library unavailable"),
+    error: expect.stringContaining(
+      "couldn’t load the agents saved on this device",
+    ),
   });
   await expect(inventoryReader(undefined, fail)(signal)).rejects.toThrow(
-    "sources unavailable",
+    "Buzz couldn’t load agents.",
   );
   await expect(inventoryReader(fail, fail)(signal)).rejects.toThrow(
-    "sources unavailable",
+    "Buzz couldn’t load agents.",
   );
   warn.mockRestore();
 });

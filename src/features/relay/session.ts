@@ -6,6 +6,7 @@ import { createMemberAdditions } from "../channel-members/operations";
 import {
   addChannelMember,
   addChannelMembersAtOnce,
+  memberName,
 } from "../channel-members/members";
 import type { LocalAgents } from "../agents/local";
 import type { GitRead } from "../repos/git";
@@ -1777,6 +1778,13 @@ export function createRelaySession(
         agentChoices.snapshot().selectable.map((agent) => agent.pubkey),
       archived: (pubkey) =>
         archiveHides(archives.queries, pubkey, transport?.viewer),
+      name: (pubkey) =>
+        identityNames.resolve(
+          pubkey,
+          agentChoices
+            .snapshot()
+            .identities.find((agent) => agent.pubkey === pubkey)?.name,
+        ),
     },
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },
@@ -2340,6 +2348,7 @@ export function createRelaySession(
         solo(channelId),
         writes?.local,
       ),
+    (pubkey) => memberName(session, pubkey),
   );
   const recoverable = (
     subscribe: (listener: () => void) => () => void,

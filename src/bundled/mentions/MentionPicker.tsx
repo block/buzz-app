@@ -367,18 +367,18 @@ export function MentionPicker({
             {error && <p role="status">{error}</p>}
             {!draftRoster && list.error && (
               <>
-                <p role="alert">Could not refresh channel membership.</p>
+                <p role="alert">Buzz couldn’t check who’s in this channel.</p>
                 <Button
                   disabled={disabled}
                   type="button"
                   onClick={() => session.channels.refreshList?.()}
                 >
-                  Retry channel membership
+                  Check again
                 </Button>
               </>
             )}
             {!draftRoster && (!inviteAgents || !!channel) && !members && (
-              <p role="status">Channel membership unavailable.</p>
+              <p role="status">Buzz can’t show who’s in this channel yet.</p>
             )}
             <div
               className={`${styles.mentionChoices} buzz-thin-scrollbar`}

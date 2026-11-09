@@ -91,6 +91,7 @@ function setup(
   let failInvitationRead = false;
   let recordedInvitation: RelayEvent | undefined;
   let onInvitationRead: (() => void) | undefined;
+  let onSharedRead: (() => void) | undefined;
   const invitationReads: import("../relay/events").ReadFilter[][] = [];
   let failSave = false;
   let failAcknowledgement = false;
@@ -206,7 +207,15 @@ function setup(
       },
       {
         outboxStorage: {
-          load: () => structuredClone(records),
+          load: (options) => {
+            // A read of the shared journal, as recovery does before adopting.
+            if (options?.readOnly) {
+              const run = onSharedRead;
+              onSharedRead = undefined;
+              run?.();
+            }
+            return structuredClone(records);
+          },
           save: (next) => {
             if (
               failSave ||
@@ -265,6 +274,9 @@ function setup(
     },
     onInvitationRead: (run: () => void) => {
       onInvitationRead = run;
+    },
+    onSharedRead: (run: () => void) => {
+      onSharedRead = run;
     },
     holdRoleRead: () => {
       let release!: () => void;
@@ -363,15 +375,15 @@ it("never retries a failed Bot addition for a guest add, in the session or after
   const guest = () =>
     t.session.memberAdditions.add(t.id, t.person.pubkey, { role: "guest" });
   t.setFail("Not committed");
-  await expect(t.managedAdd()).rejects.toThrow(/Not committed/);
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
   t.setFail("");
   const saved = t.records()[0];
   expect(saved?.event.tags).toContainEqual(["role", "bot"]);
-  await expect(guest()).rejects.toThrow(/another role/);
+  await expect(guest()).rejects.toThrow(/Buzz is still adding/);
   t.restart();
   await t.ready();
   await t.setAgent();
-  await expect(guest()).rejects.toThrow(/another role/);
+  await expect(guest()).rejects.toThrow(/Buzz is still adding/);
   // Only the first Bot attempt was ever sent, and its receipt is kept.
   expect(t.publish).toHaveBeenCalledOnce();
   expect(t.records()).toHaveLength(1);
@@ -398,7 +410,7 @@ it("doesn't join or race an addition still under way with another role", async (
   const first = t.managedAdd();
   await expect(
     t.session.memberAdditions.add(t.id, t.person.pubkey, { role: "guest" }),
-  ).rejects.toThrow(/another role/);
+  ).rejects.toThrow(/Buzz is still adding/);
   await first;
   expect(t.publish).toHaveBeenCalledOnce();
   expect(t.publish.mock.calls[0]?.[0].tags).toContainEqual(["role", "bot"]);
@@ -435,14 +447,14 @@ it("keeps a saved Solo Guest invitation separate from participation across resta
   const guest = () =>
     t.session.memberAdditions.add(t.id, t.person.pubkey, { role: "guest" });
   t.setFail("Not committed");
-  await expect(guest()).rejects.toThrow(/Not committed/);
+  await expect(guest()).rejects.toThrow(/didn’t let Buzz add them/);
   const original = t.records()[0]?.event.id;
   expect(t.records()[0]?.event.tags).toContainEqual(["role", "guest"]);
   t.setFail("");
-  await expect(t.managedAdd()).rejects.toThrow(/another role/);
+  await expect(t.managedAdd()).rejects.toThrow(/Buzz is still adding/);
   t.restart();
   await t.ready();
-  await expect(t.managedAdd()).rejects.toThrow(/another role/);
+  await expect(t.managedAdd()).rejects.toThrow(/Buzz is still adding/);
   expect(t.publish).toHaveBeenCalledOnce();
   expect(t.records()).toHaveLength(1);
   expect(t.records()[0]).toMatchObject({ event: { id: original } });
@@ -478,7 +490,7 @@ it.each(["guest", "admin"])(
     const t = setup();
     await t.ready();
     t.setFail("Not committed");
-    await expect(t.managedAdd()).rejects.toThrow(/Not committed/);
+    await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
     const original = t.records()[0]?.event.id;
     t.confirmPerson(role);
     t.setFail("");
@@ -499,7 +511,7 @@ it("preserves a rejected operation and retries its exact identity", async () => 
   const t = setup();
   await t.ready();
   t.setFail("This agent only accepts additions from its owner");
-  await expect(t.add()).rejects.toThrow(/only accepts/);
+  await expect(t.add()).rejects.toThrow(/didn’t let Buzz add them/);
   const first = t.publish.mock.calls[0]?.[0].id;
   expect(t.session.channels.list().channels[0]?.members).not.toContain(
     t.person.pubkey,
@@ -512,13 +524,13 @@ it("does not claim an accepted write is confirmed membership", async () => {
   const t = setup();
   await t.ready();
   t.setApply(false);
-  await expect(t.add()).rejects.toThrow(/not confirmed in the member list/);
+  await expect(t.add()).rejects.toThrow(/hasn’t seen .* join yet/);
 });
 it("rejects stale permission and foreign roster evidence before publishing", async () => {
   const t = setup();
   await t.ready();
   t.setForeign();
-  await expect(t.add()).rejects.toThrow(/refresh channel membership/);
+  await expect(t.add()).rejects.toThrow(/can’t check who’s in this channel/);
   expect(t.publish).not.toHaveBeenCalled();
   const revoked = setup();
   await revoked.ready();
@@ -532,7 +544,7 @@ it.each(["dm", "unknown"])("never expands a %s conversation", async (type) => {
   expect(canAddMembers(t.session, t.session.channels.list().channels[0])).toBe(
     false,
   );
-  await expect(t.add()).rejects.toThrow(/cannot add/);
+  await expect(t.add()).rejects.toThrow(/can’t add people to this channel/);
   expect(t.publish).not.toHaveBeenCalled();
 });
 it("adds a member to a system channel through the session, which plugins use", async () => {
@@ -576,9 +588,7 @@ it.each([false, true])(
       expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("seen"),
     );
     t.setRosterFailure(false);
-    await expect(t.managedAdd()).rejects.toThrow(
-      /not confirmed in the member list/,
-    );
+    await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
     expect(t.publish).toHaveBeenCalledOnce();
     t.confirmPerson();
     await t.managedAdd();
@@ -607,9 +617,7 @@ it.each(["rejected", "unknown", "unconfirmed"])(
     t.setFail("");
     t.setApply(true);
     if (failure === "unconfirmed") {
-      await expect(t.managedAdd()).rejects.toThrow(
-        /not confirmed in the member list/,
-      );
+      await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
       expect(t.publish).toHaveBeenCalledTimes(2);
       t.confirmPerson();
     }
@@ -621,34 +629,63 @@ it.each(["rejected", "unknown", "unconfirmed"])(
   },
 );
 
-it("allows a new explicit addition after an expired failed request is dismissed", async () => {
+it("replaces an expired failed request with a new explicit addition", async () => {
   const t = setup();
   await t.ready();
   t.setFail("Rejected addition");
-  await expect(t.managedAdd()).rejects.toThrow(/Rejected addition/);
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
   const first = t.publish.mock.calls[0]?.[0].id;
   if (!first) throw new Error("Expected invitation");
   const now = vi
     .spyOn(Date, "now")
     .mockReturnValue(Date.now() + 16 * 60 * 1000);
   try {
-    await expect(t.managedAdd()).rejects.toThrow(/addition expired/);
+    t.setFail("");
+    await t.managedAdd();
   } finally {
     now.mockRestore();
   }
-  await t.session.outbox?.dismiss(first);
-  expect(t.session.outbox?.snapshot()).toEqual([]);
-  t.setFail("");
-  await t.managedAdd();
   expect(t.publish).toHaveBeenCalledTimes(2);
   expect(t.publish.mock.calls[1]?.[0].id).not.toBe(first);
+  expect(
+    t.session.outbox?.snapshot().some((item) => item.event.id === first),
+  ).toBe(false);
+});
+
+it("leaves an expired failed request alone once a Retry elsewhere takes it up", async () => {
+  const t = setup();
+  await t.ready();
+  t.setFail("Rejected addition");
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
+  const first = t.publish.mock.calls[0]?.[0].id;
+  if (!first) throw new Error("Expected invitation");
+  const now = vi
+    .spyOn(Date, "now")
+    .mockReturnValue(Date.now() + 16 * 60 * 1000);
+  try {
+    t.setFail("");
+    t.setApply(false);
+    // The Outbox retries it after this addition has read it, while it
+    // records its own recovery.
+    t.onSharedRead(() => t.session.outbox?.retry(first));
+    await expect(t.managedAdd()).rejects.toThrow(/still adding/);
+  } finally {
+    now.mockRestore();
+  }
+  // Nothing sent a second invitation beside the retried one.
+  await vi.waitFor(() => expect(t.publish).toHaveBeenCalledTimes(2));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+    first,
+    first,
+  ]);
 });
 
 it("keeps the exact failed request when durable dismissal fails", async () => {
   const t = setup();
   await t.ready();
   t.setFail("Rejected addition");
-  await expect(t.managedAdd()).rejects.toThrow(/Rejected addition/);
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
   const first = t.publish.mock.calls[0]?.[0].id;
   if (!first) throw new Error("Expected invitation");
   t.setSaveFailure(true);
@@ -668,7 +705,7 @@ it("does not mistake external retry and echo removal for dismissal of a failed a
   const t = setup();
   await t.ready();
   t.setFail("Rejected addition");
-  await expect(t.managedAdd()).rejects.toThrow(/Rejected addition/);
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
   const first = t.publish.mock.calls[0]?.[0].id;
   if (!first) throw new Error("Expected invitation");
   t.setFail("");
@@ -681,9 +718,7 @@ it("does not mistake external retry and echo removal for dismissal of a failed a
   await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(
     /Buzz may still send this/,
   );
-  await expect(t.managedAdd()).rejects.toThrow(
-    /not confirmed in the member list/,
-  );
+  await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
   expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
     first,
     first,
@@ -697,7 +732,7 @@ it("does not reuse an older accepted request after dismissing a rejected re-add"
   const first = t.publish.mock.calls[0]?.[0].id;
   t.removePerson();
   t.setFail("Rejected re-add");
-  await expect(t.managedAdd()).rejects.toThrow(/Rejected re-add/);
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
   const second = t.publish.mock.calls[1]?.[0].id;
   if (!second) throw new Error("Expected re-add invitation");
   await t.session.outbox?.dismiss(second);
@@ -730,11 +765,11 @@ it("retains echoed unconfirmed intent across recreation until signed membership 
   await t.ready();
   t.setEcho();
   t.setApply(false);
-  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
   await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("seen"));
   t.restart();
   await t.ready();
-  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
   expect(t.publish).toHaveBeenCalledOnce();
   t.confirmPerson();
   await t.managedAdd();
@@ -813,7 +848,7 @@ it("protects a legacy echoed invitation until roster confirmation, including acr
   t.legacy();
   t.restart();
   await t.ready();
-  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
   await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(
     /Buzz may still send this/,
   );
@@ -841,7 +876,7 @@ it("does not supersede an invitation when saving roster confirmation failed befo
   t.setAcknowledgementFailure(false);
   t.restart();
   await t.ready();
-  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
   expect(t.publish).toHaveBeenCalledOnce();
   t.confirmPerson();
   await t.managedAdd();
@@ -853,7 +888,7 @@ it("does not revive a completed receipt after failed re-add dismissal and restar
   await t.managedAdd();
   t.removePerson();
   t.setFail("Rejected");
-  await expect(t.managedAdd()).rejects.toThrow(/Rejected/);
+  await expect(t.managedAdd()).rejects.toThrow(/didn’t let Buzz add them/);
   const second = t.publish.mock.calls[1]?.[0].id;
   if (!second) throw new Error("Expected invitation");
   await t.session.outbox?.dismiss(second);
@@ -878,7 +913,7 @@ it("never replaces a legacy invitation after recovery adoption fails to save", a
   await expect(t.managedAdd()).rejects.toThrow(/Storage unavailable/);
   expect(t.publish).toHaveBeenCalledOnce();
   t.setSaveFailure(false);
-  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await expect(t.managedAdd()).rejects.toThrow(/hasn’t seen .* join yet/);
   expect(t.publish).toHaveBeenCalledOnce();
   expect(t.records()[0]?.recovery).toBeDefined();
   t.confirmPerson();
@@ -897,7 +932,9 @@ it("does not bypass profile eligibility when recovering a guarded invitation aft
   t.restart();
   await t.ready();
   t.setFail("");
-  await expect(t.managedAdd()).rejects.toThrow(/agent’s profile/);
+  await expect(t.managedAdd()).rejects.toThrow(
+    "Buzz is still adding this person. Wait for that to finish, then try again.",
+  );
   expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([first]);
 });
 
@@ -908,7 +945,9 @@ it.each([false, true])(
     await t.ready();
     await t.setAgent();
     t.setLostReceipt(true);
-    await expect(t.profileAdd()).rejects.toThrow(/Receipt lost/);
+    await expect(t.profileAdd()).rejects.toThrow(
+      /hasn’t seen the agent join yet/,
+    );
     const first = t.publish.mock.calls[0]?.[0].id;
     expect(t.session.outbox?.snapshot()[0]).toMatchObject({
       guarded: true,
@@ -945,7 +984,9 @@ it.each([false, true])(
     await t.ready();
     await t.setAgent();
     t.setFail("Receipt lost", true);
-    await expect(t.profileAdd()).rejects.toThrow(/Receipt lost/);
+    await expect(t.profileAdd()).rejects.toThrow(
+      /hasn’t seen the agent join yet/,
+    );
     const first = t.publish.mock.calls[0]?.[0].id;
     await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("unknown"));
     if (restart) {
@@ -1072,9 +1113,7 @@ it("preserves a legacy invitation while signed roles are unavailable", async () 
   await savedNoRoleInvitation(t);
   t.confirmPerson("guest");
   t.setRolesAvailable(false);
-  await expect(t.managedAdd()).rejects.toThrow(
-    /access could not be confirmed/i,
-  );
+  await expect(t.managedAdd()).rejects.toThrow(/couldn’t confirm .*’s access/);
   expect(t.records()[0]?.acknowledged).toBeUndefined();
   expect(t.publish).toHaveBeenCalledOnce();
   t.setRolesAvailable(true);
@@ -1115,7 +1154,7 @@ it("does not confirm a legacy invitation from stale roles during another member 
       operation: { status: "pending" },
     });
     await expect(t.managedAdd()).rejects.toThrow(
-      /access could not be confirmed/i,
+      /couldn’t confirm .*’s access/,
     );
     expect(t.records()[0]?.acknowledged).toBeUndefined();
     expect(t.publish).toHaveBeenCalledOnce();

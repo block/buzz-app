@@ -3,6 +3,12 @@ import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
 import type { LocalEvents, OutgoingEvent } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
+import {
+  FinalFailure,
+  NamedError,
+  retryable,
+  unsentSentence,
+} from "../relay/refusal";
 
 const keyPattern = /^[0-9a-f]{64}$/;
 
@@ -112,7 +118,7 @@ function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
     const cancelled = () =>
       finish(
         new Error(
-          "Member addition interrupted. Reopen Members to check its status.",
+          "Buzz stopped adding them because the community connection changed.",
         ),
       );
     const inspect = () => {
@@ -120,12 +126,21 @@ function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
       // Delivery alone is not membership confirmation. Always verify the roster next.
       if (!item || item.delivery === "accepted" || item.delivery === "seen")
         finish();
-      else if (item.delivery !== "sending")
+      else if (item.delivery === "unknown")
         finish(
-          new Error(
-            item.error ?? "Addition is not confirmed. Retry to check again.",
-          ),
+          new Error("Buzz hasn’t confirmed this yet. Try again to check."),
         );
+      else if (item.delivery === "failed") {
+        const message =
+          unsentSentence(item) ??
+          (item.refused
+            ? "The community didn’t let Buzz add them."
+            : "Buzz couldn’t add them. Try again.");
+        // One that would just be refused again offers no Retry.
+        finish(
+          retryable(item) ? new Error(message) : new FinalFailure(message),
+        );
+      }
     };
     stop = outbox.subscribe(inspect);
     signal.addEventListener("abort", cancelled, { once: true });
@@ -173,6 +188,7 @@ async function addOneMember(
 ): Promise<void> {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
+  const name = memberName(session, pubkey) ?? "this person";
   const channel = () => channelOf(session, channelId);
   const checkAccess = () => {
     signal.throwIfAborted();
@@ -181,9 +197,7 @@ async function addOneMember(
         ? canShareSoloChat(session, channel())
         : canAddMembers(session, channel()))
     )
-      throw new Error(
-        "This channel cannot add members right now. Refresh and try again.",
-      );
+      throw new Error("You can’t add people to this channel right now.");
     if (archiveHides(session.archives, pubkey, session.viewer))
       throw new Error(
         "Archived identities cannot be added. Choose someone else.",
@@ -191,7 +205,8 @@ async function addOneMember(
   };
   checkAccess();
   const outbox = session.outbox;
-  if (!outbox) throw new Error("Member additions are unavailable.");
+  if (!outbox)
+    throw new Error("Buzz can’t add people in this community right now.");
   await outbox.ready();
   checkAccess();
   // This existing session operation verifies the connected relay's signed roster.
@@ -263,22 +278,62 @@ async function addOneMember(
     await session.channelWrites.refreshMembership(channelId);
     check();
     if (!channel()?.members?.includes(pubkey))
-      throw new Error(
-        "Addition is not confirmed in the member list yet. Retry to check again.",
+      throw new NamedError(
+        `Buzz hasn’t seen ${name} join yet. Try again to check.`,
       );
     await outbox.acknowledge(id);
     check();
     intent.confirmed = true;
   };
-  if (pending?.guarded && !channel()?.members?.includes(pubkey))
-    throw new Error(
-      "Retry this invitation from the agent’s profile so its eligibility can be checked.",
+  // A request that is proven unsent, and that the member list just read
+  // shows never took effect, can make way for this one. Retry only finishes
+  // an earlier request, so it never replaces one.
+  const replace = async () => {
+    if (!pending) return;
+    const id = pending.event.id;
+    // `pending` was read before the awaits above. A Retry elsewhere may have
+    // taken it up since, and dismiss leaves an item alone while it is being
+    // sent, so read it again on both sides.
+    const now = () => journal.snapshot().find((item) => item.event.id === id);
+    const current = now();
+    if (!current)
+      throw new NamedError(
+        `Buzz hasn’t seen ${name} join yet. Try again to check.`,
+      );
+    if (current.delivery !== "failed")
+      throw new NamedError(
+        `Buzz is still adding ${name}. Wait for that to finish, then try again.`,
+      );
+    await outbox.dismiss(id);
+    if (now())
+      throw new NamedError(
+        `Buzz is still adding ${name}. Wait for that to finish, then try again.`,
+      );
+    delete intent.id;
+    intent.dismissed = true;
+    return addOneMember(
+      session,
+      channelId,
+      pubkey,
+      signal,
+      intent,
+      receipts,
+      soloParticipant,
     );
+  };
+  // Another flow fenced this request for its own retry, such as an agent
+  // added from the composer.
+  if (pending?.guarded && !channel()?.members?.includes(pubkey)) {
+    if (pending.delivery === "failed" && !intent.retry) return replace();
+    throw new NamedError(
+      `Buzz is still adding ${name}. Wait for that to finish, then try again.`,
+    );
+  }
   if (soloParticipant && pending && noRole(pending.event))
     intent.id = pending.event.id;
   if (pending && !sameRole && !channel()?.members?.includes(pubkey))
-    throw new Error(
-      "An addition of this member with another role is still in Outbox. Retry it there to finish it, or remove it once it shows Not sent, then try again.",
+    throw new NamedError(
+      `Buzz is still adding ${name}. Wait for that to finish, then try again.`,
     );
 
   if (pending && !pending.acknowledged)
@@ -343,8 +398,8 @@ async function addOneMember(
       !role ||
       role === "unknown"
     )
-      throw new Error(
-        "Current access could not be confirmed. Refresh members and roles before trying again.",
+      throw new NamedError(
+        `Buzz couldn’t confirm ${name}’s access. Try again in a moment.`,
       );
     // Membership resolves the original command, even when its grant was Guest.
     // Do not promote a newer role or replay the old command after removal.
@@ -364,17 +419,20 @@ async function addOneMember(
     intent.confirmed = true;
     return;
   }
+  // The earlier request was sent and has since left the outbox, yet the
+  // member list doesn't show them: they may have been removed meanwhile.
   if (!fresh && intent.id && !pending)
-    throw new Error(
-      "The original addition receipt is unavailable. Refresh membership before trying again.",
+    throw new NamedError(
+      `Buzz sent ${name}’s invitation, but they aren’t in this channel now. Someone may have removed them.`,
     );
+  // The relay no longer takes a request this old.
   if (
     pending?.delivery === "failed" &&
     Date.now() / 1000 - pending.event.created_at >= 15 * 60
-  )
-    throw new Error(
-      "This addition expired. Remove its Not sent item in Outbox, then try again.",
-    );
+  ) {
+    if (!intent.retry) return replace();
+    throw new NamedError(`Buzz couldn’t add ${name}. Try adding them again.`);
+  }
 
   const id = pending?.event.id ?? outbox.send(invitation(), recovery);
   if (pending?.delivery === "failed" || pending?.delivery === "unknown")

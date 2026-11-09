@@ -7828,13 +7828,16 @@ it.each([false, true])(
     const add = vi.fn(() => {
       throw new Error("Cannot add agent");
     });
+    const dismiss = vi.fn(async () => {
+      operations.length = 0;
+    });
     const list = {
       status: "ready",
       channels: [
         { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
       ],
     };
-    const operations = expired
+    const operations: unknown[] = expired
       ? [
           {
             delivery: "failed",
@@ -7862,6 +7865,7 @@ it.each([false, true])(
       outbox: {
         supports: () => true,
         send: add,
+        dismiss,
         snapshot: () => operations,
         ready: async () => {},
         recover: async (
@@ -7892,14 +7896,15 @@ it.each([false, true])(
     await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Invite" }));
     await act(async () => {});
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      expired ? "addition expired" : "Cannot add agent",
-    );
+    // An expired request can't be sent anymore, so Buzz replaces it.
+    expect(screen.getByRole("alert")).toHaveTextContent("Cannot add agent");
     expect(
       (screen.getByRole("textbox", { hidden: true }) as HTMLInputElement).value,
     ).toBe("@Honey ");
     expect(h.messages.send).not.toHaveBeenCalled();
-    if (expired) expect(add).not.toHaveBeenCalled();
+    expect(add).toHaveBeenCalledOnce();
+    if (expired) expect(dismiss).toHaveBeenCalledWith("e".repeat(64));
+    else expect(dismiss).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await act(async () => {});
     expect(h.input()).not.toHaveAttribute("aria-disabled", "true");

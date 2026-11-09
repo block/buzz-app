@@ -52,7 +52,7 @@ export function ProfileChannels({
         )}
         {list.status === "unavailable" && (
           <p className={styles.channelNote}>
-            Channel membership is unavailable.
+            Buzz can’t show which channels they’re in right now.
           </p>
         )}
         {list.status === "error" && (

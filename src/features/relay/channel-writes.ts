@@ -8,9 +8,31 @@ import { withdraw } from "./withdraw";
 import type { ChannelQueries, ChannelSummary } from "./contracts";
 import type { RelayReader } from "./reader";
 import type { EventData } from "./events";
-import { refusalSentence } from "./refusal";
+import {
+  NamedError,
+  refusalSentence,
+  retryable,
+  unsentSentence,
+} from "./refusal";
 
 export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+const unconfirmedAgent =
+  "Buzz hasn’t seen the agent join yet. Try again in a moment. Buzz won’t add them twice.";
+/** Why an agent wasn't added, naming them first, as Manage members names
+ * each person; one sending again would meet the same way offers no Retry. */
+function additionFailure(item: OutgoingEvent, name: string) {
+  if (item.delivery === "unknown") return new Error(unconfirmedAgent);
+  const why = unsentSentence(item);
+  return new NamedError(
+    why
+      ? `Buzz couldn’t add ${name}. ${why}`
+      : item.refused
+        ? `The community didn’t let Buzz add ${name}.`
+        : `Buzz couldn’t add ${name}. Try again.`,
+    { final: !retryable(item) },
+  );
+}
 
 /** Why a Canvas or recipe save didn't go through, in plain words; the
  * stored reason is for Diagnostics. Other writes keep the reason their own
@@ -31,6 +53,10 @@ function unsavedChange(
 }
 const unconfirmedChange =
   "Buzz couldn’t confirm this change was saved. Try again to check. Buzz won’t save it twice.";
+
+/** When Buzz can't read who is in a channel now. */
+const membersUnchecked =
+  "Buzz can’t check who’s in this channel right now. Try again in a moment.";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -62,6 +88,8 @@ export function createChannelWrites(
   agents?: {
     selectable: () => readonly string[];
     archived: (pubkey: string) => boolean;
+    /** The agent's name, for messages about them. */
+    name?: (pubkey: string) => string | undefined;
   },
   relayAuthor?: string,
   /** Signed roster discovery, including channels this viewer cannot open. */
@@ -81,12 +109,19 @@ export function createChannelWrites(
   function identifier(id: string) {
     if (!uuid.test(id)) throw new Error("Invalid session identifier");
   }
+  /** `addition` is true, or the agent's name, for an agent addition. */
   async function delivered(
     id: string,
     active?: () => boolean,
-    addition = false,
+    addition: boolean | string = false,
     retry = true,
   ) {
+    const agent =
+      typeof addition === "string"
+        ? addition
+        : addition
+          ? "this agent"
+          : undefined;
     const check = () => {
       if (active?.() === false)
         throw new DOMException("Channel addition cancelled", "AbortError");
@@ -95,7 +130,7 @@ export function createChannelWrites(
     // Recipe and Canvas saves share delivery, not channel-creation authority.
     if (signal.aborted || !outbox)
       throw new Error("Buzz can’t confirm this right now. Try again.");
-    const source = addition ? writer(true) : outbox;
+    const source = agent !== undefined ? writer(true) : outbox;
     const journal = receipts ?? source;
     const existing = journal.snapshot().find((item) => item.event.id === id);
     if (!existing) {
@@ -173,8 +208,8 @@ export function createChannelWrites(
       const aborted = () =>
         finish(
           new Error(
-            addition
-              ? "The community connection changed. Check channel membership before adding again."
+            agent !== undefined
+              ? "The connection changed before Buzz could confirm this. Try again. Buzz won’t add them twice."
               : "The community connection changed. Your draft is kept.",
           ),
         );
@@ -182,8 +217,8 @@ export function createChannelWrites(
         () =>
           finish(
             new Error(
-              addition
-                ? "Agent addition is unconfirmed. Check channel membership before retrying; the request may already have reached the relay."
+              agent !== undefined
+                ? unconfirmedAgent
                 : "Buzz hasn’t confirmed this change yet. Try again to check. Buzz won’t save it twice.",
             ),
           ),
@@ -195,12 +230,12 @@ export function createChannelWrites(
           finish();
         else if (item?.delivery === "failed" || item?.delivery === "unknown")
           finish(
-            addition
-              ? new Error(
-                  item.error ??
-                    "Agent addition could not be confirmed. Check membership before retrying.",
-                )
-              : new Error(unsavedChange(item)),
+            // A view that closed mid-attempt cancelled it; nobody is told.
+            active?.() === false
+              ? new DOMException("Channel addition cancelled", "AbortError")
+              : agent === undefined
+                ? new Error(unsavedChange(item))
+                : additionFailure(item, agent),
           );
       };
       unsubscribe = journal.subscribe(inspect);
@@ -264,7 +299,7 @@ export function createChannelWrites(
             new Error(
               soloOnly
                 ? "Session saved, but its membership is still loading. Retry to continue."
-                : "Agent addition is unconfirmed. Check channel membership before retrying; the request may already have reached the relay.",
+                : unconfirmedAgent,
             ),
           ),
         15000,
@@ -325,8 +360,8 @@ export function createChannelWrites(
   }
   async function refreshMembership(id: string) {
     if (signal.aborted || (!outbox?.supports(9007) && !outbox?.supports(9000)))
-      throw new Error("Channel membership is unavailable.");
-    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+      throw new Error(membersUnchecked);
+    if (!relayAuthor) throw new Error(membersUnchecked);
     // A chat this device is starting has no roster until its create lands.
     await starts.get(id);
     const events = await reader.read(
@@ -344,6 +379,7 @@ export function createChannelWrites(
     const channel =
       channels.list().channels.find((item) => item.id === id) ??
       channels.get?.(id);
+    if (channel?.archived) throw new Error("This channel is archived.");
     if (
       !events.some(
         (event) =>
@@ -351,12 +387,9 @@ export function createChannelWrites(
           event.pubkey === relayAuthor &&
           event.tags.some(([name, value]) => name === "d" && value === id),
       ) ||
-      !channel?.members ||
-      channel.archived
+      !channel?.members
     )
-      throw new Error(
-        "Could not refresh channel membership. Retry to continue.",
-      );
+      throw new Error(membersUnchecked);
     return channel;
   }
   /** Unarchived channel IDs among `candidates` and those whose relay-signed
@@ -368,7 +401,10 @@ export function createChannelWrites(
     caller: AbortSignal,
     candidates: Iterable<string>,
   ) {
-    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    if (!relayAuthor)
+      throw new Error(
+        "Buzz can’t check which channels they’re in right now. Try again in a moment.",
+      );
     const limit = 500;
     const events = await discovery.read(
       [
@@ -431,7 +467,7 @@ export function createChannelWrites(
   /** Whether this channel's current relay-signed roster lists `pubkey`. Throws
    * when no roster is readable, so missing evidence never counts as absence. */
   async function listsMember(id: string, pubkey: string, caller: AbortSignal) {
-    if (!relayAuthor) throw new Error("Channel membership is unavailable.");
+    if (!relayAuthor) throw new Error(membersUnchecked);
     const events = await discovery.read(
       [
         {
@@ -454,10 +490,7 @@ export function createChannelWrites(
         event.pubkey === relayAuthor &&
         event.tags.some(([name, value]) => name === "d" && value === id),
     );
-    if (!roster)
-      throw new Error(
-        "Could not refresh channel membership. Retry to continue.",
-      );
+    if (!roster) throw new Error(membersUnchecked);
     return roster.tags.some(
       ([name, value]) => name === "p" && value === pubkey,
     );
@@ -479,12 +512,10 @@ export function createChannelWrites(
         original.channelType !== "solo" || !original.members?.includes(key),
     );
     if (!unique.length) return;
-    if (
-      !original.members ||
-      original.archived ||
-      !["stream", "forum", "solo"].includes(original.channelType ?? "")
-    )
-      throw new Error("Refresh the channel before adding agents.");
+    if (original.archived) throw new Error("This channel is archived.");
+    if (!["stream", "forum", "solo"].includes(original.channelType ?? ""))
+      throw new Error("You can’t add agents to this conversation.");
+    if (!original.members) throw new Error(membersUnchecked);
     // Archive state applies to every new admission, even for current members;
     // unknown archive state fails open to the library/member rule.
     if (unique.some((key) => agents?.archived(key)))
@@ -502,8 +533,8 @@ export function createChannelWrites(
         throw new DOMException("Channel addition cancelled", "AbortError");
       writer(!!active);
       const current = channels.list().channels.find((item) => item.id === id);
-      if (!current?.members || current.archived)
-        throw new Error("Channel membership is unavailable.");
+      if (current?.archived) throw new Error("This channel is archived.");
+      if (!current?.members) throw new Error(membersUnchecked);
       if (current.members.includes(key)) continue;
       const previous = (receipts ?? outbox)?.snapshot().find((item) => {
         const roles = item.event.tags.filter(([name]) => name === "role");
@@ -522,12 +553,38 @@ export function createChannelWrites(
           roles.every((tag) => tag.length === 2 && tag[1] === "bot")
         );
       });
-      if (previous && Date.now() / 1000 - previous.event.created_at >= 15 * 60)
-        throw new Error(
-          `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
-        );
+      const name = agents?.name?.(key) ?? "this agent";
+      // The relay no longer takes a request this old, and the roster just
+      // read shows it never took effect, so a fresh one replaces it.
+      const expired =
+        previous && Date.now() / 1000 - previous.event.created_at >= 15 * 60;
+      if (expired) {
+        const stillAdding = () =>
+          new NamedError(
+            `Buzz is still adding ${name}. Wait for that to finish, then try again.`,
+          );
+        if (previous.delivery === "sending") throw stillAdding();
+        let cleared = true;
+        try {
+          await writer(!!active).dismiss(previous.event.id);
+        } catch {
+          cleared = false;
+        }
+        // dismiss returns at once, leaving the request, while it is being
+        // sent; only reading the list again tells whether it is gone.
+        const left = (receipts ?? outbox)
+          ?.snapshot()
+          .find((item) => item.event.id === previous.event.id);
+        if (left?.delivery === "sending") throw stillAdding();
+        if (!cleared || left)
+          throw new NamedError(
+            `Buzz couldn’t add ${name}. Try adding them again.`,
+          );
+        if (active?.() === false)
+          throw new DOMException("Channel addition cancelled", "AbortError");
+      }
       const operation =
-        previous?.event.id ??
+        (!expired && previous?.event.id) ||
         writer(!!active).send(
           {
             kind: 9000,
@@ -537,7 +594,7 @@ export function createChannelWrites(
           undefined,
           active,
         );
-      await delivered(operation, active, true);
+      await delivered(operation, active, name);
       if (active?.() === false)
         throw new DOMException("Channel addition cancelled", "AbortError");
       added.push(key);

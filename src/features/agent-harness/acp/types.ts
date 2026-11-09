@@ -1,5 +1,6 @@
 // What the shared ACP client exchanges with the harness plugins built on it.
 import type {
+  HostMcpOptions,
   HostMcpServer,
   HostProcess,
   HostProcessOptions,
@@ -12,7 +13,10 @@ export type Spawn = (
   id: string,
   options?: HostProcessOptions,
 ) => Promise<HostProcess>;
-export type ServeMcp = (handler: McpHandler) => Promise<HostMcpServer>;
+export type ServeMcp = (
+  handler: McpHandler,
+  options?: HostMcpOptions,
+) => Promise<HostMcpServer>;
 /** The host's absolute path for a directory, resolving `~/…`. */
 export type ResolveDirectory = (path: string) => Promise<string>;
 
@@ -88,6 +92,10 @@ export type AcpHooks = Readonly<{
    * 126 or 127 before `initialize` answers as `missing`: for a program the
    * owner launches through `env`. */
   diagnoseStartup?: boolean;
+  /** Serves one Buzz MCP server for the whole process, for a harness that
+   * registers MCP servers per directory rather than per session. Each tool
+   * call is routed by the session id the harness sends in `_meta`. */
+  sharedMcp?: boolean;
   /** Its environment, under the launch's own. The Buzz identity is always
    * removed, whatever either says. */
   env: Readonly<Record<string, string | null>>;

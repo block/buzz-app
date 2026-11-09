@@ -805,6 +805,35 @@ it("doesn’t check in the background while offline, and checks when the connect
   }
 });
 
+it("checks once when the connection returns to a launch that was offline and Git still fails", async () => {
+  const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+  try {
+    const f = fixture();
+    f.imports.checkGit.mockRejectedValue(OFFLINE);
+    f.mount();
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    expect(f.imports.checkGit).not.toHaveBeenCalled();
+    online.mockReturnValue(true);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(
+      await screen.findByText("Couldn’t check for updates."),
+    ).toBeVisible();
+    // The connection's return started this check, so its failure doesn't
+    // force another; the row waits for the next trigger.
+    expect(f.imports.checkGit).toHaveBeenCalledOnce();
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
+  } finally {
+    online.mockRestore();
+  }
+});
+
 it("checks again when the connection returns after it dropped during a check", async () => {
   const f = fixture();
   f.candidate.revision = f.plugin.revision;

@@ -88,18 +88,22 @@ export function PluginUpdates({
       document.visibilityState !== "hidden" && navigator.onLine !== false;
     // A check that failed when the connection dropped is throttled like any
     // other, so the connection's return checks it again at once. The intent
-    // lasts until a check can run and has settled: the window may be hidden,
-    // or the check that will fail may still be in flight.
+    // lasts until a check can run: the window may be hidden. A check that
+    // starts on the returned connection spends it; one that joins a check in
+    // flight keeps it, since that check may be the one that dropped, and a
+    // forced check follows its failure.
     let reconnect = false;
+    let running = 0;
     const failed = () => updates.snapshot().some((update) => update.error);
     const check = async (force = false) => {
       clearTimeout(timer);
       if (!ready()) return;
-      if (reconnect && failed()) {
+      if (reconnect && running === 0) {
         reconnect = false;
-        force = true;
+        force ||= failed();
       }
-      const delay = await updates.check(force);
+      running++;
+      const delay = await updates.check(force).finally(() => running--);
       if (disposed || !ready()) return;
       if (reconnect) {
         reconnect = false;

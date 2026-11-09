@@ -222,6 +222,7 @@ const storage: PluginStorage = {
   recoverSettings: () => api("recover", {}),
   readModule: async (id, revision) =>
     (await api("module", { id, revision })).code,
+  readContent: async () => ({ readme: null, iconPng: null, iconJpg: null }),
   reloadPlugin: async (id) => withProbe(await api("reload", { id })),
 };
 const ctx = new Context();

@@ -8,7 +8,7 @@ import {
 } from "./manager";
 import { PagesService } from "../features/pages/service";
 import type { PluginStorage } from "./storage";
-import type { StorageResult } from "./types";
+import type { PluginContent, StorageResult } from "./types";
 
 const ready = (enabled = true, paused = false): StorageResult => ({
   status: "ready",
@@ -48,6 +48,11 @@ function harness(
     changePlugin: vi.fn(async () => ready(false)),
     recoverSettings: vi.fn(async () => ready()),
     readModule: vi.fn(async () => ""),
+    readContent: vi.fn(async () => ({
+      readme: null,
+      iconPng: null,
+      iconJpg: null,
+    })),
     reloadPlugin: vi.fn(async () => ready(false)),
     ...overrides,
   };
@@ -77,6 +82,13 @@ function harness(
   const pages = new PagesService(root);
   managers.push(plugins);
   return { plugins, pages, installation, root };
+}
+function gate<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 function deferred() {
   let resolve!: (result: StorageResult) => void;
@@ -541,6 +553,58 @@ it("loads an enabled external plugin regardless of its id", async () => {
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.startup()).toBe("ready");
   expect(installation.readModule).toHaveBeenCalledWith("monitor", "one");
+});
+
+it("reads an installed plugin's icon once per revision, preferring PNG, and retries after a failed read", async () => {
+  const content = (png: string | null, jpg: string | null) => ({
+    readme: null,
+    iconPng: png,
+    iconJpg: jpg,
+  });
+  const readContent = vi
+    .fn<PluginStorage["readContent"]>()
+    .mockResolvedValueOnce(content("UE5H", "SlBH"))
+    .mockResolvedValueOnce(content(null, "SlBH"))
+    .mockRejectedValueOnce(new Error("Plugin was updated; refresh the catalog"))
+    .mockResolvedValueOnce(content(null, null))
+    .mockResolvedValueOnce(content("UE5H", null));
+  const { plugins } = harness({ readContent });
+  await expect(plugins.icon("example", "one")).resolves.toBe(
+    "data:image/png;base64,UE5H",
+  );
+  await expect(plugins.icon("example", "one")).resolves.toBe(
+    "data:image/png;base64,UE5H",
+  );
+  expect(readContent).toHaveBeenCalledTimes(1);
+  await expect(plugins.icon("example", "two")).resolves.toBe(
+    "data:image/jpeg;base64,SlBH",
+  );
+  expect(readContent).toHaveBeenLastCalledWith("example", "two");
+  await expect(plugins.icon("example", "three")).rejects.toThrow("updated");
+  await expect(plugins.icon("example", "three")).resolves.toBeUndefined();
+  expect(readContent).toHaveBeenCalledTimes(4);
+  // A new revision replaced the old entry, so going back reads again.
+  await plugins.icon("example", "one");
+  expect(readContent).toHaveBeenCalledTimes(5);
+});
+
+it("shares one icon read between concurrent callers and falls back when the read throws synchronously", async () => {
+  const read = gate<PluginContent>();
+  const readContent = vi.fn<PluginStorage["readContent"]>(() => read.promise);
+  const { plugins } = harness({ readContent });
+  const first = plugins.icon("example", "one");
+  const second = plugins.icon("example", "one");
+  read.resolve({ readme: null, iconPng: "UE5H", iconJpg: null });
+  await expect(Promise.all([first, second])).resolves.toEqual([
+    "data:image/png;base64,UE5H",
+    "data:image/png;base64,UE5H",
+  ]);
+  expect(readContent).toHaveBeenCalledTimes(1);
+
+  readContent.mockImplementationOnce(() => {
+    throw new Error("native bridge unavailable");
+  });
+  await expect(plugins.icon("other", "one")).rejects.toThrow("unavailable");
 });
 
 it("offers agents the plugins it reads, through the context", async () => {

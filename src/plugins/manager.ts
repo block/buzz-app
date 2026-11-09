@@ -209,6 +209,29 @@ export function createPluginManager(
       else void pending.then(finish, finish);
     }
   }
+  // One read per plugin's installed revision: a new revision replaces the old
+  // entry, and a failed read is forgotten so a later mount can retry.
+  const icons = new Map<
+    string,
+    { revision: string; promise: Promise<string | undefined> }
+  >();
+  function icon(id: string, revision: string) {
+    const cached = icons.get(id);
+    if (cached?.revision === revision) return cached.promise;
+    const promise = Promise.resolve()
+      .then(() => storage.readContent(id, revision))
+      .then(({ iconPng, iconJpg }) => {
+        if (iconPng) return `data:image/png;base64,${iconPng}`;
+        if (iconJpg) return `data:image/jpeg;base64,${iconJpg}`;
+        return undefined;
+      });
+    const entry = { revision, promise };
+    icons.set(id, entry);
+    promise.catch(() => {
+      if (icons.get(id) === entry) icons.delete(id);
+    });
+    return promise;
+  }
   const change = (action: ManagementAction, id: string) =>
     update(() => storage.changePlugin(action, id));
   const requests = createPluginRequests({
@@ -233,6 +256,7 @@ export function createPluginManager(
       };
     },
     imports: storage.imports,
+    icon,
     installImport: (token: string, path: string) =>
       update(() => {
         if (!storage.imports)

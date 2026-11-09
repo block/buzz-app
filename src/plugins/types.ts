@@ -21,6 +21,12 @@ export type PluginInfo = {
   iconPngRevision?: string | null;
   iconJpgRevision?: string | null;
 };
+/** Inert package content, base64-encoded, read on demand rather than polled. */
+export type PluginContent = {
+  readme: string | null;
+  iconPng: string | null;
+  iconJpg: string | null;
+};
 export type Catalog = {
   profile: string;
   location: string;

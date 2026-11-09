@@ -1458,3 +1458,76 @@ it("keeps the unavailable card for a turned-off external plugin while external p
     reason: "unavailable",
   });
 });
+
+// Inside Settings, the dialog's own sections and Close are the way out, so
+// its cards never leave for Messages as the page cards above do.
+it("a Settings section that isn’t available offers Try again, not Go to Messages", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("tab", { name: "Activity" });
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "fixture.missing/options",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const card = (
+    await within(settings).findByRole("heading", {
+      name: "This page isn’t available",
+    })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "It may have been removed, or you may need to update Buzz.",
+    ),
+  ).toBeVisible();
+  expect(current.navigation.snapshot()).toMatchObject({
+    status: "failed",
+    reason: "unavailable",
+  });
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Try again"]);
+  expect(
+    within(card).getByRole("button", { name: "Try again" }).dataset.variant,
+  ).toBe("prominent");
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+  expect(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  ).toBeVisible();
+});
+
+it("a turned-off plugin's Settings section offers Manage plugins, not Go to Messages", async () => {
+  const current = legacyPageFixture();
+  await screen.findByRole("tab", { name: "Activity" });
+  await act(() => current.plugins.change("disable", "buzz.agents"));
+  act(() => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "buzz.agents/external-apps",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  const card = (
+    await within(settings).findByRole("heading", {
+      name: "Agents is turned off",
+    })
+  ).closest<HTMLElement>('[role="alert"]');
+  if (!card) throw new Error("Expected the failure alert");
+  expect(
+    within(card).getByText(
+      "Turn it on in Manage plugins to open this section.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(card)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Manage plugins"]);
+  expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
+});

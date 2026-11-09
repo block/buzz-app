@@ -70,7 +70,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // An FI build signs out where its shared organization sign-in is managed.
   const openIdentity = !nativeBuilderlab()
     ? undefined
-    : () => openSettings("identity");
+    : () =>
+        void ctx.navigation.open({
+          version: 1,
+          kind: "settings",
+          section: "identity",
+          part: "organization-sign-in",
+        });
   // An app that refuses the sign-in sends you where it is renewed: Identity in
   // an FI build, this card in live development.
   applyApps(

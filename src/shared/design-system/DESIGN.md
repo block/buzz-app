@@ -114,6 +114,8 @@ Settings is a reading/form column inside host-owned navigation. Reuse its center
 page surface, sidebar, fixed viewport width, or nested settings scroll container.
 A Settings destination starts with `Header`, then named groups with `InlineHeader`.
 Align headings with their groups' content, not just their outer borders.
+At narrow Settings widths, an end-aligned Header puts its actions below the
+title.
 
 Choose the group by how it behaves:
 
@@ -753,6 +755,10 @@ has a creation sidebar. The sidebar and detail pane share one joined surface; th
 resize seam is a persistent `border-standard` hairline. Layout and overflow
 remain shell-owned.
 
+Use `Tabs variant="capsule"` for outlined filters with no filled track and a
+wrapping trailing action, as in Hosted Communities. `Header align="end"`
+bottom-aligns its title and trailing action without changing spacing.
+
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
 Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px
@@ -886,7 +892,9 @@ are unchanged. No extra hover affordance is added to static content.
 
 The floating control mappings are proposed, not an accessibility certification.
 Dark floating action fills are neutral-6/7/8 at rest/hover/press, on the
-neutral-raised (#282828) floating surface; those fill edges are below 3:1. The contextual control
+neutral-raised (#282828) floating surface; those fill edges are below 3:1.
+Light floating action fills are neutral-3/4/5, one step above the panel's
+neutral-2 subtle fill, which nearly disappears on a white floating surface. The contextual control
 stroke uses neutral-9 and clears 3:1 against that outer surface. This proof does
 not change the shared [focus appearance policy](#focus-appearance), which applies
 in both the app and viewer. Glass/inverse/media surfaces retain their existing
@@ -896,6 +904,10 @@ The Floating surfaces viewer shows actions, rows, fields and choices in actual
 shared Panel/Dialog/Popover components, including a nested Panel reset. Verify
 both themes, portals, supported states and actual product flows before adoption
 is called complete; token math alone cannot validate the CSS cascade.
+
+Body-copy links use `Button variant="link" size="text"`: small label type,
+no insets, and the shared keyboard focus treatment. Caption-sized `inline`
+buttons remain for compact controls such as composer choices.
 
 ## Controls
 
@@ -936,7 +948,9 @@ Floating unread cues and Jump to latest use Button's `shape="control"` with
 same radius so its painted edges align with the button.
 A sidebar unread cue is strong (`prominent`) only when a DM, a mention of you or
 a thread reply waits past its edge; ordinary unread uses the `subtle` Button,
-whose light gray fill holds up over the list where glass would disappear.
+whose light gray fill holds up over the list where glass would disappear. The
+cue opts into `interaction-floating`, so that fill steps up to the floating
+control fill instead of the panel's near-match in either theme.
 
 Arriving at a message, by link, search, the inbox or closing its thread,
 briefly marks it. A filled bubble takes `affordance-message-highlight` (your
@@ -1150,6 +1164,12 @@ while the frame owns the active perimeter stroke. Read-only values can be
 read and copied; disabled actions cannot change a value. Search clear restores
 input focus. SearchField `trailing` places auxiliary actions after Clear inside
 the shared frame. Features still own filtering, custom values, and async recovery.
+
+For a prominent composed value, use `Input textSize="large"` for the complete
+20px body-lg role. `InputGroup wrap` keeps fixed text affixes inside the same
+frame, reserving twelve characters for editing before moving an affix to its
+own line. Keep the affix at the input's type size and connect it through
+`aria-describedby`; it remains readable when enlarged text wraps.
 
 SearchField, Combobox.Control, and code Textarea default to no autocorrection,
 capitalization, or spellcheck. Callers can override these defaults explicitly.

@@ -2,6 +2,7 @@ import { finalizeEvent } from "nostr-tools";
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 const localAgentKey =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -641,14 +642,7 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
     });
     await expect(bubble).toBeVisible();
     // Finish entrance and hold only the exit so the intermediate state is testable.
-    await message.locator("section").evaluate(async (element) => {
-      await Promise.all(
-        element
-          .getAnimations({ subtree: true })
-          .filter((a) => a.effect.getTiming().iterations !== Infinity)
-          .map((a) => a.finished),
-      );
-    });
+    await animationsSettled(message.locator("section"), { subtree: true });
     // Hold the actual exit animation before its first frame, rather than racing
     // a delayed animationstart event on a busy runner. Release in finally.
     const exitGate = await page.addStyleTag({

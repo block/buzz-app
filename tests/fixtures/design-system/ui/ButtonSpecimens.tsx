@@ -224,6 +224,16 @@ export function ButtonSpecimen() {
         </Button>
       </ExamplePreview>
       <ExamplePreview
+        code={`<Button size="text" variant="link">Manage account</Button>`}
+      >
+        <Button size="text" variant="link">
+          Manage account
+        </Button>
+        <Button size="text" variant="link" disabled>
+          Manage account
+        </Button>
+      </ExamplePreview>
+      <ExamplePreview
         code={`<Button size="inline" variant="plain" aria-expanded={expanded}>Previous steps <CaretDownIcon aria-hidden="true" /></Button>`}
       >
         <Button

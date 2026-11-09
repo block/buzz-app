@@ -216,6 +216,8 @@ function PagePreview({
   children: ReactElement<ComponentProps<"button">>;
 }) {
   const [open, setOpen] = useState(false);
+  // Previews stay below the window header, in the workspace that holds the row.
+  const [boundary, setBoundary] = useState<Element | null>(null);
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
@@ -252,7 +254,10 @@ function PagePreview({
       actionsRef={actions}
       onOpenChange={(next, details) => {
         // Hover only: pressing the row selects the page instead.
-        if (next) handoff.current = false;
+        if (next) {
+          handoff.current = false;
+          setBoundary(details.trigger?.closest(".shell-workspace") ?? null);
+        }
         setOpen(enabled && next && details.reason !== "trigger-press");
       }}
     >
@@ -280,6 +285,7 @@ function PagePreview({
         // preview's header meets the background's top edge. Offsets ignore the
         // open animation's transform.
         sideOffset={6}
+        collisionBoundary={boundary ?? undefined}
         alignOffset={() => {
           const header = popup.current?.querySelector("header");
           return header ? 1 - header.offsetTop - header.offsetHeight : 0;

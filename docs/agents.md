@@ -1344,6 +1344,16 @@ failure, and `cancelled` to stopped without identifying who cancelled. Exact
 trigger IDs and outcomes survive raw-record trimming. Losing a lifecycle turn
 makes aggregate request completion uncertain.
 
+A `turn_started` frame's `triggeringEventIds` names the messages a turn started
+for, and a second start under the same turn ID makes the turn ambiguous. A
+`turn_steered` frame names messages the agent added to its running turn, as a
+remote agent's safe-point steer does. They join that turn's triggers, so they
+show working and end with it; their activity reads from the turn's start. A
+start or steer that arrives late, after the turn ended or after a newer frame,
+still records membership without reviving or refreshing the turn. Every list is
+admitted whole, up to 64 messages per turn, and the lifecycle's retained
+membership decides which messages a turn's activity belongs to.
+
 With Builderlab sign-in, stale activity or reconnect triggers an owner-only
 `/v3/beekeeper/get-agent-turn-status` read for retained exact tasks. Reads batch
 up to 64 tasks per agent/session/channel using existing bounded retries. Missing

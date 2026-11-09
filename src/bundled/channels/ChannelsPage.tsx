@@ -173,8 +173,16 @@ export function ChannelsPage({
   const sessionNavigation = navigation?.forSession(relay, session);
   // An opening visit's deadline bounds Connecting; once it has settled, a
   // retrying connection is a failure that keeps trying, not a connection.
-  // Each attempt republishes the connection, so reading it here stays current.
-  const visitSettled = navigator.snapshot().status !== "opening";
+  // Only that case reads the visit, so only it follows the visit settling.
+  const settled = () =>
+    session.status === "error" &&
+    session.retrying &&
+    navigator.snapshot().status !== "opening";
+  const visitSettled = useSyncExternalStore(
+    navigator.subscribe,
+    settled,
+    settled,
+  );
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;

@@ -23,16 +23,19 @@ the parent conversation alone is insufficient. Several agents can participate.
 Starting a Huddle in a one-to-one DM with your running voice-capable agent
 adds it to the Huddle room; joining an existing Huddle does not. You can also
 add agents through the Huddle's member controls. On the hosting computer, a
-seated agent shows a smaller avatar, a rotating ring while it works (activity
-dots in the compact player), and its normal size while speaking. This state is
+seated agent starts at normal size, shrinks by 20% while you speak, and shows a
+rotating ring while it works (activity dots in the compact player). It returns
+to normal size while speaking, with the same pulse as people. This state is
 not shared with remote participants. The agent’s own client enforces who it
 hears. Each filters for audio from your connected devices
 and speaks to everyone. The current audio protocol can briefly misattribute delayed
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
 audio from your devices is mixed together.
-Voice work uses the same permissions as your text requests. Joining on another
-device does not seat an agent running here. Leaving closes its voice connection.
+Voice work uses the same permissions as your text requests. Joining your Codex agent’s DM huddle from mobile can activate that agent on
+this desktop. Keep Buzz and the Codex agent running here; the desktop microphone
+does not turn on. Other calls on another device do not seat an agent here.
+Leaving on every connected owner device closes the remote voice connection.
 If agent voice stops, the compact player and Huddle window show the reason;
 leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
@@ -85,10 +88,13 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
   offer it during setup. Later, **Create community** in **Settings → Plugins →
-  Builderlab** opens the join for the new community at once; after its profile
+  Builderlab → Communities** opens the join for the new community at once; after its profile
   step it opens and is listed in the community picker. When the owner of a community with no channels yet
   opens Messages, Buzz creates one open **#general**, marked as the starter
   channel for new members, and opens it.
+  The picker's **Create community** opens that form directly. If Builderlab is
+  signed out, sign in remains available in both management sections; a picker
+  creation resumes after sign-in.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
@@ -140,6 +146,31 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- **Settings → Plugins → Builderlab** shows previews of your hosted communities
+  and remote agents. Open either card to manage it, then use the left caret beside the title to return. Both lists load when the overview opens and refresh
+  when the window regains focus; opening a section preserves its current draft.
+  Hosted communities have Active/Archived filters, name/address search and row
+  menus for copying addresses and available management actions. **Create**
+  opens the address form; quota and identity checks still govern creation.
+  After **Copy address**, a hint appears above the row’s **…** menu without moving
+  the list; Escape dismisses it. The **Refresh** icon beside search checks
+  communities again, including after a failed read. Automatic
+  refresh keeps the current list usable and waits while a community dialog is open.
+  A green check beside Refresh means the Builderlab account is linked to this
+  device’s Buzz identity; hover or focus it for details. The creation dialog
+  focuses the address field and shows quota usage beside its actions. Archived
+  communities still count toward quota until deletion cleanup finishes.
+  Remote agents show their model and setup state.
+  The title includes the count. Each row’s **…** menu offers **Copy key**.
+  Saved agents show their community avatar and open their **Agents** pane when
+  clicked, with **View Agent** also available in the menu. **In Agents** marks
+  these available panes. **Configured** means Builderlab reports Active with a valid
+  model selection; it does not indicate live presence.
+  Creation dates and full keys are not displayed in this compact list.
+  Load errors include **Try again**.
+  Use **Open Agents** from the empty list to create one.
+  In builds using a shared sign-in, Builderlab's account notice names the provider;
+  **Manage account** opens Identity, where that sign-in is managed.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
@@ -174,7 +205,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
-  more than one community.
+  more than one community. To add another, choose **Join a community** in the
+  community picker and paste an invite link or type an address such as
+  `relay.example.com`; an invite link fills in its invite code. Paste the whole
+  link there; a code on its own is refused.
 - Community owners and admins invite people with **Invite members** in the
   community's **Membership** settings (also reached from **Invite to community**
   in the community picker's right-click menu). The dialog creates an invite
@@ -788,6 +822,15 @@ available rather than silently discarding it.
   note. Opened from a conversation, it shows that conversation's turns;
   **Show all conversations** lists the agent's other turns too. It shows only
   turns captured while Buzz has been open.
+- **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar
+  shows the green Online badge to everyone in the community while its owner
+  has set it up on a remote runtime and has not deleted it. The badge means the
+  agent is configured to run remotely and wakes when mentioned; it does not
+  prove the runtime is up right now, and a working indicator still shows actual
+  work. Deleting the agent clears the badge for other viewers within a few
+  minutes. Agents that run on someone's computer, and people, keep their badge
+  from recent Buzz activity, so a local agent goes grey when its owner's Buzz
+  is closed.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -816,7 +859,8 @@ available rather than silently discarding it.
   sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
-  the side pane keeps its open threads and reply drafts.
+  the side pane keeps its open threads and reply drafts. Its header includes the
+  same DM controls and actions, including Huddle when supported and enabled.
   A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie

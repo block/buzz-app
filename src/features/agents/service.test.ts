@@ -11885,6 +11885,17 @@ it("leaves an agent another copy of the app holds to that copy, and does not say
   expect(said(presence)).toEqual([`online:${bot}`]);
 });
 
+it("tells each community which agent types run remotely, so their agents show online", async () => {
+  vi.useFakeTimers();
+  const { service, plugin, session } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  const told = vi.mocked(session.presence.remoteRuntimes)?.mock.calls ?? [];
+  expect(told.length).toBeGreaterThan(0);
+  expect([...(told.at(-1)?.[0] ?? [])]).toEqual(["example/cloud"]);
+});
+
 it("tries a refused presence again after half a minute, not every tick", async () => {
   vi.useFakeTimers();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

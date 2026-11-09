@@ -1423,6 +1423,7 @@ export function Settings({
                   return (
                     <Card
                       active={active}
+                      navigation={navigation}
                       {...(!card.group && selectedCommunity
                         ? { community: selectedCommunity }
                         : {})}

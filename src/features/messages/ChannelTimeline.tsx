@@ -747,7 +747,7 @@ function Timeline({
     y: 0,
   });
   const heldReader = useRef<
-    { id: string; y: number; intent: number } | undefined
+    { id: string; y: number; intent: number; ended: boolean } | undefined
   >(undefined);
   const previousBoundaryId = useRef<string | undefined>(undefined);
   const upwardGesture = useRef<false | "candidate" | "moving">(false);
@@ -1171,7 +1171,16 @@ function Timeline({
     // The row's offset from the viewport, as last placed by the reader.
     // A live append must not choose a newly inserted row while the older
     // page is still measuring; keep the reader's original row and offset.
-    const anchor = { id, y: reader.current.y, intent: intent.current };
+    // A later render holds the row again under the same input. Input that
+    // ended during an earlier hold sends no further pointerup to end this one.
+    const anchor = {
+      id,
+      y: reader.current.y,
+      intent: intent.current,
+      ended:
+        heldReader.current?.intent === intent.current &&
+        heldReader.current.ended,
+    };
     heldReader.current = anchor;
     const top = () =>
       element
@@ -1238,11 +1247,10 @@ function Timeline({
     // their sizes in the frame after (patches/README.md), whether or not their
     // height changed. Input that ended before then releases the frame after.
     let measured = false;
-    let ended = false;
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         measured = true;
-        if (ended) frame = requestAnimationFrame(() => release());
+        if (anchor.ended) frame = requestAnimationFrame(() => release());
       });
     });
     const hold = new MutationObserver((mutations) => {
@@ -1284,7 +1292,7 @@ function Timeline({
     };
     const done = () => {
       if (measured) release();
-      else ended = true;
+      else anchor.ended = true;
     };
     // A held pointer can drag across more moved rows; it ends when released.
     const end = () => {

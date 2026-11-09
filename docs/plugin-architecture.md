@@ -1001,7 +1001,10 @@ cards such as Pair mobile that collect their own community address; it cannot be
 combined with `group` or `section`.
 Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
-Cards receive `active()` and use ordinary
+Cards receive `active()` and optional `navigation` for the current Settings visit.
+A Settings target can carry bounded `route: { version, params }` presentation
+data; the card interprets supported versions and ignores unknown routes. Opening
+a route must never submit a write. Cards use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
@@ -1730,12 +1733,36 @@ const saved = response && await ctx.host.saveBytes?.(response.body, { sha256 });
 
 `requestBytes({url,maxBytes,timeoutMs?})` performs only GET, with no caller headers,
 body or cookies and no redirects. The destination must be an exact declared
-HTTPS origin of the current enabled plugin revision, checked again before handoff.
+HTTPS origin of the current enabled plugin revision (or, with `host.publicImages`,
+any public HTTPS address, below), checked again before handoff.
 `maxBytes` is a required integer from 1 through 16777216 (16 MiB); actual chunks
 are counted regardless of Content-Length. The deadline defaults to 30000 ms and
 can be 1–30000 ms. Empty bodies and non-2xx statuses are returned, not reclassified
 as successful operations. Existing ordinary GET client retry semantics remain;
 this is not an at-most-one GET promise or an application retry policy.
+
+Declare `host: { publicImages: true }` to let `requestBytes` also read images from
+any public HTTPS site, outside `networkOrigins`: for example a link preview's
+`og:image`, whose host can't be known ahead of time. It widens only
+`requestBytes`: `request`, `upload` and `uploadBytesOnce` still need a declared
+origin. A declared origin keeps its ordinary behavior. Any other URL must use
+port 443, and native code resolves its name and refuses it unless every address is public (not loopback, private,
+shared 100.64.0.0/10, link-local, multicast, documentation or reserved space,
+including IPv4 embedded in IPv6), then connects only to those addresses, with no
+proxy, no cookies and Buzz's User-Agent. A redirect returns its status and
+`Location` alone: the plugin checks the next hop and asks again. A 2xx PNG,
+JPEG, GIF, WebP or AVIF response returns its `content-type` and body; anything
+else, including SVG and pages, returns its status with no headers or body.
+Names that resolve publicly but are reached only through a VPN (such as a
+company's internal hosts) are not visible to this check, so the plugin must
+refuse them by name on every hop. The site sees the user's IP address.
+
+Only images come back, but the plugin chooses each URL, so the grant lets it
+send data it holds to any public site in the path, query or hostname. It lifts
+the bound `networkOrigins` otherwise puts on where a plugin's data can go; the
+access review says so. Public image reads share the one-at-a-time byte request
+slot with every plugin's `requestBytes` and `saveBytes`, so pass a short
+`timeoutMs`.
 
 The internal raw response is a four-byte big-endian metadata length, UTF-8 JSON
 `{status,headers}` of at most 20 KiB, then the body. At most 64 response headers

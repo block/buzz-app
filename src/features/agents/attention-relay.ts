@@ -656,7 +656,12 @@ export async function publishAll(
   io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
   read: () => Promise<AttentionSet>,
   attention: AgentRecord["attention"],
-  options: Readonly<{ prune?: Readonly<Record<string, string>> }> = {},
+  options: Readonly<{
+    prune?: Readonly<Record<string, string>>;
+    /** Publish only objects the relay has in neither its set nor its
+     * skipped records, so the relay's own versions stay. */
+    missingOnly?: boolean;
+  }> = {},
 ): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
   const before = await read();
   const rank = ({ slug, value }: AttentionEdit) => {
@@ -665,11 +670,11 @@ export async function publishAll(
   };
   const changes: AttentionEdit[] = [
     ...Object.values(attention)
-      .filter(
-        ({ slug, value }) =>
-          !before.attention[slug] ||
-          !sameValue(before.attention[slug].value, value),
-      )
+      .filter(({ slug, value }) => {
+        const there = before.attention[slug];
+        if (options.missingOnly) return !there && !before.skipped[slug];
+        return !there || !sameValue(there.value, value);
+      })
       .map(({ slug, value }) => ({ slug, value })),
     // A record the relay skipped can be pruned too, by its key there.
     ...Object.entries(options.prune ?? {})

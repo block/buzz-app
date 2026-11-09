@@ -18791,13 +18791,19 @@ it("prunes only the objects named, at the heads the owner saw, so one added or c
   }
 });
 
-it("adopts the community's attention as it is when the owner chooses it, publishing nothing", async () => {
+it("adopts the community's attention when the owner chooses it, copying there only what it lacks", async () => {
   const f = await relayAttentionSetup({
     device: {
       "interest/default": {
         slug: "interest/default",
         value: { type: "interest", instructions: "Here." },
         modifiedAt: 1,
+      },
+      // Made here since the owner saw the refusal: copied, not dropped.
+      "interest/new": {
+        slug: "interest/new",
+        value: { type: "interest", instructions: "New here." },
+        modifiedAt: 2,
       },
       // Unreadable here: the community's set replaces it too.
       "interest/bad": {
@@ -18819,16 +18825,48 @@ it("adopts the community's attention as it is when the owner chooses it, publish
     different: ["interest/default"],
     extra: ["interest/there"],
   });
-  expect(f.ownerWrites).toHaveLength(0);
+  // Only the one the community lacks; its own version of the other stays.
+  expect(f.ownerWrites).toHaveLength(1);
+  const tag = (event: RelayEvent | undefined, name: string) =>
+    event?.tags.find((t) => t[0] === name)?.[1];
+  expect(tag(f.ownerWrites[0], "d")).toBe(
+    await attentionD(f.home, "interest/new"),
+  );
   const agent = f.service.find(bot);
   expect(agent?.attentionStorage).toBe("relay");
   expect(Object.keys(agent?.attention ?? {}).sort()).toEqual([
     "interest/default",
+    "interest/new",
     "interest/there",
   ]);
   expect(agent?.attention["interest/default"]?.value).toMatchObject({
     instructions: "Theirs.",
   });
+});
+
+it("refuses to adopt the community's attention while it holds objects it can't read", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await f.seed("interest/bad", {
+    type: "interest",
+    instructions: "",
+  } as AttentionValue);
+  await expect(
+    f.service.migrateAttention(bot, { adopt: true }),
+  ).resolves.toMatchObject({ migrated: false, skipped: ["interest/bad"] });
+  // As a refused move does, it leaves this device's copied there.
+  expect(f.ownerWrites).toHaveLength(1);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  expect(Object.keys(f.service.find(bot)?.attention ?? {})).toEqual([
+    "interest/default",
+  ]);
 });
 
 it("refuses to move attention with unreadable objects", async () => {

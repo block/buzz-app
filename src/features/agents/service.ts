@@ -1913,9 +1913,11 @@ export type Agents = {
    * on this device and the result lists what differs. It also deletes, as the
    * owner, each object in `prune` that only the community holds or could
    * not read: pass the `heads` of the result the owner confirmed, so nothing
-   * added or changed since is deleted. With `adopt`, it publishes nothing
-   * and switches to the community's set as it is now, which becomes the
-   * agent's attention here too (the owner chose the community's). */
+   * added or changed since is deleted. With `adopt` (the owner chose the
+   * community's), it publishes only objects the community lacks, then
+   * switches to the community's set as it is, which becomes the agent's
+   * attention here too: the community's versions replace this device's. It
+   * is refused while the community holds objects it can't read. */
   migrateAttention(
     agent: AgentKey,
     options?: Readonly<{
@@ -9261,11 +9263,19 @@ export class AgentsService extends Service implements Agents {
         controller.signal,
       );
       if (options.adopt) {
-        const set = await readOnce(
-          (filter) => session.artifacts.sync(filter),
-          channel,
+        // The community's versions win; what only this device holds, for
+        // example made since the owner saw the refusal, is copied there
+        // first, so the switch drops nothing of it.
+        const { set } = await publishAll(
+          { read, send: ownerSender(artifacts, controller.signal) },
+          () => readOnce((filter) => session.artifacts.sync(filter), channel),
+          saved.attention,
+          { missingOnly: true },
         );
-        result = { ...compared(saved.attention, set), migrated: true };
+        const found = compared(saved.attention, set);
+        // Objects it can't read would not run, and nothing would say so.
+        result = { ...found, migrated: !found.skipped.length };
+        if (!result.migrated) return saved;
         return { ...mirrored(saved, set), attentionStorage: "relay" };
       }
       const { set, found } = await publishAll(

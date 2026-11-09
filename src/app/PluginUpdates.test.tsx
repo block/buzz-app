@@ -634,56 +634,63 @@ it("keeps a background check’s failure on its plugin’s row, with Git’s tex
   ).not.toHaveAttribute("aria-haspopup");
 });
 
-it("gives a failed Check again a notice with Try again, and closing the notice leaves the row", async () => {
-  const f = fixture();
-  f.imports.checkGit.mockRejectedValue(OFFLINE);
-  f.mount();
-  fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
-  expect(await screen.findByText(noticeTitle("Notes"))).toBeVisible();
-  expect(f.imports.checkGit).toHaveBeenCalledTimes(2);
-  expect(
-    screen.getByText("Check your connection, then try again."),
-  ).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Later" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-  await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(3));
-  expect(screen.getByText(noticeTitle("Notes"))).toBeVisible();
-
-  fireEvent.click(
-    screen.getByRole("button", { name: "Dismiss plugin update notice" }),
-  );
-  await waitFor(() =>
-    expect(screen.queryByText(noticeTitle("Notes"))).toBeNull(),
-  );
-  expect(screen.getByText("Couldn’t check for updates.")).toBeVisible();
-  expect(f.installImport).not.toHaveBeenCalled();
-});
-
-it("shows Check again working, then clears the row when it succeeds and keeps focus on the plugin", async () => {
-  const f = fixture();
-  f.candidate.revision = f.plugin.revision;
-  f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
-  let finish!: (preview: ImportPreview) => void;
+function holdCheck(f: ReturnType<typeof fixture>) {
+  let settle!: {
+    finish(preview: ImportPreview): void;
+    fail(error: string): void;
+  };
   f.imports.checkGit.mockImplementationOnce(
     () =>
-      new Promise((resolve) => {
-        finish = resolve;
+      new Promise((resolve, reject) => {
+        settle = { finish: resolve, fail: reject };
       }),
   );
+  return () => settle;
+}
+
+it("clears the row while Check again runs, and returns a failure to the row without a notice", async () => {
+  const f = fixture();
+  f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+  const held = holdCheck(f);
   f.mount();
   const again = await screen.findByRole("button", { name: "Check again" });
   again.focus();
   fireEvent.click(again);
+  // The failure leaves at once; the row reads as it does during any check.
+  expect(screen.queryByText("Couldn’t check for updates.")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "View Notes details" }),
+  ).toHaveFocus();
   await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
-  expect(again).toHaveAttribute("aria-busy", "true");
-  expect(again).toHaveFocus();
-  // A second press while checking starts nothing more.
-  fireEvent.click(again);
-  await act(async () => finish(f.discovered));
-  expect(f.imports.checkGit).toHaveBeenCalledTimes(2);
-  await waitFor(() =>
-    expect(screen.queryByText("Couldn’t check for updates.")).toBeNull(),
+  expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+  await act(async () => held().fail(OFFLINE));
+  const status = await screen.findByRole("alert");
+  expect(status).toHaveTextContent("Couldn’t check for updates.");
+  expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+  expect(screen.getByText("Details").closest("details")).toHaveTextContent(
+    OFFLINE,
   );
+  expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+  expect(screen.queryByText(noticeTitle("Notes"))).toBeNull();
+  expect(screen.queryByText(/Check your connection/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(f.installImport).not.toHaveBeenCalled();
+});
+
+it("keeps the row clear and focus on the plugin when Check again succeeds", async () => {
+  const f = fixture();
+  f.candidate.revision = f.plugin.revision;
+  f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+  const held = holdCheck(f);
+  f.mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+  await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
+  await act(async () => held().finish(f.discovered));
+  await waitFor(() =>
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull(),
+  );
+  expect(screen.queryByText("Couldn’t check for updates.")).toBeNull();
   expect(
     screen.getByRole("button", { name: "View Notes details" }),
   ).toHaveFocus();
@@ -700,20 +707,19 @@ it.each([
     "This repository is private. Reinstall it using an SSH address.",
   ],
 ])(
-  "names a known Git cause and offers no check that can’t help (%#)",
+  "names a known Git cause on the row and offers no check that can’t help (%#)",
   async (error, cause) => {
     const f = fixture();
     f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
     f.imports.checkGit.mockRejectedValue(error);
     f.mount();
     fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
-    expect(await screen.findByText(noticeTitle("Notes"))).toBeVisible();
-    expect(screen.getAllByText(cause, { exact: false })).toHaveLength(2);
     expect(
-      screen.getByText(`Couldn’t check for updates. ${cause}`),
+      await screen.findByText(`Couldn’t check for updates. ${cause}`),
     ).toBeVisible();
+    expect(screen.getAllByText(cause, { exact: false })).toHaveLength(1);
+    expect(screen.queryByText(noticeTitle("Notes"))).toBeNull();
     expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     fireEvent.click(screen.getByText("Details"));
     expect(screen.getByText("Details").closest("details")).toHaveTextContent(
       error.replace(/\s+/g, " "),
@@ -729,13 +735,15 @@ it("keeps Check again and the generic sentence when an authorized HTTPS check is
   f.imports.checkGit.mockRejectedValue(refused);
   f.mount();
   fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
-  expect(await screen.findByText(noticeTitle("Notes"))).toBeVisible();
+  await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
   expect(
-    screen.getByText("Check your connection, then try again."),
+    await screen.findByRole("button", { name: "Check again" }),
   ).toBeVisible();
-  expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(screen.getByText("Couldn’t check for updates.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Check again" })).toBeVisible();
+  expect(screen.getByText("Details").closest("details")).toHaveTextContent(
+    "Authentication failed",
+  );
+  expect(screen.queryByText(noticeTitle("Notes"))).toBeNull();
   expect(screen.queryByText(/This repository is private/)).toBeNull();
 });
 

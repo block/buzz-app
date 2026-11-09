@@ -21,6 +21,7 @@ import {
 } from "../plugins/updates";
 import type { AppServices } from "./services";
 import { Button } from "../shared/design-system/ui/Button";
+import { LoadingRegion } from "../shared/design-system/ui/LoadingRegion";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import {
   MenuItem,
@@ -150,7 +151,7 @@ export function PluginUpdates({
     if (!store) return;
     setChecking((ids) => (ids.includes(id) ? ids : [...ids, id]));
     try {
-      await store.checkAgain(id);
+      await store.check(true);
     } finally {
       setChecking((ids) => ids.filter((item) => item !== id));
     }
@@ -172,8 +173,8 @@ export function PluginUpdates({
       {updates
         .filter(
           (update) =>
-            // A background check's failure stays on its Settings row.
-            (update.candidate || update.manual) &&
+            // A failed check stays on its Settings row.
+            update.candidate &&
             !store?.hidden(update) &&
             update.id !== action?.id,
         )
@@ -192,30 +193,6 @@ export function PluginUpdates({
                 pluginId: update.id,
               }),
           };
-          if (update.error) {
-            const { cause, retry } = updateFailure(update);
-            return (
-              <ToastNotice
-                key={update.id}
-                title={`Couldn’t check ${name} for updates`}
-                description={cause ?? "Check your connection, then try again."}
-                tone="error"
-                onDismiss={() => store?.later(update)}
-                closeLabel="Dismiss plugin update notice"
-                navigation={manage}
-              >
-                {retry && (
-                  <Button
-                    size="sm"
-                    loading={checking.includes(update.id)}
-                    onClick={() => void checkAgain(update.id)}
-                  >
-                    Try again
-                  </Button>
-                )}
-              </ToastNotice>
-            );
-          }
           const review = needsReview(update);
           return (
             <ToastNotice
@@ -349,9 +326,9 @@ export function PluginUpdatesMenu({
   );
 }
 
-/** A background check's failure, on its plugin's row in Settings → Plugins:
- * what happened, Check again when that can help, and Git's text behind
- * Details. Nothing shows outside `PluginUpdates`. */
+/** A failed check, on its plugin's row in Settings → Plugins: what happened,
+ * Check again when that can help, and Git's text behind Details. Check again
+ * clears it while the check runs. Nothing shows outside `PluginUpdates`. */
 export function PluginUpdateFailure({
   pluginId,
   className,
@@ -359,32 +336,44 @@ export function PluginUpdateFailure({
 }: {
   pluginId: string;
   className?: string | undefined;
-  /** Where focus goes when a successful check removes Check again. */
+  /** Where focus goes when Check again clears the status. */
   returnFocus?: () => HTMLElement | null | undefined;
 }) {
   const context = useContext(Context);
+  // Nothing else reports a failed Check again, so its failure is announced.
+  const [asked, setAsked] = useState(false);
   const update = context?.updates.find(
     (item) => item.id === pluginId && item.error,
   );
+  if (context?.checking.includes(pluginId))
+    return (
+      <LoadingRegion
+        pending
+        label="Checking for updates…"
+        statusVisibility="screen-reader"
+      >
+        {null}
+      </LoadingRegion>
+    );
   if (!context || !update?.error) return null;
   const { cause, retry } = updateFailure(update);
   return (
     <div className={className}>
       <div className="flex flex-wrap items-center gap-2">
-        <p className="m-0 text-body-sm error">
+        <p
+          className="m-0 text-body-sm error"
+          role={asked ? "alert" : undefined}
+        >
           Couldn’t check for updates.{cause ? ` ${cause}` : ""}
         </p>
         {retry && (
           <Button
             size="sm"
             variant="subtle"
-            loading={context.checking.includes(pluginId)}
-            onClick={async (event) => {
-              const button = event.currentTarget;
-              await context.checkAgain(pluginId);
-              const active = document.activeElement;
-              if (!button.isConnected && (!active || active === document.body))
-                returnFocus?.()?.focus();
+            onClick={() => {
+              setAsked(true);
+              returnFocus?.()?.focus();
+              void context.checkAgain(pluginId);
             }}
           >
             Check again

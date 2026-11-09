@@ -158,6 +158,8 @@ async function nativeImports(
             : candidate.revision;
         }
         if (command === "plugin_import_git" && args?.checkOnly) {
+          // A journey can hold an update check to observe it in progress.
+          await window.heldGitCheck;
           if (window.gitCheckError) throw window.gitCheckError;
           const result = structuredClone(preview);
           if (window.importCategory)
@@ -1923,7 +1925,7 @@ test("an artifact link reviews and installs the pinned URL", async ({
 });
 
 // Native IPC throws Git's own text, as plugin_import_git does when offline.
-test("a failed background update check stays on its Settings row, and only Check again raises a notice", async ({
+test("a failed update check stays on its Settings row, and Check again clears it while it checks", async ({
   page,
   app,
 }) => {
@@ -1993,20 +1995,46 @@ test("a failed background update check stays on its Settings row, and only Check
   await expect(details).toHaveAttribute("open");
   await expect(details).toContainText(offline);
 
-  await button(page, "Check again").click();
-  await expect(notice).toBeVisible();
-  await expect(
-    page.getByText("Check your connection, then try again."),
-  ).toBeVisible();
-  expect(await checks()).toBe(2);
-
-  // Back online, Try again finds nothing wrong and both reports go.
+  // Hold the check so its in-progress row can be observed.
   await page.evaluate(() => {
+    window.heldGitCheck = new Promise((resolve) => {
+      window.releaseGitCheck = resolve;
+    });
+  });
+  const again = button(page, "Check again");
+  const checking = settingsDialog(page).locator(
+    '[data-buzz-ui][aria-busy="true"]',
+  );
+  await again.click();
+  await expect(status).toHaveCount(0);
+  await expect(again).toHaveCount(0);
+  await expect(checking).toHaveCount(1);
+  await expect(
+    settingsDialog(page).getByRole("button", {
+      name: "View Standup Notes details",
+    }),
+  ).toBeFocused();
+  await expect.poll(checks).toBe(2);
+  // Still offline, the check fails again and its status returns to the row.
+  await page.evaluate(() => window.releaseGitCheck());
+  await expect(status).toBeVisible();
+  await expect(status).toHaveAttribute("role", "alert");
+  await expect(again).toBeVisible();
+  await expect(details).toContainText(offline);
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByText(/Check your connection/)).toHaveCount(0);
+
+  // Back online, Check again finds nothing wrong and the status goes.
+  await page.evaluate(() => {
+    window.heldGitCheck = undefined;
     window.gitCheckError = undefined;
   });
-  await button(page, "Try again").click();
-  await expect(notice).toHaveCount(0);
+  await again.click();
+  await expect.poll(checks).toBe(3);
+  // The check has finished once its row is no longer busy.
+  await expect(checking).toHaveCount(0);
   await expect(status).toHaveCount(0);
-  expect(await checks()).toBe(3);
+  await expect(again).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
   await expect(page.getByText("Update Standup Notes")).toHaveCount(0);
 });

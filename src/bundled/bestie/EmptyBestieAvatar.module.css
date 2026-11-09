@@ -1,3 +1,9 @@
+/* Keep native presses on the stable control, not artwork replaced mid-press. */
+.portrait,
+.compact {
+  pointer-events: none;
+}
+
 .portrait {
   display: block;
   inline-size: var(--space-16);

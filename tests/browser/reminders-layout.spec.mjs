@@ -286,3 +286,31 @@ test("pointer completion animates surviving rows in a scrolled list", async ({
     "the next row moves through intermediate positions instead of jumping into the fading row",
   ).toBe(true);
 });
+
+test("Custom… returns focus to the page once its reminder was the last one", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(`${url}?width=900`);
+  await page
+    .getByRole("button", { name: "Snooze: Ada Lovelace" })
+    .first()
+    .click();
+  await page.getByRole("menuitem", { name: "Custom…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Snooze reminder" });
+  await expect(dialog).toBeVisible();
+  // Another device cancels every reminder while the dialog is open.
+  await page.evaluate(async () => {
+    for (const id of ["ordinary", "unbroken"])
+      await window.reminders.cancel(id);
+  });
+  await expect(dialog.getByText("This reminder was cancelled.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("No reminders yet")).toBeVisible();
+  // The empty list has nothing to focus, so the page takes focus, not <body>.
+  await expect(
+    page.getByRole("region", { name: "Reminders" }).locator(":scope > div"),
+  ).toBeFocused();
+  expect(errors).toEqual([]);
+});

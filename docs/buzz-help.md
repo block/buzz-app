@@ -485,8 +485,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   it and see the full name in a tooltip.
 - **Reminders**, in the desktop app when the plugin is on: choose **Remind me**
   in a sent message's ⋯ menu. A confirmation names the due time, and the message
-  shows an alarm mark while the reminder is pending. A reminder's note can't be
-  edited once set.
+  shows an alarm mark while the reminder is pending. In **Reminders**, a
+  reminder's due time snoozes it to a preset or **Custom…** date and time. A
+  reminder's note can't be edited once set.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and

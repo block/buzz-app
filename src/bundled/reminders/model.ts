@@ -139,6 +139,15 @@ export function customInputs(at: number) {
   return { date: dateString(due), time: due.toTimeString().slice(0, 5) };
 }
 
+/** A due time as custom date and time values, while that minute is still ahead. */
+export function dueInputs(at: number | undefined) {
+  if (at === undefined || !isDisplayable(at)) return undefined;
+  const inputs = customInputs(at);
+  return parseCustomDateTime(inputs.date, inputs.time) === null
+    ? undefined
+    : inputs;
+}
+
 /** A strictly future local date and time in unix seconds, or null. */
 export function parseCustomDateTime(date: string, time: string) {
   if (!date || !time) return null;

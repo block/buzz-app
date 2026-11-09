@@ -77,6 +77,7 @@ function harness(options: { git?: ReturnType<typeof vi.fn> } = {}) {
     imports,
     installImport: vi.fn(async () => true),
     change: vi.fn(async () => true),
+    refreshManaged: vi.fn(async () => true),
     snapshot: (): { error: string | null } => ({ error: null }),
   };
   return { manager, imports, git };
@@ -833,4 +834,66 @@ it("refuses a URL install request over a plugin installed from Git", async () =>
   expect(manager.installImport).not.toHaveBeenCalled();
   fireEvent.keyDown(dialog, { key: "Escape" });
   await expect(outcome).resolves.toBe("cancelled");
+});
+
+it("shows a packaged policy that is still loading", () => {
+  const { manager } = harness();
+  show(manager, { status: "loading", url: "https://plugins.example/p.json" });
+  expect(screen.getByRole("heading")).toHaveTextContent("Recommended plugins");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading the recommended plugin list",
+  );
+  expect(manager.refreshManaged).not.toHaveBeenCalled();
+});
+
+it("explains a failed first fetch, retries once on open and on request, then shows the recovered policy", async () => {
+  const { manager } = harness();
+  const failed: Policy = {
+    status: "unavailable",
+    url: "https://plugins.example/p.json",
+    reason: "HTTP 503 Service Unavailable",
+  };
+  const view = show(manager, failed, [], { strict: true });
+  expect(
+    screen.getByRole("heading", { name: "Recommended plugins unavailable" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Buzz couldn’t load the recommended plugin list from https://plugins.example/p.json. HTTP 503 Service Unavailable",
+  );
+  await waitFor(() => expect(manager.refreshManaged).toHaveBeenCalledTimes(1));
+
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(manager.refreshManaged).toHaveBeenCalledTimes(2);
+
+  view.rerender(
+    <StrictMode>
+      <ManagedPlugins
+        plugins={manager as unknown as PluginManager}
+        managed={ready([entry("missing")])}
+        catalog={catalog()}
+        busy={false}
+      />
+    </StrictMode>,
+  );
+  expect(
+    screen.getByRole("heading", { name: "Recommended by Example Org" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(manager.refreshManaged).toHaveBeenCalledTimes(2);
+});
+
+it("disables Retry and waits to retry while plugin storage is busy", () => {
+  const { manager } = harness();
+  show(
+    manager,
+    {
+      status: "unavailable",
+      url: "https://plugins.example/p.json",
+      reason: "offline",
+    },
+    [],
+    { busy: true },
+  );
+  expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+  expect(manager.refreshManaged).not.toHaveBeenCalled();
 });

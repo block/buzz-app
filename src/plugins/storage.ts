@@ -72,6 +72,9 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
   async function getCatalog(): Promise<StorageResult> {
     return desktop ? invoke("plugin_catalog") : webCatalog();
   }
+  async function refreshManaged(): Promise<StorageResult> {
+    return desktop ? invoke("plugin_managed_refresh") : webCatalog();
+  }
   async function changePlugin(
     action: ManagementAction,
     id: string,
@@ -151,12 +154,14 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     recoverSettings,
     readModule,
     reloadPlugin,
+    refreshManaged,
     imports,
   };
 }
 export type PluginStorage = Omit<
   ReturnType<typeof createPluginStorage>,
-  "imports"
+  "imports" | "refreshManaged"
 > & {
   imports?: PluginImports | undefined;
+  refreshManaged?: (() => Promise<StorageResult>) | undefined;
 };

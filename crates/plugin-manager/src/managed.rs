@@ -82,6 +82,10 @@ pub enum Managed {
     Absent,
     /// The file as a whole cannot be used; nothing is recommended.
     Invalid { path: String, reason: String },
+    /// The build names a packaged policy that Buzz has not fetched yet.
+    Loading { url: String },
+    /// The packaged policy could not be fetched and there is no earlier copy.
+    Unavailable { url: String, reason: String },
     /// Usable entries, plus a report for each one that was ignored.
     Ready {
         path: String,
@@ -153,15 +157,37 @@ pub fn status(path: Result<PathBuf>, catalog: &Catalog) -> Managed {
     }
 }
 
+/// The outcome of the latest attempt to fetch the packaged policy.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PackagedFetch {
+    #[default]
+    Pending,
+    Fetched,
+    Failed(String),
+}
+
 /// The file's status, or the last fetched packaged policy when the file is absent
-/// and `BUZZ_MANAGED_PLUGINS` does not name one.
-pub fn effective(home: &Path, env: Option<OsString>, packaged: bool, catalog: &Catalog) -> Managed {
+/// and `BUZZ_MANAGED_PLUGINS` does not name one. `packaged` is `None` when the
+/// build has no packaged policy URL.
+pub fn effective(
+    home: &Path,
+    env: Option<OsString>,
+    packaged: Option<(&str, &PackagedFetch)>,
+    catalog: &Catalog,
+) -> Managed {
     let explicit = env.as_ref().is_some_and(|value| !value.is_empty());
-    match status(path(home, env), catalog) {
-        Managed::Absent if !explicit && packaged => {
-            status(Ok(home.join(PACKAGED_FILE_NAME)), catalog)
+    match (status(path(home, env), catalog), packaged) {
+        (Managed::Absent, Some((url, fetch))) if !explicit => {
+            match (status(Ok(home.join(PACKAGED_FILE_NAME)), catalog), fetch) {
+                (Managed::Absent, PackagedFetch::Failed(reason)) => Managed::Unavailable {
+                    url: url.into(),
+                    reason: reason.clone(),
+                },
+                (Managed::Absent, _) => Managed::Loading { url: url.into() },
+                (managed, _) => managed,
+            }
         }
-        managed => managed,
+        (managed, _) => managed,
     }
 }
 
@@ -993,29 +1019,32 @@ mod tests {
         let file = dir.path().join(FILE_NAME);
         let stored = dir.path().join(PACKAGED_FILE_NAME);
         let empty = catalog(vec![]);
-        assert_eq!(effective(dir.path(), None, true, &empty), Managed::Absent);
+        let url = "https://plugins.example/policy.json";
+        let fetched = Some((url, &PackagedFetch::Fetched));
+        assert_eq!(effective(dir.path(), None, None, &empty), Managed::Absent);
 
         fs::write(&stored, policy(&[entry("acme.packaged")])).unwrap();
-        assert_eq!(effective(dir.path(), None, false, &empty), Managed::Absent);
-        let Managed::Ready { path, plugins, .. } = effective(dir.path(), None, true, &empty) else {
+        assert_eq!(effective(dir.path(), None, None, &empty), Managed::Absent);
+        let Managed::Ready { path, plugins, .. } = effective(dir.path(), None, fetched, &empty)
+        else {
             panic!("expected the packaged policy");
         };
         assert_eq!(path, stored.display().to_string());
         assert_eq!(plugins[0].plugin.id, "acme.packaged");
         assert_eq!(plugins[0].state, ManagedState::Missing);
         assert_eq!(
-            effective(dir.path(), Some("".into()), true, &empty),
-            effective(dir.path(), None, true, &empty)
+            effective(dir.path(), Some("".into()), fetched, &empty),
+            effective(dir.path(), None, fetched, &empty)
         );
 
         fs::write(&file, policy(&[entry("acme.file")])).unwrap();
-        let Managed::Ready { plugins, .. } = effective(dir.path(), None, true, &empty) else {
+        let Managed::Ready { plugins, .. } = effective(dir.path(), None, fetched, &empty) else {
             panic!("expected the file");
         };
         assert_eq!(plugins[0].plugin.id, "acme.file");
         fs::write(&file, "{").unwrap();
         assert!(matches!(
-            effective(dir.path(), None, true, &empty),
+            effective(dir.path(), None, fetched, &empty),
             Managed::Invalid { path, .. } if path == file.display().to_string()
         ));
 
@@ -1023,10 +1052,56 @@ mod tests {
         {
             let missing = dir.path().join("missing.json");
             assert_eq!(
-                effective(dir.path(), Some(missing.into()), true, &empty),
+                effective(dir.path(), Some(missing.into()), fetched, &empty),
                 Managed::Absent
             );
         }
+    }
+
+    #[test]
+    fn reports_a_packaged_policy_that_has_not_arrived() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = catalog(vec![]);
+        let url = "https://plugins.example/policy.json";
+        let failed = PackagedFetch::Failed("HTTP 503".into());
+        assert_eq!(
+            effective(
+                dir.path(),
+                None,
+                Some((url, &PackagedFetch::Pending)),
+                &empty
+            ),
+            Managed::Loading { url: url.into() }
+        );
+        assert_eq!(
+            effective(dir.path(), None, Some((url, &failed)), &empty),
+            Managed::Unavailable {
+                url: url.into(),
+                reason: "HTTP 503".into()
+            }
+        );
+        let json = serde_json::to_value(effective(dir.path(), None, Some((url, &failed)), &empty))
+            .unwrap();
+        assert_eq!(json["status"], "unavailable");
+        assert_eq!(json["url"], url);
+
+        fs::write(
+            dir.path().join(PACKAGED_FILE_NAME),
+            policy(&[entry("acme.kept")]),
+        )
+        .unwrap();
+        let Managed::Ready { plugins, .. } =
+            effective(dir.path(), None, Some((url, &failed)), &empty)
+        else {
+            panic!("a failed refresh keeps the last good copy");
+        };
+        assert_eq!(plugins[0].plugin.id, "acme.kept");
+
+        fs::write(dir.path().join(FILE_NAME), policy(&[])).unwrap();
+        assert!(matches!(
+            effective(dir.path(), None, Some((url, &failed)), &empty),
+            Managed::Ready { .. }
+        ));
     }
 
     #[test]

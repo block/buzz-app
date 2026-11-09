@@ -65,6 +65,11 @@ rules below) is discarded, and Buzz keeps the last good copy in
 are reported as they are for the file. Serve the policy with short-lived or no edge
 caching: a stale copy keeps recommending a commit its reference no longer points to.
 
+Until the first fetch succeeds there is no copy to recommend from. Settings → Plugins
+then says the list is loading or, after a failure, that it is unavailable, with the
+reason and a **Retry** button. Opening Settings after a failure also retries once.
+Later failures keep showing the last good copy.
+
 Buzz uses the packaged policy only when no file exists at the resolved location, and
 never when `BUZZ_MANAGED_PLUGINS` names a file. A file written by a machine manager
 therefore replaces it completely; the two are not merged. "Sign out and erase local

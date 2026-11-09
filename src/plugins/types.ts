@@ -53,6 +53,10 @@ export type ManagedUrlEntry = {
 export type ManagedEntry = ManagedGitEntry | ManagedUrlEntry;
 export type ManagedPlugins =
   | { status: "invalid"; path: string; reason: string }
+  /** The build's packaged policy has not been fetched yet. */
+  | { status: "loading"; url: string }
+  /** The build's packaged policy could not be fetched, and there is no earlier copy. */
+  | { status: "unavailable"; url: string; reason: string }
   | {
       status: "ready";
       path: string;

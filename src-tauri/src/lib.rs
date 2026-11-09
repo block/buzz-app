@@ -626,6 +626,16 @@ async fn plugin_catalog(
     })
     .await
 }
+/// Fetches the packaged plugin policy now, for a Retry in Settings, then reads the catalog.
+#[tauri::command]
+async fn plugin_managed_refresh(
+    manager: tauri::State<'_, PluginManager>,
+) -> Result<InstallationResult, String> {
+    if let Ok(m) = &manager.0 {
+        packaged_plugins::refresh(m).await;
+    }
+    plugin_catalog(manager).await
+}
 #[tauri::command]
 async fn plugin_change(
     manager: tauri::State<'_, PluginManager>,
@@ -780,6 +790,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_import_install,
         plugin_import_discard,
         plugin_catalog,
+        plugin_managed_refresh,
         plugin_change,
         plugin_reload,
         plugin_module,

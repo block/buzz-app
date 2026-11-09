@@ -569,17 +569,33 @@ async function signedInAccount() {
   return h.service;
 }
 
-it("a signed-in account's consent skips the access step: an invite claim confirms the holder's age, with no boxes to tick", async () => {
-  api.inspectProfile
-    .mockRejectedValueOnce(new Error("Relay read failed (403)"))
-    .mockResolvedValueOnce({
+const pastedInvite = "https://relay.example/invite/v2.abc";
+const openedInvite = { community: "https://relay.example", code: "v2.abc" };
+
+it.each([
+  ["an opened invite", "denied", undefined],
+  // The link's code is claimed on the submission that parses it, before any
+  // render shows it in Invite code.
+  ["a pasted invite link", "denied", pastedInvite],
+  ["a pasted invite link", "new-profile", pastedInvite],
+])(
+  "a signed-in account's consent skips the access step for %s after a %s read: the invite claim confirms the holder's age, with no boxes to tick",
+  async (_, read, pasted) => {
+    const found = {
       exists: false,
       existing: {},
       profile: { name: "", picture: "" },
-    });
-  const user = userEvent.setup();
-  const accepted: unknown[] = [];
-  const requests = vi.fn(async (url: string, init?: RequestInit) => {
+    };
+    (read === "denied"
+      ? api.inspectProfile.mockRejectedValueOnce(
+          new Error("Relay read failed (403)"),
+        )
+      : api.inspectProfile.mockResolvedValueOnce(found)
+    ).mockResolvedValueOnce(found);
+    const user = userEvent.setup();
+    const accepted: unknown[] = [];
+    const claimed: unknown[] = [];
+    const requests = vi.fn(async (url: string, init?: RequestInit) => {
     const route = String(url).split("/").at(-1);
     if (route === "register") return Response.json({ id: "x" });
     if (route === "info")
@@ -596,69 +612,88 @@ it("a signed-in account's consent skips the access step: an invite claim confirm
       accepted.push(JSON.parse(String(init?.body)));
       return Response.json({ receipt: "receipt-1" });
     }
-    if (route === "claim") return Response.json({ status: "joined" });
+    if (route === "claim") {
+      claimed.push(JSON.parse(String(init?.body)));
+      return Response.json({ status: "joined" });
+    }
     throw new Error(`Unexpected request: ${url}`);
   });
-  vi.stubGlobal("fetch", requests);
-  const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-    }),
-  } as unknown as Communities;
-  render(
-    <CommunityDialog
-      communities={communities}
-      federatedIdentity={await signedInAccount()}
-      mode="join"
-      close={() => {}}
-      invite={{ community: "https://relay.example", code: "v2.abc" }}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(await screen.findByLabelText("Display name")).toBeVisible();
-  expect(screen.queryByRole("checkbox")).toBeNull();
-  expect(screen.queryByLabelText("Invite code")).toBeNull();
-  expect(accepted).toEqual([
-    { code: "v2.abc", policy_version: "v1", age_confirmed: true },
-  ]);
-});
+    vi.stubGlobal("fetch", requests);
+    const communities = {
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "", picture: "" },
+      }),
+    } as unknown as Communities;
+    render(
+      <CommunityDialog
+        communities={communities}
+        federatedIdentity={await signedInAccount()}
+        mode="join"
+        close={() => {}}
+        {...(pasted ? {} : { invite: openedInvite })}
+      />,
+    );
+    if (pasted) {
+      await user.click(screen.getByLabelText("Community URL"));
+      await user.paste(pasted);
+    }
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByLabelText("Display name")).toBeVisible();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByLabelText("Invite code")).toBeNull();
+    expect(accepted).toEqual([
+      { code: "v2.abc", policy_version: "v1", age_confirmed: true },
+    ]);
+    expect(claimed).toEqual([{ code: "v2.abc", policy_receipt: "receipt-1" }]);
+  },
+);
 
-it("a signed-in account's refused claim lands on the access step, where another code can be entered", async () => {
-  const user = userEvent.setup();
-  const requests = vi.fn(async (url: string) => {
-    const route = String(url).split("/").at(-1);
-    if (route === "register") return Response.json({ id: "x" });
-    if (route === "info")
-      return Response.json({ name: "Fixture", membershipRequired: true });
-    if (route === "claim")
-      return Response.json({ error: "invite_expired" }, { status: 403 });
-    throw new Error(`Unexpected request: ${url}`);
-  });
-  vi.stubGlobal("fetch", requests);
-  const communities = {
-    snapshot: () => ({
-      status: "ready",
-      relayAvailable: true,
-      profile: { name: "", picture: "" },
-    }),
-  } as unknown as Communities;
-  render(
-    <CommunityDialog
-      communities={communities}
-      federatedIdentity={await signedInAccount()}
-      mode="join"
-      close={() => {}}
-      invite={{ community: "https://relay.example", code: "v2.abc" }}
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Continue" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This invite code has expired — ask for a new one.",
-  );
-  expect(screen.getByLabelText("Invite code")).toHaveValue("v2.abc");
-});
+it.each([
+  ["an opened invite", undefined],
+  ["a pasted invite link", pastedInvite],
+])(
+  "a signed-in account's refused claim for %s lands on the access step, where another code can be entered",
+  async (_, pasted) => {
+    const user = userEvent.setup();
+    const requests = vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
+      if (route === "claim")
+        return Response.json({ error: "invite_expired" }, { status: 403 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", requests);
+    const communities = {
+      snapshot: () => ({
+        status: "ready",
+        relayAvailable: true,
+        profile: { name: "", picture: "" },
+      }),
+    } as unknown as Communities;
+    render(
+      <CommunityDialog
+        communities={communities}
+        federatedIdentity={await signedInAccount()}
+        mode="join"
+        close={() => {}}
+        {...(pasted ? {} : { invite: openedInvite })}
+      />,
+    );
+    if (pasted) {
+      await user.click(screen.getByLabelText("Community URL"));
+      await user.paste(pasted);
+    }
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This invite code has expired — ask for a new one.",
+    );
+    expect(screen.getByLabelText("Invite code")).toHaveValue("v2.abc");
+  },
+);
 
 it("without a signed-in account a relay's policy is still asked on the access step", async () => {
   const user = userEvent.setup();

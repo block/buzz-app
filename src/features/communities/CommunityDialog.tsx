@@ -177,16 +177,20 @@ export function CommunityDialog({
     focusProfile.current = true;
     setStep("profile");
   }
-  /** The access step's admission, with the account's consent when it covers `url`. */
+  /**
+   * The access step's admission, with the account's consent when it covers
+   * `url`. `inviteCode` is given when it is newer than the rendered `code`.
+   */
   async function admit(
     community: string,
     url: string,
     joinPolicy: JoinPolicy | null | undefined,
+    inviteCode = code,
   ) {
     const admission = await admitCommunity({
       community,
       journal,
-      code,
+      code: inviteCode,
       policy: joinPolicy,
       consent: accountConsents(federatedIdentity, url)
         ? ACCOUNT_CONSENT
@@ -206,6 +210,8 @@ export function CommunityDialog({
           );
         const next = communityDestination(entered.community);
         // A pasted invite link carries its code the way an opened invite does.
+        // This submission uses it directly; the state serves later retries.
+        const inviteCode = entered.code || code;
         if (entered.code) {
           setCode(entered.code);
           setNeedsInvite(true);
@@ -247,14 +253,14 @@ export function CommunityDialog({
           if (found && (found.exists || pending)) showProfile(found, pending);
           else if (
             !accountConsents(federatedIdentity, next.url) ||
-            (!found && !code.trim())
+            (!found && !inviteCode.trim())
           )
             setStep("access");
           else {
             // The account's consent leaves the access step nothing to ask
             // (no code is needed, or one is given), so Continue goes on to its
             // admission. A refusal is shown there, where a code can be entered.
-            await admit(next.id, next.url, value.policy).catch(
+            await admit(next.id, next.url, value.policy, inviteCode).catch(
               (reason: unknown) => {
                 if (current()) {
                   setStep("access");

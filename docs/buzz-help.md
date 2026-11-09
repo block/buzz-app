@@ -1036,6 +1036,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   a notice again. Failed checks offer **Retry**. If the updated plugin cannot
   start, use **Retry activation** or its recovery menu to **Roll back**, when
   available. Checks, review, Later, and cancellation keep plugin work running.
+- A `buzz://plugin-install` Git link pinned to both a commit and a folder can
+  update a plugin installed from that same repository and folder: it opens an
+  **Update** review showing access changes and any change to the branch or tag
+  later updates follow, and the plugin keeps its enabled or disabled state.
+  Other links to an installed plugin offer **Open in Buzz**.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved

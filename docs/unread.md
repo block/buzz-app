@@ -32,6 +32,35 @@ accepted. Cancelled leases cannot survive disposal, revocation/regrant, or a new
 manual-unread action. Restored channel heads pass signature/access verification
 and supply evidence before their rows become observable.
 
+Standard consumers can invoke automatic observation when `frontier-sync` is
+available and the reading policy below is satisfied. This ordering repair does
+not change consumer enablement. For individual non-DM `observe` writes, this
+ordering repair preserves signed peer manual-unread
+intent correlated with a local pending read, or visible in its save transaction.
+It does not yet cover a sibling-only receipt queued behind that transaction:
+the sibling has no local read correlation and its checkpoint can commit too late.
+The read's before/after frontiers use verified channel/thread context against
+current storage, so an already-stale override is not revived. Only successful,
+advancing saves qualify. An initialized storage connection reserves a read-start
+IndexedDB snapshot before the owner queue suspends. Its already-seen marker
+generations fence duplicate delivery separately from the current save-time
+frontiers. This fence joins set counters across coordinates because convergence
+and client rotation can carry an already-seen register to a new slot; later
+overlapping generations with a higher set counter remain eligible. Markers
+discovered by refresh or committed only by a sibling window after capture are reconciled in
+the advancing read transaction; no live-event redelivery is required. That
+transaction also updates qualifying pending checkpoints if sibling ingestion has
+not committed. Capture failures reject the observation rather than moving its
+start to save time. This also applies to an observation invoked before storage
+initialization; it must be retried after read-state readiness. A local checkpoint
+preserves the exact marker generation and its baseline correction before marker
+ingestion commits. Once that checkpoint succeeds, failed or cancelled ingestion
+can retry after restart with the same unread result. Newer envelopes advance the
+recovery-version fence without replacing the generation's first-arrival read
+correlation. An abrupt exit before any checkpoint write succeeds has no durable
+correlation to recover. This changes neither the signed blob nor published intent.
+Catch-up's `readMessages` path is outside this ordering repair.
+
 Reusable `ChannelTimeline` and `ThreadPanel` own the standard observation policy:
 focused active reading surface, visible document, settled positioning, fully
 visible rows, and 300 ms dwell. Scroll/content/focus changes cancel/restart dwell. Owners explicitly wake the
@@ -429,7 +458,9 @@ unread overrides. Bounded evidence cannot establish ownership of every historica
 local mark. The channel frontier and owned local clears commit in one transaction;
 storage failure changes neither, and disposal/cache clear or access revoke/regrant
 invalidates queued intent. Automatic dwell retains its existing cancellation rule
-for newer manual-unread intent.
+for newer manual-unread intent. Explicit message/timeline reads also preserve
+remote overrides at the same frontier; a strictly newer frontier makes them
+ineffective without clearing their remote register.
 
 ## Durable sync and privacy
 
@@ -547,6 +578,20 @@ the reserve does not republish that receipt. Manual unread still wins. Old build
 can load the unchanged sync journal but discard the optional reserve and floor on
 their next save; community leave on any build deletes both together. No database migration
 or wire-format change is involved.
+
+Optional local-only `peerOverlaps` metadata in the same per-viewer/partition journal
+holds pending marker-generation corrections. Keys, counters, coordinates and event
+versions are validated on load; corrupt entries fail loading rather than silently
+dropping intent. A transaction reads the latest checkpoint, preserving unrelated
+pending data from other windows. A matching or newer committed marker ingest retires
+its checkpoint; partition deletion removes it with the journal. A valid newer marker
+can recover from an undecodable superseded envelope without trusting that envelope.
+Pending failed-ingest generations share the existing acceptance backlog and browser
+storage quota; there is no hard aggregate memory/disk bound. Storage failures stay
+visible and retain the previously committed journal. Old journals still load, but
+old writers discard this unknown field on their next
+save. Restart recovery is therefore not preserved through an old-writer round trip
+or downgrade. No IndexedDB database, object-store or version migration is involved.
 
 Override groups, permanent clear floors, directly associated frontiers and possible
 inherited channel/thread frontiers are protected; capacity failure is visible,

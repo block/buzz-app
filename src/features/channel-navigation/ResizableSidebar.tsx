@@ -80,7 +80,10 @@ export function ResizableSidebar({
   if (view.scope !== scope) setView({ scope, width: readSidebarWidth(scope) });
   const width = view.scope === scope ? view.width : readSidebarWidth(scope);
   useLayoutEffect(() => {
-    const update = () => {
+    // Other keys in this scope (a draft saves one per keystroke) leave the
+    // width alone; skipping them keeps typing from re-rendering the shell.
+    const update = (key?: string) => {
+      if (key !== undefined && key !== VIEW) return;
       const width = readSidebarWidth(scope);
       setView((current) =>
         current.scope === scope && current.width === width

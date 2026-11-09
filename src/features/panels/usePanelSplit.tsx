@@ -52,7 +52,10 @@ export function usePanelSplit(
   // Follow newer saves from another frame or window sharing this page's width.
   useLayoutEffect(() => {
     if (!scope) return;
-    return subscribeView(scope, () => {
+    return subscribeView(scope, (changed) => {
+      // A draft saves another key on every keystroke; only this split's key
+      // (or an unnamed change) can move it.
+      if (changed !== undefined && changed !== key) return;
       const revision = viewRevision(scope, key);
       setView((current) =>
         revision === undefined ||

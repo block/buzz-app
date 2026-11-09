@@ -173,6 +173,18 @@ it("partitions subscriptions and widths by workspace without remounting sidebar 
   expect(screen.getByRole("textbox")).toBe(draft);
 });
 
+it("ignores draft saves in its workspace without reading its width again", () => {
+  writeView("typing", "channel-sidebar", { width: 300 });
+  render(sidebar("typing"));
+  const getItem = vi.spyOn(Storage.prototype, "getItem");
+  // Typing saves the draft under its own key on every keystroke.
+  act(() => writeView("typing", "draft:channel", { text: "typing" }));
+  expect(getItem).not.toHaveBeenCalledWith(storageKey("typing"));
+  expect(column()).toHaveStyle({ width: "300px" });
+  act(() => externalWidth("typing", { width: 360 }));
+  expect(column()).toHaveStyle({ width: "360px" });
+});
+
 it("cancels a drag across workspaces without replacing sidebar content or its destination width", () => {
   vi.stubGlobal(
     "PointerEvent",

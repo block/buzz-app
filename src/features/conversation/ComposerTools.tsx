@@ -1,8 +1,10 @@
 import {
+  memo,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentType,
   type ReactNode,
 } from "react";
 import type { Contribution } from "../../plugins/contributions";
@@ -132,7 +134,8 @@ function OwnedTool({
   if (!commands) return null;
   const { capture, ...rest } = commands;
   return (
-    <Tool
+    <ToolHost
+      Tool={Tool}
       {...props}
       {...rest}
       {...(props.capture && capture ? { capture } : {})}
@@ -140,3 +143,11 @@ function OwnedTool({
     />
   );
 }
+/** Typing re-renders the composer on every keystroke; a tool's props keep
+ * their identity while only the prose changes, so its artwork is skipped. */
+const ToolHost = memo(function ToolHost({
+  Tool,
+  ...props
+}: ComposerToolProps & { Tool: ComponentType<ComposerToolProps> }) {
+  return <Tool {...props} />;
+});

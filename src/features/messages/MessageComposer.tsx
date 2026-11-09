@@ -1129,7 +1129,9 @@ function Composer({
   });
   // biome-ignore lint/correctness/useExhaustiveDependencies: A changed draft or edit target retires feedback about the previous paste.
   useEffect(() => {
-    setPasteTooLong(false);
+    // Setting an unchanged false still re-renders the whole composer, once
+    // more per keystroke, before the typed character paints.
+    if (pasteTooLong) setPasteTooLong(false);
   }, [draft, editing.target]);
   const editScope = useMessageEditScope();
   const editableRows = () =>

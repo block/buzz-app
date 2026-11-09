@@ -8,6 +8,7 @@ import {
 
 afterEach(() => {
   delete document.documentElement.dataset.keyboardNavigation;
+  delete document.documentElement.dataset.keyboardInput;
 });
 
 it("explicit keyboard focus actions show the shared indicator and pointer use resets it", () => {
@@ -41,5 +42,28 @@ it("treats Ctrl+Tab after a pointer as keyboard navigation, but not other Ctrl c
   fireEvent.keyDown(document.body, { key: "ArrowDown", ctrlKey: true });
   fireEvent.keyDown(document.body, { key: "Tab", metaKey: true });
   expect(root.dataset.keyboardNavigation).toBeUndefined();
+  hook.unmount();
+});
+
+it("writes the root modality attributes once, not on every keystroke", () => {
+  const root = document.documentElement;
+  const hook = renderHook(() => useKeyboardFocusVisibility());
+  fireEvent.pointerDown(document.body);
+  const observer = new MutationObserver(() => {});
+  observer.observe(root, { attributes: true });
+  for (const key of ["a", "b", "Tab", "c", "Tab"])
+    fireEvent.keyDown(document.body, { key });
+  // Rewriting a root attribute restyles the whole page, even unchanged.
+  expect(observer.takeRecords().map((record) => record.attributeName)).toEqual([
+    "data-keyboard-input",
+    "data-keyboard-navigation",
+  ]);
+  expect(root.dataset.keyboardInput).toBe("");
+  expect(root.dataset.keyboardNavigation).toBe("");
+  fireEvent.pointerDown(document.body);
+  expect(root.dataset.keyboardInput).toBeUndefined();
+  fireEvent.keyDown(document.body, { key: "a" });
+  expect(root.dataset.keyboardInput).toBe("");
+  observer.disconnect();
   hook.unmount();
 });

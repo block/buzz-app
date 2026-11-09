@@ -234,7 +234,9 @@ function mount(
   let completions: readonly Contribution<ComposerCompletion>[] = [
     completion("1"),
   ];
+  let toolRenders = 0;
   function Tool(props: ComposerToolProps) {
+    toolRenders++;
     useLayoutEffect(() => {
       commands = props;
     });
@@ -508,6 +510,7 @@ function mount(
     emojiListeners,
     user: userEvent.setup(),
     commands: () => commands,
+    toolRenders: () => toolRenders,
     completionRequests,
     publish(index: number, text = "chosen") {
       const request = completionRequests[index];
@@ -674,6 +677,20 @@ it("publishes typing for text edits but not caret-driven token expansion", () =>
   expect(send).not.toHaveBeenCalled();
   h.fill(`${text}x`);
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+it("types prose without redrawing composer tools until their recipients change", async () => {
+  const h = mount();
+  act(() => h.input().focus());
+  await h.user.keyboard("Hi");
+  const settled = h.toolRenders();
+  await h.user.keyboard(" there");
+  expect(h.input()).toHaveValue("Hi there");
+  // Each keystroke re-renders the composer; a tool's props hold across it.
+  expect(h.toolRenders()).toBe(settled);
+  fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(h.commands().recipients).toEqual([first]);
+  expect(h.toolRenders()).toBeGreaterThan(settled);
 });
 
 it("types into a long chip-heavy draft without redrawing its link chips", async () => {

@@ -9,7 +9,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { clearView, writeView } from "../../shared/view-state";
+import { clearView, clearViewScope, writeView } from "../../shared/view-state";
 import { usePanelSplit } from "./usePanelSplit";
 
 afterEach(() => {
@@ -261,4 +261,52 @@ test("a width that could not be saved survives other saves in its workspace", ()
     writeView("one", "panel-split:inbox", 500);
   });
   expect(width()).toBe("500px");
+});
+
+test("a draft saved in the same workspace leaves the split unread and unrendered", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(960);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const renders = vi.fn();
+  function Page() {
+    renders();
+    const split = usePanelSplit("one", "inbox", 448, 320);
+    return (
+      <div ref={split.ref} data-testid="workspace">
+        {split.handle}
+      </div>
+    );
+  }
+  render(<Page />);
+  fireEvent.keyDown(screen.getByRole("separator"), { key: "End" });
+  const rendered = renders.mock.calls.length;
+  const getItem = vi.spyOn(Storage.prototype, "getItem");
+  // Typing saves the draft under its own key on every keystroke.
+  act(() => writeView("one", "draft:channel", { text: "typing" }));
+  expect(getItem).not.toHaveBeenCalledWith(
+    `buzz-view.v1:${JSON.stringify(["one", "panel-split:inbox"])}`,
+  );
+  expect(renders).toHaveBeenCalledTimes(rendered);
+  const width = () =>
+    screen
+      .getByTestId("workspace")
+      .style.getPropertyValue("--secondary-panel-width");
+  expect(width()).toBe("640px");
+  // This split's own key from another window, and an unnamed bulk clear,
+  // still reach it.
+  const key = `buzz-view.v1:${JSON.stringify(["one", "panel-split:inbox"])}`;
+  act(() => {
+    localStorage.setItem(key, "400");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key, storageArea: localStorage }),
+    );
+  });
+  expect(width()).toBe("400px");
+  act(() => clearViewScope("one"));
+  expect(width()).toBe("");
 });

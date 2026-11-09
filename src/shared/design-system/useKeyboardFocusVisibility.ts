@@ -14,7 +14,9 @@ const KEYBOARD_NAVIGATION_KEYS = new Set([
 
 /** Explicit keyboard focus actions also use this owner after being rebound. */
 function showKeyboardFocus() {
-  document.documentElement.dataset.keyboardNavigation = "";
+  const root = document.documentElement;
+  if (root.dataset.keyboardNavigation === undefined)
+    root.dataset.keyboardNavigation = "";
 }
 
 export function focusWithKeyboard(element: HTMLElement) {
@@ -40,7 +42,10 @@ export function useKeyboardFocusVisibility() {
     const root = document.documentElement;
     const useKeyboardNavigation = (event: KeyboardEvent) => {
       // Motion follows every keyboard action; focus styling keeps its narrower policy.
-      root.dataset.keyboardInput = "";
+      // Rewriting an unchanged root attribute still restyles the whole page on
+      // every keystroke, so set it only when it changes.
+      if (root.dataset.keyboardInput === undefined)
+        root.dataset.keyboardInput = "";
       if (
         KEYBOARD_NAVIGATION_KEYS.has(event.key) &&
         !event.metaKey &&

@@ -1099,10 +1099,29 @@ it("shows the remote execution hint only while the shared account is signed in",
   const note = screen.getByRole("note");
   expect(within(note).getByText("Remote agent")).toBeVisible();
   expect(within(note).getByText("Runs on a Builderlab machine")).toBeVisible();
+  expect(
+    within(note).getByRole("link", { name: "Usage and billing" }),
+  ).toBeVisible();
   expect(note).not.toHaveTextContent("It can’t open files on this computer.");
   act(() => h.session.signOut());
   expect(screen.queryByRole("note")).not.toBeInTheDocument();
 });
+
+it.each(["https://builderlab.example", "https://login.example/deployment/"])(
+  "links usage and billing in the remote hint to %s",
+  async (server) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", server);
+    const h = await fixture();
+    renderTabs(h);
+    await loadedInstructions();
+    const link = within(screen.getByRole("note")).getByRole("link", {
+      name: "Usage and billing",
+    });
+    expect(link).toHaveAttribute("href", server);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  },
+);
 
 it("hides the runtime Workspace hint while signed out without loading settings", async () => {
   const h = await fixture(false);

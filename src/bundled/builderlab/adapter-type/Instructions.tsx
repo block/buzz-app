@@ -100,7 +100,19 @@ export function createSettingsTab(
     return (
       <div className="grid gap-4">
         {settingsSection !== "runtime" && signedIn && (
-          <AgentExecutionNote runtime={agent.type} />
+          <AgentExecutionNote
+            runtime={agent.type}
+            trailing={
+              <a
+                className={inlineStyles.link}
+                href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Usage and billing
+              </a>
+            }
+          />
         )}
         {settingsSection !== "runtime" && (
           <Editor

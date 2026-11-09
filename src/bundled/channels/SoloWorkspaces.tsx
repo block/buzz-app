@@ -90,6 +90,7 @@ export function SoloWorkspaces({
   chats,
   renderChat,
   renderChatMenu,
+  renderConversationActions,
   onNew,
   onConverted,
   visit,
@@ -107,6 +108,8 @@ export function SoloWorkspaces({
   chats: readonly ChatListItem[];
   sidebarRows?: readonly RegisteredSidebarRows[] | undefined;
   renderChatMenu?: ((channelId: string) => ReactNode) | undefined;
+  /** Contributed conversation actions, placed after Copy link in a chat's menu. */
+  renderConversationActions?: ((channelId: string) => ReactNode) | undefined;
   /** A stable function lets a chat's row skip renders when nothing it shows changed. */
   renderChat: (
     item: ChatListItem,
@@ -602,6 +605,7 @@ export function SoloWorkspaces({
               renderChatMenu={renderChatMenu}
               sidebarRows={sidebarRows}
               onHiddenChange={setRowHidden}
+              renderConversationActions={renderConversationActions}
             />
           );
           return compose && project.id ? (
@@ -937,6 +941,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
   renderChatMenu,
   sidebarRows,
   onHiddenChange,
+  renderConversationActions,
 }: {
   id: string;
   title: string;
@@ -952,6 +957,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
   renderChatMenu: ((channelId: string) => ReactNode) | undefined;
   sidebarRows: readonly RegisteredSidebarRows[];
   onHiddenChange: (id: string, hidden: boolean) => () => void;
+  renderConversationActions: ((channelId: string) => ReactNode) | undefined;
 }) {
   const rename = renameable ? () => actions.current.rename(id) : undefined;
   const Default = (
@@ -985,6 +991,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
                   : undefined
               }
               onReadResult={(error) => actions.current.readResult(id, error)}
+              conversationActions={renderConversationActions?.(id)}
             />
           </>
         )

@@ -48,6 +48,7 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import creationStyles from "./SoloInventory.module.css";
 import {
@@ -287,6 +288,15 @@ export function SoloInventory({
         {menus?.map(({ key, component: Menu }) => (
           <Menu key={key} session={session} channelId={channelId} />
         ))}
+      </>
+    ),
+    [menus, session],
+  );
+  // Contributed conversation actions sit after Copy link, where a channel
+  // row's menu puts them, so the same action is found in the same place.
+  const renderConversationActions = useCallback(
+    (channelId: string) => (
+      <>
         {conversationActions
           .filter((action) => offered(channelId, action))
           .map((action) => (
@@ -294,12 +304,17 @@ export function SoloInventory({
               key={`action:${action.key}`}
               onClick={() => action.run({ channelId }, session)}
             >
+              {action.icon && (
+                <MenuIcon>
+                  <action.icon />
+                </MenuIcon>
+              )}
               {action.title}
             </MenuItem>
           ))}
       </>
     ),
-    [menus, session, conversationActions, offered],
+    [session, conversationActions, offered],
   );
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.
@@ -420,6 +435,7 @@ export function SoloInventory({
             }))
         }
         renderChatMenu={renderChatMenu}
+        renderConversationActions={renderConversationActions}
         navigator={navigator}
         draft={
           draft && !draft.region

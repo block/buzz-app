@@ -887,6 +887,7 @@ it("offers contributed conversation actions in a row's menu and hands ⌘-click 
     pluginId: "test",
     revision: "1",
     title: id === "window" ? "Open in new window" : "Other action",
+    icon: () => <svg data-testid={`icon-${id}`} aria-hidden="true" />,
     matches: (target: { channelId: string }) => target.channelId !== "gamma",
     run: (target: { channelId: string }) => run(id, target.channelId),
     ...(gesture ? { gesture } : {}),
@@ -900,9 +901,16 @@ it("offers contributed conversation actions in a row's menu and hands ⌘-click 
   fireEvent.keyDown(await screen.findByRole("button", { name: "beta" }), {
     key: "ContextMenu",
   });
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Open in new window" }),
+  const item = await screen.findByRole("menuitem", {
+    name: "Open in new window",
+  });
+  // The action's icon beside its title, and its place: right after Copy link.
+  expect(item).toContainElement(screen.getByTestId("icon-window"));
+  const items = screen.getAllByRole("menuitem").map((m) => m.textContent);
+  expect(items.indexOf("Open in new window")).toBe(
+    items.indexOf("Copy link") + 1,
   );
+  fireEvent.click(item);
   expect(run).toHaveBeenCalledWith("window", "beta");
   // A row the action does not match offers nothing and navigates on ⌘-click.
   fireEvent.click(screen.getByRole("button", { name: "gamma" }), {

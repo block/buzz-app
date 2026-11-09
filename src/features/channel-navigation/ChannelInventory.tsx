@@ -979,6 +979,11 @@ export function ChannelInventory({
             key={`action:${action.key}`}
             onClick={() => action.run(target, queries)}
           >
+            {action.icon && (
+              <MenuIcon>
+                <action.icon />
+              </MenuIcon>
+            )}
             {action.title}
           </MenuItem>,
         );

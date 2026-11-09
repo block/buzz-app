@@ -719,6 +719,15 @@ re-created in the companion (named as a gap in help).
   byline uses (bounded: 64 links per window, released as links leave the
   view; native DTO `link_labels` ≤64 × ≤1000 bytes).
 
+- jaw's tryout: the sidebar row's "Open in new window" had no icon and sat
+  in a different place than the message menu's "Open thread in new window"
+  (Solo rows put contributed actions at the top, channel rows after Copy
+  link). `TabAction.icon?: ComponentType` (FOUNDATION contract, same shape as
+  `MessageAction.icon`) rendered in a `MenuIcon` by both inventories; the
+  Solo menu takes contributed actions as a `conversationActions` slot right
+  after Copy link, matching the channel row's menu. Tab menus stay text-only
+  like their host items.
+
 ### Non-goals (S2)
 
 Canvas/pages/Settings windows; restoring windows after restart; member

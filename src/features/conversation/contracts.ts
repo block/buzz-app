@@ -288,6 +288,8 @@ export type ConversationTabTarget = Readonly<{
 export type TabAction = Readonly<{
   id: string;
   title: string;
+  /** Shown beside the title in a sidebar row's menu, as a message action's is. */
+  icon?: ComponentType;
   matches(target: ConversationTabTarget, session: RelaySession): boolean;
   run(target: ConversationTabTarget, session: RelaySession): void;
   /** A ⌘/Ctrl-click on a conversation entry runs this action instead of

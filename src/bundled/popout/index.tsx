@@ -167,6 +167,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.conversation.registerTabAction({
     id: "open-window",
     title: "Open in new window",
+    icon: () => <ArrowSquareOutIcon size={14} aria-hidden="true" />,
     gesture: "modifier-click",
     matches: () => true,
     run: (target) => {

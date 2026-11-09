@@ -98,13 +98,13 @@ export function ActivityPanel({
 /** Whether a turn belongs to the conversation the agent was opened from.
  * Hosted frames name a thread only for a per-thread session; a turn without
  * one is from its channel's session, which every thread there shares. */
-function inConversation(turn: TranscriptTurn, conversation: AgentConversation) {
-  if (turn.channelId !== conversation.channelId) return false;
-  return (
-    !turn.threadRootId ||
-    !conversation.rootId ||
-    turn.threadRootId === conversation.rootId
-  );
+function inConversation(
+  turn: TranscriptTurn,
+  channelId: string,
+  rootId: string | undefined,
+) {
+  if (turn.channelId !== channelId) return false;
+  return !turn.threadRootId || !rootId || turn.threadRootId === rootId;
 }
 
 function ActivityFeed({
@@ -136,6 +136,9 @@ function ActivityFeed({
   // biome-ignore lint/correctness/useExhaustiveDependencies: once per opening.
   useEffect(() => initialTranscript?.done(), [opening]);
   const here = everywhere ? undefined : conversation;
+  // The host passes a new conversation object each render; scope by its parts.
+  const channelId = here?.channelId;
+  const rootId = here?.rootId;
   // The Agent Activity plugin owns the feed's lease; this only reads it.
   const snapshot = useSyncExternalStore(
     activity.subscribe,
@@ -145,12 +148,12 @@ function ActivityFeed({
   const transcript = useMemo(() => {
     const transcript = activityTranscript(
       snapshot.records.filter((record) => record.agent === agent.pubkey),
-      { agent: agent.pubkey, channelId: here?.channelId },
+      { agent: agent.pubkey, channelId },
       (pubkey) => resolve(pubkey, "") || undefined,
     );
     return {
       turns: transcript.turns.flatMap((turn): TranscriptTurn[] => {
-        if (here && !inConversation(turn, here)) return [];
+        if (channelId && !inConversation(turn, channelId, rootId)) return [];
         const retained = snapshot.turns.find(
           (row) => row.agent === agent.pubkey && row.turnId === turn.turnId,
         );
@@ -159,7 +162,14 @@ function ActivityFeed({
         ];
       }),
     };
-  }, [snapshot.records, snapshot.turns, agent.pubkey, resolve, here]);
+  }, [
+    snapshot.records,
+    snapshot.turns,
+    agent.pubkey,
+    resolve,
+    channelId,
+    rootId,
+  ]);
   if (snapshot.status === "unavailable") return <Note>{UNAVAILABLE}</Note>;
   if (snapshot.status === "disabled")
     return (

@@ -698,10 +698,11 @@ and are asked to sign in again in Buzz.
   You can still read them, but they're hidden from the sidebar; find them in
   search. If you own or administer the channel, choose **Unarchive** there to
   restore it for everyone.
-- **Removed from a channel**: if you're removed from the channel you're
-  reading, it says **You were removed from** that channel. Choose **Back to
-  channels** to move on. A public channel stays readable below, with **Join**
-  where the channel allows it.
+- **No longer a member**: if you're removed from the channel you're reading,
+  or it's deleted, or you leave it on another device, it says **You’re no
+  longer a member of** that channel. Choose **Back to channels** to move on. A
+  public channel stays readable below, with **Join** where the channel allows
+  it.
 - **Pasted web links** keep their labels when the clipboard's HTML and plain
   text agree, including image alt text. Use ordinary paste; plain-text paste
   uses only the clipboard's plain text.

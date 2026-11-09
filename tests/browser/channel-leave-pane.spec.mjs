@@ -142,7 +142,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
     await expect(pending).toBeVisible();
     // The dropped row is the barrier: own Leave is not reported as removal.
     await expect(
-      page.getByRole("status", { name: /^You were removed from/ }),
+      page.getByRole("region", { name: /^You’re no longer a member of/ }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("dialog", { name: "Leave channel failed", exact: true }),
@@ -170,7 +170,7 @@ test("management Leave restores focus on cancel, holds pending, and completes th
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeFocused();
   await expect(
-    page.getByRole("status", { name: /^You were removed from/ }),
+    page.getByRole("region", { name: /^You’re no longer a member of/ }),
   ).toHaveCount(0);
   await page.reload();
   await expect(
@@ -187,8 +187,9 @@ test("management Leave restores focus on cancel, holds pending, and completes th
 
 // Browser-only boundary: a relay-signed roster without the viewer arrives live
 // through discovery while the channel is open, the public preview resolves
-// through real relay reads, and the sidebar owner chooses where Back lands.
-// Copy, suppression and degraded-roster matrices remain in mounted tests.
+// through real relay reads, a real browser drops focus from the unmounted
+// composer, and the sidebar owner chooses where Back lands. Copy, suppression
+// and degraded-roster matrices remain in mounted tests.
 test("a live removal names the open channel and leads to its sidebar neighbor", async ({
   page,
   app,
@@ -202,17 +203,24 @@ test("a live removal names the open channel and leads to its sidebar neighbor", 
   await openPage(page, "Messages");
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   await sidebar.getByRole("button", { name: "Alpha", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Message Alpha", exact: true }),
-  ).toBeVisible();
+  const alphaComposer = page.getByRole("textbox", {
+    name: "Message Alpha",
+    exact: true,
+  });
+  await alphaComposer.click();
+  await expect(alphaComposer).toBeFocused();
   app.removeViewer("alpha");
-  // A private channel leaves nothing to read: the status replaces the pane.
+  // A private channel leaves nothing to read: the notice replaces the pane,
+  // and focus the composer held moves to its only action.
+  const alphaLost = page.getByRole("region", {
+    name: "You’re no longer a member of Alpha",
+    exact: true,
+  });
+  await expect(alphaLost).toBeVisible();
+  await expect(alphaLost.locator("xpath=..")).toHaveAttribute("role", "status");
   await expect(
-    page.getByRole("status", {
-      name: "You were removed from Alpha",
-      exact: true,
-    }),
-  ).toBeVisible();
+    alphaLost.getByRole("button", { name: "Back to channels", exact: true }),
+  ).toBeFocused();
   await expect(
     sidebar.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
@@ -224,12 +232,15 @@ test("a live removal names the open channel and leads to its sidebar neighbor", 
   ).toHaveCount(0);
 
   await sidebar.getByRole("button", { name: "Beta", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
-  ).toBeVisible();
+  const betaComposer = page.getByRole("textbox", {
+    name: "Message #Beta",
+    exact: true,
+  });
+  await betaComposer.click();
+  await expect(betaComposer).toBeFocused();
   app.removeViewer("beta");
-  const removed = page.getByRole("status", {
-    name: "You were removed from #Beta",
+  const removed = page.getByRole("region", {
+    name: "You’re no longer a member of #Beta",
     exact: true,
   });
   // A public channel stays readable as a preview, Join below its history.
@@ -247,6 +258,12 @@ test("a live removal names the open channel and leads to its sidebar neighbor", 
   ]);
   expect(notice.y + notice.height).toBeLessThanOrEqual(list.y);
   expect(notice.y + notice.height).toBeLessThanOrEqual(join.y);
+  // The composer's focus moves to the preview's readable history.
+  await expect
+    .poll(() =>
+      history.evaluate((node) => node.contains(document.activeElement)),
+    )
+    .toBe(true);
   // The status follows the header in the keyboard order.
   await page
     .getByRole("button", { name: "Channel actions", exact: true })

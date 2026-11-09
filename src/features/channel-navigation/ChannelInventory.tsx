@@ -1,4 +1,5 @@
 import { revealCreatedChannel } from "./created-channel";
+import { openEmptyChannels } from "./routes";
 import {
   useCallback,
   useEffect,
@@ -1208,16 +1209,7 @@ export function ChannelInventory({
     };
     const land = (next: string | undefined) => {
       if (next) select(next);
-      else {
-        writeView(scope, "selected-channel", undefined);
-        void navigator.open({
-          version: 1,
-          kind: "page",
-          pluginId: "buzz.channels",
-          pageId: "channels",
-          route: { version: 1, params: "empty" },
-        });
-      }
+      else openEmptyChannels(navigator, scope);
     };
     openSuccessor.current = (id) => land(successor(id));
     lifecycleCallbacks.current = lifecycleDialog

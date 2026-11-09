@@ -14,6 +14,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { ApiPaused } from "../../features/relay/http-admission";
+import { ChannelLifecycleUnconfirmed } from "../../features/relay/channel-lifecycle";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type {
@@ -83,6 +84,7 @@ function fixture({
   sidebarRows,
   member = false,
   emptyHistory = false,
+  restored = false,
 }: {
   sidebarRows?: readonly RegisteredSidebarRows[];
   /** Observed unread messages in this chat; fakes the read state when given. */
@@ -95,6 +97,8 @@ function fixture({
   member?: boolean;
   /** The relay has no history at all, so the timeline settles empty. */
   emptyHistory?: boolean;
+  /** Membership downloaded from disk that the relay has not confirmed yet. */
+  restored?: boolean;
   /** An unjoined reader of an open chat, including legacy admission defaults. */
   preview?: { joinRole?: "member" | "guest" };
   /** Other Solo chats listed after this one in the sidebar's Chats. */
@@ -166,6 +170,7 @@ function fixture({
       ...preview,
     }),
     ...(archived && { archived }),
+    ...(restored && { cached: true as const, readOnly: true as const }),
   };
   const neighbors = others.map((other, index) => ({
     ...channel,
@@ -176,6 +181,8 @@ function fixture({
     status: "ready",
     channels: [channel, ...neighbors],
   };
+  // Completed roster reads, as `ChannelList.asOf`.
+  let reads = 0;
   const listListeners = new Set<() => void>();
   const emitList = () => {
     for (const listener of listListeners) listener();
@@ -520,17 +527,34 @@ function fixture({
     /** An admin removed the viewer: the roster drops the conversation, which
      * stays readable as a preview only when it is public. */
     remove(visibility: "private" | "public") {
-      const { private: _, viewerRole: __, ...open } = channel;
+      const { private: _, viewerRole: __, cached: ___, ...open } = channel;
       removal =
         visibility === "public"
           ? { preview: { ...open, members: [agent], readOnly: true } }
           : {};
       list = {
         ...list,
+        asOf: ++reads,
         channels: list.channels.filter((chat) => chat.id !== id),
       };
       emitList();
     },
+    /** A complete roster read that still lists the conversation, as
+     * confirmed by the relay. */
+    reread() {
+      const { cached: _, readOnly: __, ...confirmed } = channel;
+      list = {
+        ...list,
+        asOf: ++reads,
+        channels: [
+          ...list.channels.filter((chat) => chat.id !== id),
+          restored ? confirmed : channel,
+        ],
+      };
+      emitList();
+    },
+    /** How many access checks the page has started. */
+    accessChecks: () => accessChecks.length,
     /** Every access check the page started has settled and been applied. */
     async accessSettled() {
       await waitFor(() => expect(accessChecks.length).toBeGreaterThan(0));
@@ -547,13 +571,13 @@ function fixture({
       };
       emitList();
     },
-    /** The relay connection restarts with a session that lists none of this
-     * viewer's conversations yet. */
+    /** The relay connection hands this page a new session that lists none
+     * of this viewer's conversations yet. The generation stays, so the
+     * mounted workspace stays too. */
     reconnect() {
       const unlisted: ChannelList = { status: "ready", channels: [] };
       snapshot = {
         ...snapshot,
-        generation: 2,
         session: {
           ...session,
           channels: { ...session.channels, list: () => unlisted },
@@ -1760,7 +1784,7 @@ it("marks an archived chat once and keeps only its lifecycle actions", async () 
   expect(screen.queryByRole("textbox")).toBeNull();
   // Solo chats keep their header mark; the channel banner is not repeated.
   expect(
-    screen.queryByRole("status", { name: "Archived · view only" }),
+    screen.queryByRole("region", { name: "Archived · view only" }),
   ).toBeNull();
 });
 
@@ -1944,15 +1968,34 @@ it("leaves Escape to a text field outside the composer", async () => {
   field.remove();
 });
 
+const noLongerMember = /^You’re no longer a member of/;
+
+/** Fails the test on any render of the lost-membership notice, however brief. */
+function watchForLossNotice() {
+  const seen = vi.fn();
+  const observer = new MutationObserver(() => {
+    if (screen.queryByText(noLongerMember)) seen();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  return {
+    seen,
+    stop: () => observer.disconnect(),
+  };
+}
+
 it("names an archived channel above its history, and its owner unarchives it there", async () => {
   const f = fixture({ type: "stream", archived: true, emptyHistory: true });
   f.mountWithToasts();
-  const banner = await screen.findByRole("status", {
+  const banner = await screen.findByRole("region", {
     name: "Archived · view only",
   });
   expect(banner).toHaveTextContent(
     "It’s hidden from the sidebar until it’s unarchived.",
   );
+  // The pane's persistent status announces it; the notice is not another one.
+  expect(banner.parentElement).toHaveAttribute("role", "status");
+  expect(banner).not.toHaveAttribute("role");
+  expect(banner).not.toHaveAttribute("aria-live");
   const history = screen.getByRole("region", {
     name: "Channel message history",
   });
@@ -1986,7 +2029,7 @@ it("names an archived channel above its history, and its owner unarchives it the
     ).toHaveFocus(),
   );
   expect(
-    screen.queryByRole("status", { name: "Archived · view only" }),
+    screen.queryByRole("region", { name: "Archived · view only" }),
   ).toBeNull();
   expect(screen.getByText("Start the conversation below.")).toBeVisible();
 });
@@ -2005,28 +2048,37 @@ it("returns focus to Unarchive when its confirmation is cancelled", async () => 
 
 it("offers no Unarchive to a member of an archived channel", async () => {
   fixture({ type: "stream", archived: true, member: true }).mount();
-  const banner = await screen.findByRole("status", {
+  const banner = await screen.findByRole("region", {
     name: "Archived · view only",
   });
   expect(within(banner).queryByRole("button")).toBeNull();
 });
 
+it("says nothing about the sidebar to a preview reader of an archived channel", async () => {
+  fixture({ type: "stream", archived: true, preview: {} }).mount();
+  const banner = await screen.findByRole("region", {
+    name: "Archived · view only",
+  });
+  // It was never in their sidebar.
+  expect(banner).toHaveTextContent(/^Archived · view only$/);
+});
+
 it.each(["private", "public"] as const)(
-  "explains removal from the open %s channel and leads back to channels",
+  "explains lost membership of the open %s channel and leads back to channels",
   async (visibility) => {
     const f = fixture({ type: "stream" });
     f.mountWithToasts();
     await screen.findByRole("textbox", { name: "Message Planning" });
     writeView(f.scope, "selected-channel", id);
-    const live = new Set(document.querySelectorAll("[aria-live]"));
+    const live = new Set(document.querySelectorAll('[role="status"]'));
     act(() => f.remove(visibility));
-    const banner = await screen.findByRole("status", {
+    const banner = await screen.findByRole("region", {
       // Named as the channel was shown while joined.
-      name: "You were removed from Planning",
+      name: "You’re no longer a member of Planning",
     });
-    // It appears in a live region that was already mounted, so it is announced.
+    // It appears in a status that was already mounted, so it is announced.
     expect(live.has(banner.parentElement as Element)).toBe(true);
-    expect(banner.parentElement).toHaveAttribute("aria-live", "polite");
+    expect(banner.parentElement).toHaveAttribute("role", "status");
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByText("Select a channel to read it.")).toBeNull();
     if (visibility === "public") {
@@ -2057,15 +2109,97 @@ it.each(["private", "public"] as const)(
   },
 );
 
-it("never shows removal for the viewer's own Leave, even before it navigates", async () => {
-  const f = fixture({ type: "stream", canLeave: true });
+it.each([
+  ["private", "Back to channels"],
+  ["public", "the history"],
+] as const)(
+  "moves focus from the composer of a lost %s channel to %s",
+  async (visibility, _target) => {
+    const f = fixture({ type: "stream" });
+    f.mountWithToasts();
+    const composer = await screen.findByRole("textbox", {
+      name: "Message Planning",
+    });
+    act(() => composer.focus());
+    act(() => f.remove(visibility));
+    const banner = await screen.findByRole("region", {
+      name: "You’re no longer a member of Planning",
+    });
+    const history = screen.getByRole("region", { name: "Channel history" });
+    if (visibility === "private")
+      await waitFor(() =>
+        expect(
+          within(banner).getByRole("button", { name: "Back to channels" }),
+        ).toHaveFocus(),
+      );
+    else {
+      await screen.findByRole("region", { name: "Channel preview" });
+      await waitFor(() =>
+        expect(history.contains(document.activeElement)).toBe(true),
+      );
+    }
+    expect(document.activeElement).not.toBe(document.body);
+  },
+);
+
+it("leaves focus that moved on before the lost membership notice shows", async () => {
+  const f = fixture({ type: "stream" });
   f.mountWithToasts();
-  // Every render, so even a momentary banner is caught.
-  const seen = vi.fn();
-  const observer = new MutationObserver(() => {
-    if (screen.queryByText(/^You were removed from/)) seen();
+  const composer = await screen.findByRole("textbox", {
+    name: "Message Planning",
+  });
+  const field = document.createElement("input");
+  document.body.append(field);
+  try {
+    act(() => composer.focus());
+    act(() => f.remove("private"));
+    // Elsewhere, while the access check is still pending.
+    act(() => field.focus());
+    await screen.findByRole("region", {
+      name: "You’re no longer a member of Planning",
+    });
+    expect(field).toHaveFocus();
+  } finally {
+    field.remove();
+  }
+});
+
+it("keeps the notice mounted while a later visit to the same channel rechecks access", async () => {
+  const f = fixture({ type: "stream" });
+  f.mountWithToasts();
+  await screen.findByRole("textbox", { name: "Message Planning" });
+  act(() => f.remove("public"));
+  const banner = await screen.findByRole("region", {
+    name: "You’re no longer a member of Planning",
+  });
+  await screen.findByRole("region", { name: "Channel preview" });
+  await f.accessSettled();
+  const removals = vi.fn();
+  const observer = new MutationObserver((records) => {
+    for (const record of records)
+      for (const node of record.removedNodes)
+        if (node === banner || node.contains(banner)) removals();
   });
   observer.observe(document.body, { childList: true, subtree: true });
+  try {
+    // A thread or message link opens the same channel again.
+    const again = conversationTarget(f.scope, id);
+    if (again.kind !== "conversation") throw new Error("Not a conversation");
+    const checks = f.accessChecks();
+    act(() => f.show({ ...again, messageId: "e".repeat(64) }));
+    await waitFor(() => expect(f.accessChecks()).toBeGreaterThan(checks));
+    await f.accessSettled();
+  } finally {
+    observer.disconnect();
+  }
+  expect(removals).not.toHaveBeenCalled();
+  expect(banner).toBeInTheDocument();
+});
+
+it("never shows lost membership for the viewer's own Leave, even before it navigates", async () => {
+  const f = fixture({ type: "stream", canLeave: true });
+  f.mountWithToasts();
+  const watch = watchForLossNotice();
   try {
     const user = userEvent.setup();
     await screen.findByRole("textbox", { name: "Message Planning" });
@@ -2086,26 +2220,86 @@ it("never shows removal for the viewer's own Leave, even before it navigates", a
       expect(screen.queryByRole("dialog", { name: /^Leave/ })).toBeNull(),
     );
   } finally {
-    observer.disconnect();
+    watch.stop();
   }
-  expect(seen).not.toHaveBeenCalled();
-  expect(screen.queryByText(/^You were removed from/)).toBeNull();
+  expect(watch.seen).not.toHaveBeenCalled();
+  expect(screen.queryByText(noLongerMember)).toBeNull();
+});
+
+it("keeps an unconfirmed Leave the viewer's own until a later roster read lists the channel", async () => {
+  const f = fixture({ type: "stream", canLeave: true });
+  f.mountWithToasts();
+  const user = userEvent.setup();
+  await screen.findByRole("textbox", { name: "Message Planning" });
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Leave channel" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Leave channel: Planning",
+  });
+  f.run.mockRejectedValueOnce(
+    new ChannelLifecycleUnconfirmed(new Error("No acknowledgement")),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Leave channel" }),
+  );
+  expect(await screen.findByText("Leave channel failed")).toBeVisible();
+  const watch = watchForLossNotice();
+  try {
+    // The relay applies the Leave after all, in its own time.
+    act(() => f.remove("public"));
+    await screen.findByRole("region", { name: "Channel preview" });
+    await f.accessSettled();
+  } finally {
+    watch.stop();
+  }
+  expect(watch.seen).not.toHaveBeenCalled();
+});
+
+it("shows a later loss once a roster read after an unconfirmed Leave still lists the channel", async () => {
+  const f = fixture({ type: "stream", canLeave: true });
+  f.mountWithToasts();
+  const user = userEvent.setup();
+  await screen.findByRole("textbox", { name: "Message Planning" });
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Leave channel" }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Leave channel: Planning",
+  });
+  f.run.mockRejectedValueOnce(
+    new ChannelLifecycleUnconfirmed(new Error("No acknowledgement")),
+  );
+  await user.click(
+    within(dialog).getByRole("button", { name: "Leave channel" }),
+  );
+  expect(await screen.findByText("Leave channel failed")).toBeVisible();
+  // The Leave did not take effect: the viewer is still a member.
+  act(() => f.reread());
+  act(() => f.remove("private"));
+  expect(
+    await screen.findByRole("region", {
+      name: "You’re no longer a member of Planning",
+    }),
+  ).toBeVisible();
 });
 
 it.each([
   ["the roster read fails", { status: "error" } as const],
   ["the roster is incomplete", { coverage: "partial" } as const],
-])("claims no removal when %s", async (_, degraded) => {
+])("claims no lost membership when %s", async (_, degraded) => {
   const f = fixture({ type: "stream" });
   f.mount();
   await screen.findByRole("textbox", { name: "Message Planning" });
   act(() => f.degrade(degraded));
   await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
   await f.accessSettled();
-  expect(screen.queryByText(/^You were removed from/)).toBeNull();
+  expect(screen.queryByText(noLongerMember)).toBeNull();
 });
 
-it("claims no removal from a new session that has not listed the channel", async () => {
+it("claims no lost membership from a new session that has not listed the channel", async () => {
   const f = fixture({ type: "stream" });
   f.mount();
   await screen.findByRole("textbox", { name: "Message Planning" });
@@ -2116,5 +2310,25 @@ it("claims no removal from a new session that has not listed the channel", async
     ).toBeNull(),
   );
   await f.accessSettled();
-  expect(screen.queryByText(/^You were removed from/)).toBeNull();
+  expect(screen.queryByText(noLongerMember)).toBeNull();
+});
+
+it("claims no lost membership the relay never confirmed after launch", async () => {
+  // Downloaded membership opens the channel before the live roster arrives.
+  const f = fixture({ type: "stream", restored: true });
+  f.mount();
+  await screen.findByRole("button", { name: "Channel actions" });
+  act(() => f.remove("public"));
+  await screen.findByRole("region", { name: "Channel preview" });
+  await f.accessSettled();
+  expect(screen.queryByText(noLongerMember)).toBeNull();
+});
+
+it("claims no lost membership of a Solo chat", async () => {
+  const f = fixture();
+  f.mount();
+  await screen.findByRole("button", { name: "Chat actions" });
+  act(() => f.remove("private"));
+  await f.accessSettled();
+  expect(screen.queryByText(noLongerMember)).toBeNull();
 });

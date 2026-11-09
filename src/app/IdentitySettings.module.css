@@ -30,7 +30,6 @@
 }
 .overview {
   display: grid;
-  justify-items: center;
   align-items: center;
   gap: var(--space-8);
   margin-block: var(--space-6) var(--space-8);
@@ -41,7 +40,7 @@
 }
 .accountList {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-6);
 }
 .communityAssets {
@@ -104,11 +103,6 @@
   .accountCard {
     /* biome-ignore lint/complexity/noImportantStyles: Motion writes inline transforms. */
     transform: none !important;
-  }
-}
-@container (max-width: 40rem) {
-  .accountList {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -77,8 +77,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   backed up automatically if you belong to a Builderlab-hosted community;
   otherwise Buzz asks **Back up your key?**, again on the
   next launch or sign-in if the dialog is closed. In **Settings → Buzz → Identity**,
-  the ID card shows backup status. Open **More options** for **Retry backup** or,
-  while backup is off, **Back up key**, which opens the consent dialog. After signing in to the
+  the ID card shows backup status. Open **More options** at the top-left of its
+  container for **Retry backup** or, while backup is off, **Back up key**, which
+  opens the consent dialog. After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,

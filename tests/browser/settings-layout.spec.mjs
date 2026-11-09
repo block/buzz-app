@@ -59,7 +59,7 @@ test("settings share a centered, bounded column and keep controls contained acro
     .poll(() => page.evaluate(() => window.getSelection()?.toString()))
     .toBe(key);
   await copyId.focus();
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
   await expect(
     identity.getByRole("button", { name: "More options", exact: true }),
   ).toBeFocused();

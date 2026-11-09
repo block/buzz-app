@@ -5,6 +5,26 @@
   gap: var(--space-3);
   width: 100%;
   text-align: center;
+  padding: var(--space-4);
+}
+.actions {
+  justify-self: start;
+  align-self: start;
+  z-index: 1;
+}
+@container (min-width: 28rem) {
+  .actions,
+  .stage {
+    grid-area: 1 / 1;
+  }
+}
+@container (max-width: 24rem) {
+  .badge {
+    padding-inline: 0;
+  }
+  .actions {
+    margin-inline: var(--space-4);
+  }
 }
 .stage {
   width: min(100%, 20rem);
@@ -143,6 +163,10 @@
 @container (max-width: 10rem) {
   .topline {
     padding-block-start: calc(var(--space-5) + var(--space-half));
+    padding-inline: var(--space-4);
+  }
+  .backupCaption {
+    inset-inline-end: var(--space-4);
   }
 }
 .reflection {

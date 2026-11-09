@@ -617,23 +617,33 @@ function ChannelWorkspace({
   // How the open channel was last named while joined, so losing that
   // membership while it is open is explained. Only relay-confirmed membership
   // counts, not membership downloaded from disk, and only a complete, ready
-  // roster is evidence of the loss. The viewer's own Leave or Delete explains
-  // itself: its loss can arrive before its navigation, or, unconfirmed, after
-  // its failure, until the relay answers for the channel by dropping it or by
-  // a complete roster read that still lists it (see `unconfirmedLosses`).
+  // roster is evidence of the loss. The viewer's own submitted Leave or Delete
+  // explains itself: its loss can arrive before its navigation, or,
+  // unconfirmed, after its failure, until the relay answers for the channel by
+  // dropping it or by a complete roster read that still lists it (see
+  // `unconfirmedLosses`). A confirmation still open has lost nothing: a loss
+  // behind it, or after Cancel, is someone else's.
+  const lifecycleDialog = handoff?.lifecycleDialog;
   const ownLoss =
     !!requestedChannel &&
-    (handoff?.lifecycleDialog?.channel.id === requestedChannel ||
+    ((lifecycleDialog?.channel.id === requestedChannel &&
+      !!lifecycleDialog.submitted &&
+      (lifecycleDialog.action === "leave" ||
+        lifecycleDialog.action === "delete")) ||
       !!handoff?.unconfirmedLosses.some(
         ({ channelId }) => channelId === requestedChannel,
       ));
+  // From the roster, not the sidebar: an archived or hidden channel opened
+  // from Search is joined too.
   const joinedHere =
     ownLoss || cached
       ? undefined
-      : channels.find(
+      : list.channels.find(
           (channel) =>
             channel.id === requestedChannel &&
             !channel.cached &&
+            !channel.huddle &&
+            !channel.metadataPending &&
             channel.channelType !== "solo" &&
             channel.channelType !== "dm",
         );

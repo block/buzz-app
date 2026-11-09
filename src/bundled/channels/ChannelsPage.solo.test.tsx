@@ -2137,6 +2137,21 @@ it.each(["private", "public"] as const)(
   },
 );
 
+it("explains lost membership of an already-archived channel opened from Search", async () => {
+  // Out of the sidebar, so its membership comes from the roster itself.
+  const f = fixture({ type: "stream", archived: true });
+  f.mountWithToasts();
+  await screen.findByRole("region", { name: "Archived · view only" });
+  act(() => f.remove("private"));
+  const banner = await screen.findByRole("region", {
+    name: "You’re no longer a member of Planning",
+  });
+  expect(
+    within(banner).getByRole("button", { name: "Back to channels" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Select a channel to read it.")).toBeNull();
+});
+
 // What lost membership unmounts with the channel.
 const focusOrigins = {
   composer: () => screen.getByRole("textbox", { name: "Message Planning" }),
@@ -2418,6 +2433,31 @@ it("never shows lost membership for the viewer's own Leave, even before it navig
   expect(watch.seen).not.toHaveBeenCalled();
   expect(screen.queryByText(noLongerMember)).toBeNull();
 });
+
+it.each(["Archive channel", "Leave channel"])(
+  "shows a loss that arrived behind an open %s confirmation once it is cancelled",
+  async (item) => {
+    const f = fixture({ type: "stream", canLeave: true });
+    f.mountWithToasts();
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "Message Planning" });
+    await user.click(screen.getByRole("button", { name: "Channel actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: item }));
+    const dialog = await screen.findByRole("dialog", {
+      name: `${item}: Planning`,
+    });
+    // Someone else removes the viewer while they are still deciding; nothing
+    // of theirs was submitted, so the loss is not their own.
+    act(() => f.remove("public"));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(
+      await screen.findByRole("region", {
+        name: "You’re no longer a member of Planning",
+      }),
+    ).toBeVisible();
+    expect(f.run).not.toHaveBeenCalled();
+  },
+);
 
 /** Leave fails unconfirmed: the relay may still apply it. */
 async function failLeave(f: ReturnType<typeof fixture>) {

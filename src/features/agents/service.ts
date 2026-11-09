@@ -308,6 +308,15 @@ import { soloChat } from "./solo-chat";
 import { localSkills } from "./local-skills";
 import { COMMUNITY_SESSION } from "../agent-harness/session-scope";
 import {
+  agentSender,
+  attentionChange,
+  mirrored,
+  ownerSender,
+  publishChange,
+  relayAttention,
+  type RelayAttention,
+} from "./attention-relay";
+import {
   readCheckpoints,
   splitLegacyCheckpoints,
   writeCheckpoints,
@@ -2851,6 +2860,14 @@ export class AgentsService extends Service implements Agents {
   private readonly configStore: AgentConfigStore;
   /** Each bound community's config channels, while config sync is on. */
   private readonly communityConfigs = new Map<string, CommunityConfig>();
+  /** The relay attention of each agent whose attention is stored there, for
+   * the binding it reads through. */
+  private readonly relayAttention = new Map<
+    AgentKey,
+    { relay: RelayAttention; binding: Binding }
+  >();
+  /** Agents whose relay attention has shown a complete set in this session. */
+  private readonly attentionLive = new Set<AgentKey>();
   /** Origins whose presence is being sent. */
   private announcing = new Set<string>();
 
@@ -3198,12 +3215,17 @@ export class AgentsService extends Service implements Agents {
         return this.recordOf(member);
       },
       change: async (key, apply) => {
-        const record = await this.change(key, () => {
-          const member = this.liveMember(key);
-          if (!member) throw new Error("No such agent on this device");
-          // In turn, so this is the newest saved record.
-          return apply(this.recordOf(member));
-        });
+        const record = await this.change(
+          key,
+          () => {
+            const member = this.liveMember(key);
+            if (!member) throw new Error("No such agent on this device");
+            // In turn, so this is the newest saved record.
+            return apply(this.recordOf(member));
+          },
+          undefined,
+          "agent",
+        );
         if (!record) throw new Error("No such agent on this device");
         return record;
       },
@@ -6604,8 +6626,11 @@ export class AgentsService extends Service implements Agents {
       own.watchEnabled ||
       own.attentionEnabled !== undefined
     )
-      await this.change(key, (saved) =>
-        changed(saved ?? this.recordOf(identity), own),
+      await this.change(
+        key,
+        (saved) => changed(saved ?? this.recordOf(identity), own),
+        undefined,
+        own.attention || own.watchEnabled ? "owner" : undefined,
       );
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
@@ -8767,19 +8792,39 @@ export class AgentsService extends Service implements Agents {
    * nothing. The owner and the agent see a change once it is saved, and the
    * promise settles then. When the save fails, the promise rejects and they
    * keep the saved record, so a form keeps its unsaved changes. `saved`
-   * runs as the change is shown, before anyone is told. */
+   * runs as the change is shown, before anyone is told. `writer` signs an
+   * attention change of an agent whose attention is on the relay: the change
+   * applies to a fresh read of it, and is saved there before here. */
   private change(
     key: AgentKey,
     apply: (
       record: AgentRecord | undefined,
     ) => AgentRecord | null | Promise<AgentRecord | null>,
     saved?: (record: AgentRecord | null) => void,
+    writer?: "agent" | "owner",
   ): Promise<AgentRecord | null> {
     this.changing.set(key, (this.changing.get(key) ?? 0) + 1);
     return this.queued(key, async () => {
       try {
-        const base = this.records[key];
+        let base = this.records[key];
+        const relay =
+          writer && base?.attentionStorage === "relay"
+            ? this.relayWriter(key, writer)
+            : undefined;
+        const set = relay && (await relay.attention.read());
+        if (base && set) {
+          // What the read found shows, even when the change then fails.
+          const fresh = mirrored(base, set);
+          if (fresh !== base) {
+            await this.commit(key, base, fresh);
+            this.update();
+          }
+          base = fresh;
+        }
         const next = await apply(base);
+        const edit =
+          relay && set && base && next && attentionChange(base, next);
+        if (relay && set && edit) await publishChange(relay.io, set, edit);
         await this.commit(key, base, next);
         saved?.(next);
         this.update();
@@ -8908,6 +8953,95 @@ export class AgentsService extends Service implements Agents {
     );
     return [...agents, ...[...unnamed].map((pubkey) => ({ pubkey }))];
   }
+  /** Whether its watches and timers wake it: while a plugin shows Attention,
+   * and, for attention on the relay, once this session has its complete set. */
+  private attentionRuns(key: AgentKey, record: AgentRecord) {
+    return (
+      this.attentionShown() &&
+      (record.attentionStorage !== "relay" || this.attentionLive.has(key))
+    );
+  }
+  /** Keeps one relay attention for each live agent whose attention is on the
+   * relay, through its community's binding. */
+  private reconcileAttention(identities: readonly Member[]) {
+    const wanted = new Map<AgentKey, { identity: Member; binding: Binding }>();
+    for (const identity of identities) {
+      const binding = this.bindingOf(identity);
+      if (
+        !identity.deleting &&
+        binding &&
+        this.alive(identity) &&
+        this.recordOf(identity).attentionStorage === "relay"
+      )
+        wanted.set(identity.key, { identity, binding });
+    }
+    for (const [key, entry] of this.relayAttention)
+      if (wanted.get(key)?.binding !== entry.binding) {
+        entry.relay.dispose();
+        this.relayAttention.delete(key);
+        this.attentionLive.delete(key);
+      }
+    const native = this.native;
+    for (const [key, { identity, binding }] of wanted) {
+      const relayAuthor = binding.session.relayAuthor;
+      if (this.relayAttention.has(key) || !native || !relayAuthor) continue;
+      const relay = relayAttention({
+        channel: {
+          agent: identity.pubkey,
+          owner: binding.viewer,
+          relayAuthor,
+          query: (filters) => native.query(identity, filters),
+          publish: (event) => native.publish(identity, event),
+        },
+        sync: (filter) => binding.session.artifacts.sync(filter),
+        changed: (set) =>
+          void this.change(key, (saved) =>
+            // A record that moved off the relay, or is gone, stays as it is.
+            saved?.attentionStorage === "relay"
+              ? mirrored(saved, set)
+              : (saved as AgentRecord),
+          ).then(
+            () => {
+              if (this.relayAttention.get(key)?.relay !== relay) return;
+              if (this.attentionLive.has(key)) return;
+              this.attentionLive.add(key);
+              this.update();
+            },
+            (error) =>
+              console.warn(`Agent ${key} attention not applied`, error),
+          ),
+        reported: () => this.notify(),
+        signal: binding.controller.signal,
+      });
+      this.relayAttention.set(key, { relay, binding });
+    }
+  }
+  /** The relay attention an attention change of `key` saves to, and how
+   * `writer` signs it there; throws when it can't be saved now. */
+  private relayWriter(key: AgentKey, writer: "agent" | "owner") {
+    const entry = this.relayAttention.get(key);
+    const identity = this.liveMember(key);
+    const native = this.native;
+    if (!entry || !identity || !native)
+      throw new Error(
+        "This agent's attention is on its community; connect to change it",
+      );
+    const { session, controller } = entry.binding;
+    const read = session.snapshotRead;
+    const artifacts = session.configArtifactWriter;
+    if (!read || (writer === "owner" && !artifacts))
+      throw new Error("This community can't save attention");
+    return {
+      attention: entry.relay,
+      io: {
+        read,
+        send:
+          writer === "owner" && artifacts
+            ? ownerSender(artifacts, controller.signal)
+            : agentSender((event) => native.publish(identity, event)),
+      },
+    };
+  }
   /** The membership of this key, unless it was deleted. */
   private liveMember(key: AgentKey) {
     return this.identities.find(
@@ -9024,7 +9158,7 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionHistory: record.attentionHistory,
-      attentionEnabled: this.attentionShown(),
+      attentionEnabled: this.attentionRuns(identity.key, record),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
@@ -9686,7 +9820,7 @@ export class AgentsService extends Service implements Agents {
           prior.timers === (record.timers ?? EMPTY) &&
           prior.sourceRuns === record.sourceRuns &&
           prior.attentionHistory === record.attentionHistory &&
-          prior.attentionEnabled === this.attentionShown() &&
+          prior.attentionEnabled === this.attentionRuns(identity.key, record) &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&
@@ -9705,6 +9839,7 @@ export class AgentsService extends Service implements Agents {
       ),
       ...this.listedAgents(selected),
     ];
+    this.reconcileAttention(identities);
     this.runners.reconcile(
       identities
         .filter((identity) => !identity.deleting)

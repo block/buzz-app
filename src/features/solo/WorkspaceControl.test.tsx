@@ -318,6 +318,46 @@ it.each(
   },
 );
 
+it("keeps focus on the control while workspaces reload after Create", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { session, reads } = await storeFixture();
+  let release!: () => void;
+  // New chat reloads workspaces for the new pick, as SoloDraft's preload does.
+  const change = vi.fn(() => {
+    reads.hold = new Promise<void>((resolve) => (release = resolve));
+    void session.soloPreferences.refresh();
+  });
+  const user = userEvent.setup();
+  render(<WorkspaceControl session={session} value="" onChange={change} />);
+  const control = screen.getByRole("button", { name: "Add workspace" });
+  await user.click(control);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "New workspace" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Name" }),
+    "Planning",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(session.soloPreferences.snapshot().status).toBe("loading");
+  await waitFor(() => expect(control).toHaveFocus());
+  // jsdom focuses a natively disabled button; a browser can't.
+  expect(control).not.toHaveAttribute("disabled");
+  expect(control).toHaveAttribute("aria-disabled", "true");
+  // It still can't open while workspaces load.
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  await act(async () => release());
+  expect(control).not.toHaveAttribute("aria-disabled");
+  expect(control).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("menu", { name: "Choose workspace" }),
+  ).toBeInTheDocument();
+});
+
 it("offers New workspace disabled while workspaces can't be created", async () => {
   const { session } = fixture(false);
   const user = userEvent.setup();

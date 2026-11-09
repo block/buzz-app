@@ -81,6 +81,14 @@ export function WorkspaceControl({
       .finally(() => setBusy(false));
   };
   const name = project ? `Workspace: ${project.name}` : "Add workspace";
+  // Disabled only for a moment: while workspaces load (as they do after New
+  // workspace), a chat moves, or New chat starts its chat. Focus handed back
+  // to the control then must stay, so it stays focusable.
+  const inactive =
+    disabled ||
+    busy ||
+    snapshot.status === "idle" ||
+    snapshot.status === "loading";
   if (channelId && regions.managed.has(channelId) && !filed) return null;
   return (
     <span className={styles.control}>
@@ -92,15 +100,11 @@ export function WorkspaceControl({
       >
         <MenuTrigger
           ref={trigger}
-          disabled={
-            disabled ||
-            snapshot.status === "idle" ||
-            snapshot.status === "loading"
-          }
+          disabled={inactive}
           render={(props) => (
             <Button
               {...props}
-              aria-disabled={busy || undefined}
+              focusableWhenDisabled={inactive}
               variant="ghost"
               size="sm"
               shape={project ? "capsule" : "icon"}

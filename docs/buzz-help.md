@@ -1148,3 +1148,10 @@ Confirm the deletion; pending or uncertain results remain in the workflow notice
 If permission changes during confirmation, Buzz explains why deletion could not
 start and keeps any editor draft.
 Owning the agent does not grant permission to edit or run its workflow.
+
+## GPU rendering on Linux with NVIDIA
+
+On Linux with an NVIDIA GPU on Wayland, Buzz turns on GPU rendering when it
+starts. If Buzz won't open or draws incorrectly on your driver, start it with
+`WEBKIT_FORCE_DMABUF_RENDERER=0` in its environment to go back to slower
+software rendering.

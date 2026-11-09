@@ -7,6 +7,8 @@ mod browser;
 #[cfg(target_os = "macos")]
 mod close_menu;
 mod credential_service;
+#[cfg(target_os = "linux")]
+mod linux_webkit;
 mod oauth_callback;
 use oauth_callback::OAuthCallbackHost;
 #[cfg(test)]
@@ -872,6 +874,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_webkit::enable_gpu_rendering_on_nvidia_wayland();
     credential_service::drop_inherited();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.

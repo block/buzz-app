@@ -129,7 +129,7 @@ Some parts are much steadier than others:
 
 | | Parts |
 | --- | --- |
-| **Steady** | The plugin manifest and lifecycle, declared commands, HTTPS requests and file reads, agent tools, shortcuts, notifications, settings cards, and opening plugin pages. Pages and panels you own are steady too, but where the shell places them may change. |
+| **Steady** | The plugin manifest and lifecycle, declared commands, HTTPS requests and file reads, agent tools (the tool's shape), shortcuts, notifications, settings cards, and opening plugin pages. Pages and panels you own are steady too, but where the shell places them may change. |
 | **Expect breakage** | Reading relay data through the app's session, anything added to conversations (composer tools, message renderers), sidebar sections and rows, agent hooks and harness features, and anything that adds UI to a page Buzz owns. |
 
 See [plugin architecture](docs/plugin-architecture.md) to build one.

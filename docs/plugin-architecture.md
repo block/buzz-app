@@ -9,12 +9,18 @@ Plugins are the unit of contribution and installation. They can contain substant
 ## Stability
 
 Every service below is a host-matched preview with no cross-version promise; the
-author types are `0.0.0-preview.1`. The plugin envelope (manifest, `inject`/`apply`,
-`ctx.effect` cleanup) and capability services (host grants, `addTool`, shortcuts,
-notifications, settings cards, navigation `open`) change additively and are the
-safest to build on. Owning a whole page or panel is steady, but placement is not.
-The relay session read model, conversation contributions, sidebar sections and
-rows, and agent hooks and harness features change often and will break plugins.
+author types are `0.0.0-preview.1`.
+
+- **Steady:** the plugin envelope (manifest, `inject`/`apply`, `ctx.effect`
+  cleanup) and capability services: host grants, `addTool` (the tool's shape, not
+  the whole client passed to `call`), shortcuts, notifications, settings cards, and
+  navigation `open` for plugin pages, Home and Settings. Owning a whole page or
+  panel is steady, but placement is not.
+- **Borderline:** decisions, and link and code-block renderers.
+- **Expect breakage:** the relay session read model; conversation contributions;
+  sidebar sections and rows, the Solo region and backdrops; agent hooks, execution
+  targets and the harness kit; artifact storage, the installer, federated identity
+  and the browser view; and other navigation `open` targets.
 
 ## The first two authoring experiences
 

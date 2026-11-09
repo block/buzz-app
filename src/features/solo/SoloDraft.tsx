@@ -244,11 +244,13 @@ export function SoloDraft({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The lifetime Chat settings opened with.
   const [settingsLifetime, setSettingsLifetime] = useState<number>();
-  // The workspace it opened with. The pick can change under the open dialog,
-  // from another window or project entry; following it would reload the dialog
-  // over its unsaved edits. Closing checks the current pick, as a deletion
-  // found here does.
+  // The workspace and canvas it opened with. Both can change under the open
+  // dialog, from another window or project entry; following either would
+  // reload the dialog over its unsaved edits. Nothing in this window changes
+  // them while it is open: its Save closes it in the same render. Closing
+  // checks the current pick, as a deletion found here does.
   const [settingsProject, setSettingsProject] = useState<string>();
+  const [settingsCanvas, setSettingsCanvas] = useState<string>();
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
@@ -890,6 +892,7 @@ export function SoloDraft({
           onClick={() => {
             setSettingsLifetime(draftLifetime(scope, draftSettings));
             setSettingsProject(selectedProject);
+            setSettingsCanvas(draftCanvas);
             setSettingsOpen(true);
           }}
         />
@@ -901,11 +904,13 @@ export function SoloDraft({
           finalFocus={settingsTrigger}
           session={session}
           projectId={settingsProject || undefined}
-          canvas={draftCanvas}
+          canvas={settingsCanvas}
           name={draftSettings.name}
           ttlSeconds={settingsLifetime}
           close={() => setSettingsOpen(false)}
           save={(canvas, ttlSeconds, name) => {
+            // Saves only the settings, never the pick: edits made here win
+            // over a pick another window moved under the open dialog.
             // A lifetime changed here, or chosen before, stays chosen; an
             // unchanged one keeps following the default.
             const chosen =

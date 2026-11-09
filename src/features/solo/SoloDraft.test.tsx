@@ -1815,7 +1815,7 @@ it("keeps Chat settings' edits when its workspace is deleted, and drops the work
 });
 
 /** A same-origin window's write of a view key, as its storage event reports it. */
-function otherWindowWrites(scope: string, key: string, value: string) {
+function otherWindowWrites(scope: string, key: string, value: unknown) {
   const name = `buzz-view.v1:${JSON.stringify([scope, key])}`;
   const newValue = JSON.stringify(value);
   localStorage.setItem(name, newValue);
@@ -1862,15 +1862,20 @@ it("a workspace another window picks under open Chat settings is dropped on clos
   const user = userEvent.setup();
   const scope = "picked-elsewhere-under-settings";
   writeView(scope, "solo:new-project", "work");
+  writeView(scope, "solo:settings", { name: "", canvas: "Saved notes" });
   render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
   await user.click(screen.getByRole("button", { name: "Chat settings" }));
   const instructions = await screen.findByRole("textbox", {
     name: /^Instructions/,
   });
-  await waitFor(() => expect(instructions).toHaveValue("work instructions"));
+  await waitFor(() => expect(instructions).toHaveValue("Saved notes"));
   await user.clear(instructions);
   await user.type(instructions, "My own notes");
-  act(() => otherWindowWrites(scope, "solo:new-project", "other"));
+  // A pick from the workspace control also clears the draft's canvas.
+  act(() => {
+    otherWindowWrites(scope, "solo:new-project", "other");
+    otherWindowWrites(scope, "solo:settings", { name: "" });
+  });
   // Other's defaults would have loaded by the time it is deleted.
   await act(async () => {});
   act(() => remove("other"));
@@ -1883,6 +1888,35 @@ it("a workspace another window picks under open Chat settings is dropped on clos
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
   expect(readView(scope, "solo:new-project", null)).toBe("");
+});
+
+it("another window's saved instructions leave open Chat settings alone; its own Save wins", async () => {
+  const f = await projectSetup();
+  deletableWorkspaces(f);
+  const user = userEvent.setup();
+  const scope = "saved-elsewhere-under-settings";
+  writeView(scope, "solo:new-project", "work");
+  render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  const instructions = await screen.findByRole("textbox", {
+    name: /^Instructions/,
+  });
+  await waitFor(() => expect(instructions).toHaveValue("work instructions"));
+  await user.clear(instructions);
+  await user.type(instructions, "My own notes");
+  act(() =>
+    otherWindowWrites(scope, "solo:settings", { name: "", canvas: "Theirs" }),
+  );
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "My own notes",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(readView(scope, "solo:new-project", null)).toBe("work");
+  expect(readView(scope, "solo:settings", null)).toMatchObject({
+    canvas: "My own notes",
+  });
 });
 
 it("Chat settings says its workspace was deleted when its own load finds out", async () => {

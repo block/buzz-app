@@ -415,9 +415,14 @@ function ChannelWorkspace({
   const [composerFocus, setComposerFocus] = useState(0);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
   const historyContainer = useRef<HTMLElement>(null);
-  // The channel whose lost membership took focus from its composer.
+  // The channel whose lost membership took focus from the conversation.
   const focusAfterLoss = useRef<string>(undefined);
   const backTrigger = useRef<HTMLButtonElement>(null);
+  // What last took focus in the conversation pane, until focus moves to
+  // another element outside it.
+  const paneFocus = useRef<Element>(undefined);
+  // The channel the conversation showed at the last commit.
+  const shownChannel = useRef<string>(undefined);
   // A visit applied by a header opening must not take that opening's focus.
   const [preservedVisit, setPreservedVisit] = useState<PageNavigation>();
   // A started join focuses the composer when membership makes it writable,
@@ -614,17 +619,14 @@ function ChannelWorkspace({
   // counts, not membership downloaded from disk, and only a complete, ready
   // roster is evidence of the loss. The viewer's own Leave or Delete explains
   // itself: its loss can arrive before its navigation, or, unconfirmed, after
-  // its failure, until a complete roster read since then still lists it.
-  const unconfirmedLoss = handoff?.unconfirmedLosses.find(
-    ({ channelId }) => channelId === requestedChannel,
-  );
+  // its failure, until the relay answers for the channel by dropping it or by
+  // a complete roster read that still lists it (see `unconfirmedLosses`).
   const ownLoss =
     !!requestedChannel &&
     (handoff?.lifecycleDialog?.channel.id === requestedChannel ||
-      (!!unconfirmedLoss &&
-        (list.status !== "ready" ||
-          list.coverage === "partial" ||
-          list.asOf === unconfirmedLoss.asOf)));
+      !!handoff?.unconfirmedLosses.some(
+        ({ channelId }) => channelId === requestedChannel,
+      ));
   const joinedHere =
     ownLoss || cached
       ? undefined
@@ -2171,27 +2173,48 @@ function ChannelWorkspace({
       unarchive={(trigger) => unarchive(archivedChannel, trigger)}
     />
   ) : undefined;
-  // A focused composer that archiving or lost membership removes hands focus
-  // to the retained history. Lost membership unmounts that history too while
-  // access is rechecked, so the history pane holds focus until its notice
-  // shows, which then places it.
-  const focusRetainedHistory = useCallback(() => {
+  // A focused composer that archiving removes hands focus to the history.
+  const focusArchivedHistory = useCallback(() => {
     const history = historyContainer.current;
-    if (!currentId || !history?.isConnected || history.closest("[inert]"))
+    if (
+      !currentId ||
+      !queries.channels.get?.(currentId)?.archived ||
+      !history?.isConnected ||
+      history.closest("[inert]")
+    )
       return;
-    if (queries.channels.get?.(currentId)?.archived)
-      (
-        history.querySelector<HTMLElement>("[data-message-scroller]") ?? history
-      ).focus({ preventScroll: true });
-    else if (
-      !queries.channels
-        .list()
-        .channels.some((channel) => channel.id === currentId)
-    ) {
-      focusAfterLoss.current = currentId;
-      history.focus({ preventScroll: true });
-    }
+    (
+      history.querySelector<HTMLElement>("[data-message-scroller]") ?? history
+    ).focus({ preventScroll: true });
   }, [currentId, queries.channels]);
+  // Lost membership unmounts the composer, header and history with the
+  // channel, and focus in them falls to the body. The history pane holds it
+  // while access is rechecked, until the notice shows and places it.
+  useLayoutEffect(() => {
+    const shown = shownChannel.current;
+    shownChannel.current = currentId;
+    const focused = paneFocus.current;
+    const history = historyContainer.current;
+    if (
+      currentId ||
+      !shown ||
+      shown !== requestedChannel ||
+      !focused ||
+      focused.isConnected ||
+      !history?.isConnected ||
+      history.closest("[inert]")
+    )
+      return;
+    const active = document.activeElement;
+    if (
+      (active && active !== document.body) ||
+      queries.channels.list().channels.some(({ id }) => id === shown)
+    )
+      return;
+    paneFocus.current = history;
+    focusAfterLoss.current = shown;
+    history.focus({ preventScroll: true });
+  }, [currentId, requestedChannel, queries.channels]);
   // A private channel's notice offers the only way on; a public preview's
   // history is readable again. Focus that moved elsewhere meanwhile stays.
   const removedId = removed?.id;
@@ -2327,7 +2350,7 @@ function ChannelWorkspace({
         (!current.readOnly || current.cached) && (
           <ConversationComposer
             key={`composer:${current.id}`}
-            onFocusedRemoval={focusRetainedHistory}
+            onFocusedRemoval={focusArchivedHistory}
             autoFocus={
               // Remote unarchive restores controls within the reader's current visit.
               !(continuingVisit && committedVisit.current?.archived) &&
@@ -2417,6 +2440,17 @@ function ChannelWorkspace({
         data-solo-focus-pane={solo ? "" : undefined}
         inert={covered}
         aria-hidden={covered || undefined}
+        onFocus={(event) => {
+          paneFocus.current = event.target;
+        }}
+        onBlur={(event) => {
+          // A removed element or an unfocused window leaves no new target.
+          if (
+            event.relatedTarget &&
+            !event.currentTarget.contains(event.relatedTarget)
+          )
+            paneFocus.current = undefined;
+        }}
       >
         <div
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}

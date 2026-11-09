@@ -8,6 +8,7 @@ import { useOptimisticMute } from "../../bundled/channels/useOptimisticMute";
 import {
   createContext,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useContext,
   useMemo,
@@ -20,7 +21,7 @@ import {
 import { useRelayConnection } from "../relay/react";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type { ChannelLifecycleAction } from "../relay/channel-lifecycle-protocol";
 
 /** The session owns writes/recovery; each menu owns its focus and read status. */
@@ -90,13 +91,15 @@ type State = {
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
   queuedUndos: readonly ChannelSummary[];
   /** The viewer's own Leave or Delete that failed unconfirmed, so the relay
-   * may still apply it, with the roster read (`ChannelList.asOf`) current when
-   * it failed. Its loss of access is then not someone else's doing. */
+   * may still apply it; its loss of access is then not someone else's doing.
+   * Each is kept until the relay answers for its channel (see `answered`). */
   unconfirmedLosses: readonly UnconfirmedLoss[];
 };
 type UnconfirmedLoss = Readonly<{
   channelId: string;
-  asOf: number | undefined;
+  /** `ChannelList.rosterAsOf` when it failed: the last complete roster read,
+   * which may predate the request. */
+  rosterAsOf: number | undefined;
 }>;
 type ActivityThread = {
   channelId: string;
@@ -234,6 +237,28 @@ export function ChannelNavigationProvider({
     else lifecycleOrigin.addEventListener("abort", retire, { once: true });
     return () => lifecycleOrigin.removeEventListener("abort", retire);
   }, [lifecycleOrigin, update]);
+  // Settled losses go, so a failed or partial roster read long after cannot
+  // make another loss of the same channel look like the viewer's own.
+  const unconfirmedLosses = state.unconfirmedLosses;
+  const channels = connection.session.channels;
+  useEffect(() => {
+    if (!unconfirmedLosses.length) return;
+    const settle = () => {
+      const list = channels.list();
+      const settled = unconfirmedLosses.filter((loss) => answered(loss, list));
+      if (!settled.length) return;
+      update((previous) => {
+        const kept = previous.unconfirmedLosses.filter(
+          (loss) => !settled.includes(loss),
+        );
+        return kept.length === previous.unconfirmedLosses.length
+          ? previous
+          : { ...previous, unconfirmedLosses: kept };
+      });
+    };
+    settle();
+    return channels.subscribeList(settle);
+  }, [channels, unconfirmedLosses, update]);
   const value = useMemo<Handoff>(
     () => ({
       ...state,
@@ -434,7 +459,7 @@ export function ChannelNavigationProvider({
                 (dialog.action === "leave" || dialog.action === "delete")
                   ? {
                       channelId: dialog.channel.id,
-                      asOf: connection.session.channels.list().asOf,
+                      rosterAsOf: connection.session.channels.list().rosterAsOf,
                     }
                   : undefined;
               update((previous) => ({
@@ -461,6 +486,15 @@ export function ChannelNavigationProvider({
       )}
     </ChannelNavigationContext>
   );
+}
+/** Whether the relay has answered for an unconfirmed loss: a ready list no
+ * longer has its channel, or a complete roster read since the failure still
+ * lists it. Live events and exact reads commit the list too, but only a
+ * complete read proves the request did not take effect. */
+function answered(loss: UnconfirmedLoss, list: ChannelList) {
+  if (list.status !== "ready") return false;
+  if (!list.channels.some(({ id }) => id === loss.channelId)) return true;
+  return list.rosterAsOf !== undefined && list.rosterAsOf !== loss.rosterAsOf;
 }
 function restore(session: RelaySession, scope: string): State {
   return {

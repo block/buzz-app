@@ -248,7 +248,9 @@ test("Stop in a message's activity ends its local work quietly", async ({
   });
   await page.mouse.move(0, 0);
   const restingBox = await activity.boundingBox();
-  await activity.hover({ position: { x: 4, y: 4 } });
+  await row
+    .getByRole("region", { name: "Agent activity on this message" })
+    .hover();
   await expect(stop).toHaveText("Stop");
   await expect(
     page.getByRole("dialog", { name: "Agent activity", exact: true }),

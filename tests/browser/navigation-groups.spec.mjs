@@ -1182,3 +1182,39 @@ test("forums move between saved sections, Starred and their default Forums secti
     1,
   );
 });
+
+test("forum drags return to Forums, never Channels", async ({ page, app }) => {
+  for (const [id, name] of [
+    ["alpha", "Alpha"],
+    ["beta", "Beta"],
+  ])
+    app.setChannelMetadata(id, [
+      ["name", name],
+      ["t", "forum"],
+    ]);
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  const menu = await openMove(page, rowIn(page, "group:work"));
+  await menu.getByRole("menuitem", { name: "Remove from Work" }).click();
+  await expect(rowIn(page, "forums")).toBeFocused();
+  await saved(page, app, 1);
+  const alpha = (section) =>
+    page.locator(
+      `[data-sidebar-section="${section}"] [data-channel-id="alpha"]`,
+    );
+
+  await pull(page, alpha("starred"), "channels");
+  await expect(page.locator("[data-channel-dragging]")).toBeVisible();
+  await expect(page.locator("[data-drop-target]")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(alpha("starred")).toBeVisible();
+  expect(app.report.sidebarPublications).toHaveLength(1);
+
+  await pull(page, alpha("starred"), "forums");
+  await expect(
+    page.locator('[data-sidebar-section="forums"][data-drop-target]'),
+  ).toBeVisible();
+  await page.mouse.up();
+  await expect(alpha("forums")).toBeVisible();
+  await saved(page, app, 2);
+});

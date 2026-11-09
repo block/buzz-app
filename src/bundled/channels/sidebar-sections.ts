@@ -6,7 +6,7 @@ export function isChannelSectionKey(key: string) {
 }
 
 export function isChannelDropSectionKey(key: string) {
-  return key === "starred" || isChannelSectionKey(key);
+  return key === "starred" || key === "forums" || isChannelSectionKey(key);
 }
 
 export function contributedSidebarSectionKey(key: string) {

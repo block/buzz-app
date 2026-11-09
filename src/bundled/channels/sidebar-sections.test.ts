@@ -32,10 +32,9 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("dms")).toBe(false);
 });
 it("allows channel drops into Starred without making it a persistent empty section", () => {
-  for (const key of ["starred", "channels", "group:work"])
+  for (const key of ["starred", "channels", "forums", "group:work"])
     expect(isChannelDropSectionKey(key)).toBe(true);
-  for (const key of ["forums", "dms"])
-    expect(isChannelDropSectionKey(key)).toBe(false);
+  expect(isChannelDropSectionKey("dms")).toBe(false);
   expect(isChannelSectionKey("starred")).toBe(false);
 });
 it("hides empty Starred and shows it only for an authorized starred row", () => {

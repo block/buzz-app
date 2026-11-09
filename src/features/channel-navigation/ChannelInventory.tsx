@@ -1373,6 +1373,16 @@ export function ChannelInventory({
               disabled={
                 !placementWritable || !isChannelDropSectionKey(section.key)
               }
+              accepts={
+                section.key === "channels" || section.key === "forums"
+                  ? (channelId) => {
+                      const forum =
+                        sidebarChannels.find(({ id }) => id === channelId)
+                          ?.channelType === "forum";
+                      return forum === (section.key === "forums");
+                    }
+                  : undefined
+              }
               reorderable={orderWritable && section.key.startsWith("group:")}
               move={
                 orderWritable && section.key.startsWith("group:")
@@ -1551,8 +1561,7 @@ export function ChannelInventory({
                       sectionKey={section.key}
                       selectFrame={
                         channel.channelType !== "dm" &&
-                        (isChannelDropSectionKey(section.key) ||
-                          section.key === "forums")
+                        isChannelDropSectionKey(section.key)
                           ? DraggableChannel
                           : undefined
                       }

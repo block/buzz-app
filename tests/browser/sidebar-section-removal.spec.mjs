@@ -27,7 +27,7 @@ test.describe("section removal", () => {
       .click();
     const dialog = page.getByRole("dialog", { name: `Remove ${title}?` });
     await expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to their default sections. This does not delete any channels.",
+      "1 channel will move back to its default section. This does not delete any channels.",
     );
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
     await dialog.getByRole("button", { name: "Cancel" }).click();

@@ -881,7 +881,7 @@ it.each(["dm", "forum"] as const)(
     await preferences.queries.ensure();
     const h = fixture(preferences.queries, "ready", [
       { id: "alpha", name: "alpha", channelType: "stream" },
-      { id: "dm", name: "Alice", channelType },
+      { id: channelType, name: "Alice", channelType },
     ]);
     const user = userEvent.setup();
     try {
@@ -892,15 +892,26 @@ it.each(["dm", "forum"] as const)(
       await user.hover(
         await screen.findByRole("menuitem", { name: moveLabel }),
       );
+      await screen.findByRole("menuitemradio", { name: "Work" });
       if (channelType === "dm")
         expect(
-          await screen.findByRole("menuitemradio", { name: "Direct messages" }),
+          screen.getByRole("menuitemradio", { name: "Direct messages" }),
         ).toBeChecked();
-      await screen.findByRole("menuitemradio", { name: "Work" });
+      else {
+        expect(
+          screen
+            .getAllByRole("menuitemradio")
+            .filter((item) => item.getAttribute("aria-checked") === "true"),
+        ).toEqual([]);
+        for (const name of ["Channels", "Forums"])
+          expect(
+            screen.queryByRole("menuitemradio", { name }),
+          ).not.toBeInTheDocument();
+      }
       fireEvent.click(screen.getByRole("menuitemradio", { name: "Work" }));
       await waitFor(() =>
         expect(write).toHaveBeenCalledWith(
-          { channelId: "dm", sectionId: "work" },
+          { channelId: channelType, sectionId: "work" },
           expect.any(AbortSignal),
         ),
       );
@@ -910,7 +921,7 @@ it.each(["dm", "forum"] as const)(
         ).toContainElement(screen.getByRole("button", { name: "Alice" }));
         expect(
           document.querySelector(
-            `[data-sidebar-section="${homeKey}"] [data-channel-id="dm"]`,
+            `[data-sidebar-section="${homeKey}"] [data-channel-id="${channelType}"]`,
           ),
         ).toBeNull();
       });
@@ -941,11 +952,11 @@ it.each(["dm", "forum"] as const)(
         ).not.toContainElement(screen.queryByRole("button", { name: "Alice" }));
       });
       expect(write).toHaveBeenLastCalledWith(
-        { channelId: "dm" },
+        { channelId: channelType },
         expect.any(AbortSignal),
       );
       expect(star).toHaveBeenLastCalledWith(
-        { channelId: "dm", starred: false },
+        { channelId: channelType, starred: false },
         expect.any(AbortSignal),
       );
     } finally {
@@ -1505,7 +1516,7 @@ it("clears only the removed section's collapsed intent after confirmation, never
     };
     let dialog = await open();
     expect(dialog).toHaveAccessibleDescription(
-      "1 channel will move back to their default sections. This does not delete any channels.",
+      "1 channel will move back to its default section. This does not delete any channels.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(remove).not.toHaveBeenCalled();

@@ -532,7 +532,7 @@ export function SidebarSection({
                   : (removalFocus?.() ?? false)
               }
               title={`Remove ${title}?`}
-              description={`${channelCount === undefined ? "Assigned channels" : `${channelCount} ${channelCount === 1 ? "channel" : "channels"}`} will move back to their default sections. This does not delete any channels.`}
+              description={`${channelCount === undefined ? "Assigned channels" : `${channelCount} ${channelCount === 1 ? "channel" : "channels"}`} will move back to ${channelCount === 1 ? "its default section" : "their default sections"}. This does not delete any channels.`}
               actions={
                 <>
                   <Button

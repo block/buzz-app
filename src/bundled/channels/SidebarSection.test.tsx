@@ -243,7 +243,7 @@ it("offers confirmed removal for custom sections", async () => {
   );
   const confirmation = screen.getByRole("dialog", { name: "Remove Work?" });
   expect(confirmation).toHaveAccessibleDescription(
-    "1 channel will move back to their default sections. This does not delete any channels.",
+    "1 channel will move back to its default section. This does not delete any channels.",
   );
   expect(remove).not.toHaveBeenCalled();
   await user.click(

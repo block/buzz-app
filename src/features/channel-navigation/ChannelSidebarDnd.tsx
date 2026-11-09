@@ -36,7 +36,9 @@ const sidebarCollisions: CollisionDetection = (args) => {
     return pointerWithin({
       ...args,
       droppableContainers: args.droppableContainers.filter(
-        ({ data }) => (data.current?.groupDomain ?? "channels") === domain,
+        ({ data }) =>
+          (data.current?.groupDomain ?? "channels") === domain &&
+          (data.current?.accepts?.(String(args.active.id)) ?? true),
       ),
     });
   const groups = args.droppableContainers
@@ -238,6 +240,7 @@ export function DroppableSidebarSection({
   groupIndex,
   groupDomain = "channels",
   createSectionTarget,
+  accepts,
   ...section
 }: ComponentProps<typeof SidebarSection> & {
   disabled: boolean;
@@ -245,10 +248,11 @@ export function DroppableSidebarSection({
   groupIndex: number;
   groupDomain?: string;
   createSectionTarget?: boolean;
+  accepts?: ((channelId: string) => boolean) | undefined;
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
-    data: { group: reorderable, groupIndex, groupDomain },
+    data: { group: reorderable, groupIndex, groupDomain, accepts },
     disabled,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
     // that queue after each render, losing ids queued in between: a section

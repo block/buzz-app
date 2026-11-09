@@ -4935,7 +4935,9 @@ describe("quoting timeline content", () => {
     act(() => expect(h.input.insertQuote(timelineHtml("quoted"))).toBe(true));
     await h.user.keyboard("reply");
     expect(h.markdown()).toBe("Draft\n\n> quoted\n\nreply");
+    // The reply typed straight after quoting is its own undo step.
     act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Draft\n\n> quoted\n\n");
     act(() => h.input.undo(false));
     expect(h.markdown()).toBe("Draft");
   });

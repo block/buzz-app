@@ -959,7 +959,11 @@ export function EditableInput({
         current.current.onPasteTooLong?.();
         return false;
       }
+      const before = editor.state;
       editor.dispatch(tr.scrollIntoView());
+      if (editor.state === before) return false;
+      // The reply typed below the quote is its own undo step.
+      separateHistory = true;
       editor.focus();
       return true;
     };

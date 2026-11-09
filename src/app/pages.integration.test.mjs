@@ -91,12 +91,18 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.relay-notes",
           "buzz.reminders",
           "buzz.workflows",
+          "buzz.mesh-compute",
           "buzz.focus",
+          "buzz.drafts-and-sent",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
     }
-    for (const id of ["buzz.reminders", "buzz.workflows"]) {
+    for (const id of [
+      "buzz.reminders",
+      "buzz.workflows",
+      "buzz.drafts-and-sent",
+    ]) {
       assert.equal(
         services.pages.snapshot().some((page) => page.pluginId === id),
         false,
@@ -129,7 +135,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .snapshot()
       .find((page) => page.key === "buzz.channels/channels");
     assert.equal(messages.primary, true);
-    assert.equal(messages.placement, "topbar");
+    assert.equal(messages.placement, "dock");
     assert.equal(
       services.pages.snapshot().some((p) => p.key === "buzz.agents/attention"),
       false,
@@ -137,12 +143,12 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const inbox = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.inbox");
-    assert.equal(inbox.title, "Inbox");
+    assert.equal(inbox.title, "Activity");
     assert.equal(inbox.layout, "workspace");
     assert.equal(inbox.primary, true);
     assert.match(
       renderToStaticMarkup(createElement(inbox.component)),
-      /Choose a community to see your inbox/,
+      /Choose a community to see your activity/,
     );
     const unread = services.relay.snapshot().session.unread;
     await services.plugins.change("disable", "buzz.inbox");
@@ -164,13 +170,8 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map((card) => card.pluginId)
         .sort(),
-      [
-        "block.builderlab",
-        "buzz.channels",
-        "buzz.emoji",
-        "buzz.github",
-        "buzz.pairing",
-      ],
+      // A build without NIP-FI or the development broker has no Builderlab.
+      ["buzz.channels", "buzz.emoji", "buzz.github", "buzz.pairing"],
     );
     // The device-local template library remains reachable without a selected community.
     assert.equal(
@@ -263,13 +264,8 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .snapshot()
         .map((card) => card.pluginId)
         .sort(),
-      [
-        "block.builderlab",
-        "buzz.channels",
-        "buzz.emoji",
-        "buzz.github",
-        "buzz.pairing",
-      ],
+      // A build without NIP-FI or the development broker has no Builderlab.
+      ["buzz.channels", "buzz.emoji", "buzz.github", "buzz.pairing"],
     );
 
     await vi.waitFor(() =>
@@ -294,13 +290,21 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .map((link) => link.pluginId)
         .sort();
     await vi.waitFor(() =>
-      assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.links"]),
+      assert.deepEqual(linkPlugins(), [
+        "buzz.agents",
+        "buzz.github",
+        "buzz.links",
+      ]),
     );
     await services.plugins.change("disable", "buzz.links");
-    assert.deepEqual(linkPlugins(), ["buzz.github"]);
+    assert.deepEqual(linkPlugins(), ["buzz.agents", "buzz.github"]);
     await services.plugins.change("enable", "buzz.links");
     await vi.waitFor(() =>
-      assert.deepEqual(linkPlugins(), ["buzz.github", "buzz.links"]),
+      assert.deepEqual(linkPlugins(), [
+        "buzz.agents",
+        "buzz.github",
+        "buzz.links",
+      ]),
     );
     const tools = services.conversation.tools.snapshot();
     const inline = services.conversation.inline.snapshot();

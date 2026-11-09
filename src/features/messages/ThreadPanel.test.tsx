@@ -3634,3 +3634,42 @@ it("reveals a completed step selected by an exact thread link", async () => {
     screen.getByRole("button", { name: /Collapse activity history/ }),
   ).toBeVisible();
 });
+
+it("reveals a public failure that its activity history absorbs by expanding the history", async () => {
+  const h = messagesHarness();
+  const agent = "d".repeat(64);
+  const update = {
+    ...row,
+    id: "e".repeat(64),
+    authorId: agent,
+    content: "Read the release notes.",
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  const target = {
+    ...row,
+    id: "f".repeat(64),
+    authorId: agent,
+    content: "The selected model could not complete this request.",
+    notice: "execution-failure" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 3,
+  };
+  h.snapshot.replies = [update, target];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  Object.assign(h.props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(await screen.findByText(target.content)).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
+});

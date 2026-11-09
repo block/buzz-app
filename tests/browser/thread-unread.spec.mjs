@@ -1,14 +1,14 @@
 import { pauseClock } from "./clock.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { generateSecretKey } from "nostr-tools";
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { clickRow, open, virtuaIdle } from "./timeline.mjs";
 import {
   holdReadingFocus,
   readJournal,
   releaseReadingFocus,
 } from "./reading.mjs";
-import { openPage } from "./navigation.mjs";
+import { newChat, openPage } from "./navigation.mjs";
 import { channelUnread } from "./unread-state.mjs";
 
 // Each journey owns its app, relay state and browser context.
@@ -473,6 +473,87 @@ test("opening a nested reply from Activity reveals it in its collapsed branch, t
   await expect(item("Unread reply 1")).toBeVisible();
   await expect(item("Broadcast descendant")).toHaveCount(0);
 });
+
+// An agent's public failure right after its agent-only update folds into that
+// update's collapsed activity history, while Activity previews the failure
+// itself. Opening it must expand the history before the reveal looks for its
+// row; otherwise the row never mounts and the visit cannot complete.
+test("opening an absorbed failure from Activity expands its activity history, then reads it", async ({
+  page,
+  app,
+}) => {
+  const key = generateSecretKey();
+  app.serveProfile(key, { name: "Remote tester", is_agent: true });
+  await holdReadingFocus(page);
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const failure = publishAbsorbedFailure(app, "alpha", root.id, key);
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const previews = () =>
+    page.evaluate(() =>
+      window.fixtureRelay
+        .snapshot()
+        .session.unread.activity("alpha")
+        .items?.map((item) => item.preview),
+    );
+  await alpha.hover();
+  const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+  const item = popover
+    .getByRole("button", { name: /Open unread thread from/ })
+    .filter({ hasText: failure.content });
+  await expect(item).toBeVisible();
+  await releaseReadingFocus(page);
+  await item.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${failure.id}"]`);
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+  await expect(
+    thread.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect.poll(previews).not.toContain(failure.content);
+  await alpha.hover();
+  await expect(item).toHaveCount(0);
+});
+
+/** An agent-only update, then the same agent's public execution failure, as
+ * direct replies to the viewer's thread root. The failure is unread; the
+ * thread folds it into the update's activity history. */
+function publishAbsorbedFailure(app, channel, rootId, key) {
+  const history = app.histories.get(`primary/${channel}`);
+  const publish = (content, tags, offset) => {
+    const event = finalizeEvent(
+      {
+        kind: tags.some(([name]) => name === "audience") ? 40002 : 9,
+        content,
+        tags: [["h", channel], ["e", rootId, "", "reply"], ...tags],
+        created_at: Math.floor(Date.now() / 1000) + offset,
+      },
+      key,
+    );
+    history.push(event);
+    app.relay.publish("primary", event);
+    return event;
+  };
+  publish(
+    "Read the release notes and checked the headings.",
+    [["audience", "agents"]],
+    0,
+  );
+  return publish(
+    "The selected model could not complete this request.",
+    [["buzz:notice", "execution-failure"]],
+    1,
+  );
+}
 
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({
   page,
@@ -1538,5 +1619,71 @@ test.describe("top-level mention activity", () => {
     await openPage(page, "Activity");
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  });
+});
+
+// The Solo sidebar opens the same exact target through its buzz://message link.
+const soloChannel = "33333333-3333-4333-8333-333333333333";
+test.describe("Solo Activity", () => {
+  test.use({
+    threadUnread: false,
+    threadUnreadJoined: false,
+    channelIds: ["beta", soloChannel],
+    channelNames: { [soloChannel]: "Alpha" },
+    soloChannels: [soloChannel],
+    ownSoloChannels: [soloChannel],
+    historyCounts: { beta: 1, [soloChannel]: 1 },
+  });
+
+  test("opening an absorbed failure from a Solo chat's Activity expands its activity history, then reads it", async ({
+    page,
+    app,
+  }) => {
+    const key = generateSecretKey();
+    app.serveProfile(key, { name: "Remote tester", is_agent: true });
+    await page.goto(app.origin);
+    await newChat(page);
+    const chat = page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .locator(`[data-solo-channel-id="${soloChannel}"]`);
+    await expect(chat).toBeVisible();
+    const root = app.append(
+      "primary",
+      soloChannel,
+      "Summarize the release notes.",
+    );
+    const failure = publishAbsorbedFailure(app, soloChannel, root.id, key);
+    await chat.hover();
+    const popover = page.getByRole("dialog", {
+      name: "Activity in Alpha",
+      exact: true,
+    });
+    const item = popover
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: failure.content });
+    await expect(item).toBeVisible();
+    await item.click();
+    const thread = page.getByRole("region", {
+      name: "Thread messages",
+      exact: true,
+    });
+    const row = thread.locator(`[data-message-id="${failure.id}"]`);
+    await expect(row).toBeInViewport();
+    await expect(row).toBeFocused();
+    await expect(
+      thread.getByRole("button", { name: /^Collapse activity history:/ }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    await expect
+      .poll(async () => (await channelUnread(page, soloChannel)).threads)
+      .toBe(0);
+    await chat.hover();
+    await expect(
+      popover.getByRole("button", { name: /Open unread thread from/ }),
+    ).toHaveCount(0);
   });
 });

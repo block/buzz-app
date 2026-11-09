@@ -61,7 +61,7 @@ The desktop app fetches the URL when it starts and every 6 hours, or 15 minutes 
 failed attempt. It follows redirects only to `https` URLs, gives up after 30 seconds,
 and accepts at most 256 KiB. A response that is not a usable version 1 document (the
 rules below) is discarded, and Buzz keeps the last good copy in
-`packaged-managed-plugins.json` beside the profile folders. Entries the copy ignores
+`packaged-managed-plugins-<hash of the URL>.json` beside the profile folders. A copy belongs to its URL: a build that names another URL never shows it, and the first usable policy from the new URL deletes it. Entries the copy ignores
 are reported as they are for the file. Serve the policy with short-lived or no edge
 caching: a stale copy keeps recommending a commit its reference no longer points to.
 

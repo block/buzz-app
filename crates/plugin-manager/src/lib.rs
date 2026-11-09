@@ -923,7 +923,7 @@ impl Manager {
     }
     /// Keeps a policy fetched from [`managed::PACKAGED_URL`] if Buzz can use it.
     pub fn store_packaged_policy(&self, bytes: &[u8]) -> Result<bool> {
-        let stored = managed::store_packaged(&self.home, bytes);
+        let stored = managed::store_packaged(&self.home, managed::PACKAGED_URL, bytes);
         self.record_packaged_fetch(stored.as_ref().map(|_| ()).map_err(Clone::clone));
         stored
     }

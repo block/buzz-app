@@ -1,6 +1,6 @@
 import {
+  definitionRanges,
   projectMarkdownAttachments,
-  scanMarkdown,
 } from "../relay/message-content";
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -31,21 +31,10 @@ export function messageEditText(
 ) {
   const { attachmentSeams: _seams, ...source } = row;
   const content = row.sourceContent ?? row.content;
-  const parts = profileMentionParts({ ...source, content }, profiles, agents);
-  if (!parts.some((part) => part.target)) return content;
   // A link inside a reference definition would become part of its URL.
-  const definitions: { start: number; end: number }[] = [];
-  const pending = [scanMarkdown(content).tree];
-  for (let node = pending.pop(); node; node = pending.pop()) {
-    const start = node.position?.start.offset;
-    const end = node.position?.end.offset;
-    if (node.type === "definition") {
-      if (start !== undefined && end !== undefined)
-        definitions.push({ start, end });
-    } else for (const child of node.children ?? []) pending.push(child);
-  }
+  const definitions = definitionRanges(content);
   let offset = 0;
-  return parts
+  return profileMentionParts({ ...source, content }, profiles, agents)
     .map(({ text, target }) => {
       const start = offset;
       offset += text.length;

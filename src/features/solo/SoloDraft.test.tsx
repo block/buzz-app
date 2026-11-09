@@ -1765,6 +1765,71 @@ it("deleting the chosen workspace while New chat is open drops it from the draft
   expect(f.saveCanvas).not.toHaveBeenCalled();
 });
 
+it("keeps a saved workspace while workspaces can't be read, and Send says how to go on", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const scope = "unreadable-workspaces";
+  writeView(scope, "solo:new-project", "work");
+  Object.assign(f.session.soloPreferences, {
+    snapshot: () => ({ status: "error", error: "Offline" }),
+  });
+  render(<SoloDraft session={f.session} scope={scope} onStarted={started} />);
+  expect(readView(scope, "solo:new-project", null)).toBe("work");
+  await user.type(screen.getByRole("textbox"), "Plan the week");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Workspaces can’t be read right now. Try again. To start without one, choose No workspace.",
+  );
+  expect(readView(scope, "solo:new-project", null)).toBe("work");
+  expect(started).not.toHaveBeenCalled();
+});
+
+it("a deletion this device first learns of at Send drops the workspace, and the next Send starts without it", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const scope = "deleted-at-send";
+  const listeners = new Set<() => void>();
+  let sections = [
+    { id: "work", name: "Work" },
+    { id: "other", name: "Other" },
+  ];
+  let deleted = false;
+  Object.assign(f.session.soloPreferences, {
+    snapshot: () => ({ status: "ready", data: { sections, assignments: {} } }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    refresh: async () => {
+      if (!deleted) return;
+      sections = sections.filter((section) => section.id !== "work");
+      for (const listener of listeners) listener();
+    },
+  });
+  writeView(scope, "solo:new-project", "work");
+  render(<SoloDraft session={f.session} scope={scope} onStarted={started} />);
+  await user.type(screen.getByRole("textbox"), "Plan the week");
+  // Deleted on another device: its saved defaults changed, so Send reloads
+  // them, and that refresh is the first this device hears of the deletion.
+  deleted = true;
+  const [work] = f.entries;
+  if (!work) throw new Error("missing work defaults");
+  f.entries[0] = { ...work, eventId: "work-deleted" };
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This workspace was deleted. Send again to start without it, or choose another.",
+  );
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(f.assign).not.toHaveBeenCalled();
+  expect(f.saveCanvas).not.toHaveBeenCalled();
+});
+
 it("creating a workspace from New chat picks it without starting the chat or taking the dialog's pastes", async () => {
   const f = await projectSetup();
   const user = userEvent.setup();

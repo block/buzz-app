@@ -16,6 +16,7 @@ import {
   loadChatSetup,
   parseChatSetup,
   type ChatSetup,
+  WorkspaceUnavailable,
 } from "./workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
@@ -424,7 +425,18 @@ export function SoloDraft({
         setup =
           kit.status === "ready" && loaded?.revision === defaultsRevision(kit)
             ? loaded
-            : await loadChatSetup(session, project);
+            : await loadChatSetup(session, project).catch((reason: unknown) => {
+                // The way out is this composer's workspace control. A deleted
+                // workspace has already left the draft by now.
+                if (!(reason instanceof WorkspaceUnavailable)) throw reason;
+                throw new Error(
+                  `${reason.message} ${
+                    reason.deleted
+                      ? "Send again to start without it, or choose another."
+                      : "To start without one, choose No workspace."
+                  }`,
+                );
+              });
       }
       if (!mounted.current) return;
       if (canvas !== undefined)

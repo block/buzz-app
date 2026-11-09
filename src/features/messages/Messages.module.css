@@ -4148,20 +4148,19 @@ html[data-keyboard-navigation] .activityExpansion {
 }
 
 /* The painted bubble and its interactive area must have the same bounds. */
-.messageBubble:has(> .activityBubbleTrigger) {
+.messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
   padding: 0;
 }
 :where(html[data-message-density="compact"])
   .message[data-agent-response-preview]
-  .messageBubble:has(> .activityBubbleTrigger) {
+  .messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
   @apply text-caption;
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
   box-shadow: none;
 }
 .messageBubble > .activityBubbleTrigger,
-.activityBubbleTrigger:where([data-activity-controls])
-  > .activityBubbleTrigger {
+.activityBubbleControls > .activityBubbleTrigger {
   width: 100%;
   padding: var(--space-2) var(--space-4);
   border-radius: inherit;
@@ -4170,19 +4169,21 @@ html[data-keyboard-navigation] .activityExpansion {
   .messageBubble
   > .activityBubbleTrigger,
 :where(html[data-message-density="compact"])
-  .activityBubbleTrigger:where([data-activity-controls])
+  .activityBubbleControls
   > .activityBubbleTrigger {
   min-height: calc(var(--space-6) + var(--space-half));
   padding: calc(var(--space-1) + var(--space-half) / 2)
     calc(var(--space-1h) + var(--space-half) / 2);
 }
 
-.messageBubble > .activityBubbleTrigger:where([data-activity-controls]) {
-  padding: 0;
-  gap: 0;
+.activityBubbleControls {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  border-radius: inherit;
 }
-.activityBubbleTrigger:where([data-activity-controls])
-  > .activityBubbleTrigger {
+.activityBubbleControls > .activityBubbleTrigger {
   min-width: 0;
   flex: 1;
   align-self: stretch;

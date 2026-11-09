@@ -107,14 +107,14 @@
     .overlayContent {
     mask-image: none;
   }
-  :hover > .inlineStop,
-  :focus-within > .inlineStop,
-  .inlineStop[data-stopping] {
+  .overlayControls:hover > .inlineStop,
+  .overlayControls:focus-within > .inlineStop,
+  .overlayControls > .inlineStop[data-stopping] {
     opacity: 1;
   }
-  :hover > .inlineStop > button,
-  :focus-within > .inlineStop > button,
-  .inlineStop[data-stopping] > button {
+  .overlayControls:hover > .inlineStop > button,
+  .overlayControls:focus-within > .inlineStop > button,
+  .overlayControls > .inlineStop[data-stopping] > button {
     pointer-events: auto;
   }
 }

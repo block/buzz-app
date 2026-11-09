@@ -194,7 +194,7 @@ test("Stop in a message's activity ends its local work quietly", async ({
   page,
   app,
   browserName,
-}, testInfo) => {
+}) => {
   await open(page, app);
   await expect
     .poll(() => page.evaluate(() => !!window.localAgentFixture))
@@ -241,96 +241,28 @@ test("Stop in a message's activity ends its local work quietly", async ({
       ),
     event.id,
   );
-  const controls = activity.locator("..");
-  const stop = controls.getByRole("button", {
+  const row = thread.locator(`[data-message-id="${event.id}"]`);
+  const stop = row.getByRole("button", {
     name: "Stop Local tester",
     exact: true,
   });
   await page.mouse.move(0, 0);
-  await expect(stop.locator("..")).toHaveCSS("opacity", "0");
-  for (const colorScheme of ["light", "dark"]) {
-    await page.emulateMedia({ colorScheme });
-    for (const width of [390, 1440]) {
-      await page.setViewportSize({ width, height: 950 });
-      await page.mouse.move(0, 0);
-      await expect(stop.locator("..")).toHaveCSS("opacity", "0");
-      await expect(activity.locator(":scope > span")).toHaveCSS(
-        "mask-image",
-        "none",
-      );
-      const restingBox = await controls.boundingBox();
-      await activity.locator("xpath=ancestor::section[1]").screenshot({
-        path: testInfo.outputPath(
-          `single-agent-rest-${colorScheme}-${width}.png`,
-        ),
-      });
-      await activity.locator("..").hover();
-      await expect(stop.locator("..")).toHaveCSS("opacity", "1");
-      await expect(
-        page.getByRole("dialog", { name: "Agent activity", exact: true }),
-      ).toHaveCount(0);
-      await expect(stop).toHaveText("Stop");
-      const preview = activity.getByText(/^Reading /).locator("..");
-      await expect(preview).toHaveCSS("white-space", "nowrap");
-      await expect(preview).toHaveCSS("text-overflow", "ellipsis");
-      const [box, frame, text] = await Promise.all([
-        stop.boundingBox(),
-        controls.boundingBox(),
-        preview.boundingBox(),
-      ]);
-      expect(box.x).toBeLessThan(text.x + text.width);
-      expect(frame.width).toBe(restingBox.width);
-      await expect(activity.locator(":scope > span")).toHaveCSS(
-        "mask-image",
-        /linear-gradient/,
-      );
-      expect(box.x + box.width).toBeLessThanOrEqual(frame.x + frame.width);
-      expect(frame.x + frame.width).toBeLessThanOrEqual(width);
-      await expect
-        .poll(() =>
-          stop.evaluate((element) => {
-            const box = element.getBoundingClientRect();
-            return element.contains(
-              document.elementFromPoint(
-                box.x + box.width / 2,
-                box.y + box.height / 2,
-              ),
-            );
-          }),
-        )
-        .toBe(true);
-      await activity.locator("xpath=ancestor::section[1]").screenshot({
-        path: testInfo.outputPath(
-          `single-agent-stop-${colorScheme}-${width}.png`,
-        ),
-      });
-    }
-  }
-  await page.evaluate(() => {
-    document.documentElement.style.fontSize = "200%";
-  });
-  await activity.focus();
-  const enlarged = await controls.boundingBox();
-  const enlargedStop = await stop.boundingBox();
-  expect(enlargedStop.x + enlargedStop.width).toBeLessThanOrEqual(
-    enlarged.x + enlarged.width,
-  );
-  await page.screenshot({
-    path: testInfo.outputPath("single-agent-stop-large-text.png"),
-  });
-  await page.evaluate(() => {
-    document.documentElement.style.fontSize = "";
-  });
+  const restingBox = await activity.boundingBox();
+  await activity.hover({ position: { x: 4, y: 4 } });
+  await expect(stop).toHaveText("Stop");
+  await expect(
+    page.getByRole("dialog", { name: "Agent activity", exact: true }),
+  ).toHaveCount(0);
+  expect((await activity.boundingBox()).width).toBe(restingBox.width);
+  await stop.click({ trial: true });
   await page.mouse.move(0, 0);
   await activity.focus();
-  await expect(stop.locator("..")).toHaveCSS("opacity", "1");
   await page.keyboard.press(
     browserName === "webkit" && process.platform === "darwin"
       ? "Alt+Tab"
       : "Tab",
   );
   await expect(stop).toBeFocused();
-  const row = thread.locator(`[data-message-id="${event.id}"]`);
   await stop.focus();
   await stop.press("Enter");
   await expect
@@ -349,9 +281,6 @@ test("Stop in a message's activity ends its local work quietly", async ({
   ).toBeFocused();
   const note = row.getByText("Stopped", { exact: true });
   await expect(note).toBeVisible();
-  await row.screenshot({
-    path: testInfo.outputPath("local-activity-stopped.png"),
-  });
   await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);

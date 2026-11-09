@@ -3,6 +3,7 @@ import { useRecordedActivityAgents } from "../../features/conversation/typing-pr
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useProfileGeneration } from "../../features/relay/react";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -419,6 +420,13 @@ function ActivityBubble({
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const controlsRoot = useRef<HTMLDivElement>(null);
+  const restoreFocusOnRemoval = useCallback((node: HTMLElement | null) => {
+    if (!node) return;
+    return () => {
+      if (node.contains(node.ownerDocument.activeElement))
+        trigger.current?.focus({ preventScroll: true });
+    };
+  }, []);
   const stoppedFocus = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const source = stoppedFocus.current;
@@ -601,12 +609,19 @@ function ActivityBubble({
       </Button>
     );
   };
-  const activityLabel = `View agent activity: ${entries.map((entry) => `${entry.name}, ${entry.remoteStatus ? "remote, " : ""}${label(entry)}`).join("; ")}`;
+  const activityLabel = `View agent activity: ${entries
+    .map((entry) => {
+      const control = controls.get(entry.agent);
+      const status =
+        control && stops.has(control.key) ? "Stopping…" : label(entry);
+      return `${entry.name}, ${entry.remoteStatus ? "remote, " : ""}${status}`;
+    })
+    .join("; ")}`;
   const single = entries.length === 1 ? entries[0] : undefined;
   const singleControl = single && controls.get(single.agent);
   const singleStopping = !!singleControl && stops.has(singleControl.key);
   const details = (
-    <div className={styles.previews}>
+    <div ref={restoreFocusOnRemoval} className={styles.previews}>
       {entries.map((entry) => {
         // Opens the agent's Activity on this message's transcript.
         const target = profileActivityViewTarget(entry.agent);
@@ -737,7 +752,7 @@ function ActivityBubble({
     >
       <div
         ref={controlsRoot}
-        className={`${messageStyles.activityBubbleTrigger} ${singleControl ? styles.overlayControls : ""}`}
+        className={`${messageStyles.activityBubbleControls} ${singleControl ? styles.overlayControls : ""}`}
         data-activity-controls=""
       >
         <PopoverTrigger
@@ -786,6 +801,7 @@ function ActivityBubble({
         />
         {single && singleControl && (
           <span
+            ref={restoreFocusOnRemoval}
             className={styles.inlineStop}
             data-stopping={singleStopping || undefined}
           >
@@ -796,9 +812,7 @@ function ActivityBubble({
       <PopoverPopup
         ref={popup}
         finalFocus={() =>
-          retirement.current.interactive
-            ? trigger.current?.parentElement
-            : false
+          retirement.current.interactive ? trigger.current : false
         }
         side="top"
         padding="list"

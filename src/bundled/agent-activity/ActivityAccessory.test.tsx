@@ -1491,6 +1491,7 @@ it("opens a single agent directly and stops it without opening activity", async 
     });
     await settle();
     expect(bubble).toHaveTextContent("Stopping…");
+    expect(bubble).toHaveAccessibleName(/Blossom, Stopping/);
     fireEvent.click(bubble);
     expect(f.props.open).toHaveBeenCalledExactlyOnceWith(
       `buzz:profile?agent=${A}&tab=activity`,
@@ -1514,18 +1515,41 @@ it("keeps the focused bubble and pending stop when agents join and leave", async
     fireEvent.click(screen.getByRole("button", { name: "Stop Blossom" }));
     await settle();
     const bubble = screen.getByRole("button", { name: /View agent activity:/ });
-    act(() => bubble.focus());
+    act(() => screen.getByRole("button", { name: "Stop Blossom" }).focus());
     f.send(B, "u", 1, "turn_started", { triggeringEventIds: [root] });
     expect(bubble).toHaveFocus();
     openBubble();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     stopPending();
-    act(() => bubble.focus());
+    act(() => screen.getByRole("button", { name: "Stop Blossom" }).focus());
     f.send(B, "u", 2, "turn_completed");
     expect(bubble).toHaveFocus();
     expect(screen.queryByRole("dialog")).toBeNull();
     stopPending();
     expect(bubble).toHaveTextContent("Stopping…");
+    expect(bubble).toHaveAccessibleName(/Blossom, Stopping/);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("does not take focus from elsewhere when agents join and leave", () => {
+  const f = fixture();
+  const view = render(
+    <>
+      <button type="button">Elsewhere</button>
+      <ActivityAccessory {...f.props} agents={hosted()} />
+    </>,
+  );
+  try {
+    f.send(A, "t", 1, "turn_started", { triggeringEventIds: [root] });
+    const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+    act(() => elsewhere.focus());
+    f.send(B, "u", 1, "turn_started", { triggeringEventIds: [root] });
+    expect(elsewhere).toHaveFocus();
+    f.send(B, "u", 2, "turn_completed");
+    expect(elsewhere).toHaveFocus();
   } finally {
     view.unmount();
     f.dispose();

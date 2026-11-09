@@ -493,7 +493,10 @@ it("waits for entry and unread evidence before selecting a verified entry bounda
   h.unreadIds.add(laterUnread.id);
   const rows = [own, agents, joined, firstUnread, laterUnread];
   const mounted = render(h.tree("c", rows));
-  expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+  expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith(
+    "c",
+    document.hasFocus(),
+  );
   expect(screen.queryByText("New messages", { exact: true })).toBeNull();
   await h.completeEntry();
   expect(screen.queryByText("New messages", { exact: true })).toBeNull();
@@ -1017,7 +1020,10 @@ it.each(
     const mounted = render(
       h.tree("c", rows, false, true, timing !== "delayed mount"),
     );
-    expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+    expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith(
+      "c",
+      document.hasFocus(),
+    );
     if (position === "before" || timing === "delayed mount")
       await h.completeEntry();
     try {

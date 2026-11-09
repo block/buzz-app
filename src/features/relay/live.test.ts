@@ -8,6 +8,7 @@ import { assert, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createLiveAdmission,
   LIVE_BATCH_REFRESH_INTERVAL,
+  LIVE_CHECK_TIMEOUT_MS,
   LIVE_RECOVERY_INTERVAL,
   liveChannels,
   liveReconnectDelay,
@@ -1245,6 +1246,71 @@ it("keeps a quiet socket that answers its probes", async () => {
     const probes = h.first.probes().map(([, id]) => id);
     expect(probes.length).toBeGreaterThan(0);
     for (const id of probes) expect(h.first.sent).toContainEqual(["CLOSE", id]);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("replaces a socket that looks open but does not answer a wake check", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    // Asleep, the socket died without a close; writes still appear to succeed.
+    h.first.silent = true;
+    await vi.advanceTimersByTimeAsync(20_000);
+    h.owner.check?.();
+    expect(h.first.probes()).toHaveLength(1);
+    // A frame handled now may have waited through the sleep: it is no answer.
+    await h.first.receive(["NOTICE", "queued before sleep"]);
+    await vi.advanceTimersByTimeAsync(LIVE_CHECK_TIMEOUT_MS - 1);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    // A second hint while one is pending sends nothing more.
+    h.owner.check?.();
+    expect(h.first.probes()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.callbacks.state.mock.lastCall?.[0]).toMatchObject({
+      status: "retrying",
+      error: "Live connection did not answer a wake check",
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.sockets).toHaveLength(2);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps a socket that answers a wake check, and skips one it just heard", async () => {
+  vi.useFakeTimers();
+  const admission = createLiveAdmission();
+  const h = setup(["a"], admission);
+  try {
+    await h.first.auth();
+    for (const [, id] of h.first.requests())
+      await h.first.receive(["EOSE", id]);
+    // Not yet admitted sockets and relay cooldowns send no probe.
+    admission.pause(10);
+    h.owner.check?.();
+    expect(h.first.probes()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(11_000);
+    h.owner.check?.();
+    expect(h.first.probes()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(LIVE_CHECK_TIMEOUT_MS);
+    expect(h.sockets).toHaveLength(1);
+    expect(h.callbacks.state.mock.lastCall?.[0].status).toBe("connected");
+    // Focus can fire often; an answer this fresh already proves the socket.
+    h.owner.check?.();
+    expect(h.first.probes()).toHaveLength(1);
+    // A network change voids that proof.
+    h.owner.check?.(true);
+    expect(h.first.probes()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(15_000);
+    h.owner.check?.();
+    expect(h.first.probes()).toHaveLength(3);
   } finally {
     h.owner.dispose();
   }

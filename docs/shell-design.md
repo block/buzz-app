@@ -461,8 +461,10 @@ closing that profile or losing authorization also removes its log tab.
 Right-click any channel tab and choose **Close all tabs** to close this channel's
 thread, plugin and settings tabs across both panes, including hidden side-pane
 tabs. The permanent channel conversation stays; focus returns there if its previous
-target closed, while typing in surviving content remains uninterrupted. Other
-channels and saved message drafts are untouched. **Close other tabs** in the
+target closed, while typing in surviving content remains uninterrupted. A
+launcher's side panel, such as Todos, is not a tab, so it stays as it was:
+shown in an open pane, or hidden in a closed one. Other channels and saved
+message drafts are untouched. **Close other tabs** in the
 same menu does the same, except that the right-clicked tab stays open, selected
 and focused. On the channel conversation it is the same as Close all tabs. On a
 detail tab, such as an agent log, the tab that owns it stays instead, without
@@ -476,7 +478,9 @@ A thread that offers it also names its conversation above its original message,
 as Inbox rows do (`#channel` or `DM · names`); that name is a link that does
 the same.
 Shift+F10 on a focused tab opens the same
-menu. Hiding the pane remains separate from closing its tabs.
+menu. Hiding the pane remains separate from closing its tabs. It also hides a
+launcher's side panel without closing it: the launcher reads pressed only while
+the pane shows the panel, and one press brings back the pane with it.
 The main-header split control toggles existing pane content without closing its
 tabs or resetting their contents. With no content it is disabled but remains
 focusable, so closing the last tab has a stable focus-return target. There is no

@@ -136,6 +136,12 @@ unless it matches. A link that carries `path` or `commit` locks the repository a
 reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
 `path` and `commit` may appear once; a repeated key makes the link invalid.
 
+`buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
+a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
+downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
+review as a recommended plugin. It never mixes with the Git keys, and each key may
+appear once.
+
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
 enable, or grant access. You can close the dialog while the preview loads. A late
@@ -321,12 +327,20 @@ lookup returns `undefined` when an older host has not provided it.
 
 ```ts
 type PluginInstaller = {
-  requestInstall(source: {
-    repository: string; // https://, ssh:// or scp-style git URL
-    reference: string; // branch or tag
-    path?: string; // relative folder inside the repository
-    commit?: string; // 40- or 64-hex; install exactly this commit
-  }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  requestInstall(
+    source:
+      | {
+          repository: string; // https://, ssh:// or scp-style git URL
+          reference: string; // branch or tag
+          path?: string; // relative folder inside the repository
+          commit?: string; // 40- or 64-hex; install exactly this commit
+        }
+      | {
+          id: string; // the artifact's plugin ID
+          url: string; // https:// artifact from `buzzodz plugin pack`
+          sha256: string; // 64-hex; install exactly these bytes
+        },
+  ): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
   getInstallationStatus(
     id: string,
   ): "installed" | "absent" | "unavailable";
@@ -360,7 +374,13 @@ Settings closes, a `buzz://plugin-install` link replaces its review, or the requ
 plugin is disabled or removed, unless the user has already confirmed the install. A plugin that updates itself is replaced during that
 install and still resolves `updated`.
 
-A request can install a new plugin, or update an installed plugin only from the same
+`pluginInstaller.sources` lists the source kinds a host accepts (`["git", "url"]`).
+Hosts that accept only Git leave it out, so check it before requesting a URL source.
+A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
+its SHA-256 and plugin ID match, and shows the access review for the owner to
+confirm. It can install a new plugin or update one installed from a URL.
+
+A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
 including a local folder or an unknown one, is refused with a message naming both
 sources; remove it first to install it from the new one. Dismissing the review of a
@@ -556,7 +576,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the plugin that controls Attention shows the device switch. An optional
+configuration belongs in its `tabs`. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -607,16 +627,17 @@ meant only for agents running here says so in its `when`
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
-A plugin that shows Attention and its device switch calls
-`ctx.agents.controlAttention()`. Installed plugins may call it too, and one that
-does should show that switch. Agents' watches, timers and sources run on this
-device only while such a plugin is on. With none on, every agent's
-`attentionEnabled` reads false and each keeps its saved switch. Messages from
+A plugin that shows Attention calls `ctx.agents.controlAttention()`.
+Installed plugins may call it too. Agents' watches, timers and sources run on
+this device only while such a plugin is on, and then for every agent: there is
+no per-agent switch. The plugin's own on/off in Settings → Plugins is the only
+gate. With none on, every agent's `attentionEnabled` reads false.
+Messages from
 then wake no kind 9 watch later, even across a restart, though a relay replay
-after a reconnect can still deliver one, as it can after the switch is off. While plugins are still
+after a reconnect can still deliver one. While plugins are still
 starting and none has shown Attention yet, kind 9 watches keep their catch-up
 place, so startup still catches up on what the app missed while closed, and the
-events an agent with its switch on would hear wait to be matched once startup
+events an agent would hear wait to be matched once startup
 ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
 other watches keep no such record, so they still match them. The bundled Agent
 Attention UI plugin calls it.
@@ -1057,7 +1078,9 @@ in the bottom drawer by default or the existing companion column when the contri
 sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
 channel. A side-column panel stays open in the channel's workspace: leaving the channel
 or page unmounts it, and returning shows it again until the viewer closes it, another
-channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. With `channelPlacement: "tab"` the launcher instead
+channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. For a side panel, `pressed` means the panel is shown in
+the open pane, not merely selected: while the pane is hidden the panel stays selected but
+reads unpressed, and `toggle` shows it again. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
@@ -1852,6 +1875,13 @@ or URL is needed. Include both files in the imported folder or Git repository.
 Buzz checks the event ID, signature and exact artifact bytes before install and
 each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
 local development.
+
+`buzzodz plugin pack DIST_DIRECTORY FILE` writes the same single-file artifact,
+unsigned, and prints its SHA-256. An organization can serve that file over HTTPS
+for people without access to the Git host and recommend it with a `url` and
+`sha256` [managed plugin](managed-plugins.md#url-entries) entry. Buzz downloads
+it, refuses any bytes that do not match the pin, and records the URL as the
+plugin's saved source.
 
 A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
 those required files. README content must be UTF-8 and is limited to 256 KiB.

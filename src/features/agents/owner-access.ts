@@ -4,16 +4,20 @@
 // before returning anything, so a sign-out, account switch or reconnect during
 // a call returns nothing.
 import type {
+  BuzzEvent,
   OwnerAccess,
   OwnerChannel,
   OwnerExecution,
+  OwnerReadRequest,
   OwnerRole,
 } from "../../buzz-mcp/client";
+import { MESSAGES, rootOf, SEARCH, THREAD } from "../../buzz-mcp/tools";
 import { memberAuthority } from "../channel-members/administration-protocol";
+import { CANVAS_HISTORY_PAGE } from "../channel-templates/canvas-limits";
 import { communityDestination } from "../communities/destination";
 import { channelIdentity } from "../relay/channel-labels";
 import type { ChannelSummary } from "../relay/contracts";
-import type { RelayEvent } from "../relay/events";
+import type { ReadFilter, RelayEvent } from "../relay/events";
 import {
   channelTypeTag,
   exactLifecycleTag,
@@ -44,6 +48,7 @@ export type OwnerSession = Pick<
   | "names"
   | "profiles"
   | "channelLifecycle"
+  | "snapshotRead"
 >;
 /** The owner's live session for the agent's community, as the host binds it
  * now. `signal` aborts when that binding is replaced. */
@@ -53,6 +58,9 @@ export type OwnerBinding = Readonly<{
   session: OwnerSession;
   signal: AbortSignal;
 }>;
+
+/** One edit read serves a whole page; the relay reader's cap. */
+const EDITS = 500;
 
 const unavailable = () =>
   new Error(
@@ -161,12 +169,87 @@ export function createOwnerAccess(
   };
   /** Channel `id` as the owner's session knows it; never a system channel,
    * which `list()` never shows either. */
-  const known = (session: OwnerSession, id: string) => {
+  const listed = (session: OwnerSession, id: string) => {
     const item =
       session.channels.list().channels.find((each) => each.id === id) ??
       session.channels.get?.(id);
-    if (!item || item.channelType === "system") throw notOwners(id);
+    return item && item.channelType !== "system" ? item : undefined;
+  };
+  const known = (session: OwnerSession, id: string) => {
+    const item = listed(session, id);
+    if (!item) throw notOwners(id);
     return item;
+  };
+  /** The relay's own answer to the owner's session: nothing is merged into,
+   * or projected from, its views, so no unread or read state changes. */
+  const fetch = async (
+    binding: OwnerBinding,
+    filters: readonly ReadFilter[],
+    signal: AbortSignal,
+  ): Promise<readonly BuzzEvent[]> => {
+    const read = binding.session.snapshotRead;
+    if (!read) throw unavailable();
+    const events = await read(filters, { signal });
+    signal.throwIfAborted();
+    return events;
+  };
+  /** Channel `id`, checked as one of the owner's against the relay's fresh
+   * records before anything in it is read. */
+  const readable = async (
+    binding: OwnerBinding,
+    id: string,
+    signal: AbortSignal,
+  ) => {
+    known(binding.session, channelId(id));
+    await authority(binding, id, signal);
+    return id;
+  };
+  /** Message `id` and its channel, which must be one of the owner's. */
+  const message = async (
+    binding: OwnerBinding,
+    id: string,
+    signal: AbortSignal,
+  ) => {
+    const [event] = await fetch(
+      binding,
+      [{ ids: [id], kinds: [...THREAD, 45001], limit: 1 }],
+      signal,
+    );
+    const channel = event && tag(event, "h");
+    // One outside the owner's channels reads as missing, naming no channel.
+    if (!event || !channel || !listed(binding.session, channel))
+      throw new Error(`No message ${id} that your owner can see.`);
+    return { event, channel: await readable(binding, channel, signal) };
+  };
+  /** The latest edits of `events`, read for their authors' names too. */
+  const edits = (
+    binding: OwnerBinding,
+    events: readonly BuzzEvent[],
+    signal: AbortSignal,
+  ) =>
+    events.length
+      ? fetch(
+          binding,
+          [{ kinds: [40003], "#e": events.map(({ id }) => id), limit: EDITS }],
+          signal,
+        )
+      : Promise.resolve([]);
+  const names = async (
+    session: OwnerSession,
+    events: readonly BuzzEvent[],
+    signal: AbortSignal,
+  ) => {
+    const keys = [...new Set(events.map(({ pubkey }) => pubkey))];
+    if (keys.length) await session.profiles.ensure(keys, "foreground");
+    signal.throwIfAborted();
+    const found: Record<string, string> = {};
+    for (const key of keys) {
+      const name =
+        session.names.resolve(key) ??
+        session.profiles.snapshot().get(key)?.name;
+      if (name) found[key] = name;
+    }
+    return found;
   };
   const channelId = (id: string) => {
     try {
@@ -174,6 +257,28 @@ export function createOwnerAccess(
     } catch {
       throw new Error("channel must be a channel ID.");
     }
+  };
+
+  /** `events` with their edits and their authors' names. */
+  const page = async (
+    binding: OwnerBinding,
+    events: readonly BuzzEvent[],
+    signal: AbortSignal,
+  ) => {
+    const changes = await edits(binding, events, signal);
+    const found = await names(binding.session, events, signal);
+    const owners: Record<string, string> = {};
+    for (const { pubkey } of events) {
+      const owner = binding.session.profiles.owner?.(pubkey);
+      if (owner) owners[pubkey] = owner;
+    }
+    return {
+      execution: execution(binding),
+      events: [...events, ...changes],
+      names: found,
+      ...(Object.keys(owners).length ? { owners } : {}),
+      ...(changes.length >= EDITS ? { editsLimited: true as const } : {}),
+    };
   };
 
   return Object.freeze({
@@ -270,6 +375,165 @@ export function createOwnerAccess(
           }),
         };
       }),
+    messages: (request: OwnerReadRequest, signal?: AbortSignal) =>
+      run(signal, async (binding, bound) => {
+        const { limit, before, beforeId, author, since, search } = request;
+        let { channel } = request;
+        let root: string | undefined;
+        if (request.thread) {
+          const found = await message(binding, request.thread, bound);
+          channel = found.channel;
+          root = rootOf(found.event);
+        } else if (channel) await readable(binding, channel, bound);
+        // The relay's cursor: at or before `until`, after `before_id` at a tie.
+        const cursor = {
+          ...(before !== undefined ? { until: before } : {}),
+          ...(beforeId ? { before_id: beforeId } : {}),
+        };
+        const narrow = {
+          ...(author ? { authors: [author] } : {}),
+          ...(since !== undefined ? { since } : {}),
+        };
+        if (search !== undefined) {
+          const found = await fetch(
+            binding,
+            [
+              {
+                kinds: SEARCH,
+                search,
+                limit,
+                ...(channel ? { "#h": [channel] } : {}),
+                ...cursor,
+                ...narrow,
+              },
+            ],
+            bound,
+          );
+          // Only the owner's own channels, never a system one.
+          const shown = found.filter((event) => {
+            const id = tag(event, "h");
+            return !!id && !!listed(binding.session, id);
+          });
+          const list = binding.session.channels.list();
+          const partial =
+            !channel &&
+            (list.status !== "ready" || list.coverage === "partial");
+          const answer = await page(binding, shown, bound);
+          return {
+            ...answer,
+            ...(channel ? { channel } : {}),
+            ...(found.length >= limit ? { limited: true as const } : {}),
+            ...(partial ? { partial: true as const } : {}),
+          };
+        }
+        if (!channel) throw new Error("channel, thread or q is required.");
+        // One more than the limit tells whether older messages remain.
+        const found = await fetch(
+          binding,
+          root
+            ? [
+                {
+                  kinds: THREAD,
+                  "#h": [channel],
+                  "#e": [root],
+                  limit: limit + 1,
+                  ...cursor,
+                },
+                ...(before === undefined
+                  ? [{ ids: [root], kinds: [...THREAD, 45001], limit: 1 }]
+                  : []),
+              ]
+            : [
+                {
+                  kinds: MESSAGES,
+                  "#h": [channel],
+                  limit: limit + 1,
+                  ...cursor,
+                  ...narrow,
+                },
+              ],
+          bound,
+        );
+        const inChannel = found.filter((event) => tag(event, "h") === channel);
+        const first = root
+          ? inChannel.find((event) => event.id === root)
+          : undefined;
+        const rest = inChannel.filter((event) => event !== first);
+        const shown = rest.slice(0, limit);
+        const last = shown.at(-1);
+        const more =
+          last && rest.length > limit
+            ? { before: last.created_at, beforeId: last.id }
+            : undefined;
+        const answer = await page(
+          binding,
+          first ? [first, ...shown] : shown,
+          bound,
+        );
+        return {
+          ...answer,
+          channel,
+          ...(root ? { root } : {}),
+          ...(more ? { more } : {}),
+        };
+      }),
+    canvas: (channel: string, revision?: string, signal?: AbortSignal) =>
+      run(signal, async (binding, bound) => {
+        const id = await readable(binding, channel, bound);
+        const [head] = await fetch(
+          binding,
+          [
+            {
+              // From the writer, as history lists it, so an ID history just
+              // gave is found.
+              ...(revision
+                ? { ids: [revision], consistency: "strong" as const }
+                : {}),
+              kinds: [40100],
+              "#h": [id],
+              limit: 1,
+            },
+          ],
+          bound,
+        );
+        if (revision && tag(head, "h") !== id)
+          throw new Error(`No revision ${revision} of channel ${id}'s canvas.`);
+        return {
+          execution: execution(binding),
+          channel: id,
+          ...(head ? { canvas: head } : {}),
+        };
+      }),
+    canvasHistory: (
+      channel: string,
+      cursor: Readonly<{ before?: number; beforeId?: string }>,
+      signal?: AbortSignal,
+    ) =>
+      run(signal, async (binding, bound) => {
+        const id = await readable(binding, channel, bound);
+        // As the app's history pages it. The first page is read from the
+        // writer, so it includes a write just confirmed.
+        const revisions = await fetch(
+          binding,
+          [
+            {
+              kinds: [40100],
+              "#h": [id],
+              limit: CANVAS_HISTORY_PAGE,
+              ...(cursor.before === undefined
+                ? { consistency: "strong" as const }
+                : { until: cursor.before }),
+              ...(cursor.beforeId ? { before_id: cursor.beforeId } : {}),
+            },
+          ],
+          bound,
+        );
+        return {
+          execution: execution(binding),
+          channel: id,
+          revisions: revisions.filter((event) => tag(event, "h") === id),
+        };
+      }),
     held: (answer: OwnerExecution) => {
       const binding = answered.get(answer);
       if (!binding) throw changed();
@@ -306,3 +570,6 @@ function ownerChannel(item: ChannelSummary, viewer: string): OwnerChannel {
     ...(item.members ? { members: item.members.length } : {}),
   };
 }
+
+const tag = (event: BuzzEvent | undefined, name: string) =>
+  event?.tags.find((entry) => entry[0] === name)?.[1];

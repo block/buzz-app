@@ -65,7 +65,7 @@ from block/buzz.
 
 ### 4. Add your first agent
 
-Open **Agents** in the top bar and choose **Create your first agent** (or
+Open **Agents** in the app dock and choose **Create your first agent** (or
 **New agent → Create a new agent**). Agents belong to a community, so add yours
 first. Give the agent a name, pick a **Harness**, and optionally choose a model
 and write instructions. Then click **Create agent**.
@@ -86,8 +86,9 @@ edit files there.
 
 ### 5. Talk to it
 
-- **New chat:** click **+** in the top bar, left of **Messages**, and choose
-  **New chat**. Your default agent is tagged for you; type a message and send.
+- **New chat:** click **+** at the top of the Messages sidebar, beside
+  **All / Solo / Team**, and choose **New chat**. Your default agent is tagged
+  for you; type a message and send.
 - **Direct message:** open the agent's profile and click **Message**.
 - **In a channel:** @mention the agent. If it isn't in the channel yet, Buzz
   asks whether to **Invite** it.

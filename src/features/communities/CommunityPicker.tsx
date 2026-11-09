@@ -1,4 +1,5 @@
 import {
+  createContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -49,6 +50,18 @@ import { useCommunityRole } from "./useCommunityRole";
 
 const noSubscription = () => () => {};
 
+/** Opens the shell's community switcher from a page. Absent where the shell
+ * doesn't mount the switcher. */
+export const OpenCommunitySwitcher = createContext<(() => void) | undefined>(
+  undefined,
+);
+
+/** A host that opens the switcher from elsewhere owns its open state, so it
+ * passes both props; otherwise the picker keeps the state itself. */
+type SwitcherState =
+  | { open: boolean; onOpenChange: (open: boolean) => void }
+  | { open?: undefined; onOpenChange?: undefined };
+
 /** Shell navigation only: selecting a community remains owned by Communities. */
 export function CommunityPicker({
   communities,
@@ -58,6 +71,8 @@ export function CommunityPicker({
   onSelect,
   onOpenTarget,
   settingsCards,
+  open,
+  onOpenChange,
 }: {
   communities: Communities;
   federatedIdentity?: FederatedIdentity | undefined;
@@ -67,11 +82,18 @@ export function CommunityPicker({
   onSelect?: ((id: string | null) => void) | undefined;
   /** Menu destinations (Invites, hosting) open through the host's navigation. */
   onOpenTarget?: ((target: OpenTarget) => void) | undefined;
-}) {
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+} & SwitcherState) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const switcherOpen = open ?? localOpen;
+  const setSwitcherOpen = onOpenChange ?? setLocalOpen;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [joining, setJoining] = useState(false);
   const navigated = useRef(false);
+  // However it opened, a fresh switcher returns focus to its trigger until a
+  // choice navigates.
+  useLayoutEffect(() => {
+    if (switcherOpen) navigated.current = false;
+  }, [switcherOpen]);
   const wasJoining = useRef(false);
   useEffect(() => {
     if (wasJoining.current && !joining) triggerRef.current?.focus();
@@ -186,13 +208,7 @@ export function CommunityPicker({
   return (
     <>
       <nav aria-label="Communities" className={styles.picker}>
-        <PopoverRoot
-          open={switcherOpen}
-          onOpenChange={(open) => {
-            if (open) navigated.current = false;
-            setSwitcherOpen(open);
-          }}
-        >
+        <PopoverRoot open={switcherOpen} onOpenChange={setSwitcherOpen}>
           <PopoverTrigger
             render={
               <IconButton

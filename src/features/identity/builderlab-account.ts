@@ -93,6 +93,13 @@ export type FirstRunAccount = Readonly<{
    */
   bind(pubkey: string): Promise<void>;
   /**
+   * Binds installed old Buzz's key, which native signs with straight from old
+   * Buzz's storage and never saves, and resolves to it; then it may be saved
+   * here. Resolves null when there is no usable old key: none can be read, or
+   * kgoose refuses it as another account's (`pubkey_already_bound`).
+   */
+  bindLegacy(): Promise<string | null>;
+  /**
    * Unbinds `old`, the key the account held before starting over, so
    * `replacement`, the new key on this device, can be linked: kgoose's delete.
    * Sends nothing more once the account holds no key or `replacement` (after a
@@ -177,6 +184,8 @@ const OTHER_KEY =
 
 const KEY_CHANGED =
   "The key on this device changed before it could be linked, so your Builderlab account wasn’t changed.";
+/** Native could not read old Buzz's key: there is none, access was denied, or it is malformed. */
+class LegacyUnusable extends Error {}
 
 /**
  * A transport failure (no status), a rate limit or a 5xx may clear on its own,
@@ -455,57 +464,87 @@ function kgooseAccount(
         return key;
       },
     );
+  /**
+   * kgoose's challenge, the native kind-24243 signer, then verify: binds
+   * `pubkey`, the key on this device, or without it old Buzz's key, and
+   * resolves to the key bound. Sends nothing more once the account already
+   * holds that key, so running it again after a failure never meets 409
+   * `pubkey_already_bound`.
+   */
+  async function link(pubkey?: string): Promise<string> {
+    const held = await linkedKey();
+    if (pubkey && held === pubkey) return pubkey;
+    const step = "account link";
+    const fallback = "Could not link your key to this Builderlab account.";
+    // The challenge refuses only with 403 `unauthorized` or `invalid_origin`,
+    // or 429 `too_many_attempts`.
+    const challenge = await call(
+      step,
+      "/v1/buzz/nostr-identities/challenge",
+      fallback,
+      (reply, response) => {
+        if (!reply) throw failure(step, response);
+        const { challenge_id, nonce, verification_code, origin, expires_at } =
+          reply as Record<string, unknown>;
+        if (origin !== portal)
+          throw failure(step, response, "challenge for another origin");
+        return { challenge_id, nonce, verification_code, origin, expires_at };
+      },
+      { origin: portal },
+    );
+    // Native code signs a well-formed challenge for production Builderlab
+    // or the build URL's origin, so the read above passes on only the
+    // latter. It signs with whatever key secure storage holds now, or old
+    // Buzz's while none is saved. Verify binds the signer, which linking
+    // again cannot undo, so only `pubkey`'s signature may reach kgoose.
+    // Old Buzz's key that can't be read answers null, so setup makes a new
+    // key. Any rejection, such as a challenge that expired, is a failure to
+    // retry: a retry still links old Buzz's key.
+    const event = await invoke<{ pubkey?: unknown } | null>(
+      "identity_sign_builderlab_binding",
+      pubkey ? { challenge } : { challenge, legacy: true },
+    ).catch((error: unknown) => {
+      throw asError(error);
+    });
+    if (event === null && !pubkey) throw new LegacyUnusable();
+    const signer = event?.pubkey;
+    if (typeof signer !== "string" || (pubkey && signer !== pubkey))
+      throw new Error(KEY_CHANGED);
+    if (held === signer) return signer;
+    // An account bound to another key is refused here, with 409
+    // `identity_already_bound`.
+    await call(
+      step,
+      "/v1/buzz/nostr-identities/verify",
+      fallback,
+      (reply, response) => {
+        if (boundKey(reply?.identity) !== signer)
+          throw failure(step, response, "link not confirmed");
+      },
+      {
+        challenge_id: challenge.challenge_id,
+        nonce: challenge.nonce,
+        signed_payload: JSON.stringify(event),
+      },
+    );
+    return signer;
+  }
   return {
     linkedKey,
     async bind(pubkey) {
-      // Re-running after a failure must not meet 409 `pubkey_already_bound`.
-      if ((await linkedKey()) === pubkey) return;
-      const step = "account link";
-      const fallback = "Could not link your key to this Builderlab account.";
-      // The challenge refuses only with 403 `unauthorized` or `invalid_origin`,
-      // or 429 `too_many_attempts`.
-      const challenge = await call(
-        step,
-        "/v1/buzz/nostr-identities/challenge",
-        fallback,
-        (reply, response) => {
-          if (!reply) throw failure(step, response);
-          const { challenge_id, nonce, verification_code, origin, expires_at } =
-            reply as Record<string, unknown>;
-          if (origin !== portal)
-            throw failure(step, response, "challenge for another origin");
-          return { challenge_id, nonce, verification_code, origin, expires_at };
-        },
-        { origin: portal },
-      );
-      // Native code signs a well-formed challenge for production Builderlab
-      // or the build URL's origin, so the read above passes on only the
-      // latter. It signs with whatever key secure storage holds now. Verify
-      // binds the signer, which linking again cannot undo, so only `pubkey`'s
-      // signature may reach kgoose.
-      const event = await invoke<{ pubkey?: unknown }>(
-        "identity_sign_builderlab_binding",
-        { challenge },
-      ).catch((error: unknown) => {
-        throw asError(error);
-      });
-      if (event.pubkey !== pubkey) throw new Error(KEY_CHANGED);
-      // An account bound to another key is refused here, with 409
-      // `identity_already_bound`.
-      await call(
-        step,
-        "/v1/buzz/nostr-identities/verify",
-        fallback,
-        (reply, response) => {
-          if (boundKey(reply?.identity) !== pubkey)
-            throw failure(step, response, "link not confirmed");
-        },
-        {
-          challenge_id: challenge.challenge_id,
-          nonce: challenge.nonce,
-          signed_payload: JSON.stringify(event),
-        },
-      );
+      await link(pubkey);
+    },
+    async bindLegacy() {
+      try {
+        return await link();
+      } catch (error) {
+        if (
+          error instanceof LegacyUnusable ||
+          (error instanceof ApiFailure && error.code === "pubkey_already_bound")
+        )
+          return null;
+        throw error;
+      }
     },
     async unbind(old, replacement) {
       // kgoose deletes whatever is bound, so check it is still the old key.
@@ -724,6 +763,8 @@ export function seededAccount(
       Promise.reject(new Error("The development seed creates no communities.")),
     saveCommunity: () => Promise.resolve(),
     bind: () => Promise.resolve(),
+    // The seed models no old Buzz key: setup makes a new one.
+    bindLegacy: () => Promise.resolve(null),
     unbind: () =>
       seed.unlink
         ? Promise.reject(

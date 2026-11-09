@@ -244,7 +244,8 @@ export type Agent<Config = unknown> = Readonly<{
   timers: Readonly<Record<string, TimerState>>;
   sourceRuns?: Readonly<Record<string, string>>;
   attentionHistory?: AgentRecord["attentionHistory"];
-  /** Whether its watches and timers wake it. Off keeps every object. */
+  /** Whether its watches and timers wake it: true while a plugin shows
+   * Attention. Off keeps every object. */
   attentionEnabled: boolean;
   /** Its type's settings, the same in each of its communities. */
   config: Config;
@@ -258,6 +259,8 @@ export type AgentChange<Config = unknown> = Readonly<{
   /** An HTTPS image URL; `null` or empty removes the picture. */
   picture?: string | null;
   config?: Config;
+  /** @deprecated A no-op: Attention runs for every agent while a plugin
+   * shows it. Still stored, but nothing reads it. */
   attentionEnabled?: boolean;
   /** Slug to new value; `null` deletes the object. */
   attention?: Readonly<Record<string, AttentionValue | null>>;
@@ -546,9 +549,9 @@ export type AgentHandle = Readonly<{
   attention: AgentAttention;
 }>;
 /** What an agent reads and writes of its attention. Every read is current,
- * so a long run sees the owner's switch and the classifier's state change. */
+ * so a long run sees Attention turn off and the classifier's state change. */
 export type AgentAttention = Readonly<{
-  /** False when the owner turned attention off: none of its objects wakes the
+  /** False while no plugin shows Attention: none of its objects wakes the
    * agent. The handle still reads and writes them; the attention tools refuse
    * every call while it is off. */
   enabled(): boolean;
@@ -790,6 +793,8 @@ export type AgentVoiceSeat<Config = unknown> = Readonly<
     output(samples: number[]): Promise<void>;
     /** Idempotent disconnect notification, ignored after signal aborts. */
     ended(error?: Error): void;
+    /** Presentation only; never authorizes work. */
+    thinking?(active: boolean): void;
   } & Pick<Delivery<Config>, "config" | "revisions" | "synced" | "team">
 >;
 
@@ -865,15 +870,13 @@ export type AgentType<Config = unknown> = {
     AgentCreateProps<Config> & {
       harnessControl: ReactNode;
       onReadyChange?: (ready: boolean) => void;
-      /** Present while the person has just switched to this harness from
-       * another: returns them to it, as they had it, such as when they turn
-       * down setup this harness asks for on arrival. */
-      onDecline?: () => void;
     }
   >;
   /** Compact provider-owned action beside Harness. Readiness belongs to
    * CreateConfiguration; this slot only presents the provider's action. */
   CreateAction?: ComponentType<{
+    /** The agent being edited, as CreateConfiguration has it. */
+    agent?: AgentCreateProps<Config>["agent"];
     disabled: boolean;
   }>;
   /** Provider-owned account notice, pinned outside the agent's tab content.
@@ -1079,7 +1082,11 @@ export type RetypePreview = Readonly<{
 /** A proposal's picture: uploads it once the proposal is valid, giving its
  * HTTPS image URL. */
 export type ProposedPicture = () => Promise<string>;
-type AgentCreation = Readonly<{ type: string; name: string }>;
+type AgentCreation = Readonly<{
+  type: string;
+  name: string;
+  instructions?: string;
+}>;
 /** A requested agent. */
 export type AgentCreationInput = AgentCreation &
   Readonly<{ picture?: ProposedPicture }>;
@@ -1301,9 +1308,9 @@ export type Agents = {
   registerTab(tab: AgentAddedTab): void;
   /** The tabs active plugins add now. */
   addedTabs(): readonly RegisteredAgentAddedTab[];
-  /** Says the calling plugin shows Attention and its device switch. Agents'
-   * Attention runs on this device only while such a plugin is on; with none,
-   * it is off for every agent and each keeps its saved switch. */
+  /** Says the calling plugin shows Attention. Agents' Attention runs on this
+   * device only while such a plugin is on; with none, it is off for every
+   * agent. */
   controlAttention(): void;
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
@@ -2182,7 +2189,6 @@ export class AgentsService extends Service implements Agents {
         changed: () => this.update(),
       },
       scope: (agent) => this.bindingOf(agent)?.scope,
-      saved: (key) => this.records[key],
       attentionShown: () => this.attentionShown(),
       pluginsSettled: () => this.ctx.pluginStatus.settled?.() ?? true,
       record: (key) => {
@@ -2233,6 +2239,8 @@ export class AgentsService extends Service implements Agents {
           if (!kind) throw new Error("That agent type is not available");
           if (kind.remote)
             throw new Error("A hosted agent's key stays with its provider");
+          if (input.instructions && !kind.adopt)
+            throw new Error(`${kind.title} agents have no instructions to set`);
           if (this.pendingRequests() >= 16)
             throw new Error("Review the pending agent requests first");
           return {
@@ -2243,6 +2251,7 @@ export class AgentsService extends Service implements Agents {
             community: binding.origin,
             type: input.type,
             name: input.name.trim(),
+            ...(input.instructions && { instructions: input.instructions }),
             ...(picture && { picture }),
           };
         };
@@ -3158,9 +3167,10 @@ export class AgentsService extends Service implements Agents {
     const run = this.runners.handle(key, undefined, true);
     if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
-    const { handoff } = run;
+    // External apps never get the owner's access a bundled harness's run has.
+    const { handoff, ownerAccess: _, ...agentRun } = run;
     const handle: AgentHandle = {
-      ...run,
+      ...agentRun,
       ...(handoff && {
         handoff: ({ from: _, ...wake }: AgentHandoff) =>
           handoff({ ...wake, from: { external: true } }),
@@ -5984,8 +5994,7 @@ export class AgentsService extends Service implements Agents {
       timers: record.timers ?? EMPTY,
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionHistory: record.attentionHistory,
-      attentionEnabled:
-        record.attentionEnabled === true && this.attentionShown(),
+      attentionEnabled: this.attentionShown(),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
@@ -6568,8 +6577,7 @@ export class AgentsService extends Service implements Agents {
           prior.timers === (record.timers ?? EMPTY) &&
           prior.sourceRuns === record.sourceRuns &&
           prior.attentionHistory === record.attentionHistory &&
-          prior.attentionEnabled ===
-            (record.attentionEnabled === true && this.attentionShown()) &&
+          prior.attentionEnabled === this.attentionShown() &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&
           prior.configProblem === editor?.problem &&
           prior.archiveUnchecked === this.archiveUnchecked(identity.key) &&

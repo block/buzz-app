@@ -90,8 +90,8 @@ export const ChannelBody = memo(function ChannelBody({
         presented: true,
       });
   }, [cached, navigation, window.status]);
-  // While recovery retries this timeline's head read it owns the one Retry
-  // now, in its notice after the quiet delay; the empty timeline waits.
+  // While recovery retries this timeline's head read, its notice is the one
+  // report, after the quiet delay; the empty timeline waits.
   if (window.status === "error" && !window.rows.length && !headRecovers)
     return (
       <div

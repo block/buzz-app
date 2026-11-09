@@ -1,3 +1,4 @@
+import { dmVoiceAgent } from "../../features/huddle/dm-agent";
 import { createHuddleVoices } from "../../features/huddle/voice";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { createHuddleRing } from "../../features/huddle/ring";
@@ -23,7 +24,13 @@ export const inject = [
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!nativeHuddles.available) return;
-  const huddles = createHuddles(ctx.relay, nativeHuddles, openHuddleAudio);
+  const huddles = createHuddles(
+    ctx.relay,
+    nativeHuddles,
+    openHuddleAudio,
+    (connection, destination) =>
+      dmVoiceAgent(connection, destination, ctx.agents)?.pubkey,
+  );
   const stopVoices = createHuddleVoices(
     huddles,
     ctx.agents,
@@ -100,6 +107,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
     channelLauncher: (props) => (
       <HuddleLauncher
+        agents={ctx.agents}
         {...props}
         relay={ctx.relay}
         huddles={huddles}

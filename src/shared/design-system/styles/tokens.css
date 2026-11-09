@@ -1623,12 +1623,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
-  /* A reaction you made: an accent tint and a ring in the accent link ink,
-     which clears 3:1 where step 9 (Citrus, Bee) would not. */
-  --affordance-reaction-self: var(--accent-3);
-  --affordance-reaction-self-own: var(--affordance-reaction-self);
-  --border-reaction-self: var(--accent-link);
-  --border-reaction-self-own: var(--border-reaction-self);
+  /* A reaction you made swaps bubble fills: your bubble's fill on a received
+     message and the panel, and the received fill inside your own bubble. */
+  --affordance-reaction-self: var(--surface-message-own);
+  --text-reaction-self: var(--text-message-own);
+  --affordance-reaction-self-own: var(--surface-message);
+  --text-reaction-self-own: var(--text-standard);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1669,12 +1669,12 @@
   --affordance-accent: var(--affordance-subtle);
   --affordance-accent-hover: var(--affordance-subtle-hover);
   --surface-message-highlight: var(--accent-3);
-  /* A reaction you made: an accent tint and a ring in the accent link ink,
-     which clears 3:1 where step 9 (Citrus, Bee) would not. */
-  --affordance-reaction-self: var(--accent-3);
-  --affordance-reaction-self-own: var(--affordance-reaction-self);
-  --border-reaction-self: var(--accent-link);
-  --border-reaction-self-own: var(--border-reaction-self);
+  /* A reaction you made swaps bubble fills: your bubble's fill on a received
+     message and the panel, and the received fill inside your own bubble. */
+  --affordance-reaction-self: var(--surface-message-own);
+  --text-reaction-self: var(--text-message-own);
+  --affordance-reaction-self-own: var(--surface-message);
+  --text-reaction-self-own: var(--text-standard);
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
@@ -1976,6 +1976,11 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
+  /* The tinted bubble is too faint for a reaction you made, so it takes the
+     solid accent as at Buzzin’, and the panel fill inside your bubble. */
+  --affordance-reaction-self: var(--accent-9);
+  --text-reaction-self: var(--accent-ink);
+  --affordance-reaction-self-own: var(--neutral-1);
 }
 
 :root[data-color-level="touch"][data-color-mode="dark"],
@@ -1983,6 +1988,11 @@
   --surface-message-own: var(--accent-4);
   --text-message-own: var(--accent-12);
   --text-message-link-own: var(--accent-link);
+  /* As in light mode; inside your bubble a lifted neutral, since the panel is
+     darker than the bubble. */
+  --affordance-reaction-self: var(--accent-9);
+  --text-reaction-self: var(--accent-ink);
+  --affordance-reaction-self-own: var(--neutral-7);
 }
 
 :root[data-color-level="high"],
@@ -1992,9 +2002,6 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
-  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
-  --affordance-reaction-self-own: var(--accent-overlay);
-  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -2014,9 +2021,6 @@
   --affordance-message-own-hover: var(--accent-overlay-quiet);
   --affordance-message-own-highlight: var(--accent-overlay-highlight);
   --affordance-reaction-own: var(--accent-overlay-soft);
-  /* The accent ring would vanish on the accent bubble, so yours take its ink. */
-  --affordance-reaction-self-own: var(--accent-overlay);
-  --border-reaction-self-own: var(--text-message-own);
   --text-mention-own: var(--text-message-own);
   --surface-message-own: var(--accent-9);
   --text-message-own: var(--accent-ink);
@@ -2061,6 +2065,8 @@
   --text-color-mention: var(--text-mention);
   --text-color-mention-own: var(--text-mention-own);
   --text-color-mention-self: var(--text-mention-self);
+  --text-color-reaction-self: var(--text-reaction-self);
+  --text-color-reaction-self-own: var(--text-reaction-self-own);
   --text-color-navigation: var(--text-navigation);
   --text-color-navigation-unread: var(--text-navigation-unread);
   --color-affordance-link-hover: var(--affordance-link-hover);
@@ -2155,8 +2161,6 @@
     --affordance-accent-prominent-hover
   );
   --border-color-accent: var(--border-accent);
-  --border-color-reaction-self: var(--border-reaction-self);
-  --border-color-reaction-self-own: var(--border-reaction-self-own);
 
   /* Palette utilities remain for the palette viewer and staged migration. */
   /* neutral */

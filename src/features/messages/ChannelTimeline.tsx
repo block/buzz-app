@@ -45,6 +45,7 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
+import { useRecovery } from "../relay/RecoveryNotice";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -700,6 +701,11 @@ function Timeline({
     return () => observer.disconnect();
   }, []);
   useMessageSelection(scroller, rows, queries);
+  // While the connection recovers, its notice is the one report, so the
+  // history edge does not repeat the reason. Recovery does not retry older
+  // history, and paging stops on a failed read, so Retry stays either way.
+  const { recovering } = useRecovery(queries.recovery);
+  const edgeError = recovering ? undefined : window.error;
   // Keep pagination space through EOF so removing its control cannot change
   // Virtua's start margin in the same measurement cycle as a prepend.
   const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
@@ -1778,7 +1784,7 @@ function Timeline({
         className={styles.edge}
         data-history-space={reserveHistorySpace || undefined}
       >
-        {window.error && <span role="alert">{window.error}</span>}
+        {edgeError && <span role="alert">{edgeError}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
         ) : window.hasMore && queries.channels.cachedOnly ? (

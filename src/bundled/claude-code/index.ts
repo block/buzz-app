@@ -120,6 +120,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     );
   const {
     Create,
+    CreateAction,
     CreateConfiguration,
     CreateModel,
     CreateThinking,
@@ -145,6 +146,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
+    CreateAction,
     CreateConfiguration,
     CreateModel,
     createModelReportsReadiness: true,

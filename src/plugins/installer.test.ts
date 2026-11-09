@@ -45,6 +45,27 @@ it("accepts HTTPS, SSH and scp-style repositories and normalizes the commit", ()
   });
 });
 
+it("accepts a plugin artifact pinned by id and SHA-256", () => {
+  const source = {
+    id: "example.plugin",
+    url: "https://artifacts.example.com/plugins/a.json",
+    sha256: "AB".repeat(32),
+  };
+  expect(parsePluginInstallSource(source)).toEqual({
+    ...source,
+    sha256: "ab".repeat(32),
+  });
+  for (const invalid of [
+    { ...source, url: "http://artifacts.example.com/a.json" },
+    { ...source, url: "https://artifacts.example.com/a.json?token=x" },
+    { ...source, sha256: "ab".repeat(20) },
+    { ...source, id: "Example" },
+    { ...source, reference: "main" },
+    { url: source.url, sha256: source.sha256 },
+  ])
+    expect(parsePluginInstallSource(invalid)).toBeNull();
+});
+
 it.each([
   ["http transport", { repository: "http://example.com/team/plugins.git" }],
   ["file transport", { repository: "file:///tmp/plugins" }],
@@ -559,7 +580,7 @@ it("is unavailable without native imports, before the catalog is ready, or while
     installer.requestInstall({ ...base, reference: "other" }),
   ).resolves.toBe("unavailable");
   expect(busy.open).toHaveBeenCalledOnce();
-  expect(busy.requests.snapshot()?.source.reference).toBe("main");
+  expect(busy.requests.snapshot()?.source).toMatchObject({ reference: "main" });
   settleRequest(busy.requests, "cancelled");
   await expect(first).resolves.toBe("cancelled");
 });
@@ -574,4 +595,20 @@ it("reports a confirmed self-update as updated even though it replaces the reque
   expect(requests.snapshot()?.id).toBe(id);
   requests.settle(id, "updated");
   await expect(outcome).resolves.toBe("updated");
+});
+
+it("advertises URL sources and admits a URL request for review", async () => {
+  const { as, requests, open } = setup();
+  const installer = await as("example.market");
+  expect(installer.sources).toEqual(["git", "url"]);
+  const source = {
+    id: "example.artifact",
+    url: "https://cdn.example.com/a.json",
+    sha256: "e".repeat(64),
+  };
+  const outcome = installer.requestInstall(source);
+  expect(requests.snapshot()?.source).toEqual(source);
+  expect(open).toHaveBeenCalledOnce();
+  settleRequest(requests, "cancelled");
+  await expect(outcome).resolves.toBe("cancelled");
 });

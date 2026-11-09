@@ -19,7 +19,7 @@ pub mod managed;
 mod migrate_agent_flag;
 
 pub type Result<T> = std::result::Result<T, String>;
-const LIMIT: u64 = 8 * 1024 * 1024;
+pub const LIMIT: u64 = 8 * 1024 * 1024;
 const MAX_README_BYTES: usize = 256 * 1024;
 const MAX_ICON_BYTES: usize = 1024 * 1024;
 const MAX_ICON_DIMENSION: u32 = 4096;
@@ -615,6 +615,7 @@ impl ReloadSource {
 pub enum InstallSource {
     Folder(ReloadSource),
     Git(GitSource),
+    Url(UrlSource),
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -624,6 +625,13 @@ pub struct GitSource {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
+}
+/// A single plugin artifact downloaded over HTTPS and accepted only if its SHA-256 matches.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UrlSource {
+    pub url: String,
+    pub sha256: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1444,6 +1452,14 @@ fn prepare_artifact(directory: &Path) -> Result<Release> {
 }
 pub fn release_manifest(directory: &Path) -> Result<Manifest> {
     prepare_artifact(directory)?.validate()
+}
+/// The single-file artifact a URL source serves, and its SHA-256: the exact bytes Buzz
+/// installs. A release signature is not part of it.
+pub fn pack_release(directory: &Path) -> Result<(Manifest, Vec<u8>, String)> {
+    let release = prepare_artifact(directory)?;
+    let manifest = release.validate()?;
+    let digest = hash(&release.bytes);
+    Ok((manifest, release.bytes, digest))
 }
 fn prepare_reload_artifact(source: &InstallSource) -> Result<Release> {
     let InstallSource::Folder(source) = source else {

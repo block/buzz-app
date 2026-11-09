@@ -35,6 +35,8 @@ export type RemoteAgentModel = Readonly<{
   id: string;
   displayName: string;
   supportedReasoningEfforts: readonly string[];
+  /** Served on low-latency inference hardware, such as Cerebras. */
+  fast?: boolean;
 }>;
 
 export type RemoteAgentModelCatalog = Readonly<{
@@ -420,6 +422,7 @@ export function createAgentClient(
           id: model.id,
           displayName: model.display_name,
           supportedReasoningEfforts: model.supported_reasoning_efforts,
+          fast: model.fast === true,
         })),
         // Advisory: an unknown or unsupported pair is dropped, never an error.
         ...(typeof reasoningEffort === "string" &&

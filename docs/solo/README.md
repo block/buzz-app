@@ -51,6 +51,11 @@ behavior on the label, so a rename touches copy only.
   account/community-scoped `groups:me` preference record. Messages groups remain
   independent. Records from before the label also list a `channels` placement
   array; it is ignored and dropped on the next workspace write.
+- Deleting a workspace tombstones its `me-section-<sha256(id)>` defaults record,
+  emptied and renamed, best effort after the groups write. If that write fails,
+  the record stays live but unreachable. A delete retried after a groups write
+  that landed unconfirmed finds the workspace gone and still writes the
+  tombstone. Saving another workspace's defaults meanwhile is unaffected.
 - **Label only:** a private channel without `buzz.solo` is an ordinary Team
   channel, whatever its `about` text. No code reads the retired
   `Buzz session (buzz.sessions/v1)` marker, and there is no migration,
@@ -279,6 +284,13 @@ workspace filing remain unchanged. A no-op closes without writing. If details fa
 after Canvas confirms, the dialog keeps the choices
 and retry skips that confirmed Canvas revision. Partial confirmation is explained
 as an error, not presented as two independent normal save states.
+
+**Cancel** in new and saved **Chat settings** and **Workspace settings** discards
+without asking. Close, Escape and, except in a new chat, backdrop clicks close untouched
+forms at once; changed ones first show **Discard changes?**: **Keep editing** (focused)
+or Escape returns to the intact form, and **Discard changes** closes it. A failed save's
+local draft or a name/lifetime save awaiting **Check save status** closes without
+asking: reopening restores it. A typed, unadded folder path is not part of the draft.
 
 Conflicts require explicit Reload while retaining the selected lifetime; an
 unconfirmed save survives modal remount and relabels the single primary action

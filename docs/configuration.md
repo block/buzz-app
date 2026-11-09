@@ -9,7 +9,7 @@ Build defaults are readable binary data, **never secret storage**.
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins allowed to authorize external MCP access. Empty disables access. See below. |
-| `BUZZ_OWNER_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins where an agent's app-hosted runs can read its owner's channels and members with the owner's access. Empty disables them. See below. |
+| `BUZZ_OWNER_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins where an agent's app-hosted runs can read its owner's channels, members, messages and Canvases with the owner's access. Empty disables them. See below. |
 | `BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` | Frontend build: space-separated secure community origins where workflow messages cannot start or steer local agents. Empty keeps checked workflow delegation everywhere. See below. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
@@ -145,6 +145,21 @@ hosted communities:
   "apiBasePath": "/api/goose/"
 }
 ```
+
+With the built-in server, a build also trusts a server for each Builderlab
+customer, named by the community's host: `buzz.{name}.builderlab.xyz` signs in
+at `https://{name}.builderlab.xyz/api/goose`, on demand, with no organization
+name. `{name}` is one DNS label. The server is added the first time one of its
+communities connects, with its own session saved under its own fingerprint, and
+listed (hosts only) so every later launch adds it again, even once none of its
+communities remain: its session stays in Settings, and deleting an agent still
+retires the agent's grant there. A full Buzz sign-out deletes the list. Its id
+is `bb-{name}`, as Builderlab names its deployments, so its descriptor matches
+one a build lists for the same deployment and a dev build finds the session
+that build saved. For names of 61 to 63 bytes, which would exceed the 64-byte
+id limit, it is the name's first 44 bytes and 16 hex digits of its SHA-256. A
+listed server that covers the host, or has the same id, wins: a distributor's build keeps at-launch sign-in and its organization name
+by listing its server. Builds without the built-in server have none of these.
 
 `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` adds servers to it. Unset, the build
 has the built-in server only. Empty, it has no sign-in servers. Otherwise it is

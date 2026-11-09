@@ -77,13 +77,12 @@ export function SoloInventory({
   /** Plugin icons that can stand in for a chat's own. */
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
+  /** Places the conversations in a host that titles them; creation then
+   * belongs to the host's own New menu, so only the standalone header has it. */
   renderContents?: (
     content: ReactNode,
-    actions: ReactNode,
     header: ReactNode,
-    trigger: RefObject<HTMLButtonElement | null>,
     pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>,
-    headerActions: ReactNode,
   ) => ReactNode;
 }) {
   const list = useChannelList(session.channels);
@@ -188,6 +187,9 @@ export function SoloInventory({
         onSelect={() => void open(item.id)}
         onRename={rename}
         onOpenThread={(thread) => openMessage(thread.channelId, thread.rootId)}
+        onOpenMention={(mention) =>
+          openMessage(mention.channelId, mention.messageId)
+        }
         onOpenWorkingAgent={(id, _agent, messageId) => {
           if (messageId) openMessage(id, messageId);
           else void open(id);
@@ -370,14 +372,7 @@ export function SoloInventory({
       aria-label={`${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`}
     >
       {renderContents ? (
-        renderContents(
-          content,
-          creationItems,
-          header,
-          trigger,
-          pendingClick,
-          actions,
-        )
+        renderContents(content, header, pendingClick)
       ) : (
         <>
           {header}
@@ -401,6 +396,7 @@ function SoloConversationRow({
   onSelect,
   onRename,
   onOpenThread,
+  onOpenMention,
   onOpenWorkingAgent,
   onOpenAgentActivity,
 }: {
@@ -417,7 +413,10 @@ function SoloConversationRow({
   onRename: (() => boolean) | undefined;
 } & Pick<
   ComponentProps<typeof ChannelActivityPopover>,
-  "onOpenThread" | "onOpenWorkingAgent" | "onOpenAgentActivity"
+  | "onOpenThread"
+  | "onOpenMention"
+  | "onOpenWorkingAgent"
+  | "onOpenAgentActivity"
 >) {
   const activation = useSoloRowActivation(
     navigation,
@@ -441,6 +440,7 @@ function SoloConversationRow({
       agents={agents}
       agentProfiles={agentProfiles}
       onOpenThread={onOpenThread}
+      onOpenMention={onOpenMention}
       {...(onOpenWorkingAgent ? { onOpenWorkingAgent } : {})}
       {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
       trigger={

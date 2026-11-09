@@ -3,7 +3,11 @@
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
 import { useId, useState, type ReactNode } from "react";
-import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
+import {
+  MemoryPanel,
+  type AgentMemories,
+  type MemoryLinks,
+} from "./MemoryPanel";
 import type { CommunityReader } from "../communities/service";
 import type {
   Agent,
@@ -41,6 +45,7 @@ export function agentSections({
   canOpenLink,
   settingsHost,
   memories,
+  memoryLinks,
   communities,
   settingsSection,
   settingsContent,
@@ -63,6 +68,7 @@ export function agentSections({
   settingsContent?: ReactNode;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
+  memoryLinks?: MemoryLinks | undefined;
   communities?: CommunityReader | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
@@ -178,6 +184,7 @@ export function agentSections({
           agents={agents}
           agent={agent}
           memories={memories}
+          links={memoryLinks}
           communities={communities}
         />
       ),

@@ -1716,6 +1716,27 @@ it.each([{ fields: { name: 7 } }, { fields: { name: "x".repeat(121) } }])(
   },
 );
 
+it("opens Chat settings over a malformed persisted name and saves a repaired one", async () => {
+  const h = setup(),
+    user = userEvent.setup();
+  writeView("malformed-name", "solo:settings", { name: 7 });
+  render(
+    <SoloDraft
+      session={h.session}
+      scope="malformed-name"
+      onStarted={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  await screen.findByRole("textbox", { name: /^Instructions/ });
+  expect(screen.getByRole("textbox", { name: /^Chat name/ })).toHaveValue("");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(readView("malformed-name", "solo:settings", null)).toMatchObject({
+    name: "",
+  });
+});
+
 it.each([false, true])(
   "naming crosses the real composer → creation/outbox boundary with frozen intent (explicit=%s)",
   async (explicit) => {
@@ -3288,6 +3309,7 @@ function soloDraftWithInventory(
   const input = screen.getByRole("textbox");
   return {
     input,
+    agents: () => session.agentChoices.snapshot(),
     chip: () =>
       within(input).queryByRole("img", { name: "Resolving mention Aaron" }),
     async send() {
@@ -3345,9 +3367,14 @@ it("tags an agent whose name was typed with Space while a retry after a failed i
     return { definitions: [], identities: [aaron] };
   });
   try {
+    await waitFor(() => expect(draft.agents().status).toBe("error"));
+    // No standing composer notice: recovery sits beside the mention menu.
+    expect(screen.queryByRole("button", { name: "Retry agents" })).toBeNull();
+    await userEvent.type(draft.input, "@");
     await userEvent.click(
-      await screen.findByRole("button", { name: "Retry agents" }),
+      await screen.findByRole("option", { name: "Retry suggestions" }),
     );
+    await userEvent.clear(draft.input);
     // The failed read settled the roster empty; the retry's Space must wait
     // for the retry, not consume that settled roster.
     await userEvent.type(draft.input, "@Aaron hi");

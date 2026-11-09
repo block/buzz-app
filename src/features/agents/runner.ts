@@ -465,8 +465,6 @@ export type RunnerHost = {
   };
   /** The partition its community's activity is kept under, while live. */
   scope(agent: Agent): string | undefined;
-  /** Its saved record, without defaults. */
-  saved(key: AgentKey): AgentRecord | undefined;
   /** Whether a plugin that shows Attention is on; Attention runs only then. */
   attentionShown(): boolean;
   /** Whether plugins have finished starting. */
@@ -711,9 +709,8 @@ export class AgentRunners {
   }
 
   /** Keeps one runner for each saved agent: a deleted one's is retired, and a
-   * replaced type aborts its run. Turning attention off voids the watch work
-   * it queued or held, even if it is turned on again before that work would
-   * run. */
+   * replaced type aborts its run. Hiding Attention voids the watch work it
+   * queued, even if it is shown again before that work would run. */
   reconcile(
     identities: readonly RunnerMember[],
     types: ReadonlyMap<string, RegisteredAgentType>,
@@ -726,13 +723,9 @@ export class AgentRunners {
     for (const identity of identities) {
       const type = types.get(identity.type);
       const runner = this.runners.get(identity.key);
-      const off = this.host.saved(identity.key)?.attentionEnabled !== true;
-      if (runner && (off || !this.host.attentionShown())) {
+      if (runner && !this.host.attentionShown()) {
         runner.epoch++;
         this.dropWatchWork(runner);
-        // A startup hold keeps its events until Attention is shown, but not
-        // past the switch being turned off.
-        if (off) runner.held.clear();
       }
       if (!runner) this.runners.set(identity.key, this.runner(identity, type));
       else if (
@@ -2231,10 +2224,7 @@ export class AgentRunners {
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
     // An agent whose Attention waits for startup holds what it would hear.
-    const waiting =
-      !agent.attentionEnabled &&
-      this.host.saved(runner.key)?.attentionEnabled === true &&
-      this.starting();
+    const waiting = !agent.attentionEnabled && this.starting();
     if (!agent.attentionEnabled && !waiting) return { triggers: [] };
     const matches = this.watches(runner, agent).filter(
       ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
@@ -3214,8 +3204,7 @@ export class AgentRunners {
     const record = () => this.host.record(key);
     return guarded(
       {
-        enabled: () =>
-          record().attentionEnabled === true && this.host.attentionShown(),
+        enabled: () => this.host.attentionShown(),
         classifier: () => this.host.classifier(),
         show: async (slug: string, interest?: string) => {
           const result = await show(record(), slug, seconds(), interest);

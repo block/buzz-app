@@ -123,21 +123,24 @@ export function AgentCreateDialog({
       return undefined;
     }
   };
-  /** The agent's settings in `item`, with the requested instructions. */
-  const seed = (item: RegisteredAgentType | undefined) => {
+  /** The agent's settings in `item`, or a new agent's defaults, with the
+   * requested instructions. */
+  const seed = (item: RegisteredAgentType | undefined, initial = true) => {
     if (!update) {
       const config = startingConfig(item);
-      return draft?.instructions && item?.adopt
-        ? item.adopt({ instructions: draft.instructions }, config)
+      const instructions =
+        (initial ? request?.instructions : undefined) ?? draft?.instructions;
+      return instructions && item?.adopt
+        ? item.adopt({ instructions }, config)
         : config;
     }
-    const { agent, request } = update;
+    const { agent, request: proposed } = update;
     const config =
       item?.key === agent.type
         ? agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    return request.instructions !== undefined && item?.adopt
-      ? item.adopt({ instructions: request.instructions }, config)
+    return proposed.instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions: proposed.instructions }, config)
       : config;
   };
   const [config, setConfig] = useState(() => seed(type));
@@ -195,27 +198,16 @@ export function AgentCreateDialog({
     setDirty(true);
     setError("");
   };
-  // The harness and config the person switched from, while a harness's
-  // setup may send them back.
-  const [left, setLeft] = useState<{ key: string; config: unknown }>();
-  const decline = () => {
-    const item = left && types.find((candidate) => candidate.key === left.key);
-    setLeft(undefined);
-    if (!left || !item) return;
-    restoreHarnessFocus.current = item.key;
-    setConfigurationReady(false);
-    chooseModel(item, left.config);
-  };
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
-    setLeft(type ? { key: type.key, config } : undefined);
-    const next = seed(item);
-    // Typed instructions follow a new agent to its new harness. A harness
-    // that carries none was emptied, so a card's text must not come back.
+    // A creation request seeds only the first harness, not later choices.
+    const next = seed(item, false);
+    // Carry the owner's edits, including an explicit clear, across harnesses.
     const carried =
       update || !type?.carry ? undefined : type.carry(config).instructions;
-    const instructions = carried || (draft && type?.carry ? "" : undefined);
+    const instructions =
+      carried || ((draft || request) && type?.carry ? "" : undefined);
     restoreHarnessFocus.current = item.key;
     setConfigurationReady(false);
     chooseModel(
@@ -282,7 +274,11 @@ export function AgentCreateDialog({
             onValueChange={choose}
           />
           {CreateAction && (
-            <CreateAction key={type.key} disabled={pending || avatarBusy} />
+            <CreateAction
+              key={type.key}
+              {...(edited ? { agent: edited } : {})}
+              disabled={pending || avatarBusy}
+            />
           )}
         </div>
       }
@@ -445,7 +441,6 @@ export function AgentCreateDialog({
                 disabled={pending}
                 harnessControl={harnessControl}
                 onReadyChange={setConfigurationReady}
-                {...(left && { onDecline: decline })}
                 onChange={(next, options) => chooseModel(type, next, options)}
               />
             ) : (

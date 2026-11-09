@@ -4,6 +4,8 @@ import type { Membership } from "../communities/service";
 import { communityDestination } from "../communities/destination";
 import { coveredCommunities, serverName } from "./community-servers";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import type { CommunityRefusal } from "../relay/http-admission";
 
 /** Native's rejection when the browser step outlasts its wait (`oauth_callback::TIMED_OUT`). */
 export const SIGN_IN_TIMED_OUT = "Sign-in timed out. Try again.";
@@ -76,7 +78,6 @@ function Action({
     identity.snapshot,
     identity.snapshot,
   );
-  const [failure, setFailure] = useState("");
   // A switch outlives the signed-in state that offered it: sign-out ends
   // that state, so its progress and recovery are kept here.
   const [switching, setSwitching] = useState<Switching | null>(null);
@@ -133,10 +134,32 @@ function Action({
   )
     return null;
   if (state.status === "signed-in") return null;
+  return (
+    <>
+      <p className="text-body-sm">
+        This community requires {serverName(state.authority)} sign-in.
+      </p>
+      <SignInButton identity={identity} state={state} retry={retry} />
+    </>
+  );
+}
+
+/** Sign in (or cancel one in progress), then retry what was refused. Its
+ * own failure, or the session's, shows beneath it. */
+function SignInButton({
+  identity,
+  state,
+  retry,
+}: {
+  identity: FederatedIdentity;
+  state: SessionSnapshot;
+  retry: () => void;
+}) {
+  const [failure, setFailure] = useState("");
+  if (!state.authority) return null;
   const server = serverName(state.authority);
   return (
     <>
-      <p className="text-body-sm">This community requires {server} sign-in.</p>
       <Button
         onClick={() => {
           setFailure("");
@@ -335,5 +358,114 @@ function SwitchProgress({
         </Button>
       )}
     </>
+  );
+}
+
+const noSubscription = () => () => {};
+const NO_ACCESS = "You don’t have access to this community";
+const SIGN_IN = "Sign in to open this community";
+/** What a page that the refusal left empty says; its notice says what fixes it. */
+export const communityRefusalTitle = (refusal?: CommunityRefusal) =>
+  refusal === "sign-in" ? SIGN_IN : NO_ACCESS;
+
+/** The one report of a community's refusal, in the toast stack on every page.
+ * The relay's reason and this device's sign-in for the community decide what
+ * it offers; Check again only where someone else (an admin) can fix it. */
+export function CommunityRefusalNotice({
+  refusal,
+  identity,
+  retry,
+  relay,
+  memberships = [],
+}: {
+  refusal: CommunityRefusal;
+  /** The sign-in session of the refusing community's own server. */
+  identity?: FederatedIdentity | undefined;
+  retry: () => void;
+  relay?: string | undefined;
+  memberships?: readonly Membership[] | undefined;
+}) {
+  const state = useSyncExternalStore(
+    identity?.subscribe ?? noSubscription,
+    () => identity?.snapshot(),
+    () => identity?.snapshot(),
+  );
+  // As in `Action`: sign-out ends the state that offered the switch.
+  const [switching, setSwitching] = useState<Switching | null>(null);
+  const authority = state?.authority;
+  const checkAgain = <Button onClick={retry}>Check again</Button>;
+  if (!identity || !state || !authority)
+    return refusal === "sign-in" ? (
+      <ToastNotice
+        title="This community needs a sign-in Buzz doesn’t support yet"
+        description="Ask the community’s admin which Buzz version or server to use."
+      />
+    ) : (
+      <ToastNotice
+        title={NO_ACCESS}
+        description="Ask the community’s admin to add you."
+      >
+        {checkAgain}
+      </ToastNotice>
+    );
+  const server = serverName(authority);
+  const signedIn = state.status === "signed-in";
+  // A switch signs out first, so its progress and recovery come before the
+  // signed-out answer.
+  if (refusal === "access" && !signedIn && !switching)
+    return (
+      <ToastNotice
+        title={NO_ACCESS}
+        description="Ask the community’s admin to add you."
+      >
+        {checkAgain}
+      </ToastNotice>
+    );
+  // Signing in again where Buzz still holds the refused session, or as
+  // another account, both sign out of this server first.
+  const others = othersAffected(authority, relay, memberships);
+  const action = switching ? (
+    <SwitchProgress
+      identity={identity}
+      state={state}
+      switching={switching}
+      onChange={setSwitching}
+      retry={retry}
+    />
+  ) : refusal === "sign-in" && !signedIn ? (
+    <SignInButton identity={identity} state={state} retry={retry} />
+  ) : (
+    <>
+      {others.length > 0 && (
+        <p className="text-body-sm">
+          {`This also signs you out of: ${others.join(", ")}.`}
+        </p>
+      )}
+      <Button
+        onClick={() =>
+          setSwitching(
+            runSwitch(identity, authority, "sign-out", setSwitching, retry),
+          )
+        }
+      >
+        {refusal === "sign-in" ? "Sign in again" : "Switch account"}
+      </Button>
+      {refusal === "access" && checkAgain}
+    </>
+  );
+  return refusal === "sign-in" ? (
+    <ToastNotice
+      title={SIGN_IN}
+      description={`This community needs your ${server} sign-in.`}
+    >
+      {action}
+    </ToastNotice>
+  ) : (
+    <ToastNotice
+      title={NO_ACCESS}
+      description={`This community didn’t accept ${state.email ?? `your ${server} account`}.`}
+    >
+      {action}
+    </ToastNotice>
   );
 }

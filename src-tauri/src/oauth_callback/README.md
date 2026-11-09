@@ -10,12 +10,17 @@ each performing its own code exchange and verification:
 - Native FI uses NIP-FA `return_to` and an S256 handoff challenge, without
   inventing an echoed OAuth state. Handoff secrets stay in its native session
   owner. It uses the shared callback template and account card with Buzz
-  branding and browser light/dark styling. Success means the callback was
-  received, not that native account verification has completed: the page
-  instructs the user to return to the app to finish verification. Errors retain
-  their generic recovery copy. Federated pages have no script, auto-close hint,
-  artwork, or focus return; their CSP permits only the embedded stylesheet by
-  hash and self-contained data assets.
+  branding and the existing light web sign-in shell, including cube artwork.
+  Success means the callback was received, not that native account verification
+  has completed: the page instructs the user to return to the app to finish
+  verification. Errors retain their generic recovery copy. Federated pages share
+  the three-second close script and manual-close hint.
+  After native verification and session installation,
+  their attempt-scoped macOS return can focus the visible Buzz window only
+  while the captured browser is foreground. Cancellation, replacement, expiry
+  and failed verification retire that permission. The signed-in snapshot
+  publishes before the return delay. The CSP permits exact embedded style and
+  script hashes and self-contained data assets.
 
 Each caller passes an owner key: native FI uses its server's fingerprint and
 restore a fixed key. An owner's pending attempt cannot be replaced by that owner.
@@ -48,7 +53,11 @@ Each owner has one slot. Attempts from different owners may be pending at once,
 each on its own port and path, and end only through their own wait, cancel,
 timeout, launch failure, or a main-document load. An owner serializes its own
 begin/wait/cancel sequence: after its generic listener finishes, its next attempt
-can replace the unconsumed result. A native FI result stays until wait or cancel.
+can replace the unconsumed result. A native FI result stays until wait or cancel. A captured return permission
+survives a successful wait until verified completion or cancellation; each
+owner keeps its own permission, so concurrent servers cannot replace it.
+Once the handoff is consumed, another sign-in for that owner can supersede its
+pending focus return immediately. The previous attempt's cleanup cannot end the new one.
 
 ## State protection
 
@@ -119,9 +128,10 @@ browser.
   dependency on the harness-picker feature. The cropped `cubes.webp` is embedded
   in the response rather than fetched from the short-lived listener. The same
   branded shell serves key-backup restore. Federated identity shares the template,
-  embedded font, and account card, using `public/buzz-mark.svg` and a visible Buzz
-  label inside the card. Its shell uses Buzz's dot texture and browser light/dark
-  colors. See `NOTICE.md` for artwork provenance.
+  embedded font, artwork, and account card, using `public/buzz-mark.svg` and a
+  visible Buzz label above the card. Both callbacks retain the web sign-in
+  shell's light colors regardless of browser color scheme. See `NOTICE.md` for
+  artwork provenance.
 
 ## Standards scope
 

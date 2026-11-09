@@ -335,17 +335,16 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
-/* Your reactions keep their tint and ring after the pointer leaves. The ring is
-   an inset outline: an inset box-shadow cost hover frames on macOS. */
+/* Your reactions take the other bubble's fill: yours on a received message,
+   the received one inside your bubble. */
 .reactionItem[data-mine] {
   background: var(--reaction-self-surface, var(--affordance-reaction-self));
-  outline: 1px solid var(--reaction-self-border, var(--border-reaction-self));
-  outline-offset: -1px;
 }
 /* Forced colors replace the tint, so a system-color ring keeps it marked. */
 @media (forced-colors: active) {
   .reactionItem[data-mine] {
-    outline-color: Highlight;
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
   }
 }
 .reactionGlyph {
@@ -365,6 +364,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionItem [data-reaction] {
   color: var(--reaction-ink, var(--text-standard));
+}
+.reactionItem[data-mine] [data-reaction] {
+  color: var(--reaction-self-ink, var(--text-reaction-self));
 }
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
@@ -3213,14 +3215,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   font-weight: var(--type-weight-medium);
   padding-inline: var(--space-1h);
 }
-/* Align the leading sigil with prose; its capsule paints into the gutter.
-   The renderer marks actual paragraph starts, not merely first elements. */
-.messageBubble
-  > .text
-  > p[data-leading-mention]
-  > [data-mention-kind]:first-child {
-  margin-inline-start: calc(-1 * var(--space-1h));
-}
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
   background: var(--surface-panel);
@@ -3280,7 +3274,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
   --reaction-self-surface: var(--affordance-reaction-self-own);
-  --reaction-self-border: var(--border-reaction-self-own);
+  --reaction-self-ink: var(--text-reaction-self-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
   --message-icon-subtle: var(--icon-subtle-own);
   --message-metadata: var(--text-metadata-own);
@@ -3436,13 +3430,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-inline-start: var(--space-half);
 }
 :where(html[data-message-density="compact"])
-  .messageBubble
-  > .text
-  > p[data-leading-mention]
-  > [data-mention-kind]:first-child {
-  margin-inline-start: calc(-1 * var(--space-half));
-}
-:where(html[data-message-density="compact"])
   .message
   .messageBubble
   > .reactions {
@@ -3581,12 +3568,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 :where(html[data-message-density="compact"]) .audienceRow {
   padding-block: calc(var(--space-1) + var(--space-half));
-}
-.failureNotice {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
 }
 .audienceRow[data-layout="timeline"],
 .feed .audienceRow[data-layout="continuation"] {
@@ -3935,7 +3916,7 @@ html[data-keyboard-navigation]
   --reaction-surface: initial;
   --reaction-ink: initial;
   --reaction-self-surface: initial;
-  --reaction-self-border: initial;
+  --reaction-self-ink: initial;
   /* An edited marker there sits on the panel too. */
   --message-metadata: initial;
 }

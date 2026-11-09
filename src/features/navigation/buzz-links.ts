@@ -5,8 +5,9 @@ import {
 } from "../repos/routes";
 import {
   parseGitPluginSource,
+  parseUrlPluginSource,
   parseOpenTarget,
-  type GitPluginSource,
+  type PluginLinkSource,
   type NavigationScope,
 } from "./targets";
 
@@ -15,7 +16,7 @@ import {
 export const AGENT_CARD_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 type BuzzLink =
-  | { format: "plugin-install"; source: GitPluginSource }
+  | { format: "plugin-install"; source: PluginLinkSource }
   | { format: "settings"; section?: string; provider?: string }
   | { format: "agent-card"; card: string }
   | { format: "removed" }
@@ -145,11 +146,28 @@ export function parseBuzzLink(href: string): BuzzLink | null {
         (url.pathname !== "" &&
           (url.pathname !== "/" ||
             !/^buzz:\/\/plugin-install\/\?/i.test(href))) ||
-        ["repository", "ref", "path", "commit"].some(
+        ["repository", "ref", "path", "commit", "url", "sha256", "id"].some(
           (key) => url.searchParams.getAll(key).length > 1,
         )
       )
         return null;
+      const artifact = url.searchParams.has("url");
+      if (
+        (artifact
+          ? ["repository", "ref", "path", "commit"]
+          : ["sha256", "id"]
+        ).some((key) => url.searchParams.has(key))
+      )
+        return null;
+      if (artifact)
+        return {
+          format: "plugin-install",
+          source: parseUrlPluginSource({
+            id: url.searchParams.get("id") ?? "",
+            url: url.searchParams.get("url") ?? "",
+            sha256: url.searchParams.get("sha256") ?? "",
+          }),
+        };
       return {
         format: "plugin-install",
         source: parseGitPluginSource({

@@ -806,8 +806,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "NavigationSection",
     purpose: "A named group of related rows in a dense workspace navigator.",
     behavior:
-      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm.",
-    variants: ["default", "headingless", "inside SidebarNavigation"],
+      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm. NavigationSectionHeading is its one heading row: the label fills, actions hug, and neither overlays nor reserves space for the other.",
+    variants: [
+      "default",
+      "headingless",
+      "inside SidebarNavigation",
+      "disclosure heading",
+      "revealed actions",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

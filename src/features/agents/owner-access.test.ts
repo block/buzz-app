@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
+import { appClient } from "../../buzz-mcp/app-client";
 import { callSessionTool } from "../../buzz-mcp/session-tools";
 import type { ProtectionAction } from "../agent-protection/service";
 import {
@@ -7,7 +8,8 @@ import {
   lifecycleSettings,
 } from "../relay/channel-lifecycle-protocol";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
-import type { RelayEvent } from "../relay/events";
+import type { ReadFilter, RelayEvent } from "../relay/events";
+import type { AgentHandle } from "./service";
 import {
   createOwnerAccess,
   type OwnerBinding,
@@ -24,6 +26,7 @@ const community = "https://relay.example.test";
 const joined = "11111111-1111-4111-8111-111111111111";
 const archived = "22222222-2222-4222-8222-222222222222";
 const system = "44444444-4444-4444-8444-444444444444";
+const unlisted = "66666666-6666-4666-8666-666666666666";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -68,12 +71,45 @@ function fakeSession(
   list: Partial<ChannelList> & { channels: ChannelSummary[] },
   events: () => readonly RelayEvent[] = () => [],
   lifecycle?: (id: string) => ChannelLifecycleSettings,
+  content: readonly RelayEvent[] = [],
 ) {
   const touched = new Set<PropertyKey>();
   const readRemote = vi.fn(
-    async (_filters: unknown, options?: { signal?: AbortSignal }) => {
+    async (
+      filters: readonly ReadFilter[],
+      options?: { signal?: AbortSignal },
+    ): Promise<readonly RelayEvent[]> => {
       options?.signal?.throwIfAborted();
-      return events();
+      const wanted = filters.flatMap((filter) => filter["#d"] ?? []);
+      return events().filter(
+        (event) =>
+          !wanted.length ||
+          event.tags.some(
+            ([key, value]) => key === "d" && wanted.includes(value ?? ""),
+          ),
+      );
+    },
+  );
+  // The relay's own answer, newest first per filter, as `snapshotRead` gives.
+  const snapshotRead = vi.fn(
+    async (
+      filters: readonly ReadFilter[],
+      options: { signal?: AbortSignal | undefined },
+    ) => {
+      options.signal?.throwIfAborted();
+      // As the relay reader does.
+      if (
+        filters.some(
+          ({ limit }) => limit === undefined || limit < 1 || limit > 500,
+        )
+      )
+        throw new Error("Relay read limit must be between 1 and 500");
+      return filters.flatMap((filter) =>
+        content
+          .filter((event) => matches(filter, event))
+          .sort((a, b) => b.created_at - a.created_at)
+          .slice(0, filter.limit),
+      );
     },
   );
   const ensureList = vi.fn();
@@ -108,6 +144,7 @@ function fakeSession(
     },
     // Reads only: it has no `run`.
     channelLifecycle: { load },
+    snapshotRead,
   };
   const session = new Proxy(target, {
     get(object, key, receiver) {
@@ -116,8 +153,59 @@ function fakeSession(
       return Reflect.get(object, key, receiver);
     },
   }) as unknown as OwnerSession;
-  return { session, readRemote, ensureList, ensure, load, touched };
+  return {
+    session,
+    readRemote,
+    snapshotRead,
+    ensureList,
+    ensure,
+    load,
+    touched,
+  };
 }
+
+function matches(filter: ReadFilter, event: RelayEvent) {
+  const tagged = (name: string) => {
+    const wanted = filter[`#${name}`];
+    return (
+      !wanted ||
+      event.tags.some(
+        ([key, value]) => key === name && wanted.includes(value ?? ""),
+      )
+    );
+  };
+  return (
+    (!filter.ids || filter.ids.includes(event.id)) &&
+    (!filter.kinds || filter.kinds.includes(event.kind)) &&
+    (!filter.authors || filter.authors.includes(event.pubkey)) &&
+    (filter.since === undefined || event.created_at >= filter.since) &&
+    (filter.until === undefined || event.created_at <= filter.until) &&
+    (filter.before_id === undefined || event.id !== filter.before_id) &&
+    (filter.search === undefined || event.content.includes(filter.search)) &&
+    tagged("h") &&
+    tagged("e")
+  );
+}
+
+/** A message in channel `h`; `key` names its ID. */
+const post = (
+  key: string,
+  h: string,
+  created_at: number,
+  content: string,
+  tags: string[][] = [],
+  patch: Partial<RelayEvent> = {},
+) =>
+  ({
+    id: key.repeat(64).slice(0, 64),
+    pubkey: person,
+    kind: 9,
+    created_at,
+    content,
+    tags: [["h", h], ...tags],
+    sig: "",
+    ...patch,
+  }) as unknown as RelayEvent;
 
 const channels: ChannelSummary[] = [
   {
@@ -470,6 +558,10 @@ describe("owner access", () => {
     await access.channels();
     await access.channel(joined);
     await access.members(joined, { offset: 0, limit: 10 });
+    await access.messages({ channel: joined, limit: 5 });
+    await access.messages({ search: "plan", limit: 5 });
+    await access.canvas(joined);
+    await access.canvasHistory(joined, {});
     expect(
       [...fake.touched].every((key) =>
         [
@@ -479,9 +571,17 @@ describe("owner access", () => {
           "names",
           "profiles",
           "channelLifecycle",
+          "snapshotRead",
         ].includes(String(key)),
       ),
     ).toBe(true);
+    // Content comes only from the relay's own answer, never through the
+    // session's projected reads; the strong read is relay-signed state alone.
+    for (const [filters] of fake.readRemote.mock.calls)
+      for (const filter of filters as readonly ReadFilter[])
+        expect(
+          filter.kinds?.every((kind) => kind >= 39000 && kind <= 39002),
+        ).toBe(true);
   });
 
   it.each(["no binding", "another account's binding", "a replaced binding"])(
@@ -646,5 +746,361 @@ describe("owner access", () => {
     // The first owner's agent never reads through the second owner's session.
     mine.set(theirs.first);
     await expect(a.channels()).rejects.toThrow("not connected");
+  });
+});
+
+describe("owner reads", () => {
+  /** The relay's signed state of the owner's two channels; the agent is in
+   * neither private channel's roster. */
+  const state = () => [
+    ...signed(joined, { [owner]: "owner", [person]: "member" }),
+    ...signed(
+      archived,
+      { [owner]: "member", [person]: "member", [agent]: "bot" },
+      [["t", "forum"], ["public"], ["archived", "true"]],
+    ),
+  ];
+  const reader = (content: readonly RelayEvent[], list = { channels }) => {
+    const fake = fakeSession(list, state, undefined, content);
+    const binding = bound(fake.session);
+    return {
+      fake,
+      binding,
+      access: createOwnerAccess({ pubkey: agent, owner }, binding.bind),
+    };
+  };
+  const contentReads = (fake: ReturnType<typeof fakeSession>) =>
+    fake.snapshotRead.mock.calls.map(([filters]) => filters);
+
+  it("reads a private channel the agent is not in, a page at a time, with edits and names", async () => {
+    const one = post("1", joined, 10, "first");
+    const two = post("2", joined, 20, "second");
+    const three = post("3", joined, 30, "third");
+    const edit = post("4", joined, 31, "third, fixed", [["e", three.id]], {
+      kind: 40003,
+    });
+    const elsewhere = post("5", archived, 40, "elsewhere");
+    const { fake, access } = reader([one, two, three, edit, elsewhere]);
+    const page = await access.messages({ channel: joined, limit: 2 });
+    expect(page).toEqual({
+      execution: { agent, owner, community },
+      channel: joined,
+      events: [three, two, edit],
+      names: { [person]: "Pat" },
+      more: { before: 20, beforeId: two.id },
+    });
+    expect(contentReads(fake)[0]).toEqual([
+      expect.objectContaining({ "#h": [joined], limit: 3 }),
+    ]);
+    // Read with the call's signal, from the relay's own answer.
+    expect(fake.snapshotRead.mock.calls[0]?.[1]).toEqual({
+      signal: expect.any(AbortSignal),
+    });
+    await expect(
+      access.messages({
+        channel: joined,
+        limit: 2,
+        before: 20,
+        beforeId: two.id,
+      }),
+    ).resolves.toMatchObject({ events: [one], channel: joined });
+    // An archived open forum reads the same way.
+    await expect(
+      access.messages({ channel: archived, limit: 5 }),
+    ).resolves.toMatchObject({ events: [elsewhere], channel: archived });
+  });
+
+  it("names the owners its Buzz has verified for a page's authors", async () => {
+    const one = post("1", joined, 10, "first");
+    const { fake, access } = reader([one]);
+    Object.assign(fake.session.profiles, {
+      owner: (key: string) => (key === person ? owner : undefined),
+    });
+    await expect(
+      access.messages({ channel: joined, limit: 5 }),
+    ).resolves.toMatchObject({ owners: { [person]: owner } });
+  });
+
+  it("says when a page's edits fill the one edit read", async () => {
+    const message = post("1", joined, 10, "first");
+    const edits = Array.from({ length: 500 }, (_, i) =>
+      post(
+        `a${i.toString(16).padStart(3, "0")}`,
+        joined,
+        11 + i,
+        `v${i}`,
+        [["e", message.id]],
+        { kind: 40003 },
+      ),
+    );
+    const { access } = reader([message, ...edits]);
+    await expect(
+      access.messages({ channel: joined, limit: 5 }),
+    ).resolves.toMatchObject({ editsLimited: true });
+  });
+
+  it("reads a whole thread from any of its messages", async () => {
+    const root = post("1", joined, 10, "root");
+    const reply = (key: string, at: number) =>
+      post(key, joined, at, `reply ${key}`, [
+        ["e", root.id, "", "root"],
+        ["e", root.id, "", "reply"],
+      ]);
+    const first = reply("2", 20);
+    const second = reply("3", 30);
+    const { access } = reader([
+      root,
+      first,
+      second,
+      post("4", joined, 40, "x"),
+    ]);
+    const page = await access.messages({ thread: second.id, limit: 1 });
+    expect(page).toMatchObject({
+      channel: joined,
+      root: root.id,
+      events: [root, second],
+      more: { before: 30, beforeId: second.id },
+    });
+    await expect(
+      access.messages({
+        thread: second.id,
+        limit: 1,
+        before: 30,
+        beforeId: second.id,
+      }),
+    ).resolves.toMatchObject({ root: root.id, events: [first] });
+  });
+
+  it("searches only the owner's channels, and says when that is incomplete or limited", async () => {
+    const mine = post("1", joined, 10, "the plan");
+    const unknown = post("2", unlisted, 20, "their plan");
+    const hidden = post("3", system, 30, "system plan");
+    const { access } = reader([mine, unknown, hidden]);
+    await expect(
+      access.messages({ search: "plan", limit: 5 }),
+    ).resolves.toEqual({
+      execution: { agent, owner, community },
+      events: [mine],
+      names: { [person]: "Pat" },
+    });
+    await expect(
+      access.messages({ search: "plan", limit: 3 }),
+    ).resolves.toMatchObject({ events: [mine], limited: true });
+    const loading = reader([mine], {
+      channels: [],
+      status: "loading",
+    } as never).access;
+    await expect(
+      loading.messages({ search: "plan", limit: 5 }),
+    ).resolves.toMatchObject({ events: [], partial: true });
+  });
+
+  it.each([
+    ["a channel outside the owner's channels", unlisted, "not in your owner's"],
+    ["a system channel", system, "not in your owner's"],
+    ["an ID that is not a channel's", "general", "must be a channel ID"],
+  ])("reads nothing from %s", async (_what, id, error) => {
+    const { fake, access } = reader([post("1", id, 10, "secret")]);
+    await expect(access.messages({ channel: id, limit: 5 })).rejects.toThrow(
+      error,
+    );
+    await expect(access.canvas(id)).rejects.toThrow(error);
+    await expect(access.canvasHistory(id, {})).rejects.toThrow(error);
+    expect(fake.snapshotRead).not.toHaveBeenCalled();
+  });
+
+  it("reads nothing from a channel the relay withholds from the owner", async () => {
+    const fake = fakeSession({ channels }, () => [], undefined, [
+      post("1", joined, 10, "secret"),
+    ]);
+    const access = createOwnerAccess(
+      { pubkey: agent, owner },
+      bound(fake.session).bind,
+    );
+    await expect(
+      access.messages({ channel: joined, limit: 5 }),
+    ).rejects.toThrow("not found or your owner cannot see it");
+    expect(fake.snapshotRead).not.toHaveBeenCalled();
+  });
+
+  it("answers a message or thread outside the owner's channels as missing, reading no more", async () => {
+    const theirs = post("1", unlisted, 10, "secret");
+    const { fake, access } = reader([theirs]);
+    await expect(
+      access.messages({ thread: theirs.id, limit: 5 }),
+    ).rejects.toThrow(`No message ${theirs.id}`);
+    await expect(
+      access.messages({ thread: "f".repeat(64), limit: 5 }),
+    ).rejects.toThrow("No message");
+    // Only the message lookups.
+    for (const filters of contentReads(fake))
+      expect(filters).toEqual([expect.objectContaining({ limit: 1 })]);
+    expect(fake.readRemote).not.toHaveBeenCalled();
+  });
+
+  it("is unavailable while the owner's session cannot read the relay", async () => {
+    const fake = fakeSession({ channels }, state);
+    const session = new Proxy(fake.session, {
+      get: (object, key) =>
+        key === "snapshotRead" ? undefined : Reflect.get(object, key),
+    });
+    const access = createOwnerAccess(
+      { pubkey: agent, owner },
+      bound(session).bind,
+    );
+    await expect(
+      access.messages({ channel: joined, limit: 5 }),
+    ).rejects.toThrow("owner tools are unavailable now");
+    await expect(access.canvas(joined)).rejects.toThrow(
+      "owner tools are unavailable now",
+    );
+  });
+
+  it("reads the current canvas, a revision of it, and its history a page at a time", async () => {
+    const canvas = (key: string, h: string, at: number, content: string) =>
+      post(key, h, at, content, [], { kind: 40100, pubkey: owner });
+    const older = canvas("1", joined, 10, "# Draft");
+    const newer = canvas("2", joined, 20, "# Plan");
+    const other = canvas("3", archived, 30, "# Other");
+    const { fake, access } = reader([older, newer, other]);
+    await expect(access.canvas(joined)).resolves.toEqual({
+      execution: { agent, owner, community },
+      channel: joined,
+      canvas: newer,
+    });
+    await expect(access.canvas(joined, older.id)).resolves.toMatchObject({
+      canvas: older,
+    });
+    // A revision is read from the writer, so one history just listed is found.
+    expect(contentReads(fake).at(-1)).toEqual([
+      expect.objectContaining({ ids: [older.id], consistency: "strong" }),
+    ]);
+    await expect(access.canvas(joined, other.id)).rejects.toThrow(
+      `No revision ${other.id} of channel ${joined}'s canvas.`,
+    );
+    await expect(access.canvasHistory(joined, {})).resolves.toEqual({
+      execution: { agent, owner, community },
+      channel: joined,
+      revisions: [newer, older],
+    });
+    // The first page is the writer's; later ones follow the cursor.
+    expect(contentReads(fake).at(-1)).toEqual([
+      expect.objectContaining({ consistency: "strong", "#h": [joined] }),
+    ]);
+    await expect(
+      access.canvasHistory(joined, { before: 20, beforeId: newer.id }),
+    ).resolves.toMatchObject({ revisions: [older] });
+    expect(contentReads(fake).at(-1)).toEqual([
+      expect.not.objectContaining({ consistency: "strong" }),
+    ]);
+    expect(contentReads(fake).at(-1)).toEqual([
+      expect.objectContaining({ until: 20, before_id: newer.id }),
+    ]);
+    // A channel with no canvas has none.
+    const empty = reader([]).access;
+    await expect(empty.canvas(joined)).resolves.not.toHaveProperty("canvas");
+  });
+
+  it("returns no content once the owner's connection changes mid-read", async () => {
+    const reading = started();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { fake, binding, access } = reader([post("1", joined, 10, "secret")]);
+    const replacement = fakeSession({ channels }, state);
+    fake.snapshotRead.mockImplementationOnce(async () => {
+      reading.resolve();
+      await held;
+      return [post("1", joined, 10, "secret")];
+    });
+    const call = access.messages({ channel: joined, limit: 5 });
+    await reading.promise;
+    binding.set({ ...binding.first, session: replacement.session });
+    release();
+    await expect(call).rejects.toThrow("changed during the call");
+    expect(replacement.snapshotRead).not.toHaveBeenCalled();
+    expect(replacement.readRemote).not.toHaveBeenCalled();
+  });
+
+  it("stops when its caller cancels during a content read", async () => {
+    const { fake, access } = reader([post("1", joined, 10, "secret")]);
+    const during = new AbortController();
+    fake.snapshotRead.mockImplementationOnce(async () => {
+      during.abort(new Error("Turn ended"));
+      return [post("1", joined, 10, "secret")];
+    });
+    await expect(
+      access.messages({ channel: joined, limit: 5 }, during.signal),
+    ).rejects.toThrow("Turn ended");
+    const before = new AbortController();
+    before.abort(new Error("Turn ended"));
+    await expect(
+      access.canvas(joined, undefined, before.signal),
+    ).rejects.toThrow("Turn ended");
+  });
+
+  it("never gives one owner's agent another owner's content", async () => {
+    const mine = reader([post("1", joined, 10, "mine")]);
+    const theirs = fakeSession(
+      { channels: [{ id: joined, name: "Plans", members: [otherOwner] }] },
+      () => signed(joined, { [otherOwner]: "owner" }),
+      undefined,
+      [post("2", joined, 20, "theirs")],
+    );
+    const other = bound(theirs.session, otherOwner);
+    await expect(
+      mine.access.messages({ channel: joined, limit: 5 }),
+    ).resolves.toMatchObject({ events: [{ content: "mine" }] });
+    // The host now binds the other owner: this agent reads nothing there.
+    mine.binding.set(other.first);
+    await expect(
+      mine.access.messages({ channel: joined, limit: 5 }),
+    ).rejects.toThrow("not connected");
+    await expect(mine.access.canvas(joined)).rejects.toThrow("not connected");
+    expect(theirs.snapshotRead).not.toHaveBeenCalled();
+  });
+
+  it("answers each owner read tool through the agent's own client, as the owner", async () => {
+    const message = post("1", joined, 10, "see the plan");
+    const canvas = post("2", joined, 20, "# Plan", [], {
+      kind: 40100,
+      pubkey: owner,
+    });
+    const { fake, access } = reader([message, canvas]);
+    const client = appClient(
+      {
+        pubkey: agent,
+        key: agent,
+        owner,
+        ownerAccess: access,
+      } as unknown as AgentHandle,
+      {
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+      },
+    );
+    const call = async (name: string, args: Record<string, unknown>) =>
+      JSON.parse(String(await callSessionTool(client, {}, name, args)));
+    const executedAs = { agent, owner, community };
+    await expect(
+      call("owner_read", { channel: joined }),
+    ).resolves.toMatchObject({
+      executedAs,
+      channel: joined,
+      messages: [expect.stringContaining("see the plan")],
+    });
+    await expect(call("owner_read", { q: "plan" })).resolves.toMatchObject({
+      executedAs,
+      messages: [expect.any(String)],
+    });
+    await expect(
+      call("owner_canvas_get", { channel: joined }),
+    ).resolves.toMatchObject({ executedAs, id: canvas.id, canvas: "# Plan" });
+    await expect(
+      call("owner_canvas_history", { channel: joined }),
+    ).resolves.toMatchObject({ executedAs, revisions: [{ id: canvas.id }] });
+    // Every answer came from the relay's own reads with the owner's session.
+    expect(fake.snapshotRead).toHaveBeenCalled();
   });
 });

@@ -246,10 +246,39 @@ it("reads back expired delivery with strong consistency without re-signing or pu
     vi.mocked(invoke).mock.calls.some(([command]) => command === "relay_sign"),
   ).toBe(false);
 });
+it.each([
+  {},
+  { supported_extensions: null },
+  { supported_extensions: [] },
+  { supported_extensions: ["nip-cl"] },
+  { supported_extensions: "nip-ar" },
+])(
+  "does not offer artifact writes without NIP-AR advertisement: %o",
+  async (extensions) => {
+    discovery = extensions;
+    expect(
+      (await connectNativeTransport(community)).configArtifacts,
+    ).toBeUndefined();
+  },
+);
 it("publishes config artifacts straight to the relay, re-sending identical bytes and keeping typed refusals", async () => {
+  discovery = { supported_extensions: ["nip-ar"] };
   const transport = await connectNativeTransport(community);
   assert.exists(transport.configArtifacts);
   expect(transport.configArtifacts.kinds).toEqual([45010]);
+  const signal = new AbortController().signal;
+  const template = {
+    kind: 45010,
+    created_at: 1700000000,
+    content: "{}",
+    tags: [["ar", "1"]],
+  };
+  const revision = await transport.configArtifacts.sign(template, signal);
+  expect(verifyEvent(revision)).toBe(true);
+  expect(revision.pubkey).toBe(viewer.pubkey);
+  await expect(
+    transport.configArtifacts.sign({ ...template, kind: 9 }, signal),
+  ).rejects.toThrow("Not an artifact");
   // Older than the message writer's 15-minute retry block.
   const event = signed(viewer, {
     kind: 45010,
@@ -260,7 +289,6 @@ it("publishes config artifacts straight to the relay, re-sending identical bytes
       ["d", "agent"],
     ],
   });
-  const signal = new AbortController().signal;
   respond = () => ({
     body: { accepted: true, event_id: event.id, message: "" },
   });

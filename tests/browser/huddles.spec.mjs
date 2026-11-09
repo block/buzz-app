@@ -416,12 +416,17 @@ test("capsule and companion presentation share mute and leave", async ({
       keys.slice(0, count),
     );
     await expect(roster.locator("[data-participant]")).toHaveCount(count - 1);
+    // Motion cancels an animation it replaces, which rejects its finished
+    // promise; wait until none is still running.
     await roster.evaluate(async (el) => {
-      await Promise.all(
+      const running = () =>
         el
           .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
+          .filter((animation) => animation.playState === "running");
+      while (running().length)
+        await Promise.allSettled(
+          running().map((animation) => animation.finished),
+        );
     });
     // A spring can briefly cross its final size before overshooting, and
     // Motion can put a sub-pixel transform back on a settled avatar for a

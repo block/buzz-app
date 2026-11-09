@@ -197,8 +197,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   explains why and offers **Sign in with** the organization’s name or server
   address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.
 - The **Community sign-ins** cards show each configured server, its account
-  and the saved communities it covers. Each **Sign out** asks for confirmation
-  and ends only that server’s sign-in. Signed-out servers keep **Sign in**.
+  and the saved communities that require its sign-in. Each **Sign out** asks for
+  confirmation and ends only that server’s sign-in. Signed-out servers keep **Sign in**.
   **Renew sign-in** and the expiry date appear within seven days of expiry;
   its caret menu offers **Sign out**. A Builderlab connection link opens its
   existing settings. Removing the Buzz key still ends all server sign-ins.
@@ -212,9 +212,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - If a community doesn't accept the account you signed in with, its prompt
   names the server and offers **Switch account**: Buzz signs out of that server
   only and opens its sign-in again, so other servers stay signed in. It also
-  lists the other communities that use the same server. If you cancel the
-  sign-in during a switch, you stay signed out of that server and the prompt
-  offers **Sign in**. **Not now** closes the prompt and changes nothing.
+  names the other communities that require that server's sign-in, whose access
+  may change with the account; ones that don't require it are unaffected. If
+  you cancel the sign-in during a switch, you stay signed out of that server and
+  the prompt offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community. To add another, choose **Join a community** in the

@@ -27,7 +27,10 @@ import {
   type SessionSnapshot,
 } from "../features/federated-identity/service";
 import type { Membership } from "../features/communities/service";
-import { serverName } from "../features/federated-identity/community-servers";
+import {
+  useSignInMemberships,
+  serverName,
+} from "../features/federated-identity/community-servers";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 import { PrivateKey } from "../features/identity/PrivateKey";
@@ -49,7 +52,6 @@ import { IdentityBadge } from "./IdentityBadge";
 import { IdentityReflection } from "./IdentityReflection";
 import { useIdentityTilt } from "./useIdentityTilt";
 import { communityIcon } from "../features/communities/community-icon";
-import { coversCommunity } from "../features/federated-identity/community-hosts";
 import { Avatar } from "../shared/design-system/ui/Avatar";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { SplitButton } from "../shared/design-system/ui/SplitButton";
@@ -602,6 +604,7 @@ function OrganizationSignIns({
             <AccountCard
               key={state.authority.id}
               state={state}
+              identity={session}
               memberships={memberships}
               endnote={details && state.status !== "restoring" && accountRows}
             >
@@ -643,11 +646,13 @@ function needsRenewal(state: SessionSnapshot) {
 /** One host and its current sign-in, with its actions and endnote below. */
 function AccountCard({
   state,
+  identity,
   children,
   endnote,
   memberships,
 }: {
   state: SessionSnapshot;
+  identity: FederatedIdentity;
   children: ReactNode;
   endnote?: ReactNode;
   memberships: readonly Membership[];
@@ -670,15 +675,14 @@ function AccountCard({
     [],
   );
   const authority = state.authority;
+  const communities = useSignInMemberships(
+    identity,
+    authority?.communityHosts ?? [],
+    memberships,
+  );
   if (!authority) return null;
   const name = serverTitle(authority);
   const signedIn = state.status === "signed-in";
-  const communities = memberships.filter((membership) =>
-    coversCommunity(
-      authority.communityHosts,
-      communityDestination(membership.id).url,
-    ),
-  );
   const status = state.failure
     ? "Needs attention"
     : signedIn
@@ -989,6 +993,7 @@ function OrganizationSignIn({
       <div className={styles.accountList}>
         <AccountCard
           state={state}
+          identity={identity}
           memberships={memberships}
           endnote={state.status !== "restoring" && accountRows}
         >

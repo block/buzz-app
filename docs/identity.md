@@ -1238,8 +1238,8 @@ plugin upload. A 401 is handled as for API calls.
 
 Settings → Identity → Community sign-ins is the same whichever community is
 open. It shows cards for each configured server, its name and origin, account,
-and saved communities its hosts cover. Static community artwork exposes names
-and tooltips. **Sign out** confirms before ending that server’s session only.
+and saved communities that require its sign-in. Static community artwork exposes
+names and tooltips. **Sign out** confirms before ending that server’s session only.
 Within seven days of expiry, **Renew sign-in** and the expiry date appear, with
 **Sign out** in the renewal caret menu. The Builderlab connection row observes
 the existing plugin session and opens its settings; it starts no account read.
@@ -1252,8 +1252,8 @@ message when applicable.
 
 When a community refuses a signed-in account (`authorization-denied` or
 `binding-mismatch`), its prompt names the community's server and account, and
-the other joined communities that server covers, and offers **Switch account**:
-it signs out of that server only, signs in to it again, and retries. Other
+the other joined communities that require its sign-in, and offers **Switch
+account**: it signs out of that server only, signs in to it again, and retries. Other
 servers' sessions are not touched. While it runs the prompt says so, with
 **Cancel sign-in** during the browser step. A canceled sign-in leaves that
 server signed out: the prompt says the sign-in was canceled and offers

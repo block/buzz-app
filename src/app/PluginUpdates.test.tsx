@@ -697,6 +697,35 @@ it("keeps the row clear and focus on the plugin when Check again succeeds", asyn
   expect(screen.queryByText(noticeTitle("Notes"))).toBeNull();
 });
 
+it("doesn’t announce the hourly check’s failure after Check again succeeded", async () => {
+  vi.useFakeTimers();
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("visible");
+  const f = fixture();
+  f.candidate.revision = f.plugin.revision;
+  f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+  const held = holdCheck(f);
+  const view = f.mount();
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(f.imports.checkGit).toHaveBeenCalledTimes(2);
+    await act(async () => held().finish(f.discovered));
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(screen.queryByText("Couldn’t check for updates.")).toBeNull();
+    f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+    await act(() => vi.advanceTimersByTimeAsync(3_600_000));
+    expect(f.imports.checkGit).toHaveBeenCalledTimes(3);
+    expect(screen.getByText("Couldn’t check for updates.")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    view.unmount();
+    visibility.mockRestore();
+  }
+});
+
 it.each([
   [
     "Git could not read this repository: remote: Repository not found.\nfatal: repository 'https://example.com/plugins.git/' not found",

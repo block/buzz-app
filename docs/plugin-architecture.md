@@ -270,7 +270,8 @@ a connection that dropped during a check is retried when it returns. **Check
 again** forces a check and clears the row's status while it runs, leaving the
 row as it is during any check, with a screen-reader-only "Checking for
 updates…" status. If the check fails again, the status returns, announced as an
-alert. `updateFailure()` in `src/plugins/updates.ts` names
+alert. Once the row clears, a later background failure returns unannounced.
+`updateFailure()` in `src/plugins/updates.ts` names
 the Git causes Buzz recognizes: a repository that moved or was removed, and a
 private repository added over HTTPS (Git couldn't read a username). For those it
 hides **Check again** and asks for a reinstall. A failed authentication keeps

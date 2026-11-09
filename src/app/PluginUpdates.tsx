@@ -341,11 +341,14 @@ export function PluginUpdateFailure({
 }) {
   const context = useContext(Context);
   // Nothing else reports a failed Check again, so its failure is announced.
+  // Once the row clears, a later background failure returns unannounced.
   const [asked, setAsked] = useState(false);
   const update = context?.updates.find(
     (item) => item.id === pluginId && item.error,
   );
-  if (context?.checking.includes(pluginId))
+  const checking = context?.checking.includes(pluginId);
+  if (asked && !checking && !update?.error) setAsked(false);
+  if (checking)
     return (
       <LoadingRegion
         pending

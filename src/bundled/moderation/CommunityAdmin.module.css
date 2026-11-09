@@ -58,3 +58,32 @@
 .invitePanel > :last-child {
   flex: 1 1 18rem;
 }
+
+.inviteQr {
+  position: relative;
+  min-width: 0;
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+.qrShare {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--space-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .qrShare {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-scrim);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .inviteQr:is(:hover, :focus-within) .qrShare {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

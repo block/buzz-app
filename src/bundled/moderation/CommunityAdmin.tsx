@@ -469,7 +469,7 @@ function Choice({
       <MenuTrigger
         disabled={disabled}
         render={
-          <Button variant="ghost" size="sm" aria-label={label}>
+          <Button variant="ghost" size="inline" aria-label={label}>
             {options.find((option) => option.value === value)?.label}
             <CaretDownIcon
               size={14}
@@ -685,7 +685,7 @@ function MembershipContent({
           id="invite-share-panel"
           aria-labelledby="invite-share-panel-tab"
         >
-          <div className="flex min-w-0 flex-col items-center gap-3">
+          <div className={styles.inviteQr}>
             {showQr && (
               <div className="flex justify-center">
                 {drawn?.svg ? (
@@ -697,39 +697,68 @@ function MembershipContent({
                   // Holds the code's place while the link or its code is made.
                   <div
                     aria-hidden="true"
-                    className="size-60 max-w-full shrink-0 bg-surface-inset"
+                    className="size-60 max-w-full shrink-0"
                   />
                 )}
               </div>
             )}
-            {showQr && canShareInvite() && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={!url || !drawn?.svg || locked}
-                loading={sharing}
-                onClick={async (event) => {
-                  if (!url || sharing) return;
-                  const anchor = event.currentTarget.getBoundingClientRect();
-                  setSharing(true);
-                  setError("");
-                  try {
-                    await shareInvite(url, anchor);
-                  } catch {
-                    setError(
-                      "Could not open sharing. Try again or copy the link.",
-                    );
-                  } finally {
-                    setSharing(false);
-                  }
-                }}
-              >
-                Share
-              </Button>
+            {showQr && drawn?.svg && canShareInvite() && (
+              <div className={styles.qrShare}>
+                <Button
+                  size="sm"
+                  variant="subtle"
+                  disabled={!url || !drawn?.svg || locked}
+                  loading={sharing}
+                  onClick={async (event) => {
+                    if (!url || sharing) return;
+                    const anchor = event.currentTarget.getBoundingClientRect();
+                    setSharing(true);
+                    setError("");
+                    try {
+                      await shareInvite(url, anchor);
+                    } catch {
+                      setError(
+                        "Could not open sharing. Try again or copy the link.",
+                      );
+                    } finally {
+                      setSharing(false);
+                    }
+                  }}
+                >
+                  Share
+                </Button>
+              </div>
             )}
           </div>
           <div className="flex min-w-0 flex-col gap-4">
-            <InputGroup>
+            <InputGroup
+              trailing={
+                <Button
+                  size="sm"
+                  loading={pending}
+                  disabled={current?.failed ? locked : !url}
+                  // Copying with a pointer should not move focus into the field.
+                  // Keyboard activation keeps the shared visible-focus treatment.
+                  onMouseDown={(event) => {
+                    if (event.button === 0) event.preventDefault();
+                  }}
+                  onClick={() => {
+                    if (current?.failed) {
+                      setLink(null);
+                      return;
+                    }
+                    if (!url) return;
+                    writeClipboardText(url)
+                      .then(() => {
+                        setCopied(true);
+                      })
+                      .catch(() => setError("Could not copy the invite link."));
+                  }}
+                >
+                  {current?.failed ? "Retry" : copied ? "Copied" : "Copy link"}
+                </Button>
+              }
+            >
               <Input
                 aria-label="Community invite link"
                 readOnly
@@ -740,30 +769,6 @@ function MembershipContent({
                     : "Creating invite link…"
                 }
               />
-              <Button
-                size="sm"
-                loading={pending}
-                disabled={current?.failed ? locked : !url}
-                // Copying with a pointer should not move focus into the field.
-                // Keyboard activation keeps the shared visible-focus treatment.
-                onMouseDown={(event) => {
-                  if (event.button === 0) event.preventDefault();
-                }}
-                onClick={() => {
-                  if (current?.failed) {
-                    setLink(null);
-                    return;
-                  }
-                  if (!url) return;
-                  writeClipboardText(url)
-                    .then(() => {
-                      setCopied(true);
-                    })
-                    .catch(() => setError("Could not copy the invite link."));
-                }}
-              >
-                {current?.failed ? "Retry" : copied ? "Copied" : "Copy link"}
-              </Button>
             </InputGroup>
             <SettingsGroup>
               <div className="flex items-center justify-between gap-4 py-3">

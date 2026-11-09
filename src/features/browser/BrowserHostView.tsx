@@ -518,6 +518,8 @@ export function BrowserHostView({
         </div>
       ) : null}
       <div className={styles.viewport} ref={viewport}>
+        {/* The pages share one Try again, keyed so a retry that lands on
+            another page keeps the focused button, wherever it sits in the row. */}
         {page === "denied" ? (
           <div role="alert" className="page-status">
             <EmptyState
@@ -526,6 +528,7 @@ export function BrowserHostView({
               description="The link may be wrong, or the app may have been removed. Ask whoever shared it."
               action={
                 <Button
+                  key="retry"
                   type="button"
                   variant="primary"
                   loading={retrying}
@@ -549,6 +552,7 @@ export function BrowserHostView({
               action={
                 <>
                   <Button
+                    key="retry"
                     type="button"
                     variant="primary"
                     loading={retrying}
@@ -557,6 +561,7 @@ export function BrowserHostView({
                     Try again
                   </Button>
                   <Button
+                    key="open"
                     type="button"
                     onClick={() => {
                       setOpenFailed(false);
@@ -580,11 +585,16 @@ export function BrowserHostView({
               action={
                 <>
                   {openSignIn && (
-                    <Button type="button" onClick={() => openSignIn()}>
+                    <Button
+                      key="settings"
+                      type="button"
+                      onClick={() => openSignIn()}
+                    >
                       Open settings
                     </Button>
                   )}
                   <Button
+                    key="retry"
                     type="button"
                     variant="primary"
                     loading={retrying}

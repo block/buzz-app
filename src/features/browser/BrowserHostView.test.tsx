@@ -976,6 +976,66 @@ it("keeps Try again focused while an unreachable Builderlab retries", async () =
   );
 });
 
+it("keeps Try again focused when a retry lands on another page", async () => {
+  const platform = fakePlatform();
+  const user = userEvent.setup();
+  const openSignIn = vi.fn();
+  const unreachable = () =>
+    new BrowserAttachError("Builderlab sign-in request failed", "unavailable");
+  let settle: { resolve(id: string): void; reject(error: unknown): void } = {
+    resolve: () => {},
+    reject: () => {},
+  };
+  const deferred = () =>
+    new Promise<string>((resolve, reject) => {
+      settle = { resolve, reject };
+    });
+  vi.mocked(platform.attach)
+    .mockRejectedValueOnce(refusedSignIn())
+    .mockImplementation(deferred);
+  render(
+    <BrowserHostView
+      url="https://example.com/app"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={50_000}
+      openSignIn={openSignIn}
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: "Try again" });
+  retry.focus();
+
+  // Sign-in → unavailable: the retry button, second on the sign-in page and
+  // first on the unavailable one, keeps its identity and focus.
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  await act(async () => settle.reject(unreachable()));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Buzz couldn’t load this app",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBe(retry);
+  expect(retry).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(3));
+  expect(platform.openExternal).not.toHaveBeenCalled();
+
+  // Unavailable → sign-in: the same the other way round.
+  await act(async () => settle.reject(refusedSignIn()));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Sign in again to open this app",
+  );
+  expect(screen.getByRole("button", { name: "Try again" })).toBe(retry);
+  expect(retry).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(4));
+  expect(openSignIn).not.toHaveBeenCalled();
+  expect(platform.openExternal).not.toHaveBeenCalled();
+  await act(async () => settle.resolve("session-1"));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+});
+
 it("moves focus to the error when a retry from the page fails another way", async () => {
   const platform = fakePlatform();
   const user = userEvent.setup();

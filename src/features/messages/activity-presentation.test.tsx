@@ -270,4 +270,21 @@ it("binds an agent update to the request it claims only when that is a loaded hu
   expect(levelRequest(loaded)("toElsewhere")).toBe("root");
   expect(levelRequest(loaded)("toOtherAgent")).toBe("root");
   expect(levelRequest()("flattened")).toBe("root");
+
+  // Top-level conversations claim top-level requests, not thread replies.
+  const flat = (id: string, request: string) =>
+    message(id, agent, { audience: "agents", request });
+  const { byRow: flatRows } = activityPresentation(
+    [
+      message("first", human),
+      message("reply", human, { threadRootId: "first" }),
+      message("second", human),
+      flat("answersFirst", "first"),
+      flat("toThreadReply", "reply"),
+    ],
+    undefined,
+    new Set([agent]),
+  );
+  expect(flatRows.get("answersFirst")?.requestId).toBe("first");
+  expect(flatRows.get("toThreadReply")?.requestId).toBe("second");
 });

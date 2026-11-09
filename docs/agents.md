@@ -1386,7 +1386,7 @@ message IDs select request lifecycle evidence; a nearby human message or shared
 thread root is not proof of a turn. Thread replies flatten to the thread root, so an
 update binds first to the request whose local run published it, then to a signed
 `["buzz:request", <id>]` tag naming a loaded human request in the same channel
-and thread, at any reply level. The `send` and `reply_in_subthread` tools add
+and thread (or that thread's root), at any reply level. The `send` and `reply_in_subthread` tools add
 that tag from their `request` argument, the turn's triggering message. That
 request, not the reply link, then decides which live work the update shows.
 Untagged or unverifiable updates keep their reply link. Finishing a request retires its live treatment,

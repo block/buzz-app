@@ -79,8 +79,9 @@ export function ActivityGroupPreview({
     !!group.requestId,
     group.presentedParticipants,
   );
-  // This group is the working cue for its request's working agents, so the
-  // conversation shows no second one for that request.
+  // While collapsed, this group's dots are the working cue for its request's
+  // working agents, so the conversation shows no second one for that request.
+  // Expanded, the working update shows them instead.
   useActivityTypingReplacement(
     session
       ? {
@@ -92,7 +93,7 @@ export function ActivityGroupPreview({
           presence: true,
         }
       : undefined,
-    !!group.requestId && !!group.workingParticipants.length,
+    !!group.requestId && !!group.workingParticipants.length && !expanded,
     group.workingParticipants,
   );
   const primary = history[0]?.authorId ?? row.authorId;

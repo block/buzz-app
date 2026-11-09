@@ -249,7 +249,9 @@ export function activityPresentation(
       claimed &&
       !causes.has(row.id) &&
       claimed.channelId === row.channelId &&
-      (claimed.threadRootId ?? claimed.id) === row.threadRootId
+      // The same thread, the thread's own root, or both top-level.
+      (claimed.threadRootId === row.threadRootId ||
+        claimed.id === row.threadRootId)
     )
       causes.set(row.id, claimed.id);
     // A thread root is a scope, not necessarily the latest triggering request.

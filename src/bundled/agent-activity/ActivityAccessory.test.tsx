@@ -2113,6 +2113,115 @@ it("hands live work to only the latest history for each agent and keeps Stop and
   }
 });
 
+it("hands a follow-up's live work to the update its run published to the thread root, never to older root updates", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const first = local.begin({
+    scope: "test",
+    agent: A,
+    channelId: "c",
+    messageId: root,
+    threadRootId: root,
+    thread: true,
+  });
+  first.reply("old");
+  act(() => first.finish({ ok: false, error: "Root failed" }));
+  const work = local.begin({
+    scope: "test",
+    agent: A,
+    channelId: "c",
+    messageId: next,
+    threadRootId: root,
+    thread: true,
+  });
+  work.interruptible(vi.fn(async () => {}));
+  work.step("Search", "edit history");
+  // Normal sends flatten every thread reply to the root; only the publishing
+  // run knows which request each update belongs to.
+  work.reply("step");
+  const followUp = {
+    ...f.props.message,
+    id: next,
+    threadRootId: root,
+    replyParentId: root,
+    content: "Follow-up",
+  };
+  const update = {
+    ...f.props.message,
+    authorId: A,
+    threadRootId: root,
+    replyParentId: root,
+    audience: "agents" as const,
+  };
+  const presentation = activityPresentation(
+    [
+      { ...update, id: "old", content: "Checking the root" },
+      followUp,
+      { ...update, id: "stray", content: "Unattributed root update" },
+      { ...update, id: "step", content: "Checking the follow-up" },
+    ],
+    f.props.session.agentActivity.snapshot(),
+    new Set([A]),
+    root,
+  );
+  expect(presentation.byRow.get("old")?.requestId).toBe(root);
+  expect(presentation.byRow.get("stray")).toMatchObject({
+    requestId: root,
+    active: false,
+  });
+  expect(presentation.byRow.get("step")).toMatchObject({
+    requestId: next,
+    active: true,
+  });
+  const ui = (expanded: boolean) => (
+    <ActivityIndicatorPresentation>
+      <ActivityAccessory
+        {...f.props}
+        message={followUp}
+        messageLayout="thread"
+      />
+      {presentation.groups.map((group) => (
+        <ActivityGroupPreview
+          key={group.ids[0]}
+          session={f.props.session}
+          group={group}
+          profiles={f.profiles}
+          media={() => undefined}
+          expanded={expanded}
+          onToggle={() => {}}
+          openActivity={f.props.open}
+          canOpenActivity={f.props.canOpen}
+        />
+      ))}
+    </ActivityIndicatorPresentation>
+  );
+  const view = render(ui(false));
+  try {
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(screen.getByText("Checking the follow-up")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(screen.getByText("Checking the root")).not.toHaveAttribute(
+      "data-active",
+    );
+    view.rerender(ui(true));
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Stop Blossom" }),
+    ).toHaveLength(1);
+    // The root's failure stays with the root's latest history.
+    expect(screen.getAllByText("Root failed")).toHaveLength(1);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it.each([
   {
     runtime: "block.builderlab/builderlab",

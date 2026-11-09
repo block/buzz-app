@@ -86,12 +86,34 @@ export function useChannelActivitySnapshot(
   return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
 }
 
+/** Requests whose local run published each row: exact causal evidence that
+ * the root-flattened reply link of a thread reply cannot carry. */
+function publishedRequests(
+  rows: readonly ChannelMessage[],
+  snapshot: Snapshot | undefined,
+) {
+  const local = snapshot?.local ?? [];
+  const published = new Map<string, string>();
+  if (!local.length) return published;
+  for (const row of rows) {
+    const work = local.find(
+      (entry) =>
+        entry.agent === row.authorId &&
+        entry.channelId === row.channelId &&
+        entry.publishedMessageIds?.includes(row.id),
+    );
+    if (work) published.set(row.id, work.messageId);
+  }
+  return published;
+}
+
 /** Status belongs to the triggering request, never to all work in its thread. */
 function activityStatus(
   group: ActivityRun,
   snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   requests: ReadonlyMap<string, string>,
+  published: ReadonlyMap<string, string>,
 ) {
   const { latest, participants, followingMessage: response, requestId } = group;
   const followedByReply =
@@ -107,17 +129,17 @@ function activityStatus(
       // the coordinator having authored a message in this activity run.
       ((response.agentEnvelope || agents?.has(response.authorId)) &&
         latest.mentions.includes(response.authorId)));
-  // Only signed immediate reply links and activity IDs bind lifecycle evidence.
-  // The preceding human message/thread root is useful for layout, not proof
-  // that these updates came from that request's turn.
+  // Only the publishing run, signed immediate reply links and activity IDs bind
+  // lifecycle evidence. The preceding human message/thread root is useful for
+  // layout, not proof that these updates came from that request's turn.
   const work = snapshot
     ? participants.flatMap((agent) => {
         const ids = group.history
           .filter((row) => row.authorId === agent)
-          .flatMap((row) => [
-            row.id,
-            ...(row.replyParentId ? [row.replyParentId] : []),
-          ]);
+          .flatMap((row) => {
+            const link = published.get(row.id) ?? row.replyParentId;
+            return [row.id, ...(link ? [link] : [])];
+          });
         return requestWork(snapshot, latest.channelId, ids).filter(
           (entry) => entry.agent === agent,
         );
@@ -181,6 +203,7 @@ export function activityPresentation(
   const preceding = new Map(
     rows.map((row, index) => [row.id, rows[index - 1]]),
   );
+  const published = publishedRequests(rows, snapshot);
   const requests = new Map<string, string>();
   if (rootId) requests.set(rootId, rootId);
   const representedAgents = new Map<string, string[]>();
@@ -204,10 +227,13 @@ export function activityPresentation(
     )
       request = row.id;
     // A thread root is a scope, not necessarily the latest triggering request.
-    // Preserve explicit reply links; otherwise follow the preceding request.
-    const parentRequest = row.replyParentId
-      ? (requests.get(row.replyParentId) ?? row.replyParentId)
-      : undefined;
+    // Prefer the publishing run, then explicit reply links; otherwise follow
+    // the preceding request.
+    const parentRequest =
+      published.get(row.id) ??
+      (row.replyParentId
+        ? (requests.get(row.replyParentId) ?? row.replyParentId)
+        : undefined);
     const rowRequest = isAgent ? (parentRequest ?? request) : request;
     if (rowRequest) requests.set(row.id, rowRequest);
     if (rowRequest && !row.membership && isAgent) {
@@ -284,6 +310,7 @@ export function activityPresentation(
       snapshot,
       agents,
       requests,
+      published,
     );
     const anchor = preceding.get(first.id);
     const standalone =

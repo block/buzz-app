@@ -320,6 +320,14 @@ test.describe("recovery over the timeline", () => {
     await expect.poll(requests).toBeGreaterThan(before);
     await page.clock.fastForward(30_000);
     await expect(notice(page)).toBeVisible();
+    // Measure only once Sonner has mounted the item (which adds its hover gap)
+    // and its entrance transition has settled.
+    const item = notice(page).locator("xpath=ancestor::li[@data-sonner-toast]");
+    await expect(item).toHaveAttribute("data-mounted", "true");
+    await expect(item).toHaveAttribute("data-expanded", "true");
+    await item.evaluate((li) =>
+      Promise.all(li.getAnimations().map((animation) => animation.finished)),
+    );
     // Sonner's hover gap above the card passes the pointer through too.
     const gapHit = await notice(page).evaluate((card) => {
       const item = card.closest("[data-sonner-toast]");
@@ -330,30 +338,40 @@ test.describe("recovery over the timeline", () => {
     });
     expect(gapHit.gap).toBeGreaterThan(0);
     expect(gapHit.inToaster).toBe(false);
-    // A point inside both the notice and the newest row.
-    const overlap = async () => {
-      const box = await notice(page).boundingBox();
-      const row = await newest.boundingBox();
-      if (!box || !row) return undefined;
-      const top = Math.max(box.y, row.y);
-      const bottom = Math.min(box.y + box.height, row.y + row.height);
-      const left = Math.max(box.x, row.x);
-      const right = Math.min(box.x + box.width, row.x + row.width);
-      return bottom > top && right > left
-        ? { x: (left + right) / 2, y: (top + bottom) / 2 }
-        : undefined;
-    };
-    await expect.poll(overlap).toBeTruthy();
-    const point = await overlap();
-    await page.mouse.move(point.x, point.y);
-    const react = newest.getByRole("button", {
-      name: "Add reaction",
-      exact: true,
+    // Where the notice covers the newest message's content, which is what
+    // activates its actions.
+    const content = newest.locator("[data-message-action-anchor]").first();
+    const box = await notice(page).boundingBox();
+    const bubble = await content.boundingBox();
+    const top = Math.max(box.y, bubble.y);
+    const bottom = Math.min(box.y + box.height, bubble.y + bubble.height);
+    const right = Math.min(box.x + box.width, bubble.x + bubble.width);
+    expect(bottom).toBeGreaterThan(top);
+    expect(right).toBeGreaterThan(box.x);
+    const covered = { x: (box.x + right) / 2, y: (top + bottom) / 2 };
+    expect(
+      await page.evaluate(
+        ({ x, y }) =>
+          !!document.elementFromPoint(x, y)?.closest("[data-message-id]"),
+        covered,
+      ),
+    ).toBe(true);
+    // Reveal the actions from the uncovered content, then glide right under
+    // the notice, as a pointer heading for the toolbar does.
+    const actions = newest.getByRole("group", {
+      name: "Message actions",
+      includeHidden: true,
     });
-    await expect(react).toBeVisible();
-    await react.click();
-    await expect(page.locator("em-emoji-picker")).toBeVisible();
-    await page.keyboard.press("Escape");
+    const open = () => actions.evaluate((bar) => bar.matches(":popover-open"));
+    await page.mouse.move(bubble.x + 24, covered.y);
+    await expect.poll(open).toBe(true);
+    await page.mouse.move(covered.x, covered.y, { steps: 10 });
+    // The pointer still counts as over the row once it is under the notice.
+    await expect(newest.locator("[data-layout]")).toHaveAttribute(
+      "data-actions-revealed",
+      "",
+    );
+    await expect.poll(open).toBe(true);
     app.relay.releaseEose("alpha");
     await expect(notice(page)).toHaveCount(0);
   });

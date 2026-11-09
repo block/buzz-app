@@ -8,6 +8,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import {
   TIME_PRESETS,
   formatDue,
@@ -34,6 +35,7 @@ export function RemindDialog({
   const [time, setTime] = useState("09:00");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const notify = useToastNotification();
   const custom = parseCustomDateTime(date, time);
   const preset = TIME_PRESETS.find((item) => item.label === when);
   const submit = async (notBefore: number) => {
@@ -52,6 +54,7 @@ export function RemindDialog({
         notBefore,
         note,
       );
+      notify(`Reminder set for ${formatDue(notBefore)}`, "success");
       close();
     } catch {
       setError("The reminder could not be saved. Try again.");

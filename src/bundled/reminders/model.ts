@@ -39,21 +39,32 @@ export function nextDelay(reminders: readonly Reminder[], now: number) {
     : Math.min((next - now) * 1000, MAX_DELAY_MS);
 }
 
-const pendingIds = new WeakMap<RemindersState, ReadonlySet<string>>();
-/** Message ids with a pending reminder, derived once per reminders snapshot. */
-export function pendingMessageIds(state: RemindersState) {
-  let ids = pendingIds.get(state);
-  if (!ids) {
-    ids = new Set(
-      state.reminders.flatMap((reminder) =>
-        reminder.status === "pending" && reminder.target
-          ? [reminder.target.eventId]
-          : [],
-      ),
-    );
-    pendingIds.set(state, ids);
+const pendingDue = new WeakMap<
+  RemindersState,
+  ReadonlyMap<string, number | undefined>
+>();
+/**
+ * Each message with a pending reminder, mapped to its earliest due time,
+ * derived once per reminders snapshot.
+ */
+export function pendingMessageDue(state: RemindersState) {
+  let due = pendingDue.get(state);
+  if (!due) {
+    const next = new Map<string, number | undefined>();
+    for (const { status, target, notBefore } of state.reminders) {
+      if (status !== "pending" || !target) continue;
+      const earliest = next.get(target.eventId);
+      next.set(
+        target.eventId,
+        earliest !== undefined && notBefore !== undefined
+          ? Math.min(earliest, notBefore)
+          : (notBefore ?? earliest),
+      );
+    }
+    due = next;
+    pendingDue.set(state, due);
   }
-  return ids;
+  return due;
 }
 
 export type ReminderGroup = Readonly<{ label: string; reminders: Reminder[] }>;

@@ -399,6 +399,11 @@ export type Agent<Config = unknown> = Readonly<{
   /** Whether its watches and timers wake it: true while a plugin shows
    * Attention. Off keeps every object. */
   attentionEnabled: boolean;
+  /** Attention is shown, but its attention is on the relay and this session
+   * has not read its complete set yet: its watches and timers wait, and each
+   * watch keeps its checkpoint, so it catches up from there once the set is
+   * read. Attention off would move each checkpoint to now instead. */
+  attentionPending?: true;
   /** Why the attention shown may not be its current attention: on the relay,
    * while this device is still reading it or can't. */
   attentionProblem?: string;
@@ -8987,6 +8992,15 @@ export class AgentsService extends Service implements Agents {
       (record.attentionStorage !== "relay" || this.attentionLive.has(key))
     );
   }
+  /** Whether its watches and timers wait for this session to read its
+   * attention on the relay; they run once it is read. */
+  private attentionPending(key: AgentKey, record: AgentRecord) {
+    return (
+      this.attentionShown() &&
+      record.attentionStorage === "relay" &&
+      !this.attentionLive.has(key)
+    );
+  }
   /** Why its attention on the relay is not current here, if it is not
    * (Reader step 6): it is not read yet, can't be read, or may be stale. */
   private attentionProblem(key: AgentKey, record: AgentRecord) {
@@ -9215,6 +9229,9 @@ export class AgentsService extends Service implements Agents {
       ...(record.sourceRuns ? { sourceRuns: record.sourceRuns } : {}),
       attentionHistory: record.attentionHistory,
       attentionEnabled: this.attentionRuns(identity.key, record),
+      ...(this.attentionPending(identity.key, record) && {
+        attentionPending: true,
+      }),
       ...(attentionProblem && { attentionProblem }),
       config: editor?.config ?? record.config,
       ...(editor && { configBase: editor.base }),
@@ -9880,6 +9897,8 @@ export class AgentsService extends Service implements Agents {
           prior.sourceRuns === record.sourceRuns &&
           prior.attentionHistory === record.attentionHistory &&
           prior.attentionEnabled === this.attentionRuns(identity.key, record) &&
+          !!prior.attentionPending ===
+            this.attentionPending(identity.key, record) &&
           prior.attentionProblem ===
             this.attentionProblem(identity.key, record) &&
           sameConfig(prior, editor?.config ?? record.config, editor?.base) &&

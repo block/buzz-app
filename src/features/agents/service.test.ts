@@ -17684,7 +17684,14 @@ it("fails an agent's attention write that agent storage could not save, and keep
 /** An agent whose attention is on the relay: its record says so, and the
  * community holds its attention channel, with the records `seed` puts there. */
 async function relayAttentionSetup(
-  options: { synced?: boolean; enabled?: boolean } = {},
+  options: {
+    synced?: boolean;
+    enabled?: boolean;
+    /** Continues the device record and progress saved there, its attention
+     * now on the relay. */
+    storage?: AgentStore;
+    history?: RelayEvent[];
+  } = {},
 ) {
   const relayKey = generateSecretKey();
   const writerKey = generateSecretKey();
@@ -17719,19 +17726,21 @@ async function relayAttentionSetup(
     ["p", viewer, "", "owner"],
   ];
   const ownerWrites: RelayEvent[] = [];
-  const storage = memoryStorage() as AgentStore;
+  const storage = options.storage ?? (memoryStorage() as AgentStore);
+  const saved = await storage.get(`buzz.agent.v1:${bot}`);
   await storage.set(
     `buzz.agent.v1:${bot}`,
     JSON.stringify({
-      pubkey: bot,
-      attention: {},
-      config: { reply: "ok" },
+      ...(saved
+        ? JSON.parse(saved)
+        : { pubkey: bot, attention: {}, config: { reply: "ok" } }),
       attentionStorage: "relay",
       ...(options.enabled && { attentionEnabled: true }),
     }),
   );
   const f = await setup({
     storage,
+    ...(options.history && { history: options.history }),
     identities: [
       {
         pubkey: bot,
@@ -17903,6 +17912,48 @@ it("runs no watch of a relay agent before its first complete set, then mirrors t
   await vi.waitFor(() =>
     expect(f.service.find(bot)?.attention["interest/default"]).toBeUndefined(),
   );
+});
+
+it("catches a relay agent's watch up from its saved checkpoint once its first set is read", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const start = nowSeconds();
+    const storage = memoryStorage() as AgentStore;
+    const first = await setup({ storage, identities: [echo] });
+    await first.service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await settle();
+    const attention = first.service.find(bot)?.attention ?? {};
+    vi.setSystemTime((start + 20) * 1000);
+    first.recover();
+    await settle();
+    first.connect(false);
+    // Moved to its community while closed; the relay has the same set.
+    vi.setSystemTime((start + 60) * 1000);
+    const f = await relayAttentionSetup({
+      storage,
+      synced: false,
+      history: [...first.history, posted("while closed", start + 30)],
+    });
+    for (const [slug, object] of Object.entries(attention))
+      await f.seed(slug, object.value);
+    await vi.waitFor(() => expect(f.native.query).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(f.service.find(bot)?.attentionPending).toBe(true);
+    // What it hears live meanwhile waits too.
+    f.emit({ events: [event("live", { created_at: start + 61 })] });
+    await settle();
+    expect(f.run).not.toHaveBeenCalled();
+    f.sync();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(heard(f.run)).toEqual(["while closed", "hello live"]);
+    expect(f.service.find(bot)?.attentionPending).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("saves a relay agent's attention tool write on the relay first, as the agent, with prev", async () => {

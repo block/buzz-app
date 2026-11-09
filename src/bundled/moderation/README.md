@@ -10,5 +10,5 @@ community where you are an owner or admin.
 ## Getting started
 
 1. Go to **Settings → Community admin → Membership**.
-2. Choose **Invite members** to add someone or copy an invite link.
+2. Switch between **Members**, **Invite**, and **Add directly** in the same screen.
 3. Use a member's menu to manage their role or remove access, according to your permissions.

@@ -17,6 +17,7 @@ const owner = "0".repeat(64);
 function relay(): RelayData {
   const session = {
     relayAuthor: relayKey,
+    subscribeLive: () => () => {},
     read: async () => [
       {
         id: "e".repeat(64),

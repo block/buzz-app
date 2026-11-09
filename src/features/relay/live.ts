@@ -1359,6 +1359,11 @@ export function subscribeRelayTraffic(
         ...(route.id === "membership"
           ? [
               {
+                kinds: [13534],
+                since: route.since,
+                limit: 1,
+              },
+              {
                 kinds: [30078],
                 authors: [viewer],
                 "#t": ["read-state"],

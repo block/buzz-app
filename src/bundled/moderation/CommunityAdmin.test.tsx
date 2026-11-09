@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   render,
   screen,
@@ -86,8 +87,17 @@ function relay(
   people: { pubkey: string; name: string }[] = [],
 ) {
   const read = vi.fn(async () => events);
+  const live = new Set<
+    (batch: { events: ReturnType<typeof snapshot>[] }) => void
+  >();
   const session = {
     relayAuthor: relayKey,
+    subscribeLive: (
+      listener: (batch: { events: ReturnType<typeof snapshot>[] }) => void,
+    ) => {
+      live.add(listener);
+      return () => live.delete(listener);
+    },
     read,
     viewer,
     // The real sizing rewrite behind a pass-through proxy, as the session applies it.
@@ -110,6 +120,9 @@ function relay(
     session,
   };
   return {
+    emit: () => {
+      for (const listener of live) listener({ events });
+    },
     read,
     relay: {
       snapshot: () => value,
@@ -148,7 +161,7 @@ it("gates administration to owners and admins by the verified roster", async () 
     [{ kinds: [13534], authors: [relayKey], limit: 1 }],
     expect.objectContaining({ fresh: true }),
   );
-  expect(screen.queryByRole("button", { name: "Invite members" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
 });
 
 it("treats a roster signed by anyone else as unavailable", async () => {
@@ -180,9 +193,7 @@ it("mints a bounded invite and surfaces relay refusals", async () => {
   });
   const { relay: data } = relay(admin);
   render(<CommunityAdmin relay={data} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
   // Opening the dialog creates the link with the default settings.
   expect(
     await screen.findByDisplayValue("https://primary.example/invite/abc"),
@@ -193,6 +204,7 @@ it("mints a bounded invite and surfaces relay refusals", async () => {
   // QR codes come from the native renderer; the browser host has none.
   expect(screen.queryByRole("img")).toBeNull();
   // Admins cannot grant admin, so direct addition has no role choice.
+  await user.click(screen.getByRole("tab", { name: "Add directly" }));
   await user.type(
     screen.getByRole("textbox", { name: "Public identity" }),
     "3".repeat(64),
@@ -201,6 +213,7 @@ it("mints a bounded invite and surfaces relay refusals", async () => {
   expect(
     screen.queryByRole("button", { name: "Choose member role" }),
   ).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "Invite" }));
   refuse = true;
   await user.click(
     screen.getByRole("button", { name: "Choose maximum invite uses" }),
@@ -283,7 +296,7 @@ it("keeps an accepted removal when the refresh fails and retries read-only", asy
   expect(screen.queryAllByRole("button", { name: /^Actions for / })).toEqual(
     [],
   );
-  expect(screen.queryByRole("button", { name: "Invite members" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
   read.mockResolvedValueOnce([
     snapshot([
       ["member", owner, "owner"],
@@ -298,10 +311,9 @@ it("keeps an accepted removal when the refresh fails and retries read-only", asy
   expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
 });
 
-it("picks up a promotion made elsewhere when refreshed", async () => {
-  const user = userEvent.setup();
+it("picks up a promotion made elsewhere from the live roster stream", async () => {
   broker({});
-  const { relay: data, read } = relay(member);
+  const { relay: data, read, emit } = relay(member);
   render(<CommunityAdmin relay={data} active={() => true} />);
   await screen.findByText(
     "Only community owners and admins can invite people or manage members.",
@@ -312,10 +324,8 @@ it("picks up a promotion made elsewhere when refreshed", async () => {
       ["member", member, "admin"],
     ]),
   ]);
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(
-    await screen.findByRole("button", { name: "Invite members" }),
-  ).toBeVisible();
+  act(() => emit());
+  expect(await screen.findByRole("tab", { name: "Invite" })).toBeVisible();
 });
 
 it("recovers from an initial read failure on retry", async () => {
@@ -328,9 +338,7 @@ it("recovers from an initial read failure on retry", async () => {
     "Could not load members: offline",
   );
   await user.click(screen.getByRole("button", { name: "Retry" }));
-  expect(
-    await screen.findByRole("button", { name: "Invite members" }),
-  ).toBeVisible();
+  expect(await screen.findByRole("tab", { name: "Invite" })).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
@@ -349,7 +357,7 @@ it("disables an open confirmation when a pending refresh fails", async () => {
   const calls = broker({
     member: () => Response.json({ accepted: true, message: "" }),
   });
-  const { relay: data, read } = relay(owner);
+  const { relay: data, read, emit } = relay(owner);
   render(<CommunityAdmin relay={data} active={() => true} />);
   const menus = await screen.findAllByRole("button", { name: /^Actions for / });
   await user.click(menus[1] as HTMLElement);
@@ -360,7 +368,7 @@ it("disables an open confirmation when a pending refresh fails", async () => {
   const held = deferred<ReturnType<typeof snapshot>[]>();
   read.mockReturnValueOnce(held.promise);
   // Refresh stays reachable behind the modal in the browser; drive it directly.
-  screen.getByRole("button", { name: "Refresh", hidden: true }).click();
+  act(() => emit());
   await waitFor(() => expect(confirm).toBeDisabled());
   held.reject(new Error("relay unavailable"));
   expect(
@@ -378,7 +386,7 @@ it("disables an open confirmation when a pending refresh fails", async () => {
   expect(calls.filter((c) => c.route === "member")).toHaveLength(0);
 });
 
-it("locks an open invite dialog after an accepted add whose refresh fails", async () => {
+it("locks sharing tabs after an accepted add whose refresh fails", async () => {
   const user = userEvent.setup();
   const calls = broker({
     member: () => Response.json({ accepted: true, message: "" }),
@@ -393,11 +401,10 @@ it("locks an open invite dialog after an accepted add whose refresh fails", asyn
   });
   const { relay: data, read } = relay(owner);
   render(<CommunityAdmin relay={data} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
-  const dialog = await screen.findByRole("dialog");
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  const dialog = screen.getByRole("region", { name: "Membership" });
   await within(dialog).findByDisplayValue("https://primary.example/invite/abc");
+  await user.click(screen.getByRole("tab", { name: "Add directly" }));
   read.mockRejectedValueOnce(new Error("relay unavailable"));
   // The field resets after a confirmed direct addition.
   const search = () =>
@@ -418,9 +425,11 @@ it("locks an open invite dialog after an accepted add whose refresh fails", asyn
   expect(
     within(dialog).getByRole("button", { name: "Add member" }),
   ).toBeDisabled();
+  await user.click(screen.getByRole("tab", { name: "Invite" }));
   expect(
     within(dialog).getByRole("button", { name: "Choose maximum invite uses" }),
   ).toBeDisabled();
+  await user.click(screen.getByRole("tab", { name: "Add directly" }));
   expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
   expect(calls.filter((c) => c.route === "invite")).toHaveLength(1);
   // Read-only recovery inside the modal re-enables new writes.
@@ -523,12 +532,8 @@ it("accepts only an exact identity and never searches the people directory", asy
     }
   ).people = people;
   render(<CommunityAdmin relay={data} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
+  await user.click(await screen.findByRole("tab", { name: "Add directly" }));
+  const dialog = screen.getByRole("tabpanel");
   const identity = within(dialog).getByRole("textbox", {
     name: "Public identity",
   });
@@ -556,12 +561,8 @@ it("adds a member by a nostr: npub and refuses an npub that is not a 32-byte key
     member: () => Response.json({ accepted: true, message: "" }),
   });
   render(<CommunityAdmin relay={relay(owner).relay} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
+  await user.click(await screen.findByRole("tab", { name: "Add directly" }));
+  const dialog = screen.getByRole("tabpanel");
   const identity = within(dialog).getByRole("textbox", {
     name: "Public identity",
   });

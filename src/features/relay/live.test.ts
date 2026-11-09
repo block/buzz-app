@@ -393,6 +393,13 @@ it("uses independent explicit channel routes and self-p globals; equal interests
     since: expect.any(Number),
     limit: 500,
   });
+  const membershipRequest = h.first.requests()[1];
+  assert(membershipRequest);
+  expect(filtersOf(membershipRequest)).toContainEqual({
+    kinds: [13534],
+    since: expect.any(Number),
+    limit: 1,
+  });
   const before = h.first.sent.length;
   h.owner.update(["b", "a", "a"]);
   expect(h.first.sent).toHaveLength(before);

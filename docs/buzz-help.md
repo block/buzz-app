@@ -198,11 +198,13 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community picker and paste an invite link or type an address such as
   `relay.example.com`; an invite link fills in its invite code. Paste the whole
   link there; a code on its own is refused.
-- Community owners and admins invite people with **Invite members** in the
-  community's **Membership** settings (also reached from **Invite to community**
-  in the community picker's right-click menu). The dialog creates an invite
-  link with an expiry and use limit to copy, or adds someone directly by npub.
-  The desktop app also shows that link as a QR code to scan with a phone.
+- Community owners and admins manage access in the community's **Membership**
+  settings (also reached from **Invite to community** in the community picker's
+  right-click menu). **Members** shows the roster and updates as membership changes arrive.
+  If loading fails, use **Retry**. Switch to **Invite** or **Add directly** in the same screen.
+  Invite shows a QR code in the desktop app alongside the invite URL,
+  **Copy link**, and shared expiry and use limits. Add directly adds an
+  existing public identity by npub.
 - To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
   in builds without Builderlab). When you're signed in with Builderlab and your
   account holds this identity's backup, it says to install the app (with store

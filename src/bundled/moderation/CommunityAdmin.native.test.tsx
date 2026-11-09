@@ -111,7 +111,10 @@ function shownRole(pubkey: string) {
     .queryAllByRole("listitem")
     // Labels are `Name · key`: every target carries a key qualifier.
     .find((item) => within(item).queryByText(new RegExp(`^${name} · `)));
-  return row ? (row.querySelectorAll("p")[1]?.textContent ?? "") : null;
+  return row
+    ? (within(row).queryByText(/^(Owner|Admin|Member)( · You)?$/)
+        ?.textContent ?? "")
+    : null;
 }
 const actions = (pubkey: string) =>
   screen.queryByRole("button", {
@@ -123,9 +126,18 @@ function relay(viewer: string) {
   const profiles = new Map(
     [...NAMES].map(([pubkey, name]) => [pubkey, { name }]),
   );
+  const live = new Set<
+    (batch: { events: ReturnType<typeof snapshot>[] }) => void
+  >();
   const session = {
     relayAuthor: relayKey,
     read,
+    subscribeLive: (
+      listener: (batch: { events: ReturnType<typeof snapshot>[] }) => void,
+    ) => {
+      live.add(listener);
+      return () => live.delete(listener);
+    },
     viewer,
     media: () => undefined,
     directMessages: { people: async () => ({ people: [], hasMore: false }) },
@@ -143,6 +155,9 @@ function relay(viewer: string) {
     session,
   };
   return {
+    emit: () => {
+      for (const listener of live) listener({ events: [snapshot()] });
+    },
     read,
     relay: {
       snapshot: () => value,
@@ -165,6 +180,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  delete document.documentElement.dataset.colorMode;
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -203,11 +219,9 @@ it("lets a native owner add, promote, demote and remove through the host signer"
   expect(actions(owner)).toBeNull();
   expect(actions(admin)).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: "Invite members" }));
+  await user.click(screen.getByRole("tab", { name: "Add directly" }));
   // Invite minting is not part of this host stand-in; only the add is exercised.
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
+  const dialog = screen.getByRole("region", { name: "Membership" });
   await user.type(
     within(dialog).getByRole("textbox", { name: "Public identity" }),
     added,
@@ -216,7 +230,7 @@ it("lets a native owner add, promote, demote and remove through the host signer"
   expect(
     await within(dialog).findByText("Member added directly."),
   ).toBeVisible();
-  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("tab", { name: "Members" }));
   await waitFor(() => expect(shownRole(added)).toBe("Member"));
 
   const change = async (pubkey: string, item: string) => {
@@ -313,10 +327,8 @@ it("offers a native admin only member removal and surfaces the relay's refusal",
 
   // An admin adds only plain members: no role choice is offered.
   await user.keyboard("{Escape}");
-  await user.click(screen.getByRole("button", { name: "Invite members" }));
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
+  await user.click(screen.getByRole("tab", { name: "Add directly" }));
+  const dialog = screen.getByRole("region", { name: "Membership" });
   expect(
     within(dialog).queryByRole("button", { name: "Choose member role" }),
   ).toBeNull();
@@ -350,7 +362,7 @@ it.each([
     const user = userEvent.setup();
     let fail = true;
     const published = host(ownerKey, () => (fail ? failure : undefined));
-    const { relay: data, read } = relay(owner);
+    const { relay: data, read, emit } = relay(owner);
     render(<CommunityAdmin relay={data} active={() => true} />);
     await screen.findByRole("list", { name: "Members" });
     const promote = async () => {
@@ -375,7 +387,7 @@ it.each([
     fail = false;
     await user.keyboard("{Escape}");
     // Refresh shows whatever the relay actually holds.
-    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    act(() => emit());
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(shownRole(member)).toBe(applied ? "Admin" : "Member"),
@@ -415,12 +427,8 @@ it("still mints invite links natively", async () => {
     };
   });
   render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  const dialog = screen.getByRole("region", { name: "Membership" });
   expect(await within(dialog).findByDisplayValue(url)).toBeVisible();
   expect(
     vi
@@ -457,12 +465,8 @@ it("keeps the invite picker focused and the code in place while a new link is ma
     return new Promise((resolve) => minted.set(code, () => resolve(answer)));
   });
   render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  const dialog = screen.getByRole("region", { name: "Membership" });
   await within(dialog).findByDisplayValue(
     "https://primary.example/invite/open",
   );
@@ -499,7 +503,7 @@ it("keeps the invite picker focused and the code in place while a new link is ma
   expect(picker).toHaveFocus();
 });
 
-it("always shows the minted invite link as a native QR code", async () => {
+it("draws theme-aware invite QR codes and rejects stale renderer answers", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("matchMedia", () => ({
     matches: false,
@@ -529,18 +533,8 @@ it("always shows the minted invite link as a native QR code", async () => {
     };
   });
   render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Invite members" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Add or invite people",
-  });
-  // The link section leads; adding directly follows it.
-  expect(
-    within(dialog)
-      .getAllByRole("heading", { level: 3 })
-      .map((heading) => heading.textContent),
-  ).toEqual(["Invite with a link", "Add directly"]);
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  const dialog = screen.getByRole("region", { name: "Membership" });
   await within(dialog).findByDisplayValue(
     "https://primary.example/invite/open",
   );
@@ -594,6 +588,25 @@ it("always shows the minted invite link as a native QR code", async () => {
   ).toHaveAttribute(
     "src",
     `data:image/svg+xml,${encodeURIComponent("<svg>open</svg>")}`,
+  );
+  act(() => {
+    document.documentElement.dataset.colorMode = "dark";
+  });
+  await waitFor(() =>
+    expect(invoke).toHaveBeenLastCalledWith("qr_code", {
+      value: "https://primary.example/invite/open",
+      variant: "dark",
+    }),
+  );
+  expect(within(dialog).queryByRole("img")).toBeNull();
+  drawn.get("https://primary.example/invite/open")?.("<svg>dark</svg>");
+  expect(
+    await within(dialog).findByRole("img", {
+      name: "Scan this QR code to open the invite link",
+    }),
+  ).toHaveAttribute(
+    "src",
+    `data:image/svg+xml,${encodeURIComponent("<svg>dark</svg>")}`,
   );
   // A renderer failure shows its error and no stale code.
   await user.click(

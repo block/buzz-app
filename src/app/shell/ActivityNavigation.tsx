@@ -143,13 +143,20 @@ export function ActivityReactionScope({
   );
 }
 
-/** Activity is always a dock page (presentation.ts), so its icon has the
- * dock tile's size. */
-export function ActivityNavigationIcon({ children }: { children: ReactNode }) {
+/** The Activity icon, swapped for the latest reaction emoji, sized for a
+ * dock tile or a sidebar row. */
+export function ActivityNavigationIcon({
+  size = "dock",
+  children,
+}: {
+  size?: "dock" | "row";
+  children: ReactNode;
+}) {
   const emoji = useContext(ActivityEmojiContext);
   return (
     <span
       className={styles.icon}
+      data-size={size}
       data-active={emoji?.active || undefined}
       aria-hidden="true"
     >

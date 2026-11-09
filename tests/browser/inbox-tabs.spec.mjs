@@ -8,6 +8,7 @@ import {
   chooseColorMode,
   closeSettings,
 } from "./navigation.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 test.use({
   productionBroker: true,
@@ -597,13 +598,7 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   await expect(row).toHaveCount(2);
   await expect(row.filter({ hasText: "reacted ❤️" })).toContainText(" and ");
   const typeTabs = inbox.getByRole("tablist", { name: "Activity type" });
-  await typeTabs.evaluate(async (element) => {
-    await Promise.all(
-      element
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(typeTabs, { subtree: true });
   await expect
     .poll(() =>
       typeTabs.evaluate((element) => {

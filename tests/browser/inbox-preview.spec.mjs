@@ -7,6 +7,7 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 // Browser-only contract: a real pointer resting on the dock tab opens the
 // card, which sits just past the row, and its row navigates without opening
@@ -129,11 +130,7 @@ test("hovering the dock Activity tab previews recent conversations and opens one
     expect(geometry.contextY).toBeGreaterThan(geometry.previewY);
     expect(geometry.tailRight).toBeLessThanOrEqual(geometry.rowRight);
     // Measure after the open transition, which offsets the card while it runs.
-    await card.evaluate((element) =>
-      Promise.all(
-        element.getAnimations().map((animation) => animation.finished),
-      ),
-    );
+    await animationsSettled(card);
     const row = await inboxRow.boundingBox();
     const box = await card.boundingBox();
     // Where there is room the card sits 6px past the row's hover background,

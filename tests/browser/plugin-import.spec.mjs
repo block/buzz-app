@@ -13,6 +13,7 @@ import {
 } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -615,11 +616,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Add").click();
   const sourceDialog = page.getByRole("dialog");
   await expect(sourceDialog).toHaveCSS("opacity", "1");
-  await sourceDialog.evaluate(async (node) => {
-    await Promise.all(
-      node.getAnimations().map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(sourceDialog);
   await sourceDialog.screenshot({
     path: info.outputPath("plugin-source.png"),
   });
@@ -778,13 +775,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
           return { x, y, width, height };
         }),
       );
-  await details.evaluate(async (node) => {
-    await Promise.all(
-      node
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(details, { subtree: true });
   const settledActions = await actionPositions();
   await page.evaluate(() => {
     window.importCategory = "productivity";

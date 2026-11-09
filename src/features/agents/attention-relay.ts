@@ -583,30 +583,47 @@ export function compared(
   set: AttentionSet,
 ): AttentionMigration {
   const sorted = (slugs: Iterable<string>) => [...slugs].sort();
+  const different = sorted(
+    Object.values(attention)
+      .filter(
+        ({ slug, value }) =>
+          !set.attention[slug] || !sameValue(set.attention[slug].value, value),
+      )
+      .map(({ slug }) => slug),
+  );
+  const extra = sorted(
+    Object.keys(set.attention).filter((slug) => !attention[slug]),
+  );
   return {
     migrated: false,
-    different: sorted(
-      Object.values(attention)
-        .filter(
-          ({ slug, value }) =>
-            !set.attention[slug] ||
-            !sameValue(set.attention[slug].value, value),
-        )
-        .map(({ slug }) => slug),
-    ),
-    extra: sorted(
-      Object.keys(set.attention).filter((slug) => !attention[slug]),
-    ),
+    different,
+    extra,
     skipped: sorted(Object.keys(set.skipped)),
     heads: Object.fromEntries(
       Object.keys(set.skipped)
-        .concat(Object.keys(set.attention).filter((slug) => !attention[slug]))
+        .concat(extra)
         .flatMap((slug) => {
           const id = set.heads[slug]?.id;
           return id ? [[slug, id]] : [];
         }),
     ),
+    names: Object.fromEntries(
+      [...different, ...extra].flatMap((slug) => {
+        const object = attention[slug] ?? set.attention[slug];
+        return object ? [[slug, nameOf(slug, object.value)]] : [];
+      }),
+    ),
   };
+}
+
+/** What the owner calls an object: an Interest's title or first heading, a
+ * watch's name, else its id. */
+function nameOf(slug: string, value: AttentionValue) {
+  const id = slug.slice(slug.indexOf("/") + 1);
+  if (value.type !== "interest") return ("name" in value && value.name) || id;
+  const first = value.instructions.split("\n").find((line) => line.trim());
+  const heading = first && /^#+\s+(.+)$/.exec(first.trim())?.[1]?.trim();
+  return value.title || heading || id;
 }
 
 /** What moving an agent's attention to the relay found. It moved only when
@@ -622,6 +639,9 @@ export type AttentionMigration = Readonly<{
   /** The relay head of each object in `extra` and `skipped`, by slug: what
    * the owner confirms deleting when a move prunes. */
   heads: Readonly<Record<string, string>>;
+  /** What the owner calls each object in `different` and `extra`, by slug:
+   * its title or name, else its id. */
+  names: Readonly<Record<string, string>>;
 }>;
 
 /** Publishes each object of `attention` the relay does not already hold

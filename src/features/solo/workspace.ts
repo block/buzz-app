@@ -354,6 +354,19 @@ export function parseChatSetup(raw: unknown): ChatSetup {
 export function defaultsRevision(kit: { entries: readonly KitEntry[] }) {
   return kit.entries.map((entry) => entry.eventId).join();
 }
+/** The chat's workspace can't be used: workspaces can't be read, or this one
+ * was deleted. Callers that offer a way out add it. */
+export class WorkspaceUnavailable extends Error {
+  readonly deleted: boolean;
+  constructor(deleted: boolean) {
+    super(
+      deleted
+        ? "This workspace was deleted."
+        : "Workspaces can’t be read right now. Try again.",
+    );
+    this.deleted = deleted;
+  }
+}
 /** A workspace's saved default template, as New chat and New channel find
  * it, with the kit it was read from. */
 export async function loadWorkspaceDefaults(
@@ -362,15 +375,11 @@ export async function loadWorkspaceDefaults(
 ) {
   const store = session.sidebarPreferences;
   await store.refresh();
-  const sections = store.writable ? store.snapshot().data?.sections : undefined;
-  if (!sections)
-    throw new Error(
-      "Workspaces can’t be read right now. Try again, or choose No workspace.",
-    );
+  const preferences = store.snapshot();
+  const sections = store.writable ? preferences.data?.sections : undefined;
+  if (!sections) throw new WorkspaceUnavailable(false);
   if (!sections.some((project) => project.id === projectId))
-    throw new Error(
-      "This workspace was deleted. Start the chat without one, or choose another.",
-    );
+    throw new WorkspaceUnavailable(true);
   await session.channelKit.refresh();
   const kit = session.channelKit.snapshot();
   if (kit.status !== "ready")

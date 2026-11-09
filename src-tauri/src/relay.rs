@@ -2085,7 +2085,7 @@ pub(crate) async fn media_copy_image<R: tauri::Runtime>(
     crate::clipboard::write_image(&app, pixels.0, pixels.1, pixels.2).await
 }
 
-/// Lifts the subject out of relay image media as a sticker PNG. As for Copy
+/// Lifts the subject out of relay image media as a transparent PNG. As for Copy
 /// image, the host owns authenticated media access; the webview gets only the
 /// result.
 #[tauri::command]
@@ -2111,7 +2111,7 @@ pub(crate) async fn media_lift_subject(
         .and_then(|value| value.to_str().ok())
         .is_some_and(|kind| kind.starts_with("image/") && kind != "image/svg+xml")
     {
-        return Err("Choose an image to make a sticker".into());
+        return Err("Choose an image".into());
     }
     let png = tauri::async_runtime::spawn_blocking(move || {
         crate::subject_lift::lift_subject(response.body())

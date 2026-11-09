@@ -766,6 +766,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         media_download,
         media_copy_image,
         media_lift_subject,
+        subject_lift::media_lift_subject_supported,
         clipboard::clipboard_write_text,
         media_stream_base,
         get_os_idle_seconds,

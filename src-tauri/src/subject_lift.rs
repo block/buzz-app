@@ -1,15 +1,15 @@
-//! Lifts the subject out of a photo for a sticker, as Photos and Messages do.
+//! Lifts the subject out of a photo, as Photos and Messages do for stickers.
 //!
 //! On macOS 14 and later, Vision's foreground instance mask finds every
 //! subject, keeps them over a transparent background and crops to them. Buzz
-//! then scales the result down to sticker size and returns a PNG. Elsewhere,
+//! then scales the result down to at most [`LIFT_SIZE`] and returns a PNG. Elsewhere,
 //! and on older macOS, lifting is unavailable and the caller keeps the whole
 //! image.
 
-/// The longest side of a lifted sticker, in pixels: sharp at reaction and
+/// The longest side of a lifted subject, in pixels: sharp at reaction and
 /// message sizes on Retina displays, and small enough to upload quickly.
-const STICKER_SIZE: u32 = 512;
-/// The largest source the host fetches for a sticker.
+const LIFT_SIZE: u32 = 512;
+/// The largest source the host fetches to lift.
 pub(crate) const MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
 /// The most source pixels Vision decodes, as attachment preparation allows.
 const MAX_SOURCE_PIXELS: u64 = 25_000_000;
@@ -19,13 +19,19 @@ pub(crate) fn supported() -> Result<(), String> {
     platform::supported()
 }
 
+/// Whether this host can lift subjects, so plugins offer it only where it works.
+#[tauri::command]
+pub(crate) fn media_lift_subject_supported() -> bool {
+    supported().is_ok()
+}
+
 /// Returns a transparent PNG of the image's subjects, cropped to them and at
-/// most [`STICKER_SIZE`] on its longer side. Only GIF, JPEG, PNG and WebP
+/// most [`LIFT_SIZE`] on its longer side. Only GIF, JPEG, PNG and WebP
 /// within [`MAX_SOURCE_PIXELS`] reach the system decoder: message images come
 /// from other members, so their bytes and declared type are untrusted.
 pub(crate) fn lift_subject(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if bytes.len() > MAX_SOURCE_BYTES {
-        return Err("Image too large for a sticker".into());
+        return Err("Image too large to lift a subject".into());
     }
     let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -45,22 +51,18 @@ pub(crate) fn lift_subject(bytes: &[u8]) -> Result<Vec<u8>, String> {
         .into_dimensions()
         .map_err(|_| "Could not read this image")?;
     if u64::from(width) * u64::from(height) > MAX_SOURCE_PIXELS {
-        return Err("Image too large for a sticker".into());
+        return Err("Image too large to lift a subject".into());
     }
     let lifted = platform::lift(bytes)?;
     fit(&lifted)
 }
 
-/// Scales a lifted PNG down to sticker size, keeping its aspect ratio.
+/// Scales a lifted PNG down to [`LIFT_SIZE`], keeping its aspect ratio.
 fn fit(png: &[u8]) -> Result<Vec<u8>, String> {
     let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
         .map_err(|_| "Could not read the lifted subject")?;
-    let image = if image.width().max(image.height()) > STICKER_SIZE {
-        image.resize(
-            STICKER_SIZE,
-            STICKER_SIZE,
-            image::imageops::FilterType::Lanczos3,
-        )
+    let image = if image.width().max(image.height()) > LIFT_SIZE {
+        image.resize(LIFT_SIZE, LIFT_SIZE, image::imageops::FilterType::Lanczos3)
     } else {
         image
     };
@@ -68,7 +70,7 @@ fn fit(png: &[u8]) -> Result<Vec<u8>, String> {
     image
         .to_rgba8()
         .write_to(&mut out, image::ImageFormat::Png)
-        .map_err(|_| "Could not encode the sticker")?;
+        .map_err(|_| "Could not encode the image")?;
     Ok(out.into_inner())
 }
 
@@ -131,7 +133,7 @@ mod platform {
             let image = unsafe { CIImage::imageWithCVPixelBuffer(&buffer) };
             // SAFETY: a constant Core Graphics provides.
             let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
-                .ok_or("Could not encode the sticker")?;
+                .ok_or("Could not encode the image")?;
             // SAFETY: an empty options dictionary; RGBA8 is a valid PNG format.
             let png = unsafe {
                 CIContext::new().PNGRepresentationOfImage_format_colorSpace_options(
@@ -141,7 +143,7 @@ mod platform {
                     &NSDictionary::new(),
                 )
             }
-            .ok_or("Could not encode the sticker")?;
+            .ok_or("Could not encode the image")?;
             Ok(png.to_vec())
         })
     }
@@ -184,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn fit_scales_the_longer_side_to_sticker_size() {
+    fn fit_scales_the_longer_side_to_lift_size() {
         assert_eq!(size(&fit(&png(2048, 1024)).unwrap()), (512, 256));
         assert_eq!(size(&fit(&png(300, 1200)).unwrap()), (128, 512));
     }
@@ -211,13 +213,13 @@ mod tests {
         header[29..33].copy_from_slice(&crc);
         assert_eq!(
             lift_subject(&header).unwrap_err(),
-            "Image too large for a sticker"
+            "Image too large to lift a subject"
         );
     }
 
     #[test]
     fn lift_subject_refuses_oversized_sources_before_decoding() {
         let error = lift_subject(&vec![0; MAX_SOURCE_BYTES + 1]).unwrap_err();
-        assert_eq!(error, "Image too large for a sticker");
+        assert_eq!(error, "Image too large to lift a subject");
     }
 }

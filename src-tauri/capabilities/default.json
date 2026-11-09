@@ -96,6 +96,7 @@
     "allow-file-download",
     "allow-media-copy-image",
     "allow-media-lift-subject",
+    "allow-media-lift-subject-supported",
     "allow-clipboard-write-text",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",

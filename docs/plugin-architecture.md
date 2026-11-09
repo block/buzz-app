@@ -332,12 +332,12 @@ type SubjectLift = {
 ```
 
 `source` is what `session.media(attachment.url)` returned. `supports` is true
-only for desktop media URLs in the Mac app, so check it before offering the
-action. `lift` resolves with the image's subjects over a transparent
+only for desktop media URLs on a host that can lift, which today means the Mac
+app on macOS 14 or later, so check it before offering the action. `lift` resolves with the image's subjects over a transparent
 background, cropped to them and at most 512 px on the longer side, as a
 metadata-free PNG that `session.emoji.upload` accepts. It rejects with the
 host's reason, for example when no subject is found, the image is not GIF,
-JPEG, PNG or WebP, or macOS is older than 14. The result is a still image, so
+JPEG, PNG or WebP, or the image is too large. The result is a still image, so
 an animated GIF or WebP loses its animation; offer the whole image for those.
 The host fetches the authenticated media and runs Vision's foreground instance
 mask (`media_lift_subject`); the plugin never receives media credentials.

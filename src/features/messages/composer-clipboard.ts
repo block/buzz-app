@@ -410,12 +410,13 @@ function pastedImageExtension(type: string) {
   );
 }
 
-/** The pictures `pastedInlineImages` found, as files in paste order. One that
- * cannot be read, or is not an image, is left out. Unnamed ones are "Pasted
- * image", numbered from the second. */
+/** The pictures `pastedInlineImages` found, as files in paste order, and how
+ * many were left out because they could not be read or are not images, so the
+ * composer can say so. Unnamed ones are "Pasted image", numbered from the
+ * second. */
 export async function fetchPastedImages(
   images: readonly { src: string; name?: string | undefined }[],
-): Promise<File[]> {
+): Promise<{ files: File[]; unread: number }> {
   const blobs = await Promise.all(
     images.map(({ src }) =>
       fetch(src)
@@ -425,11 +426,12 @@ export async function fetchPastedImages(
     ),
   );
   let unnamed = 0;
-  return images.flatMap(({ name }, index) => {
+  const files = images.flatMap(({ name }, index) => {
     const blob = blobs[index];
     if (!blob) return [];
     const fallback = () =>
       `Pasted image${++unnamed > 1 ? ` ${unnamed}` : ""}.${pastedImageExtension(blob.type)}`;
     return [new File([blob], name ?? fallback(), { type: blob.type })];
   });
+  return { files, unread: images.length - files.length };
 }

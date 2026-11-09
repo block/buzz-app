@@ -258,6 +258,26 @@ export function flushPendingDraft(scope: string, key: string) {
   return true;
 }
 const editAttachmentNotice = "Finish editing before attaching new files.";
+/** Pasted pictures that could not be read, beside the text that pasted. */
+const unreadPicturesNotice = (count: number) =>
+  count === 1
+    ? "A pasted picture could not be read. Copy it again, or attach it as a file."
+    : `${count} pasted pictures could not be read. Copy them again, or attach them as files.`;
+/** The notice for files left out of an attach, for the reasons given. */
+const attachmentFailure = (
+  refused: number,
+  total: number,
+  reasons: readonly string[],
+  kind = "file",
+) => ({
+  title:
+    refused < total
+      ? `Could not attach ${refused} of ${total} ${kind}s`
+      : refused === 1
+        ? `Could not attach ${kind}`
+        : `Could not attach ${refused} ${kind}s`,
+  description: reasons.join(" "),
+});
 /** What the composer reports. A report that a kept rewrite of another message
  * cannot open here names that message: Edit chosen while it shows discards
  * the rewrite. */
@@ -1872,12 +1892,18 @@ function Composer({
       !voice.capturing,
     attachFiles,
   );
-  function attachFiles(files: readonly File[], folders?: ReadonlySet<File>) {
+  /** Attaches `files`. `unread` counts pasted pictures that could not be
+   * read; they are reported beside the files, as ones the store refuses are. */
+  function attachFiles(
+    files: readonly File[],
+    folders?: ReadonlySet<File>,
+    unread = 0,
+  ) {
     if (
       !permitted.current ||
       editingDisabled ||
       voice.isCapturing() ||
-      !files.length
+      !(files.length || unread)
     )
       return;
     if (editing.target) {
@@ -1898,38 +1924,45 @@ function Composer({
       : folders.size === files.length
         ? "folder"
         : "item";
+    const total = files.length + unread;
+    const reasons = unread ? [unreadPicturesNotice(unread)] : [];
     try {
       const before = attachments.store.snapshot().length;
-      const left = attachments.store.add(files, undefined, folders);
+      const left = files.length
+        ? attachments.store.add(files, undefined, folders)
+        : [];
       const added = attachments.store
         .snapshot()
         .slice(before)
         .map((item) => item.id);
-      const refused = files.length - added.length;
+      const refused = total - added.length;
       setAttachmentError(
-        left.length
-          ? {
-              title: added.length
-                ? `Could not attach ${refused} of ${files.length} ${kind}s`
-                : `Could not attach ${refused} ${kind}s`,
-              description: left.join(" "),
-            }
+        refused
+          ? attachmentFailure(refused, total, [...left, ...reasons], kind)
           : undefined,
       );
       return added;
     } catch (reason) {
-      setAttachmentError({
-        title: `Could not attach ${kind}`,
-        description:
-          reason instanceof Error ? reason.message : "Could not attach files.",
-      });
+      setAttachmentError(
+        attachmentFailure(
+          total,
+          total,
+          [
+            reason instanceof Error ? reason.message : "Could not attach files.",
+            ...reasons,
+          ],
+          kind,
+        ),
+      );
     }
   }
   // Pictures read after their paste attach to the composer as it is then,
-  // never once it unmounts.
-  const attachLate = useEffectEvent((files: readonly File[]) => {
-    if (live.current) attachFiles(files);
-  });
+  // never once it unmounts. Ones that could not be read are reported there.
+  const attachLate = useEffectEvent(
+    ({ files, unread }: Awaited<ReturnType<typeof fetchPastedImages>>) => {
+      if (live.current) attachFiles(files, undefined, unread);
+    },
+  );
   // Send waits while they are read, as it does for a failed file, so a paste
   // stays one message. An edit reads none, so its Save never waits.
   const [pictureReads, setPictureReads] = useState(0);

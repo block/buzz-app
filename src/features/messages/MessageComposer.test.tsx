@@ -2675,18 +2675,29 @@ it("pastes text copied together with a picture as text, and attaches a file past
  * it to the page: the picture is a blob: URL in the HTML and U+FFFC in the
  * text, with no file item. The composer and its editor read the HTML once. Its
  * fetch waits for `picture()`, which reads a PNG unless given another result.
- * With `fetched: false` the paste need not fetch; the caller checks `fetch`. */
-function pasteTextEditCopy(input: HTMLElement, { fetched = true } = {}) {
-  const src = "blob:http://127.0.0.1:4873/ba90c5a8-7c1e-4d0b-9f2a-3e6d8b1c5f40";
-  const read = deferred<Blob>();
-  const fetch = vi.fn(
-    async (_src: string) => ({ blob: () => read.promise }) as Response,
-  );
+ * With `fetched: false` the paste need not fetch; the caller checks `fetch`.
+ * With `second: true` a second picture, Chart.png, follows the first; its read
+ * waits for `picture(result, 1)`. */
+function pasteTextEditCopy(
+  input: HTMLElement,
+  { fetched = true, second = false } = {},
+) {
+  const srcs = [
+    "blob:http://127.0.0.1:4873/ba90c5a8-7c1e-4d0b-9f2a-3e6d8b1c5f40",
+    "blob:http://127.0.0.1:4873/2f5c1e7a-9b3d-4c8e-a1f6-7d2b9c4e8a10",
+  ].slice(0, second ? 2 : 1);
+  const reads = srcs.map(() => deferred<Blob>());
+  const fetch = vi.fn(async (src: string) => {
+    const read = reads[srcs.indexOf(src)];
+    if (!read) throw new TypeError("Failed to fetch");
+    return { blob: () => read.promise } as Response;
+  });
   vi.stubGlobal("fetch", fetch);
+  const image = (src: string, alt: string) =>
+    `<p><span><img src="${src}" alt="${alt}"></span></p>\n`;
   const flavors: Record<string, string> = {
-    "text/plain":
-      "Lunch budget notes for Q3.\n\uFFFC\nVenue costs went up twelve percent.\n",
-    "text/html": `<p><span>Lunch budget notes for Q3.</span></p>\n<p><span><img src="${src}" alt="Attachment.png"></span></p>\n<p><span>Venue costs went up twelve percent.</span></p><br class="Apple-interchange-newline">`,
+    "text/plain": `Lunch budget notes for Q3.\n${"\uFFFC\n".repeat(srcs.length)}Venue costs went up twelve percent.\n`,
+    "text/html": `<p><span>Lunch budget notes for Q3.</span></p>\n${image(srcs[0] ?? "", "Attachment.png")}${second ? image(srcs[1] ?? "", "Chart.png") : ""}<p><span>Venue costs went up twelve percent.</span></p><br class="Apple-interchange-newline">`,
   };
   const getData = vi.fn((type: string) => flavors[type] ?? "");
   act(() => {
@@ -2702,11 +2713,17 @@ function pasteTextEditCopy(input: HTMLElement, { fetched = true } = {}) {
   expect(getData.mock.calls.filter(([type]) => type === "text/html")).toEqual([
     ["text/html"],
   ]);
-  if (fetched) expect(fetch).toHaveBeenCalledExactlyOnceWith(src);
-  return (result: Blob | Error = new Blob(["png"], { type: "image/png" })) =>
-    act(async () =>
-      result instanceof Error ? read.reject(result) : read.resolve(result),
-    );
+  if (fetched) expect(fetch.mock.calls.map(([src]) => src)).toEqual(srcs);
+  return (
+    result: Blob | Error = new Blob(["png"], { type: "image/png" }),
+    index = 0,
+  ) =>
+    act(async () => {
+      const read = reads[index];
+      if (!read) throw new Error(`No picture ${index}`);
+      if (result instanceof Error) read.reject(result);
+      else read.resolve(result);
+    });
 }
 const textEditText =
   "Lunch budget notes for Q3.\nVenue costs went up twelve percent.\n";
@@ -2753,14 +2770,46 @@ it("holds Send while a pasted picture is read, so the paste sends as one message
 it.each([
   ["is not an image", new Blob(["<p>"], { type: "text/html" })],
   ["cannot be read", new Error("gone")],
-])("releases Send when a pasted picture %s", async (_, result) => {
+])("releases Send and says so when a pasted picture %s", async (_, result) => {
   const h = await mountUploadComposer();
   const picture = pasteTextEditCopy(h.input());
   expect(h.send()).toBeDisabled();
   await picture(result);
   await waitFor(() => expect(h.send()).toBeEnabled());
+  // The text stayed, so the notice says how to bring the picture along.
+  const notice = await screen.findByRole("dialog", {
+    name: "Could not attach file",
+  });
+  expect(notice).toHaveAccessibleDescription(
+    "A pasted picture could not be read. Copy it again, or attach it as a file.",
+  );
   expect(h.uploadCalls).toHaveLength(0);
   expect(h.input()).toHaveValue(textEditText);
+});
+
+it("attaches the pasted pictures it can read and counts the one it cannot", async () => {
+  const h = await mountUploadComposer();
+  const picture = pasteTextEditCopy(h.input(), { second: true });
+  expect(h.send()).toBeDisabled();
+  await picture(new Error("gone"), 1);
+  // Send waits for the whole read: the first picture is still being read.
+  expect(h.send()).toBeDisabled();
+  await picture();
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  expect(h.uploadCalls[0]?.file.name).toBe("Attachment.png");
+  expect(
+    within(h.form()).getByRole("button", { name: "Remove Attachment.png" }),
+  ).toBeInTheDocument();
+  const notice = await screen.findByRole("dialog", {
+    name: "Could not attach 1 of 2 files",
+  });
+  expect(notice).toHaveAccessibleDescription(
+    "A pasted picture could not be read. Copy it again, or attach it as a file.",
+  );
+  expect(h.input()).toHaveValue(
+    "Lunch budget notes for Q3.\nVenue costs went up twelve percent.\n",
+  );
 });
 
 it("attaches no pasted picture that arrives after the composer unmounts", async () => {

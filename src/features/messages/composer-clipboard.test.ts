@@ -494,7 +494,7 @@ it("collects no pictures without a clipboard", () => {
   expect(pastedInlineImages(null)).toEqual([]);
 });
 
-it("reads pasted pictures in order, names unnamed ones and leaves out unreadable ones", async () => {
+it("reads pasted pictures in order, names unnamed ones and counts the ones left out", async () => {
   const blobs: Record<string, Blob> = {
     "blob:named": new Blob(["a"], { type: "image/png" }),
     "blob:jpeg": new Blob(["bb"], { type: "image/jpeg" }),
@@ -512,7 +512,7 @@ it("reads pasted pictures in order, names unnamed ones and leaves out unreadable
   });
   vi.stubGlobal("fetch", fetch);
   try {
-    const files = await fetchPastedImages([
+    const { files, unread } = await fetchPastedImages([
       { src: "blob:named", name: "Attachment.png" },
       { src: "blob:revoked" },
       { src: "blob:jpeg" },
@@ -532,6 +532,8 @@ it("reads pasted pictures in order, names unnamed ones and leaves out unreadable
       ["Pasted image 5.ico", "image/vnd.microsoft.icon", 1],
       ["Pasted image 6.png", "image/vnd.adobe.photoshop", 1],
     ]);
+    // The revoked URL and the text blob.
+    expect(unread).toBe(2);
     expect(fetch).toHaveBeenCalledTimes(9);
   } finally {
     vi.unstubAllGlobals();

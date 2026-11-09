@@ -401,7 +401,10 @@ it("settles a stopped turn that Claude ends as aborted tools as stopped, not fai
 /** A Claude whose Buzz tools run through the real app client: its first
  * `mem_get` of `later` holds until `release`, and other reads answer at once.
  * With `holdStops`, Claude answers a Stop only when the test does. */
-async function heldTurns(env?: Record<string, string>, added: AddedTool[] = []) {
+async function heldTurns(
+  env?: Record<string, string>,
+  added: AddedTool[] = [],
+) {
   const { spawn, processes } = fakeSpawn();
   const stops: string[] = [];
   let holdStops = false;
@@ -435,7 +438,13 @@ async function heldTurns(env?: Record<string, string>, added: AddedTool[] = []) 
         { pubkey: "agent", key: "agent" } as unknown as AgentHandle,
         { read: vi.fn(), memories, signal, callSignal: signal },
       );
-      return callSessionTool(client, {}, params.name, params.arguments, added).then(
+      return callSessionTool(
+        client,
+        {},
+        params.name,
+        params.arguments,
+        added,
+      ).then(
         (text) => ({ jsonrpc: "2.0", id, result: { content: [{ text }] } }),
         (error: Error) => ({
           jsonrpc: "2.0",

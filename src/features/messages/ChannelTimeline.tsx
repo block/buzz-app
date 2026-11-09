@@ -760,6 +760,9 @@ function Timeline({
     viewport: number;
   } | null>(null);
   const olderDemand = useRef(false);
+  // A page read to fill the opening screen lands as part of that opening: the
+  // follower's bottom positioning owns it, not prepend anchoring.
+  const fillLanding = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
@@ -1436,9 +1439,12 @@ function Timeline({
       (revealIndex < 0 &&
         settled.current &&
         (!follow.current ||
-          (prepend && pendingRestore.current !== intent.current)))
+          (prepend &&
+            pendingRestore.current !== intent.current &&
+            !fillLanding.current)))
     )
       return;
+    if (prepend) fillLanding.current = false;
     // A send supersedes saved reading intent before the first scroll event.
     // This effect also retains its height observer through late measurements.
     if (revealIndex >= 0 && revealMessageId) {
@@ -1681,7 +1687,9 @@ function Timeline({
     )
       return;
     queries.channels.loadOlder(channelId);
-    if (queries.channels.window(channelId).loadingOlder) fillPages.current++;
+    if (!queries.channels.window(channelId).loadingOlder) return;
+    fillPages.current++;
+    fillLanding.current = true;
   }, [
     window,
     queries,

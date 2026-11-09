@@ -719,6 +719,23 @@ it("a settled reader at the bottom fills a screen with nothing to scroll", () =>
   expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
   h.unmount();
 });
+it("a filled page keeps the follower at the bottom, unlike other prepends", () => {
+  const h = setup({ hasMore: true });
+  underfilled(h);
+  expect(h.olderReads).toHaveBeenCalledOnce();
+  // The page lands and fills the screen.
+  h.element.scrollHeight = 3706;
+  h.handle.scrollToIndex.mockClear();
+  h.prepend();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  // A later page is ordinary prepend anchoring again.
+  h.handle.scrollToIndex.mockClear();
+  h.prepend();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+});
 it("filling reads a few pages a visit, then leaves paging to the reader", () => {
   const h = setup({ hasMore: true });
   underfilled(h);

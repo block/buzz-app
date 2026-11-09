@@ -16,6 +16,7 @@ import {
   type BackupStatus,
   createBackupStatus,
 } from "../features/identity/backup";
+import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
 import type { FederatedIdentity } from "../features/federated-identity/service";
@@ -97,9 +98,15 @@ function backupHost(initial: BackupStatus) {
   };
 }
 
-const renderBackup = (initial: BackupStatus) => {
+const renderBackup = (initial: BackupStatus, openBuilderlab?: () => void) => {
   const host = backupHost(initial);
-  render(<IdentitySettings viewer={viewer} identity={host.identity} />);
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      identity={host.identity}
+      openBuilderlab={openBuilderlab}
+    />,
+  );
   return host;
 };
 function accountResponse(path: string, key = viewer, backups = [key]) {
@@ -302,6 +309,76 @@ it("keeps a failed organization sign-out visible when storage refuses", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Secure storage is busy",
   );
+});
+
+const builderlab = { name: "Builderlab" };
+
+// Builderlab's page connects this key, or switches the account to it. Native
+// reaches either only after consent, so the link starts no backup unasked.
+it.each([
+  [{ status: "waiting", reason: "not_linked" }, "not_linked"],
+  [{ status: "failed", kind: "other_key_linked" }, "other_key_linked"],
+] as const)(
+  "links Builderlab from the %o sentence to its Settings page",
+  async (progress, kind) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+    const openBuilderlab = vi.fn();
+    await renderBackup(at(1, progress), openBuilderlab).settled();
+    await showKeyDetails();
+    const message = BACKUP_FAILURES[kind].message.replace(/\.$/, "");
+    const sentence = screen.getByText(
+      (_, el) => el?.tagName === "P" && el.textContent === message,
+    );
+    expect(sentence.textContent).toBe(message);
+    const link = within(sentence).getByRole("button", builderlab);
+    expect(within(sentence).getAllByRole("button")).toEqual([link]);
+    expect(screen.getByRole("button", { name: "Retry backup" })).toBeEnabled();
+    await userEvent.setup().click(link);
+    expect(openBuilderlab).toHaveBeenCalledOnce();
+  },
+);
+
+// Signing in is on this page, and consent is the row's own Sync; retrying
+// failures need a new sign-in, and the rest have no fix on Builderlab's page.
+it.each([
+  { status: "waiting", reason: "no_session" },
+  { status: "waiting", reason: "no_consent" },
+  { status: "idle" },
+  { status: "running" },
+  { status: "complete" },
+  ...(
+    [
+      "signed_out",
+      "busy",
+      "unreachable",
+      "unconfirmed",
+      "storage",
+      "not_offered",
+      "invalid_service",
+      "refused",
+    ] as const
+  ).map((kind) => ({ status: "failed", kind }) as const),
+] as const)("names no Builderlab link for the %o status", async (progress) => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  await renderBackup(at(1, progress), vi.fn()).settled();
+  await showKeyDetails();
+  const badge = screen.getByRole("region", { name: "Your Buzz ID" });
+  expect(badge).toBeVisible();
+  expect(within(badge).queryByRole("button", builderlab)).toBeNull();
+});
+
+it("names Builderlab as plain text where Settings can't open it", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  await renderBackup(
+    at(1, { status: "waiting", reason: "not_linked" }),
+  ).settled();
+  await showKeyDetails();
+  const message = BACKUP_FAILURES.not_linked.message.replace(/\.$/, "");
+  const sentence = screen.getByText(
+    (_, el) => el?.tagName === "P" && el.textContent === message,
+  );
+  expect(sentence.textContent).toBe(message);
+  expect(within(sentence).queryByRole("button")).toBeNull();
 });
 
 const sync = { name: "Back up key" };

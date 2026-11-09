@@ -1020,6 +1020,11 @@ consent prompt before any choice is saved; the prompt closes if the wait settles
 without its answer. Cancel restores the action's focus; saving consent or an
 externally settled wait returns focus to **Back**. **Retry backup** and the
 consent action share that slot, so retry never bypasses consent.
+When the key isn’t linked to the account, or the account holds a different
+key, the notice’s **Builderlab** opens Settings → Plugins → Builderlab, whose
+**Connect Buzz identity** or **Switch to this device’s identity** is the next
+step. Both states arise only after consent. The link is available only while
+Builderlab’s Settings card is registered; the sign-in wait stays plain text.
 Settings does not turn automatic backup off. A successful restore, and a
 welcome-back import of a key the account already backs up, save automatic
 backup the same way, only when the key has no saved choice.

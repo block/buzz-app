@@ -80,6 +80,7 @@ export function useConversationTabs({
   mainPane = false,
   anyMainThread = false,
   threadPane,
+  hostPanes,
   visits = true,
   navigation,
   routed,
@@ -122,6 +123,9 @@ export function useConversationTabs({
   anyMainThread?: boolean | undefined;
   /** Where new thread tabs open; by default, per the thread placement setting. */
   threadPane?: TabPane | undefined;
+  /** Panes whose thread content renders now; by default both. A page withholds
+   * a pane's threads while something covers them; they mount afresh after. */
+  hostPanes?: readonly TabPane[] | undefined;
   /** Showing a tab visits its conversation; a page may only reveal it. */
   visits?: boolean | undefined;
   /** Opens another conversation's tab where it lives, from the tab's menu. */
@@ -983,6 +987,7 @@ export function useConversationTabs({
     // Thread content renders here once and is attached to whichever pane holds it.
     hosts: tabState.tabs.flatMap((tab) => {
       if (tab.kind !== "thread") return [];
+      if (hostPanes && !hostPanes.includes(tabPane(tab))) return [];
       const node = nodes.get(tab.id);
       const target = tabChannel(tab);
       if (!node || !target) return [];

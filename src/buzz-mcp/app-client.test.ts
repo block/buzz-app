@@ -375,83 +375,23 @@ it("offers the handle's settings, checking the turn before each call", () => {
   expect(settings.get).not.toHaveBeenCalled();
 });
 
-it("offers the handle's owner reads with the turn's signal, withholding answers once the turn ends", async () => {
-  const memories = async () => ({ entries: [], partial: false });
-  expect(
-    appClient({ pubkey: "agent" } as unknown as AgentHandle, {
-      read: vi.fn(),
-      memories,
-    }).ownerAccess,
-  ).toBeUndefined();
-  const held = gate<void>();
-  const answer = { execution: {}, channels: [], partial: false } as never;
-  const ownerAccess = {
-    channels: vi.fn(async () => answer),
-    channel: vi.fn(async () => {
-      await held.promise;
-      return answer;
-    }),
-    members: vi.fn(async () => answer),
-    messages: vi.fn(async () => answer),
-    canvas: vi.fn(async () => answer),
-    canvasHistory: vi.fn(async () => answer),
-    held: vi.fn(),
-  };
-  let ended = false;
-  const controller = new AbortController();
+it("never passes on an owner-read capability, even from a handle that carries one", () => {
+  const read = vi.fn();
+  const stale = Object.fromEntries(
+    [
+      "channels",
+      "channel",
+      "members",
+      "messages",
+      "canvas",
+      "canvasHistory",
+      "held",
+    ].map((name) => [name, read]),
+  );
   const client = appClient(
-    { pubkey: "agent", ownerAccess } as unknown as AgentHandle,
-    {
-      read: vi.fn(),
-      memories,
-      signal: controller.signal,
-      check: () => {
-        if (ended) throw new Error("The turn has ended");
-      },
-    },
+    { pubkey: "agent", ownerAccess: stale } as unknown as AgentHandle,
+    { read: vi.fn(), memories: async () => ({ entries: [], partial: false }) },
   );
-  await expect(client.ownerAccess?.channels()).resolves.toBe(answer);
-  expect(ownerAccess.channels).toHaveBeenCalledExactlyOnceWith(
-    controller.signal,
-  );
-  await client.ownerAccess?.members("c", { offset: 2, limit: 5 });
-  expect(ownerAccess.members).toHaveBeenCalledExactlyOnceWith(
-    "c",
-    { offset: 2, limit: 5 },
-    controller.signal,
-  );
-  // Each read runs with the turn's signal.
-  await client.ownerAccess?.messages({ channel: "c", limit: 5 });
-  expect(ownerAccess.messages).toHaveBeenCalledExactlyOnceWith(
-    { channel: "c", limit: 5 },
-    controller.signal,
-  );
-  await client.ownerAccess?.canvas("c", "r");
-  expect(ownerAccess.canvas).toHaveBeenCalledExactlyOnceWith(
-    "c",
-    "r",
-    controller.signal,
-  );
-  await client.ownerAccess?.canvasHistory("c", { before: 1 });
-  expect(ownerAccess.canvasHistory).toHaveBeenCalledExactlyOnceWith(
-    "c",
-    { before: 1 },
-    controller.signal,
-  );
-  const execution = { agent: "agent", owner: "owner", community: "c" };
-  client.ownerAccess?.held(execution);
-  expect(ownerAccess.held).toHaveBeenCalledExactlyOnceWith(execution);
-  const pending = client.ownerAccess?.channel("c");
-  ended = true;
-  held.resolve();
-  await expect(pending).rejects.toThrow("ended");
-  await expect(client.ownerAccess?.channels()).rejects.toThrow("ended");
-  await expect(
-    client.ownerAccess?.messages({ channel: "c", limit: 5 }),
-  ).rejects.toThrow("ended");
-  expect(ownerAccess.channels).toHaveBeenCalledOnce();
-  expect(ownerAccess.messages).toHaveBeenCalledOnce();
-  // An answer read before the turn ended is not released after it.
-  expect(() => client.ownerAccess?.held(execution)).toThrow("ended");
-  expect(ownerAccess.held).toHaveBeenCalledOnce();
+  expect("ownerAccess" in client).toBe(false);
+  expect(read).not.toHaveBeenCalled();
 });

@@ -55,11 +55,11 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // Global destinations live in the dock independently of the Messages sidebar.
-const destinationTitles = ["Bestie", "Activity"];
+const destinationTitles = ["Bestie", "Workflows"];
 const dockDestinations = (page, options = {}) =>
   page
     .getByRole("navigation", { name: "Apps dock", ...options })
-    .getByRole("tab", { name: /^(Bestie|Activity)$/, ...options });
+    .getByRole("tab", { name: /^(Bestie|Workflows)$/, ...options });
 const companionReadingTest = readingTest.extend({ companionFixture: true });
 const box = async (locator) => {
   const bounds = await locator.boundingBox();

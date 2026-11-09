@@ -9,7 +9,6 @@ Build defaults are readable binary data, **never secret storage**.
 | Input | Consumer and boundary |
 | --- | --- |
 | `BUZZ_EXTERNAL_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins allowed to authorize external MCP access. Empty disables access. See below. |
-| `BUZZ_OWNER_MCP_COMMUNITIES` | Frontend build: space-separated secure community origins where an agent's app-hosted runs can read its owner's channels, members, messages and Canvases with the owner's access. Empty disables them. See below. |
 | `BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES` | Frontend build: space-separated secure community origins where workflow messages cannot start or steer local agents. Empty keeps checked workflow delegation everywhere. See below. |
 | `BUZZ_BUILDERLAB_URL` | Shared frontend/native build: the live development broker's Builderlab, and whether a build without an added sign-in server keeps the built-in one; no runtime override. See below. |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | Shared frontend/native build: exact Apps cookie domain paired with the login origin for native viewer SSO; no runtime override. |
@@ -28,7 +27,9 @@ Build defaults are readable binary data, **never secret storage**.
 The retired v1 inputs `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`
 and `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` are no longer read or compiled. Agents
 uses each plugin agent type's settings. Remove these old defaults from local/CI
-configuration; they do not configure Agents. Restart Vite to change broker or
+configuration; they do not configure Agents. `BUZZ_OWNER_MCP_COMMUNITIES`,
+which enabled the retired owner-read agent tools, is no longer read either.
+Restart Vite to change broker or
 routing configuration. Production frontend builds never load the dev broker or
 expose its auto-open seed. They can separately opt into the packaged community
 default below.
@@ -44,16 +45,6 @@ The distributor's release build chooses the allowed communities; this
 repository's workflow sets none. Community names do not grant access. The Agents service compares the exact canonical origin before
 opening a connection and on each tool call. Consent disables other communities,
 and Settings hides External apps there. Normal agent MCP servers are unchanged.
-
-## Owner MCP community flag
-
-`BUZZ_OWNER_MCP_COMMUNITIES` is a space-separated list of `https://` or
-`wss://` community origins, parsed as the external flag is. The default is
-empty, which turns the owner tools off in every community. Each build lists
-its own community origins. It is not an employee entitlement and grants no external app or plugin access.
-The Agents service compares the agent's exact canonical community origin when
-it starts a run and again on each call. See
-[owner tools](agents.md#owner-tools).
 
 ## Workflow restriction community flag
 

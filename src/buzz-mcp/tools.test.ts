@@ -152,10 +152,8 @@ it.each([false, true])(
         if (property === "protect")
           return protectedSession ? protect : undefined;
         if (property === "nativeToolGate") return undefined;
-        // The tool list checks whether settings can change and owner tools
-        // apply here.
-        if (property === "settings" || property === "ownerAccess")
-          return undefined;
+        // The tool list checks whether settings can change here.
+        if (property === "settings") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });

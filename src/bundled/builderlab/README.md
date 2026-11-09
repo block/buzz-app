@@ -11,7 +11,8 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 5. Edit model settings and instructions later in **Identity**. Opening it attempts sign-in automatically if needed. The compact action beside Harness shows a spinner that cancels browser sign-in on click. The resting signed-out hint explains that sign-in enables editing while messaging still works. Cancellation, timeout and login failures wait for an explicit inline retry. Sheets are reserved for settings or account-access errors. Instructions appear after sign-in. Native account-access errors open **Identity → Organization sign-in** without ending the shared session. In live development, **Use another account** ends the broker session and opens `/logout` in your browser. A cancellable spinner then waits three seconds before showing **Retry** beside Harness. Sign in with the other account in the browser, return to Buzz, then click Retry to check broker access.
 
 While signed in, Identity shows a cloud beside “Remote agent”, with “Runs on a
-Builderlab machine” underneath. Workspace in Settings explains that the remote
+Builderlab machine” underneath and a “See usage and billing” link to your Builderlab
+server's site. Workspace in Settings explains that the remote
 runtime is shared with your other agents in the workspace by default, alongside
 availability and file access. These hints stay hidden while signed out or signing in.
 Current remote activity steps show a cloud that pulses while working and stays

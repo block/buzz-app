@@ -71,6 +71,7 @@ function fixturePlugin(plugins) {
       // server and binds it to the number Vite probed for the first one.
       if (server.httpServer && server.config.server.port === 0)
         bindAssignedPort(server.httpServer);
+      if (server.httpServer) keepIdleConnections(server.httpServer);
       const after = [];
       for (const plugin of plugins) {
         const result = await plugin.configureServer?.(server);
@@ -118,6 +119,15 @@ function bindAssignedPort(httpServer) {
   httpServer.listen = (_port, ...args) => listen.call(httpServer, 0, ...args);
 }
 
+// Node closes a keep-alive connection once it has idled for its 5 s default
+// keepAliveTimeout. A browser may reuse the connection in that same instant (WebKit on Linux did, after a few seconds
+// between a page's resources and its first lazy import), so its request dies
+// with the socket, and nothing retries a module script. Fixture servers leave
+// idle connections open; closing the server destroys them.
+function keepIdleConnections(httpServer) {
+  httpServer.keepAliveTimeout = 0;
+}
+
 export const build = (config) => keepNodeEnv(() => viteBuild(config));
 export const preview = (config) =>
   keepNodeEnv(() =>
@@ -130,6 +140,7 @@ export const preview = (config) =>
           configurePreviewServer(server) {
             if (server.config.preview.port === 0)
               bindAssignedPort(server.httpServer);
+            keepIdleConnections(server.httpServer);
           },
         },
       ],

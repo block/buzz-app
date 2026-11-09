@@ -1479,6 +1479,12 @@ export function Settings({
             federatedIdentity={federatedIdentity}
             memberships={client.memberships}
             builderlabIdentity={builderlabIdentity}
+            openBuilderlab={
+              openSection &&
+              contributed.some((card) => card.key === "block.builderlab/login")
+                ? () => openSection("block.builderlab/login")
+                : undefined
+            }
             profileSession={
               relay.viewer === client.viewer &&
               (relay.status === "ready" || relay.cached)

@@ -1214,6 +1214,24 @@ function ChannelWorkspace({
         target: targetKey(fallback),
       };
   };
+  const [mediaReview, setMediaReview] = useState<{
+    channelId: string;
+    channelName: string;
+    messageId: string;
+    attachment: Attachment;
+    initialAttachments?: readonly Attachment[] | undefined;
+    initialTime: number;
+    hasComments: boolean;
+    entryId?: string | undefined;
+  }>();
+  // The current destination may be an authorized public preview, which is
+  // intentionally absent from the joined-channel list.
+  const showingMediaReview = current?.archived
+    ? undefined
+    : mediaReviewForDestination(mediaReview, current?.id, navigation?.entryId);
+  useEffect(() => {
+    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
+  }, [mediaReview, showingMediaReview]);
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -1246,6 +1264,13 @@ function ChannelWorkspace({
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
     mainPane: !solo,
+    // Side thread tabs leave during an image or video review; this is what
+    // hands the thread draft back from the viewer. The viewer's comment
+    // composer reads the thread's saved draft when it mounts, and a thread
+    // composer reads a draft only when it mounts, so a side thread kept
+    // mounted under the hidden dock would still show the text the viewer
+    // replaced. Main-pane threads keep their place and state, as before.
+    hostPanes: showingMediaReview ? ["main"] : undefined,
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
@@ -1662,24 +1687,6 @@ function ChannelWorkspace({
     [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
-  const [mediaReview, setMediaReview] = useState<{
-    channelId: string;
-    channelName: string;
-    messageId: string;
-    attachment: Attachment;
-    initialAttachments?: readonly Attachment[] | undefined;
-    initialTime: number;
-    hasComments: boolean;
-    entryId?: string | undefined;
-  }>();
-  // The current destination may be an authorized public preview, which is
-  // intentionally absent from the joined-channel list.
-  const showingMediaReview = current?.archived
-    ? undefined
-    : mediaReviewForDestination(mediaReview, current?.id, navigation?.entryId);
-  useEffect(() => {
-    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
-  }, [mediaReview, showingMediaReview]);
   // Timeline rows are memoized; their callbacks read the shown destination at
   // call time so a new navigation request does not rerender every row.
   const destination = useRef({ current, navigation });
@@ -1696,7 +1703,6 @@ function ChannelWorkspace({
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
-      setSettings(undefined);
       mediaReviewTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -1712,7 +1718,7 @@ function ChannelWorkspace({
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
-    [setSettings],
+    [],
   );
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
@@ -2502,12 +2508,14 @@ function ChannelWorkspace({
       <PanelDock
         open={!!showingPanel && !showingMediaReview}
         keepMounted={
-          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+          tabState.entries.length > 0 ||
+          (!!hasPanel && !tabState.paneOpen) ||
+          (!!hasPanel && !!showingMediaReview)
         }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >
-        {hasPanel && !showingMediaReview && (
+        {hasPanel && (
           <>
             {hasChannelPanel && (settings || secondary.items.length > 0) && (
               <div

@@ -28,6 +28,7 @@ import {
 import type { Membership } from "../features/communities/service";
 import { serverName } from "../features/federated-identity/community-servers";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
+import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { SignOutDialog } from "../features/identity/SignOut";
 import { Header } from "../shared/design-system/ui/Header";
@@ -137,6 +138,7 @@ export function IdentitySettings({
   servers = signInServers,
   builderlabIdentity,
   accountRows,
+  openBuilderlab,
   profileSession,
   community,
   memberships = [],
@@ -152,6 +154,8 @@ export function IdentitySettings({
    */
   builderlabIdentity?: FederatedIdentity | undefined;
   accountRows?: ReactNode;
+  /** Opens Builderlab where its page holds the next backup step. */
+  openBuilderlab?: (() => void) | undefined;
   profileSession?: RelaySession | undefined;
   community?: Membership | undefined;
   memberships?: readonly Membership[];
@@ -374,6 +378,7 @@ export function IdentitySettings({
                           statusError={checking && policyError}
                           identity={identity}
                           offered={offered}
+                          openBuilderlab={openBuilderlab}
                           accountError={accountBackup.failed}
                           accountPending={accountBackup.pending}
                           onStatusError={setPolicyError}
@@ -1008,6 +1013,7 @@ function BackupRecovery({
   statusError,
   identity,
   offered,
+  openBuilderlab,
   accountError,
   accountPending,
   onStatusError,
@@ -1020,6 +1026,7 @@ function BackupRecovery({
   statusError: boolean;
   identity: Identity;
   offered: boolean;
+  openBuilderlab: (() => void) | undefined;
   accountError: boolean;
   accountPending: boolean;
   onStatusError(failed: boolean): void;
@@ -1059,6 +1066,26 @@ function BackupRecovery({
   const failure = failedAt !== undefined && failedAt === status?.seq;
   const problem =
     status?.status === "failed" ? BACKUP_FAILURES[status.kind] : undefined;
+  const feedback = waiting
+    ? "Back up this key to Builderlab"
+    : statusError || accountError
+      ? "Backup status unknown"
+      : status?.status === "waiting"
+        ? status.reason === "no_session"
+          ? "Sign in to Builderlab to back up your key"
+          : BACKUP_FAILURES.not_linked.message.replace(/\.$/, "")
+        : problem &&
+          ("cause" in problem ? problem.cause : problem.message).replace(
+            /\.$/,
+            "",
+          );
+  // These are the two waits whose next step is on Builderlab's Settings page.
+  const at =
+    openBuilderlab &&
+    ((status?.status === "waiting" && status.reason === "not_linked") ||
+      (status?.status === "failed" && status.kind === "other_key_linked"))
+      ? (feedback?.indexOf("Builderlab") ?? -1)
+      : -1;
   async function retry() {
     if (pending.current || running) return;
     pending.current = true;
@@ -1114,19 +1141,20 @@ function BackupRecovery({
           role={statusError || accountError ? "status" : undefined}
           className="m-0 text-center text-caption text-subtle"
         >
-          {waiting
-            ? "Back up this key to Builderlab"
-            : statusError || accountError
-              ? "Backup status unknown"
-              : status?.status === "waiting"
-                ? status.reason === "no_session"
-                  ? "Sign in to Builderlab to back up your key"
-                  : BACKUP_FAILURES.not_linked.message.replace(/\.$/, "")
-                : problem &&
-                  ("cause" in problem
-                    ? problem.cause
-                    : problem.message
-                  ).replace(/\.$/, "")}
+          {feedback && at >= 0 ? (
+            <>
+              {feedback.slice(0, at)}
+              <SettingsSectionLink
+                section="block.builderlab/login"
+                open={openBuilderlab}
+              >
+                Builderlab
+              </SettingsSectionLink>
+              {feedback.slice(at + "Builderlab".length)}
+            </>
+          ) : (
+            feedback
+          )}
         </p>
       )}
       {failure && (

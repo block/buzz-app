@@ -596,28 +596,28 @@ it.each([
     const accepted: unknown[] = [];
     const claimed: unknown[] = [];
     const requests = vi.fn(async (url: string, init?: RequestInit) => {
-    const route = String(url).split("/").at(-1);
-    if (route === "register") return Response.json({ id: "x" });
-    if (route === "info")
-      return Response.json({
-        name: "Fixture",
-        membershipRequired: true,
-        policy: {
-          version: "v1",
-          terms_markdown: "Terms",
-          age_attestation_required: true,
-        },
-      });
-    if (route === "accept-policy") {
-      accepted.push(JSON.parse(String(init?.body)));
-      return Response.json({ receipt: "receipt-1" });
-    }
-    if (route === "claim") {
-      claimed.push(JSON.parse(String(init?.body)));
-      return Response.json({ status: "joined" });
-    }
-    throw new Error(`Unexpected request: ${url}`);
-  });
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({
+          name: "Fixture",
+          membershipRequired: true,
+          policy: {
+            version: "v1",
+            terms_markdown: "Terms",
+            age_attestation_required: true,
+          },
+        });
+      if (route === "accept-policy") {
+        accepted.push(JSON.parse(String(init?.body)));
+        return Response.json({ receipt: "receipt-1" });
+      }
+      if (route === "claim") {
+        claimed.push(JSON.parse(String(init?.body)));
+        return Response.json({ status: "joined" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
     vi.stubGlobal("fetch", requests);
     const communities = {
       snapshot: () => ({

@@ -506,6 +506,11 @@ it.each([true, false])(
       await user.click(
         screen.getByRole("button", { name: "Sign in with builderlab.example" }),
       );
+      // Sign-in replaces the section's header; wait before using its Back control.
+      await screen.findByRole("button", {
+        name: "Manage account",
+        hidden: true,
+      });
       await settingsOverview();
       expect(
         await screen.findByRole("button", {

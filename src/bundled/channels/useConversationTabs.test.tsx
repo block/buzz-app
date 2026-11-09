@@ -960,21 +960,28 @@ function launcherHarness(
   };
 }
 
-it("Close all tabs keeps a launcher's side panel open, since it isn't a tab", () => {
-  const h = launcherHarness(false, "side");
-  act(() => {
-    h.workspace().openConversationThread("alpha", "root", "root");
-  });
-  h.toggle("alpha");
-  expect(h.tabs()).toHaveLength(1);
-  expect(h.sideShown()).toBe(true);
-  act(() => {
-    expect(h.workspace().closeAllTabs()).toBe(true);
-  });
-  expect(h.tabs()).toHaveLength(0);
-  expect(h.sideShown()).toBe(true);
-  expect(h.pressed()).toBe(true);
-});
+it.each([
+  ["open", true],
+  ["closed", false],
+])(
+  "Close all tabs leaves a launcher's side panel as the %s pane showed it, since it isn't a tab",
+  (_, open) => {
+    const h = launcherHarness(false, "side");
+    act(() => {
+      h.workspace().openConversationThread("alpha", "root", "root");
+    });
+    h.toggle("alpha");
+    expect(h.tabs()).toHaveLength(1);
+    expect(h.sideShown()).toBe(true);
+    if (!open) act(() => h.workspace().closePane());
+    act(() => {
+      expect(h.workspace().closeAllTabs()).toBe(true);
+    });
+    expect(h.tabs()).toHaveLength(0);
+    expect(h.sideShown()).toBe(open);
+    expect(h.pressed()).toBe(open);
+  },
+);
 
 it("a side panel's launcher reads unpressed while the closed pane hides it, and one press shows it", () => {
   const h = launcherHarness(false, "side");

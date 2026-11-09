@@ -350,10 +350,11 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await expect(canvas).toBeEditable();
 });
 
-// Browser-only boundary: Close all tabs retires the thread's native history
-// visit, and the page's return to the channel visit must keep the launcher's
-// side panel, or keep it hidden in a closed pane. jsdom page tests don't route
-// visits through navigation.
+// Browser-only boundary: Back and Close all tabs move through native history
+// visits. Back restores the channel visit's own closed pane, and Close all
+// tabs' return to the channel visit must keep the launcher's side panel, or
+// keep it hidden in a closed pane even when that visit saved an open one.
+// jsdom page tests don't route visits through navigation.
 test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pane", async ({
   page,
   app,
@@ -385,6 +386,24 @@ test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pa
       content: "Looks good",
     }),
   );
+  const second = app.sign({
+    kind: 9,
+    created_at: at + 120,
+    tags: [["h", "alpha"]],
+    content: "Retro notes",
+  });
+  history.push(
+    second,
+    app.sign({
+      kind: 9,
+      created_at: at + 180,
+      tags: [
+        ["h", "alpha"],
+        ["e", second.id, "", "reply"],
+      ],
+      content: "Added",
+    }),
+  );
   const head = app.sign({
     kind: 40100,
     content: "## Todos\n\n- [ ] First\n",
@@ -406,6 +425,7 @@ test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pa
   ).toBeVisible();
   // The reply chip comes only from the relay's live thread summary.
   app.threadSummary(root.id, [app.viewer], 1);
+  app.threadSummary(second.id, [app.viewer], 1);
   const launcher = page.getByRole("button", {
     name: "Toggle channel todos",
     exact: true,
@@ -418,9 +438,11 @@ test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pa
   await expect(
     todos.getByRole("checkbox", { name: "First", exact: true }),
   ).toBeVisible();
-  const viewThread = page
-    .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ });
+  const viewThreadOf = (id) =>
+    page
+      .locator(`[data-channel-timeline="alpha"] [data-message-id="${id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+  const viewThread = viewThreadOf(root.id);
   await activate(viewThread);
   const thread = page.locator(
     '[data-panel-workspace] [role="tab"][data-tab-value^="thread:"]',
@@ -431,6 +453,35 @@ test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pa
   await page
     .getByRole("button", { name: "Toggle tab pane", expanded: true })
     .click();
+  await expect(todos).toBeHidden();
+  await expect(launcher).toHaveAttribute("aria-expanded", "false");
+  await launcher.click();
+  await expect(todos).toBeVisible();
+  await expect(thread).toBeVisible();
+  await thread.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Close all tabs", exact: true })
+    .click();
+  await expect(thread).toHaveCount(0);
+  await expect(todos).toBeVisible();
+  await expect(launcher).toHaveAttribute("aria-expanded", "true");
+  // Back restores the channel visit's saved pane: open, so Todos shows with
+  // the retained thread tab. Hiding the pane there saves it closed, so the
+  // next Back hides Todos with the launcher unpressed; one press shows it
+  // with the thread tab, and Close all tabs from there keeps it.
+  await activate(viewThread);
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await page.goBack();
+  await expect(todos).toBeVisible();
+  await expect(thread).toBeVisible();
+  await page
+    .getByRole("button", { name: "Toggle tab pane", expanded: true })
+    .click();
+  await expect(todos).toBeHidden();
+  await activate(viewThread);
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await expect(todos).toBeVisible();
+  await page.goBack();
   await expect(todos).toBeHidden();
   await expect(launcher).toHaveAttribute("aria-expanded", "false");
   await launcher.click();
@@ -462,6 +513,36 @@ test("Todos isn't a tab: Close all tabs keeps it, and its launcher tracks the pa
   await expect(thread).toHaveCount(0);
   // The return lands after the address changes.
   await expect.poll(() => page.url()).not.toBe(threadVisit);
+  await frames(page);
+  await expect(todos).toBeHidden();
+  await expect(launcher).toHaveAttribute("aria-expanded", "false");
+  await launcher.click();
+  await expect(todos).toBeVisible();
+  await expect(launcher).toHaveAttribute("aria-expanded", "true");
+  // A channel visit showing Todos beside a thread retained from Back saves
+  // an open pane when a second thread opens. Hiding the pane and closing all
+  // tabs still returns there with Todos hidden, over that saved open pane.
+  await activate(viewThread);
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await page.goBack();
+  await expect(todos).toBeVisible();
+  await expect(thread).toBeVisible();
+  await activate(viewThreadOf(second.id));
+  await expect(thread).toHaveCount(2);
+  const secondVisit = page.url();
+  await page
+    .getByRole("button", { name: "Toggle tab pane", expanded: true })
+    .click();
+  await expect(todos).toBeHidden();
+  expect(
+    await page.evaluate(() => {
+      const event = new Event("buzz:close-all-tabs", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(true);
+  await expect(thread).toHaveCount(0);
+  await expect.poll(() => page.url()).not.toBe(secondVisit);
   await frames(page);
   await expect(todos).toBeHidden();
   await expect(launcher).toHaveAttribute("aria-expanded", "false");

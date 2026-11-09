@@ -156,19 +156,27 @@ export function WorkspaceControl({
         <NewWorkspace
           session={session}
           create={(section) => {
-            if (onChange || !channelId)
-              return session.soloPreferences.createSection(section);
+            const store = session.soloPreferences;
+            if (onChange || !channelId) return store.createSection(section);
             const blocked = prepareSoloMove(session, channelId);
             if (blocked) return Promise.reject(new Error(blocked));
             // The groups record can't be saved twice within a second, so a
             // saved chat moves in the write that creates its workspace.
-            return session.soloPreferences.createAndAssign(channelId, section);
+            return store
+              .createAndAssign(channelId, section)
+              .catch((reason: unknown) => {
+                // The dialog reports the failure and retries it with its
+                // folders and instructions. The sidebar's Retry move would
+                // replay only the move, so drop the store's record of it.
+                store.dismissMoveError(channelId);
+                throw reason;
+              });
           }}
           close={() => setCreating(false)}
           finalFocus={trigger}
-          onCreated={(id) => {
-            if (onChange) choose(id);
-          }}
+          // A saved chat moved as Create wrote, so an earlier move's error
+          // no longer applies.
+          onCreated={(id) => (onChange ? choose(id) : setError(""))}
         />
       )}
     </span>

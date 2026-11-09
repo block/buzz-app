@@ -248,12 +248,20 @@ async function storeFixture() {
   });
   await store.queries.ensure();
   const assign = vi.fn(store.queries.assign);
+  const save = vi.fn(async () => {});
   const session = {
+    scope: "https://relay.example.test:viewer",
+    // Workspace defaults, which New workspace saves for folders.
+    channelKit: {
+      refresh: async () => {},
+      snapshot: () => ({ status: "ready", entries: [] }),
+      save,
+    },
     soloPreferences: Object.create(store.queries, {
       assign: { value: assign },
     }),
   } as unknown as RelaySession;
-  return { session, write, assign, reads };
+  return { session, write, assign, save, reads };
 }
 
 it.each(
@@ -283,6 +291,17 @@ it.each(
       </form>,
     );
     const control = screen.getByRole("button", { name: trigger });
+    if (channelId) {
+      // An earlier move failed, and its alert sits by the control.
+      write.mockRejectedValueOnce(new Error("Offline"));
+      await user.click(control);
+      await user.click(
+        await screen.findByRole("menuitemradio", { name: "No workspace" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent("Offline");
+      write.mockClear();
+      assign.mockClear();
+    }
     await user.click(control);
     await user.click(
       await screen.findByRole("menuitem", { name: "New workspace" }),
@@ -314,9 +333,53 @@ it.each(
     if (channelId) {
       expect(change).not.toHaveBeenCalled();
       expect(control).toHaveAccessibleName("Workspace: Planning");
+      // The chat moved, so the earlier failure no longer applies.
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } else expect(change).toHaveBeenCalledWith(id);
   },
 );
+
+it("leaves a saved chat's failed Create to New workspace's Retry", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const { session, write, save } = await storeFixture();
+  write.mockRejectedValueOnce(new Error("Offline"));
+  const user = userEvent.setup();
+  render(<WorkspaceControl session={session} channelId="chat" />);
+  const control = screen.getByRole("button", { name: "Workspace: Buzz App" });
+  await user.click(control);
+  await user.click(
+    await screen.findByRole("menuitem", { name: "New workspace" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Name" }),
+    "Planning",
+  );
+  await user.type(
+    within(dialog).getByRole("textbox", { name: /^Folders/ }),
+    "~/repo",
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Add" }));
+  await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Offline");
+  expect(dialog).toBeInTheDocument();
+  expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveValue(
+    "Planning",
+  );
+  expect(within(dialog).getByText("~/repo")).toBeInTheDocument();
+  // The store keeps no failed move, so the sidebar offers no Retry move that
+  // would replay the move without the folders.
+  expect(session.soloPreferences.snapshot().moves).toBeUndefined();
+  expect(screen.getAllByRole("alert", { hidden: true })).toHaveLength(1);
+  expect(save).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  expect(write).toHaveBeenCalledTimes(2);
+  expect(write.mock.calls[1]?.[0]).toEqual(write.mock.calls[0]?.[0]);
+  expect(save).toHaveBeenCalledOnce();
+  expect(control).toHaveAccessibleName("Workspace: Planning");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
 
 it("keeps focus on the control while workspaces reload after Create", async () => {
   vi.stubGlobal("crypto", webcrypto);
@@ -348,6 +411,8 @@ it("keeps focus on the control while workspaces reload after Create", async () =
   expect(control).toHaveAttribute("aria-disabled", "true");
   // It still can't open while workspaces load.
   await user.keyboard("{Enter}");
+  await user.keyboard("{ArrowDown}");
+  await user.click(control);
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   await act(async () => release());
   expect(control).not.toHaveAttribute("aria-disabled");

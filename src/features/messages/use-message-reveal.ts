@@ -38,8 +38,9 @@ export function useMessageReveal({
    */
   hold?: () => boolean;
   /**
-   * Focus as the request reached an owner that forwards its signal only after
-   * confirming the target, such as a thread retargeting in place.
+   * The person's input since the request reached an owner that forwards its
+   * signal only after confirming the target, such as a thread retargeting in
+   * place.
    */
   arrival?: RevealArrival | undefined;
 }) {
@@ -59,24 +60,21 @@ export function useMessageReveal({
     },
     [],
   );
-  // Focus as each request arrives, recorded before the target loads, however
-  // late. An arrival handed in by the owner serves only the first new signal
-  // after it.
-  const opener = useRef<{ signal: AbortSignal; arrival: RevealArrival }>(
+  // The person's input since each request arrived, watched from before the
+  // target loads, however late. An arrival handed in by the owner serves only
+  // the first new signal after it.
+  const arrived = useRef<{ signal: AbortSignal; arrival: RevealArrival }>(
     undefined,
   );
   const adopted = useRef<RevealArrival>(undefined);
   useLayoutEffect(() => {
     if (!signal) return;
-    if (opener.current?.signal !== signal) {
+    if (arrived.current?.signal !== signal) {
       const handed = arrival !== adopted.current ? arrival : undefined;
       if (handed) adopted.current = handed;
-      opener.current = {
-        signal,
-        arrival: handed ?? { element: document.activeElement, input: false },
-      };
+      arrived.current = { signal, arrival: handed ?? { input: false } };
     }
-    return watchArrival(opener.current.arrival);
+    return watchArrival(arrived.current.arrival);
   }, [signal, arrival]);
   useLayoutEffect(() => {
     if (
@@ -116,11 +114,13 @@ export function useMessageReveal({
       });
       placed?.();
       settled.current = true;
-      // The first focus yields to a control the person moved to, or typed
-      // into, after the request arrived, such as the composer of a
-      // still-loading conversation, so their typing stays there. Focus the
-      // app handed off without such input, or left on the opener or the
-      // surface around the scroller, is still taken.
+      // The first focus yields to the focused control once the person has
+      // moved focus or typed since the request arrived, so their typing stays
+      // there: the composer of a still-loading conversation, or the editor
+      // they were already writing in when a link retargeted the open thread.
+      // Focus the app handed off without such input, or left on the control
+      // that opened the request or the surface around the scroller, is still
+      // taken.
       // A replacement may recover lost focus, but must not take it from
       // another control after this request already focused a row successfully.
       const active = document.activeElement;
@@ -128,8 +128,7 @@ export function useMessageReveal({
       const claimed =
         !lost &&
         !active.contains(container) &&
-        active !== opener.current?.arrival.element &&
-        !!opener.current?.arrival.input;
+        !!arrived.current?.arrival.input;
       let focusPending = false;
       if (
         focus &&
@@ -219,11 +218,10 @@ export function useMessageReveal({
 }
 
 /**
- * Focus as a reveal request arrived: the control that opened it, or none once
- * that control unmounted. `input` marks that the person has since moved focus
- * or typed into the focused control.
+ * Whether the person has moved focus or typed into the focused control since a
+ * reveal request arrived.
  */
-export type RevealArrival = { element: Element | null; input: boolean };
+export type RevealArrival = { input: boolean };
 
 /**
  * Until stopped, set `input` when the person moves focus or types into the

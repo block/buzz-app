@@ -281,7 +281,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     // Settles with its selection, so a retarget's line is decided for it.
     unreadRequest: ThreadPanelProps["unreadRequest"];
     revision: number;
-    /** Focus as a request confirmed in place arrived, before its retarget. */
+    /** The person's input since a request confirmed in place arrived. */
     arrival?: RevealArrival | undefined;
   };
   const current = useRef<Opening | undefined>(undefined);
@@ -358,7 +358,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         if (navigation) setRouting(navigation);
         // The editor stays usable while the read runs, so focus the person
         // moves or text they type meanwhile belongs to this request's reveal.
-        const arrival = { element: document.activeElement, input: false };
+        const arrival = { input: false };
         stopArrival = watchArrival(arrival);
         let result: ThreadRetarget;
         try {
@@ -649,7 +649,7 @@ function ThreadMessages({
   trailing?: ThreadPanelProps["trailing"];
   subthreadId?: string | undefined;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
-  /** Focus as the request retargeted in place arrived, for its reveal. */
+  /** The person's input since the request retargeted in place arrived. */
   arrival?: RevealArrival | undefined;
   /** A route to this reader is on its way: until it lands, a reader not yet
    * shown stays hidden and unread rather than showing a place the route

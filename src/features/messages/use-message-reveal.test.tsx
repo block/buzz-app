@@ -511,13 +511,54 @@ it("leaves focus with a composer the app focused once the person types into it",
   expect(complete).toHaveBeenCalledOnce();
 });
 
+// The editor the person was already writing in when a link retargeted the
+// open thread had focus as the request arrived. Their typing still claims it.
+it("leaves focus with the control focused as the request arrived once the person types into it", async () => {
+  const { row, composer, complete, next } = mount();
+  await idle();
+  expect(document.activeElement).toBe(row);
+  composer.focus();
+  next();
+  vi.mocked(row.scrollIntoView).mockClear();
+  const focus = vi.spyOn(row, "focus");
+  fireEvent.keyDown(composer, { key: "a" });
+  fireEvent(
+    composer,
+    new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: "a",
+    }),
+  );
+  await idle();
+  expect(row.scrollIntoView).toHaveBeenCalled();
+  expect(document.activeElement).toBe(composer);
+  expect(focus).not.toHaveBeenCalled();
+  expect(complete).toHaveBeenCalledTimes(2);
+  expect(highlighted(row)).toBe(true);
+});
+
+// Without input, the control focused as the request arrived is an opener the
+// person clicked and then waited on, and the row takes focus from it.
+it("takes focus from the control focused as the request arrived when the person does nothing", async () => {
+  const { row, composer, complete, next } = mount();
+  await idle();
+  expect(document.activeElement).toBe(row);
+  composer.focus();
+  next();
+  await idle();
+  expect(document.activeElement).toBe(row);
+  expect(complete).toHaveBeenCalledTimes(2);
+});
+
 // A thread retargeting in place records the arrival before the read and hands
 // it to the reveal that follows; the next request records its own.
 it("adopts an arrival recorded before the signal, for that request only", async () => {
   const { row, composer, complete, next } = mount();
   await idle();
   expect(document.activeElement).toBe(row);
-  const arrival = { element: document.activeElement, input: false };
+  const arrival = { input: false };
   const stop = watchArrival(arrival);
   try {
     moves.click(composer);

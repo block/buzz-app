@@ -9048,6 +9048,7 @@ export class AgentsService extends Service implements Agents {
           query: (filters) => native.query(identity, filters),
           publish: (event) => native.publish(identity, event),
         },
+        artifactSync: binding.session.artifactSync,
         sync: (filter) => binding.session.artifacts.sync(filter),
         changed: (set) =>
           void this.change(key, (saved) => {

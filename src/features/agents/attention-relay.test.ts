@@ -468,6 +468,50 @@ describe("one writer revision", () => {
     });
   });
 
+  it("keeps another client's tags on an edit and on a restore", async () => {
+    const r = relay();
+    const d = await attentionD(channel, "interest/x");
+    const extra = [
+      ["root", "a".repeat(64)],
+      ["client", "example"],
+    ];
+    const annotations = (event: RelayEvent | undefined) =>
+      event?.tags.filter(([name]) => name === "root" || name === "client");
+    r.heads.set(
+      d,
+      sign(
+        revision({
+          channel,
+          d,
+          slug: "interest/x",
+          op: "create",
+          value: interest,
+          tags: extra,
+        }),
+      ),
+    );
+    await publishChange(r.io, await r.set(), {
+      slug: "interest/x",
+      value: { ...interest, instructions: "More" },
+    });
+    expect(annotations(r.sent[0])).toEqual(extra);
+    // Deleted by a client that kept them; an add over it restores them too.
+    const deletion = revision({
+      channel,
+      d,
+      slug: "interest/x",
+      op: "delete",
+      prev: r.sent[0]?.id,
+    });
+    r.heads.set(d, sign({ ...deletion, tags: [...deletion.tags, ...extra] }));
+    await publishChange(r.io, emptySet(channel), {
+      slug: "interest/x",
+      value: interest,
+    });
+    expect(tag(r.sent.at(-1) as RelayEvent, "op")).toBe("restore");
+    expect(annotations(r.sent.at(-1))).toEqual(extra);
+  });
+
   it("reports a slug whose head was retired", async () => {
     const r = relay();
     r.answer(() => ({
@@ -788,6 +832,35 @@ describe("one complete read", () => {
 });
 
 describe("the kept-current set", () => {
+  it("creates no channel where the relay has no artifact sync", async () => {
+    let calls = 0;
+    const kept = relayAttention({
+      channel: {
+        agent: author,
+        relayAuthor: author,
+        query: async () => {
+          calls++;
+          return [];
+        },
+        publish: async () => {
+          calls++;
+          return {};
+        },
+      },
+      artifactSync: false,
+      sync: () => {
+        throw new Error("no sync");
+      },
+      changed: () => {},
+      reported: () => {},
+      signal: new AbortController().signal,
+    });
+    expect(kept.problem()).toBe("This community can't store attention");
+    await expect(kept.read()).rejects.toThrow("can't store attention");
+    expect(calls).toBe(0);
+    kept.dispose();
+  });
+
   it("finds the channel again on resync, keeping the last good set", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     let finds = 0;
@@ -823,6 +896,7 @@ describe("the kept-current set", () => {
         },
         publish: async () => ({}),
       },
+      artifactSync: true,
       sync: () => ({
         snapshot: () => snapshot,
         subscribe(listener) {

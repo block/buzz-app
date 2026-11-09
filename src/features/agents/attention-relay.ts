@@ -67,7 +67,21 @@ export async function attentionD(channel: string, slug: string) {
 }
 
 /** One record's current revision. */
-export type RelayHead = Readonly<{ id: string; d: string }>;
+/** One record's current revision, and its tags outside the envelope (client
+ * tags and `root`), which an edit over it keeps (NIP-AR Client behavior). */
+export type RelayHead = Readonly<{
+  id: string;
+  d: string;
+  tags?: readonly (readonly string[])[];
+}>;
+/** NIP-AR's envelope tags, which each revision sets itself. */
+const ENVELOPE = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
+const annotations = (event: Pick<RelayEvent, "tags">) =>
+  event.tags.filter(([name]) => name === undefined || !ENVELOPE.has(name));
+const headOf = (event: Pick<RelayEvent, "id" | "tags">, d: string) => {
+  const tags = annotations(event);
+  return tags.length ? { id: event.id, d, tags } : { id: event.id, d };
+};
 /** One complete set of the channel's records, checked. */
 export type AttentionSet = Readonly<{
   channel: string;
@@ -143,7 +157,7 @@ export async function attentionSet(
                   : validateObject(slug, fields.value);
     const key = slug ?? `invalid/${d}`;
     if (key in heads) continue;
-    heads[key] = { id: event.id, d };
+    heads[key] = headOf(event, d);
     if (problem !== undefined)
       skipped[key] = {
         slug: key,
@@ -308,7 +322,8 @@ export function pendingSet(
   return { set: { ...set, attention, skipped }, settled };
 }
 
-/** The revision to sign: a complete snapshot, or a deletion. */
+/** The revision to sign: a complete snapshot, or a deletion. A snapshot
+ * keeps `tags`, the annotations of the head it revises. */
 export function revision(input: {
   channel: string;
   d: string;
@@ -316,8 +331,9 @@ export function revision(input: {
   op: "create" | "update" | "restore" | "delete";
   prev?: string | undefined;
   value?: AttentionValue | undefined;
+  tags?: readonly (readonly string[])[] | undefined;
 }) {
-  const { channel, d, slug, op, prev, value } = input;
+  const { channel, d, slug, op, prev, value, tags = [] } = input;
   if ((op === "create") !== (prev === undefined))
     throw new Error("Only a create has no previous revision");
   const content =
@@ -337,6 +353,7 @@ export function revision(input: {
       ...(op === "delete" ? [] : [["title", slug]]),
       ["op", op],
       ...(prev ? [["prev", prev]] : []),
+      ...(op === "delete" ? [] : tags.map((tag) => [...tag])),
     ],
   };
 }
@@ -468,10 +485,11 @@ export async function publishChange(
         op: "update",
         prev: head.id,
         value,
+        tags: head.tags,
       }),
       head.id,
     );
-    if (sent.status === "accepted") return { id: sent.id, d };
+    if (sent.status === "accepted") return { ...head, id: sent.id };
     if (sent.refusal === "conflict") throw changed();
     throw new Error(`${slug} was not saved: ${sent.message}`);
   }
@@ -495,6 +513,7 @@ export async function publishChange(
       `${slug} was retired on the relay; choose another ID`,
     );
   if (tag(current, "op") === "delete") {
+    const deleted = headOf(current, d);
     const restored = await send(
       revision({
         channel: set.channel,
@@ -503,15 +522,16 @@ export async function publishChange(
         op: "restore",
         prev: current.id,
         value,
+        tags: deleted.tags,
       }),
       current.id,
     );
-    if (restored.status === "accepted") return { id: restored.id, d };
+    if (restored.status === "accepted") return { ...deleted, id: restored.id };
     if (restored.refusal === "conflict") throw changed();
     throw new Error(`${slug} was not saved: ${restored.message}`);
   }
   const found = (await attentionSet(set.channel, [current])).attention[slug];
-  if (found && sameValue(found.value, value)) return { id: current.id, d };
+  if (found && sameValue(found.value, value)) return headOf(current, d);
   throw new AttentionError("conflict", `${slug} already exists; show it again`);
 }
 
@@ -668,6 +688,8 @@ export type RelayAttention = Readonly<{
 
 export function relayAttention(input: {
   channel: AgentChannelIO;
+  /** The relay advertises NIP-AR sync; without it no channel is created. */
+  artifactSync: boolean;
   /** NIP-AR sync on the owner's session. */
   sync(filter: unknown): ArtifactSyncView;
   /** Each new complete set, and each set a live change makes. */
@@ -680,7 +702,11 @@ export function relayAttention(input: {
   const { signal, retryMs = 30_000 } = input;
   let channel: Promise<string> | undefined;
   let set: AttentionSet | undefined;
-  let problem: string | undefined;
+  // Relay support: a channel is created only where its set can be read.
+  const unsupported = input.artifactSync
+    ? undefined
+    : "This community can't store attention";
+  let problem = unsupported;
   let view: ArtifactSyncView | undefined;
   let stopView = () => {};
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -697,6 +723,7 @@ export function relayAttention(input: {
     view = undefined;
   };
   const ensured = () => {
+    if (unsupported) return Promise.reject(new Error(unsupported));
     channel ??= ensureChannel(input.channel).catch((error) => {
       channel = undefined;
       throw error;
@@ -783,7 +810,7 @@ export function relayAttention(input: {
     },
     { once: true },
   );
-  void start();
+  if (!unsupported) void start();
   return {
     current: () => set,
     problem: () => problem,

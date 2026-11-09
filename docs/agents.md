@@ -1370,8 +1370,9 @@ visible for any request of that agent here that nothing mounted presents, and
 returns when that history unmounts or is closed. History that is mounted but
 scrolled out of view still counts, as the live bubble does. Reduced motion
 leaves the dots static.
-When local request evidence is available, old activity does not inherit the
-working/thinking state of a different request in the same thread.
+When local work or a remote turn's triggering IDs identify the request, old
+activity does not inherit the working/thinking state of a different request in
+the same thread. Only work with no known request falls back to the thread.
 
 Agent-to-agent coordination messages remain in the conversation as collapsed,
 expandable history, including after completion, stopping, steering, or reload.

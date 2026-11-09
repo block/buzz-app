@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelMessage } from "../relay/contracts";
-import { currentActivity } from "../agents/current-activity";
+import { currentActivity, workingRequests } from "../agents/current-activity";
 import { useActivityTypingReplacement } from "../conversation/typing-presentation";
 const noSubscribe = () => () => {};
 const noActivity = () => undefined;
@@ -53,14 +53,23 @@ export function useActivityIndicator(
         work.channelId === row.channelId &&
         (!row.threadRootId || work.threadRootId === row.threadRootId),
     );
-    return (
-      !requestId ||
-      !local.length ||
-      local.some(
+    if (!requestId) return true;
+    if (local.length)
+      return local.some(
         (work) =>
           requestIds.has(work.messageId) &&
           (work.state === "waiting" || work.state === "working"),
-      )
+      );
+    // Likewise a known remote turn binds to its triggers; only work with no
+    // known request falls back to the conversation's scope.
+    const turns = workingRequests(
+      activity,
+      agent,
+      row.channelId,
+      row.threadRootId,
+    ).filter((ids) => ids.length);
+    return (
+      !turns.length || turns.some((ids) => ids.some((id) => requestIds.has(id)))
     );
   });
   const liveAgents = liveDetails

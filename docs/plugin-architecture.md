@@ -265,17 +265,19 @@ A check that fails raises no notice. The plugin's row in Settings → Plugins sa
 **Couldn’t check for updates.** with **Check again**, and keeps the raw Git text
 behind **Details**. Background checks wait while the browser reports
 offline and run on its `online` event. Checks are throttled to one an hour, but
-when a row holds a failure that checking again can help, `online` forces one, so
-a connection that dropped during a check is retried when it returns. **Check
-again** forces a check and clears the row's status while it runs, leaving the
-row as it is during any check, with a screen-reader-only "Checking for
-updates…" status. If the check fails again, the status returns, announced as an
-alert. Once the row clears, a later background failure returns unannounced.
-`updateFailure()` in `src/plugins/updates.ts` names
-the Git causes Buzz recognizes: a repository that moved or was removed, and a
-private repository added over HTTPS (Git couldn't read a username). For those it
-hides **Check again** and asks for a reinstall. A failed authentication keeps
-**Check again**, since it also follows an expired `authorizeGit` token. Failures don't appear in the profile menu's **Plugins** submenu.
+when a row holds a failure, `online` forces one, so a connection that dropped
+during a check is retried when it returns. **Check again** forces a check and clears the row's status while it runs,
+leaving the row as it is during any check, with a screen-reader-only "Checking
+for updates…" status. If the check fails again, the status returns, announced as
+an alert. Once the row clears, a later background failure returns unannounced.
+`updateFailure()` in `src/plugins/updates.ts` adds a sentence for the Git text
+Buzz recognizes: a repository Git couldn't find, and a missing username on an
+HTTPS source. Both are hints, not verdicts: "not found" also answers a
+repository that denies access, and a missing username means this check sent no
+credentials (`authorizeGit` was unavailable, or the repository is private). Every
+failure keeps **Check again** and counts for the forced `online` check. A failed
+authentication gets no hint, since it follows an expired `authorizeGit` token.
+Failures don't appear in the profile menu's **Plugins** submenu.
 
 An update action fetches a fresh immutable preview. The importer checks access
 and publisher data from that preview before it applies the update. It checks

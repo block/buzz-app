@@ -729,18 +729,19 @@ it("doesn’t announce the hourly check’s failure after Check again succeeded"
 it.each([
   [
     "Git could not read this repository: remote: Repository not found.\nfatal: repository 'https://example.com/plugins.git/' not found",
-    "This plugin’s repository moved or was removed. Reinstall it from its new address.",
+    "Git couldn’t find this plugin’s repository. It may have moved, been removed, or need access you don’t have.",
   ],
   [
     "Git could not read this repository: fatal: could not read Username for 'https://example.com': terminal prompts disabled",
-    "This repository is private. Reinstall it using an SSH address.",
+    "Git needs a sign-in for this repository that Buzz couldn’t provide.",
   ],
 ])(
-  "names a known Git cause on the row and offers no check that can’t help (%#)",
+  "adds a hint for a Git cause Buzz recognizes and keeps Check again, since access can return (%#)",
   async (error, cause) => {
     const f = fixture();
+    f.candidate.revision = f.plugin.revision;
     f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
-    f.imports.checkGit.mockRejectedValue(error);
+    f.imports.checkGit.mockRejectedValueOnce(error);
     f.mount();
     fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
     expect(
@@ -748,10 +749,15 @@ it.each([
     ).toBeVisible();
     expect(screen.getAllByText(cause, { exact: false })).toHaveLength(1);
     expect(screen.queryByText(noticeTitle("Notes"))).toBeNull();
-    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     fireEvent.click(screen.getByText("Details"));
     expect(screen.getByText("Details").closest("details")).toHaveTextContent(
       error.replace(/\s+/g, " "),
+    );
+    // Access restored, Check again clears the hint.
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(screen.queryByText(/Couldn’t check for updates/)).toBeNull(),
     );
   },
 );
@@ -773,7 +779,7 @@ it("keeps Check again and the generic sentence when an authorized HTTPS check is
     "Authentication failed",
   );
   expect(screen.queryByText(noticeTitle("Notes"))).toBeNull();
-  expect(screen.queryByText(/This repository is private/)).toBeNull();
+  expect(screen.queryByText(/Git needs a sign-in/)).toBeNull();
 });
 
 it("doesn’t check in the background while offline, and checks when the connection returns", async () => {

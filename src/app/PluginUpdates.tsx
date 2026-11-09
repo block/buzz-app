@@ -98,11 +98,7 @@ export function PluginUpdates({
     // A check that failed when the connection dropped mid-run is throttled
     // like any other, so the connection's return checks it again at once.
     const reconnected = () =>
-      void check(
-        updates
-          .snapshot()
-          .some((update) => update.error && updateFailure(update).retry),
-      );
+      void check(updates.snapshot().some((update) => update.error));
     scheduled();
     const unsubscribe = plugins.subscribe(scheduled);
     document.addEventListener("visibilitychange", scheduled);
@@ -327,8 +323,8 @@ export function PluginUpdatesMenu({
 }
 
 /** A failed check, on its plugin's row in Settings → Plugins: what happened,
- * Check again when that can help, and Git's text behind Details. Check again
- * clears it while the check runs. Nothing shows outside `PluginUpdates`. */
+ * Check again, and Git's text behind Details. Check again clears it while
+ * the check runs. Nothing shows outside `PluginUpdates`. */
 export function PluginUpdateFailure({
   pluginId,
   className,
@@ -359,7 +355,7 @@ export function PluginUpdateFailure({
       </LoadingRegion>
     );
   if (!context || !update?.error) return null;
-  const { cause, retry } = updateFailure(update);
+  const cause = updateFailure(update);
   return (
     <div className={className}>
       <div className="flex flex-wrap items-center gap-2">
@@ -369,19 +365,17 @@ export function PluginUpdateFailure({
         >
           Couldn’t check for updates.{cause ? ` ${cause}` : ""}
         </p>
-        {retry && (
-          <Button
-            size="sm"
-            variant="subtle"
-            onClick={() => {
-              setAsked(true);
-              returnFocus?.()?.focus();
-              void context.checkAgain(pluginId);
-            }}
-          >
-            Check again
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="subtle"
+          onClick={() => {
+            setAsked(true);
+            returnFocus?.()?.focus();
+            void context.checkAgain(pluginId);
+          }}
+        >
+          Check again
+        </Button>
       </div>
       {update.error !== cause && (
         <details>

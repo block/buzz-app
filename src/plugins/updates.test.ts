@@ -377,45 +377,48 @@ it("reuses discovery for plugins in the same repository and reference", async ()
 const OFFLINE =
   "Git could not read this repository: fatal: unable to access 'https://example.com/plugins.git/': Could not resolve host: example.com";
 
-const MOVED =
-  "This plugin’s repository moved or was removed. Reinstall it from its new address.";
-const PRIVATE =
-  "This repository is private. Reinstall it using an SSH address.";
+// Hints, not verdicts: "not found" also answers a repository that denies
+// access, and a missing username means this check sent no credentials.
+const NOT_FOUND =
+  "Git couldn’t find this plugin’s repository. It may have moved, been removed, or need access you don’t have.";
+const NO_SIGN_IN =
+  "Git needs a sign-in for this repository that Buzz couldn’t provide.";
 it.each([
   [
     "https://github.com/acme/notes",
     "Git could not read this repository: remote: Repository not found.\nfatal: repository 'https://github.com/acme/notes/' not found",
-    { cause: MOVED, retry: false },
+    NOT_FOUND,
   ],
   [
     "git@github.com:acme/notes.git",
     "Git could not read this repository: ERROR: Repository not found.\nfatal: Could not read from remote repository.",
-    { cause: MOVED, retry: false },
+    NOT_FOUND,
   ],
   [
     "https://github.com/acme/notes",
     "Git could not read this repository: fatal: could not read Username for 'https://github.com': terminal prompts disabled Private repositories need an SSH URL, such as git@github.com:owner/repo.git.",
-    { cause: PRIVATE, retry: false },
+    NO_SIGN_IN,
+  ],
+  [
+    "git@github.com:acme/notes.git",
+    "Git could not read this repository: fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    undefined,
   ],
   // A repository Buzz authorizes over HTTPS fails this way when its token
-  // expired or was revoked, so checking again can help.
+  // expired or was revoked; the generic sentence fits.
   [
     "https://github.com/acme/notes",
     "Git could not read this repository: remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/acme/notes/'",
-    { retry: true },
+    undefined,
   ],
-  ["https://example.com/plugins.git", OFFLINE, { retry: true }],
+  ["https://example.com/plugins.git", OFFLINE, undefined],
   [
     "https://example.com/plugins.git",
     "The repository does not match the managed commit. Try again after the recommendation is corrected.",
-    {
-      cause:
-        "The repository does not match the managed commit. Try again after the recommendation is corrected.",
-      retry: true,
-    },
+    "The repository does not match the managed commit. Try again after the recommendation is corrected.",
   ],
 ] as const)(
-  "names the cause of a failed check when Buzz knows it (%s, case %#)",
+  "names what Buzz knows about a failed check (%s, case %#)",
   (repository, error, expected) => {
     expect(
       updateFailure({

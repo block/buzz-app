@@ -1074,9 +1074,9 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   skips background checks while offline and checks again when the connection
   returns, including a check that failed because the connection dropped.
   **Check again** clears the row while it checks; if the check fails again,
-  the row shows the failure again. When the
-  repository moved or was removed, or is private and was added over HTTPS, the
-  row says so and to reinstall the plugin, since checking again can’t help.
+  the row shows the failure again. When Git couldn’t find the repository, or
+  asked for a sign-in Buzz couldn’t provide, the row adds a sentence saying so.
+  **Check again** stays available, since access can be restored.
   If the updated plugin cannot start, use **Retry activation** or its recovery
   menu to **Roll back**, when available. Checks, review, Later, and
   cancellation keep plugin work running.

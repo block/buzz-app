@@ -16,7 +16,14 @@ const accent =
 // code point alone keeps a map from folded text back to the name for
 // underlining, and gives the same result as folding the whole name.
 const foldPoint = (char: string) =>
-  char.normalize("NFKD").replace(accent, "").toLowerCase().replace(/ς/g, "σ");
+  // ASCII has no accents, decompositions or final sigma.
+  char < "\x80"
+    ? char.toLowerCase()
+    : char
+        .normalize("NFKD")
+        .replace(accent, "")
+        .toLowerCase()
+        .replace(/ς/g, "σ");
 
 /** The folded code points of `text`, one or more per code point. */
 const foldChars = (text: string) =>
@@ -24,9 +31,6 @@ const foldChars = (text: string) =>
 
 /** A name or query without accents and case. Keeps spaces at the ends. */
 export const foldName = (text: string) => [...text].map(foldPoint).join("");
-
-/** The normalized form for comparing and ordering names. */
-export const normalizeName = (text: string) => foldName(text).trim();
 
 /** Words are runs of letters, marks and digits; anything else separates them. */
 const wordChar = /[\p{L}\p{M}\p{N}]/u;
@@ -134,6 +138,12 @@ const foldedChars = (name: string) => {
   }
   return chars;
 };
+
+/** The normalized form for comparing and ordering names. Reads the folded
+ * names cache, since mentions normalize every name on each keystroke; a
+ * query adds one entry per keystroke, within the same bound. */
+export const normalizeName = (text: string) =>
+  foldedChars(text).join("").trim();
 
 /** Where and how well folded `chars` match the folded `needle`, or undefined. */
 function search(chars: readonly string[], needle: readonly string[]) {

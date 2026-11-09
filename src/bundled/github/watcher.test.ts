@@ -771,7 +771,10 @@ describe("github_watch_pr", () => {
       `Stopped watching ${url}.`,
     );
     app.gh(null);
-    await expect(app.call({ url })).rejects.toThrow(/gh/);
+    // The refusal says what gh answered, so the agent can tell why.
+    await expect(app.call({ url })).rejects.toThrow(
+      /gh: Could not resolve to a Repository/,
+    );
     await expect(app.call({ url: "https://example.com/x" })).rejects.toThrow(
       /pull request URL/,
     );
@@ -1398,10 +1401,10 @@ describe("github_watch_pr", () => {
     savePolicy(`deny body:/^\\s*nit\\b/i
 allow author:/^COPILOT/
 allow org:block
-allow org:squareup author:/^ada_/`);
+allow org:example-org author:/^ada_/`);
     const app = setup();
     await app.call({ url });
-    app.members(["alice@block", "ada_x@squareup", "bob@squareup"]);
+    app.members(["alice@block", "ada_x@example-org", "bob@example-org"]);
     app.gh(
       answer({
         comments: [

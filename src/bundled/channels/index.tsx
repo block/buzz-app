@@ -3,7 +3,7 @@ import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
-import { MessagesPage } from "./MessagesPage";
+import { ChannelsPage } from "./ChannelsPage";
 import { PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
@@ -129,13 +129,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "channels",
     title: "Channels",
     primary: true,
-    placement: "topbar",
+    placement: "dock",
     layout: "workspace",
     companion: true,
     handlesNavigation: true,
     route: { version: 1, validate: isChannelRoute },
     component: ({ companion, navigation }) => (
-      <MessagesPage
+      <ChannelsPage
         chatMenus={ctx.conversation.chatMenus}
         navigation={navigation}
         navigator={navigator}

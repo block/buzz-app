@@ -5,7 +5,7 @@ One Builderlab account for communities and agents that Builderlab hosts for you,
 ## Getting started
 
 1. Go to **Settings → Plugins → Builderlab** and choose **Sign in with Builderlab**.
-2. To host a community, choose **Create community** under **Communities**, then **Copy address**, open the community picker and choose **Join a community**.
+2. To host a community, choose **Create community** under **Communities**. Buzz opens the join for the new community at once; publish your profile there and it opens and appears in the community picker. **Copy address** shares the address with others.
 3. To host an agent, in **Agents** choose **New agent** and pick **Builderlab** under **Remote** in the **Harness** menu. It can answer while your desktop is off, but cannot open files on your computer.
 4. If signed out, choose the small **Sign in** button beside Harness. Model, Thinking and Create agent stay disabled until sign-in completes. Choose a model and thinking level, optionally add instructions, then choose **Create agent**. Review the introduction and choose **Let’s go** to create it.
 5. Edit model settings and instructions later in **Identity**. Opening it attempts sign-in automatically if needed. The compact action beside Harness shows a spinner that cancels browser sign-in on click. The resting signed-out hint explains that sign-in enables editing while messaging still works. Cancellation, timeout and login failures wait for an explicit inline retry. Sheets are reserved for settings or account-access errors. Instructions appear after sign-in. Native account-access errors open **Identity → Organization sign-in** without ending the shared session. In live development, **Use another account** ends the broker session and opens `/logout` in your browser. A cancellable spinner then waits three seconds before showing **Retry** beside Harness. Sign in with the other account in the browser, return to Buzz, then click Retry to check broker access.
@@ -42,12 +42,11 @@ between everyone in the owner's workspace and only the owner, and
 `apps_community` grants or revokes a Buzz community at the grant revision it just
 read. `apps_visibility` keeps existing viewers and community grants.
 
-BBBlock is the employee pilot. BBPublic uses the same authenticated control-plane
-boundary: the server must grant Builderlab access to the current workspace/account.
-Existing workspace early-preview enablement can provide that access; these tools
-do not enable a workspace or bypass its policy. A denied request preserves the
-server's permission error. Check the contract before choosing a profile because
-BBPublic need not support static hosting.
+Every tenant uses the same authenticated control-plane boundary: the server must
+grant Builderlab access to the current workspace/account. These tools do not
+enable a workspace or bypass its policy. A denied request preserves the server's
+permission error. Check the contract before choosing a profile because a tenant
+need not support static hosting.
 
 After an accepted deployment, readiness errors preserve its app, version,
 deployment and rollout IDs. `apps_status` checks those exact IDs without uploading
@@ -145,8 +144,11 @@ including after a restart. Setup completes only once the settings save succeeds.
 Settings shows the fixed remote workspace and per-thread session behavior, with
 a link to the configured Builderlab site for remote runtime management.
 Activity shows the turns the agent published to its owner while Buzz has been
-open, across all of its conversations. It doesn't scope to the conversation it
-was opened from, because hosted frames don't always name their thread. It needs
+open. Opened from a conversation, it shows that conversation's turns, and
+**Show all conversations** widens it to every conversation; each new request
+for the conversation's transcript narrows it again. Hosted frames name a thread
+only for per-thread sessions, so a turn without one counts as its channel's
+conversation, the per-channel session every thread there shares. It needs
 the Agent Activity plugin, which owns the feed.
 Create sends the chosen picture with registration, and Beekeeper publishes it at
 attestation. Renaming or changing the picture republishes the agent's profile
@@ -176,6 +178,13 @@ agents are not migrated into this type.
   Its sign-out lives in Identity → Organization sign-in, which `login/` links to,
   because community sign-in shares the session. In live development it projects
   the development broker's sign-in instead, through `brokerApi`.
+- `capabilities.ts` keeps a sign-in's permissions at most a minute old, on
+  demand: reading the session's snapshot starts a due re-read in the background,
+  and acting waits for it through `freshCredential`. Gates read the flags and
+  never refresh by hand. Concurrent reads join one request; failed attempts keep
+  cached values and wait a minute before another attempt. There is no timer, but
+  a surface that keeps reading the session, such as Attention readiness, re-reads
+  `/v1/auth/me` about once a minute while it does.
 - `oauth/` names the build's Builderlab API (`oauthTarget`). `oauth/first-run.ts`
   lets the app's first-launch welcome screen run the same native NIP-FI
   sign-in before the plugin's JavaScript starts; the app's later calls go
@@ -235,17 +244,27 @@ access. Live development signs in through the development broker instead. A
 build with neither has no Builderlab: the plugin registers nothing.
 
 The login snapshot retains `capabilities.can_use_remote_agents`; only explicit
-`true` enables remote agents. Otherwise, Settings and the Agents provider show
-“Coming soon” and no Beekeeper requests are sent. Sign out and back in to refresh
-this capability.
+`true` enables remote agents. Otherwise, Harness defaults and Builderlab Settings
+show “Unavailable for this account”; the provider dialog explains the same
+restriction. The Harness defaults row has no action. Account management stays in
+Settings → Builderlab, and no Beekeeper requests are sent. Permissions are
+re-read from `/v1/auth/me` once they are a minute old and the session is read
+again; failed reads retain the previous values. Only capabilities change;
+account identity and display details remain those read at sign-in.
 
-The plugin also offers Builderlab as a Decisions API provider. It reads
-`capabilities.can_use_builderlab_decisions` the same way, but only explicit
-`true` registers the provider, and only while the user is signed in. Otherwise
-Builderlab is not listed in Settings > Decisions API and no decision request
-goes to it. While it is registered, it answers unless the user chose another
-provider; when it goes away, TypeSafe answers. Sign out and back in to refresh
-this capability. The plugin names the NIP-FI session by its revision, and
+The plugin also offers Builderlab as a Decisions API provider while the user is
+signed in. It reads `capabilities.can_use_builderlab_decisions` the same way:
+only explicit `true` makes it ready, and otherwise it needs setup, its settings
+say it is unavailable for this account, and no decision request goes to it.
+Without a choice, the first default that can answer does, so TypeSafe answers
+until access is granted; when no default can, TypeSafe is shown, since its key
+is something the user can add. While stale permissions refuse, Builderlab's
+status is `checking` during the re-read that reading it starts. That never
+moves the selection: a request is held for it only when no other default can
+answer, and then, like Attention readiness, it waits within its deadline, so
+a new grant is used by the request that noticed it. Live development retains refreshed flags and their cache age
+across page reloads.
+The plugin names the NIP-FI session by its revision, and
 native `decide` posts to the identity origin's API with that
 session as `Authorization: Bearer`, as for the build's other Builderlab calls;
 the token never reaches the webview. A 401 there refuses only that call, and

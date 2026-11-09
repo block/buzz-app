@@ -440,6 +440,7 @@ export function useConversationTabs({
       tabState.setPaneOpen(true);
     },
     {
+      paneOpen: tabState.paneOpen,
       pressed: (panel, context) => {
         const entry = channelTab(panel, context.channelId);
         return !!entry && tabState.paneOpen && selectedTab === tabId(entry);
@@ -483,6 +484,11 @@ export function useConversationTabs({
         openConversationLink(drawerContext.channelId, target),
     },
     openMembers,
+    {
+      opening: tabState.sideDrawer,
+      set: tabState.setSideDrawer,
+      fallbackFocus,
+    },
   );
   // The pane's page-local side panel, so a tab opened from outside the page
   // knows the pane is in use; it ends with this mount.

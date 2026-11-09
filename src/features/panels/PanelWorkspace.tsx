@@ -412,6 +412,15 @@ export function PanelWorkspace({
         pointerTab.current = false;
       }}
       onKeyDown={(event) => {
+        // A hovered preview can open while focus stays elsewhere in this pane.
+        // Let Base UI's document handler dismiss it before closing its owner.
+        if (
+          event.key === "Escape" &&
+          event.currentTarget.querySelector(
+            "[data-preview-card-trigger][data-popup-open]",
+          )
+        )
+          return;
         if (
           event.key === "Escape" &&
           !event.shiftKey &&

@@ -61,6 +61,22 @@ describe("matchPerson", () => {
   it("normalizes the way it matches", () => {
     expect(normalizeName("  ÉLODIE ")).toBe("elodie");
     expect(foldName("José ")).toBe("jose ");
+    // Cached folds normalize as a fresh fold does, short or long, repeated or not.
+    const long = `${"é".repeat(130)} X`;
+    // Short, but folds to more than 128 code points, so it is not kept.
+    const wide = "ﷺ".repeat(8);
+    for (const name of [
+      "  José ",
+      "ﬁona",
+      "ΟΔΥΣΣΕΥΣ",
+      "a\u0301",
+      long,
+      long,
+      wide,
+      wide,
+      "  José ",
+    ])
+      expect(normalizeName(name)).toBe(foldName(name).trim());
   });
 
   it("finds a longer name only when it continues with a new word", () => {

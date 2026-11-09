@@ -838,6 +838,7 @@ fn process_attachment_reader_blocks_delete_until_output_and_killed_child_complet
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();

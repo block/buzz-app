@@ -7,7 +7,7 @@ import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { watchPageErrors } from "./page-errors.mjs";
-import { createServer } from "./vite-server.mjs";
+import { createServer, warmUp } from "./vite-server.mjs";
 import { expectMessageActionsHidden } from "./message-actions.mjs";
 import { hoverRow, settle } from "./timeline.mjs";
 
@@ -127,6 +127,9 @@ test("independent packed author consumer and native-installed contribution survi
       server: { host: "127.0.0.1", port: 0, strictPort: false },
     });
     await server.listen();
+    // The fixture loads every bundled plugin; compile it outside the
+    // navigation budget, which parallel CI builds can otherwise exhaust.
+    await warmUp(server, "/tests/fixtures/conversation.tsx");
     const errors = watchPageErrors(page);
     await page.route("**/proof-media/**", (route) =>
       route.fulfill({

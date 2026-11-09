@@ -15,3 +15,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+:where(html[data-message-density="compact"]) .stepPreview {
+  height: calc(var(--text-caption) * var(--text-caption--line-height));
+}

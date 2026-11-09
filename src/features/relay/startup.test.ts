@@ -257,6 +257,8 @@ describe("device-local startup", () => {
         expect(owner.session.live.snapshot().roster.state).toBe("pending");
         expect(channels.get?.("alpha")?.name).toBe("Alpha");
         expect(channels.get?.("alpha")?.archived).toBeUndefined();
+        // A failed refresh confirmed nothing of the saved metadata.
+        expect(channels.get?.("alpha")?.metadataCached).toBe(true);
       } finally {
         names.resolve([fresh]);
       }
@@ -304,6 +306,12 @@ describe("device-local startup", () => {
         if (!included) {
           await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(2));
           expect(channels.get?.("alpha")?.cached).toBeUndefined();
+          // The roster is fresh; the saved metadata is not confirmed yet.
+          expect(channels.get?.("alpha")?.metadataCached).toBe(true);
+          expect(
+            channels.list().channels.find(({ id }) => id === "alpha")
+              ?.metadataCached,
+          ).toBe(true);
           expect(owner.session.live.snapshot().roster.state).toBe("pending");
         }
       } finally {
@@ -317,12 +325,26 @@ describe("device-local startup", () => {
         archived: true,
       });
       expect(channels.get?.("alpha")?.cached).toBeUndefined();
+      expect(channels.get?.("alpha")?.metadataCached).toBeUndefined();
+      expect(
+        channels.list().channels.find(({ id }) => id === "alpha")
+          ?.metadataCached,
+      ).toBeUndefined();
       expect(
         query.mock.calls
           .flatMap(([filters]) => filters)
           .filter((filter) => filter.kinds?.includes(39000)),
       ).toEqual(
-        included ? [] : [{ kinds: [39000], "#d": ["alpha"], limit: 500 }],
+        included
+          ? []
+          : [
+              {
+                kinds: [39000],
+                authors: [relay.pubkey],
+                "#d": ["alpha"],
+                limit: 500,
+              },
+            ],
       );
     },
   );

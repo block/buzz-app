@@ -203,7 +203,7 @@ export function apply(ctx: Context) {
     // @ts-expect-error A page icon is a data URL string.
     icon: 1,
   });
-  for (const placement of ["sidebar", "topbar", "toolbar"] as const)
+  for (const placement of ["sidebar", "dock", "topbar", "toolbar"] as const)
     ctx.pages.register({ id: placement, title: placement, component: () => null, primary: true, placement });
   ctx.pages.register({
     id: "bad-placement", title: "Bad placement", component: () => null,

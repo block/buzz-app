@@ -136,6 +136,12 @@ unless it matches. A link that carries `path` or `commit` locks the repository a
 reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
 `path` and `commit` may appear once; a repeated key makes the link invalid.
 
+`buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
+a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
+downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
+review as a recommended plugin. It never mixes with the Git keys, and each key may
+appear once.
+
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
 enable, or grant access. You can close the dialog while the preview loads. A late
@@ -262,8 +268,12 @@ point exporting
 `apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
 `inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
 `ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
-several pages or none. Page IDs are unique within their plugin. Add `primary: true` for a
-row in the sidebar's page navigation; every active page is listed in search. Buzz supplies React
+several pages or none. Page IDs are unique within their plugin. Add `primary: true` (with the
+default `placement`) for a row in the Messages sidebar's page navigation; every active page
+is listed in search.
+While that page is open, Messages stays selected in the app dock and the conversation
+sidebar stays visible, unless the page registers its own `sidebar`, which then
+replaces it. Buzz supplies React
 and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
 in external plugins; runtime imports are rejected by the scaffold's builder.
 
@@ -317,14 +327,34 @@ lookup returns `undefined` when an older host has not provided it.
 
 ```ts
 type PluginInstaller = {
-  requestInstall(source: {
-    repository: string; // https://, ssh:// or scp-style git URL
-    reference: string; // branch or tag
-    path?: string; // relative folder inside the repository
-    commit?: string; // 40- or 64-hex; install exactly this commit
-  }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  requestInstall(
+    source:
+      | {
+          repository: string; // https://, ssh:// or scp-style git URL
+          reference: string; // branch or tag
+          path?: string; // relative folder inside the repository
+          commit?: string; // 40- or 64-hex; install exactly this commit
+        }
+      | {
+          id: string; // the artifact's plugin ID
+          url: string; // https:// artifact from `buzzodz plugin pack`
+          sha256: string; // 64-hex; install exactly these bytes
+        },
+  ): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  getInstallationStatus(
+    id: string,
+  ): "installed" | "absent" | "unavailable";
+  subscribeInstallationStatus(
+    id: string,
+    listener: (status: "installed" | "absent" | "unavailable") => void,
+  ): () => void;
 };
 ```
+
+These status methods may be missing on an older host even when the optional
+service is available. Feature-check each method before calling it; see the
+[plugin authoring guide](plugin-authoring-guide.md#extension-points) for
+status semantics and subscription-lifetime guidance.
 
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the
@@ -344,7 +374,13 @@ Settings closes, a `buzz://plugin-install` link replaces its review, or the requ
 plugin is disabled or removed, unless the user has already confirmed the install. A plugin that updates itself is replaced during that
 install and still resolves `updated`.
 
-A request can install a new plugin, or update an installed plugin only from the same
+`pluginInstaller.sources` lists the source kinds a host accepts (`["git", "url"]`).
+Hosts that accept only Git leave it out, so check it before requesting a URL source.
+A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
+its SHA-256 and plugin ID match, and shows the access review for the owner to
+confirm. It can install a new plugin or update one installed from a URL.
+
+A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
 including a local folder or an unknown one, is refused with a message naming both
 sources; remove it first to install it from the new one. Dismissing the review of a
@@ -529,8 +565,9 @@ A plugin exports `inject` and `apply(ctx)`. Pages register with
 `ctx.panels.register({ id, title, matches, order?, launcher?, toolbar?, component })`. An optional `toolbar` supplies live controls beside shell search in place of the static launcher. Its lifetime stays with its plugin, and shell render failures are isolated. Huddles is the first caller. IDs are local to the
 plugin; the registry adds installation identity and revision and removes the
 contribution when its Cordis scope ends. `primary: true` opts a page into shell
-navigation. Its optional `placement` chooses `"sidebar"` (the default), `"topbar"`
-(centered text destination), or `"toolbar"` (top-right full-page icon near search).
+navigation. Its optional `placement` chooses `"sidebar"` (the default), a row in the
+Messages sidebar that keeps Messages selected, or `"dock"`, an app in the left dock.
+`"topbar"` and `"toolbar"` predate the dock and remain accepted aliases for `"dock"`.
 Pages without `primary: true` remain search/deep-link-only even with a placement.
 The host owns ordering, active state, responsive overflow and navigation history;
 plugins do not supply header React or a second navigation stack. Placement is fixed
@@ -539,7 +576,7 @@ falling back to the sidebar without failing activation. Older hosts ignore place
 and continue to show primary pages in their sidebar.
 
 Harness plugins register an agent type with `ctx.agents.register`. Per-agent
-configuration belongs in its `tabs`; the plugin that controls Attention shows the device switch. An optional
+configuration belongs in its `tabs`. An optional
 `provider` contribution exposes a stable readiness snapshot, subscription,
 read-only `check()` and `DialogBody`. The Agents page supplies the Providers
 health submenu plus provider title, registered icon, modal framing, dismissal,
@@ -568,7 +605,15 @@ which uploads of local files use. The kit grants nothing `ctx.agents` and
 A plugin, bundled or installed, can add a tab to the settings of agents
 running here or hosted, whatever their type, with
 `ctx.agents.registerTab({ id, title, component, when, subscribe })`. The component receives
-`{ agent }`; it reads and saves through the plugin's own `ctx.agents`. An
+`{ agent, open, canOpen }`; it reads and saves through the plugin's own `ctx.agents`.
+`open(target)` opens a link, such as a `nostr:npub…` profile, where the tab is
+shown: the profile panel opens it beside the conversation and the Agents page
+selects that agent. `canOpen(target)` says whether `open` can open that link
+there, so the tab can show it as plain text when it can't. `open` returns true
+once it has opened the link, and false otherwise: either it can't, or the host
+first asks whether to discard unsaved edits and opens the link only if the
+person agrees. So false is not an error. Both are absent where the tab can open
+nothing. An
 optional `when(agent)` limits the tab to the agents it returns true for, and an
 optional `subscribe(listener)` tells the host when `when` may answer
 differently, so the tab appears or goes without a reload. A `when` that throws
@@ -582,16 +627,17 @@ meant only for agents running here says so in its `when`
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
-A plugin that shows Attention and its device switch calls
-`ctx.agents.controlAttention()`. Installed plugins may call it too, and one that
-does should show that switch. Agents' watches, timers and sources run on this
-device only while such a plugin is on. With none on, every agent's
-`attentionEnabled` reads false and each keeps its saved switch. Messages from
+A plugin that shows Attention calls `ctx.agents.controlAttention()`.
+Installed plugins may call it too. Agents' watches, timers and sources run on
+this device only while such a plugin is on, and then for every agent: there is
+no per-agent switch. The plugin's own on/off in Settings → Plugins is the only
+gate. With none on, every agent's `attentionEnabled` reads false.
+Messages from
 then wake no kind 9 watch later, even across a restart, though a relay replay
-after a reconnect can still deliver one, as it can after the switch is off. While plugins are still
+after a reconnect can still deliver one. While plugins are still
 starting and none has shown Attention yet, kind 9 watches keep their catch-up
 place, so startup still catches up on what the app missed while closed, and the
-events an agent with its switch on would hear wait to be matched once startup
+events an agent would hear wait to be matched once startup
 ends. Those are dropped for a kind 9 watch last seen with Attention hidden;
 other watches keep no such record, so they still match them. The bundled Agent
 Attention UI plugin calls it.
@@ -663,7 +709,7 @@ ctx.pages.register({
   id: "dashboard",
   title: "Dashboard",
   primary: true,
-  placement: "toolbar",
+  placement: "dock",
   component: Dashboard,
 });
 ```
@@ -882,7 +928,7 @@ Membership, and Moderation are on by default, but optional. Both browser and
 native catalogs declare that policy.
 
 Solo is part of Channels, not a plugin: Solo chats are channels opened in
-Messages, and Solo drafts are a Messages route. Channels requests topbar
+Messages, and Solo drafts are a Messages route. Channels requests dock
 placement and the shell presents it as Messages, the startup destination.
 Saved `buzz.me` and `buzz.sessions` flags are ignored like any uninstalled owner.
 
@@ -930,8 +976,10 @@ placement in Channels → Channel actions. Channels owns the menu, selected chan
 tab geometry, focus, and close behavior; it opens the **exact active contribution**
 without resolving a target matcher. Eligibility is evaluated again at activation
 against the current connected session, selected non-cached channel and membership.
-Disabling or replacing a plugin retires its open tab; a channel change or loss of
-eligibility closes it and unmounts its archive reader. `eligible` also decides
+Disabling or replacing a plugin retires its open tab, and loss of eligibility closes
+it. A channel change unmounts it with the rest of the channel's tabs; the tab stays
+open in that channel's workspace and remounts, after eligibility is checked again,
+when the viewer returns, until they close it. `eligible` also decides
 archived-channel availability; exclude `channel.archived` if the panel writes.
 Re-enabling never reopens a
 stale tab. Eligibility and `channelContext` are presentation, **not authority**:
@@ -939,7 +987,7 @@ the panel must independently verify access before reading any sensitive data and
 fence asynchronous reads on revocation. Channels registers **View canvas** this
 way. Canvas has no separate plugin toggle; Solo,
 Todos, and agents use the same session capability. Its editor keeps the channel's
-draft locally, so reopening after a channel change restores it. Members of archived
+draft locally, so returning to the channel or reopening Canvas restores it. Members of archived
 channels can read Canvas and History, but cannot edit, save, or restore through the panel.
 A retained unpublished draft is labeled as local; History shows the saved versions.
 
@@ -1027,7 +1075,12 @@ A panel may additionally contribute `channelLauncher: ComponentType<ChannelLaunc
 Channels renders these in its conversation header with public `context`, `pressed`,
 `available()`, `toggle(target)` and the channel's `canOpen`/`open`. The page owns one selected channel panel, placed
 in the bottom drawer by default or the existing companion column when the contribution
-sets `channelPlacement: "side"`. With `channelPlacement: "tab"` the launcher instead
+sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
+channel. A side-column panel stays open in the channel's workspace: leaving the channel
+or page unmounts it, and returning shows it again until the viewer closes it, another
+channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. For a side panel, `pressed` means the panel is shown in
+the open pane, not merely selected: while the pane is hidden the panel stays selected but
+reads unpressed, and `toggle` shows it again. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
@@ -1082,6 +1135,7 @@ Unordered checkbox items in that section are shown, including nested tasks. Nest
 Quotes and fenced examples are not tasks in this view. Doing and checkbox edits
 change one source byte; additions insert below the heading without rewriting other
 content.
+People who can’t write the channel’s Canvas, such as guests, see Todos read-only.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel actions → View canvas remains editable.
 
@@ -1822,6 +1876,13 @@ Buzz checks the event ID, signature and exact artifact bytes before install and
 each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
 local development.
 
+`buzzodz plugin pack DIST_DIRECTORY FILE` writes the same single-file artifact,
+unsigned, and prints its SHA-256. An organization can serve that file over HTTPS
+for people without access to the Git host and recommend it with a `url` and
+`sha256` [managed plugin](managed-plugins.md#url-entries) entry. Buzz downloads
+it, refuses any bytes that do not match the pin, and records the URL as the
+plugin's saved source.
+
 A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
 those required files. README content must be UTF-8 and is limited to 256 KiB.
 Icons must match their PNG or JPEG filename and have a decodable first image, each at most 1 MiB, no more than 4096 pixels on
@@ -2440,14 +2501,18 @@ intent survives optional plugin removal and remains subject to session validatio
 One host-owned, viewport-bounded portal renders the active listbox. Focus stays on
 the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
 plain Enter/forward Tab accept, and Escape dismisses pending results. A typed
-terminator accepts the provider-verified unique exact match: plain Space for a
-mention, the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
+terminator accepts the provider-verified unique exact match: plain Space or closing
+punctuation for a mention
+([mentions README §5](../src/bundled/mentions/README.md#5-space-or-closing-punctuation-selects-only-an-exact-unique-name)),
+the closing colon for an emoji shortcode. Emoji publishes an exact-match ID
 only after both Unicode and community catalogs successfully settle. The editor refuses
 typed terminators in rich or raw Markdown literal ranges; colon conversion records the
 typed source first so undo restores the closing colon and collapsed caret. A rejected
 displayed choice must not fall through to sending. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
-keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.
+keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior, except
+that Shift may type any terminator but Space, and Option a mention's closing
+punctuation.
 
 Emoji lazily copies native-only records (including aliases and keywords) from the
 pinned data package; it does not use Emoji Mart's mutable global search singleton.
@@ -2609,8 +2674,11 @@ that were not asked are dropped.
 
 The user chooses the provider in Settings > Decisions API, and the choice is
 kept on this device. Until they choose, the first default provider that is on
-answers: Builderlab (`block.builderlab/builderlab`), then TypeSafe
-(`buzz.typesafe/typesafe`). The same holds while a chosen default is not on.
+and can answer (`ready` or `unconfirmed`) does: Builderlab
+(`block.builderlab/builderlab`), then TypeSafe (`buzz.typesafe/typesafe`).
+When none can, TypeSafe is the provider, and the status is `checking` while
+another default is still finding out whether it can answer. The same holds
+while a chosen default is not on.
 Decision text can include private messages, so no other provider gets it
 without that choice: while a chosen provider that is not a default is not on,
 decisions are `unavailable` and are not sent to another provider. `ctx.decisions.backend()`
@@ -2622,7 +2690,7 @@ so send only what the decision needs.
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
 | `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
-| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered only while the user is signed in to an account Builderlab allows decisions for | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server allows up to 32 questions per call |
+| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered while the user is signed in, and `needs-setup` unless Builderlab allows the account decisions | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server allows up to 32 questions per call |
 
 ## In-app keyboard shortcuts
 

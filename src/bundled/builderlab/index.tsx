@@ -31,6 +31,7 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
+  "communityJoin",
   "decisions",
   "navigation",
   ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
@@ -102,7 +103,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         state.status === "signed-in"
           ? state.account?.canUseRemoteAgents
             ? { readiness: "ready" }
-            : { readiness: "attention", attentionLabel: "Coming soon" }
+            : {
+                readiness: "attention",
+                attentionLabel: null,
+                attentionDescription: "Unavailable for this account",
+              }
           : state.status === "pending"
             ? { readiness: "checking", blocking: true }
             : {
@@ -128,7 +133,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           {state.status === "signed-in" &&
             !state.account?.canUseRemoteAgents && (
               <p role="status" className="text-body-sm text-secondary">
-                Builderlab remote agents are coming soon for your account.
+                Builderlab remote agents are unavailable for this account.
               </p>
             )}
         </div>
@@ -183,7 +188,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
     if (!communities) return null;
     if (communities === brokerApi)
-      return <HostedCommunities api={communities} active={active} />;
+      return (
+        <HostedCommunities
+          api={communities}
+          active={active}
+          join={ctx.communityJoin?.open}
+        />
+      );
     const viewer =
       state.status === "signed-in" && dev ? session.viewerSession() : undefined;
     return state.status === "signed-in" ? (
@@ -195,6 +206,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
         api={communities}
         active={active}
+        join={ctx.communityJoin?.open}
         sharedSignIn
       />
     ) : null;

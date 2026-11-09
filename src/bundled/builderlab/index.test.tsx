@@ -54,6 +54,7 @@ function provideKnownCommunities(root: Context, viewer: string) {
     apply: vi.fn(async () => {}),
   };
   root.provide("knownCommunities", knownCommunities);
+  root.provide("communityJoin", { open: vi.fn(() => true) });
   return knownCommunities;
 }
 beforeEach(() => {
@@ -273,8 +274,10 @@ it("a build with neither NIP-FI nor the development broker has no Builderlab", a
 });
 
 it.each([undefined, false, true])(
-  "gates remote agents on the login capability %s and refreshes it on sign-in",
+  "gates remote agents on capability %s and refreshes after one minute without signing in again",
   async (initialCapability) => {
+    let now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     let capability = initialCapability;
     native.invoke.mockResolvedValue(undefined);
     const identity = fiBuild(async (url) =>
@@ -323,11 +326,30 @@ it.each([undefined, false, true])(
       );
       const user = userEvent.setup();
       await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
+        screen.getByRole("button", { name: "Log in to Builderlab, attention" }),
       );
-      await screen.findByRole("button", {
+      const dialog = await screen.findByRole("dialog", { name: "Builderlab" });
+      await user.click(
+        within(dialog).getByRole("button", { name: "Sign in with Builderlab" }),
+      );
+      await within(dialog).findByRole("button", {
         name: "Identity → Organization sign-in",
       });
+      if (capability !== true) {
+        expect(
+          within(dialog).getByText(
+            "Builderlab remote agents are unavailable for this account.",
+          ),
+        ).toBeVisible();
+      }
+      await user.keyboard("{Escape}");
+      if (capability !== true) {
+        const status = screen.getByText("Unavailable for this account", {
+          selector: ".buzz-preference-row-description span",
+        });
+        await waitFor(() => expect(status).toHaveFocus());
+        expect(status).toHaveAttribute("tabindex", "-1");
+      }
       const type = agents.types()[0];
       if (!type?.remote) throw new Error("Missing Builderlab agent type");
       if (capability === true) {
@@ -337,45 +359,38 @@ it.each([undefined, false, true])(
         expect(type.provider?.snapshot().readiness).toBe("ready");
       } else {
         expect(
-          screen.getByRole("heading", { name: "Coming soon" }),
+          screen.getByRole("heading", { name: "Remote agents" }),
         ).toBeInTheDocument();
-        expect(
-          screen.getByRole("button", { name: "Coming soon, attention" }),
-        ).toBeEnabled();
+        const row = screen
+          .getByText("Builderlab", { selector: ".buzz-preference-row-label" })
+          .closest(".buzz-preference-row");
+        expect(row).toHaveTextContent("Unavailable for this account");
+        expect(row?.querySelector("button")).toBeNull();
         await expect(
           type.remote.provision({
             name: "Helper",
             community: "wss://community.example",
             signal: new AbortController().signal,
           }),
-        ).rejects.toThrow("coming soon");
+        ).rejects.toThrow("unavailable for this account");
         // The known-communities sync follows sign-in, not the remote agents gate.
         expect(
-          identity
-            .forwarded()
-            .filter(
-              ({ url }) =>
-                !url.endsWith("/me") && !url.includes("/known-communities/"),
-            ),
+          identity.forwarded().filter(({ url }) => url.includes("/beekeeper/")),
         ).toHaveLength(0);
         expect(localStorage.length).toBe(0);
-        await user.click(
-          screen.getByRole("button", { name: "Coming soon, attention" }),
-        );
-        const dialog = screen.getByRole("dialog", { name: "Builderlab" });
-        expect(
-          within(dialog).getByText(/remote agents are coming soon/),
-        ).toBeVisible();
-        await user.keyboard("{Escape}");
       }
       capability = capability !== true;
-      await act(() => identity.service.signOut());
-      await user.click(
-        screen.getByRole("button", { name: "Sign in with Builderlab" }),
-      );
-      await screen.findByRole("button", {
-        name: "Identity → Organization sign-in",
-      });
+      const accountReads = () =>
+        identity.forwarded().filter(({ url }) => url.endsWith("/me")).length;
+      const before = accountReads();
+      now += 59_999;
+      await act(() => type.provider?.check());
+      expect(accountReads()).toBe(before);
+      now += 1;
+      await act(() => type.provider?.check());
+      expect(accountReads()).toBe(before + 1);
+      expect(identity.service.signIn).toHaveBeenCalledOnce();
+      expect(identity.service.signOut).not.toHaveBeenCalled();
       if (capability) {
         expect(
           await screen.findByText("No remote agents yet."),
@@ -383,11 +398,12 @@ it.each([undefined, false, true])(
         expect(type.provider?.snapshot().readiness).toBe("ready");
       } else {
         expect(
-          screen.getByRole("heading", { name: "Coming soon" }),
+          screen.getByRole("heading", { name: "Remote agents" }),
         ).toBeInTheDocument();
         expect(type.provider?.snapshot().readiness).toBe("attention");
       }
     } finally {
+      clock.mockRestore();
       cleanup();
       await runtime.dispose();
       await root.fiber.dispose();
@@ -475,7 +491,9 @@ it.each([true, false])(
       ).toBeEnabled();
       expect(
         await screen.findByText(
-          canUseRemoteAgents ? "No remote agents yet." : "Coming soon",
+          canUseRemoteAgents
+            ? "No remote agents yet."
+            : "Unavailable for this account",
         ),
       ).toBeInTheDocument();
       // Communities share the one sign-in and its identity link.

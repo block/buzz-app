@@ -2,7 +2,7 @@
 pub(crate) mod agent;
 mod huddle;
 use crate::federated_identity::{
-    assertion::{Authorization, HEADER},
+    assertion::{Authorization, HEADER, SIGNED_OUT},
     FederatedIdentity,
 };
 use crate::identity::{EventTemplate, IdentityHost};
@@ -969,24 +969,105 @@ async fn send(
     authenticated: bool,
     response_limit: usize,
 ) -> Result<RelayResponse> {
-    let assertion = if authenticated {
-        evidence(host, fi, &url).await?
-    } else {
-        None
-    };
-    send_authorized(
-        host,
-        AuthorizationContext {
-            fi,
-            assertion: assertion.as_ref(),
+    let community = url.clone();
+    let result = async {
+        let assertion = if authenticated {
+            evidence(host, fi, &url).await?
+        } else {
+            None
+        };
+        send_authorized(
+            host,
+            AuthorizationContext {
+                fi,
+                assertion: assertion.as_ref(),
+            },
+            url,
+            method,
+            body,
+            authenticated,
+            response_limit,
+        )
+        .await
+    }
+    .await;
+    // Only a request sent as the signed-in user speaks for their session: a
+    // native plugin's read or publish goes without federated evidence, so an
+    // FI-gated community refusing it says nothing about the user's sign-in.
+    if authenticated && fi.is_some() {
+        observe_refusal(&community, &result);
+    }
+    result
+}
+
+/// What the whole community refused, as `http-admission.ts` reads it: the
+/// relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`), a
+/// community without NIP-FI refusing a key that isn't a member or is banned
+/// (buzz-relay `api/mod.rs` `admit_member`, and its media routes'
+/// `membership_denial`), and the sign-in this device no longer has. Anything
+/// else stays with its caller.
+fn community_refusal(result: &Result<RelayResponse>) -> Option<&'static str> {
+    match result {
+        Ok(response) => match (response.status, response.body.as_str()) {
+            (401, "authentication required\n") | (403, "evidence rejected\n") => Some("sign-in"),
+            (403, "authorization denied\n") => Some("access"),
+            (403, body) => serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .filter(|body| {
+                    matches!(
+                        body["error"].as_str(),
+                        Some(
+                            "relay_membership_required"
+                                | "relay membership required"
+                                | "blocked: you are banned from this community"
+                        )
+                    )
+                })
+                .map(|_| "access"),
+            _ => None,
         },
-        url,
-        method,
-        body,
-        authenticated,
-        response_limit,
-    )
-    .await
+        Err(error) if error == SIGNED_OUT => Some("sign-in"),
+        Err(_) => None,
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct Refusal {
+    community: String,
+    refusal: &'static str,
+}
+
+fn refusals() -> &'static tokio::sync::broadcast::Sender<Refusal> {
+    static REFUSALS: OnceLock<tokio::sync::broadcast::Sender<Refusal>> = OnceLock::new();
+    REFUSALS.get_or_init(|| tokio::sync::broadcast::channel(16).0)
+}
+
+/// Every signed relay request passes here, so a community's refusal reaches
+/// the window whichever command met it first.
+fn observe_refusal(url: &Url, result: &Result<RelayResponse>) {
+    if let Some(refusal) = community_refusal(result) {
+        let _ = refusals().send(Refusal {
+            community: url.origin().ascii_serialization(),
+            refusal,
+        });
+    }
+}
+
+/// Tells the window `relay-refusal` for each community refusal.
+pub(crate) fn watch_refusals<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    use tauri::Emitter as _;
+    let mut refused = refusals().subscribe();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match refused.recv().await {
+                Ok(refusal) => {
+                    let _ = app.emit_to("main", "relay-refusal", refusal);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }
 
 async fn send_authorized(
@@ -1465,20 +1546,28 @@ async fn upload_file(
     (size, hash): (usize, String),
     progress: Option<UploadProgress>,
 ) -> Result<RelayResponse> {
-    let assertion = evidence(host, fi, &url).await?;
-    upload_file_authorized(
-        host,
-        AuthorizationContext {
-            fi,
-            assertion: assertion.as_ref(),
-        },
-        url,
-        kind,
-        path,
-        (size, hash),
-        progress,
-    )
-    .await
+    let community = url.clone();
+    let result = async {
+        let assertion = evidence(host, fi, &url).await?;
+        upload_file_authorized(
+            host,
+            AuthorizationContext {
+                fi,
+                assertion: assertion.as_ref(),
+            },
+            url,
+            kind,
+            path,
+            (size, hash),
+            progress,
+        )
+        .await
+    }
+    .await;
+    if fi.is_some() {
+        observe_refusal(&community, &result);
+    }
+    result
 }
 
 async fn upload_file_authorized(

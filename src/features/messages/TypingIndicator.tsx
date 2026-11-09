@@ -1,6 +1,9 @@
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import messageStyles from "./Messages.module.css";
-import { useReplacedTypers } from "../conversation/typing-presentation";
+import {
+  usePresentedAgents,
+  useReplacedTypers,
+} from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   useCallback,
@@ -97,6 +100,7 @@ export function useLiveConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ): readonly string[] {
+  const presented = usePresentedAgents(session, channelId, threadRootId);
   const watchChannel = !threadRootId && !includeThreads;
   const subscribe = useCallback(
     (listener: () => void) => {
@@ -130,7 +134,10 @@ export function useLiveConversationAgents(
       includeThreads,
       threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
     );
-    return [...details.keys()].sort().join(",");
+    return [...details.keys()]
+      .filter((key) => !presented.has(key))
+      .sort()
+      .join(",");
   };
   const key = useSyncExternalStore(subscribe, getKey, getKey);
   return useMemo(() => (key ? key.split(",") : []), [key]);
@@ -144,6 +151,7 @@ export function useConversationAgents(
   includeThreads = true,
 ) {
   const replaced = useReplacedTypers(session, channelId, threadRootId);
+  const presented = usePresentedAgents(session, channelId, threadRootId);
   const entries = useSyncExternalStore(
     session.typing.subscribe,
     session.typing.snapshot,
@@ -196,8 +204,11 @@ export function useConversationAgents(
     getDetails,
     getDetails,
   );
-  // A message may own the step details, but the conversation keeps its busy cue.
-  const agents = [...details.keys()].sort();
+  // A message's live bubble is the agent's working indicator. Recorded history
+  // may own only the step details; then the conversation keeps its busy cue.
+  const agents = [...details.keys()]
+    .filter((key) => !presented.has(key))
+    .sort();
   return {
     activity: (session.agentActivity?.snapshot ?? noActivity)(),
     details,

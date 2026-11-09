@@ -55,7 +55,6 @@ it("keeps listening channels distinct from destinations and respects rearmed tim
   ).toBe(true);
 });
 it("shows one agent's watches, reacts to changes and surfaces save errors", async () => {
-  let changed = () => {};
   const enabled = true;
   const record = () => ({
     key: "membership-a",
@@ -91,7 +90,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
       },
     },
   });
-  let snapshot = {
+  const snapshot = {
     status: "ready",
     running: [
       record(),
@@ -115,10 +114,7 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
     agents: {
       presentWatch: () => undefined,
       snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changed = listener;
-        return () => {};
-      },
+      subscribe: () => () => {},
       save,
     },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
@@ -158,14 +154,14 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
   fireEvent.click(
     screen.getByRole("button", { name: "Watch status for task" }),
   );
-  expect(screen.getByRole("menuitem", { name: "Activate" })).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "Resume" })).toBeTruthy();
   expect(within(ada).getByText("Paused")).toBeTruthy();
   expect(
-    within(ada).getByRole("button", {
+    within(ada).queryByRole("button", {
       name: "Attention status for Ada",
     }),
-  ).toBeTruthy();
-  fireEvent.click(screen.getByRole("menuitem", { name: "Activate" }));
+  ).toBeNull();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }));
   await waitFor(() =>
     expect(screen.getByRole("alert").textContent).toBe("Save failed"),
   );
@@ -177,28 +173,6 @@ it("shows one agent's watches, reacts to changes and surfaces save errors", asyn
       },
     },
   });
-  await act(async () => {
-    snapshot = {
-      ...snapshot,
-      running: [{ ...record(), attentionEnabled: false }],
-    };
-    changed();
-  });
-  const toggle = within(ada).getByRole("button", {
-    name: "Attention status for Ada",
-  });
-  expect(toggle.textContent).toContain("Paused");
-  fireEvent.click(toggle);
-  fireEvent.click(
-    within(
-      screen.getByRole("menu", { name: "Attention status for Ada" }),
-    ).getByRole("menuitem", { name: "Activate" }),
-  );
-  await waitFor(() =>
-    expect(save).toHaveBeenCalledWith("membership-a", {
-      attentionEnabled: true,
-    }),
-  );
   expect(within(ada).getByRole("heading", { name: "task" })).toBeTruthy();
 });
 
@@ -240,6 +214,15 @@ it.each(["source", "event", "timer"] as const)(
         },
         "watch/check": { slug: "watch/check", modifiedAt: 1, value },
       },
+      // Over the limit here; deleting its Interest deletes it too.
+      skipped: {
+        "watch/over": {
+          slug: "watch/over",
+          modifiedAt: 1,
+          value,
+          problem: "Over the limit of 100 watches and timers",
+        },
+      },
     };
     let snapshot = { status: "ready", running: [agent] };
     let finishSave = () => {};
@@ -272,7 +255,17 @@ it.each(["source", "event", "timer"] as const)(
             value: { ...value, enabled: target.enabled },
           };
         }
-        agent = { ...agent, attention: attention as typeof agent.attention };
+        // Deleting a skipped slug clears it, as the store does.
+        const skipped = Object.fromEntries(
+          Object.entries(agent.skipped).filter(
+            ([slug]) => patch.attention?.[slug] !== null,
+          ),
+        ) as typeof agent.skipped;
+        agent = {
+          ...agent,
+          attention: attention as typeof agent.attention,
+          skipped,
+        };
         snapshot = { ...snapshot, running: [agent] };
         changed();
         await saving;
@@ -297,9 +290,43 @@ it.each(["source", "event", "timer"] as const)(
     );
     expect(
       screen
-        .getByRole("button", { name: "Delete Interest release" })
+        .getByRole("button", { name: "Interest status for release" })
         .hasAttribute("disabled"),
-    ).toBe(true);
+    ).toBe(false);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Interest status for release" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(save).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Interest status for release" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Interest save failed",
+      ),
+    );
+    expect(save).toHaveBeenLastCalledWith("membership-a", {
+      attentionExpected: expect.objectContaining({
+        "interest/release": expect.objectContaining({
+          slug: "interest/release",
+        }),
+      }),
+      attention: {
+        "watch/check": null,
+        "watch/over": null,
+        "interest/release": null,
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("button", { name: "Watch status for release" }),
+    ).toBeTruthy();
+    save.mockClear();
     expect(screen.queryByRole("menuitem", { name: "Pause" })).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Watch status for release" }),
@@ -310,7 +337,7 @@ it.each(["source", "event", "timer"] as const)(
       await waitFor(() =>
         expect(
           screen
-            .getByRole("menuitem", { name: "Pause" })
+            .getByRole("menuitem", { name: "Resume" })
             .getAttribute("aria-disabled"),
         ).toBe("true"),
       );
@@ -334,7 +361,7 @@ it.each(["source", "event", "timer"] as const)(
     if (type === "timer") {
       expect(
         screen
-          .getByRole("menuitem", { name: "Activate" })
+          .getByRole("menuitem", { name: "Resume" })
           .getAttribute("aria-disabled"),
       ).toBe("true");
       expect(
@@ -353,9 +380,12 @@ it.each(["source", "event", "timer"] as const)(
       screen.getByRole("region", { name: "Interest release" }),
     ).toBeTruthy();
     const removeInterest = screen.getByRole("button", {
-      name: "Delete Interest release",
+      name: "Interest status for release",
     });
     fireEvent.click(removeInterest);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    // Its skipped watch is deleted with it, so this still confirms.
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(
         "Interest save failed",
@@ -363,12 +393,17 @@ it.each(["source", "event", "timer"] as const)(
     );
     expect(agent.attention["interest/release"]).toBeTruthy();
     rejectInterest = false;
-    fireEvent.click(removeInterest);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "Attention" })).toBeTruthy(),
     );
     expect(save).toHaveBeenLastCalledWith("membership-a", {
-      attention: { "interest/release": null },
+      attentionExpected: expect.objectContaining({
+        "interest/release": expect.objectContaining({
+          slug: "interest/release",
+        }),
+      }),
+      attention: { "watch/over": null, "interest/release": null },
     });
   },
 );
@@ -464,22 +499,20 @@ it("keeps subscription controls disabled and the tab open while saving, and pres
   fireEvent.click(
     screen.getByRole("button", { name: "Watch status for Build" }),
   );
-  toggle = screen.getByRole("menuitem", { name: "Pause" }) as HTMLButtonElement;
+  toggle = screen.getByRole("menuitem", {
+    name: "Pause",
+  }) as HTMLButtonElement;
   remove = screen.getByRole("menuitem", {
     name: "Delete Build",
   }) as HTMLButtonElement;
   expect(toggle.getAttribute("aria-disabled")).not.toBe("true");
   expect(remove.getAttribute("aria-disabled")).not.toBe("true");
-  expect(
-    screen
-      .getByRole("menuitem", { name: "Activate" })
-      .getAttribute("aria-disabled"),
-  ).toBe("true");
+  expect(screen.queryByRole("menuitem", { name: "Resume" })).toBeNull();
   expect(save).toHaveBeenCalledTimes(1);
 });
 
-it("explains Attention to a new agent and switches it on this device", async () => {
-  let snapshot = {
+it("explains Attention to a new agent with no switch to turn on", () => {
+  const snapshot = {
     status: "ready",
     running: [
       {
@@ -488,27 +521,19 @@ it("explains Attention to a new agent and switches it on this device", async () 
         owner: viewer,
         relay: "wss://example.com",
         name: "Bo",
-        attentionEnabled: false,
+        attentionEnabled: true,
         timers: {},
         attention: {},
       },
     ],
   };
-  const save = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("Enable failed"))
-    .mockResolvedValueOnce(undefined);
   const disconnected = { status: "disconnected", ...community };
-  let changed = () => {};
   const ctx = {
     react: React,
     agents: {
       snapshot: () => snapshot,
-      subscribe: (listener: () => void) => {
-        changed = listener;
-        return () => {};
-      },
-      save,
+      subscribe: () => () => {},
+      save: vi.fn(),
     },
     relay: { snapshot: () => disconnected, subscribe: () => () => {} },
   } as unknown as Context;
@@ -517,39 +542,10 @@ it("explains Attention to a new agent and switches it on this device", async () 
   );
   expect(screen.getByRole("region", { name: "Start watching" })).toBeTruthy();
   expect(screen.getByRole("heading", { name: "Attention" })).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Attention status for Bo" }),
+  ).toBeNull();
   expect(screen.getByText(/Send Bo a message/)).toBeTruthy();
-  expect(screen.queryByRole("switch")).toBeNull();
-  expect(screen.queryByRole("button")).toBeNull();
-  act(() => {
-    snapshot = {
-      ...snapshot,
-      running: snapshot.running.map((agent) => ({
-        ...agent,
-        attention: {
-          "interest/task": {
-            slug: "interest/task",
-            modifiedAt: 1,
-            value: { type: "interest", instructions: "Follow this work" },
-          },
-        },
-      })),
-    };
-    changed();
-  });
-  const toggle = screen.getByRole("button", {
-    name: "Attention status for Bo",
-  });
-  expect(toggle.textContent).toContain("Paused");
-  fireEvent.click(toggle);
-  fireEvent.click(screen.getByRole("menuitem", { name: "Activate" }));
-  await waitFor(() =>
-    expect(screen.getByRole("alert").textContent).toBe("Enable failed"),
-  );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Activate" }));
-  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
-  expect(save).toHaveBeenLastCalledWith("membership-b", {
-    attentionEnabled: true,
-  });
 });
 
 it("says why an agent's watches are not shown", async () => {
@@ -1239,10 +1235,11 @@ it("shows a minimal activity timeline with full message and output previews", ()
     );
     if (index === 0) {
       expect(reads).toContainEqual([[author, casey], "background"]);
+      // A chip splits its first character from the rest of the name.
       expect(
-        screen
-          .getByText("Casey", { selector: "[data-mention-kind]" })
-          .getAttribute("data-mention-kind"),
+        [...document.querySelectorAll("[data-mention-kind]")]
+          .find((element) => element.textContent === "Casey")
+          ?.getAttribute("data-mention-kind"),
       ).toBe("person");
       expect(
         screen.getByRole("link", { name: "#Beta" }).getAttribute("href"),
@@ -1301,6 +1298,196 @@ it("shows a minimal activity timeline with full message and output previews", ()
   expect(within(build).queryByText("third", { selector: "pre" })).toBeNull();
 });
 
+it("keeps spoilers hidden in activity summaries", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attentionHistory: {
+      "watch/pr": { events: [{ at: 1, text: "Status: ||private result||" }] },
+    },
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: { type: "interest", instructions: "Follow releases." },
+      },
+      "watch/pr": {
+        slug: "watch/pr",
+        value: {
+          type: "source",
+          name: "Release PR",
+          enabled: true,
+          interest_id: "release",
+          provider: "github/pr",
+          config: {},
+        },
+      },
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const list = { channels: [] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: {
+        ensureList() {},
+        subscribeList: () => () => {},
+        list: () => list,
+      },
+    },
+  };
+  const ctx = {
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+    },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Details for Release PR" }),
+  );
+  fireEvent.click(screen.getByLabelText("Show activity for Release PR"));
+  const row = within(
+    screen.getByRole("list", { name: "Activity for Release PR" }),
+  ).getByLabelText(/^Open activity/);
+  expect(row.getAttribute("aria-label")).toBe(
+    "Open activity: Status: [Spoiler]",
+  );
+  expect(row.textContent).not.toContain("private");
+});
+
+it("shows a fired timer's wake as activity", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attentionHistory: {
+      "watch/tick": {
+        lastWokeAt: 1,
+        events: [{ at: 1, text: "Check the **release**." }],
+      },
+    },
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: { type: "interest", instructions: "Follow releases." },
+      },
+      "watch/tick": {
+        slug: "watch/tick",
+        value: {
+          type: "timer",
+          interest_id: "release",
+          enabled: true,
+          prompt: "Check the **release**.",
+          armed_at: 1,
+          interval_secs: 3600,
+          max_occurrences: null,
+          expires_at: null,
+        },
+      },
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const list = { channels: [] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: {
+        ensureList() {},
+        subscribeList: () => () => {},
+        list: () => list,
+      },
+    },
+  };
+  const ctx = {
+    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Details for release" }));
+  const activity = screen.getByLabelText("Show activity for release");
+  expect(activity.querySelector(".attention-detail-preview")?.textContent).toBe(
+    "1 event",
+  );
+  fireEvent.click(activity);
+  expect(
+    within(
+      screen.getByRole("list", { name: "Activity for release" }),
+    ).getByLabelText("Open activity: Check the release."),
+  ).toBeTruthy();
+});
+
+it("shows an Interest's title and summary, and no summary when it has none", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a".repeat(64),
+    owner: viewer,
+    relay: origin,
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        value: {
+          type: "interest",
+          title: "Release checks",
+          summary: "Wakes when CI finishes and reports failures to John.",
+          instructions: "# Old heading\nFollow releases.",
+        },
+      },
+      "interest/builds": {
+        slug: "interest/builds",
+        value: { type: "interest", instructions: "Follow builds." },
+      },
+    },
+  };
+  const snapshot = { status: "ready", running: [agent] };
+  const list = { channels: [] };
+  const connection = {
+    status: "ready",
+    ...community,
+    session: {
+      channels: {
+        ensureList() {},
+        subscribeList: () => () => {},
+        list: () => list,
+      },
+    },
+  };
+  const ctx = {
+    agents: { snapshot: () => snapshot, subscribe: () => () => {} },
+    relay: { snapshot: () => connection, subscribe: () => () => {} },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  const titled = screen.getByRole("region", {
+    name: "Interest Release checks",
+  });
+  expect(titled.querySelector(".attention-interest-summary")?.textContent).toBe(
+    "Wakes when CI finishes and reports failures to John.",
+  );
+  const untitled = screen.getByRole("region", { name: "Interest builds" });
+  expect(untitled.querySelector(".attention-interest-summary")).toBeNull();
+});
+
 it("does not repeat consecutive sonar messages across sweeps", () => {
   const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
   try {
@@ -1327,4 +1514,56 @@ it("does not repeat consecutive sonar messages across sweeps", () => {
   } finally {
     random.mockRestore();
   }
+});
+
+it("confirms deleting an Interest whose only watch was skipped", () => {
+  const agent = {
+    key: "membership-a",
+    pubkey: "a",
+    owner: viewer,
+    relay: "wss://example.com",
+    name: "Ada",
+    attentionEnabled: true,
+    timers: {},
+    attention: {
+      "interest/release": {
+        slug: "interest/release",
+        modifiedAt: 1,
+        value: { type: "interest", instructions: "Keep releases moving." },
+      },
+    },
+    skipped: {
+      "watch/over": {
+        slug: "watch/over",
+        modifiedAt: 1,
+        value: { type: "event", interest_id: "release", enabled: true },
+        problem: "Over the limit of 100 watches and timers",
+      },
+    },
+  };
+  const save = vi.fn(async () => {});
+  const snapshot = { status: "ready", running: [agent] };
+  const disconnected = { status: "disconnected", ...community };
+  const ctx = {
+    react: React,
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save,
+    },
+    relay: {
+      snapshot: () => disconnected,
+      subscribe: () => () => {},
+    },
+  } as unknown as Context;
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Interest status for release" }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  expect(save).not.toHaveBeenCalled();
 });

@@ -266,7 +266,12 @@ A check that fails raises no notice. The plugin's row in Settings → Plugins sa
 behind **Details**. Background checks wait while the browser reports
 offline and run on its `online` event. Checks are throttled to one an hour, but
 when a row holds a failure, `online` forces one, so a connection that dropped
-during a check is retried when it returns. **Check again** forces a check and clears the row's status while it runs,
+during a check is retried when it returns. That intent is kept until a check
+can run and has settled: if `online` arrives while the window is hidden, the
+next check the window's return triggers is forced; if it arrives while the
+check that will fail is still in flight, a forced check follows that failure.
+An `online` that finds nothing failed is throttled like any other trigger.
+**Check again** forces a check and clears the row's status while it runs,
 leaving the row as it is during any check, with a screen-reader-only "Checking
 for updates…" status. If the check fails again, the status returns, announced as
 an alert. Once the row clears, a later background failure returns unannounced.

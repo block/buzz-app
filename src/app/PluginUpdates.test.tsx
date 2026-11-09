@@ -830,3 +830,56 @@ it("checks again when the connection returns after it dropped during a check", a
   });
   expect(f.imports.checkGit).toHaveBeenCalledTimes(2);
 });
+
+it("checks again when the connection returns before the check it dropped has failed", async () => {
+  const f = fixture();
+  f.candidate.revision = f.plugin.revision;
+  const held = holdCheck(f);
+  f.mount();
+  await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledOnce());
+  // Nothing has failed yet, so the connection's return has nothing to force.
+  await act(async () => {
+    window.dispatchEvent(new Event("online"));
+  });
+  expect(f.imports.checkGit).toHaveBeenCalledOnce();
+  await act(async () => held().fail(OFFLINE));
+  await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.queryByText("Couldn’t check for updates.")).toBeNull(),
+  );
+  // The intent was spent on that check.
+  await act(async () => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(f.imports.checkGit).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the connection's return for a hidden window, and checks again once it is shown", async () => {
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("visible");
+  try {
+    const f = fixture();
+    f.candidate.revision = f.plugin.revision;
+    f.imports.checkGit.mockRejectedValueOnce(OFFLINE);
+    f.mount();
+    expect(
+      await screen.findByText("Couldn’t check for updates."),
+    ).toBeVisible();
+    visibility.mockReturnValue("hidden");
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(f.imports.checkGit).toHaveBeenCalledOnce();
+    visibility.mockReturnValue("visible");
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(f.imports.checkGit).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByText("Couldn’t check for updates.")).toBeNull(),
+    );
+  } finally {
+    visibility.mockRestore();
+  }
+});

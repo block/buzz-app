@@ -37,7 +37,7 @@ test("creating a hosted community joins it and lists it in the picker", async ({
     normalized_host: "secondary.example",
   };
   let communities = [];
-  const listStarted = Promise.withResolvers();
+  let listStarted = false;
   const listReady = Promise.withResolvers();
   await page.route("**/api/builderlab/**", async (route) => {
     const action = new URL(route.request().url()).pathname.split("/").at(-1);
@@ -48,7 +48,7 @@ test("creating a hosted community joins it and lists it in the picker", async ({
     if (action === "identity")
       return route.fulfill({ json: { identity: { pubkey_hex: viewer } } });
     if (action === "list") {
-      listStarted.resolve();
+      listStarted = true;
       await listReady.promise;
       return route.fulfill({
         json: {
@@ -85,12 +85,43 @@ test("creating a hosted community joins it and lists it in the picker", async ({
   });
   try {
     await picker.getByRole("button", { name: "Create community" }).click();
-    await listStarted.promise;
+    await expect.poll(() => listStarted).toBe(true);
     await expect(address).toBeDisabled();
     await settleDialogMotion(create);
   } finally {
     listReady.resolve();
   }
+  await expect(address).toBeEnabled();
+  await expect(address).toBeFocused();
+  await button(page, "Cancel").click();
+  await expect(create).toHaveCount(0);
+  await page.goBack();
+  const settings = page.getByRole("dialog", {
+    name: "Settings",
+    exact: true,
+    includeHidden: true,
+  });
+  await expect(settings).toHaveCount(0);
+  await page.goForward();
+  await expect(settings).toBeVisible();
+  // Include hidden controls so the readiness barrier works even if the bug
+  // reopens Create and makes the parent Settings dialog inert.
+  await expect(
+    page
+      .getByRole("button", {
+        name: "Create community",
+        exact: true,
+        includeHidden: true,
+      })
+      .first(),
+  ).toBeEnabled();
+  await expect(create).toHaveCount(0);
+
+  // A fresh picker visit still opens the form after the earlier dismissal.
+  await button(page, "Close Settings").click();
+  await expect(settings).toHaveCount(0);
+  const again = await openCommunityPicker(page);
+  await again.getByRole("button", { name: "Create community" }).click();
   await expect(address).toBeEnabled();
   await expect(address).toBeFocused();
   await address.fill("secondary");

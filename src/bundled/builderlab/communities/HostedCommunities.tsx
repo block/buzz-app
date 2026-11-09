@@ -100,6 +100,7 @@ export function HostedCommunities({
   onOverview,
   navigation,
   initialCreate = false,
+  onCreateClose,
 }: {
   api: Api;
   active(): boolean;
@@ -112,6 +113,8 @@ export function HostedCommunities({
   navigation?: ReactNode;
   /** Picker entry opens the existing form once the account checks complete. */
   initialCreate?: boolean;
+  /** Explicit dismissal or completion retires the caller's creation intent. */
+  onCreateClose?: (() => void) | undefined;
 }) {
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -1173,7 +1176,10 @@ export function HostedCommunities({
             </PopoverRoot>
             <CreateCommunity
               open={createOpen}
-              close={() => setCreateOpen(false)}
+              close={() => {
+                setCreateOpen(false);
+                onCreateClose?.();
+              }}
               quotaLabel={
                 quotaState
                   ? `${quotaState.used} of ${quotaState.limit} communities used`

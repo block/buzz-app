@@ -562,12 +562,17 @@ it.each([true, false])(
       ).toBeEnabled();
       expect(backupCalls().at(-1)?.[1]).toMatchObject({ federated: null });
       if (canUseRemoteAgents) {
+        const positions = new Map<string, boolean>();
         mounted.rerender(
           <Card
             active={() => true}
             navigation={
               {
                 entryId: "picker-create",
+                position: (key: string) => positions.get(key),
+                savePosition: (key: string, value: boolean) => {
+                  positions.set(key, value);
+                },
                 target: {
                   version: 1,
                   kind: "settings",
@@ -589,6 +594,23 @@ it.each([true, false])(
           ).toHaveFocus(),
         );
         await user.click(screen.getByRole("button", { name: /^Cancel$/ }));
+        expect(
+          screen.queryByRole("dialog", { name: "Create community" }),
+        ).toBeNull();
+        // A session remount in the same visit must not replay the cancelled intent.
+        await act(() => identity.service.signOut());
+        await user.click(
+          screen.getByRole("button", {
+            name: "Sign in with builderlab.example",
+          }),
+        );
+        await waitFor(() =>
+          expect(
+            within(
+              screen.getByRole("region", { name: "Communities" }),
+            ).getByRole("button", { name: "Create community" }),
+          ).toBeEnabled(),
+        );
         expect(
           screen.queryByRole("dialog", { name: "Create community" }),
         ).toBeNull();

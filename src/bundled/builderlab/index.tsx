@@ -32,6 +32,8 @@ import { createNativeBackend } from "./communities/native";
 import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
 
+const CREATE_DISMISSED = "builderlab:create-dismissed";
+
 export const inject = [
   "host",
   "settingsCards",
@@ -198,11 +200,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     onOverview,
     navigation,
     initialCreate,
+    onCreateClose,
   }: {
     active(): boolean;
     onOverview: OverviewObserver;
     navigation: ReactNode;
     initialCreate: boolean;
+    onCreateClose(): void;
   }) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
     useLayoutEffect(() => {
@@ -221,6 +225,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return (
         <HostedCommunities
           initialCreate={initialCreate}
+          onCreateClose={onCreateClose}
           navigation={navigation}
           api={communities}
           active={active}
@@ -233,6 +238,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return state.status === "signed-in" ? (
       <HostedCommunities
         initialCreate={initialCreate}
+        onCreateClose={onCreateClose}
         navigation={navigation}
         key={
           viewer && "broker" in viewer
@@ -291,10 +297,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
             openIdentity={openIdentity}
           />
         }
-        communities={(navigation) => (
+        communities={(back) => (
           <Communities
-            initialCreate={createRequested}
-            navigation={navigation}
+            initialCreate={
+              createRequested && navigation?.position(CREATE_DISMISSED) !== true
+            }
+            onCreateClose={() => {
+              if (createRequested)
+                navigation?.savePosition(CREATE_DISMISSED, true);
+            }}
+            navigation={back}
             active={active}
             onOverview={setCommunityOverview}
           />

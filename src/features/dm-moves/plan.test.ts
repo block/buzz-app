@@ -129,6 +129,25 @@ it.each([parent, child])(
     ).toThrow("Conversion cannot start from a thread reply");
   },
 );
+it("binds a partial range to its previewed message before consent", () => {
+  expect(() =>
+    planMove("dm", relay.pubkey, [root, parent, child], {
+      ...req,
+      from: { id: root.id, ms: 0 },
+    }),
+  ).toThrow("starting message could not be verified");
+  const partial = { ...req, from: { id: root.id, ms: 100000 } };
+  const later = message(author, "dm", "Later main-DM message", 103);
+  expect(() => planMove("dm", relay.pubkey, [later], partial)).toThrow(
+    "starting message could not be verified",
+  );
+  // A deletion after the approved commit keeps its already-bound time cutoff.
+  expect(
+    planMove("dm", relay.pubkey, [later], partial, undefined, 103000).map(
+      (row) => row.original,
+    ),
+  ).toEqual([later.id]);
+});
 it("excludes completed and cancelled conversion notices, hidden controls and the current request", () => {
   const previousRequest = signed(author, {
     ...controlTemplate("dm", req),

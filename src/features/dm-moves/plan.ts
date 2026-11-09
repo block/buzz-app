@@ -25,6 +25,15 @@ export function planMove(
 ): MovedMessage[] {
   const byId = new Map(events.map((e) => [e.id, e]));
   const start = request.from && byId.get(request.from.id);
+  // Consent binds the previewed event to its signed time. After commit, retain
+  // the approved boundary if that event is subsequently deleted.
+  if (
+    request.from &&
+    (start ? eventMs(start) !== request.from.ms : !Number.isFinite(through))
+  )
+    throw new Error(
+      "The starting message could not be verified. Start a new conversion from an available message.",
+    );
   if (start && threadReference(start))
     throw new Error(
       "Conversion cannot start from a thread reply. Choose a message in the main DM.",

@@ -15,7 +15,7 @@ import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import type { LiveCallbacks } from "../relay/live";
 import type { OutboxStorage, OutgoingEvent } from "../relay/outbox";
 import { createDmMoves, type MoveStorage } from "./coordinator";
-import { moveControl, movedSource } from "./protocol";
+import { controlTemplate, moveControl, movedSource } from "./protocol";
 const DM = "10000000-0000-4000-8000-000000000001",
   TARGET = "10000000-0000-4000-8000-000000000002";
 const cleanups: (() => void)[] = [];
@@ -274,6 +274,47 @@ function fixture(withAgent = false) {
     events: () => events,
   };
 }
+it("rejects a mismatched preview boundary before requesting or approving", async () => {
+  const f = fixture();
+  const a = await f.client(f.alice);
+  const b = await f.client(f.bob);
+  const selected = f.events().find((event) => event.content === "Second");
+  assert.exists(selected);
+  const from = { id: selected.id, ms: 0 };
+  await expect(a.moves.start(DM, TARGET, 24, from)).rejects.toThrow(
+    "starting message could not be verified",
+  );
+  expect(f.published).toHaveLength(0);
+  const forged = signed(f.alice, {
+    ...controlTemplate(DM, {
+      type: "request",
+      move: crypto.randomUUID(),
+      worker: a.moves.worker,
+      target: TARGET,
+      expires: Math.floor(Date.now() / 1000) + 3600,
+      authors: [
+        [f.alice.pubkey, f.alice.pubkey],
+        [f.bob.pubkey, f.bob.pubkey],
+      ],
+      from,
+    }),
+    created_at: Math.floor(Date.now() / 1000),
+  });
+  assert.exists(moveControl(forged));
+  f.emit(forged);
+  await vi.waitFor(() =>
+    expect(
+      b.moves
+        .snapshot()
+        .moves.some((move) => move.request.event.id === forged.id),
+    ).toBe(true),
+  );
+  await expect(b.moves.respond(forged.id, true)).rejects.toThrow(
+    "starting message could not be verified",
+  );
+  expect(f.published).toHaveLength(0);
+});
+
 it("gets all approvals before membership/copying, preserves authors and recovers without duplicates", async () => {
   const f = fixture();
   const a = await f.client(f.alice);

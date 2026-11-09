@@ -62,6 +62,42 @@ describe("message fold", () => {
       expect(row?.content).toBe(content);
     }
   });
+  it("reads one exact signed request id, and none from conflicting or malformed tags", () => {
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    for (const [tags, request] of [
+      [[["buzz:request", a]], a],
+      [
+        [
+          ["buzz:request", a],
+          ["buzz:request", a],
+        ],
+        a,
+      ],
+      [
+        [
+          ["buzz:request", a],
+          ["buzz:request", b],
+        ],
+        undefined,
+      ],
+      [[["buzz:request", a.toUpperCase()]], undefined],
+      [[["buzz:request", "nope"]], undefined],
+      [[["buzz:request"]], undefined],
+      [[["request", a]], undefined],
+    ] as const) {
+      const [row] = foldMessages(channel, relay.pubkey, [
+        message(
+          alice,
+          channel,
+          "Checking",
+          1,
+          tags.map((tag) => [...tag]),
+        ),
+      ]);
+      expect(row?.request).toBe(request);
+    }
+  });
   it("reads the id of a plugin request from the signed tag", () => {
     const content = "Requested: install Browser — Check the staging site";
     const id = "5d1f0b8e-8c2a-4a39-9a54-0f6a4e7e6c11";

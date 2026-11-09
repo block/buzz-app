@@ -1379,7 +1379,12 @@ its messages in their original order; exact message links open the matching grou
 
 Live work is separate from this history. Explicit immediate reply IDs and activity
 message IDs select request lifecycle evidence; a nearby human message or shared
-thread root is not proof of a turn. Finishing a request retires its live treatment,
+thread root is not proof of a turn. Thread replies flatten to the thread root, so an
+update binds first to the request whose local run published it, then to a signed
+`["buzz:request", <id>]` tag naming a loaded human request in the same channel
+and thread. The `send` and `reply_in_subthread` tools add that tag from their
+`request` argument, the turn's triggering message. Untagged or unverifiable
+updates keep their reply link. Finishing a request retires its live treatment,
 not its messages. When lifecycle evidence is missing, a related public reply can
 retire the old live treatment without claiming that execution completed. Current
 work continues to appear in the conversation indicator.

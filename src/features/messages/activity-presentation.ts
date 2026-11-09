@@ -113,7 +113,7 @@ function activityStatus(
   snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   requests: ReadonlyMap<string, string>,
-  published: ReadonlyMap<string, string>,
+  causes: ReadonlyMap<string, string>,
 ) {
   const { latest, participants, followingMessage: response, requestId } = group;
   const followedByReply =
@@ -129,7 +129,7 @@ function activityStatus(
       // the coordinator having authored a message in this activity run.
       ((response.agentEnvelope || agents?.has(response.authorId)) &&
         latest.mentions.includes(response.authorId)));
-  // Only the publishing run, signed immediate reply links and activity IDs bind
+  // Only causal evidence, signed immediate reply links and activity IDs bind
   // lifecycle evidence. The preceding human message/thread root is useful for
   // layout, not proof that these updates came from that request's turn.
   const work = snapshot
@@ -137,7 +137,7 @@ function activityStatus(
         const ids = group.history
           .filter((row) => row.authorId === agent)
           .flatMap((row) => {
-            const link = published.get(row.id) ?? row.replyParentId;
+            const link = causes.get(row.id) ?? row.replyParentId;
             return [row.id, ...(link ? [link] : [])];
           });
         return requestWork(snapshot, latest.channelId, ids).filter(
@@ -203,7 +203,10 @@ export function activityPresentation(
   const preceding = new Map(
     rows.map((row, index) => [row.id, rows[index - 1]]),
   );
-  const published = publishedRequests(rows, snapshot);
+  // Each agent row's exact request: its publishing run, else a signed claim
+  // naming a loaded human request in the same conversation.
+  const causes = publishedRequests(rows, snapshot);
+  const humanRequests = new Map<string, ChannelMessage>();
   const requests = new Map<string, string>();
   if (rootId) requests.set(rootId, rootId);
   const representedAgents = new Map<string, string[]>();
@@ -224,13 +227,24 @@ export function activityPresentation(
       !row.membership &&
       agents &&
       !agents.has(row.authorId)
-    )
+    ) {
       request = row.id;
+      humanRequests.set(row.id, row);
+    }
+    const claimed = row.request && humanRequests.get(row.request);
+    if (
+      isAgent &&
+      claimed &&
+      !causes.has(row.id) &&
+      claimed.channelId === row.channelId &&
+      (claimed.threadRootId ?? claimed.id) === row.threadRootId
+    )
+      causes.set(row.id, claimed.id);
     // A thread root is a scope, not necessarily the latest triggering request.
-    // Prefer the publishing run, then explicit reply links; otherwise follow
-    // the preceding request.
+    // Prefer causal evidence, then explicit reply links; otherwise follow the
+    // preceding request.
     const parentRequest =
-      published.get(row.id) ??
+      causes.get(row.id) ??
       (row.replyParentId
         ? (requests.get(row.replyParentId) ?? row.replyParentId)
         : undefined);
@@ -310,7 +324,7 @@ export function activityPresentation(
       snapshot,
       agents,
       requests,
-      published,
+      causes,
     );
     const anchor = preceding.get(first.id);
     const standalone =

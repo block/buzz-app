@@ -2222,6 +2222,93 @@ it("hands a follow-up's live work to the update its run published to the thread 
   }
 });
 
+it("hands a remote follow-up's live work to the update that claims it, leaving older root updates as history", () => {
+  const f = fixture();
+  f.send(A, "t0", 1, "turn_started", { triggeringEventIds: [root] });
+  f.send(A, "t0", 2, "turn_completed");
+  f.send(A, "t1", 1, "turn_started", {
+    triggeringEventIds: [next],
+    threadRootEventId: root,
+  });
+  const followUp = {
+    ...f.props.message,
+    id: next,
+    threadRootId: root,
+    replyParentId: root,
+    content: "Follow-up",
+  };
+  const update = {
+    ...f.props.message,
+    authorId: A,
+    threadRootId: root,
+    replyParentId: root,
+    audience: "agents" as const,
+  };
+  const rows = [
+    f.props.message,
+    { ...update, id: "old", content: "Checking the root" },
+    followUp,
+    {
+      ...update,
+      id: "step",
+      request: next,
+      content: "Checking the follow-up",
+    },
+  ];
+  const agents = new Set([A]);
+  function Thread() {
+    const presentation = useActivityPresentation(
+      rows,
+      f.props.session.agentActivity,
+      agents,
+      root,
+    );
+    return (
+      <ActivityIndicatorPresentation>
+        <ActivityAccessory
+          {...f.props}
+          message={followUp}
+          messageLayout="thread"
+        />
+        {presentation.groups.map((group) => (
+          <ActivityGroupPreview
+            key={group.ids[0]}
+            session={f.props.session}
+            group={group}
+            profiles={f.profiles}
+            media={() => undefined}
+            expanded={false}
+            onToggle={() => {}}
+          />
+        ))}
+      </ActivityIndicatorPresentation>
+    );
+  }
+  const view = render(<Thread />);
+  try {
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+    expect(screen.getByText("Checking the follow-up")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(screen.getByText("Checking the root")).not.toHaveAttribute(
+      "data-active",
+    );
+    f.send(A, "t1", 2, "turn_completed");
+    expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
+      "data-active",
+    );
+    expect(
+      screen.queryByLabelText("Agent activity on this message"),
+    ).toBeNull();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it.each([
   {
     runtime: "block.builderlab/builderlab",

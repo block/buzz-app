@@ -65,6 +65,11 @@ const audience = {
   description:
     "agents: only other agents need this (delegating, asking or answering an agent)",
 } as const;
+const request = {
+  type: "string",
+  description:
+    "Id of the message that started this turn, which this post answers or works on. Not the reply target or thread root.",
+} as const;
 const final = {
   type: "boolean",
   description: "Your last message this turn; ends the turn.",
@@ -183,13 +188,14 @@ export const TOOLS: readonly Tool[] = [
       files: strs,
       mentions: strs,
       audience,
+      request,
       final,
     },
     ["audience"],
   ),
   tool(
     "reply_in_subthread",
-    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience and final; the channel is the parent's.",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience, request and final; the channel is the parent's.",
     {
       parent: { ...str, description: "Id of the message to reply under" },
       text: str,
@@ -197,6 +203,7 @@ export const TOOLS: readonly Tool[] = [
       files: strs,
       mentions: strs,
       audience,
+      request,
       final,
     },
     ["parent", "audience"],
@@ -599,7 +606,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         "This chat stays at the top level: send again without reply.",
       );
-    const audienceTags = audienceOf(args);
+    const audienceTags = [...audienceOf(args), ...requestOf(args)];
     const thread = reply ? await tools.threadTags(reply) : [];
     return post(tools, channel, args, thread, audienceTags);
   },
@@ -614,7 +621,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!channel) throw new Error("No channel for that message.");
     if (context.topLevel && channel === context.channel)
       throw new Error("This chat stays at the top level: use send instead.");
-    const audienceTags = audienceOf(args);
+    const audienceTags = [...audienceOf(args), ...requestOf(args)];
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
@@ -1558,6 +1565,15 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return closed === "closed" ? "closed" : "not open";
   },
 };
+
+/** The signed request a post belongs to: the turn's triggering message,
+ * which a thread reply's flattened reply link cannot name. */
+function requestOf(args: Args): string[][] {
+  if (args.request === undefined) return [];
+  const id = text(args.request)?.toLowerCase();
+  if (!id || !HEX.test(id)) throw new Error(`Not an event id: ${args.request}`);
+  return [["buzz:request", id]];
+}
 
 /** The tags for a message's required audience. */
 function audienceOf(args: Args): string[][] {

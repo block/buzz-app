@@ -460,6 +460,32 @@ it("tags a message for agents, and needs the audience said", async () => {
   expect(published).toHaveLength(1);
 });
 
+it("signs the turn's triggering request separately from the flattened reply", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const request = "f".repeat(64);
+  await callTool(client, context, "send", {
+    text: "Checking",
+    audience: "agents",
+    request: request.toUpperCase(),
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "reply"],
+    ["audience", "agents"],
+    ["buzz:request", request],
+  ]);
+  for (const bad of ["", "nope", 7])
+    await expect(
+      callTool(client, context, "send", {
+        text: "hi",
+        audience: "agents",
+        request: bad,
+      }),
+    ).rejects.toThrow("Not an event id");
+  expect(published).toHaveLength(1);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

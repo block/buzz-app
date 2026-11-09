@@ -153,3 +153,78 @@ it("maps each request to its agents' latest public replies", () => {
   expect(replyRequests.has("update")).toBe(false);
   expect(repliedAgents.has("later")).toBe(false);
 });
+
+it("binds an agent update to the request it claims only when that is a loaded human request in its conversation", () => {
+  const human = "h".repeat(64);
+  const message = (
+    id: string,
+    authorId: string,
+    extra: Partial<ChannelMessage> = {},
+  ) =>
+    ({
+      id,
+      channelId: "channel",
+      authorId,
+      createdAt: 1,
+      content: id,
+      mentions: [],
+      attachments: [],
+      reactions: [],
+      participants: [],
+      replyCount: 0,
+      ...extra,
+    }) as ChannelMessage;
+  // Normal sends reply to the thread root, whichever request they answer.
+  const update = (
+    id: string,
+    request: string | undefined,
+    threadRootId = "root",
+    extra: Partial<ChannelMessage> = {},
+  ) =>
+    message(id, agent, {
+      audience: "agents",
+      threadRootId,
+      replyParentId: threadRootId,
+      ...(request ? { request } : {}),
+      ...extra,
+    });
+  const { byRow } = activityPresentation(
+    [
+      message("root", human),
+      update("old", undefined),
+      message("followUp", human, { threadRootId: "root" }),
+      message("elsewhere", human, { threadRootId: "otherRoot" }),
+      message("otherChannel", human, {
+        channelId: "other",
+        threadRootId: "root",
+      }),
+      message("agentRoot", agent),
+      message("agentFollowUp", human, { threadRootId: "agentRoot" }),
+      update("exact", "followUp"),
+      update("toRoot", "root"),
+      update("toThreadElsewhere", "elsewhere"),
+      update("toOtherChannel", "otherChannel"),
+      update("toAgentUpdate", "old"),
+      update("toUnloaded", "f".repeat(64)),
+      update("toAgentRoot", "agentRoot", "agentRoot", {
+        replyParentId: "agentFollowUp",
+      }),
+    ],
+    undefined,
+    new Set([agent]),
+    "root",
+  );
+  const request = (id: string) => byRow.get(id)?.requestId;
+  expect(request("exact")).toBe("followUp");
+  expect(request("toRoot")).toBe("root");
+  // Untagged history and unverifiable claims keep their reply link.
+  for (const id of [
+    "old",
+    "toThreadElsewhere",
+    "toOtherChannel",
+    "toAgentUpdate",
+    "toUnloaded",
+  ])
+    expect(request(id)).toBe("root");
+  expect(request("toAgentRoot")).toBe("agentFollowUp");
+});

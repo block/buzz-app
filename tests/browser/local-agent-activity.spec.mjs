@@ -252,7 +252,19 @@ test("Stop in a message's activity ends its local work quietly", async ({
     await page.emulateMedia({ colorScheme });
     for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      await activity.hover();
+      await page.mouse.move(0, 0);
+      await expect(stop.locator("..")).toHaveCSS("opacity", "0");
+      await expect(activity.locator(":scope > span")).toHaveCSS(
+        "mask-image",
+        "none",
+      );
+      const restingBox = await controls.boundingBox();
+      await activity.locator("xpath=ancestor::section[1]").screenshot({
+        path: testInfo.outputPath(
+          `single-agent-rest-${colorScheme}-${width}.png`,
+        ),
+      });
+      await activity.locator("..").hover();
       await expect(stop.locator("..")).toHaveCSS("opacity", "1");
       await expect(
         page.getByRole("dialog", { name: "Agent activity", exact: true }),
@@ -266,7 +278,12 @@ test("Stop in a message's activity ends its local work quietly", async ({
         controls.boundingBox(),
         preview.boundingBox(),
       ]);
-      expect(box.x).toBeGreaterThanOrEqual(text.x + text.width);
+      expect(box.x).toBeLessThan(text.x + text.width);
+      expect(frame.width).toBe(restingBox.width);
+      await expect(activity.locator(":scope > span")).toHaveCSS(
+        "mask-image",
+        /linear-gradient/,
+      );
       expect(box.x + box.width).toBeLessThanOrEqual(frame.x + frame.width);
       expect(frame.x + frame.width).toBeLessThanOrEqual(width);
       await expect
@@ -282,7 +299,7 @@ test("Stop in a message's activity ends its local work quietly", async ({
           }),
         )
         .toBe(true);
-      await page.screenshot({
+      await activity.locator("xpath=ancestor::section[1]").screenshot({
         path: testInfo.outputPath(
           `single-agent-stop-${colorScheme}-${width}.png`,
         ),
@@ -558,7 +575,7 @@ test("opens an active message's empty thread without losing its activity preview
   const response = row.getByRole("button", { name: /^View agent activity:/ });
   await row.hover();
   await expect(trigger).toBeVisible();
-  await response.hover();
+  await response.locator("..").hover();
   const preview = page.getByRole("dialog", {
     name: "Agent activity",
     exact: true,
@@ -581,7 +598,7 @@ test("opens an active message's empty thread without losing its activity preview
   await expect(root).toContainText(request.content);
   const activity = root.getByRole("button", { name: /^View agent activity:/ });
   await expect(activity).toBeVisible();
-  await activity.hover();
+  await activity.locator("..").hover();
   await expect(preview).toHaveCount(0);
   await expect(
     root.getByRole("button", { name: "Stop Local tester" }).locator(".."),

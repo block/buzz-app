@@ -737,7 +737,7 @@ function ActivityBubble({
     >
       <div
         ref={controlsRoot}
-        className={messageStyles.activityBubbleTrigger}
+        className={`${messageStyles.activityBubbleTrigger} ${singleControl ? styles.overlayControls : ""}`}
         data-activity-controls=""
       >
         <PopoverTrigger
@@ -770,8 +770,14 @@ function ActivityBubble({
               data-activity-summary=""
               aria-label={activityLabel}
             >
-              {singleStopping ? (
-                <ShimmerText active>Stopping…</ShimmerText>
+              {singleControl ? (
+                <span className={styles.overlayContent}>
+                  {singleStopping ? (
+                    <ShimmerText active>Stopping…</ShimmerText>
+                  ) : (
+                    content
+                  )}
+                </span>
               ) : (
                 content
               )}

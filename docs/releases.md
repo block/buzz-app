@@ -129,6 +129,38 @@ Recover from a broken feed by promoting a higher tested build; for key loss or
 client failure, distribute a manually installed build (an Apple-signed DMG on macOS). Do not assume
 rolling back a signed archive can undo an installed update.
 
+## Website installer manifest
+
+After preview-feed verification and read-back, the same promotion job publishes
+`downloads.json` to the dedicated `download-feed` data branch. Its public URL is:
+
+`https://raw.githubusercontent.com/block/buzz-app/download-feed/downloads.json`
+
+Schema version 1 contains `channel: "preview"`, `version`, `release` and a
+`downloads` map with `macos-arm64`, `macos-x64`, `windows-x64`, `linux-appimage`
+and `linux-deb` URLs. Mac entries are DMG installers, not updater archives.
+All five exact, nonempty release assets must exist before the manifest changes.
+Publication follows the promoted preview, rejects rollback and altered
+same-version metadata, uses an atomic file update, and verifies read-back.
+The initial publication creates an orphan branch containing only the manifest.
+Keep that branch writable by release Actions; no personal token or Pages setup
+is required. Raw-file CDN updates can take about five minutes to become visible.
+
+Preview manifest generation can be checked without writing anything. Replace
+this example version with the current promoted preview:
+
+```sh
+GH_REPO=block/buzz-app bin/node scripts/publish-desktop-downloads.mjs 0.7.0-preview.260.1
+```
+
+For first publication or recovery after the workflow has landed, a release
+operator can run the same command with `--apply` for the current promoted
+version. Normal release runs and manual feed promotions publish it automatically.
+Publication failure blocks cleanup, leaving the previous advertised installers
+available. Website clients should use bounded caching and fall back to the
+releases page if metadata cannot be read or validated. This manifest selects
+installer links; it is not an updater signature or desktop acceptance record.
+
 ## Preview retention
 
 After successful promotion and feed read-back, the same serialized job removes
@@ -136,12 +168,13 @@ old versioned preview releases **and their Git tags**, keeping the union of:
 
 - the latest **10 published previews**, ordered by publication time;
 - every preview published within the last **seven days** (including the boundary);
-- the preview currently referenced by `preview-feed/latest.json`.
+- the preview currently referenced by `preview-feed/latest.json`;
+- the preview advertised by `download-feed/downloads.json`.
 
 Cleanup only considers non-draft prereleases with canonical
 `v<app-version>-preview.<run-number>.<attempt>` tags. Stable releases, other tag
 formats, and the rolling `preview-feed` release are never deleted. The feed is
-read again before cleanup; an unavailable/invalid feed, missing target, failed
+read again before cleanup; an unavailable/invalid updater or download manifest, missing target, failed
 listing, or invalid preview publication date aborts before deletion. A deletion
 failure stops cleanup and fails the job, without rolling back the promoted feed;
 inspect the release/tag state before rerunning. Cleanup also runs after successful

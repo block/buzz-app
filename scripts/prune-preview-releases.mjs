@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import {
+  downloadBranch,
+  validateDownloadManifest,
+} from "./download-manifest.mjs";
 
 const args = process.argv.slice(2);
 assert.ok(
@@ -52,6 +56,18 @@ for (const [target, asset] of Object.entries(assets)) {
     "Unexpected preview feed asset URL",
   );
 }
+// Protect the website selection too, including when publication/promotion diverge.
+// Missing or invalid download metadata fails closed before any deletion.
+const downloadFile = JSON.parse(
+  gh(
+    "api",
+    `repos/${repository}/contents/downloads.json?ref=${downloadBranch}`,
+  ),
+);
+const downloads = validateDownloadManifest(
+  JSON.parse(Buffer.from(downloadFile.content, "base64").toString("utf8")),
+);
+const protectedTags = new Set([protectedTag, downloads.release]);
 const releases = JSON.parse(
   gh(
     "api",
@@ -68,10 +84,12 @@ const previews = releases.filter(
     release.tag_name.startsWith("v") &&
     versionPattern.test(release.tag_name.slice(1)),
 );
-assert.ok(
-  previews.some((release) => release.tag_name === protectedTag),
-  "Preview feed target is missing from published previews",
-);
+for (const tag of protectedTags) {
+  assert.ok(
+    previews.some((release) => release.tag_name === tag),
+    `Advertised preview ${tag} is missing from published previews`,
+  );
+}
 for (const release of previews) {
   assert.ok(
     Number.isFinite(Date.parse(release.published_at)),
@@ -86,7 +104,7 @@ const obsolete = previews
   .slice(10)
   .filter(
     (release) =>
-      release.tag_name !== protectedTag &&
+      !protectedTags.has(release.tag_name) &&
       Date.parse(release.published_at) < cutoff,
   );
 for (const release of obsolete) {

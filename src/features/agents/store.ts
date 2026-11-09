@@ -1,4 +1,4 @@
-import { interestPaused, sourceCompleted, sourceSignature } from "./attention";
+import { sourceCompleted, sourceSignature } from "./attention";
 // Device-local settings for agents: the attention objects of each agent's
 // membership in a community, in the `agent-attention/v1` shape, with its
 // timers' run state, and one JSON blob the agent's plugin type owns. Which
@@ -172,6 +172,18 @@ export const STORAGE_KEY = "buzz.agents.v1";
 export const RECORD_PREFIX = "buzz.agent.v1:";
 export const recordKey = (key: AgentKey) => `${RECORD_PREFIX}${key}`;
 const PUBKEY = /^[0-9a-f]{64}$/;
+/** Whether an older reader cannot apply this Interest: it is paused, or has a
+ * title or summary its validator rejects. Its watches are saved in an envelope
+ * that reader rejects too, so it never runs them without the instructions. */
+const sealed = (attention: AgentRecord["attention"], id: string) => {
+  const value = attention[`interest/${id}`]?.value;
+  return (
+    value?.type === "interest" &&
+    (value.paused === true ||
+      value.title !== undefined ||
+      value.summary !== undefined)
+  );
+};
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches and timers";
 
@@ -235,7 +247,7 @@ function readRecord(
       value.interest_paused &&
       typeof value.interest_paused === "object" &&
       value.type !== "interest" &&
-      interestPaused(attention, value.interest_id)
+      sealed(attention, value.interest_id)
     ) {
       const { interest_paused, ...watch } = value;
       // Skipped objects survive older rewrites, while their top-level runtime
@@ -393,15 +405,34 @@ export function removeRecord(storage: AgentStore, key: AgentKey) {
 
 /** A record as it is saved. */
 export function recordText({ skipped, ...record }: AgentRecord) {
-  // Skipped objects go back where they were read from, so a later reader that
-  // can apply them still finds them.
+  // A sealed Interest's watches are saved in an envelope older readers reject.
+  // Their history moves into the envelope rather than being saved twice.
+  const enveloped = new Set(
+    Object.values(record.attention)
+      .filter(
+        ({ value }) =>
+          value.type !== "interest" &&
+          sealed(record.attention, value.interest_id),
+      )
+      .map(({ slug }) => slug),
+  );
   return JSON.stringify({
     ...record,
+    ...(record.attentionHistory && {
+      attentionHistory: Object.fromEntries(
+        Object.entries(record.attentionHistory).filter(
+          ([slug]) => !enveloped.has(slug),
+        ),
+      ),
+    }),
     attention: {
+      // Skipped objects go back where they were read from, so a later reader
+      // that can apply them still finds them, enveloped as their Interest
+      // requires: one over a limit here can be within an older reader's.
       ...Object.fromEntries(
         Object.values(skipped ?? {}).map(({ problem: _, ...object }) => [
           object.slug,
-          object,
+          { ...object, value: skippedValue(record.attention, object.value) },
         ]),
       ),
       ...Object.fromEntries(
@@ -414,7 +445,7 @@ export function recordText({ skipped, ...record }: AgentRecord) {
           }
           return [
             slug,
-            interestPaused(record.attention, value.interest_id)
+            enveloped.has(slug)
               ? {
                   ...object,
                   value: {
@@ -438,6 +469,23 @@ export function recordText({ skipped, ...record }: AgentRecord) {
       ),
     },
   });
+}
+
+/** A skipped watch's value, enveloped while its Interest is sealed and
+ * unwrapped once that Interest is readable again. */
+function skippedValue(
+  attention: AgentRecord["attention"],
+  value: unknown,
+): unknown {
+  if (!value || typeof value !== "object") return value;
+  const { interest_paused, ...watch } = value as Record<string, unknown>;
+  if (watch.type === "interest" || typeof watch.interest_id !== "string")
+    return value;
+  const parent = attention[`interest/${watch.interest_id}`]?.value;
+  if (parent?.type !== "interest") return value;
+  if (sealed(attention, watch.interest_id))
+    return { ...watch, interest_paused: interest_paused ?? {} };
+  return watch;
 }
 
 /** Saves one record, when it changed. */

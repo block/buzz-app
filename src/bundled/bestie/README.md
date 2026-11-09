@@ -1,15 +1,21 @@
 # Bestie
 
-Bestie is the account-saved agent pinned in Buzz's left Apps dock. The
+Bestie is the account-saved agent pinned in Buzz's left navigation. The
 selection is the private `main-agent` record shared with Solo's default-agent
 owner; this plugin adds presentation and a conversation destination, not another
 selection store.
 
 ## Getting started
 
+Bestie starts On for fresh local installs. Upgrades preserve existing saved
+choices and retain Off for existing profiles without a saved Bestie choice.
+The browser and native plugin storage owners persist that decision; a deliberate
+plugin-settings reset uses the current On default. This enables the destination,
+not automatic agent creation or messaging. See [plugin defaults](../../../docs/plugin-defaults.md).
+
 ### Pinned conversation
 
-When the account has a saved eligible Bestie, the dock shortcut adopts that
+When the account has a saved eligible Bestie, the pinned shortcut adopts that
 agent's name and avatar and opens their canonical direct message. The canonical
 conversation is the newest verified, unarchived, non-cached DM whose roster
 contains the viewer and exactly that one other public key. A Solo chat, group DM,
@@ -22,7 +28,8 @@ inventory do not keep a pinned conversation.
 
 The page uses the ordinary conversation owners for history, drafts, sending,
 threads and unread state. `BestieConversation` owns the local welcome. Its
-workspace reuses Messages’ tab state and tab host, with a retained main timeline/composer and a resizable side pane.
+workspace reuses Messages’ tab state and tab host, with a retained main
+timeline/composer and a resizable side pane.
 Threads follow the device’s thread placement preference and support the same
 move, rename, close and pane-collapse controls. Profile and plugin links open
 in the tab workspace. Thread visits bind to their originating DM. Restoring
@@ -109,17 +116,15 @@ off too. On adds the `buzz:bestie/checkin.hourly` Hourly upkeep section to the
 instructions and an hourly Attention timer, `watch/bestie-hourly-check-in`,
 that wakes Bestie in your DM with it. Each check-in reads what is new in
 that DM and in the private channels Bestie was added to, and reports only in
-the DM. On also turns on the agent's Attention,
-which the Watching tab shows. Off removes the section and the timer and leaves
-Attention on, since the agent's other watches may need it. The timer runs while
-Buzz is open and the Watching plugin is on: this plugin doesn't call
+the DM. The Watching tab shows the timer. Off removes the section and the
+timer. The timer runs while Buzz is open and the Watching plugin is on: this
+plugin doesn't call
 `controlAttention()`, so turning Watching off still turns Attention off for
 every agent. While the timer can't run, the row says it is paused, and a
 timer paused on its own in the Attention tab says to turn the switch off and on
 again to restart it. If the instructions fail to save after the timer did, On
-removes the timer again, and turns Attention back off if it turned it on; a
-timer still left without its section gets a **Remove** row. After a
-sleep it runs once, not once for each missed hour. Each
+removes the timer again; a timer still left without its section gets a
+**Remove** row. After a sleep it runs once, not once for each missed hour. Each
 check-in is a feature in `features.ts`, so another kind is one more entry.
 
 **Changing your Bestie.** Only your Bestie checks in: whenever the saved Bestie
@@ -147,11 +152,11 @@ the same chooser appears in place instead of sending the owner to another menu.
 
 Setup is opt-in from the pinned Bestie destination; it does not take over the
 initial destination or send an automatic message. With no saved choice, the
-dock cycles through the same Fuzzies, Gloopies and Figgies as mobile, using
+shortcut cycles through the same Fuzzies, Gloopies and Figgies as mobile, using
 bundled stills. The artwork pauses for reduced motion and hidden documents.
 
 Once the account read confirms no saved Bestie and inventory/archive reads settle,
-the rotating dock shortcut reads **Create an agent**, even when the shared
+the rotating shortcut reads **Create an agent**, even when the shared
 inventory offers existing agents. When no eligible agents are available, the page
 shows **Create your first agent**, with matching character artwork, the description
 “Buzz is better with your agents. Create one to get started.” and a **Create an

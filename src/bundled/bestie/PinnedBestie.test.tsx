@@ -151,6 +151,9 @@ async function fixture({
     [["e", root.id, "", "reply"]],
   );
   const gate = deferred();
+  const olderGate = deferred();
+  const olderStarted = vi.fn();
+  disposals.push(olderGate.resolve);
   if (existing) dm(pollen);
   const open = vi.fn(async (keys: readonly string[], _signal: AbortSignal) => {
     if (hold && keys[0] === pollen) await gate.promise;
@@ -182,7 +185,9 @@ async function fixture({
         )
           return [...discovery.values()].flat();
         const history = filters.find((filter) => filter.top_level);
-        if (history?.before_id)
+        if (history?.before_id) {
+          olderStarted();
+          if (hasOlder) await olderGate.promise;
           return [
             bounds(
               relayKey,
@@ -194,6 +199,7 @@ async function fixture({
               },
             ),
           ];
+        }
         if (withReply && history)
           return [
             root,
@@ -341,6 +347,8 @@ async function fixture({
     read,
     open,
     gate,
+    olderGate,
+    olderStarted,
     native,
     navigator,
     makePollenIneligible() {
@@ -469,19 +477,23 @@ it("shows the local welcome only at known history start and keeps real history i
   rememberFirstAgent(f.scope, pollen);
   f.choose(pollen);
   f.mount();
-  const older = await screen.findByRole("button", {
-    name: "Load older messages",
-  });
-  expect(await screen.findByText("Are you there?")).toBeVisible();
-  expect(
-    screen.queryByRole("article", { name: "Welcome to Buzz" }),
-  ).not.toBeInTheDocument();
-  await userEvent.setup().click(older);
-  expect(
-    await screen.findByRole("article", { name: "Welcome to Buzz" }),
-  ).toBeVisible();
-  expect(screen.getByText("Are you there?")).toBeVisible();
-  expect(f.send).not.toHaveBeenCalled();
+  try {
+    // Main fills a short viewport automatically. Hold that real session read
+    // so the assertion observes pending history, not a race with its response.
+    await waitFor(() => expect(f.olderStarted).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Are you there?")).toBeVisible();
+    expect(
+      screen.queryByRole("article", { name: "Welcome to Buzz" }),
+    ).not.toBeInTheDocument();
+    await act(async () => f.olderGate.resolve());
+    expect(
+      await screen.findByRole("article", { name: "Welcome to Buzz" }),
+    ).toBeVisible();
+    expect(screen.getByText("Are you there?")).toBeVisible();
+    expect(f.send).not.toHaveBeenCalled();
+  } finally {
+    f.olderGate.resolve();
+  }
 });
 
 it("reuses an existing DM and its ordinary draft after leaving and reopening Bestie", async () => {

@@ -3,7 +3,11 @@
 // Memory is relay-backed for both local and hosted agents. Agents classified
 // as `elsewhere` expose no sections in these views.
 import { useId, useState, type ReactNode } from "react";
-import { MemoryPanel, type AgentMemories } from "./MemoryPanel";
+import {
+  MemoryPanel,
+  type AgentMemories,
+  type MemoryLinks,
+} from "./MemoryPanel";
 import type { CommunityReader } from "../communities/service";
 import type {
   Agent,
@@ -37,8 +41,11 @@ export function agentSections({
   initialTranscript,
   close,
   openConversation,
+  openLink,
+  canOpenLink,
   settingsHost,
   memories,
+  memoryLinks,
   communities,
   settingsSection,
   settingsContent,
@@ -53,11 +60,15 @@ export function agentSections({
   close?: (() => void) | undefined;
   /** Opens a turn's conversation; see AgentViewProps. */
   openConversation?: AgentViewProps["openConversation"];
+  /** Opens a link from a plugin's tab; see AgentAddedTab. */
+  openLink?: ((target: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   settingsHost?: AgentSettingsHost;
   settingsSection?: "identity" | "runtime";
   settingsContent?: ReactNode;
   /** Memory reads through the owner's session; absent while it connects. */
   memories: AgentMemories | undefined;
+  memoryLinks?: MemoryLinks | undefined;
   communities?: CommunityReader | undefined;
 }): readonly AgentSection[] {
   if (agent.place === "elsewhere") return [];
@@ -159,7 +170,9 @@ export function agentSections({
       tabs.push({
         value: `agent:added:${key}`,
         label: title,
-        render: () => <Component agent={agent} />,
+        render: () => (
+          <Component agent={agent} open={openLink} canOpen={canOpenLink} />
+        ),
       });
   return [
     ...tabs,
@@ -171,6 +184,7 @@ export function agentSections({
           agents={agents}
           agent={agent}
           memories={memories}
+          links={memoryLinks}
           communities={communities}
         />
       ),

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import type { Context } from "../../src/plugins/author";
 import { presentPull } from "../../src/bundled/github/attention";
 import { createTab } from "../../src/bundled/watching/Tab";
+import { profileTarget } from "../../src/features/profiles/target";
 import "../../src/shared/styles/globals.css";
 
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -81,8 +82,7 @@ let snapshot = {
           modifiedAt: 1,
           value: {
             type: "interest",
-            instructions:
-              "# Release planning\nReport blockers and keep the release moving.",
+            instructions: `# Release planning\nReport blockers to [Sam](${profileTarget(sam)}) and keep the release moving.`,
           },
         },
         "watch/discussion": {
@@ -93,7 +93,13 @@ let snapshot = {
         "interest/review": {
           slug: "interest/review",
           modifiedAt: 1,
-          value: { type: "interest", instructions: "# Review checks" },
+          value: {
+            type: "interest",
+            title: "PR reviews",
+            summary:
+              "Wakes on new reviews and CI results for example/project#42, then fixes failures and replies to feedback.",
+            instructions: "# Review checks",
+          },
         },
         "watch/pr": {
           slug: "watch/pr",
@@ -221,6 +227,13 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");
 createRoot(root).render(
   <Panel joined>
-    <Tab agent={{ key: "membership-a" }} />
+    <Tab
+      agent={{ key: "membership-a" }}
+      open={(target) => {
+        document.body.dataset.opened = target;
+        return true;
+      }}
+      canOpen={() => true}
+    />
   </Panel>,
 );

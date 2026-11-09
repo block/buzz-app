@@ -1183,8 +1183,16 @@ member neither deletes their identity nor stops their agents.
 
 Role change and removal use deliberate confirmation steps in the same dialog,
 initially focused on Cancel. Removal shows only the avatar/name and actions;
-Cancel returns to the list. Errors appear below Search, outside the scrolling
-list; pending and success banners are omitted.
+Cancel returns to the list. Leaving either step keeps the list's scroll position
+and returns focus to that member's actions, including while a confirmed change
+is pending. When a confirmed removal takes the row away, focus moves to the
+actions of the member now in its place, the one before it, or Search when none
+is left, unless focus has moved elsewhere; a failed or uncertain removal leaves
+focus on the member. An addition's confirmation returns to Search. Errors appear
+below Search, outside the scrolling list. Only a confirmed change's own error
+scrolls the list, to keep that member's actions in view, and only while focus
+and the list are where the change left them. Pending and success banners are
+omitted.
 The service checks fresh actor/target state before signing and again
 before publication, rejects altered signer payloads, and confirms the requested
 role or roster absence with a fresh read. Relay acceptance alone is not success.
@@ -1695,13 +1703,14 @@ and OS notifications are not enabled by this feature.
 
 The Channels plugin registers Slack-style shortcuts through the shared dispatcher, so
 each is listed in Settings → Shortcuts and can be rebound. All run while typing in the
-message editor and are ignored behind a dialog. None run in a terminal, which keeps
-Escape and Option+Arrow for the shell.
+message editor, except as noted below, and are ignored behind a dialog. None run in a
+terminal, which keeps Escape and Option+Arrow for the shell.
 
 - **Previous/next conversation** (Option+Up/Down) and **previous/next unread
   conversation** (Option+Shift+Up/Down) step through the sidebar's rendered order,
-  Solo chats and team rows alike. `conversation-rows.ts` scans the sidebar's
-  `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
+  Solo chats and team rows alike. As in Slack, plain Option+Up/Down steps from the
+  composer only while its draft is empty; with text it moves the caret by paragraph
+  instead. `conversation-rows.ts` scans the sidebar's `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
   are already applied; rows in a collapsed section or the inactive pane are skipped. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.

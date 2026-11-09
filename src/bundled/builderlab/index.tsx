@@ -31,6 +31,7 @@ export const inject = [
   "panels",
   "browser",
   "knownCommunities",
+  "communityJoin",
   "decisions",
   "navigation",
   ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
@@ -187,7 +188,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     const state = useSyncExternalStore(session.subscribe, session.snapshot);
     if (!communities) return null;
     if (communities === brokerApi)
-      return <HostedCommunities api={communities} active={active} />;
+      return (
+        <HostedCommunities
+          api={communities}
+          active={active}
+          join={ctx.communityJoin?.open}
+        />
+      );
     const viewer =
       state.status === "signed-in" && dev ? session.viewerSession() : undefined;
     return state.status === "signed-in" ? (
@@ -199,6 +206,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         }
         api={communities}
         active={active}
+        join={ctx.communityJoin?.open}
         sharedSignIn
       />
     ) : null;

@@ -67,6 +67,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const {
     Create,
     CreateModel,
+    CreateThinking,
     SettingsTab,
     ActivityTab,
     DefaultControl,
@@ -113,6 +114,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
     Create,
     CreateModel,
+    CreateThinking,
     createModelReportsReadiness: true,
     provider: {
       snapshot: setup.snapshot,

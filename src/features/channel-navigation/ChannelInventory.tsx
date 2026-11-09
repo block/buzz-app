@@ -1544,6 +1544,7 @@ export function ChannelInventory({
                       selected={composingMessage ? undefined : selected}
                       onSelect={select}
                       onOpenThread={openActivityThread}
+                      onOpenMessage={openActivityMessage}
                       onOpenWorkingAgent={openWorkingAgent}
                       onOpenAgentActivity={openAgentActivity}
                       menuEnabled

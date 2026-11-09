@@ -835,7 +835,8 @@ export function useChannelTabState(
           tabs: tab ? [tab] : [],
           selected: (side && keep) || "",
           mainSelected: main ? keep : undefined,
-          paneOpen: side,
+          // A launcher's side panel is not a tab, so a pane showing one stays.
+          paneOpen: side || (s.paneOpen && !!s.sidePanel),
           thread: undefined,
           settings,
         };

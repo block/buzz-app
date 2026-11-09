@@ -55,7 +55,6 @@ export function soloDraft(
 export function isChannelRoute(params: JsonValue) {
   return (
     params === "new-message" ||
-    params === "drafts-sent" ||
     params === "empty" ||
     soloDraft(params) !== undefined
   );

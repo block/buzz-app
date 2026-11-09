@@ -840,6 +840,83 @@ it("resolves every activity item through its own channel hierarchy", () => {
   expect(h.session.unread.activity("other").items).toEqual([]);
 });
 
+it("lists unread top-level mentions apart from thread activity, never for a DM or a broadcast", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("dm");
+  h.emit([metadata(h.relay, "dm", "DM", 11, [["t", "dm"]])]);
+  const tag = [["p", h.viewer.pubkey]];
+  const root = message(h.viewer, "room", "My thread", 20);
+  const older = message(h.alice, "room", "First ask", 21, tag);
+  const reply = message(h.alice, "room", "In your thread", 22, [
+    ["e", root.id, "", "reply"],
+    ...tag,
+  ]);
+  const broadcast = message(h.alice, "room", "Everyone", 23, [
+    ["broadcast", "1"],
+  ]);
+  h.emit([root, older, reply, broadcast]);
+  const changed = vi.fn();
+  h.session.unread.subscribeActivity("room", changed);
+  const newer = message(h.alice, "room", "Second ask", 24, tag);
+  h.emit([newer, message(h.alice, "dm", "Direct ask", 25, tag)]);
+
+  expect(changed).toHaveBeenCalled();
+  // The reply's mention stays with its thread.
+  expect(h.session.unread.activity("room")).toMatchObject({
+    items: [{ rootId: root.id, latestMessageId: reply.id }],
+    mentions: [
+      {
+        channelId: "room",
+        messageId: newer.id,
+        authorId: h.alice.pubkey,
+        createdAt: 24,
+        preview: "Second ask",
+      },
+      { messageId: older.id, createdAt: 21, preview: "First ask" },
+    ],
+  });
+  expect(h.session.unread.activity("dm").mentions).toEqual([]);
+
+  await h.session.unread.markThrough(
+    { kind: "message", channelId: "room", messageId: newer.id },
+    newer.id,
+  );
+  expect(h.session.unread.activity("room").mentions).toEqual([
+    expect.objectContaining({ messageId: older.id }),
+  ]);
+});
+
+it("lists a top-level mention that cites or quotes a message, and keeps the snapshot through an unrelated publish", () => {
+  const h = setup();
+  h.grant("room");
+  const tag = [["p", h.viewer.pubkey]];
+  const root = message(h.viewer, "room", "My thread", 20);
+  // Neither tag marks a reply, so both stay top-level.
+  const cited = message(h.alice, "room", "Cites it", 21, [
+    ["e", root.id],
+    ...tag,
+  ]);
+  const quoted = message(h.alice, "room", "Quotes it", 22, [
+    ["e", root.id, "", "mention"],
+    ...tag,
+  ]);
+  h.emit([root, cited, quoted]);
+  const activity = h.session.unread.activity("room");
+  expect(activity).toMatchObject({
+    items: [],
+    mentions: [{ messageId: quoted.id }, { messageId: cited.id }],
+  });
+
+  const changed = vi.fn();
+  h.session.unread.subscribeActivity("room", changed);
+  h.emit([message(h.alice, "room", "Unrelated", 23)]);
+  // The publish landed, and left Activity alone.
+  expect(h.snapshot().observedCount).toBe(3);
+  expect(changed).not.toHaveBeenCalled();
+  expect(h.session.unread.activity("room")).toBe(activity);
+});
+
 it("distinguishes unknown thread-activity evidence from observed evidence", () => {
   const h = setup();
   h.grant("room");
@@ -2252,6 +2329,30 @@ it("bottom catch-up reads top-level mentions and broadcasts; participating threa
     category: "thread",
     unread: true,
   });
+  lease.dispose();
+});
+
+it("bottom catch-up leaves older attention that arrives during its save unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const bottom = message(h.alice, "room", "bottom", 20);
+  h.emit([bottom]);
+  const lease = h.session.unread.reading("room");
+  const { started, release } = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  await started; // The dwell's activity save is held before the arrival.
+  const late = message(h.alice, "room", "late mention", 17, [
+    ["p", h.viewer.pubkey],
+  ]);
+  try {
+    h.emit([late]);
+  } finally {
+    release();
+  }
+  await pending;
+  // The dwell ended before this mention arrived, so it waits for its own.
+  expect(h.journal()?.state.frontiers).toEqual({ "activity:room": 20 });
+  expect(h.session.unread.attention("room", late.id).unread).toBe(true);
   lease.dispose();
 });
 
@@ -4322,6 +4423,7 @@ it("agent-audience messages never count, earn attention, list in Inbox or activi
     attentionCount: 0,
   });
   expect(unread.activity("room").items).toEqual([]);
+  expect(unread.activity("room").mentions).toEqual([]);
   expect(unread.inbox().items).toEqual([]);
   for (const [channelId, row] of [
     ["room", progress],
@@ -4489,4 +4591,303 @@ it("live content events extend the evidence index and match a full rebuild", () 
     return read();
   };
   expect(run(true)).toBe(run(false));
+});
+
+it("opening a channel quiets its row while its messages and threads stay unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const own = message(h.viewer, "room", "my thread", 11);
+  const reply = message(h.alice, "room", "reply to me", 12, [
+    ["e", own.id, "", "reply"],
+  ]);
+  const mention = message(h.alice, "room", "mention", 13, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const ordinary = message(h.alice, "room", "ordinary", 14);
+  h.emit([channelMetadata(h, "stream"), own, reply, mention, ordinary]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 3,
+    attentionCount: 2,
+    row: { observedCount: 3, attentionCount: 2, threadCount: 1 },
+  });
+  const revision = h.session.unread.revision();
+
+  // Opening quiets the row at once, before the visit is ready.
+  const entered = h.session.unread.enterChannel("room");
+  const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+  expect(h.snapshot()).toMatchObject({ observedCount: 3, row: quiet });
+  await entered;
+  // What arrives during the visit is seen too.
+  const during = message(h.alice, "room", "reply during visit", 15, [
+    ["e", own.id, "", "reply"],
+  ]);
+  h.emit([during]);
+  expect(h.snapshot()).toMatchObject({ observedCount: 4, row: quiet });
+
+  h.session.unread.leaveChannel("room");
+  expect(h.snapshot()).toMatchObject({ observedCount: 4, row: quiet });
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers["seen:room"]).toBe(15),
+  );
+  // Seeing reads nothing: thread dots, Activity and the timeline keep their
+  // unread, and a reader's entry evidence outlives the save.
+  expect(h.snapshot()).toMatchObject({ observedCount: 4, attentionCount: 3 });
+  expect(h.session.unread.activity("room").items).toEqual([
+    expect.objectContaining({ rootId: own.id, unreadCount: 2 }),
+  ]);
+  for (const { id } of [reply, mention, ordinary, during])
+    expect(h.session.unread.attention("room", id).unread).toBe(true);
+  expect(h.session.unread.revision()).toBe(revision);
+
+  // A later reply lights the row again.
+  h.emit([
+    message(h.alice, "room", "later reply", 16, [["e", own.id, "", "reply"]]),
+  ]);
+  expect(h.snapshot().row).toEqual({
+    observedCount: 1,
+    attentionCount: 1,
+    threadCount: 1,
+  });
+});
+
+it("a saved seen mark quiets the row after reload; marking a message unread shows it all", async () => {
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { "seen:room": 12 }, overrides: {} },
+  }));
+  h.grant("room");
+  const seen = message(h.alice, "room", "seen", 11);
+  const later = message(h.alice, "room", "later", 13);
+  h.emit([seen, later]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 2,
+    row: { observedCount: 1 },
+  });
+  await h.session.unread.markMessageUnread("room", seen.id);
+  expect(h.snapshot().manual).not.toBe("none");
+  expect(h.snapshot().row).toBeUndefined();
+});
+
+it("marking a seen channel unread shows its whole row again", async () => {
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    state: { frontiers: { "seen:room": 12 }, overrides: {} },
+  }));
+  h.grant("room");
+  h.emit([message(h.alice, "room", "seen", 11)]);
+  await h.session.unread.ensure();
+  expect(h.snapshot().row?.observedCount).toBe(0);
+  await h.session.unread.markUnreadLocal(h.target);
+  expect(h.snapshot()).toMatchObject({
+    manual: "local-only",
+    observedCount: 1,
+  });
+  expect(h.snapshot().row).toBeUndefined();
+});
+
+it("leaving a channel whose row shows nothing new writes no seen mark", async () => {
+  const h = setup();
+  h.grant("room");
+  h.emit([message(h.alice, "room", "only", 11)]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers["seen:room"]).toBe(11),
+  );
+  const saved = h.journal();
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await flush();
+  expect(h.journal()).toBe(saved);
+});
+
+it.each([
+  ["at the same second", 100, 100],
+  ["backdated by a slower clock", 110, 105],
+])(
+  "a mention delivered after the visit lights the row %s",
+  async (_, seen, delivered) => {
+    const h = setup();
+    h.grant("room");
+    const mention = message(h.alice, "room", "mention", seen, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([mention, message(h.alice, "room", "ordinary", seen)]);
+    await h.session.unread.enterChannel("room");
+    h.session.unread.leaveChannel("room");
+    await vi.waitFor(() =>
+      expect(h.journal()?.state.frontiers).toMatchObject({
+        "seen:room": seen,
+        [`seen:msg:${mention.id}`]: seen,
+      }),
+    );
+    const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+    expect(h.snapshot().row).toEqual(quiet);
+    // An ordinary message at the cut stays quiet: only a timestamp says so.
+    h.emit([message(h.alice, "room", "late ordinary", delivered)]);
+    expect(h.snapshot().row).toEqual(quiet);
+    h.emit([
+      message(h.alice, "room", "late mention", delivered, [
+        ["p", h.viewer.pubkey],
+      ]),
+    ]);
+    expect(h.snapshot()).toMatchObject({
+      attentionCount: 2,
+      row: { observedCount: 1, attentionCount: 1 },
+    });
+    // Receipts stay on this device: only the channel cut is published.
+    expect(Object.keys(h.journal()?.own ?? {})).toEqual(["seen:room"]);
+  },
+);
+
+it("a mention arriving while the leave saves still lights the row, also from saved marks alone", async () => {
+  const h = setup();
+  h.grant("room");
+  const seen = message(h.alice, "room", "seen mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([seen]);
+  await h.session.unread.enterChannel("room");
+  const held = h.holdSaveStarted();
+  h.session.unread.leaveChannel("room");
+  await held.started;
+  const late = message(h.alice, "room", "late mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([late]);
+  expect(h.snapshot().row?.attentionCount).toBe(1);
+  held.release();
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${seen.id}`]).toBe(100),
+  );
+  expect(h.journal()?.state.frontiers[`seen:msg:${late.id}`]).toBeUndefined();
+  expect(h.snapshot().row?.attentionCount).toBe(1);
+
+  // Without this session's visit, only the saved marks decide the row.
+  await h.clearCache();
+  h.grant("room");
+  h.emit([seen, late]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    attentionCount: 2,
+    row: { observedCount: 1, attentionCount: 1 },
+  });
+});
+
+it("a row receipt never hides a message marked unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room");
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+  await h.session.unread.markMessageUnread("room", mention.id);
+  // Explicit intent shows the whole channel: the badge falls back from `row`.
+  expect(h.snapshot()).toMatchObject({
+    manual: "local-only",
+    attentionCount: 1,
+  });
+  expect(h.snapshot().row).toBeUndefined();
+});
+
+it("a row receipt never hides a message a peer marked unread", async () => {
+  let id = "";
+  const h = setup({}, true, (journal) => ({
+    ...journal,
+    // The message's id exists only after setup makes its keys; the owner
+    // reads the preloaded journal later, on its first load.
+    get state() {
+      return {
+        frontiers: { [`seen:msg:${id}`]: 100 },
+        // A peer's message override; the channel itself is not marked unread.
+        overrides: { [`msg:${id}`]: { set: 5, clear: 0, baseline: 0 } },
+      };
+    },
+  }));
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  id = mention.id;
+  h.grant("room");
+  h.emit([mention]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    manual: "none",
+    row: { attentionCount: 1 },
+  });
+});
+
+it("background arrivals survive a frozen visit's leave and reload without being seen", async () => {
+  const h = setup();
+  h.grant("room");
+  const old = message(h.alice, "room", "old mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const ordinary = message(h.alice, "room", "old ordinary", 100);
+  h.emit([old, ordinary]);
+  await h.session.unread.enterChannel("room");
+  const journal = h.journal();
+  h.session.unread.setChannelActive("room", false);
+  await flush();
+  expect(h.journal()).toBe(journal);
+  const late = message(h.alice, "room", "background mention", 99, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const newer = message(h.alice, "room", "background ordinary", 101);
+  h.emit([late, newer]);
+  expect(h.snapshot().row).toMatchObject({
+    observedCount: 2,
+    attentionCount: 1,
+  });
+  h.session.unread.setChannelActive("room", false);
+  h.session.unread.leaveChannel("room");
+  h.session.unread.setChannelActive("room", true);
+  expect(h.snapshot().row).toMatchObject({
+    observedCount: 2,
+    attentionCount: 1,
+  });
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers["seen:room"]).toBe(100),
+  );
+  expect(h.journal()?.state.frontiers[`seen:msg:${old.id}`]).toBe(100);
+  expect(h.journal()?.state.frontiers[`seen:msg:${late.id}`]).toBeUndefined();
+  await h.clearCache();
+  h.grant("room");
+  h.emit([old, ordinary, late, newer]);
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 4,
+    row: { observedCount: 2, attentionCount: 1 },
+  });
+});
+
+it("inactive entry sees nothing until the open visit resumes", async () => {
+  const h = setup();
+  h.grant("room");
+  const mention = message(h.alice, "room", "mention", 100, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention]);
+  await h.session.unread.enterChannel("room", false);
+  expect(h.snapshot().row?.attentionCount).toBe(1);
+  h.session.unread.leaveChannel("room");
+  await flush();
+  expect(
+    h.journal()?.state.frontiers[`seen:msg:${mention.id}`],
+  ).toBeUndefined();
+  await h.session.unread.enterChannel("room", false);
+  h.session.unread.setChannelActive("room", true);
+  expect(h.snapshot().row?.attentionCount).toBe(0);
+  h.session.unread.setChannelActive("room", false);
+  h.session.unread.leaveChannel("room");
+  await vi.waitFor(() =>
+    expect(h.journal()?.state.frontiers[`seen:msg:${mention.id}`]).toBe(100),
+  );
 });

@@ -17,15 +17,15 @@ Find and mention people, agents, and teams while you write.
 ## Abstract
 
 This contract says who a user can mention in a channel message, how a client
-orders the choices, when Space completes a mention, and what a client sends when
-the user mentions someone outside the channel. Clients that follow it give the
-same search the same list and send the same tags.
+orders the choices, when Space or closing punctuation completes a mention, and
+what a client sends when the user mentions someone outside the channel. Clients
+that follow it give the same search the same list and send the same tags.
 
 The built-in Mentions feature implements the chooser: the choice set, matching,
-order, and Space. The composer decides which keys a draft may address and asks
-before sending to people outside the channel. The relay message writer and
-message fold implement the tags. This directory owns the spec and the
-[portable fixtures](mention-rules.fixtures.json).
+order, and selection by Space or closing punctuation. The composer decides which
+keys a draft may address and asks before sending to people outside the channel.
+The relay message writer and message fold implement the tags. This directory
+owns the spec and the [portable fixtures](mention-rules.fixtures.json).
 
 This is an extraction of the behavior in
 [buzz-app #257](https://github.com/block/buzz-app/pull/257) and
@@ -197,7 +197,7 @@ and recency never override membership or match. Recency is the
 client's memory of explicit selections in this channel. The desktop keeps it in
 memory for 100 channels and 100 keys each.
 
-## 5. Space selects only an exact, unique name
+## 5. Space or closing punctuation selects only an exact, unique name
 
 When the user types Space after a query, a choice is the **exact name** among a
 set of choices when all of these are true:
@@ -244,6 +244,19 @@ does not hold step 1 back; a failed read is not evidence. A name that only a
 directory result has could still gain a namesake from a pending search, so Space
 MUST NOT select it before the search finishes. Otherwise Space is a normal
 space. Tab, Enter, and a click select the highlighted row.
+
+Closing punctuation typed straight after the query (`,` `.` `!` `?` `;` `:` `)`
+or a closing quote `'` `’` `"` `”`) SHOULD select exactly as Space does, and the
+client keeps the character after the mention in place of the space, so
+`@Honey's` mentions Honey. Where Space would not select, the character is typed
+into the query instead. A longer known name that continues the query blocks
+every one of these characters, as it blocks Space, whichever character comes
+next in that name: `'` after `Pat O` while `Pat O'Brien` is known stays in the
+query, and so does `,` after `Wes` while `Wes Smith` is known. A saved team with
+the same or a longer name blocks them too. Where Space may hold a pending
+mention, so may this character, kept after the chip. A selected or pending
+mention ends at a name boundary: the next character that is not a letter, mark,
+digit or underscore.
 
 While the client cannot yet decide — the member list, member names or agent
 list is still loading, or a directory search for the query is waiting or

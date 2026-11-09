@@ -159,7 +159,10 @@ export function useDrafts(session: Session | undefined) {
     }
     const refresh = () => setSnapshot(readDrafts(session));
     refresh();
-    const stopViews = subscribeView(session.scope, refresh);
+    // Other view keys (scroll places, panels) never change the draft list.
+    const stopViews = subscribeView(session.scope, (key) => {
+      if (key === undefined || draftCoordinates(key)) refresh();
+    });
     const stopFiles = subscribeAttachmentDraftCounts(
       session as Parameters<typeof subscribeAttachmentDraftCounts>[0],
       refresh,

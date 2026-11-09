@@ -7,6 +7,7 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 // Browser-only contract: a real pointer resting on the dock tab opens the
 // card, which sits just past the row, and its row navigates without opening
@@ -129,11 +130,7 @@ test("hovering the dock Activity tab previews recent conversations and opens one
     expect(geometry.contextY).toBeGreaterThan(geometry.previewY);
     expect(geometry.tailRight).toBeLessThanOrEqual(geometry.rowRight);
     // Measure after the open transition, which offsets the card while it runs.
-    await card.evaluate((element) =>
-      Promise.all(
-        element.getAnimations().map((animation) => animation.finished),
-      ),
-    );
+    await animationsSettled(card);
     const row = await inboxRow.boundingBox();
     const box = await card.boundingBox();
     // Where there is room the card sits 6px past the row's hover background,
@@ -143,9 +140,14 @@ test("hovering the dock Activity tab previews recent conversations and opens one
       const header = await card.locator("header").boundingBox();
       expect(Math.abs(box.x - (row.x + row.width + 6))).toBeLessThanOrEqual(1);
       // The first dock item can be too high for header-line alignment; the
-      // shared popup then keeps its 8px viewport gutter instead.
+      // card then keeps an 8px gutter below the window header instead.
+      const workspaceTop = await page
+        .locator(".shell-workspace")
+        .evaluate((element) => element.getBoundingClientRect().top);
       const alignedTop = row.y - (header.y - box.y) - header.height + 1;
-      expect(Math.abs(box.y - Math.max(8, alignedTop))).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(box.y - Math.max(workspaceTop + 8, alignedTop)),
+      ).toBeLessThanOrEqual(1);
     } else
       expect(box.y >= row.y + row.height || box.x >= row.x + row.width).toBe(
         true,

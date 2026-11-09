@@ -217,6 +217,31 @@ describe("the attention tools", () => {
     });
   });
 
+  it("saves an Interest's title and summary, and a replacement without them clears them", async () => {
+    const { call } = agent();
+    const created = await call("interest_set", {
+      id: "release",
+      title: " Release checks ",
+      summary: "Wakes when CI finishes and reports failures.",
+      instructions: "Check the release.",
+      expected_state: ABSENT,
+    });
+    expect(created.object).toEqual(
+      expect.objectContaining({
+        title: "Release checks",
+        summary: "Wakes when CI finishes and reports failures.",
+      }),
+    );
+    const replaced = await call("interest_set", {
+      id: "release",
+      title: "",
+      instructions: "Check the release.",
+      expected_state: created.expected_state,
+    });
+    expect(replaced.object).not.toHaveProperty("title");
+    expect(replaced.object).not.toHaveProperty("summary");
+  });
+
   it("keeps an Interest until its watches are gone", async () => {
     const { call } = agent();
     await call("interest_set", {
@@ -400,6 +425,36 @@ describe("the attention tools", () => {
       used: 1,
       next_due: NOW + 121,
     });
+  });
+
+  it("accepts a timer budget and an event start sent as digits", async () => {
+    // Some MCP clients send an integer that shares its schema with a word as a string.
+    const { call } = agent();
+    await call("interest_set", {
+      id: "triage",
+      instructions: "T.",
+      expected_state: ABSENT,
+    });
+    const timer = await call("watch_add", {
+      interest: "triage",
+      id: "nudge",
+      type: "timer",
+      prompt: "Check the queue.",
+      interval_secs: 60,
+      max_occurrences: "3",
+      expires_at: String(NOW + 600),
+      expected_state: ABSENT,
+    });
+    expect(timer.object).toMatchObject({
+      max_occurrences: 3,
+      expires_at: NOW + 600,
+    });
+    const event = await call("watch_add", {
+      ...asks,
+      since: String(NOW),
+      expected_state: ABSENT,
+    });
+    expect(event.object.since).toBe(NOW);
   });
 
   it("filters the watch list by type, status and search", async () => {

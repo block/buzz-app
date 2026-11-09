@@ -95,7 +95,15 @@ test("archive confirmation returns focus on cancel and retains the conversation 
     name: "Archive channel: Lifecycle channel",
   });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeFocused();
+  // Pointer entry still shows what Enter will activate without swapping emphasis.
+  await expect(cancel).toHaveCSS("outline-style", "solid");
+  await expect(cancel).toHaveCSS("outline-width", "2px");
+  await expect(cancel).toHaveAttribute("data-variant", "subtle");
+  await expect(
+    dialog.getByRole("button", { name: "Archive channel", exact: true }),
+  ).toHaveAttribute("data-variant", "prominent");
   await dialog.screenshot({
     path: testInfo.outputPath("lifecycle-confirmation.png"),
   });

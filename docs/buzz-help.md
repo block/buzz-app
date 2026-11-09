@@ -15,6 +15,29 @@ Keep a first explanation brief: Solo, Team, agents, and one useful next step.
 Offer more detail when asked. Do not pretend to highlight controls or navigate
 the interface unless an available tool actually supports that action.
 
+## Agents in Huddles
+
+On supported desktop hosts, a running local agent with voice support joins your
+connected Huddle when it is also a member of that Huddle's room. Membership of
+the parent conversation alone is insufficient. Several agents can participate.
+Starting a Huddle in a one-to-one DM with your running voice-capable agent
+adds it to the Huddle room; joining an existing Huddle does not. You can also
+add agents through the Huddle's member controls. On the hosting computer, a
+seated agent shows a smaller avatar, a rotating ring while it works (activity
+dots in the compact player), and its normal size while speaking. This state is
+not shared with remote participants. The agent’s own client enforces who it
+hears. Each filters for audio from your connected devices
+and speaks to everyone. The current audio protocol can briefly misattribute delayed
+audio when a connection slot is reused; this is not a strict privacy guarantee.
+Other people or speakers near your microphones can also be heard. Simultaneous
+audio from your devices is mixed together.
+Voice work uses the same permissions as your text requests. Joining on another
+device does not seat an agent running here. Leaving closes its voice connection.
+If agent voice stops, the compact player and Huddle window show the reason;
+leave and rejoin to retry.
+Final voice transcripts appear in the room with speaker credit and do not
+mention anyone. Explicit agent watches on that room can still receive them.
+
 ## Identity and getting connected
 
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
@@ -26,7 +49,10 @@ the interface unless an available tool actually supports that action.
   steps. Before joining, **Back** returns to the entered link; after admission,
   profile setup continues forward. An invite-code field appears for
   a supplied invite or denied access on a community that enforces membership;
-  community policy links open separately.
+  community policy links open separately. When you are signed in to Builderlab
+  and the community is one it hosts, Buzz skips the age and terms boxes,
+  because your account setup already covered them, and **Continue** joins
+  straight away.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
   The key-import field masks your key. Use the eye inside the field to reveal
@@ -57,7 +83,11 @@ the interface unless an available tool actually supports that action.
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
-  offer it during setup.
+  offer it during setup. Later, **Create community** in **Settings → Plugins →
+  Builderlab** opens the join for the new community at once; after its profile
+  step it opens and is listed in the community picker. When the owner of a community with no channels yet
+  opens Messages, Buzz creates one open **#general**, marked as the starter
+  channel for new members, and opens it.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
@@ -70,7 +100,7 @@ the interface unless an available tool actually supports that action.
   **Add people** and after `@` in a message. The **private key**, shown as an
   `nsec`, lets someone act as that identity. Never ask anyone to paste a
   private key into a conversation or send it to you.
-- In native desktop builds, **Settings → Buzz → Identity → Authorize external identity** creates an
+- In native desktop builds, **Settings → Buzz → Security → Authorize external identity** creates an
   ownership proof for an application such as Nexus that holds its own agent key.
   Enter that application's public key in hex, select **Authorize identity**,
   review the exact identity and permission in the confirmation, then select
@@ -90,6 +120,9 @@ the interface unless an available tool actually supports that action.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
+  The callback tab attempts to close after three seconds. On macOS, Buzz can
+  regain focus after verification while the sign-in browser is still foreground.
+  If the tab stays open, you can close it yourself.
   **Not now** opens Buzz anyway, but that organization's communities stay
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under
@@ -117,7 +150,15 @@ the interface unless an available tool actually supports that action.
   offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
-  more than one community.
+  more than one community. To add another, choose **Join a community** in the
+  community picker and paste an invite link or type an address such as
+  `relay.example.com`; an invite link fills in its invite code. Paste the whole
+  link there; a code on its own is refused.
+- Community owners and admins invite people with **Invite members** in the
+  community's **Membership** settings (also reached from **Invite to community**
+  in the community picker's right-click menu). The dialog creates an invite
+  link with an expiry and use limit to copy, or adds someone directly by npub.
+  The desktop app also shows that link as a QR code to scan with a phone.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
@@ -138,7 +179,7 @@ the interface unless an available tool actually supports that action.
 ## Connect an external app
 
 External apps are available only in communities enabled for this build.
-Desktop preview releases enable bb-block only. Other communities cannot grant access.
+Other communities cannot grant access.
 
 Start setup in the external app. Buzz desktop shows an **Authorize app**
 dialog. Select a community and an agent, then select **Authorize**. The app
@@ -169,20 +210,36 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 ## Pair a command-line tool
 
-Run `buzz auth desktop pair` in a terminal while Buzz is open. Buzz asks
-whether to let that tool use Buzz as you; select **Allow** only when you ran the
-command. The tool can then post, read and use your sign-in through Buzz, and
-your key stays in Buzz. It can't edit your profile, delete, or manage members,
-agents or moderation: do those in Buzz.
+Run `buzz --relay <community address> auth desktop pair` in a terminal while
+Buzz is open, using the **Community address** shown in that community's
+**Settings → Local settings**. Buzz asks whether to let that tool use Buzz as
+you; select **Allow** only when you ran the command. Buzz pairs only for a
+community you've joined in Buzz, and otherwise tells the tool so without
+asking. Until you've finished signing in or setting up Buzz, it refuses
+pairing; finish, then run the command again. Once allowed, the tool can post,
+read and use your sign-in through Buzz, and your key stays in Buzz. It can't
+edit your profile, delete, or manage members, agents or moderation: do those
+in Buzz.
 **Settings → Security** lists paired tools. **Revoke** stops one. Signing out
 revokes all of them, and a pairing unused for 30 days expires.
 
 ## Conversations and communities
 
+- In dialogs, a ring shows which button has keyboard focus, including when the
+  dialog opens after a click. Enter or Space activates that button; Tab moves
+  focus. The filled action button can be different from the focused button.
+  Simple confirmations generally focus Cancel or the equivalent safe dismissal
+  action, so Enter cancels. Some intentionally focus their primary action.
+  Confirmations with a required field or checkbox start at the relevant control;
+  the action stays gated until its requirements are met.
+
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
-  or removes your reaction. Capsules you reacted with are tinted and outlined.
+  or removes your reaction. Capsules you reacted with take your solid accent
+  color; on your own messages they take a neutral gray instead.
+- In the fullscreen video viewer, comments and emoji reactions at the current
+  frame stay attached to that video when you move through a thread's media.
 - With **Voice Notes** enabled, use the microphone in the composer to record
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
@@ -196,9 +253,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
 - **Forward message** in a message's hover actions or message menu sends its link
-  to one person in the current community, with an optional note. Buzz opens or
-  creates the direct message for you. The link previews the original message;
-  the recipient still needs access to its conversation. Forwarding is unavailable
+  to one person in the current community, with an optional note. Buzz sends it
+  in your direct message with them, starting one if needed, and you stay where
+  you are; select the confirmation notice while it's showing to open the
+  forwarded message in that DM. The link previews the original message; the
+  recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered
@@ -227,15 +286,26 @@ revokes all of them, and a pairing unused for 30 days expires.
   notice ends this recovery option.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
+  New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
+  which archives the chat after a set time without activity. To start every new
+  chat temporary, open the community's **Settings → Local settings** and choose
+  a lifetime under **New Solo chats**: Ongoing, or Temporary after 1 day, 7
+  days or 2 weeks. It saves at once and applies on this device to this
+  community and account only. It covers chats started with **New chat**; a
+  chat's own settings can still choose another lifetime, and existing chats do
+  not change.
 - **Team** contains community channels and their threads. Use the **@** picker
-  to address a channel member. Typing a name alone does not guarantee a
+  to address a channel member. A full name typed after **@** and followed by
+  Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
+  agent unless a namesake or a longer name that begins the same way could be
+  meant; then pick from the list. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
-- **Activity** (the bell in the sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
+- **Activity** (the bell in the app dock) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
@@ -256,11 +326,40 @@ revokes all of them, and a pairing unused for 30 days expires.
   later. It may also be absent when unread evidence is incomplete, or when read
   intent or the read evidence needed to locate the boundary changes before it is
   established.
-- **Communities** have their own channels, people, and agents. Switching
+- **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
+  dot and the thread dot. Switching away from Buzz pauses this: new messages
+  can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked
+  read: unread threads keep their dots in the conversation and in Activity →
+  Threads, and **New messages** still marks where you left off. A mention, DM or
+  reply to you that arrives after you leave lights the row again, as does any
+  newer message; **Mark as unread** still shows on it. On another device, rows
+  with unread mentions, DMs or replies to you light again until you read them.
+- **Communities** have their own channels, people, and agents. Switch with
+  the community switcher at the bottom of the dock; in **Personal space**,
+  Messages offers **Choose a community**, which opens it. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
   the person asking may have different channel access. A link alone never
   grants access.
+- **Offline**: when Buzz can't reach a community, it shows the conversations
+  saved on this device. Once Buzz reconnects, you can load messages older than
+  those, and the top of the conversation says so.
+- **Losing the connection**: Buzz keeps retrying on its own and says nothing
+  for the first 30 seconds. If it still can't connect, a notice at the bottom
+  right says "Buzz is having trouble connecting" until it reconnects. There is
+  nothing to press.
+- **Refused by a community**: if a community refuses your account, one
+  notice at the bottom right says so on every page, with what fixes it. It
+  doesn't retry on its own.
+  - **Sign in to open this community**: your sign-in ended or expired.
+    **Sign in with** that community's server. If Buzz still thinks you're
+    signed in, **Sign in again** signs you out of that server and back in.
+  - **This community needs a sign-in Buzz doesn't support yet**: this build
+    can't sign in to that community. Ask its admin which Buzz version or
+    server to use.
+  - **You don't have access to this community**: when you're signed in through
+    the community's server, it names the account it refused and offers
+    **Switch account**. **Check again** once an admin has added you.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
@@ -269,13 +368,17 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
   nothing typed lists up to six of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
-  of reopening where you left it. Muted
+  of reopening where you left it. A conversation unread only through thread
+  replies previews its newest unread reply and opens it in its thread. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
 - **Activity** threads name their channel above the original message. Select that
   name, or **Open in channel** in the thread tab's menu, to open the thread in
   Channels beside its original message, which the channel history shows and
   highlights.
+- **Sidebar activity**: rest the pointer on a sidebar row to list its unread
+  mentions of you and its unread threads, mentions first. Open one or mark it
+  read from the list; just looking marks nothing read.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
@@ -331,10 +434,15 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
+- **Search while offline**: while a community is offline or still connecting,
+  search finds and opens the conversations saved on this device, and a line
+  under the results says so. Messages, people and open channels are searched
+  once it connects; while it is offline, **Retry connection** tries again.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
-  cannot post or react. Reading without joining stays available.
+  cannot post, react, or change Canvas or Todos. Reading without joining
+  stays available.
   Use **Leave chat** or **Leave channel** to remove your membership and sidebar
   entry. Joined viewers keep reading after a switch to Private until they leave
   or are removed in People.
@@ -404,9 +512,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
 - **Message density**: **Settings → Appearance → Message density → Compact**
-  shows conversations as a flat, left-aligned list without bubbles, across the
-  window's full width, to fit more on screen. Text size stays with **Interface
-  size**. The choice applies on this device only.
+  shows conversations, including threads, as a flat, left-aligned list without
+  bubbles, across the window's full width, to fit more on screen. Hover or focus
+  a row to show its timestamp; grouped messages show it in the left gutter.
+  Text size stays with **Interface size**.
+  Hover a row to highlight it and show message actions at the right
+  edge. The choice applies on this device only.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,
@@ -478,10 +589,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   Activity second, followed by the other apps. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
-  view unless they provide their own sidebar. The sidebar and message pane
-  share one surface with a persistent divider; panel headers also have bottom
-  hairlines. Dock icons stay still, highlight on hover, and show instant labels
-  to their right. Bestie uses your configured avatar.
+  view unless they provide their own sidebar. Pages listed in the Messages
+  sidebar, such as the Drafts & sent plugin, keep Messages selected in the dock. The
+  Messages sidebar stays open unless the page provides its own sidebar, which
+  replaces it.
+  The sidebar and message pane share one surface with a persistent divider;
+  panel headers also have bottom hairlines. Dock icons stay still, highlight
+  on hover, and show instant labels to their right. Bestie uses your
+  configured avatar.
   The **+** opens New from the sidebar. **Cmd/Ctrl+N** opens that menu where
   the current app has a creation sidebar.
 - **Link boundaries**: a bare http(s) or buzz link ends at whitespace and at
@@ -491,23 +606,31 @@ revokes all of them, and a pairing unused for 30 days expires.
   approval, Buzz opens the approval page in your default browser, where you
   are signed in to Builderlab. Approve it there, return to Buzz and click
   **Reload** to open the app.
-- **Drafts & sent** is part of Messages. Opening it keeps the conversation
-  sidebar available, so you can switch straight back to a chat. Use the **Drafts**
+- **Drafts & sent** is an optional plugin, off by default. Turn it on in
+  **Settings → Plugins**, and it appears in the Messages sidebar. Opening it keeps
+  the conversation sidebar available, so you can switch straight back to a chat.
+  Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
-  Rows use Activity’s message layout, with recipient identities in Sent. It lists
+  Rows lead with the destination and message text. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by
   day. A sent message shows who replied after you ("2 after you") or that you
   were last ("You're last"); a channel post shows its reply count. Select a
-  draft to continue it in its conversation, or a sent message to jump to it.
-  Search matches the conversation name and what you wrote. It reads only this
+  draft to edit and send in a conversation preview beside the list; **Open
+  conversation** opens its original destination. Narrow windows show the preview
+  with **Back to drafts**. After confirmed delivery the preview closes; failed
+  sends stay in its message history with Retry. Select a sent message to preview
+  it in context and reply in place; Sent previews stay open after sending. Both
+  previews use the conversation’s saved draft, if one exists. Archived or read-only
+  Sent destinations show the conversation without a composer, with an archived
+  or read-only notice and Join when available. The popout icon
+  opens the original conversation.
+  Search above the list matches the conversation name and what you wrote. It reads only this
   device's saved drafts; a draft's trash button clears that draft and its
-  attached files without opening the conversation. The same drafts show where
-  you left them: a pencil at the right edge of a channel or DM's sidebar row
-  when it, or one of its threads, holds a draft (hidden while that conversation is
-  open), and **Draft** on a message's reply line, or **Draft reply** when no
-  one has replied yet (hidden while that thread is open).
+  attached files without opening the conversation. A thread draft also shows
+  where you left it: **Draft** on a message's reply line, or **Draft reply** when
+  no one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
@@ -555,6 +678,13 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
+- Open an agent’s **Memory** tab and expand a memory to read it with Markdown
+  formatting, including headings, lists, code, tables, and line breaks. Memory
+  images stay as text rather than loading remote content. **Copy full body** in
+  a memory’s context menu copies its original Markdown.
+  Buzz links use the app’s link labels and previews and open their destination
+  in the same community. Links inside code stay as text.
+
 - Buzz supports different agent types, including Claude, Codex, Goose, and Pi.
   A **harness** is the software that runs an agent; a **model** is the AI it
   uses. Available types and models depend on the platform, active plugins, and
@@ -563,6 +693,11 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
+- In communities where your build restricts workflows, workflow messages do
+  not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
+  have one act on a workflow result, send it a direct request explaining what
+  to do with that result. Other communities still let a workflow you or your
+  agents created mention your agents.
 - **Agents** is where people create and manage agents. For supported types,
   open an agent there and use **Identity → Instructions**. Opening its avatar or
   name in a conversation shows its profile, where **Settings → Instructions**
@@ -582,6 +717,9 @@ available rather than silently discarding it.
   then choose a supported **Thinking** level. If Builderlab recommends a model
   and thinking level, both start selected; change either to choose your own. Both
   choices are required; changing the model clears the thinking choice.
+  A bolt after a model's name means Builderlab serves it on faster hardware, so
+  it replies sooner. When only some models are fast, the menu also lists them
+  in a **Fast** section at the top, above the families.
   Instructions are optional. **Create agent** stays disabled until its name and
   required choices are complete; Builderlab also waits for sign-in and its model
   catalog.
@@ -626,7 +764,9 @@ available rather than silently discarding it.
   where it runs; received tool details take precedence.
   Available model, effort and session controls keep their gauge beside Send.
   Activity keeps its transcript and feed guidance without a separate workspace
-  note.
+  note. Opened from a conversation, it shows that conversation's turns;
+  **Show all conversations** lists the agent's other turns too. It shows only
+  turns captured while Buzz has been open.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -662,7 +802,7 @@ available rather than silently discarding it.
   does not prove an agent is ready or running. **Remove as bestie** in the
   Bestie's card menu asks, then saves no Bestie to the account. On desktop it
   works on every device, including one where the agent doesn't run.
-- With the **Bestie** plugin on, open **Create an agent** in the left Apps dock
+- With the **Bestie** plugin on, open **Create an agent** in the left navigation
   when you haven’t chosen a Bestie. You can create one or choose an existing agent.
   The placeholder cycles through character avatars; reduced motion keeps it still.
   If you have no eligible agents in this community, **Create your first agent**
@@ -673,9 +813,8 @@ available rather than silently discarding it.
   After creating your first agent here, the pinned DM shows a local welcome on
   this device. It is not a sent message and does not start an agent response;
   send a message when you’re ready to begin.
-  Choosing a known remote
-
-  agent, including one created through Builderlab, asks for confirmation:
+  Choosing a known remote agent, including one created through Builderlab, asks
+  for confirmation:
   “Some bestie features aren’t available with remote agents.” Cancel leaves the
   Bestie choice unchanged; it does not delete a newly created agent. A hosted
   Bestie whose provider holds its instructions (Builderlab does) shows a
@@ -686,14 +825,47 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
-  On macOS, Claude security reviews need their own sign-in: run
-  `claude setup-token` in Terminal and paste its token under **Sign in for
-  reviews** in Claude's **Edit configuration**. Until it is saved, Claude
-  reviews fail closed. It needs a Claude subscription and lasts a year.
+  Builderlab permissions are re-read at most once a minute while the app uses
+  them, so a newly granted or removed permission applies without signing in
+  again; a failed check keeps the previous permissions.
+  Claude runs with an Anthropic API key pasted under **Anthropic API key**
+  there, once for every Claude agent. When creating a Claude agent or editing
+  one that runs on this computer, click **Add key** beside **Harness** to open
+  **Set up Claude**. Builds with interactive authentication show **Sign in**
+  instead. Selecting Claude does not open setup automatically; closing setup
+  keeps Claude selected. An interactive sign-in continues if you navigate Back;
+  returning to creation restores its pending controls with **Cancel**, without
+  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
+  **Model**, **Thinking**, and agent creation wait until credentials are saved.
+  Agents on execution targets use that target's credentials, not a key on this
+  computer. Buzz keeps the API key in the system's secure credential store
+  (Keychain on macOS) and
+  gives it to every Claude process, security reviews included. Commands a
+  Claude agent runs inherit it, so they can read the key. Until a key is
+  saved, Claude agents don't answer and Claude reviews fail closed.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace; once signed in elsewhere, use Codex's **Sign in again**. API key
   and keyring sign-ins can't run them.
+- **Settings → Agent details** says where an agent's configuration lives:
+  **Synced in** its community, or **Only on this Mac** with why (the relay
+  doesn't sync agent settings, or the first copy failed and Buzz will try
+  again). Hosted agents show no line. Editing a team shows the same line for
+  the team. Teams made before teams synced move to their agents' community
+  automatically once it syncs teams; a team whose agents are in different
+  communities stays on this Mac.
+- Each Claude agent running on this computer keeps its own `claude` process for
+  each active conversation. While an unprotected one runs here, Buzz also keeps
+  one shared process ready for the next new conversation. Each of these starts
+  its own copies of the local MCP servers in your Claude Code configuration, so
+  memory use grows with active conversations times those servers. A
+  conversation's process stops after 15 minutes with no message, turn or
+  background work. Protected agents load none of your MCP servers and don't use
+  the shared process. To lower the cost, remove servers agents don't need, or
+  move heavy servers from user scope to local or project scope in the folders
+  where you use them. Agents work in their **Workspace** folder (`~/.buzz` by
+  default), so keep those servers out of that folder, the folders above it,
+  and any Git repository it is in.
 - **Settings → Agent details → Previous versions** expands saved revisions for
   agents whose configuration syncs here. Settings and instructions appear together
   in one feed, newest first, with a label on each version. Versions are kept
@@ -703,20 +875,33 @@ available rather than silently discarding it.
   the feed; the dialog identifies it in words and offers no restore action.
   **Load older** fetches more history. Reverting one track saves
   a new revision without changing the other track.
+- **Agents → Your teams → Previous versions**, in a team's editor, lists the
+  saved versions of a team that syncs to a community, the same way. Reverting
+  restores its instructions and keeps its current name; members are not
+  versioned. Teams kept only on this Mac have no versions.
+- Your agents can read your agents and teams here (`agent_read`,
+  `team_read`) and propose a team's new name or instructions
+  (`team_update`). A proposal opens a review: nothing changes until you save
+  it, members never change this way, and Save is refused if the team changed
+  since the proposal.
 - **Activity**, where the agent type provides it, shows sessions and their
-  transcripts in the agent's profile. A turn's **Thread** or **Channel** label
+  transcripts in the agent's profile. An open transcript updates by itself
+  while the agent works; **Refresh transcript** stays at the top as you scroll.
+  A turn's **Thread** or **Channel** label
   opens that conversation. Choosing an agent in the activity under a message,
   or a Working now agent whose conversation is known, opens that
   conversation's transcript. Working indicators describe current work,
   not a guarantee that an agent is available or that a message was delivered.
   Expand grouped work updates to read each message; the collapsed excerpt names
   its speaker. Thread work appears inside its thread; the channel’s reply summary
-  still shows when an agent is working there. Dots remain at the end of the
-  conversation while agents work, alongside current step details when available.
-  With Reduce Motion enabled, the dots stay still. Open the live indicator or
-  expand recorded work to view the agent’s activity or **Stop** the running
-  request. The live indicator keeps its controls while recorded updates are
-  visible. Stop availability depends on the agent type.
+  still shows when an agent is working there. While the activity under your
+  message shows an agent working, it is that agent's only working indicator.
+  Otherwise dots remain at the end of the conversation while agents work,
+  alongside current step details when available. With Reduce Motion enabled,
+  the dots stay still. Open the live indicator or expand recorded work to view
+  the agent’s activity or **Stop** the running request. The live indicator
+  keeps its controls while recorded updates are visible. Stop availability
+  depends on the agent type.
 - Agent-to-agent messages stay in the conversation as collapsed history after
   work finishes or you reopen a thread. Expand them to read dispatches, handoffs,
   and results. The working indicator shows current activity separately.
@@ -730,17 +915,25 @@ available rather than silently discarding it.
   sessions**, which searches goose's local history and can take a while. Watch
   and timer turns from before this version aren't listed, and **Search older
   sessions** doesn't find them, because it only matches channel conversations.
-- Failed requests show **Couldn’t finish**, cancelled requests **Stopped**, and
-  unconfirmed outcomes **Status unavailable**. Choose **Details** for status
-  information. For your remote agents, Buzz checks again automatically when no
-  final result is available yet, or after a temporary lookup failure, while you
-  stay signed in and connected. Requests sent to several agents keep each
-  agent's stopped outcome visible alongside another agent's failure.
-- Automatic failure replies appear below their request as a compact status line;
-  **Details** expands the explanation inline. Failures of channel requests also
-  appear in the channel.
-- For agents running on this device, **Details** can offer **Retry** to ask again
-  and **Dismiss** to hide the failure.
+- Confirmed failures keep **Couldn’t finish** visible after the working indicator
+  stops, even when the agent sends no reply. Cancelled requests show **Stopped**.
+  There is no viewing timer. Outcomes supplied only by live activity may be lost
+  after restarting Buzz; signed failure messages remain in conversation history.
+  An uncertain status does not create an error balloon.
+  Expand the summary to read the explanation and recorded updates, view Activity,
+  or use supported recovery actions. The expanded outcome sits below **Collapse**;
+  collapsing keeps the outcome visible.
+  For your remote agents, Buzz checks again automatically when no final result is
+  available yet, or after a temporary lookup failure, while you stay signed in
+  and connected. Requests sent to several agents keep each agent's outcome visible.
+- Automatic failure explanations share the related activity history when linked
+  to the same request. Otherwise they have their own expandable outcome bubble.
+  Ordinary replies and partial results remain visible. Failures of channel
+  requests also appear in the channel.
+- For agents running on this device, expanded outcomes can offer **Retry** to ask
+  again and **Dismiss** to hide the outcome for the current app session. Dismiss
+  does not delete a recorded failure message; it can show the outcome again after
+  restarting Buzz.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,
   vibe level, where new threads open, Solo follow-up behavior, automatic
@@ -748,7 +941,7 @@ available rather than silently discarding it.
   no switch to turn on. A change shows as not saved when it is active but
   could not be saved on this device.
 
-- Where a preview build enables it (bb-block), an agent running on this
+- In communities where your build enables it, an agent running on this
   device with a built-in harness can list your channels, including private and
   archived ones, DMs and Solo chats it is not in, and see a channel's details
   and members, read with your access. It cannot change anything this way, and
@@ -760,12 +953,14 @@ mention picker. Select a team to insert its members as individual mentions.
 Typing its name alone does not notify it. Empty teams, teams with more than 32
 members, and teams with unavailable members cannot be selected; edit the team or
 refresh the choices. Adding people to a channel still requires the normal send
-confirmation.
+confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Do not assume a particular optional plugin is on.
+  A page whose plugin is turned off says so, and its **Manage plugins** opens
+  that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
   remaining row in its section, or the section heading when none remains.
   A saved plugin sort can briefly wait for its plugin at startup, within the
@@ -786,13 +981,14 @@ confirmation.
   a notice again. Failed checks offer **Retry**. If the updated plugin cannot
   start, use **Retry activation** or its recovery menu to **Roll back**, when
   available. Checks, review, Later, and cancellation keep plugin work running.
-- **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
-  their previous state, including when no choice was saved. Enable or disable
-  them in **Manage plugins**; saved choices persist.
+- **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
+  local installs. Upgrades preserve their previous state, including Bestie off
+  when no choice was saved. Enable or disable them in **Manage plugins**; saved
+  choices persist. A deliberate plugin-settings reset uses the current defaults.
 - A plugin's details in Manage plugins link to the Settings sections that hold
   its settings: sections it adds, such as GitHub comment authors, and Decisions
   API for a decision provider, such as TypeSafe. Only sections the Settings
-  sidebar currently shows are linked.
+  sidebar currently shows are linked. Back from one returns to those details.
 - Some plugins let the person's other agents on this computer, such as Claude
   Code, Codex or Pi, use their tools while Buzz is open. Those agents run the
   helper Buzz installs, for example
@@ -844,7 +1040,7 @@ confirmation.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking
-  (**Instructions**), and whether Attention is active on this device. Use its Active/Paused menu to change that.
+  (**Instructions**). Attention is active for every agent while the Agent Attention plugin is on.
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
   Each interest has an Active/Paused menu. Pausing stops its triggers without changing
   individual watch settings. Running turns may finish; activating resumes enabled
@@ -856,8 +1052,11 @@ confirmation.
   resume, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
-  mention can still wake an agent when Attention is off; turning Attention on does not grant new access.
-  On macOS and Linux, watched commands stop when their Buzz process exits.
+  mention can still wake an agent when Attention is off; turning the plugin on does not grant new access.
+  An event watch hears the channels its agent may read, including public channels
+  the agent has not joined. A watch's delivery channel must be one the agent is
+  a member of; the relay decides where the agent may post. On macOS and Linux,
+  watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
 - **Shared compute** is off by default; enable it in Settings → Plugins, then
@@ -882,9 +1081,10 @@ confirmation.
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
 
-On macOS, debug builds can use a trusted local credential helper for human restore
-and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).
-Release builds ignore this optional helper.
+On macOS, `just desktop me` debug builds keep their Keychain items through a local
+credential helper, so Keychain asks once per item rather than after each rebuild.
+See [local credential helper](identity.md#local-credential-helper-on-macos).
+Release builds ignore it.
 
 ### Builderlab in development
 
@@ -901,7 +1101,7 @@ even when no session is connected. Full access requires new approval.
 
 ### Reconnecting an old agent in a DM
 
-On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open, if that agent is still a member of the channel. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
 
 ## Deleting an agent’s workflow
 

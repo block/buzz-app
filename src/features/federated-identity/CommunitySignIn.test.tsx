@@ -69,7 +69,7 @@ it.each(["binding-mismatch", "authorization-denied"])(
 );
 
 const memberships = [
-  { id: "wss://buzz.block.builderlab.xyz", name: "Block" },
+  { id: "wss://buzz.acme.builderlab.xyz", name: "Acme" },
   { id: "wss://will.communities.buzz.xyz", name: "will" },
   { id: "wss://kalvin.communities.buzz.xyz", name: "kalvin" },
 ];

@@ -417,16 +417,16 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "--affordance-reaction-self",
         variable: "--affordance-reaction-self",
-        pointsAt: "accent step 3",
-        use: "A reaction you made, on received bubbles and the panel, paired with --border-reaction-self.",
+        pointsAt: "surface-message-own at Buzzin’; accent-9 at Chillin’",
+        use: "A reaction you made, on received bubbles and the panel: your own bubble's fill, paired with text-reaction-self.",
         status: "core",
       },
       {
         token: "--affordance-reaction-self-own",
         variable: "--affordance-reaction-self-own",
         pointsAt:
-          "affordance-reaction-self; at Buzzin’, the accent's strong overlay on its fill",
-        use: "A reaction you made inside your own bubble, paired with --border-reaction-self-own.",
+          "surface-message at Buzzin’; neutral-1 at Chillin’ (neutral-7 in dark mode)",
+        use: "A reaction you made inside your own bubble: the received bubble's fill, paired with text-reaction-self-own.",
         status: "core",
       },
       {
@@ -675,6 +675,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "text-reaction-self",
+        variable: "--text-reaction-self",
+        pointsAt: "text-message-own at Buzzin’; accent ink at Chillin’",
+        use: "Count of a reaction you made on received bubbles and the panel, paired with bg-affordance-reaction-self.",
+        status: "core",
+      },
+      {
+        token: "text-reaction-self-own",
+        variable: "--text-reaction-self-own",
+        pointsAt: "text-standard",
+        use: "Count of a reaction you made inside your own bubble, paired with bg-affordance-reaction-self-own.",
+        status: "core",
+      },
+      {
         token: "text-mention",
         variable: "--text-mention",
         pointsAt: "text-standard",
@@ -909,20 +923,6 @@ export const ROLE_GROUPS: RoleGroup[] = [
         use: "An identity accent boundary.",
         status: "core",
       },
-      {
-        token: "border-reaction-self",
-        variable: "--border-reaction-self",
-        pointsAt: "accent-link",
-        use: "Ring around a reaction you made, on received bubbles and the panel. It clears 3:1 on the tint and its host.",
-        status: "core",
-      },
-      {
-        token: "border-reaction-self-own",
-        variable: "--border-reaction-self-own",
-        pointsAt: "border-reaction-self; at Buzzin’, text-message-own",
-        use: "Ring around a reaction you made inside your own bubble, where the accent ring would vanish at Buzzin’.",
-        status: "core",
-      },
     ],
   },
   {
@@ -1127,21 +1127,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "bg-affordance-floating-control",
         variable: "--affordance-floating-control",
-        pointsAt: "affordance-subtle light / neutral-6 dark",
+        pointsAt: "neutral-3 light / neutral-6 dark",
         use: "Secondary action at rest on floating surfaces.",
         status: "proposed",
       },
       {
         token: "bg-affordance-floating-control-hover",
         variable: "--affordance-floating-control-hover",
-        pointsAt: "affordance-subtle-hover light / neutral-7 dark",
+        pointsAt: "neutral-4 light / neutral-7 dark",
         use: "Secondary action hover on floating surfaces; pair with standard text.",
         status: "proposed",
       },
       {
         token: "bg-affordance-floating-control-pressed",
         variable: "--affordance-floating-control-pressed",
-        pointsAt: "affordance-subtle-pressed light / neutral-8 dark",
+        pointsAt: "neutral-5 light / neutral-8 dark",
         use: "Pressed action on floating surfaces; pair with standard text.",
         status: "proposed",
       },
@@ -1772,10 +1772,6 @@ export const TYPE_FAMILIES = [
     use: "Code, keys and identifiers, set in the xsmall detail role at 12/16.",
   },
 ];
-
-/** Source for the primitive ladder and resolved roles displayed below. */
-export const TYPE_SOURCE =
-  "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json";
 
 /** Active size primitives, with xsmall sharing the 12px step. */
 export const TYPE_RAMPS = [

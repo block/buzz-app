@@ -95,6 +95,7 @@ export function ProfileFields({
         <Input
           ref={nameRef}
           autoComplete="nickname"
+          spellCheck={false}
           autoFocus={autoFocus}
           required
           disabled={disabled}

@@ -382,6 +382,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["field", "radio-group"],
   },
   {
+    slug: "count-badge",
+    name: "CountBadge",
+    purpose:
+      "Show a quiet item count, such as drafts, at the end of a navigation row.",
+    behavior:
+      "Image role with an exact spoken count; caps the visible number at 99+. Not interactive.",
+    variants: ["single digit", "multiple digits", "capped", "selected row"],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Messages",
+    source: "shared/design-system/ui/CountBadge.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "keyboard-shortcut",
     name: "KeyboardShortcut",
     purpose:
@@ -791,8 +806,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "NavigationSection",
     purpose: "A named group of related rows in a dense workspace navigator.",
     behavior:
-      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm.",
-    variants: ["default", "headingless", "inside SidebarNavigation"],
+      "Semantic native section, composed inside SidebarNavigation for shared compact heading and grouping rhythm. NavigationSectionHeading is its one heading row: the label fills, actions hug, and neither overlays nor reserves space for the other.",
+    variants: [
+      "default",
+      "headingless",
+      "inside SidebarNavigation",
+      "disclosure heading",
+      "revealed actions",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

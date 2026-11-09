@@ -394,6 +394,12 @@ export function RecipientPicker({
     setQuery("");
     onTyped(false);
     focus();
+    // The pick that fills a one-person To closes the list rather than show
+    // the limit it just reached: the dialog's purpose and "1 person selected"
+    // already say it is full. A multi-person field's count ("8 people
+    // selected") doesn't state the maximum, so it keeps showing the limit.
+    if (maxRecipients === 1 && selection.current.length >= maxRecipients)
+      setOpen(false);
   }
   function remove(pubkey: string, point?: { x: number; y: number }) {
     if (
@@ -473,7 +479,8 @@ export function RecipientPicker({
           className={styles.toField}
           onClick={focus}
           onKeyDown={(event) => {
-            if (event.key === "Escape") {
+            // Escape closes an open list; otherwise it is the host's.
+            if (event.key === "Escape" && open && !disabled) {
               event.stopPropagation();
               setOpen(false);
             }
@@ -563,9 +570,11 @@ export function RecipientPicker({
                 const last = selected.at(-1);
                 if (last) remove(last.pubkey);
               } else if (event.key === "Escape") {
-                event.preventDefault();
-                event.stopPropagation();
-                setOpen(false);
+                if (open && !disabled) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setOpen(false);
+                }
               } else if (
                 event.key === "Tab" &&
                 !event.shiftKey &&
@@ -634,10 +643,14 @@ export function RecipientPicker({
               finalFocus={false}
               className={styles.picker}
             >
+              {/* Shown whenever a full field's list is open: right after the
+                  eighth pick in New message, and when a full one-person
+                  field is used again. The one-person text explains the
+                  limit rather than asking for a choice already made. */}
               {atLimit ? (
                 <p role="status">
                   {maxRecipients === 1
-                    ? "Choose one person."
+                    ? "One person at a time. Remove them to choose someone else."
                     : `You can message up to ${maxRecipients} people at once.`}
                 </p>
               ) : (

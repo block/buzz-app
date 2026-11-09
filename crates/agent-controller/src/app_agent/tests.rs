@@ -406,7 +406,8 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
     let key = agent.read_key(&credentials).unwrap();
     let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
     for kind in [
-        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100, 41010,
+        5, 7, 9, 9000, 9001, 9002, 9007, 9008, 9021, 9022, 20002, 30023, 30617, 40003, 40100,
+        41010, 45010,
     ] {
         let tags = vec![
             vec!["auth".to_owned(), "forged".to_owned()],
@@ -417,9 +418,13 @@ fn signs_only_bounded_kinds_with_the_saved_attestation() {
         assert_eq!(event["kind"], kind);
         assert_eq!(event["pubkey"], agent.pubkey);
         let mut tags: Vec<Vec<String>> = serde_json::from_value(event["tags"].clone()).unwrap();
-        let ms = tags.remove(tags.iter().position(|tag| tag[0] == "ms").unwrap());
-        assert_eq!(ms[0], "ms");
-        assert!(ms[1].parse::<u16>().unwrap() < 1000);
+        if kind == 45010 {
+            assert!(!tags.iter().any(|tag| tag[0] == "ms"));
+        } else {
+            let ms = tags.remove(tags.iter().position(|tag| tag[0] == "ms").unwrap());
+            assert_eq!(ms[0], "ms");
+            assert!(ms[1].parse::<u16>().unwrap() < 1000);
+        }
         assert_eq!(
             tags,
             [
@@ -533,6 +538,35 @@ fn signs_artifact_revisions_without_a_timeline_ms_tag() {
     let mut expected = envelope;
     expected.push(saved);
     assert_eq!(tags, expected);
+    assert_eq!(event["content"], "");
+    let signed: nostr::event::Event = serde_json::from_value(event).unwrap();
+    signed.verify().unwrap();
+}
+
+#[test]
+fn signs_audio_auth_for_only_the_challenge_in_its_own_community() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (_, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    let saved: Vec<String> = serde_json::from_str(&agent.auth).unwrap();
+    let auth = agent.audio_auth(&key, "relay-challenge").unwrap();
+    assert_eq!(auth["kind"], 22242);
+    assert_eq!(auth["pubkey"], agent.pubkey);
+    assert_eq!(auth["content"], "");
+    let tags: Vec<Vec<String>> = serde_json::from_value(auth["tags"].clone()).unwrap();
+    assert_eq!(
+        tags,
+        [
+            vec!["relay".to_owned(), RELAY.to_owned()],
+            vec!["challenge".to_owned(), "relay-challenge".to_owned()],
+            saved
+        ]
+    );
+    assert!(agent.audio_auth(&key, "").is_err());
+    assert!(agent.audio_auth(&key, &"c".repeat(4097)).is_err());
+    let other = Secret::generate().unwrap();
+    assert!(agent.audio_auth(&other, "relay-challenge").is_err());
 }
 
 #[test]

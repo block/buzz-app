@@ -142,10 +142,16 @@ it("adds plugin tabs to each agent shown unless their `when` says otherwise, alo
     pluginId: "buzz.example",
     revision: "1",
     title: id,
-    component: ({ agent }: { agent: Agent }) => (
-      <p>
+    component: ({
+      agent,
+      open,
+    }: {
+      agent: Agent;
+      open?: ((target: string) => boolean) | undefined;
+    }) => (
+      <button type="button" onClick={() => open?.(`nostr:${id}`)}>
         {id} {agent.name}
-      </p>
+      </button>
     ),
     ...(when && { when }),
   });
@@ -184,12 +190,21 @@ it("adds plugin tabs to each agent shown unless their `when` says otherwise, alo
     "agent:memory",
   ]);
   expect(values("elsewhere")).toEqual([]);
+  // A plugin's tab opens links, such as profiles, where it is shown.
+  const opened: string[] = [];
   render(
-    agentSections({ agents, agent, type: undefined, memories: undefined })
+    agentSections({
+      agents,
+      agent,
+      type: undefined,
+      memories: undefined,
+      openLink: (target) => opened.push(target) > 0,
+    })
       .find((tab) => tab.value === "agent:added:buzz.example/every")
       ?.render(),
   );
-  expect(screen.getByText("every Ada")).toBeInTheDocument();
+  screen.getByText("every Ada").click();
+  expect(opened).toEqual(["nostr:every"]);
 });
 
 it("adds a plugin tab only to the agents its `when` accepts", () => {

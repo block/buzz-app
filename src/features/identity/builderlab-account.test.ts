@@ -935,6 +935,88 @@ describe("bind", () => {
       );
     },
   );
+
+  describe("bindLegacy", () => {
+    const legacy = [
+      "identity_sign_builderlab_binding",
+      { challenge, legacy: true },
+    ];
+
+    it("signs with old Buzz's key, verifies it and resolves to the key bound", async () => {
+      vi.mocked(invoke).mockResolvedValue(event);
+      const { request, sent } = kgoose(
+        unbound,
+        answer(200, challenge),
+        bound(pubkey),
+      );
+      const account = forwardedAccount(credential, request, untouched);
+      expect(await account.bindLegacy()).toBe(pubkey);
+      expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
+        "current",
+        "challenge",
+        "verify",
+      ]);
+      expect(vi.mocked(invoke).mock.calls).toEqual([legacy]);
+    });
+
+    it("sends no verify when the account already holds old Buzz's key", async () => {
+      vi.mocked(invoke).mockResolvedValue(event);
+      const { request, sent } = kgoose(bound(pubkey), answer(200, challenge));
+      const account = forwardedAccount(credential, request, untouched);
+      expect(await account.bindLegacy()).toBe(pubkey);
+      expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
+        "current",
+        "challenge",
+      ]);
+    });
+
+    it("resolves null when kgoose refuses old Buzz's key as another account's", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(invoke).mockResolvedValue(event);
+      const { request } = kgoose(
+        unbound,
+        answer(200, challenge),
+        refusal(409, "pubkey_already_bound"),
+      );
+      const account = forwardedAccount(credential, request, untouched);
+      expect(await account.bindLegacy()).toBeNull();
+    });
+
+    it("resolves null when native can't read old Buzz's key, sending no verify", async () => {
+      vi.mocked(invoke).mockResolvedValue(null);
+      const { request, sent } = kgoose(unbound, answer(200, challenge));
+      const account = forwardedAccount(credential, request, untouched);
+      expect(await account.bindLegacy()).toBeNull();
+      expect(sent).toHaveLength(2);
+    });
+
+    it("fails when native refuses to sign, such as an expired challenge, sending no verify", async () => {
+      vi.mocked(invoke).mockRejectedValue("Invalid Nostr identity challenge");
+      const { request, sent } = kgoose(unbound, answer(200, challenge));
+      const account = forwardedAccount(credential, request, untouched);
+      await expect(account.bindLegacy()).rejects.toThrow(
+        "Invalid Nostr identity challenge",
+      );
+      expect(sent).toHaveLength(2);
+    });
+
+    it.each([
+      [
+        "an account bound to another key",
+        [answer(200, challenge), refusal(409, "identity_already_bound")],
+      ],
+      ["a challenge outage", [answer(502, "<html>bad gateway</html>")]],
+    ])(
+      "fails on %s rather than giving up the old key",
+      async (_label, replies) => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.mocked(invoke).mockResolvedValue(event);
+        const { request } = kgoose(unbound, ...replies);
+        const account = forwardedAccount(credential, request, untouched);
+        await expect(account.bindLegacy()).rejects.toBeInstanceOf(Error);
+      },
+    );
+  });
 });
 
 describe("unbind", () => {

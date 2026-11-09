@@ -207,22 +207,33 @@ it.each(["sign-out", "new-login", "cancel", "dispose"])(
   async (action) => {
     const h = await fixture();
     const held = deferred<HostResponse>();
-    vi.mocked(h.host.request).mockReturnValue(held.promise);
+    const started = deferred<void>();
+    vi.mocked(h.host.request).mockImplementation(() => {
+      started.resolve();
+      return held.promise;
+    });
     const controller = new AbortController();
     const pending = h.client.list(controller.signal);
-    if (action === "cancel") controller.abort();
-    else if (action === "dispose") h.session.dispose();
-    else {
-      h.session.signOut();
-      if (action === "new-login") await h.session.signIn();
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    await started.promise;
+    try {
+      if (action === "cancel") controller.abort();
+      else if (action === "dispose") h.session.dispose();
+      else {
+        h.session.signOut();
+        if (action === "new-login") await h.session.signIn();
+      }
+    } finally {
+      held.resolve(
+        response(
+          { status: 1, agents: [row] },
+          action === "new-login" ? 401 : 200,
+        ),
+      );
     }
-    held.resolve(
-      response(
-        { status: 1, agents: [row] },
-        action === "new-login" ? 401 : 200,
-      ),
-    );
-    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    await rejected;
     if (action === "new-login")
       expect(h.session.snapshot().status).toBe("signed-in");
   },
@@ -256,6 +267,12 @@ it("loads the standalone catalog with model-specific effort identifiers", async 
           display_name: "Friendly Model",
           supported_reasoning_efforts: ["none", "max"],
         },
+        {
+          id: "model-two",
+          display_name: "Fast Model",
+          supported_reasoning_efforts: ["low"],
+          fast: true,
+        },
       ],
     }),
   );
@@ -265,6 +282,13 @@ it("loads the standalone catalog with model-specific effort identifiers", async 
         id: "model-one",
         displayName: "Friendly Model",
         supportedReasoningEfforts: ["none", "max"],
+        fast: false,
+      },
+      {
+        id: "model-two",
+        displayName: "Fast Model",
+        supportedReasoningEfforts: ["low"],
+        fast: true,
       },
     ],
   });

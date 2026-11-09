@@ -389,6 +389,8 @@ enum Stream {
 /// Starts the declared process `process_id` with `args` after its declared
 /// arguments. `env` adds variables (`null` removes one) to the app's own
 /// environment, less any Buzz identity: an agent's key never leaves the app.
+/// `secrets` names native-held secrets set after `env`, each only for the
+/// processes it belongs to; a secret that is not saved is left unset.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
@@ -406,6 +408,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     protection: Option<ProcessProtection>,
     agent_credential: Option<bool>,
     protected_agent: Option<ProtectedAgent>,
+    secrets: Option<Vec<String>>,
 ) -> Result<u64, String> {
     // Any plugin process with either ID conservatively blocks managed deletion
     // app-wide, regardless of program/path. Attachment adapters use these IDs.
@@ -528,6 +531,16 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             {
                 command.env_remove(name);
             }
+        }
+    }
+    for secret in secrets.unwrap_or_default() {
+        if secret != crate::claude_key::SECRET
+            || !crate::claude_key::may_have(&plugin, &declared.id)
+        {
+            return Err("That secret is not available to this process".into());
+        }
+        if let Some(key) = app.state::<crate::claude_key::ClaudeKey>().key().await? {
+            command.env(crate::claude_key::ENV, &*key);
         }
     }
     if let Some(mcp) = mcp {

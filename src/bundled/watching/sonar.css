@@ -133,14 +133,6 @@
     transform: translateY(0) scale(1);
   }
 }
-.attention-sonar[data-paused]
-  :is(.attention-sonar-sweep, .attention-sonar-dot, .attention-sonar-hint) {
-  animation-play-state: paused;
-}
-.attention-sonar[data-paused] .attention-sonar-sweep {
-  opacity: 0;
-  scale: 0;
-}
 @media (prefers-reduced-motion: reduce) {
   .attention-sonar-sweep {
     animation: none;
@@ -160,9 +152,6 @@
   display: block;
   inline-size: var(--sonar-avatar-size);
   block-size: var(--sonar-avatar-size);
-}
-.attention-sonar[data-paused] .attention-sonar-signal {
-  visibility: hidden;
 }
 @media (prefers-reduced-motion: reduce) {
   .attention-sonar-sweep {

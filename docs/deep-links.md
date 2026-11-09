@@ -21,6 +21,7 @@ after this list:
 - `buzz://mcp-authorize?version=1&client=<name>&callback=<loopback-url>&state=<state>&scope=<scopes>&code_challenge=<challenge>&code_challenge_method=S256`
 - `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
 - `buzz://plugin-install?repository=<encoded-https-or-ssh-url>[&ref=<encoded-branch-or-tag>][&path=<encoded-folder>][&commit=<40-or-64-hex>]`
+- `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-artifact-url>&sha256=<64-hex>`
 - `buzz://channel/<id>`
 - `buzz://channel/<id>/<event>` (the original desktop message alias)
 - `buzz://repo?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
@@ -31,6 +32,7 @@ after this list:
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
 - `buzz://plugin?id=<plugin id>[&page=<page id>][&route.<key>=<value>...]`
 - `buzz://agent/new?card=<id>`
+- `buzz://settings[?section=<section>][&provider=<agent type>]`, such as `buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code`, which opens Claude's setup in Agent setup. `provider` needs `section=agents`. Like the Settings target it becomes, it only presents Settings and has no community scope.
 
 Two more links work only at the OS boundary. Neither names a destination, and
 neither is a Buzz link form, so messages and Notes show them as plain text.

@@ -385,6 +385,193 @@ describe("GooseProcess", () => {
     },
   );
 
+  it("ends the turn once goose reports a final send's result", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const settled = session.send("hello");
+    await flush();
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi", final: true },
+      _meta: { "agent-tool-call-request-id": "t1" },
+    });
+    await expect(settled).resolves.toEqual({ ok: true, answered: true });
+    // Cancelled before goose has the result, the send would be saved as
+    // interrupted.
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "in_progress",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([]);
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    await session.idle();
+    expect(session.working).toBe(false);
+    // The next turn is not cancelled by its own results.
+    const next = session.send("again");
+    await flush();
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t2",
+      status: "completed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    process.turns[1]?.finish();
+    await expect(next).resolves.toEqual({ ok: true });
+  });
+
+  it("runs a message that arrives as a final send ends its turn as the next turn", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const first = session.send("one");
+    await flush();
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi", final: true },
+      _meta: { "agent-tool-call-request-id": "t1" },
+    });
+    await expect(first).resolves.toEqual({ ok: true, answered: true });
+    const second = session.send("two");
+    await flush();
+    expect(process.turns[0]?.steered).toEqual([]);
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    expect(process.turns.map((turn) => turn.text)).toEqual(["one", "two"]);
+    process.turns[1]?.finish();
+    await expect(second).resolves.toEqual({ ok: true });
+  });
+
+  it("queues a message sent while a final send's cancel is ending the turn", async () => {
+    const { goose, process, release } = await slow("session/cancel");
+    process.hold = true;
+    const session = await goose.open({
+      cwd: "/work",
+      systemPrompt: "",
+      tools: ok,
+    });
+    const first = session.send("one");
+    await flush();
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi", final: true },
+      _meta: { "agent-tool-call-request-id": "t1" },
+    });
+    await expect(first).resolves.toEqual({ ok: true, answered: true });
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+    });
+    await flush();
+    // The cancel is on its way, and goose has not ended the turn yet.
+    const second = session.send("two");
+    await flush();
+    expect(process.turns[0]?.steered).toEqual([]);
+    release();
+    await vi.waitFor(() =>
+      expect(process.turns.map((turn) => turn.text)).toEqual(["one", "two"]),
+    );
+    process.turns[1]?.finish();
+    await expect(second).resolves.toEqual({ ok: true });
+  });
+
+  it("ends the turn on its final send's result, not another call's", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const settled = session.send("hello");
+    await flush();
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi", final: true },
+      _meta: { "agent-tool-call-request-id": "t2" },
+    });
+    await expect(settled).resolves.toEqual({ ok: true, answered: true });
+    // An earlier call's result, reported late.
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([]);
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t2",
+      status: "failed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([session.id]);
+    await session.idle();
+    expect(session.working).toBe(false);
+  });
+
+  it("lets a turn end on its own after a final send goose did not name", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const settled = session.send("hello");
+    await flush();
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi", final: true },
+    });
+    await expect(settled).resolves.toEqual({ ok: true, answered: true });
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([]);
+    process.turns[0]?.finish();
+    await session.idle();
+    expect(session.working).toBe(false);
+  });
+
+  it("keeps the turn going after a final send while another message waits", async () => {
+    const { open, process } = await start();
+    process.hold = true;
+    const session = await open();
+    const first = session.send("one");
+    await flush();
+    const second = session.send("two");
+    await flush();
+    expect(process.turns[0]?.steered).toEqual(["two"]);
+    await process.mcp(session.id, "tools/call", {
+      name: "send",
+      arguments: { content: "hi", final: true },
+      _meta: { "agent-tool-call-request-id": "t1" },
+    });
+    process.update(session.id, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "t1",
+      status: "completed",
+    });
+    await flush();
+    expect(process.cancelled).toEqual([]);
+    process.turns[0]?.finish();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { ok: true },
+      { ok: true, answered: true },
+    ]);
+  });
+
   it("steers a message that arrives mid-turn into it", async () => {
     const { open, process } = await start();
     process.hold = true;

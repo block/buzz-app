@@ -22,6 +22,7 @@ import { agentAvatars } from "../../features/agents/avatar-packs";
 import type {
   Agent,
   AgentCreateProps,
+  AgentCreationRequest,
   Agents,
   NewAgent,
   RegisteredAgentType,
@@ -167,6 +168,7 @@ function setup(
   types: readonly RegisteredAgentType[],
   create: (input: NewAgent) => Promise<Agent> = async () => made,
   community?: string,
+  request?: AgentCreationRequest,
 ) {
   const agents = { create: vi.fn(create) } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
@@ -180,6 +182,7 @@ function setup(
       community={community}
       onCreated={onCreated}
       onClose={onClose}
+      {...(request && { request })}
     />,
   );
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
@@ -474,7 +477,7 @@ it("previews an upload in place with progress and cancel, keeping Name editable"
   });
   expect(
     await within(dialog).findByRole("img", { name: "Uploading avatar" }),
-  ).toBeInTheDocument();
+  ).toHaveAttribute("data-avatar-shape", "squircle");
   expect(URL.createObjectURL).toHaveBeenCalledWith(file);
   const ring = within(dialog).getByRole("progressbar", {
     name: "Uploading image",
@@ -1062,11 +1065,12 @@ it("previews an emoji without uploading until Continue and retries a failed remo
   const intro = await screen.findByRole("dialog", {
     name: "Meet your remote agent",
   });
-  expect(
-    within(intro)
-      .getByRole("img", { name: "Nova’s avatar" })
-      .querySelector("canvas"),
-  ).not.toBeNull();
+  const portrait = within(intro).getByRole("img", { name: "Nova’s avatar" });
+  expect(portrait.querySelector("canvas")).not.toBeNull();
+  expect(portrait.firstElementChild).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
   expect(emojiAvatar).not.toHaveBeenCalled();
   expect(uploadAvatar).not.toHaveBeenCalled();
   await user.click(within(intro).getByRole("button", { name: "Let’s go" }));
@@ -1290,6 +1294,20 @@ it("saves the create-time Thinking choice in the initial agent config", async ()
   );
 });
 
+it("leaves Thinking to its own row instead of the model field", async () => {
+  const shown: unknown[] = [];
+  const type = {
+    ...withThinking(notes),
+    CreateModel: (props: AgentCreateProps) => {
+      shown.push(props.showEffort);
+      return <span>Model field</span>;
+    },
+  } as RegisteredAgentType;
+  const { dialog } = setup([type]);
+  expect(within(dialog).getByText("Model field")).toBeInTheDocument();
+  expect(shown.at(-1)).toBe(false);
+});
+
 it("restores inherited Thinking when Default is chosen before creation", async () => {
   const { agents, dialog, user } = setup([withThinking(notes)]);
   const thinking = within(dialog).getByRole("combobox", { name: "Thinking" });
@@ -1387,6 +1405,51 @@ it("keeps typed instructions when choosing a harness or model", async () => {
     expect.objectContaining({
       type: "test/other",
       config: { notes: "start", instructions: "Keep this.", model: "deep" },
+    }),
+  );
+});
+
+it("keeps requested instructions the owner cleared when choosing a harness", async () => {
+  // Both carry instructions as the bundled harnesses do, omitting blank ones.
+  const carrying = (key: string, title: string): RegisteredAgentType => ({
+    ...notes,
+    key,
+    title,
+    carry: (config) => {
+      const { instructions } = config as Notes;
+      return instructions.trim() ? { instructions } : {};
+    },
+    adopt: (carry, config) => ({
+      ...(config as Notes),
+      instructions: carry.instructions ?? (config as Notes).instructions,
+    }),
+  });
+  const { agents, dialog, user } = setup(
+    [carrying("test/notes", "Notes"), carrying("test/other", "Other")],
+    undefined,
+    undefined,
+    {
+      id: "draft",
+      requester: "a".repeat(64),
+      requesterName: "Parent",
+      owner: "b".repeat(64),
+      community: "https://relay.example",
+      type: "test/notes",
+      name: "Nova",
+      instructions: "Review PRs.",
+    },
+  );
+  const instructions = within(dialog).getByLabelText("Instructions");
+  expect(instructions).toHaveValue("Review PRs.");
+  await user.clear(instructions);
+  await user.click(within(dialog).getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Other" }));
+  expect(within(dialog).getByLabelText("Instructions")).toHaveValue("");
+  await user.click(createButton());
+  expect(agents.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "test/other",
+      config: { notes: "start", instructions: "" },
     }),
   );
 });

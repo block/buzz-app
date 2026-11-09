@@ -956,9 +956,10 @@ test("Settings loads and publishes the selected community profile", async ({
     exact: true,
   });
   await picture.fill("http://example.com/avatar.png");
-  await expect(
-    avatarEditor.getByRole("button", { name: "Done", exact: true }),
-  ).toBeDisabled();
+  // Done reveals the URL error instead of applying it.
+  await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(picture).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await expect(avatarEditor).toBeVisible();
   await picture.fill("");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(avatarEditor).toBeHidden();
@@ -1101,9 +1102,10 @@ test("discarding community setup leaves the published profile unchanged", async 
     exact: true,
   });
   await picture.fill("http://example.com/avatar.png");
-  await expect(
-    avatarEditor.getByRole("button", { name: "Done", exact: true }),
-  ).toBeDisabled();
+  // Done reveals the URL error instead of applying it.
+  await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(picture).toHaveAccessibleDescription(/Use an HTTPS image URL/);
+  await expect(avatarEditor).toBeVisible();
   await picture.fill("https://example.com/avatar.png");
   await avatarEditor.getByRole("button", { name: "Done", exact: true }).click();
   await expect(button(page, "Publish profile & open")).toBeEnabled();

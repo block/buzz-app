@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 let server;
 let directory;
@@ -92,11 +93,7 @@ test("identity menus preserve modal focus and addition returns focus only to its
       name: /Open profile for Morgan/,
     });
     if (!moved) {
-      await dialog.evaluate(async (element) => {
-        await Promise.all(
-          element.getAnimations({ subtree: true }).map((a) => a.finished),
-        );
-      });
+      await animationsSettled(dialog, { subtree: true });
       await expect(add).not.toBeFocused();
       const before = await add.boundingBox();
       await identity.hover({ position: { x: 20, y: 20 } });
@@ -245,11 +242,7 @@ test("multiword candidate Add actions stay clickable", async ({ page }) => {
         name: new RegExp(`Add ${name} `),
       });
       await expect(add).toBeEnabled();
-      await dialog.evaluate(async (element) => {
-        await Promise.all(
-          element.getAnimations({ subtree: true }).map((a) => a.finished),
-        );
-      });
+      await animationsSettled(dialog, { subtree: true });
       const identity = dialog.getByRole("button", {
         name: new RegExp(`Open profile for ${name} `),
       });
@@ -471,17 +464,7 @@ for (const [width, reducedMotion] of [
         list.getByRole("button", { name: /^Open profile for/ }),
       ).toHaveCount(0);
       // Only wait for finite dialog entrance animations, never the loading spin.
-      await dialog.evaluate(async (element) => {
-        await Promise.all(
-          element
-            .getAnimations({ subtree: true })
-            .filter(
-              (animation) =>
-                animation.effect?.getComputedTiming().iterations !== Infinity,
-            )
-            .map((animation) => animation.finished),
-        );
-      });
+      await animationsSettled(dialog, { subtree: true });
       const before = {
         list: await list.boundingBox(),
         search: await search.boundingBox(),
@@ -907,9 +890,7 @@ test("member identity filter sits inside search and preserves modal focus", asyn
     const agents = page.getByRole("menuitemradio", { name: "Agents · 60" });
     await expect(all).toBeVisible();
     const popup = page.locator(".buzz-menu-popup");
-    await popup.evaluate(async (element) => {
-      await Promise.all(element.getAnimations().map((a) => a.finished));
-    });
+    await animationsSettled(popup);
     const popupBounds = await popup.boundingBox();
     const minimumWidth = await page.evaluate(
       () =>
@@ -928,9 +909,7 @@ test("member identity filter sits inside search and preserves modal focus", asyn
       await expect(popup).toHaveCount(0);
       await filter.click();
       await expect(popup).toBeVisible();
-      await popup.evaluate(async (element) => {
-        await Promise.all(element.getAnimations().map((a) => a.finished));
-      });
+      await animationsSettled(popup);
       const bounds = await popup.boundingBox();
       expect(bounds.width).toBe(popupBounds.width);
       expect(bounds.x + bounds.width).toBeCloseTo(
@@ -1005,10 +984,10 @@ test("member identity filter sits inside search and preserves modal focus", asyn
         element.scrollIntoView({ block: "center" }),
       );
       await profile.hover({ position: { x: 20, y: 20 } });
-      const profileFill = await profile.evaluate(async (element) => {
-        await Promise.all(element.getAnimations().map((a) => a.finished));
-        return getComputedStyle(element).backgroundColor;
-      });
+      await animationsSettled(profile);
+      const profileFill = await profile.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      );
       await action.hover();
       await expect(action).toHaveCSS("background-color", profileFill);
     }
@@ -1107,7 +1086,12 @@ for (const rejected of [false, true]) {
             .getByRole("button", { name: dismiss, exact: true })
             .click();
         await expect(search).toHaveValue("Morgan");
-        await expect(search).toBeFocused();
+        await expect(
+          members.getByRole("button", {
+            name: "Actions for Morgan",
+            exact: true,
+          }),
+        ).toBeFocused();
         await expect(members).toHaveAttribute("id", popupId);
       }
     }
@@ -1142,7 +1126,12 @@ for (const rejected of [false, true]) {
       .getByRole("button", { name: "Remove member", exact: true })
       .click();
     await page.evaluate(() => window.focusFixture.published);
-    await expect(search).toBeFocused();
+    // The member keeps focus while the removal is pending.
+    const morganActions = members.getByRole("button", {
+      name: "Actions for Morgan",
+      exact: true,
+    });
+    await expect(morganActions).toBeFocused();
     await expect(
       members.getByRole("button", { name: /Open profile for Morgan/ }),
     ).toBeVisible();
@@ -1156,6 +1145,7 @@ for (const rejected of [false, true]) {
         .getByRole("alert")
         .filter({ hasText: "Permission changed" });
       await expect(error).toBeVisible();
+      await expect(morganActions).toBeFocused();
       await expect(
         members
           .getByRole("region", { name: "Member list" })
@@ -1189,6 +1179,8 @@ for (const rejected of [false, true]) {
           .getByRole("region", { name: "People", exact: true })
           .getByRole("button", { name: /Open profile for Morgan/ }),
       ).toHaveCount(0);
+      // No member is left in the filtered list.
+      await expect(search).toBeFocused();
       await expect(page.locator(".buzz-toast")).toHaveCount(0);
       await expect(members.getByRole("alert")).toHaveCount(0);
     }
@@ -1196,6 +1188,197 @@ for (const rejected of [false, true]) {
     expect(errors).toEqual([]);
   });
 }
+
+// The step replaces the list: only a browser shows where the returning list
+// paints its rows, and whether a shortened list keeps the focused row inside.
+for (const rejected of [false, true]) {
+  test(`a member change returns to its place on a later page (rejected: ${rejected})`, async ({
+    page,
+  }) => {
+    const { errors } = watchPageErrors(page);
+    await page.goto(
+      `${url}?administration&search-scale${rejected ? "&reject-removal" : ""}`,
+    );
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const members = page.getByRole("dialog", {
+      name: "Manage members",
+      exact: true,
+    });
+    const list = members.getByRole("region", { name: "Member list" });
+    await expect(list).toHaveAttribute("data-refreshing", "false");
+    const pages = list.getByRole("navigation", { name: "Agents member pages" });
+    await pages.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(pages.getByText("2 of 2")).toBeVisible();
+    const agents = list
+      .getByRole("region", { name: "Agents", exact: true })
+      .getByRole("button", { name: /^Actions for / });
+    await expect(agents).toHaveCount(10);
+    // The last row sits where an error above the list would clip it.
+    const [previous, target] = await agents.evaluateAll((buttons) =>
+      buttons.slice(-2).map((button) => button.getAttribute("aria-label")),
+    );
+    const targetActions = members.getByRole("button", {
+      name: target,
+      exact: true,
+    });
+    await page.evaluate(() => {
+      // The shown list's offset and a row's top within it. The entering step
+      // is scaled, so the top is measured in the list's own layout.
+      window.listPlace = (name) => {
+        const list = document.querySelector(
+          '.buzz-dialog-step:not([aria-hidden]) [aria-label="Member list"]',
+        );
+        const row = list
+          ?.querySelector(`[aria-label="${name}"]`)
+          ?.closest("li");
+        if (!list || !row) return undefined;
+        const box = list.getBoundingClientRect();
+        return {
+          scrollTop: list.scrollTop,
+          top:
+            (row.getBoundingClientRect().top - box.top) /
+            (box.height / list.offsetHeight),
+        };
+      };
+    });
+    const offset = await list.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(offset).toBeGreaterThan(0);
+    const place = await page.evaluate((name) => window.listPlace(name), target);
+    expect(place.scrollTop).toBe(offset);
+    const leave = async (item, action) => {
+      await expect(members.locator(".buzz-dialog-step")).toHaveCount(1);
+      await targetActions.click();
+      await page
+        .getByRole(item === "Viewing only" ? "menuitemradio" : "menuitem", {
+          name: item,
+          exact: true,
+        })
+        .click();
+      const confirmation = page.getByRole("dialog", {
+        name:
+          item === "Viewing only"
+            ? "Change access to Viewing only?"
+            : "Remove agent from channel",
+        exact: true,
+      });
+      // Enter confirms a reversible change; a removal starts on Cancel.
+      await expect(
+        confirmation.getByRole("button", {
+          name: item === "Viewing only" ? "Set to viewing only" : "Cancel",
+          exact: true,
+        }),
+      ).toBeFocused();
+      await expect(confirmation.locator(".buzz-dialog-step")).toHaveCount(1);
+      // Sample every frame from before the step leaves until it has gone.
+      await page.evaluate((name) => {
+        window.listFrames = [];
+        window.sampling = true;
+        const sample = () => {
+          const shown = window.listPlace(name);
+          if (shown) window.listFrames.push(shown);
+          if (window.sampling) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }, target);
+      await confirmation
+        .getByRole("button", { name: action, exact: true })
+        .click();
+      await expect(targetActions).toBeFocused();
+      await expect(members.locator(".buzz-dialog-step")).toHaveCount(1);
+      const frames = await page.evaluate(() => {
+        window.sampling = false;
+        return window.listFrames;
+      });
+      expect(frames.length).toBeGreaterThan(0);
+      for (const frame of frames) {
+        expect(frame.scrollTop).toBe(offset);
+        // Sub-pixel: the scale divides out of a transformed rectangle.
+        expect(frame.top).toBeCloseTo(place.top, 0);
+      }
+      await expect(pages.getByText("2 of 2")).toBeVisible();
+    };
+    await leave("Viewing only", "Cancel");
+    // A removal keeps focus on its member until the row leaves.
+    await leave("Remove from channel", "Remove agent");
+    await page.evaluate(() => window.focusFixture.published);
+    await page.evaluate(() => window.focusFixture.confirm());
+    if (rejected) {
+      await expect(
+        members.getByRole("alert").filter({ hasText: "Permission changed" }),
+      ).toBeVisible();
+      await expect(targetActions).toBeFocused();
+      // The error above the list shortens it; the member's row stays inside.
+      const listBox = await list.boundingBox();
+      const focusedBox = await targetActions.boundingBox();
+      expect(focusedBox.y).toBeGreaterThanOrEqual(listBox.y);
+      expect(focusedBox.y + focusedBox.height).toBeLessThanOrEqual(
+        listBox.y + listBox.height,
+      );
+    } else {
+      await expect(targetActions).toHaveCount(0);
+      await expect(agents).toHaveCount(9);
+      // The member was last, so the one before it takes focus.
+      await expect(
+        members.getByRole("button", { name: previous, exact: true }),
+      ).toBeFocused();
+      // The shorter list keeps its offset, or clamps it to its new end.
+      const after = await list.evaluate((element) => ({
+        scrollTop: element.scrollTop,
+        end: element.scrollHeight - element.clientHeight,
+      }));
+      expect(after.scrollTop).toBe(Math.min(offset, after.end));
+      await expect(members.getByRole("alert")).toHaveCount(0);
+    }
+    expect(errors).toEqual([]);
+  });
+}
+
+// Paging is a browser layout: removing the only member on the last page
+// moves the list back a page, where the member before it takes focus.
+test("removing the last page's only member focuses the member before it", async ({
+  page,
+}) => {
+  const { errors } = watchPageErrors(page);
+  await page.goto(`${url}?administration&last-page-alone`);
+  await page.getByRole("button", { name: "Access", exact: true }).click();
+  const members = page.getByRole("dialog", {
+    name: "Manage members",
+    exact: true,
+  });
+  const list = members.getByRole("region", { name: "Member list" });
+  await expect(list).toHaveAttribute("data-refreshing", "false");
+  const pages = list.getByRole("navigation", { name: "Agents member pages" });
+  const agents = list
+    .getByRole("region", { name: "Agents", exact: true })
+    .getByRole("button", { name: /^Actions for / });
+  await expect(agents).toHaveCount(50);
+  const previous = await agents.last().getAttribute("aria-label");
+  await pages.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(pages.getByText("2 of 2")).toBeVisible();
+  await expect(agents).toHaveCount(1);
+  const target = await agents.first().getAttribute("aria-label");
+  await members.getByRole("button", { name: target, exact: true }).click();
+  await page
+    .getByRole("menuitem", { name: "Remove from channel", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Remove agent from channel", exact: true })
+    .getByRole("button", { name: "Remove agent", exact: true })
+    .click();
+  await page.evaluate(() => window.focusFixture.published);
+  await page.evaluate(() => window.focusFixture.confirm());
+  await expect(
+    members.getByRole("button", { name: target, exact: true }),
+  ).toHaveCount(0);
+  await expect(agents).toHaveCount(50);
+  await expect(
+    members.getByRole("button", { name: previous, exact: true }),
+  ).toBeFocused();
+  expect(errors).toEqual([]);
+});
 
 // Browser layout is required to prove the helper inset and role-label geometry.
 test("member helper aligns with content and Owner stays beside a person's name", async ({
@@ -1261,17 +1444,7 @@ test("member helper aligns with content and Owner stays beside a person's name",
           0,
         );
         // Measure the settled layout, not the dialog's open transition.
-        await dialog.evaluate(async (element) => {
-          await Promise.all(
-            element
-              .getAnimations({ subtree: true })
-              .filter(
-                (animation) =>
-                  animation.effect?.getComputedTiming().iterations !== Infinity,
-              )
-              .map((animation) => animation.finished),
-          );
-        });
+        await animationsSettled(dialog, { subtree: true });
         const nameBounds = await name.boundingBox();
         const ownerBounds = await owner.boundingBox();
         expect(ownerBounds.x).toBeGreaterThan(nameBounds.x + nameBounds.width);

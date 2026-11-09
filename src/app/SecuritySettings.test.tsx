@@ -56,6 +56,7 @@ it("shows an empty state, and a read failure", async () => {
   vi.mocked(invoke).mockResolvedValueOnce([]);
   render(<SecuritySettings />);
   expect(await screen.findByText("No paired tools")).toBeInTheDocument();
+  expect(screen.queryByText("Authorize external identity")).toBeNull();
   cleanup();
   vi.mocked(invoke).mockRejectedValueOnce(
     "Paired tools could not be read from secure storage",

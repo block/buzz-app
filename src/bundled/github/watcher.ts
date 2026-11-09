@@ -482,15 +482,15 @@ export function watchPulls(
           level: "feedback",
           wantsText: (id) => !!prior?.seen && !prior.seen.includes(id),
         })
-        .catch(() => undefined);
+        .catch((error: Error) => ({ state: undefined, error }));
       if (disposed) throw new Error("The GitHub plugin has stopped");
       const snapshot =
-        typeof found?.state === "object" && !found.error
+        typeof found.state === "object" && !found.error
           ? snapshotOf(found.state, prior?.seen)
           : undefined;
       if (!snapshot)
         throw new Error(
-          "Could not read the pull request with gh. Check that gh is installed, signed in, and can see it.",
+          `Could not read the pull request with gh${found.error ? `: ${found.error.message}` : ""}. Check that gh is installed, signed in, and can see it.`,
         );
       const watch: Watch = {
         ...(prior ?? { wakes: 0 }),

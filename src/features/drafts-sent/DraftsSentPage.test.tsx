@@ -12,10 +12,17 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { DraftsSentPage } from "./DraftsSentPage";
-import { DraftsSentBadge } from "./DraftsSentNavigation";
+import { DraftsSentBadge } from "./DraftsSentBadge";
 import type { RelayData } from "../relay/service";
 import type { Navigation } from "../navigation/controller";
 import { dayLabel, type ReadEvent } from "./model";
+
+const emptyPanels: never[] = [];
+const panels = {
+  subscribe: () => () => {},
+  snapshot: () => emptyPanels,
+  resolve: () => undefined,
+} as unknown as import("../panels/service").Panels;
 
 const viewer = "a".repeat(64);
 const root = "b".repeat(64);
@@ -61,7 +68,10 @@ type FakeView = {
 };
 
 function harness() {
-  const list = {
+  let list: {
+    status: string;
+    channels: import("../relay/contracts").ChannelSummary[];
+  } = {
     status: "ready",
     channels: [
       { id: "team", name: "launch-room", channelType: "stream" },
@@ -83,6 +93,7 @@ function harness() {
     [scout, { name: "Scout", isAgent: true }],
   ]);
   const relayListeners = new Set<() => void>();
+  const channelListeners = new Set<() => void>();
   let events: ReadEvent[] = [event()];
   let status = "ready";
   const viewListeners = new Set<() => void>();
@@ -141,7 +152,10 @@ function harness() {
     relayAuthor: relay,
     channels: {
       list: () => list,
-      subscribeList: () => () => {},
+      subscribeList: (listener: () => void) => {
+        channelListeners.add(listener);
+        return () => channelListeners.delete(listener);
+      },
       ensureList: vi.fn(),
       refreshList: vi.fn(),
     },
@@ -180,11 +194,22 @@ function harness() {
   } as unknown as RelayData;
   const navigator = { open } as unknown as Navigation;
   const page = {
-    component: () => <DraftsSentPage relay={relayData} navigator={navigator} />,
+    component: () => (
+      <DraftsSentPage panels={panels} relay={relayData} navigator={navigator} />
+    ),
     badge: () => <DraftsSentBadge relay={relayData} />,
   };
   return {
     page,
+    hideSelected() {
+      list = {
+        ...list,
+        channels: list.channels.map((channel, index) =>
+          index === 0 ? { ...channel, huddle: true } : channel,
+        ),
+      };
+      for (const listener of channelListeners) listener();
+    },
     open,
     view,
     session,
@@ -254,7 +279,7 @@ it("switches separate Drafts and Sent panels and remembers the community's selec
   expect(screen.queryByRole("tabpanel", { name: /^Drafts/ })).toBeNull();
 });
 
-it("lists drafts first and continues a thread draft at its root", async () => {
+it("lists drafts first and opens a thread draft from its preview at its root", async () => {
   saved(`draft:team:thread:${root}`, { text: "Finish launch reply" });
   saved("draft:dm", "Lunch tomorrow?");
   const h = harness();
@@ -264,12 +289,14 @@ it("lists drafts first and continues a thread draft at its root", async () => {
   expect(within(list).getByText(/#launch-room/)).toBeInTheDocument();
   expect(within(list).getByText(/Thread/)).toBeInTheDocument();
   expect(within(list).getByText("Sam Okafor")).toBeInTheDocument();
-  expect(within(list).getAllByText("You")).toHaveLength(2);
+  expect(within(list).queryByText("You")).toBeNull();
   fireEvent.click(
     screen.getByRole("button", {
       name: /Continue draft in #launch-room, thread/,
     }),
   );
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
   await waitFor(() =>
     expect(h.open).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -328,10 +355,10 @@ it("clears only the chosen draft from the keyboard, without opening it", async (
     }),
   ).toHaveFocus();
 
-  // A draft whose conversation is gone can't be opened, but can be cleared.
+  // An unavailable draft can be inspected and copied, or cleared.
   expect(
     within(list).getByRole("button", { name: /Continue draft in Unavailable/ }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await user.click(
     within(list).getByRole("button", {
       name: "Clear draft in Unavailable conversation: Orphaned note",
@@ -352,6 +379,8 @@ it("clears only the chosen draft from the keyboard, without opening it", async (
       name: /Continue draft in #launch-room/,
     }),
   );
+  expect(h.open).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
   await waitFor(() =>
     expect(h.open).toHaveBeenCalledWith(
       expect.objectContaining({ channelId: "team" }),
@@ -425,6 +454,11 @@ it("sent groups by day, updates live, and opens the exact message", async () => 
       name: /View message in #launch-room: Recently shipped/,
     }),
   );
+  expect(h.open).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("region", { name: "Sent message in #launch-room" }),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open conversation" }));
   await waitFor(() =>
     expect(h.open).toHaveBeenLastCalledWith(
       expect.objectContaining({ channelId: "team", messageId: id }),
@@ -454,7 +488,7 @@ it("clears identity-scoped content and releases the views on unmount", async () 
   ).toBe(true);
 });
 
-it("shows participants with new-reply and you're-last status", () => {
+it("shows destination rows with reply status and no participant stack", () => {
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
   const h = harness();
   const Page = h.page.component;
@@ -507,15 +541,10 @@ it("shows participants with new-reply and you're-last status", () => {
   expect(thread.getAttribute("aria-label")).toMatch(
     /2 replies after yours, latest from Sam Okafor/,
   );
-  expect(thread.getAttribute("aria-label")).toMatch(/With Sam Okafor, Scout/);
-  expect(
-    thread.querySelectorAll("[data-avatar-stack] > [data-avatar-shape]"),
-  ).toHaveLength(2);
-  expect(
-    thread.querySelector(
-      '[data-avatar-stack] > [data-avatar-shape="squircle"]',
-    ),
-  ).toBeTruthy();
+  expect(thread.getAttribute("aria-label")).not.toMatch(
+    /With Sam Okafor, Scout/,
+  );
+  expect(thread.querySelector("[data-avatar-stack]")).toBeNull();
   const solo = screen.getByRole("button", {
     name: /View message in Research helper: Hi helper/,
   });
@@ -951,6 +980,7 @@ it("asks for a community before showing anything", () => {
   const connecting = { status: "connecting", generation: 0, session: {} };
   render(
     <DraftsSentPage
+      panels={panels}
       relay={
         {
           snapshot: () => connecting,
@@ -961,4 +991,28 @@ it("asks for a community before showing anything", () => {
     />,
   );
   expect(screen.getByText("Choose a community")).toBeInTheDocument();
+});
+
+it("focuses search only after an excluded preview closes", async () => {
+  const h = harness();
+  saved("draft:team", "Draft to hide");
+  render(h.page.component());
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /Continue draft.*Draft to hide/,
+    }),
+  );
+  expect(
+    screen.getByRole("region", { name: "Draft for #launch-room" }),
+  ).toBeInTheDocument();
+  const search = screen.getByRole("searchbox");
+  const focus = vi.spyOn(search, "focus").mockImplementation(() => {
+    expect(
+      screen.queryByRole("region", { name: "Draft for #launch-room" }),
+    ).toBeNull();
+    expect(search.closest("[hidden]")).toBeNull();
+    expect(search.closest("[data-selected]")).toBeNull();
+  });
+  act(() => h.hideSelected());
+  await waitFor(() => expect(focus).toHaveBeenCalled());
 });

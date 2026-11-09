@@ -101,7 +101,6 @@ export function createWatchComponents({
     const completed = sourceCompleted(agent.sourceRuns, agent.attention[slug]);
     const state =
       watch.enabled &&
-      agent.attentionEnabled &&
       !interestPaused(agent.attention, watch.interest_id) &&
       !completed &&
       !description.spent
@@ -175,14 +174,9 @@ export function createWatchComponents({
         ref={row}
         className="attention-card"
         data-expanded={open || undefined}
-        data-disabled={!watch.enabled || !agent.attentionEnabled || undefined}
+        data-disabled={!watch.enabled || undefined}
         data-paused={
-          completed ||
-          description.spent ||
-          !watch.enabled ||
-          !agent.attentionEnabled
-            ? ""
-            : undefined
+          completed || description.spent || !watch.enabled ? "" : undefined
         }
       >
         <div className="attention-table-row">
@@ -415,12 +409,6 @@ export function createWatchComponents({
                   {interestPaused(agent.attention, watch.interest_id) && (
                     <MenuNote>
                       This interest is paused. Resume it to run enabled watches.
-                    </MenuNote>
-                  )}
-                  {!agent.attentionEnabled && (
-                    <MenuNote>
-                      Attention is paused on this device. Resume Attention to
-                      run enabled watches.
                     </MenuNote>
                   )}
                   {watch.type === "timer" && !watch.enabled && (

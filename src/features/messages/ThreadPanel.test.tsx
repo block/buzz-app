@@ -3673,3 +3673,78 @@ it("reveals a public failure that its activity history absorbs by expanding the 
     screen.getByRole("button", { name: /Collapse activity history/ }),
   ).toBeVisible();
 });
+
+// A cold exact visit verifies its target before the thread window arrives, so
+// the update that absorbs the failure can land on a later snapshot of the same
+// request. The expansion must wait for that group, and the reader's collapse
+// of it must then hold.
+it("expands the activity history that absorbs an exact failure target once its update arrives, then keeps a reader's collapse", async () => {
+  const h = messagesHarness();
+  const agent = "d".repeat(64);
+  const update = {
+    ...row,
+    id: "e".repeat(64),
+    authorId: agent,
+    content: "Read the release notes.",
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 2,
+  };
+  const target = {
+    ...row,
+    id: "f".repeat(64),
+    authorId: agent,
+    content: "The selected model could not complete this request.",
+    notice: "execution-failure" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt: 3,
+  };
+  h.snapshot.status = "loading";
+  h.snapshot.replies = [target];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  Object.assign(h.props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  expect(await screen.findByText(target.content)).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /Collapse activity history/ }),
+  ).toBeNull();
+  h.snapshot.status = "ready";
+  h.snapshot.replies = [update, target];
+  h.render();
+  expect(
+    await screen.findByRole("button", { name: /Collapse activity history/ }),
+  ).toBeVisible();
+  expect(screen.getByText(target.content)).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: /Collapse activity history/ }),
+  );
+  expect(
+    screen.getByRole("button", { name: /Show activity history/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+  h.snapshot.replies = [
+    update,
+    target,
+    {
+      ...row,
+      id: "a".repeat(64),
+      content: "A later reply",
+      threadRootId: row.id,
+      replyParentId: row.id,
+      createdAt: 4,
+    },
+  ];
+  h.render();
+  expect(await screen.findByText("A later reply")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Show activity history/ }),
+  ).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText(target.content)).toBeNull();
+});

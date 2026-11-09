@@ -1,7 +1,7 @@
 import { pauseClock } from "./clock.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
-import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { clickRow, open, virtuaIdle } from "./timeline.mjs";
 import {
   holdReadingFocus,
@@ -524,10 +524,106 @@ test("opening an absorbed failure from Activity expands its activity history, th
   await expect(item).toHaveCount(0);
 });
 
+// A cold exact visit verifies the failure before it reads the thread window,
+// so the thread first shows the failure alone and only then the update that
+// absorbs it. The expansion must still happen once that group forms; otherwise
+// the revealed failure vanishes into the collapsed history.
+test("a cold link to an absorbed failure expands its activity history once the window arrives, then reads it", async ({
+  page,
+  app,
+}) => {
+  const key = generateSecretKey();
+  app.serveProfile(key, { name: "Remote tester", is_agent: true });
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const failure = publishAbsorbedFailure(app, "alpha", root.id, key, {
+    live: false,
+  });
+  // The fixture's head reads carry recent replies, which would load the
+  // update before the thread read. Keep the update to the thread read, and
+  // hold that read until the thread has shown the verified failure.
+  const agent = getPublicKey(key);
+  const windowRead = Promise.withResolvers();
+  const held = Promise.withResolvers();
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON() ?? [];
+    if (
+      filters.some(
+        (filter) => filter.depth_limit && filter["#e"]?.includes(root.id),
+      )
+    ) {
+      windowRead.resolve();
+      await held.promise;
+      return route.continue().catch(() => {});
+    }
+    const response = await route.fetch();
+    const events = await response.json();
+    const kept = Array.isArray(events)
+      ? events.filter(
+          (event) => !(event.kind === 40002 && event.pubkey === agent),
+        )
+      : events;
+    await route.fulfill({ response, json: kept }).catch(() => {});
+  });
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${failure.id}"]`);
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "conversation",
+        channelId: "alpha",
+        messageId: failure.id,
+        threadRootId: root.id,
+        scope: {
+          viewer: app.viewer,
+          communityOrigin: "https://primary.example",
+        },
+      }),
+    )}`,
+  );
+  await windowRead.promise;
+  // The verified failure shows alone: no history has absorbed it yet.
+  await expect(row).toBeAttached();
+  await expect(
+    thread.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toHaveCount(0);
+  held.resolve();
+  await expect(
+    thread.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toBeVisible();
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.fixtureRelay
+          .snapshot()
+          .session.unread.activity("alpha")
+          .items?.map((item) => item.preview),
+      ),
+    )
+    .not.toContain(failure.content);
+});
+
 /** An agent-only update, then the same agent's public execution failure, as
  * direct replies to the viewer's thread root. The failure is unread; the
- * thread folds it into the update's activity history. */
-function publishAbsorbedFailure(app, channel, rootId, key) {
+ * thread folds it into the update's activity history. Before the page loads
+ * there is no live stream to publish to: history alone serves a cold load. */
+function publishAbsorbedFailure(
+  app,
+  channel,
+  rootId,
+  key,
+  { live = true } = {},
+) {
   const history = app.histories.get(`primary/${channel}`);
   const publish = (content, tags, offset) => {
     const event = finalizeEvent(
@@ -540,7 +636,7 @@ function publishAbsorbedFailure(app, channel, rootId, key) {
       key,
     );
     history.push(event);
-    app.relay.publish("primary", event);
+    if (live) app.relay.publish("primary", event);
     return event;
   };
   publish(

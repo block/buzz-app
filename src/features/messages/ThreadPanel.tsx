@@ -835,6 +835,10 @@ function ThreadMessages({
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  // The request whose target's group this visit expanded. A cold exact visit
+  // verifies its target before the window arrives, so the group that absorbs
+  // it may form only on a later snapshot: the request stays pending until a
+  // group is found, and once expanded, the reader's collapse of it is final.
   const activityVisit = useRef<unknown[]>([]);
   useLayoutEffect(() => {
     const request = [messageId, navigation?.signal, revealRequest];
@@ -844,12 +848,13 @@ function ThreadMessages({
       !snapshot.replies.some((row) => row.id === messageId)
     )
       return;
-    activityVisit.current = request;
     const group = [...tree.children.keys()]
       .flatMap((parent) => presentLevel(parent).groups)
       .find((group) => group.ids.includes(messageId));
     const first = group?.ids[0];
-    if (first) setExpandedActivity((current) => new Set([...current, first]));
+    if (!first) return;
+    activityVisit.current = request;
+    setExpandedActivity((current) => new Set([...current, first]));
   }, [
     messageId,
     navigation?.signal,

@@ -212,6 +212,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,
       check: () => setup.check(),
+      /** Settings' row updates or signs in with one click. A missing copy
+       * has no action: its row opens DialogBody, so the download note is
+       * seen before the download starts. */
+      get attentionAction() {
+        const state = setup.snapshot();
+        if (state.running) return undefined;
+        return state.status?.state === "outdated"
+          ? () => void setup.run("install")
+          : state.status?.state === "signed-out" && setup.auth.signIn
+            ? () => void setup.run("sign-in")
+            : undefined;
+      },
       DialogBody: ProviderDialogBody,
       DefaultControl,
     },

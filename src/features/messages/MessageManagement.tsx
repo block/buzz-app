@@ -28,6 +28,11 @@ import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
+import {
+  failureText,
+  retryable as canRetry,
+  unsentSentence,
+} from "../relay/refusal";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
 import { lastEditableMessage } from "./useMessageEdit";
@@ -712,6 +717,8 @@ function DeleteMessageDialog({
   const pending = operation?.delivery === "sending" || discarding;
   const retryable =
     operation?.delivery === "failed" || operation?.delivery === "unknown";
+  // A refused delete is refused again, so it offers no Retry.
+  const refused = retryable && !!operation && !canRetry(operation);
   useEffect(() => {
     if (
       operationId &&
@@ -767,11 +774,7 @@ function DeleteMessageDialog({
       }
     } catch (cause) {
       setDiscarding(false);
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not delete this message. Try again.",
-      );
+      setError(failureText(cause, "Couldn’t delete your message. Try again."));
     }
   };
   return (
@@ -780,8 +783,8 @@ function DeleteMessageDialog({
       initialFocus={cancelAction}
       description={
         unsent
-          ? "This message wasn’t sent. Deleting it removes it from this device. This cannot be undone."
-          : "This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
+          ? "This message wasn’t sent. Deleting it removes it from this device. You can’t undo this."
+          : "This requests removal of this message from the community. People may still have copies. This cannot be undone."
       }
       pending={pending}
       finalFocus={() =>
@@ -793,18 +796,16 @@ function DeleteMessageDialog({
           <Button ref={cancelAction} disabled={pending} onClick={close}>
             {operationId ? "Close" : "Cancel"}
           </Button>
-          <Button variant="destructive" disabled={pending} onClick={run}>
-            {pending ? "Deleting…" : retryable ? "Retry" : "Delete"}
-          </Button>
+          {!refused && (
+            <Button variant="destructive" disabled={pending} onClick={run}>
+              {pending ? "Deleting…" : retryable ? "Retry" : "Delete"}
+            </Button>
+          )}
         </>
       }
     >
       {(error || retryable) && (
-        <p role="alert">
-          {error ??
-            operation?.error ??
-            "Delivery could not be confirmed. Retry sends the same operation."}
-        </p>
+        <p role="alert">{error ?? (operation && deleteStatus(operation))}</p>
       )}
     </AlertDialog>
   );
@@ -829,55 +830,86 @@ export function MessageManagementStatus() {
   );
   return (
     <>
-      {pending.map((item) => (
-        <div
-          key={item.event.id}
-          className={styles.messageActionNotice}
-          role="status"
-        >
-          <p>
-            {item.event.kind === 40003 ? "Message edit" : "Message deletion"}:{" "}
-            {item.error ?? "Delivery could not be confirmed."}
-          </p>
-          {item.event.kind === 40003 && <p>{item.event.content}</p>}
-          {item.delivery === "unknown" && (
-            <p>
-              This may already have reached the conversation. Retry sends the
-              same operation; dismissing does not undo it.
-            </p>
-          )}
-          <RetryMessageUpdate session={session} event={item.event} />
+      {pending.map((item) => {
+        const edit = item.event.kind === 40003;
+        // Sending a refused change again is refused again, unless the
+        // refusal can pass later.
+        const retry = canRetry(item) && (
+          <RetryMessageUpdate
+            session={session}
+            event={item.event}
+            label={edit ? "Retry" : "Try again"}
+          />
+        );
+        const dismiss = (
           <Button
             onClick={async () => {
               try {
                 await session.outbox?.dismiss(item.event.id);
                 setError(undefined);
               } catch (cause) {
-                setError(
-                  cause instanceof Error
-                    ? cause.message
-                    : "Could not dismiss the operation.",
-                );
+                setError(failureText(cause, "Buzz couldn’t dismiss this."));
               }
             }}
           >
-            {item.delivery === "failed"
-              ? "Discard failed update"
-              : "Dismiss unconfirmed update"}
+            {edit ? "Discard" : "Dismiss"}
           </Button>
-        </div>
-      ))}
+        );
+        return (
+          <div
+            key={item.event.id}
+            className={styles.messageActionNotice}
+            role="status"
+          >
+            <p>{edit ? editStatus(item) : deleteStatus(item)}</p>
+            {edit && <p>{item.event.content}</p>}
+            {/* An edit's choices match the edit composer: Retry last. */}
+            {edit ? dismiss : retry}
+            {edit ? retry : dismiss}
+          </div>
+        );
+      })}
       {error && <p role="alert">{error}</p>}
     </>
   );
 }
 
+/** Where a delete stands: maybe done, or not done and why. A retry sends
+ * the same delete, so it can't delete anything twice. Without a Retry, the
+ * reason says why it can't be sent. */
+function deleteStatus(
+  item: Pick<
+    OutgoingEvent,
+    "delivery" | "error" | "refused" | "reason" | "unsent"
+  >,
+) {
+  if (item.delivery === "unknown")
+    return "Your delete may already have gone through. Trying again won’t delete anything twice.";
+  const reason = unsentSentence(item);
+  return `Couldn’t delete your message.${reason ? ` ${reason}` : ""}`;
+}
+
+/** The same for an edit. */
+function editStatus(
+  item: Pick<
+    OutgoingEvent,
+    "delivery" | "error" | "refused" | "reason" | "unsent"
+  >,
+) {
+  if (item.delivery === "unknown")
+    return "Your edit may already be saved. Retrying won’t apply it twice.";
+  const reason = unsentSentence(item);
+  return `Couldn’t save your edit.${reason ? ` ${reason}` : ""}`;
+}
+
 function RetryMessageUpdate({
   session,
   event,
+  label,
 }: {
   session: RelaySession;
   event: OutgoingEvent["event"];
+  label: string;
 }) {
   const eligible = useSyncExternalStore(
     (listener) => {
@@ -895,7 +927,7 @@ function RetryMessageUpdate({
       disabled={!eligible}
       onClick={() => session.outbox?.retry(event.id)}
     >
-      Retry message update
+      {label}
     </Button>
   );
 }

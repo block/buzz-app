@@ -779,6 +779,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--text-caption--font-weight);
 }
+/* An unsaved edit's choices keep their own width, the primary one last. */
+.composerEditActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
 .composerContent {
   display: flex;
   flex-direction: column;

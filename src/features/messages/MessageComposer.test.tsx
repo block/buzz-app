@@ -491,7 +491,10 @@ function mount(
         for (const listener of rowListeners) listener();
       });
     },
-    setDelivery(delivery: OutgoingEvent["delivery"]) {
+    setDelivery(
+      delivery: OutgoingEvent["delivery"],
+      extra: Partial<OutgoingEvent> = {},
+    ) {
       act(() =>
         setPending(
           pending.map((item) => ({
@@ -499,9 +502,18 @@ function mount(
             delivery,
             error:
               delivery === "failed" ? "Relay rejected this edit" : undefined,
+            ...extra,
           })),
         ),
       );
+    },
+    /** Lets the outbox remove items, as the session's does. */
+    allowDismiss() {
+      const dismiss = vi.fn(async (id: string) =>
+        act(() => setPending(pending.filter((item) => item.event.id !== id))),
+      );
+      Object.assign(props.session.outbox ?? {}, { dismiss });
+      return dismiss;
     },
     onSend,
     session: props.session,
@@ -9413,13 +9425,53 @@ it.each(["failed", "unknown"] as const)(
     h.setDelivery(delivery);
     expect(h.input()).toHaveValue("Revised");
     expect(h.input()).toHaveAttribute("contenteditable", "false");
-    fireEvent.click(screen.getByRole("button", { name: "Retry edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(h.session.outbox?.retry).toHaveBeenCalledExactlyOnceWith("edit-id");
     expect(h.messages.edit).toHaveBeenCalledTimes(1);
     h.setDelivery("seen");
     expect(h.input()).toHaveValue("");
   },
 );
+
+it("names a refused edit, links it to the textbox and can discard it", async () => {
+  const h = mount({}, undefined, first.pubkey);
+  const dismiss = h.allowDismiss();
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Revised");
+  h.submit();
+  h.setDelivery("failed", { refused: true, error: "restricted: nope" });
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent("You don’t have permission.");
+  expect(alert).not.toHaveTextContent(/restricted|relay/i);
+  expect(h.input()).toHaveAccessibleDescription(/You don’t have permission\./);
+  expect(screen.getByText("Your edit hasn’t been saved yet.")).toBeVisible();
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+  });
+  expect(dismiss).toHaveBeenCalledExactlyOnceWith("edit-id");
+  await waitFor(() =>
+    expect(screen.queryByText("Editing message")).not.toBeInTheDocument(),
+  );
+  expect(h.session.outbox?.retry).not.toHaveBeenCalled();
+});
+
+it("says an unconfirmed edit may already be saved", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.allowDismiss();
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Revised");
+  h.submit();
+  h.setDelivery("unknown");
+  expect(
+    screen.getByText(
+      "Your edit may already be saved. Retrying won’t apply it twice.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Discard" })).toBeVisible();
+});
 
 it.each(["changed", "deleted"])(
   "preserves text and refuses to overwrite a %s target",

@@ -23,7 +23,7 @@ import {
 } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 import { MediaReviewViewer } from "./MediaReviewViewer";
-import { PublishRejected, type OutboxStorage } from "../relay/outbox";
+import { PublishNotSent, type OutboxStorage } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
@@ -386,7 +386,7 @@ it.each(["reject", "commit"] as const)(
     };
     const publish = vi
       .fn(async (_event: RelayEvent, _signal?: AbortSignal) => {})
-      .mockRejectedValueOnce(new PublishRejected("Edit rejected"));
+      .mockRejectedValueOnce(new PublishNotSent("Edit not sent"));
     const owner = editOwner(viewer, [root, reply], storage, publish);
     try {
       await authorize(owner);
@@ -412,7 +412,7 @@ it.each(["reject", "commit"] as const)(
       });
       fireEvent.input(input);
       fireEvent.keyDown(input, { key: "Enter" });
-      await screen.findByRole("button", { name: "Retry edit" });
+      await screen.findByRole("button", { name: "Retry" });
       const outbox = owner.session.outbox;
       assert.exists(outbox);
       const pending = outbox.snapshot()[0];
@@ -439,7 +439,7 @@ it.each(["reject", "commit"] as const)(
         expect(await result).toEqual(new Error("Disk unavailable"));
         expect(input).toHaveAccessibleName("Edit message");
         expect(input).toHaveValue("Keep my revision");
-        fireEvent.click(screen.getByRole("button", { name: "Retry edit" }));
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
         await waitFor(() =>
           expect(input).toHaveAccessibleName("Reply to thread"),
         );

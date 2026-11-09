@@ -59,9 +59,8 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
     confirmation.getByRole("heading", { name: "Delete message?" }),
   ).toBeVisible();
   await expect(confirmation).toContainText(
-    "This requests removal of this message from Buzz’s relay.",
+    "This requests removal of this message from the community. People may still have copies. This cannot be undone.",
   );
-  await expect(confirmation).toContainText("People may still have copies.");
   await expect(
     confirmation.getByRole("button", { name: "Cancel" }),
   ).toBeFocused();
@@ -87,6 +86,8 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
 
   // The actual recovery control must retain eligibility after its dialog closes;
   // role/ownership revocation matrices stay in the session/component tests.
+  // A NIP-01 `error:` refusal is the community's own problem, so it can pass
+  // later and keeps Try again; other refusals offer none.
   let rejected;
   await page.route("**/api/relay/**/publish", async (route) => {
     const event = route.request().postDataJSON();
@@ -96,15 +97,22 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
       json: {
         accepted: false,
         event_id: event.id,
-        message: "Fixture deletion refusal",
+        message: "error: fixture deletion refusal",
       },
     });
   });
   await confirmation
     .getByRole("button", { name: "Delete", exact: true })
     .click();
+  // The relay's own words stay out of the dialog.
   await expect(confirmation.getByRole("alert")).toContainText(
-    "Fixture deletion refusal",
+    "Couldn’t delete your message.",
+  );
+  await expect(confirmation.getByRole("alert")).toContainText(
+    "The community had a problem.",
+  );
+  await expect(confirmation.getByRole("alert")).not.toContainText(
+    "fixture deletion refusal",
   );
   await confirmation
     .getByRole("button", { name: "Close", exact: true })
@@ -112,7 +120,7 @@ test("the verified owner confirms a NIP-09 delete for an agent message", async (
     .click();
   await expect(confirmation).toHaveCount(0);
   const retry = page.getByRole("button", {
-    name: "Retry message update",
+    name: "Try again",
     exact: true,
   });
   await expect(retry).toBeEnabled();

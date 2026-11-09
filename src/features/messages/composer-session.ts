@@ -52,10 +52,12 @@ export type ComposerSession = Pick<
     "refreshMembership" | "addAgents"
   >;
   outbox:
-    | Pick<
+    | (Pick<
         NonNullable<RelaySession["outbox"]>,
         "supports" | "snapshot" | "subscribe" | "retry"
-      >
+      > &
+        /** Discards an unsent edit; a surface without it keeps the edit. */
+        Partial<Pick<NonNullable<RelaySession["outbox"]>, "dismiss">>)
     | undefined;
   attachments:
     | (NonNullable<RelaySession["attachments"]> & {

@@ -13,7 +13,7 @@ import {
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../messages/composer-testing";
 import type { ComposerInputElement } from "../messages/composer-dom";
-import { PublishRejected } from "../relay/outbox";
+import { PublishNotSent } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import { useChannelWindow } from "../relay/react";
 import { createRelaySession } from "../relay/session";
@@ -369,19 +369,18 @@ it("confirms, cancels, recovers and retries a card's deletion", async () => {
   expect(first.event.kind).toBe(5);
   expect(first.event.tags).toContainEqual(["e", h.posts.alpha.id]);
   await act(async () =>
-    first.result.reject(new PublishRejected("Deletion refused")),
+    // Not sent rather than refused, so it can be retried.
+    first.result.reject(new PublishNotSent("Deletion not sent")),
   );
   fireEvent.click(
     within(await screen.findByRole("alertdialog")).getByText("Close"),
   );
   // Recovery belongs to the card's channel, not every card on the page.
   expect(
-    await card("alpha").findByText("Message deletion: Deletion refused"),
+    await card("alpha").findByText("Couldn’t delete your message."),
   ).toBeVisible();
-  expect(card("beta").queryByText(/Message deletion/)).toBeNull();
-  fireEvent.click(
-    card("alpha").getByRole("button", { name: "Retry message update" }),
-  );
+  expect(card("beta").queryByText(/Couldn’t delete/)).toBeNull();
+  fireEvent.click(card("alpha").getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publications[1]?.event.id).toBe(first.event.id);
   await act(async () => h.publications[1]?.result.resolve());

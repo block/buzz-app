@@ -20,7 +20,7 @@ import type { RelayEvent } from "../../src/features/relay/events";
 import type { OutgoingEvent } from "../../src/features/relay/outbox";
 import {
   browserOutboxStorage,
-  PublishRejected,
+  PublishNotSent,
 } from "../../src/features/relay/outbox";
 import "../../src/shared/styles/globals.css";
 const viewer = keypair(),
@@ -132,7 +132,10 @@ const owner = createRelaySession(
         await new Promise((resolve) => setTimeout(resolve, 1200));
         if (event.content.includes("reject") && !rejected.has(event.id)) {
           rejected.add(event.id);
-          throw new PublishRejected("Fixture relay rejected this message once");
+          // Not sent rather than refused, so it can be retried.
+          throw new PublishNotSent(
+            "Fixture relay didn’t take this message once",
+          );
         }
         if (!confirmed.some((old) => old.id === event.id))
           confirmed.push(event);

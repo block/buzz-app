@@ -164,7 +164,7 @@ export function createMessages(
   ) => {
     const original = find(messageId);
     if (!original || ![9, 40002].includes(original.kind))
-      throw new Error("Load the message before editing it");
+      throw new Error("Scroll to the message, then try editing it again.");
     const ownerEdit =
       !!viewer &&
       authorization?.ownerId === viewer &&
@@ -530,5 +530,7 @@ export function createMessages(
     retry(id: string) {
       outbox?.retry(id);
     },
+    /** A message or reaction this session holds, to name a change to it. */
+    event: (id: string) => find(id),
   });
 }

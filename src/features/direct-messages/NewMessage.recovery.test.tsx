@@ -1093,16 +1093,22 @@ it.each([40003, 5])(
     await t.user.click(await screen.findByRole("option", { name: "Avery" }));
     await screen.findByRole("region", { name: "Channel message history" });
     expect(
-      screen.getByRole("button", { name: "Retry message update" }),
+      screen.getByRole("button", {
+        name: kind === 40003 ? "Retry" : "Try again",
+      }),
     ).toBeVisible();
     await t.user.click(
-      screen.getByRole("button", { name: "Discard failed update" }),
+      screen.getByRole("button", {
+        name: kind === 40003 ? "Discard" : "Dismiss",
+      }),
     );
     await waitFor(() =>
       expect(owner.session.outbox?.snapshot()).toHaveLength(0),
     );
     expect(
-      screen.queryByRole("button", { name: "Retry message update" }),
+      screen.queryByRole("button", {
+        name: kind === 40003 ? "Retry" : "Try again",
+      }),
     ).not.toBeInTheDocument();
   },
 );

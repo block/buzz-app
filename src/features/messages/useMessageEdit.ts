@@ -9,6 +9,11 @@ import {
 import type { ChannelMessage } from "../relay/contracts";
 import type { OutgoingEvent } from "../relay/outbox";
 import type { ComposerSession } from "./composer-session";
+import {
+  failureText,
+  retryable as canRetry,
+  unsentSentence,
+} from "../relay/refusal";
 
 export function lastEditableMessage(
   session: ComposerSession,
@@ -68,6 +73,10 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
   const busy = draftSaving || (!!operation && delivery?.delivery === "sending");
   const retryable =
     delivery?.delivery === "failed" || delivery?.delivery === "unknown";
+  /** Sending it again can work: a refused edit is refused again. */
+  const resendable = retryable && !!delivery && canRetry(delivery);
+  /** The edit may have been saved; only its confirmation is missing. */
+  const unconfirmed = delivery?.delivery === "unknown";
   useEffect(
     () => () => {
       if (target && "cancelDraft" in target) target.cancelDraft();
@@ -98,7 +107,19 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     busy,
     locked: !!operation || draftSaving,
     retryable,
-    error: error ?? delivery?.error,
+    resendable,
+    unconfirmed,
+    /** Whether this surface can discard an unsent edit. */
+    discardable: retryable && !!session.outbox?.dismiss,
+    // The status beside Retry says the edit wasn't saved; a refusal, or a
+    // check on this device that can't pass, adds why.
+    error:
+      error ??
+      (delivery &&
+        (unsentSentence(delivery) ??
+          (delivery.refused
+            ? "The community didn’t accept your edit."
+            : undefined))),
     close,
     clearError: () => setError(undefined),
     start(
@@ -128,7 +149,7 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
         void target
           .saveDraft(body)
           .then(close, (reason) => {
-            setError(reason instanceof Error ? reason.message : String(reason));
+            setError(failureText(reason));
           })
           .finally(() => setDraftSaving(false));
         return;
@@ -158,17 +179,25 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
         setOperation(id);
         setError(undefined);
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(failureText(reason));
       }
     },
     retry() {
-      if (!operation) return;
+      if (!operation || !resendable) return;
       try {
         session.outbox?.retry(operation);
         setError(undefined);
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(failureText(reason));
       }
+    },
+    /** Drops the unsent edit and leaves the message as it is. */
+    discard() {
+      if (!operation || !retryable) return;
+      // Once the edit leaves the outbox, the effect above closes the editor.
+      session.outbox?.dismiss?.(operation).catch((reason: unknown) => {
+        setError(failureText(reason));
+      });
     },
   };
 }

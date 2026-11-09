@@ -3831,14 +3831,30 @@ function Composer({
           )}
         {editing.retryable && (
           <>
-            <p role="status">Your edit is still in the outbox.</p>
-            <Button
-              type="button"
-              disabled={editDisabled}
-              onClick={editing.retry}
-            >
-              Retry edit
-            </Button>
+            <p role="status">
+              {editing.unconfirmed
+                ? "Your edit may already be saved. Retrying won’t apply it twice."
+                : "Your edit hasn’t been saved yet."}
+            </p>
+            {(editing.discardable || editing.resendable) && (
+              <div className={styles.composerEditActions}>
+                {editing.discardable && (
+                  <Button type="button" onClick={editing.discard}>
+                    Discard
+                  </Button>
+                )}
+                {editing.resendable && (
+                  <Button
+                    type="button"
+                    variant="prominent"
+                    disabled={editDisabled}
+                    onClick={editing.retry}
+                  >
+                    Retry
+                  </Button>
+                )}
+              </div>
+            )}
           </>
         )}
         {(error || editing.error) && emojiCatalog.status === "error" && (

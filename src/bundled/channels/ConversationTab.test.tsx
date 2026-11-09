@@ -178,17 +178,19 @@ it.each(["thread", "conversation"] as const)(
       notice.textContent?.includes(retry.content),
     );
     assert.exists(retryNotice);
-    fireEvent.click(
-      within(retryNotice).getByRole("button", { name: "Retry message update" }),
-    );
+    // As in the edit composer, Retry comes last.
+    expect(
+      within(retryNotice)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Discard", "Retry"]);
+    fireEvent.click(within(retryNotice).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
     expect(publish.mock.calls[0]?.[0]).toEqual(retry);
     await waitFor(() =>
       expect(screen.queryByText(retry.content)).not.toBeInTheDocument(),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Discard failed update" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     await waitFor(() =>
       expect(screen.queryByRole("status")).not.toBeInTheDocument(),
     );

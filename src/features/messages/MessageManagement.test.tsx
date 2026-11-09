@@ -32,6 +32,7 @@ import {
 import { createRelaySession } from "../relay/session";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import {
+  PublishNotSent,
   PublishRejected,
   type OutboxStorage,
   type OutgoingEvent,
@@ -369,7 +370,61 @@ async function edit() {
   expect(screen.queryByRole("dialog", { name: "Edit message" })).toBeNull();
 }
 
-it("edits in the composer, retains a rejected change and retries the same operation", async () => {
+it("keeps a refused edit without offering Retry, which would be refused again", async () => {
+  const h = await fixture();
+  await edit();
+  fill("Corrected message");
+  submit();
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  await act(async () =>
+    h.publication(0).result.reject(new PublishRejected("Edit refused")),
+  );
+  // The refusal's own words stay out of the composer.
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The community didn’t accept your edit.",
+  );
+  expect(screen.getByText("Your edit hasn’t been saved yet.")).toBeVisible();
+  expect(editor()).toHaveValue("Corrected message");
+  // Neither the composer nor the conversation's strip offers it.
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(
+    screen.getAllByRole("button", { name: "Discard" }).length,
+  ).toBeGreaterThan(0);
+});
+
+it("says why an edit Buzz can't send as written has no Retry", async () => {
+  const h = await fixture();
+  await edit();
+  fill("Corrected message");
+  submit();
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  await act(async () =>
+    h.publication(0).result.reject(new PublishNotSent("Edit not sent")),
+  );
+  await screen.findByText("Your edit hasn’t been saved yet.");
+  await act(async () => h.setRole("guest"));
+  // The Outbox or another window sends it again after the demotion.
+  const id = h.publication(0).event.id;
+  await act(async () => h.owner.session.outbox?.retry(id));
+  await waitFor(() =>
+    expect(
+      h.owner.session.outbox?.snapshot().find((item) => item.event.id === id),
+    ).toMatchObject({ delivery: "failed", unsent: "blocked" }),
+  );
+  // Both the conversation's strip and the composer say why.
+  expect(
+    screen.getByText(
+      "Couldn’t save your edit. You have read-only access to this channel.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "You have read-only access to this channel.",
+  );
+  expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  expect(h.publications).toHaveLength(1);
+});
+
+it("edits in the composer, retains an unsent change and retries the same operation", async () => {
   const h = await fixture();
   await edit();
   fill("Corrected message");
@@ -377,11 +432,16 @@ it("edits in the composer, retains a rejected change and retries the same operat
   await waitFor(() => expect(h.publications).toHaveLength(1));
   expect(editor()).toHaveAttribute("contenteditable", "false");
   await act(async () =>
-    h.publication(0).result.reject(new PublishRejected("Edit refused")),
+    h.publication(0).result.reject(new PublishNotSent("Edit not sent")),
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent("Edit refused");
+  expect(
+    await screen.findByText("Your edit hasn’t been saved yet."),
+  ).toBeVisible();
   expect(editor()).toHaveValue("Corrected message");
-  fireEvent.click(screen.getByRole("button", { name: "Retry edit" }));
+  // The composer and the conversation's recovery strip both offer it.
+  const [retry] = screen.getAllByRole("button", { name: "Retry" });
+  if (!retry) throw new Error("Expected Retry");
+  fireEvent.click(retry);
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
   await act(async () => h.publication(1).result.resolve());
@@ -419,9 +479,8 @@ it.each(["member", "guest"] as const)(
       name: "Delete message?",
     });
     expect(confirmation).toHaveTextContent(
-      "This requests removal of this message from Buzz’s relay.",
+      "This requests removal of this message from the community. People may still have copies. This cannot be undone.",
     );
-    expect(confirmation).toHaveTextContent("People may still have copies.");
     expect(h.publications).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(h.publications).toHaveLength(1));
@@ -430,10 +489,10 @@ it.each(["member", "guest"] as const)(
     expect(h.publication(0).event.tags).toContainEqual(["e", h.original.id]);
     if (role === "guest") {
       await act(async () =>
-        h.publication(0).result.reject(new PublishRejected("Deletion refused")),
+        h.publication(0).result.reject(new PublishNotSent("Deletion not sent")),
       );
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Deletion refused",
+        "Couldn’t delete your message.",
       );
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
       await waitFor(() => expect(h.publications).toHaveLength(2));
@@ -860,6 +919,31 @@ it("offers the follow choice only once a restored roster is confirmed", async ()
   ).toBeVisible();
 });
 
+it("offers no Retry or Try again for a refused deletion, which would be refused again", async () => {
+  const h = await fixture();
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Delete message" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  await act(async () =>
+    h.publication(0).result.reject(new PublishRejected("Deletion refused")),
+  );
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Delete message?",
+  });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "Couldn’t delete your message.",
+  );
+  expect(within(dialog).queryByRole("button", { name: "Retry" })).toBeNull();
+  fireEvent.click(within(dialog).getByText("Close", { exact: true }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(screen.getByText("Couldn’t delete your message.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
+  expect(h.publications).toHaveLength(1);
+});
+
 it("keeps deletion recovery outside the optimistically removed row", async () => {
   const h = await fixture();
   fireEvent.click(
@@ -871,10 +955,10 @@ it("keeps deletion recovery outside the optimistically removed row", async () =>
   await waitFor(() => expect(h.publications).toHaveLength(1));
   expect(h.owner.session.channels.window("room").rows).toHaveLength(0);
   await act(async () =>
-    h.publication(0).result.reject(new PublishRejected("Deletion refused")),
+    h.publication(0).result.reject(new PublishNotSent("Deletion not sent")),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Deletion refused",
+    "Couldn’t delete your message.",
   );
   expect(h.owner.session.channels.window("room").rows).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -908,7 +992,7 @@ it("recovers an uncertain deletion after the row and dialog disappear", async ()
   fireEvent.click(await screen.findByText("Close", { exact: true }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(screen.queryByRole("button", { name: "Message actions" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
   await act(async () => h.publication(1).result.resolve());
@@ -928,13 +1012,13 @@ it.each(["failed", "unknown"] as const)(
         .publication(0)
         .result.reject(
           delivery === "failed"
-            ? new PublishRejected("Deletion refused")
+            ? new PublishNotSent("Deletion not sent")
             : new Error("Connection lost"),
         ),
     );
     fireEvent.click(await screen.findByText("Close", { exact: true }));
     const retry = await screen.findByRole("button", {
-      name: "Retry message update",
+      name: "Try again",
     });
     expect(retry).toBeEnabled();
     await act(async () => h.setRole("guest"));
@@ -944,6 +1028,37 @@ it.each(["failed", "unknown"] as const)(
     expect(h.publications).toHaveLength(1);
   },
 );
+
+it("says why a deletion Buzz can't send as written has no Try again", async () => {
+  const h = await fixture();
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Delete message" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  await act(async () =>
+    h.publication(0).result.reject(new PublishNotSent("Deletion not sent")),
+  );
+  fireEvent.click(await screen.findByText("Close", { exact: true }));
+  await act(async () => h.setRole("guest"));
+  // The Outbox or another window sends it again after the demotion.
+  const id = h.publication(0).event.id;
+  await act(async () => h.owner.session.outbox?.retry(id));
+  await waitFor(() =>
+    expect(
+      h.owner.session.outbox?.snapshot().find((item) => item.event.id === id),
+    ).toMatchObject({ delivery: "failed", unsent: "blocked" }),
+  );
+  // Not a dead end that reads as still on its way: it says why.
+  expect(
+    screen.getByText(
+      "Couldn’t delete your message. You have read-only access to this channel.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
+  expect(h.publications).toHaveLength(1);
+});
 
 it("retries an owned-agent deletion without its row and disables retry when ownership is revoked", async () => {
   const h = await fixture(
@@ -968,17 +1083,17 @@ it("retries an owned-agent deletion without its row and disables retry when owne
   fireEvent.click(await screen.findByText("Close", { exact: true }));
   expect(h.owner.session.channels.window("room").rows).toHaveLength(0);
   const retry = await screen.findByRole("button", {
-    name: "Retry message update",
+    name: "Try again",
   });
   expect(retry).toBeEnabled();
   fireEvent.click(retry);
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
   await act(async () =>
-    h.publication(1).result.reject(new PublishRejected("Deletion refused")),
+    h.publication(1).result.reject(new PublishNotSent("Deletion not sent")),
   );
   const revokedRetry = await screen.findByRole("button", {
-    name: "Retry message update",
+    name: "Try again",
   });
   expect(revokedRetry).toBeEnabled();
   await act(async () => h.revokeOwner());
@@ -1499,13 +1614,13 @@ it("keeps a withheld empty-edit deletion recoverable and restores the draft only
   h.present(false);
   expect(screen.queryByRole("alertdialog")).toBeNull();
   await act(async () =>
-    h.publication(0).result.reject(new PublishRejected("Deletion refused")),
+    h.publication(0).result.reject(new PublishNotSent("Deletion not sent")),
   );
   expect(editor()).toHaveValue("");
-  expect(screen.getByText("Message deletion: Deletion refused")).toBeVisible();
+  expect(screen.getByText("Couldn’t delete your message.")).toBeVisible();
   h.present(true);
   expect(screen.queryByRole("alertdialog")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);
   expect(editor()).toHaveValue("");

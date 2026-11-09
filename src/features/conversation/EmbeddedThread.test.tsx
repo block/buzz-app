@@ -380,10 +380,8 @@ it("offers recovery for a failed edit left in the outbox", () => {
     } as unknown as OutgoingEvent,
   ]);
   render(<EmbeddedThread {...h.props} />);
-  expect(
-    screen.getByText("Message edit: Relay refused the edit."),
-  ).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Retry message update" }));
+  expect(screen.getByText("Couldn’t save your edit.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(h.outbox.retry).toHaveBeenCalledExactlyOnceWith("edit");
 });
 

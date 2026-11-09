@@ -103,10 +103,33 @@ test("Cmd+Up edits in the existing composer and restores native focus, draft his
       source.replace("Original caption", "Revised caption reject"),
     );
     await editor.press("Enter");
-    await expect(
-      page.getByRole("button", { name: "Retry edit", exact: true }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Retry edit", exact: true }).click();
+    // The conversation's strip offers the same recovery; this is the
+    // composer's own.
+    const editForm = page.getByRole("form", {
+      name: "Edit message",
+      exact: true,
+    });
+    const retry = editForm.getByRole("button", { name: "Retry", exact: true });
+    await expect(retry).toBeVisible();
+    // Discard, then Retry, side by side at their own widths and centred.
+    const [formBox, discardBox, retryBox] = await Promise.all([
+      editForm.boundingBox(),
+      editForm
+        .getByRole("button", { name: "Discard", exact: true })
+        .boundingBox(),
+      retry.boundingBox(),
+    ]);
+    expect(discardBox.y).toBe(retryBox.y);
+    expect(discardBox.x + discardBox.width).toBeLessThan(retryBox.x);
+    expect(retryBox.width).toBeLessThan(formBox.width / 4);
+    expect(
+      Math.abs(
+        discardBox.x -
+          formBox.x -
+          (formBox.x + formBox.width - retryBox.x - retryBox.width),
+      ),
+    ).toBeLessThan(2);
+    await retry.click();
     await expect(input).toBeFocused();
     await expect(input).toHaveJSProperty("value", "");
     // The applied edit replaces the caption and marks it as edited.

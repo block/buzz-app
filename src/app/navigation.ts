@@ -187,26 +187,20 @@ export function useAppNavigation(
     )
       failure = "unavailable";
   }
-  if (
-    target.kind === "settings" &&
-    !failure &&
-    !waiting &&
-    target.section &&
-    !isBuiltInSettingsSection(target.section)
-  ) {
-    // Plugin cards are addressed by contribution key.
-    const section = target.section;
-    const owner = section.split("/")[0] ?? "";
-    if (visibility !== true) {
-      if (
-        retainedAttempt !== state.attempt ||
-        startup === "loading" ||
-        plugins.activation[owner]?.status === "starting" ||
-        visibility === "pending"
-      )
-        waiting = true;
-      else failure = "unavailable";
-    }
+  // Plugin cards are addressed by contribution key, prefixed by their plugin.
+  const cardOwner =
+    settings && target.section && !isBuiltInSettingsSection(target.section)
+      ? target.section.split("/")[0]
+      : undefined;
+  if (cardOwner !== undefined && !failure && !waiting && visibility !== true) {
+    if (
+      retainedAttempt !== state.attempt ||
+      startup === "loading" ||
+      plugins.activation[cardOwner]?.status === "starting" ||
+      visibility === "pending"
+    )
+      waiting = true;
+    else failure = "unavailable";
   }
   if (provider && !failure && !waiting) {
     const owner = provider.split("/")[0] ?? "";
@@ -217,16 +211,24 @@ export function useAppNavigation(
       waiting = true;
     else if (!providerAvailable) failure = "unavailable";
   }
-  // An installed plugin that is turned off has no pages: say so, not "removed".
-  // Paused external plugins can't start this launch, so Enable wouldn't help.
+  // An installed plugin that is turned off has no pages or Settings cards:
+  // say so, not "removed". Paused external plugins can't start this launch,
+  // so Enable wouldn't help. A card key is "<plugin>/<card>"; a bare section
+  // id names no plugin, so it keeps the not-available card.
   const configuration = plugins.configuration;
+  const pluginId =
+    target.kind === "page" || target.kind === "plugin"
+      ? target.pluginId
+      : settings && target.section?.includes("/")
+        ? cardOwner
+        : undefined;
   const turnedOff =
     failure === "unavailable" &&
-    (target.kind === "page" || target.kind === "plugin") &&
+    pluginId !== undefined &&
     configuration.status === "ready"
       ? configuration.catalog.plugins.find(
           (plugin) =>
-            plugin.manifest.id === target.pluginId &&
+            plugin.manifest.id === pluginId &&
             !plugin.enabled &&
             !(
               configuration.externalPluginsPaused &&

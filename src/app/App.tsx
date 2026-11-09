@@ -556,7 +556,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         <EmptyState
           icon={<WarningCircleIcon />}
           title={`${route.turnedOff.name} is turned off`}
-          description="Turn it on in Manage plugins to open this page."
+          description={`Turn it on in Manage plugins to open this ${settings ? "section" : "page"}.`}
           action={
             <>
               <Button

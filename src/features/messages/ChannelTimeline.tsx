@@ -1670,7 +1670,6 @@ function Timeline({
       !element ||
       !settled.current ||
       !follow.current ||
-      restoredAnchor.current ||
       pendingRestore.current === intent.current ||
       pendingReveal.current ||
       (targetId && revealedSignal !== targetSignal) ||

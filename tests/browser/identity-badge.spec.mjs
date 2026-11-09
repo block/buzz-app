@@ -23,6 +23,7 @@ test("backup pills open stable key details and long content scrolls within the b
     }, mode);
   };
   try {
+    await page.emulateMedia({ reducedMotion: "no-preference" });
     for (const mode of ["light", "dark"]) {
       await openFixture("identity-badge.html", mode);
       const badge = page.getByRole("region", { name: "Your Buzz ID" });
@@ -30,9 +31,35 @@ test("backup pills open stable key details and long content scrolls within the b
       await expect(check).toBeVisible();
       const front = await height(badge);
       await check.focus();
+      // Pause the real flip near its start: settled checks miss a blank first half.
+      await badge.evaluate((el) => {
+        document.addEventListener(
+          "click",
+          () => {
+            for (const animation of el.getAnimations({ subtree: true })) {
+              animation.pause();
+              animation.currentTime = 1;
+            }
+          },
+          { once: true },
+        );
+      });
       await page.keyboard.press("Enter");
       const back = badge.getByRole("button", { name: "Back", exact: true });
       await expect(back).toBeFocused();
+      const inactive = badge.locator('[inert][aria-hidden="true"]');
+      await expect(inactive).toHaveCSS("visibility", "visible");
+      await badge.evaluate((el) => {
+        for (const animation of el.getAnimations({ subtree: true }))
+          animation.finish();
+      });
+      // Compare the card alone: DOM/geometry miss the overlay; the corner tooltip animates.
+      const card = inactive.locator("..");
+      const painted = await card.screenshot();
+      await inactive.evaluate((el) => (el.style.visibility = "hidden"));
+      const hidden = await card.screenshot();
+      await inactive.evaluate((el) => el.style.removeProperty("visibility"));
+      expect(painted.equals(hidden), "inactive face must not paint").toBe(true);
       const keyMenu = badge.getByRole("button", {
         name: "Private key actions",
       });

@@ -55,6 +55,15 @@
   text-align: left;
   backface-visibility: hidden;
 }
+@media (prefers-reduced-motion: no-preference) {
+  .face {
+    transition: visibility var(--duration-panel-enter) var(--easing-enter);
+  }
+  /* WebKit can paint a mirrored back face despite backface-visibility. */
+  .face[aria-hidden="true"] {
+    visibility: hidden;
+  }
+}
 .slot {
   position: absolute;
   top: var(--space-3);

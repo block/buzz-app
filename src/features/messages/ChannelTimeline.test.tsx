@@ -707,6 +707,60 @@ it.each([
   expect(h.loadOlder).not.toHaveBeenCalled();
   h.unmount();
 });
+// A head of folded agent activity can leave nothing to scroll.
+const underfilled = (h: ReturnType<typeof setup>) => {
+  h.element.scrollHeight = h.element.clientHeight;
+  h.render();
+};
+it("a settled reader at the bottom fills a screen with nothing to scroll", () => {
+  const h = setup({ hasMore: true });
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  underfilled(h);
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  h.unmount();
+});
+it("filling reads a few pages a visit, then leaves paging to the reader", () => {
+  const h = setup({ hasMore: true });
+  underfilled(h);
+  for (let page = 0; page < 6; page++) h.update({ loadingOlder: false });
+  expect(h.olderReads).toHaveBeenCalledTimes(5);
+  h.element.scrollTop = 0;
+  h.gesture();
+  expect(h.olderReads).toHaveBeenCalledTimes(6);
+  h.unmount();
+});
+it.each([
+  { hasMore: false },
+  { hasMore: true, loadingOlder: true },
+  { hasMore: true, historyLimited: true },
+  { hasMore: true, error: "Relay requests paused" },
+  { hasMore: true, recovering: true },
+  { hasMore: true, freshness: "cached" as const, blocked: false },
+  {
+    hasMore: true,
+    initial: { bottom: false, anchor: { id: "first", y: 0 } },
+  },
+])("does not fill an underfilled screen %j", (options) => {
+  const h = setup(options);
+  underfilled(h);
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("does not fill a screen that can scroll", () => {
+  const h = setup({ hasMore: true });
+  h.element.scrollHeight = h.element.clientHeight + 1;
+  h.render();
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("a failed fill read is not retried unasked", () => {
+  const h = setup({ hasMore: true });
+  underfilled(h);
+  h.update({ loadingOlder: false, error: "Relay requests paused" });
+  h.render();
+  expect(h.loadOlder).toHaveBeenCalledTimes(1);
+  h.unmount();
+});
 it("programmatic scroll does not page before a user gesture", () => {
   const h = setup({ hasMore: true });
   h.scroll(false);

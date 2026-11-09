@@ -127,6 +127,8 @@ const visitBoundaries = new WeakMap<
 >();
 const unknownUnreadSync = Object.freeze({ completeness: "unknown" as const });
 const TIMELINE_PLACE = "timeline";
+// Older pages a visit reads unasked to fill a screen its head leaves empty.
+const FILL_PAGES = 5;
 function positionAt(
   element: HTMLElement,
   restoredAnchor?: string,
@@ -1650,6 +1652,65 @@ function Timeline({
     if (olderDemand.current && scroller.current)
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
+  // A head of folded agent activity can paint less than a screen, leaving no
+  // range to scroll: no reader input would ask for older history. A settled
+  // reader at the bottom fills it from verified history, a few pages a visit.
+  // Past that, or after a failed read, the edge control and gestures page.
+  const fillPages = useRef(0);
+  const fillFrame = useRef<number | undefined>(undefined);
+  const fillViewport = useCallback(() => {
+    const element = scroller.current;
+    if (
+      !element ||
+      !settled.current ||
+      !follow.current ||
+      restoredAnchor.current ||
+      pendingRestore.current === intent.current ||
+      pendingReveal.current ||
+      (targetId && revealedSignal !== targetSignal) ||
+      fillPages.current >= FILL_PAGES ||
+      recovering ||
+      queries.channels.cachedOnly ||
+      window.freshness === "cached" ||
+      window.status !== "ready" ||
+      !window.hasMore ||
+      window.historyLimited ||
+      window.loadingOlder ||
+      window.error ||
+      element.scrollHeight > element.clientHeight
+    )
+      return;
+    queries.channels.loadOlder(channelId);
+    if (queries.channels.window(channelId).loadingOlder) fillPages.current++;
+  }, [
+    window,
+    queries,
+    channelId,
+    recovering,
+    targetId,
+    targetSignal,
+    revealedSignal,
+  ]);
+  // After positioning's frame, and again once Virtua measures estimated rows.
+  const scheduleFill = useCallback(() => {
+    if (fillFrame.current !== undefined)
+      cancelAnimationFrame(fillFrame.current);
+    fillFrame.current = requestAnimationFrame(() => {
+      fillFrame.current = undefined;
+      fillViewport();
+    });
+  }, [fillViewport]);
+  // Window updates carry each page; positioning settles once the viewport is
+  // measured.
+  useLayoutEffect(() => {
+    if (!size.height) return;
+    scheduleFill();
+    return () => {
+      if (fillFrame.current !== undefined)
+        cancelAnimationFrame(fillFrame.current);
+      fillFrame.current = undefined;
+    };
+  }, [scheduleFill, size]);
   const gesture = (upward = false) => {
     const restoring = pendingRestore.current === intent.current;
     restoredAnchor.current = undefined;
@@ -1826,6 +1887,7 @@ function Timeline({
           // Reflow must not evict the focused control or a row's open report.
           keepMounted={keptIndices}
           onResize={() => {
+            scheduleFill();
             const element = scroller.current;
             // Rows can measure after native scrollend without moving the
             // scroll offset. Do not carry their estimated Y into the next hold.

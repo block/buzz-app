@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
-import { CodexSetup } from "./setup";
+import { CodexSetup, explainTurn } from "./setup";
 import { describe, afterEach, expect, it, vi } from "vitest";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
@@ -1524,6 +1524,112 @@ it("reports a protection startup failure and settles the waiting activity", asyn
   });
   expect(f.worker.starts()).toEqual([]);
 });
+
+const CODEX_SETTINGS =
+  "buzz://settings?section=agents&provider=buzz.codex%2Fcodex";
+const SIGN_IN_AGAIN = `OpenAI rejected Codex's sign-in. It may have expired or been revoked. Head to [Settings](${CODEX_SETTINGS}) to sign in again.`;
+
+/** Ends the first turn as Codex 0.166 does when OpenAI refuses it. */
+const failFirstTurn = (f: ReturnType<typeof fixture>, message: string) => {
+  const params = f.starts()[0]?.params as { threadId: string };
+  f.emit({
+    method: "turn/completed",
+    params: {
+      threadId: params.threadId,
+      turn: { id: "turn-1", status: "failed", error: { message } },
+    },
+  });
+};
+
+it.each([
+  [
+    "it is signed out",
+    "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses",
+    `Codex isn't signed in. Head to [Settings](${CODEX_SETTINGS}) to sign in.`,
+  ],
+  [
+    "OpenAI rejects its API key",
+    "unexpected status 401 Unauthorized: Incorrect API key provided: sk-test. You can find your API key at https://platform.openai.com/account/api-keys., url: https://api.openai.com/v1/responses",
+    SIGN_IN_AGAIN,
+  ],
+  [
+    "its ChatGPT sign-in expired",
+    "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
+    SIGN_IN_AGAIN,
+  ],
+  [
+    "it cannot recover its sign-in",
+    "Your authentication session could not be refreshed automatically. Please log out and sign in again.",
+    SIGN_IN_AGAIN,
+  ],
+])(
+  "links Codex's Settings and quotes Codex when a turn fails because %s",
+  async (_, error, explanation) => {
+    const f = fixture([], undefined, true);
+    try {
+      await f.runPlugin(f.delivery("work"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      failFirstTurn(f, error);
+      await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+      // Codex's words as it said them, without "Codex could not finish: ".
+      expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+        content: `${explanation}\n\nCodex said:\n> ${error}`,
+      });
+    } finally {
+      f.pluginDispose();
+    }
+  },
+);
+
+it.each([
+  "model busy",
+  // An MCP server's sign-in, which Codex's Settings can't fix.
+  "MCP OAuth refresh token was rejected; reauthorization required",
+  "MCP OAuth access token is expired and refresh failed; reauthorization required",
+  // A refresh that isn't Codex's sign-in, alone and followed by another error.
+  "configured values could not be refreshed: x",
+  "configured values could not be refreshed: enterprise IdP session has no OIDC ID token; sign in again.",
+])(
+  "reports a turn that failed otherwise (%s) as Codex said it",
+  async (error) => {
+    const f = fixture([], undefined, true);
+    try {
+      await f.runPlugin(f.delivery("work"));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      failFirstTurn(f, error);
+      await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+      expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+        content: `Codex could not finish: ${error}.`,
+      });
+    } finally {
+      f.pluginDispose();
+    }
+  },
+);
+
+it.each(["thread/start", "turn/start"])(
+  "links Codex's Settings and quotes Codex when Codex refuses %s for its sign-in, keeping Codex's words for the Activity tab",
+  async (method) => {
+    const f = fixture();
+    f.runtime.explain = (notice) => explainTurn(notice, CODEX_SETTINGS);
+    const refused =
+      "Your access token could not be refreshed because your refresh token was revoked. Please log out and sign in again.";
+    f.failures.set(method, refused);
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(pubkey)).toMatchObject([
+        {
+          status: "Needs attention",
+          detail: `Codex could not finish: ${refused}.`,
+        },
+      ]),
+    );
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: `${SIGN_IN_AGAIN}\n\nCodex said:\n> ${refused}`,
+    });
+  },
+);
 
 it("starts a protected engine in Buzz's Codex home, as unprotected Codex runs", async () => {
   const f = protectedPreview();
@@ -7032,66 +7138,46 @@ it.each(["conversation", "standalone", "preview"])(
   },
 );
 
-it.each([true, false])(
-  "lists and runs the owner tools only for a run with owner access: %s",
-  async (owned) => {
-    const f = fixture();
-    const executedAs = { agent: "agent", owner: "owner", community: "c" };
-    const ownerAccess = {
-      channels: vi.fn(async () => ({
-        execution: executedAs,
-        channels: [],
-        partial: false,
-      })),
-      channel: vi.fn(),
-      members: vi.fn(),
-      messages: vi.fn(),
-      canvas: vi.fn(),
-      canvasHistory: vi.fn(),
-      held: vi.fn(),
-    };
-    const delivery = f.delivery("@Codex list my channels");
-    await f.runtime.run({
-      ...delivery,
-      agent: {
-        ...delivery.agent,
-        ...(owned ? { ownerAccess } : {}),
-      } as typeof delivery.agent,
-    });
-    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-    const thread = f.sent.find((wire) => wire.method === "thread/start")
-      ?.params as {
-      dynamicTools: {
-        description: string;
-        tools: { name: string; deferLoading?: boolean }[];
-      }[];
-    };
-    const listed = thread.dynamicTools[0]?.tools.filter((tool) =>
-      tool.name.startsWith("owner_"),
-    );
-    expect(listed).toEqual(
-      owned
-        ? [
-            "owner_channel_list",
-            "owner_channel_get",
-            "owner_member_list",
-            "owner_read",
-            "owner_canvas_get",
-            "owner_canvas_history",
-          ].map((name) => expect.objectContaining({ name, deferLoading: true }))
-        : [],
-    );
-    // A name the model remembers or guesses is checked against the run's
-    // own access on every call.
-    const reply = (await f.tool("owner_channel_list", {}))?.result as {
+// The owner-read tools #2745 and #2881 added, listed here rather than taken
+// from the catalog under test.
+const RETIRED_OWNER_TOOLS = [
+  "owner_channel_list",
+  "owner_channel_get",
+  "owner_member_list",
+  "owner_read",
+  "owner_canvas_get",
+  "owner_canvas_history",
+];
+
+it("neither lists nor runs the retired owner-read tools, while its own reads work", async () => {
+  const f = fixture();
+  // A handle that still carries the old capability must not make it usable.
+  const ownerRead = vi.fn();
+  const ownerAccess = new Proxy({}, { get: () => ownerRead });
+  const delivery = f.delivery("OWN_CONVERSATION");
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, ownerAccess } as typeof delivery.agent,
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as {
+    dynamicTools: { description: string; tools: { name: string }[] }[];
+  };
+  const listed = JSON.stringify(thread.dynamicTools);
+  for (const name of RETIRED_OWNER_TOOLS) {
+    expect(listed).not.toContain(name);
+    // A name the model remembers from an earlier build is refused.
+    const reply = (await f.tool(name, { channel: "channel" }))?.result as {
       success: boolean;
       contentItems: { text: string }[];
     };
-    expect(reply.success).toBe(owned);
-    expect(reply.contentItems[0]?.text).toContain(
-      owned ? '"executedAs"' : "nothing was read",
-    );
-    expect(ownerAccess.channels).toHaveBeenCalledTimes(owned ? 1 : 0);
-    await f.complete();
-  },
-);
+    expect(reply.success).toBe(false);
+    expect(reply.contentItems[0]?.text).toContain("No active Buzz tool");
+  }
+  expect(ownerRead).not.toHaveBeenCalled();
+  expect(JSON.stringify((await f.tool("read", {}))?.result)).toContain(
+    "OWN_CONVERSATION",
+  );
+  await f.complete();
+});

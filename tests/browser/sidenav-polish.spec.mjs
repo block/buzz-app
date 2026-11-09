@@ -1,4 +1,5 @@
 import {
+  activityRow,
   closeSettings,
   openPage,
   openSettings,
@@ -73,7 +74,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const alpha = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  const destinations = ["Activity", "Bestie"].map((name) =>
+  const destinations = ["Bestie", "Reminders"].map((name) =>
     page
       .getByRole("navigation", { name: "Apps dock" })
       .getByRole("tab", { name, exact: true }),
@@ -603,7 +604,7 @@ test("Bestie stays clickable while its invitation artwork rotates", async ({
   await expect(
     page.getByRole("region", { name: "Bestie", exact: true }),
   ).toBeVisible();
-  await dock.getByRole("tab", { name: "Activity", exact: true }).click();
+  await dock.getByRole("tab", { name: "Messages", exact: true }).click();
   await bestie.focus();
   await page.keyboard.press("Enter");
   await expect(bestie).toHaveAttribute("aria-selected", "true");
@@ -658,12 +659,18 @@ test.extend({ companionFixture: true })(
       await sidebar.getByRole("button", { name, exact: true }).click();
     };
     const openPage = async (name) => {
-      await pages
-        .getByRole("tab", {
-          name: name === "Bestie" ? "Create an agent" : name,
-          exact: true,
-        })
-        .click();
+      if (name === "Activity") {
+        // Activity is a row at the top of the Messages sidebar.
+        await pages.getByRole("tab", { name: "Messages", exact: true }).click();
+        await showNavigation();
+        await activityRow(page).click();
+      } else
+        await pages
+          .getByRole("tab", {
+            name: name === "Bestie" ? "Create an agent" : name,
+            exact: true,
+          })
+          .click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
         name === "Activity"
@@ -854,9 +861,7 @@ test("non-ready sidebar keeps Retry reachable while dock pages remain available"
   });
   await expect(status).toBeAttached();
   await scrollToBottom(status);
-  const inbox = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Activity", exact: true });
+  const inbox = activityRow(page);
   await inbox.scrollIntoViewIfNeeded();
   await expect(inbox).toBeInViewport();
   await inbox.click();

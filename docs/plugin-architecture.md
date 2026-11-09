@@ -805,7 +805,9 @@ every gate to allow the target; the Dock asks about each conversation as a
 removed. A throwing gate is skipped. `gate` returns a remover, and disabling the
 plugin removes its gates. Gates never widen the host's own access and
 preference checks. A refused alert is dropped, not queued. Focus registers one
-only while Focus is on.
+only while Focus is on. Reminders re-targets a refused message alert to its
+Reminders page, so a gate that should silence reminders must refuse page
+targets too, as Focus does.
 
 A page may supply `icon`, a `data:image/<subtype>[;params],<payload>` URL; the
 scheme and type match case-insensitively. Search Buzz and the page navigation
@@ -1002,7 +1004,10 @@ cards such as Pair mobile that collect their own community address; it cannot be
 combined with `group` or `section`.
 Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
-Cards receive `active()` and use ordinary
+Cards receive `active()` and optional `navigation` for the current Settings visit.
+A Settings target can carry bounded `route: { version, params }` presentation
+data; the card interprets supported versions and ignores unknown routes. Opening
+a route must never submit a write. Cards use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 

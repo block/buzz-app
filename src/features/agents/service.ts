@@ -14,7 +14,6 @@ import { respond } from "../../buzz-mcp/rpc";
 import { respondExternal } from "../../buzz-mcp/external";
 import type { ExternalScope } from "./external-connection";
 import { externalMcpEnabled } from "./external-connection";
-import { createOwnerAccess, ownerMcpEnabled } from "./owner-access";
 import { connectMcp } from "../../buzz-mcp/connection";
 import { type HarnessKit, harnessKit } from "../agent-harness/kit";
 import { repositoriesContext } from "../communities/repositories";
@@ -194,7 +193,6 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
-import type { OwnerAccess } from "../../buzz-mcp/client";
 import { nameSoloChat } from "./solo-chat-name";
 import { visibleTeams } from "./visible-teams";
 import {
@@ -532,9 +530,6 @@ export type AgentHandle = Readonly<{
   tabs(): ReturnType<typeof channelTabs> | undefined;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
-  /** On a bundled harness's run handle only, where the build enables owner
-   * tools for its community: reads with the owner's access. */
-  ownerAccess?: OwnerAccess;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -2460,22 +2455,6 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
-      ownerAccess: (agent) =>
-        ownerMcpEnabled(agent.relay)
-          ? createOwnerAccess(agent, () => {
-              const binding = this.bindingOf(agent);
-              return binding &&
-                ownerMcpEnabled(binding.origin) &&
-                this.communities.snapshot().viewer === agent.owner
-                ? {
-                    viewer: binding.viewer,
-                    origin: binding.origin,
-                    session: binding.session,
-                    signal: binding.controller.signal,
-                  }
-                : undefined;
-            })
-          : undefined,
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
@@ -2724,7 +2703,7 @@ export class AgentsService extends Service implements Agents {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
-      // The owner_ prefix is reserved for tools that run with the owner's access.
+      // Reserved so a retired owner_ tool name can never reach plugin code.
       tool.name.startsWith("owner_") ||
       !tool.description ||
       tool.inputSchema?.type !== "object" ||
@@ -3167,10 +3146,9 @@ export class AgentsService extends Service implements Agents {
     const run = this.runners.handle(key, undefined, true);
     if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
-    // External apps never get the owner's access a bundled harness's run has.
-    const { handoff, ownerAccess: _, ...agentRun } = run;
+    const { handoff } = run;
     const handle: AgentHandle = {
-      ...agentRun,
+      ...run,
       ...(handoff && {
         handoff: ({ from: _, ...wake }: AgentHandoff) =>
           handoff({ ...wake, from: { external: true } }),

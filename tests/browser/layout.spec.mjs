@@ -55,12 +55,12 @@ const button = (page, name) => page.getByRole("button", { name, exact: true });
 const companionLauncher = (page, name) =>
   button(page, name).and(page.locator("button[aria-expanded]"));
 // Global destinations live in the dock independently of the Messages sidebar.
-const destinationTitles = ["Create an agent", "Activity"];
+const destinationTitles = ["Create an agent", "Workflows"];
 const dockDestinations = (page, options = {}) =>
   page
     .getByRole("navigation", { name: "Apps dock", ...options })
     .getByRole("tab", {
-      name: /^(Create an agent|Bestie|Activity)$/,
+      name: /^(Create an agent|Bestie|Workflows)$/,
       ...options,
     });
 const companionReadingTest = readingTest.extend({ companionFixture: true });
@@ -150,7 +150,7 @@ async function shellFits(page, width, bestieLabel = "Create an agent") {
   // Settings is a modal with its own navigation; the shell is measured with
   // Settings closed.
   const destinations = dockDestinations(page);
-  await expect(destinations).toHaveText([bestieLabel, "Activity"]);
+  await expect(destinations).toHaveText([bestieLabel, "Workflows"]);
   const dock = await box(page.getByRole("navigation", { name: "Apps dock" }));
   for (const destination of [destinations.first(), destinations.last()]) {
     await destination.scrollIntoViewIfNeeded();
@@ -254,9 +254,12 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   const sidebar = await box(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   );
+  // A narrow link panel covers the conversation, removing it from the
+  // accessibility tree; its geometry still applies.
   const conversation = page.getByRole("article", {
     name: "Conversation",
     exact: true,
+    includeHidden: true,
   });
   // The sidebar and main are flush regions inside one outer panel.
   const mainPanel = page.locator("#main-content > [data-joined]");
@@ -335,9 +338,11 @@ test("joined sidebar and workspace surface, real link panel and compact communit
     "background-color",
     shellColor,
   );
+  // The draft must survive under the covering link panel at narrow widths.
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
+    includeHidden: true,
   });
   await composer.fill("Layout draft");
   await page.screenshot({ path: testInfo.outputPath("joined-no-panel.png") });
@@ -519,8 +524,13 @@ test("narrow link panels begin after the rendered sidebar", async ({
   const sidebar = await box(
     page.getByRole("complementary", { name: "Sidebar", exact: true }),
   );
+  // The card covers the conversation, removing it from the accessibility tree.
   const conversation = await box(
-    page.getByRole("article", { name: "Conversation", exact: true }),
+    page.getByRole("article", {
+      name: "Conversation",
+      exact: true,
+      includeHidden: true,
+    }),
   );
   const dock = await box(page.locator("[data-panel-workspace]"));
   near(conversation.x, sidebar.x + sidebar.width);

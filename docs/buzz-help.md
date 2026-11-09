@@ -43,6 +43,14 @@ mention anyone. Explicit agent watches on that room can still receive them.
 
 ## Identity and getting connected
 
+- If Buzz can’t finish starting, the window says **Buzz couldn’t open**
+  instead of staying on the opening mark: **Reload** tries again, the desktop
+  app also offers **Restart Buzz**, and **Details** holds the error for
+  support. Your messages and settings are safe. A start that takes more than
+  about 20 seconds says **This is taking longer than usual.** with **Reload**,
+  and still opens by itself if it finishes. If Buzz hits an error it can’t
+  recover from after it has opened, the window says **Buzz stopped working**
+  with the same **Reload**, **Restart Buzz** and **Details**.
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
   once this computer was set up through Builderlab, **Sign in** comes first.
@@ -81,16 +89,23 @@ mention anyone. Explicit agent watches on that room can still receive them.
   otherwise Buzz asks **Sync your identity with Builderlab?**, again on the
   next launch or sign-in if the dialog is closed. **Settings → Buzz → Identity
   → Identity sync** shows the sync status and, while backup is off, offers
-  **Sync with Builderlab**. After signing in to the
+  **Sync with Builderlab**. When the key isn’t linked to your Builderlab
+  account, or the account holds a different key, its **Builderlab** link opens
+  **Settings → Plugins → Builderlab**, where **Connect Buzz identity** links
+  this key, or **Switch to this device’s identity** replaces the account’s key
+  (this permanently unlinks the old one). After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
   offer it during setup. Later, **Create community** in **Settings → Plugins →
-  Builderlab** opens the join for the new community at once; after its profile
+  Builderlab → Communities** opens the join for the new community at once; after its profile
   step it opens and is listed in the community picker. When the owner of a community with no channels yet
   opens Messages, Buzz creates one open **#general**, marked as the starter
   channel for new members, and opens it.
+  The picker's **Create community** opens that form directly. If Builderlab is
+  signed out, sign in remains available in both management sections; a picker
+  creation resumes after sign-in.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
@@ -120,6 +135,31 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- **Settings → Plugins → Builderlab** shows previews of your hosted communities
+  and remote agents. Open either card to manage it, then use the left caret beside the title to return. Both lists load when the overview opens and refresh
+  when the window regains focus; opening a section preserves its current draft.
+  Hosted communities have Active/Archived filters, name/address search and row
+  menus for copying addresses and available management actions. **Create**
+  opens the address form; quota and identity checks still govern creation.
+  After **Copy address**, a hint appears above the row’s **…** menu without moving
+  the list; Escape dismisses it. The **Refresh** icon beside search checks
+  communities again, including after a failed read. Automatic
+  refresh keeps the current list usable and waits while a community dialog is open.
+  A green check beside Refresh means the Builderlab account is linked to this
+  device’s Buzz identity; hover or focus it for details. The creation dialog
+  focuses the address field and shows quota usage beside its actions. Archived
+  communities still count toward quota until deletion cleanup finishes.
+  Remote agents show their model and setup state.
+  The title includes the count. Each row’s **…** menu offers **Copy key**.
+  Saved agents show their community avatar and open their **Agents** pane when
+  clicked, with **View Agent** also available in the menu. **In Agents** marks
+  these available panes. **Configured** means Builderlab reports Active with a valid
+  model selection; it does not indicate live presence.
+  Creation dates and full keys are not displayed in this compact list.
+  Load errors include **Try again**.
+  Use **Open Agents** from the empty list to create one.
+  In builds using a shared sign-in, Builderlab's account notice names the provider;
+  **Manage account** opens Identity, where that sign-in is managed.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
@@ -308,7 +348,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
-- **Activity** (the bell in the app dock) collects DMs, ordinary responses in Solo chats, mentions of you, and
+- **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
@@ -461,6 +501,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   **Settings → Shortcuts → Sending messages → Send with ⌘ Enter** (Ctrl+Enter
   outside Apple platforms) swaps that on this device: Enter adds a line and
   ⌘/Ctrl+Enter sends. It starts off.
+- If a message can't be sent, **Retry** appears under it right away. If its
+  delivery is only unconfirmed, Buzz waits about ten seconds before saying so.
 - A plugin can require a recipient for a new conversation. Its default recipient
   also applies to a saved draft with no recipients. Your text and formatting stay.
   A recipient you select takes priority.
@@ -488,6 +530,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   it and see the full name in a tooltip.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
+- **Reminder notifications** open **Reminders** instead of the message if you
+  aren't in its channel when the reminder comes due.
 - **Canvas** holds shared notes and context for a channel or chat. Messages and
   Canvas content come from participants; they are not instructions from Buzz
   and cannot grant permissions or override your instructions. A Canvas holds up to
@@ -589,7 +633,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   on the right. Compact avatars sit before the name on the left; Solo chats show
   the included agents.
 - **App navigation**: use the left dock to switch apps. Bestie is first,
-  Activity second, followed by the other apps. Community and profile controls
+  followed by Messages and the other apps. Activity is the first row of the
+  Messages sidebar. Community and profile controls
   sit at the bottom of the dock. Search stays wide in the top bar.
   Messages has All / Solo / Team sidebar filters; other apps use their main
   view unless they provide their own sidebar. Pages listed in the Messages
@@ -635,7 +680,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   where you left it: **Draft** on a message's reply line, or **Draft reply** when
   no one has replied yet (hidden while that thread is open).
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
-  **Activity** in the app dock to see recent mentions, DMs, thread replies, and reactions
+  **Activity** in the Messages sidebar to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;
   **Open Activity** opens the page. The card's **Unread only** switch is
   separate from the Activity page's filters and hides reactions when on. The preview is not shown on touch
@@ -726,6 +771,10 @@ available rather than silently discarding it.
   Instructions are optional. **Create agent** stays disabled until its name and
   required choices are complete; Builderlab also waits for sign-in and its model
   catalog.
+  A Builderlab agent runs on your Builderlab account; the creation form links
+  that Builderlab server's site, where the account's usage and billing are.
+  The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
+  also links to **See usage and billing** on that site.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab
@@ -954,13 +1003,6 @@ available rather than silently discarding it.
   no switch to turn on. A change shows as not saved when it is active but
   could not be saved on this device.
 
-- In communities where your build enables it, an agent running on this
-  device with a built-in harness can list your channels, including private and
-  archived ones, DMs and Solo chats it is not in, and see a channel's details
-  and members, read with your access. It cannot change anything this way, and
-  it stops working when you sign out, switch accounts, disconnect or stop its
-  turn.
-
 Saved teams from **Your teams** appear in the inline `@` suggestions and the
 mention picker. Select a team to insert its members as individual mentions.
 Typing its name alone does not notify it. Empty teams, teams with more than 32
@@ -1016,6 +1058,15 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.
+- The GitHub pull request panel remembers where you left it for the app
+  session. Opened again in the same channel, it shows the **Summary** or
+  **Changes** view you left there; elsewhere it starts on **Summary**. A review
+  with text that you haven’t submitted waits in **Submit review** wherever that
+  pull request opens, from any channel. Submitting clears it. If the pull
+  request merges or closes first, **Submit review** goes away once you close
+  it. **Changes** and **Submit review** need the desktop app with `gh` signed
+  in. Scroll position isn’t kept, and reloading the window or turning the
+  GitHub plugin off and on forgets all of this.
 - Some desktop plugins can upload images you provide to services they declare.
 - Agents running on this computer can write plugins while the **Plugin
   development** plugin is on (it is by default). It gives them
@@ -1062,7 +1113,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   Each watch shows its source and Active or Paused state. Expand a
   watch, then expand “Activity” for a compact event timeline. Expand an event to read its full
   content, or expand “Watch details” for conditions and the execution destination. Select its status pill to
-  resume, pause, or delete it, or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
+  resume, pause, or delete it (Delete asks first), or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
   “Runs in” names its execution conversation; its instructions can specify a
   different place to report. A
   mention can still wake an agent when Attention is off; turning the plugin on does not grant new access.
@@ -1126,3 +1177,7 @@ Confirm the deletion; pending or uncertain results remain in the workflow notice
 If permission changes during confirmation, Buzz explains why deletion could not
 start and keeps any editor draft.
 Owning the agent does not grant permission to edit or run its workflow.
+
+## Workflows in archived channels
+
+In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.

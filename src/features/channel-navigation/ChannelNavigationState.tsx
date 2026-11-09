@@ -89,7 +89,15 @@ type State = {
     | undefined;
   /** Undos chosen while another lifecycle action held the gate, oldest first. */
   queuedUndos: readonly ChannelSummary[];
+  /** The viewer's own Leave or Delete that failed unconfirmed, so the relay
+   * may still apply it, with the roster read (`ChannelList.asOf`) current when
+   * it failed. Its loss of access is then not someone else's doing. */
+  unconfirmedLosses: readonly UnconfirmedLoss[];
 };
+type UnconfirmedLoss = Readonly<{
+  channelId: string;
+  asOf: number | undefined;
+}>;
 type ActivityThread = {
   channelId: string;
   messageId: string;
@@ -411,7 +419,7 @@ export function ChannelNavigationProvider({
               )?.depart(departOnSubmit ? "current" : "origin");
               value.closeLifecycle();
             }}
-            failed={(title, message) => {
+            failed={(title, message, unconfirmed) => {
               setFailure({
                 session: connection.session,
                 title,
@@ -419,7 +427,28 @@ export function ChannelNavigationProvider({
                   ? `${state.lifecycleDialog?.channel.name}: ${message}`
                   : message,
               });
-              value.closeLifecycle();
+              const dialog = state.lifecycleDialog;
+              const loss =
+                unconfirmed &&
+                dialog &&
+                (dialog.action === "leave" || dialog.action === "delete")
+                  ? {
+                      channelId: dialog.channel.id,
+                      asOf: connection.session.channels.list().asOf,
+                    }
+                  : undefined;
+              update((previous) => ({
+                ...previous,
+                lifecycleDialog: undefined,
+                ...(loss && {
+                  unconfirmedLosses: [
+                    ...previous.unconfirmedLosses.filter(
+                      ({ channelId }) => channelId !== loss.channelId,
+                    ),
+                    loss,
+                  ],
+                }),
+              }));
             }}
           />
         )}
@@ -440,5 +469,6 @@ function restore(session: RelaySession, scope: string): State {
     preparingDm: undefined,
     lifecycleDialog: undefined,
     queuedUndos: [],
+    unconfirmedLosses: [],
   };
 }

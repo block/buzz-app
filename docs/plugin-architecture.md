@@ -6,6 +6,16 @@ Buzz should make it practical for people and agents to build new product experie
 
 Plugins are the unit of contribution and installation. They can contain substantial implementations: several components, their own layout and interactions, and multiple contributions. The foundation is ordinary React components, shared data and execution capabilities, and a small number of explicit extension points.
 
+## Stability
+
+Every service below is a host-matched preview with no cross-version promise; the
+author types are `0.0.0-preview.1`. The plugin envelope (manifest, `inject`/`apply`,
+`ctx.effect` cleanup) and capability services (host grants, `addTool`, shortcuts,
+notifications, settings cards, navigation `open`) change additively and are the
+safest to build on. Owning a whole page or panel is steady, but placement is not.
+The relay session read model, conversation contributions, sidebar sections and
+rows, and agent hooks and harness features change often and will break plugins.
+
 ## The first two authoring experiences
 
 **A page (target authoring experience).** A builder creates a plugin that registers

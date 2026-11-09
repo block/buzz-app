@@ -547,9 +547,8 @@ function CommunitySearch({
                   },
                 ]
         }
-      >
-        {offline}
-      </SearchChoices>
+        footer={offline}
+      />
     );
   }
   const scope = {

@@ -1714,6 +1714,7 @@ export function SearchResults({
         )
       }
       isAction={isSearchAction}
+      footer={offline}
     >
       {dateOperator === "on" && (
         <Calendar
@@ -1725,7 +1726,6 @@ export function SearchResults({
           }}
         />
       )}
-      {offline}
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"
         aria-live="polite"

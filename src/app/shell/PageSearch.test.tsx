@@ -924,11 +924,10 @@ it("finds and opens saved conversations while the community is unreachable or st
     await act(async () => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
     expect(within(dialog).getByRole("option", { name: /^Beta/ })).toBeVisible();
     expect(within(dialog).queryByText("No matching pages.")).toBeNull();
-    expect(
-      within(dialog).getByText(
-        "Only saved conversations are searched while this community is disconnected.",
-      ),
-    ).toBeVisible();
+    const savedNotice = within(dialog).getByText(
+      "Only saved conversations are searched while this community is disconnected.",
+    );
+    expect(savedNotice).toBeVisible();
     // Lookups that need the relay wait for it, so nothing offers a Retry that
     // cannot succeed; the connection's own Retry is the way back.
     expect(query).not.toHaveBeenCalled();
@@ -940,6 +939,14 @@ it("finds and opens saved conversations while the community is unreachable or st
     const retryButton = within(dialog).getByRole("button", {
       name: "Retry connection",
     });
+    // The notice and its Retry stay below the results, outside their
+    // scrollport, so a long list of rows can't push them out of view.
+    const results = dialog.querySelector(".search-palette-scroll");
+    expect(results).toContainElement(
+      within(dialog).getByRole("option", { name: /^Beta/ }),
+    );
+    expect(results).not.toContainElement(savedNotice);
+    expect(results).not.toContainElement(retryButton);
     retryButton.focus();
     fireEvent.click(retryButton);
     expect(retry).toHaveBeenCalledOnce();
@@ -948,11 +955,11 @@ it("finds and opens saved conversations while the community is unreachable or st
 
     // While a launch is still connecting, the same results say why.
     expect(within(dialog).getByRole("option", { name: /^Beta/ })).toBeVisible();
-    expect(
-      within(dialog).getByText(
-        "Only saved conversations are searched until this community connects.",
-      ),
-    ).toBeVisible();
+    const connectingNotice = within(dialog).getByText(
+      "Only saved conversations are searched until this community connects.",
+    );
+    expect(connectingNotice).toBeVisible();
+    expect(results).not.toContainElement(connectingNotice);
     expect(within(dialog).queryByRole("button", { name: /^Retry/ })).toBeNull();
 
     fireEvent.click(within(dialog).getByRole("option", { name: /^Beta/ }));

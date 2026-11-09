@@ -3116,6 +3116,12 @@ it("asks for the connection, not more text, when a saved session's author picker
       expect(screen.queryByText(/Try a longer name/)).toBeNull();
     }
     expect(searchProfiles).not.toHaveBeenCalled();
+    // The offline notice sits below the results, outside their scrollport.
+    expect(
+      screen
+        .getByText("Only saved conversations are searched.")
+        .closest(".search-palette-scroll"),
+    ).toBeNull();
   } finally {
     cleanup();
     owner.dispose();

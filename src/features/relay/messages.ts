@@ -68,7 +68,7 @@ export function createMessages(
     if (!canWrite(channelId, owner))
       throw new Error("You don’t have write access to this conversation.");
     if (!outbox?.supports(kind))
-      throw new Error("This connection cannot publish that operation");
+      throw new Error("You can’t do that in this conversation.");
     return outbox;
   };
   const ownedMessage = (event: EventData) =>
@@ -79,11 +79,10 @@ export function createMessages(
     return value;
   };
   const mentionTags = (channelId: string, pubkeys: readonly string[]) => {
-    if (
-      pubkeys.length > 32 ||
-      pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key))
-    )
-      throw new Error("Choose at most 32 valid mention recipients");
+    if (pubkeys.length > 32)
+      throw new Error("You can mention at most 32 people in one message.");
+    if (pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key)))
+      throw new Error("Choose valid mentions.");
     const unique = [...new Set(pubkeys)];
     validateMentions(channelId, unique);
     return unique.map((key) => ["p", key]);

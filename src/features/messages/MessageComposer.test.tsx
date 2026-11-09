@@ -7666,7 +7666,7 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
     expect(h.commands().insertMention(first)).toBe(false);
   });
   expect(h.input()).toHaveValue(before);
-  expect(screen.getByRole("alert")).toHaveTextContent("at most 32 recipients");
+  expect(screen.getByRole("alert")).toHaveTextContent("at most 32 people");
 });
 
 // The production composer must perform enrollment, not a pre-populated test roster.
@@ -10640,7 +10640,7 @@ it("rejects a known archived recipient at send entry without clearing the draft"
   expect(h.input()).toHaveValue(`@${first.name} `);
   expect(
     screen.getByText(
-      "A selected recipient is archived. Remove it before sending.",
+      "Someone you mentioned is archived. Remove the mention to send.",
     ),
   ).toBeVisible();
 });
@@ -15324,7 +15324,7 @@ it.each([
         );
       }),
     alert:
-      "@honey could not be tagged: a message can tag at most 32 recipients. Send again to send it as text.",
+      "@honey could not be tagged: a message can tag at most 32 people. Send again to send it as text.",
   },
   {
     refusal: "the recipient is not admitted here",

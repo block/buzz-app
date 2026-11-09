@@ -168,9 +168,13 @@ it("reconnect AUTH must not reuse previous-generation roster before establishmen
   await established(h);
   h.socket().close();
   h.removeAgent();
-  expect(() =>
-    h.session.messages.send("c", "@Agent", [h.agent.pubkey]),
-  ).toThrow(/membership/);
+  // A mention sent while live updates come back waits for them.
+  const queued = h.session.messages.send("c", "@Agent", [h.agent.pubkey]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(
+    h.session.outbox?.snapshot().find((item) => item.event.id === queued)
+      ?.delivery,
+  ).toBe("sending");
   await vi.advanceTimersByTimeAsync(500);
   await h.socket(1).auth();
   // No new stream has reached EOSE and no post-reconnect finite read has run.
@@ -262,7 +266,7 @@ it("control: verified current membership publishes exact keys; observed removal 
   await vi.advanceTimersByTimeAsync(0);
   expect(() =>
     h.session.messages.send("c", "@Agent", [h.agent.pubkey]),
-  ).toThrow(/no longer/);
+  ).toThrow(/isn’t in this channel anymore/);
   expect(h.publish).toHaveBeenCalledTimes(1);
 });
 it("control: restored signed unknown retry rejects a removed member without re-signing/replacing identity", async () => {

@@ -713,7 +713,8 @@ it.each(["picker", "completion"])(
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     await t.user.click(send());
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "no longer a channel member",
+      // Without Zoe's profile in the session's cache, the mention is unnamed.
+      /isn’t in this conversation anymore\. Remove the mention to send\./,
     );
     expect(t.publish).not.toHaveBeenCalled();
     expect(composer()).toHaveTextContent("@Zoe");

@@ -250,7 +250,7 @@ function wellFormedRecipient(
 const pendingRefusals = {
   unresolved: "could not be confirmed as one person or agent",
   unavailable: "could not be tagged here",
-  limit: "could not be tagged: a message can tag at most 32 recipients",
+  limit: "could not be tagged: a message can tag at most 32 people",
   length: "could not be tagged: the message would be too long",
 } as const;
 type PendingRefusal = { name: string; reason: keyof typeof pendingRefusals };
@@ -1691,13 +1691,11 @@ function Composer({
       terminator = undefined;
     }
     if (recipient && !admits()(recipient.pubkey)) {
-      setError(
-        "This recipient is no longer available. Remove it or refresh choices.",
-      );
+      setError("You can’t mention them here anymore.");
       return false;
     }
     if (recipient && valueRef.current.recipients.length >= 32) {
-      setError("Choose at most 32 recipients");
+      setError("You can mention at most 32 people in one message.");
       return false;
     }
     completion.invalidate();
@@ -1982,7 +1980,7 @@ function Composer({
       ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
     ];
     if (unique.length > 32) {
-      setError("Choose at most 32 recipients");
+      setError("You can mention at most 32 people in one message.");
       return false;
     }
     if (
@@ -2018,7 +2016,7 @@ function Composer({
         : input.current.insertText(text, unique, range))
     ) {
       setError(
-        "The team would exceed the message length or 32-recipient limit. Nothing was added.",
+        "The team would make this message too long or mention more than 32 people. Nothing was added.",
       );
       return false;
     }
@@ -2705,7 +2703,7 @@ function Composer({
         throw new Error(
           routing && !captured.recipients.length
             ? "An agent you're sending to is archived. Choose another agent to send."
-            : "A selected recipient is archived. Remove it before sending.",
+            : "Someone you mentioned is archived. Remove the mention to send.",
         );
       if (
         ownSoloConversation &&
@@ -2718,7 +2716,7 @@ function Composer({
         )
       )
         throw new Error(
-          "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
+          "You can mention only your available agents in Solo chats. Remove the other mention to send.",
         );
       if (submission) {
         // SoloDraft filters the captured choices against its final recipient set.

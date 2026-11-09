@@ -4516,6 +4516,7 @@ export function createChannelStore(
     diagnostics: () => ({
       heads: heads.stats(),
       media: media.stats(),
+      listListeners: listListeners.size,
       historyRows: [...windows.values()].reduce(
         (sum, state) => sum + state.snapshot.rows.length,
         0,

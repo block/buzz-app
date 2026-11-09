@@ -111,7 +111,7 @@ import { accessOnce, eventVisibility } from "./event-access";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import {
   PublishBlocked,
-  PublishRejected,
+  PublishNotSent,
   browserOutboxStorage,
   createOutbox,
   type OutboxStorage,
@@ -163,6 +163,27 @@ export const ROSTER_BACKSTOP_INTERVAL = 15 * 60_000;
  * carries every unread change; this read only backs up what it can lose with
  * no signal: a channel the relay pruned from a batch, or a dropped fan-out. */
 export const UNREAD_BACKSTOP_INTERVAL = 15 * 60_000;
+
+/** How long a mention waits for live updates to come back: well inside the
+ * outbox's 15-minute delivery window, so the message is kept and can be sent
+ * again. */
+export const MENTION_HOLD_MS = 2 * 60_000;
+/** A mention Buzz has checked and can't send as written: a check on this
+ * device, so retryable() offers no Retry for it. `listed` says it where
+ * the message can't be edited. */
+class MentionRefused extends PublishBlocked {
+  constructor(
+    message: string,
+    readonly listed = message,
+  ) {
+    super(message);
+    this.name = "MentionRefused";
+  }
+}
+/** Why a mention can't be sent: without live updates, Buzz can't tell who is
+ * in the channel now. */
+export const MENTION_UNCHECKED =
+  "Buzz can’t check who’s in this channel right now, so this mention can’t be sent. Your message is kept. Try again when new messages are showing.";
 
 /** A read of named authors' profiles only. Profiles do not depend on channels,
  * so no channel access change, including a denied channel list, can stale it. */
@@ -322,7 +343,14 @@ export function createRelaySession(
             ...writer,
             async sign(template, signal) {
               validateChannelWrite(template);
-              validateMentionEvent(template);
+              try {
+                validateMentionEvent(template);
+              } catch (error) {
+                // Kept on the item, read where the message can't be edited.
+                throw error instanceof MentionRefused
+                  ? new PublishBlocked(error.listed)
+                  : error;
+              }
               validateCanvasWrite(template);
               workflows.validate({
                 ...template,
@@ -352,13 +380,16 @@ export function createRelaySession(
             // A chat this device is starting takes its events once the relay
             // has its create; its local agents hear its owner's messages now.
             // The start's own create and member adds never wait.
-            holdPublish: (event) => {
+            holdPublish: (event, signal) => {
               if (event.kind === 9007 || event.kind === 9000) return;
               const id = event.tags.find(([name]) => name === "h")?.[1];
               if (!id) return;
               const ready = channelWrites.starting(id);
               if (ready && event.kind === 9) hearStarting(event, id);
-              return ready;
+              // A mention waits for live updates after any start; it's
+              // checked once they are back.
+              if (!ready) return mentionHold(event, id, signal);
+              return ready.then(() => mentionHold(event, id, signal));
             },
             preparePublish: async (event, signal) => {
               validateChannelWrite(event);
@@ -1554,30 +1585,110 @@ export function createRelaySession(
       ? channel.members.filter((key) => key !== transport.viewer)
       : [];
   }
-  function validateMentions(channelId: string, pubkeys: readonly string[]) {
+  /** Whether live updates are what a mention in this channel waits for.
+   * A one-to-one DM's partner is addressed by every message there, so a
+   * plain message never waits. */
+  function mentionAwaitsLive(channelId: string, pubkeys: readonly string[]) {
+    const partners = dmPartners(channelId);
+    return (
+      !!transport?.subscribe &&
+      liveSnapshot.status !== "connected" &&
+      !pubkeys.every((key) => partners.includes(key))
+    );
+  }
+  /** Live updates that are coming back, which a mention can wait for. */
+  const liveReturning = () =>
+    liveSnapshot.status === "connecting" || liveSnapshot.status === "retrying";
+  /** Checks mentions against the member list live updates keep current. Until
+   * `publishing`, a mention may wait for live updates to come back
+   * (mentionHold); publication itself needs them, and reads the member list
+   * fresh as well (preflightMentions). */
+  function validateMentions(
+    channelId: string,
+    pubkeys: readonly string[],
+    publishing = false,
+  ) {
     if (!pubkeys.length) return;
     const channel = channels.queries
       .list()
       .channels.find((item) => item.id === channelId);
-    // A one-to-one DM's partner is addressed by every message there, so a
-    // plain message must still queue while the live stream reconnects.
-    // Publication still reads the roster fresh (preflightMentions).
-    const partners = dmPartners(channelId);
-    const addressesPartnerOnly = pubkeys.every((key) => partners.includes(key));
+    const awaitsLive = mentionAwaitsLive(channelId, pubkeys);
+    // Known answers first: waiting or checking again won't change them.
+    if (!closed && channel?.archived)
+      throw new MentionRefused("This channel is archived.");
+    if (!closed && channel?.viewerRole === "guest")
+      throw new MentionRefused("You have read-only access to this channel.");
     if (
       closed ||
       !channels.canWrite(channelId) ||
       !channel?.members ||
-      channel.archived ||
-      (transport?.subscribe &&
-        liveSnapshot.status !== "connected" &&
-        !addressesPartnerOnly)
+      (awaitsLive && (publishing || !liveReturning()))
     )
-      throw new Error("Refresh channel membership before mentioning anyone");
-    if (pubkeys.some((key) => !channel.members?.includes(key)))
-      throw new Error(
-        "A selected recipient is no longer a channel member; remove them or refresh membership",
+      throw new Error(MENTION_UNCHECKED);
+    const removed = pubkeys.find((key) => !channel.members?.includes(key));
+    if (removed) throw mentionRemoved(removed, channel.channelType === "dm");
+  }
+  /** A mention of someone no longer in the channel, by name. A DM says so of
+   * its conversation, known from its type: its partner list empties once the
+   * partner leaves. A DM's partner is addressed without a mention, so there
+   * is none to remove. */
+  function mentionRemoved(pubkey: string, dm: boolean, partner = false) {
+    const name = identityNames.resolve(
+      pubkey,
+      profiles.queries.snapshot().get(pubkey)?.name ??
+        agentChoices
+          .snapshot()
+          .identities.find((agent) => agent.pubkey === pubkey)?.name,
+    );
+    if (partner)
+      return new MentionRefused(
+        `${name ?? "The other person"} isn’t in this conversation anymore.`,
       );
+    const gone = `${name ?? "Someone you mentioned"} isn’t in this ${dm ? "conversation" : "channel"} anymore.`;
+    return new MentionRefused(`${gone} Remove the mention to send.`, gone);
+  }
+  /** A mention waits, without a delivery slot, for live updates to come back;
+   * publication then checks it against the fresh member list. Live updates
+   * that stop coming back, or don't come back within MENTION_HOLD_MS, fail
+   * it with the message kept. */
+  function mentionHold(
+    event: RelayEvent,
+    channelId: string,
+    signal: AbortSignal,
+  ) {
+    if (event.kind !== 9) return;
+    const pubkeys = event.tags.flatMap(([name, key]) =>
+      name === "p" && key ? [key] : [],
+    );
+    if (!pubkeys.length || !mentionAwaitsLive(channelId, pubkeys)) return;
+    return new Promise<void>((resolve, reject) => {
+      let stopList = () => {};
+      const finish = (error?: unknown) => {
+        clearTimeout(timer);
+        liveListeners.delete(check);
+        stopList();
+        signal.removeEventListener("abort", abort);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      // Not refused: sending again once live updates are back can work.
+      const unchecked = () => finish(new PublishNotSent(MENTION_UNCHECKED));
+      const abort = () =>
+        finish(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      const check = () => {
+        if (closed) return unchecked();
+        // Connected, or a DM whose member list arrived showing that only its
+        // other person is mentioned: nothing to wait for.
+        if (!mentionAwaitsLive(channelId, pubkeys)) return finish();
+        if (!liveReturning()) unchecked();
+      };
+      const timer = setTimeout(unchecked, MENTION_HOLD_MS);
+      if (signal.aborted) return abort();
+      signal.addEventListener("abort", abort, { once: true });
+      liveListeners.add(check);
+      stopList = channels.queries.subscribeList(check);
+      check();
+    });
   }
   function validateCanvasWrite(event: Pick<EventData, "kind" | "tags">) {
     if (event.kind !== 40100) return;
@@ -1625,7 +1736,10 @@ export function createRelaySession(
     // Sending it again is refused the same way until the role changes.
     throw new PublishBlocked("You have read-only access to this channel.");
   }
-  function validateMentionEvent(event: Pick<EventData, "kind" | "tags">) {
+  function validateMentionEvent(
+    event: Pick<EventData, "kind" | "tags">,
+    publishing = false,
+  ) {
     if (event.kind !== 9) return;
     const recipients = event.tags.filter(([name]) => name === "p");
     if (!recipients.length) return;
@@ -1642,6 +1756,7 @@ export function createRelaySession(
     validateMentions(
       destinations[0][1],
       recipients.map((tag) => tag[1] ?? ""),
+      publishing,
     );
   }
   async function prepareMentionPublication(
@@ -1657,11 +1772,7 @@ export function createRelaySession(
     try {
       await preflightMentions(event, signal);
     } catch (error) {
-      throw new PublishRejected(
-        error instanceof Error
-          ? error.message
-          : "Mention rejected before dispatch",
-      );
+      throw mentionFailure(error);
     }
     return () => {
       if (
@@ -1670,22 +1781,23 @@ export function createRelaySession(
         epoch !== accessEpoch ||
         cleared !== cacheClearEpoch
       )
-        throw new PublishRejected(
-          "Channel membership changed during mention verification; retry",
-        );
+        throw new PublishNotSent(MENTION_UNCHECKED);
       try {
-        validateMentionEvent(event);
+        validateMentionEvent(event, true);
       } catch (error) {
-        throw new PublishRejected(
-          error instanceof Error
-            ? error.message
-            : "Mention rejected before dispatch",
-        );
+        throw mentionFailure(error);
       }
     };
   }
+  /** A mention Buzz checked and can't send as written blocks the message,
+   * in words for where it can't be edited; one it couldn't check fails it
+   * so that sending again can work. */
+  const mentionFailure = (error: unknown) =>
+    error instanceof MentionRefused
+      ? new PublishBlocked(error.listed)
+      : new PublishNotSent(MENTION_UNCHECKED);
   async function preflightMentions(event: EventData, signal?: AbortSignal) {
-    validateMentionEvent(event);
+    validateMentionEvent(event, true);
     if (event.kind !== 9 || !event.tags.some(([name]) => name === "p")) return;
     if (!transport) throw new Error("Relay is unavailable");
     const channelId = event.tags.find(([name]) => name === "h")?.[1];
@@ -1731,17 +1843,21 @@ export function createRelaySession(
       throw new Error(
         "Could not verify current channel membership; refresh and retry",
       );
+    // Whom the message addresses without a mention, before this read
+    // updates the member list.
+    const partners = dmPartners(channelId);
+    const dm =
+      channels.queries.list().channels.find((item) => item.id === channelId)
+        ?.channelType === "dm";
     accept([roster]);
-    validateMentionEvent(event); // A newer live removal beats an older read result.
-    if (
-      !hasTag(roster, "p", transport.viewer) ||
-      event.tags.some(
-        ([name, key]) => name === "p" && !hasTag(roster, "p", key ?? ""),
-      )
-    )
-      throw new Error(
-        "A selected recipient is no longer a channel member; remove them or refresh membership",
-      );
+    if (!hasTag(roster, "p", transport.viewer))
+      throw new MentionRefused("You aren’t in this channel anymore.");
+    const removed = event.tags.find(
+      ([name, key]) => name === "p" && !hasTag(roster, "p", key ?? ""),
+    )?.[1];
+    if (removed !== undefined)
+      throw mentionRemoved(removed, dm, partners.includes(removed));
+    validateMentionEvent(event, true); // A newer live removal beats an older read result.
   }
   const channelWrites = createChannelWrites(
     writes?.outbox,
@@ -4023,6 +4139,7 @@ export function createRelaySession(
     diagnostics: () => ({
       ...channels.diagnostics(),
       profiles: profiles.stats(),
+      liveListeners: liveListeners.size,
     }),
   };
 }

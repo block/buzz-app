@@ -1682,7 +1682,7 @@ it("allows changing an unavailable assistant before any remote creation", async 
   );
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await screen.findByText(
-    "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
+    "You can mention only your available agents in Solo chats. Remove the other mention to send.",
   );
   expect(f.channelWrites.create).not.toHaveBeenCalled();
   cleanup();

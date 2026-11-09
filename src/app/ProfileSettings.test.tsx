@@ -439,6 +439,9 @@ it("keeps a community draft when publication fails and retries a failed read", a
   await user.type(name, "Keep this draft");
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn’t save your profile. Try again.",
+  );
+  expect(screen.getByRole("alert")).not.toHaveTextContent(
     "publish unavailable",
   );
   expect(name).toHaveValue("Keep this draft");
@@ -648,7 +651,9 @@ it("retains edits on failure and hides actions after a successful retry", async 
     throw new Error("Could not save");
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn’t save your profile. Try again.",
+  );
   expect(name).toHaveValue("Updated");
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(
@@ -693,7 +698,9 @@ it("keeps the focused Save on failure and hands focus off after retry", async ()
     throw new Error("Could not save");
   });
   await user.keyboard("{Enter}");
-  expect(screen.getByRole("alert")).toHaveTextContent("Could not save");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn’t save your profile. Try again.",
+  );
   expect(save).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(name).toHaveFocus();

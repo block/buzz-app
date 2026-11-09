@@ -31,6 +31,33 @@ import {
 import * as communityApi from "../features/communities/api";
 import type { Membership } from "../features/communities/service";
 import { communityName } from "../features/communities/names";
+import { ReadError } from "../features/relay/errors";
+import { failureKind, refusalReason } from "../features/relay/user-copy";
+
+const SAVE_FAILED = "Couldn’t save your profile. Try again.";
+const SAVE_REFUSED = "This community didn’t accept your profile change.";
+const SAVE_UNCONFIRMED =
+  "Buzz couldn’t confirm your profile was saved. Save again to check.";
+
+/** Where a failed save stopped: before anything was sent, while the community
+ * was answering, or after it accepted the change and Buzz read it back. */
+type SavePhase = "prepare" | "publish" | "confirm" | "local";
+
+function saveFailureText(error: unknown, phase: SavePhase) {
+  if (phase === "confirm") return SAVE_UNCONFIRMED;
+  if (failureKind(error) === "refused") {
+    const reason = refusalReason(error);
+    return reason ? `${SAVE_REFUSED} ${reason}` : SAVE_REFUSED;
+  }
+  // The community answered, but not with a receipt for this change.
+  if (
+    phase === "publish" &&
+    error instanceof ReadError &&
+    error.kind === "invalid-response"
+  )
+    return SAVE_UNCONFIRMED;
+  return SAVE_FAILED;
+}
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
@@ -370,28 +397,30 @@ export function ProfileSettings({
                     setSaved(false);
                     setError("");
                     void (async () => {
+                      let phase: SavePhase = "prepare";
                       try {
                         if (community && loaded) {
                           // Preserve fields outside this editor even if another client edited them.
                           const latest = await inspect(community.id);
                           if (!mounted.current) return;
                           setDispatched(true);
+                          phase = "publish";
                           await communityApi.publishProfile(
                             community.id,
                             next,
                             latest.existing,
                           );
                           // Once dispatched, finish on this session even if Settings closes.
+                          phase = "confirm";
                           const confirmed = await inspect(community.id);
                           if (
                             !confirmed.exists ||
                             !profilesEqual(confirmed.profile, next)
                           )
-                            throw new Error(
-                              "Your profile change is not current. Your edits are retained; save again to retry.",
-                            );
+                            throw new Error("Profile readback is not current");
                           setLoaded(confirmed);
                         }
+                        phase = "local";
                         if (isCurrentProfileSave(communities, saveGeneration))
                           communities.saveProfile(
                             profileDefault(
@@ -404,11 +433,7 @@ export function ProfileSettings({
                         setSaved(true);
                       } catch (reason) {
                         if (mounted.current)
-                          setError(
-                            reason instanceof Error
-                              ? reason.message
-                              : String(reason),
-                          );
+                          setError(saveFailureText(reason, phase));
                       } finally {
                         if (mounted.current) {
                           setSaving(false);

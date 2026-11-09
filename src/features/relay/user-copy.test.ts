@@ -318,11 +318,10 @@ describe("userCopy", () => {
 });
 
 describe("refusalReason", () => {
-  it("formats a timeout's end", () => {
-    const until = Math.floor(new Date(2026, 10, 6, 21, 20).getTime() / 1000);
-    expect(refusalReason(`restricted: you are timed out until ${until}`)).toBe(
-      "You’re timed out until Nov 6, 9:20 PM.",
-    );
+  it("names a relay timeout without the relay's end time", () => {
+    expect(
+      refusalReason("restricted: you are timed out until 1794000000"),
+    ).toBe("You’re timed out in this community.");
   });
 
   it("maps known community refusals", () => {

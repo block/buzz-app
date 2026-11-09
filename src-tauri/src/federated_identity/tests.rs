@@ -180,6 +180,10 @@ pub(super) fn customers_listed_in(
         Arc::new(Memory::default()),
         peers,
         customers.map(|record| Customers {
+            root: record
+                .as_deref()
+                .and_then(std::path::Path::parent)
+                .map_or_else(std::env::temp_dir, std::path::Path::to_path_buf),
             profile: "default".into(),
             record,
         }),

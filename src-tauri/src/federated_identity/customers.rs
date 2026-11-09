@@ -55,6 +55,7 @@ fn builderlab_customer_id(name: &str) -> String {
 /// The profile Builderlab customers' servers are added for, and where they
 /// are listed.
 pub(super) struct Customers {
+    pub(super) root: std::path::PathBuf,
     pub(super) profile: String,
     /// The community host of every customer server added, one per line, so
     /// the next launch adds each again even once none of its communities

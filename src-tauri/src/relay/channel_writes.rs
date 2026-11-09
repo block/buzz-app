@@ -909,7 +909,7 @@ mod member_administration_tests {
         .unwrap();
         let app = mock_builder()
             .manage(IdentityHost::fixture())
-            .manage(FederatedIdentity::new().unwrap())
+            .manage(FederatedIdentity::unconfigured())
             .invoke_handler(crate::commands())
             .build(crate::app_context())
             .unwrap();

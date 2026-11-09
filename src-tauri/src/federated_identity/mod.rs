@@ -6,6 +6,7 @@ pub(crate) mod assertion;
 pub(crate) mod config;
 mod customers;
 pub(crate) mod protocol;
+mod runtime;
 pub(crate) mod socket;
 pub(crate) mod store;
 
@@ -179,26 +180,30 @@ pub(crate) struct FederatedIdentity(Arc<Inner>);
 
 impl FederatedIdentity {
     pub(crate) fn new() -> Result<Self, String> {
-        let servers = option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG")
-            .filter(|raw| !raw.is_empty())
-            .map(Config::parse_list)
-            .transpose()?
-            .unwrap_or_default();
+        Self::from_root(
+            store::root()?,
+            option_env!("BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG"),
+        )
+    }
+    fn from_root(root: std::path::PathBuf, compiled: Option<&str>) -> Result<Self, String> {
+        let servers = runtime::resolve(compiled, &root.join(runtime::FILE_NAME))?;
         let profile = std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into());
         if profile.is_empty() || profile.len() > 128 {
             return Err("Invalid federated identity profile".into());
         }
-        let customers = servers.iter().any(Config::is_built_in);
+        let customers =
+            compiled.is_some_and(|raw| !raw.is_empty()) && servers.iter().any(Config::is_built_in);
         let mut servers = servers.into_iter().map(Some);
         let first = servers.next().flatten();
         let peers = servers
-            .map(|config| Self::open(config, &profile, Vec::new(), false))
+            .map(|config| Self::open(root.clone(), config, &profile, Vec::new(), false))
             .collect::<Result<_, _>>()?;
-        Self::open(first, &profile, peers, customers)
+        Self::open(root, first, &profile, peers, customers)
     }
     /// Each server's sessions are stored under its own descriptor, so a
     /// build's first server keeps the sessions it saved as the only one.
     fn open(
+        root: std::path::PathBuf,
         config: Option<Config>,
         profile: &str,
         peers: Vec<FederatedIdentity>,
@@ -212,8 +217,8 @@ impl FederatedIdentity {
             )
         );
         let account = format!("{:x}", Sha256::digest(format!("{profile}\0{fingerprint}")));
-        let root = store::root()?;
         let customers = customers.then(|| Customers {
+            root: root.clone(),
             profile: profile.into(),
             record: Some(root.join(format!("{account}.customers"))),
         });
@@ -347,7 +352,13 @@ impl FederatedIdentity {
             return Ok(self.clone());
         }
         let host = config.community_hosts[0].clone();
-        let server = Self::open(Some(config), &customers.profile, Vec::new(), false)?;
+        let server = Self::open(
+            customers.root.clone(),
+            Some(config),
+            &customers.profile,
+            Vec::new(),
+            false,
+        )?;
         // Listed first, so no grant is ever stored with a server a later
         // launch would not add again.
         customers.remember(&host)?;

@@ -18641,7 +18641,7 @@ it("moves an agent's attention to its community only when the set comes back the
   await vi.waitFor(() =>
     expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
   );
-  // An edit on the relay shows here; moving back restores the backup.
+  // An edit on the relay shows here, and moving back keeps it.
   await f.seed("interest/default", { type: "interest", instructions: "New." });
   await vi.waitFor(() =>
     expect(
@@ -18652,14 +18652,38 @@ it("moves an agent's attention to its community only when the set comes back the
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
   expect(
     f.service.find(bot)?.attention["interest/default"]?.value,
-  ).toMatchObject({ instructions: "Here." });
-  // Moving again publishes the record's objects over the relay's.
+  ).toMatchObject({ instructions: "New." });
+  // A later relay change no longer shows here, and moving again publishes
+  // the record's objects over the relay's.
+  await f.seed("interest/default", { type: "interest", instructions: "Late." });
   await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
     migrated: true,
   });
   expect(
     f.service.find(bot)?.attention["interest/default"]?.value,
-  ).toMatchObject({ instructions: "Here." });
+  ).toMatchObject({ instructions: "New." });
+});
+
+it("refuses to move attention back until its copy here is current and readable", async () => {
+  const f = await relayAttentionSetup({ synced: false });
+  await expect(f.service.revertAttention(bot)).rejects.toThrow(
+    "Reading this agent's attention from its community",
+  );
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
+  await f.seed("interest/bad", { type: "interest", instructions: "" });
+  f.sync();
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
+  );
+  await expect(f.service.revertAttention(bot)).rejects.toThrow(
+    "Fix or remove its unreadable attention in its community first: interest/bad",
+  );
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
+  await f.seed("interest/bad", null);
+  await vi.waitFor(async () => {
+    await f.service.revertAttention(bot);
+    expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  });
 });
 
 it("deletes what only the community holds when a move prunes, watches before their Interest", async () => {

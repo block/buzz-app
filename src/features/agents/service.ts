@@ -321,7 +321,6 @@ import {
   agentSender,
   attentionChanges,
   type AttentionMigration,
-  emptySet,
   mirrored,
   ownerSender,
   pendingSet,
@@ -1910,8 +1909,7 @@ export type Agents = {
   /** Moves the agent's attention from this device to its community
    * (Rollout 3): publishes each object, reads the set back and compares
    * it. The agent switches only when they are the same; otherwise it stays
-   * on this device and the result lists what differs. Its objects here stay
-   * as a backup that `revertAttention` restores. It also deletes, as the
+   * on this device and the result lists what differs. It also deletes, as the
    * owner, each object in `prune` that only the community holds or could
    * not read: pass the `heads` of the result the owner confirmed, so nothing
    * added or changed since is deleted. */
@@ -1919,8 +1917,10 @@ export type Agents = {
     agent: AgentKey,
     options?: Readonly<{ prune?: Readonly<Record<string, string>> }>,
   ): Promise<AttentionMigration>;
-  /** Moves the agent's attention back to this device, as it was when it
-   * moved: changes made in the community since then are lost here. */
+  /** Moves the agent's attention back to this device as its community holds
+   * it now, from the copy this session keeps current. Rejects while that copy
+   * is not current (not read yet, or its read reports a problem) or the
+   * community holds objects it can't read. */
   revertAttention(agent: AgentKey): Promise<void>;
   /** Adds a tool to every agent session in the app, beside the Buzz tools.
    * The tool acts as the agent, like the rest of a trusted plugin's code
@@ -9252,11 +9252,7 @@ export class AgentsService extends Service implements Agents {
         !found.different.length && !found.extra.length && !found.skipped.length;
       result = { ...found, migrated: same };
       if (!same) return saved;
-      return {
-        ...mirrored(saved, set),
-        attentionStorage: "relay",
-        attentionBackup: saved.attention,
-      };
+      return { ...mirrored(saved, set), attentionStorage: "relay" };
     });
     return result as AttentionMigration;
   }
@@ -9289,15 +9285,17 @@ export class AgentsService extends Service implements Agents {
     await this.change(key, (saved) => {
       if (!saved) throw new Error("No such agent on this device");
       if (saved.attentionStorage !== "relay") return saved;
-      const {
-        attentionStorage: _,
-        attentionBackup: backup,
-        ...rest
-      } = mirrored(saved, {
-        ...emptySet(""),
-        attention: saved.attentionBackup ?? saved.attention,
-      });
-      return { ...rest, skipped: {} };
+      // `attention` mirrors the community's set, and is current while this
+      // session's read of it is live: keep it as the device's.
+      const problem = this.attentionProblem(key, saved);
+      if (problem) throw new Error(problem);
+      const skipped = Object.keys(saved.skipped ?? {});
+      if (skipped.length)
+        throw new Error(
+          `Fix or remove its unreadable attention in its community first: ${skipped.join(", ")}`,
+        );
+      const { attentionStorage: _, ...rest } = saved;
+      return rest;
     });
   }
   /** The relay head of `slug` in the agent's current attention set, when

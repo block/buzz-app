@@ -18648,11 +18648,21 @@ it("moves an agent's attention to its community only when the set comes back the
       f.service.find(bot)?.attention["interest/default"]?.value,
     ).toMatchObject({ instructions: "New." }),
   );
+  // A move queued behind the one that moved it finds it moved.
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+  });
+  expect(f.ownerWrites).toHaveLength(1);
+  // A change the live view has not shown yet is read before the move back.
+  await f.behind("interest/default", {
+    type: "interest",
+    instructions: "Newer.",
+  });
   await f.service.revertAttention(bot);
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
   expect(
     f.service.find(bot)?.attention["interest/default"]?.value,
-  ).toMatchObject({ instructions: "New." });
+  ).toMatchObject({ instructions: "Newer." });
   // A later relay change no longer shows here, and moving again publishes
   // the record's objects over the relay's.
   await f.seed("interest/default", { type: "interest", instructions: "Late." });
@@ -18661,7 +18671,7 @@ it("moves an agent's attention to its community only when the set comes back the
   });
   expect(
     f.service.find(bot)?.attention["interest/default"]?.value,
-  ).toMatchObject({ instructions: "New." });
+  ).toMatchObject({ instructions: "Newer." });
 });
 
 it("refuses to move attention back until its copy here is current and readable", async () => {

@@ -9217,6 +9217,18 @@ export class AgentsService extends Service implements Agents {
   ): Promise<AttentionMigration> {
     let result: AttentionMigration | undefined;
     await this.change(key, async (saved) => {
+      if (!saved) throw new Error("No such agent on this device");
+      // Already moved, for example by an earlier call this one queued behind.
+      if (saved.attentionStorage === "relay") {
+        result = {
+          migrated: true,
+          different: [],
+          extra: [],
+          skipped: [],
+          heads: {},
+        };
+        return saved;
+      }
       // Read once its turn comes: the community may have rebound meanwhile.
       const identity = this.liveMember(key);
       const native = this.native;
@@ -9229,9 +9241,6 @@ export class AgentsService extends Service implements Agents {
         throw new Error("Connect this agent's community to move its attention");
       if (!relayAuthor || !read || !artifacts)
         throw new Error("This community can't store attention");
-      if (!saved) throw new Error("No such agent on this device");
-      if (saved.attentionStorage === "relay")
-        throw new Error("This agent's attention is already on its community");
       const skipped = Object.keys(saved.skipped ?? {});
       if (skipped.length)
         throw new Error(
@@ -9282,19 +9291,22 @@ export class AgentsService extends Service implements Agents {
     return found.id;
   }
   async revertAttention(key: AgentKey) {
-    await this.change(key, (saved) => {
+    await this.change(key, async (saved) => {
       if (!saved) throw new Error("No such agent on this device");
       if (saved.attentionStorage !== "relay") return saved;
-      // `attention` mirrors the community's set, and is current while this
-      // session's read of it is live: keep it as the device's.
+      // `attention` mirrors the community's set while this session's read of
+      // it is live. A live set that arrived just now may not be mirrored
+      // yet, so read the set once more and keep that as the device's.
       const problem = this.attentionProblem(key, saved);
-      if (problem) throw new Error(problem);
-      const skipped = Object.keys(saved.skipped ?? {});
+      const relay = this.relayAttention.get(key)?.relay;
+      if (problem || !relay) throw new Error(problem);
+      const fresh = mirrored(saved, await relay.read());
+      const skipped = Object.keys(fresh.skipped ?? {});
       if (skipped.length)
         throw new Error(
           `Fix or remove its unreadable attention in its community first: ${skipped.join(", ")}`,
         );
-      const { attentionStorage: _, ...rest } = saved;
+      const { attentionStorage: _, ...rest } = fresh;
       return rest;
     });
   }

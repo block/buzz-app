@@ -55,3 +55,14 @@
   display: flex;
   flex-direction: column;
 }
+
+/* Keep the burst clear of the fixed footer instead of reserving an empty
+   loading-status row above the artwork. */
+.preview {
+  padding-bottom: var(--space-8);
+}
+
+/* A wrapping error needs the space more than the finished burst does. */
+.preview:has([role="alert"]) {
+  padding-bottom: 0;
+}

@@ -17,6 +17,9 @@ import { publicKeyLabels } from "../../shared/identity/public-key";
 import { allowedActions, membersFromSnapshot } from "./api";
 import { CommunityAdmin } from "./CommunityAdmin";
 
+// Exercise the retained direct-add implementation while its shipping UI is hidden.
+vi.mock("./features", () => ({ DIRECT_MEMBER_ADD_ENABLED: true }));
+
 const relayKey = "f".repeat(64);
 const owner = "0".repeat(64);
 const admin = "1".repeat(64);

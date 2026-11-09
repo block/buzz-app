@@ -65,6 +65,7 @@ import {
   useQrVariant,
 } from "../../shared/QrCode";
 import styles from "./CommunityAdmin.module.css";
+import { DIRECT_MEMBER_ADD_ENABLED } from "./features";
 
 const DAY = 24 * 60 * 60;
 const EXPIRY = [1, 3, 7, 30].map((days) => ({
@@ -521,9 +522,13 @@ function MembershipContent({
   retry(): void;
   add(pubkey: string, role: "admin" | "member"): Promise<void>;
 }) {
-  const [method, setMethod] = useState<"members" | "invite" | "direct">(
-    "members",
-  );
+  const [requestedMethod, setMethod] = useState<
+    "members" | "invite" | "direct"
+  >("members");
+  const method =
+    !DIRECT_MEMBER_ADD_ENABLED && requestedMethod === "direct"
+      ? "members"
+      : requestedMethod;
   const open = method === "invite";
   const [ttl, setTtl] = useState(String(3 * DAY));
   const [uses, setUses] = useState("");
@@ -649,12 +654,16 @@ function MembershipContent({
               panelId: "invite-share-panel",
               disabled: adding || busy,
             },
-            {
-              value: "direct",
-              label: "Add directly",
-              panelId: "invite-direct-panel",
-              disabled: adding || busy,
-            },
+            ...(DIRECT_MEMBER_ADD_ENABLED
+              ? [
+                  {
+                    value: "direct" as const,
+                    label: "Add directly",
+                    panelId: "invite-direct-panel",
+                    disabled: adding || busy,
+                  },
+                ]
+              : []),
           ]}
         />
       </div>
@@ -752,7 +761,7 @@ function MembershipContent({
           </div>
         </section>
       )}
-      {method === "direct" && (
+      {DIRECT_MEMBER_ADD_ENABLED && method === "direct" && (
         <section
           role="tabpanel"
           id="invite-direct-panel"

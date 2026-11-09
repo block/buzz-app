@@ -23,6 +23,9 @@ import { createCommunityMembership } from "./membership";
 
 const { relayKey } = vi.hoisted(() => ({ relayKey: "f".repeat(64) }));
 
+// Exercise the retained direct-add implementation while its shipping UI is hidden.
+vi.mock("./features", () => ({ DIRECT_MEMBER_ADD_ENABLED: true }));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async () => {
     throw new Error("unexpected native call");

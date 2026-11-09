@@ -301,12 +301,11 @@ test.describe("community administration permissions", () => {
     await expect(
       dialog.getByRole("textbox", { name: "Community invite link" }),
     ).toBeVisible();
-    await page.getByRole("tab", { name: "Add directly", exact: true }).click();
+    await expect(
+      page.getByRole("tab", { name: "Add directly", exact: true }),
+    ).toHaveCount(0);
     await expect(
       dialog.getByRole("textbox", { name: "Public identity" }),
-    ).toBeVisible();
-    await expect(
-      dialog.getByRole("combobox", { name: /Search people/ }),
     ).toHaveCount(0);
     await page.getByRole("tab", { name: "Members", exact: true }).click();
     await expect(

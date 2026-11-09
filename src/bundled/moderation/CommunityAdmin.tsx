@@ -519,8 +519,9 @@ function InviteDialog({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
-  // The QR code drawn for one link; it never shows for another.
-  const [qr, setQr] = useState<{ url: string; svg: string } | null>(null);
+  // The QR code drawn for one link, or no svg when it failed; it never shows
+  // for another link.
+  const [qr, setQr] = useState<{ url: string; svg?: string } | null>(null);
   // One minted link per settings; a missing entry for these settings mints.
   const settings = `${ttl}:${uses}`;
   const [link, setLink] = useState<{
@@ -561,14 +562,19 @@ function InviteDialog({
   }, [copied]);
   const url = current?.url;
   const pending = !!current && !url && !current.failed;
-  const qrSvg = url && qr?.url === url ? qr.svg : undefined;
-  const showQr = nativeIdentityEnabled() && (pending || !!url);
+  const drawn = url && qr?.url === url ? qr : null;
+  const showQr =
+    nativeIdentityEnabled() && (pending || !!url) && !(drawn && !drawn.svg);
   useEffect(() => {
     if (!url || !nativeIdentityEnabled()) return;
     let live = true;
     renderQrCode(url, "dark").then(
       (svg) => live && setQr({ url, svg }),
-      (reason) => live && setError(message(reason)),
+      (reason) => {
+        if (!live) return;
+        setQr({ url });
+        setError(message(reason));
+      },
     );
     return () => {
       live = false;
@@ -688,9 +694,9 @@ function InviteDialog({
           </div>
           {showQr && (
             <div className="mt-3 flex justify-center">
-              {qrSvg ? (
+              {drawn?.svg ? (
                 <QrCode
-                  svg={qrSvg}
+                  svg={drawn.svg}
                   alt="Scan this QR code to open the invite link"
                 />
               ) : (

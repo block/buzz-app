@@ -481,15 +481,8 @@ it("always shows the minted invite link as a dark native QR code", async () => {
     variant: "dark",
   });
   expect(within(dialog).queryByRole("img")).toBeNull();
-  drawn.get("https://primary.example/invite/open")?.("<svg>open</svg>");
-  const code = await within(dialog).findByRole("img", {
-    name: "Scan this QR code to open the invite link",
-  });
-  expect(code).toHaveAttribute(
-    "src",
-    `data:image/svg+xml,${encodeURIComponent("<svg>open</svg>")}`,
-  );
-  // A new link never shows the old link's code, and draws its own.
+  // A new link draws its own code; the old link's code, arriving late, never
+  // replaces it.
   await user.click(
     within(dialog).getByRole("button", { name: "Choose maximum invite uses" }),
   );
@@ -497,16 +490,19 @@ it("always shows the minted invite link as a dark native QR code", async () => {
   await within(dialog).findByDisplayValue(
     "https://primary.example/invite/limited",
   );
-  expect(within(dialog).queryByRole("img")).toBeNull();
   drawn.get("https://primary.example/invite/limited")?.("<svg>limited</svg>");
+  const code = await within(dialog).findByRole("img", {
+    name: "Scan this QR code to open the invite link",
+  });
+  const limited = `data:image/svg+xml,${encodeURIComponent("<svg>limited</svg>")}`;
+  expect(code).toHaveAttribute("src", limited);
+  drawn.get("https://primary.example/invite/open")?.("<svg>open</svg>");
+  await new Promise((resolve) => setTimeout(resolve, 0));
   expect(
-    await within(dialog).findByRole("img", {
+    within(dialog).getByRole("img", {
       name: "Scan this QR code to open the invite link",
     }),
-  ).toHaveAttribute(
-    "src",
-    `data:image/svg+xml,${encodeURIComponent("<svg>limited</svg>")}`,
-  );
+  ).toHaveAttribute("src", limited);
   // A renderer failure shows its error and no stale code.
   await user.click(
     within(dialog).getByRole("button", { name: "Choose invite expiry" }),
@@ -519,5 +515,7 @@ it("always shows the minted invite link as a dark native QR code", async () => {
     within(dialog).getByRole("textbox", { name: "Community invite link" }),
   ).toHaveValue("https://primary.example/invite/1-day");
   expect(within(dialog).queryByRole("img")).toBeNull();
+  // Neither the code nor its placeholder (both size-60) holds the space.
+  expect(dialog.querySelector(".size-60")).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
 });

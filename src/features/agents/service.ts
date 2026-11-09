@@ -1911,8 +1911,12 @@ export type Agents = {
    * (Rollout 3): publishes each object, reads the set back and compares
    * it. The agent switches only when they are the same; otherwise it stays
    * on this device and the result lists what differs. Its objects here stay
-   * as a backup that `revertAttention` restores. */
-  migrateAttention(agent: AgentKey): Promise<AttentionMigration>;
+   * as a backup that `revertAttention` restores. With `prune`, it first
+   * deletes the objects only the community holds, as the owner. */
+  migrateAttention(
+    agent: AgentKey,
+    options?: Readonly<{ prune?: boolean }>,
+  ): Promise<AttentionMigration>;
   /** Moves the agent's attention back to this device, as it was when it
    * moved: changes made in the community since then are lost here. */
   revertAttention(agent: AgentKey): Promise<void>;
@@ -9205,20 +9209,24 @@ export class AgentsService extends Service implements Agents {
       return mirrored(saved, shown.set);
     });
   }
-  async migrateAttention(key: AgentKey): Promise<AttentionMigration> {
-    const identity = this.liveMember(key);
-    const native = this.native;
-    const binding = identity && this.bindingOf(identity);
-    const { session, controller } = binding ?? {};
-    const relayAuthor = session?.relayAuthor;
-    const read = session?.snapshotRead;
-    const artifacts = session?.configArtifactWriter;
-    if (!identity || !native || !binding || !session || !controller)
-      throw new Error("Connect this agent's community to move its attention");
-    if (!relayAuthor || !read || !artifacts)
-      throw new Error("This community can't store attention");
+  async migrateAttention(
+    key: AgentKey,
+    options: Readonly<{ prune?: boolean }> = {},
+  ): Promise<AttentionMigration> {
     let result: AttentionMigration | undefined;
     await this.change(key, async (saved) => {
+      // Read once its turn comes: the community may have rebound meanwhile.
+      const identity = this.liveMember(key);
+      const native = this.native;
+      const binding = identity && this.bindingOf(identity);
+      const { session, controller } = binding ?? {};
+      const relayAuthor = session?.relayAuthor;
+      const read = session?.snapshotRead;
+      const artifacts = session?.configArtifactWriter;
+      if (!identity || !native || !binding || !session || !controller)
+        throw new Error("Connect this agent's community to move its attention");
+      if (!relayAuthor || !read || !artifacts)
+        throw new Error("This community can't store attention");
       if (!saved) throw new Error("No such agent on this device");
       if (saved.attentionStorage === "relay")
         throw new Error("This agent's attention is already on its community");
@@ -9236,6 +9244,7 @@ export class AgentsService extends Service implements Agents {
         { read, send: ownerSender(artifacts, controller.signal) },
         () => readOnce((filter) => session.artifacts.sync(filter), channel),
         saved.attention,
+        options,
       );
       const same =
         !found.different.length && !found.extra.length && !found.skipped.length;

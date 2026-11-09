@@ -18661,6 +18661,40 @@ it("moves an agent's attention to its community only when the set comes back the
   ).toMatchObject({ instructions: "Here." });
 });
 
+it("deletes what only the community holds when a move prunes, watches before their Interest", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await f.seed("interest/there", { type: "interest", instructions: "There." });
+  await f.seed("watch/there", { ...chat["watch/chat"], interest_id: "there" });
+  await expect(
+    f.service.migrateAttention(bot, { prune: true }),
+  ).resolves.toEqual({ migrated: true, different: [], extra: [], skipped: [] });
+  const tag = (event: RelayEvent | undefined, name: string) =>
+    event?.tags.find((t) => t[0] === name)?.[1];
+  expect(f.ownerWrites.map((event) => tag(event, "op"))).toEqual([
+    "delete",
+    "create",
+    "delete",
+  ]);
+  expect(tag(f.ownerWrites[0], "d")).toBe(
+    await attentionD(f.home, "watch/there"),
+  );
+  expect(tag(f.ownerWrites[2], "d")).toBe(
+    await attentionD(f.home, "interest/there"),
+  );
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
+  expect(Object.keys(f.service.find(bot)?.attention ?? {})).toEqual([
+    "interest/default",
+  ]);
+});
+
 it("refuses to move attention with unreadable objects", async () => {
   const f = await relayAttentionSetup({
     device: {

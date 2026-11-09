@@ -607,36 +607,46 @@ export type AttentionMigration = Readonly<{
   migrated: boolean;
   /** Objects the relay is missing or holds another value of. */
   different: readonly string[];
-  /** Objects only the relay holds. They stay; nothing removes them. */
+  /** Objects only the relay holds. They stay, unless the move prunes them. */
   extra: readonly string[];
   /** Records skipped, here or on the relay; they are not moved. */
   skipped: readonly string[];
 }>;
 
 /** Publishes each object of `attention` the relay does not already hold
- * (Rollout 3), Interests first, then reads the set back and compares it. */
+ * (Rollout 3), then reads the set back and compares it. With `prune`, it
+ * also deletes the objects only the relay holds (Rollback: "deletes them
+ * only when asked"). Removed watches go first, then Interests, then
+ * watches, then removed Interests, so no watch is left without its
+ * Interest. */
 export async function publishAll(
   io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
   read: () => Promise<AttentionSet>,
   attention: AgentRecord["attention"],
+  options: Readonly<{ prune?: boolean }> = {},
 ): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
   const before = await read();
-  const changes = Object.values(attention)
-    .filter(
-      ({ slug, value }) =>
-        !before.attention[slug] ||
-        !sameValue(before.attention[slug].value, value),
-    )
-    .map(({ slug, value }) => ({ slug, value }))
-    .sort((a, b) =>
-      a.slug.startsWith("interest/") === b.slug.startsWith("interest/")
-        ? a.slug < b.slug
-          ? -1
-          : 1
-        : a.slug.startsWith("interest/")
-          ? -1
-          : 1,
-    );
+  const rank = ({ slug, value }: AttentionEdit) => {
+    const interest = slug.startsWith("interest/");
+    return value === null ? (interest ? 3 : 0) : interest ? 1 : 2;
+  };
+  const changes: AttentionEdit[] = [
+    ...Object.values(attention)
+      .filter(
+        ({ slug, value }) =>
+          !before.attention[slug] ||
+          !sameValue(before.attention[slug].value, value),
+      )
+      .map(({ slug, value }) => ({ slug, value })),
+    ...(options.prune
+      ? Object.keys(before.attention)
+          .filter((slug) => !attention[slug])
+          .map((slug) => ({ slug, value: null }))
+      : []),
+  ];
+  changes.sort((a, b) =>
+    rank(a) !== rank(b) ? rank(a) - rank(b) : a.slug < b.slug ? -1 : 1,
+  );
   await publishChanges(io, before, changes);
   const set = await read();
   return { set, found: compared(attention, set) };

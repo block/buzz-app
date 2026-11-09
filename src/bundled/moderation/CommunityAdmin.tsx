@@ -469,7 +469,7 @@ function Choice({
       <MenuTrigger
         disabled={disabled}
         render={
-          <Button variant="ghost" size="inline" aria-label={label}>
+          <Button variant="ghost" size="sm" aria-label={label}>
             {options.find((option) => option.value === value)?.label}
             <CaretDownIcon
               size={14}

@@ -2,7 +2,7 @@
 // mark, the agent's picture, its name, and its harness and model as stats.
 // It is the same in either theme, as a thing handed to someone else.
 
-import foilTextureUrl from "./assets/card-foil.png";
+import foilTextureUrl from "./assets/card-foil.webp";
 import { fallbackAgentCardColor } from "./agent-card-color";
 
 export const CARD_WIDTH = 820;

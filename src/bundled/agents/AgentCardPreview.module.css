@@ -12,6 +12,8 @@
 /* The card keeps its drawn proportions and fits whole in the room its flex
    column leaves the stage. */
 .stage {
+  /* Feature-owned artwork: retain the reference card’s return curve. */
+  --card-return: 560ms cubic-bezier(0.22, 0.8, 0.3, 1);
   flex: 1;
   min-height: 0;
   container-type: size;
@@ -134,6 +136,7 @@
   --card-x: 0.5;
   --card-y: 0.5;
   position: relative;
+  /* Artwork shadow scales with the card so it clears the dialog footer. */
   box-shadow:
     0 0.8cqh 1.6cqh color-mix(in srgb, black 22%, transparent),
     0 0.4cqh 0.8cqh color-mix(in srgb, black 16%, transparent);
@@ -144,7 +147,7 @@
   pointer-events: none;
 }
 .card {
-  transition: transform 560ms cubic-bezier(0.22, 0.8, 0.3, 1);
+  transition: transform var(--card-return);
 }
 .placeholder {
   box-shadow: none;
@@ -167,8 +170,8 @@
     linear-gradient(black 0 0);
   mask-composite: exclude;
   transition:
-    --card-x 560ms cubic-bezier(0.22, 0.8, 0.3, 1),
-    --card-y 560ms cubic-bezier(0.22, 0.8, 0.3, 1);
+    --card-x var(--card-return),
+    --card-y var(--card-return);
 }
 .sheen::before,
 .sheen::after {
@@ -176,7 +179,7 @@
   position: absolute;
   inset: -1px;
   opacity: 0;
-  transition: opacity 560ms cubic-bezier(0.22, 0.8, 0.3, 1);
+  transition: opacity var(--card-return);
 }
 .sheen::before {
   background: radial-gradient(
@@ -254,7 +257,7 @@
     calc((var(--card-x) - 0.5) * 4%),
     calc((var(--card-y) - 0.5) * 4%)
   );
-  transition: transform 560ms cubic-bezier(0.22, 0.8, 0.3, 1);
+  transition: transform var(--card-return);
 }
 @media (hover: hover) and (pointer: fine) {
   .reveal[data-entered="true"]:hover .card .portrait img {

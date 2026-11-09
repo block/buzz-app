@@ -1,3 +1,6 @@
+// The foil needs one dominant hue faithful to the portrait. The composer’s
+// avatar-palette instead selects three distinct colors and brightens them for
+// its shader, so sharing that palette would change the exported artwork.
 // Adapted from block/buzz PR #5790, agentCardPreviewColor.ts.
 type ColorAccumulator = {
   blue: number;

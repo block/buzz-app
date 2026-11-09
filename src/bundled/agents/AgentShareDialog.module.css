@@ -66,3 +66,13 @@
 .preview:has([role="alert"]) {
   padding-bottom: 0;
 }
+
+/* LoadingRegion owns the delay. Overlay its status in the empty card area so
+   slow artwork has visible feedback without reserving a row above the card. */
+.preview [class~="buzz-loading-region-feedback"]:not(:has([role="alert"])) {
+  position: absolute;
+  top: 50%;
+  width: 100%;
+  text-align: center;
+  pointer-events: none;
+}

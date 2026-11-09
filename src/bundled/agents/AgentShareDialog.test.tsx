@@ -11,7 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { readSnapshot } from "../../features/agents/agent-share";
 import { agentAvatars } from "../../features/agents/avatar-packs";
-import foilTextureUrl from "../../features/agents/assets/card-foil.png";
+import foilTextureUrl from "../../features/agents/assets/card-foil.webp";
 import type { Agent, RegisteredAgentType } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
@@ -606,7 +606,7 @@ it("shows the card and what it does before exporting it", async () => {
   expect(
     await screen.findByRole("dialog", { name: "Export Ada" }),
   ).toHaveAccessibleDescription(
-    "Share instructions and settings with this card. Memories and chats stay with you.",
+    "Anyone with this card can add Ada, instructions and settings included. Memories and chats stay with you.",
   );
   expect(
     await screen.findByRole("img", { name: "Ada’s agent card" }),
@@ -815,7 +815,11 @@ it("exports without the picture when it does not load in time", async () => {
     // Only the wait for the picture runs on a controlled clock.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(exportButton());
-    await vi.advanceTimersByTimeAsync(4999);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(screen.getByRole("status")).toHaveTextContent("Drawing the card…");
+    expect(screen.getByRole("status")).not.toHaveClass("sr-only");
+    await vi.advanceTimersByTimeAsync(3999);
     expect(screen.getByRole("button", { name: "Save card" })).toBeDisabled();
     await vi.advanceTimersByTimeAsync(1);
     vi.useRealTimers();

@@ -496,7 +496,7 @@ export function AgentShareDialog({
       title={previewing ? `Export ${agent.name}` : `Share ${agent.name}`}
       description={
         previewing
-          ? "Share instructions and settings with this card. Memories and chats stay with you."
+          ? `Anyone with this card can add ${agent.name}, instructions and settings included. Memories and chats stay with you.`
           : "Everyone gets their own copy. Later changes won’t sync."
       }
       // Keep the same frame across steps so entering and leaving the card
@@ -597,7 +597,6 @@ export function AgentShareDialog({
           <LoadingRegion
             pending={!card}
             label="Drawing the card…"
-            statusVisibility="screen-reader"
             feedback={
               // A save can still fail after a card couldn’t be drawn, and an
               // agent can stop being shareable while previewed; say each.

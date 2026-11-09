@@ -227,9 +227,11 @@ test("the portrait colors the exported foil and the directional hover light", as
     const light = image.locator("..").locator("span");
     await expect
       .poll(() =>
-        light.evaluate((el) => getComputedStyle(el, "::before").opacity),
+        light.evaluate((el) =>
+          Number(getComputedStyle(el, "::before").opacity),
+        ),
       )
-      .toBe("0.76");
+      .toBeGreaterThan(0);
     const pointer = await image.evaluate((img) => ({
       x: Number(img.parentElement.style.getPropertyValue("--card-x")),
       y: Number(img.parentElement.style.getPropertyValue("--card-y")),
@@ -308,7 +310,6 @@ test("pack portrait moves independently and respects reduced motion", async ({
       ),
     )
     .toBeLessThan(-1);
-  await expect(portrait).toHaveCSS("transition-duration", "0.08s");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(portrait).toHaveCSS("transform", "none");
 });

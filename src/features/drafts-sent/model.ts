@@ -1,6 +1,6 @@
 import type { VisibleEvent } from "../../features/relay/projection";
 import { threadReference } from "../../features/relay/thread-reference";
-import { plainText } from "../../features/notifications/content";
+import { messagePlainText } from "../../features/notifications/content";
 
 export type ReadEvent = VisibleEvent;
 export type Entry = {
@@ -111,7 +111,7 @@ export function sentEntries(
 
 /** One readable line: spoilers hidden, Markdown and media reduced to their words. */
 export const preview = (text: string, fallback: string) =>
-  plainText(text) || fallback;
+  messagePlainText(text) || fallback;
 
 export function matches(text: string, label: string, search: string) {
   const haystack = `${text} ${label}`.toLocaleLowerCase();

@@ -151,10 +151,20 @@ export function WorkspaceControl({
       {creating && (
         <NewWorkspace
           session={session}
-          create={(section) => session.soloPreferences.createSection(section)}
+          create={(section) => {
+            if (onChange || !channelId)
+              return session.soloPreferences.createSection(section);
+            const blocked = prepareSoloMove(session, channelId);
+            if (blocked) return Promise.reject(new Error(blocked));
+            // The groups record can't be saved twice within a second, so a
+            // saved chat moves in the write that creates its workspace.
+            return session.soloPreferences.createAndAssign(channelId, section);
+          }}
           close={() => setCreating(false)}
           finalFocus={trigger}
-          onCreated={choose}
+          onCreated={(id) => {
+            if (onChange) choose(id);
+          }}
         />
       )}
     </span>

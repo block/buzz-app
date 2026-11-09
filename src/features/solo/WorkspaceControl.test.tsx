@@ -14,6 +14,11 @@ import userEvent from "@testing-library/user-event";
 import type { FormEvent } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../relay/session";
+import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
+import type {
+  SidebarAssignmentIntent,
+  SidebarPreferences,
+} from "../relay/sidebar-preferences";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-testing";
 
@@ -51,13 +56,24 @@ function fixture(sectionCreationWritable = true) {
 
 it("moves a saved chat without changing project defaults", async () => {
   const { session, assign } = fixture();
+  // A move waits on the relay, and the control stays busy until it ends.
+  let moved!: () => void;
+  assign.mockReturnValue(new Promise<void>((resolve) => (moved = resolve)));
   const user = userEvent.setup();
   render(<WorkspaceControl session={session} channelId="chat" />);
-  await user.click(screen.getByRole("button", { name: "Workspace: Buzz App" }));
+  const control = screen.getByRole("button", { name: "Workspace: Buzz App" });
+  await user.click(control);
   await user.click(
     await screen.findByRole("menuitemradio", { name: "No workspace" }),
   );
   expect(assign).toHaveBeenCalledWith("chat", undefined);
+  // The menu hands focus back as the move starts. jsdom focuses a natively
+  // disabled button; a browser can't.
+  await waitFor(() => expect(control).toHaveFocus());
+  expect(control).not.toHaveAttribute("disabled");
+  expect(control).toHaveAttribute("aria-disabled", "true");
+  await act(async () => moved());
+  expect(control).not.toHaveAttribute("aria-disabled");
 });
 
 it("changes a new-chat project locally instead of moving a saved channel", async () => {
@@ -195,6 +211,51 @@ it("keeps hiding a region chat whose region offers no workspace", async () => {
   }
 });
 
+/** A real Solo preferences store over one groups record, so a test can count
+ * its writes. Reads wait while `hold` is pending. */
+async function storeFixture() {
+  let saved: SidebarPreferences = {
+    sections: [{ id: "buzz", name: "Buzz App", order: 0 }],
+    assignments: { chat: "buzz" },
+    starred: [],
+    muted: [],
+  };
+  const reads = { hold: Promise.resolve() };
+  const write = vi.fn(async (intent: SidebarAssignmentIntent) => {
+    const created = intent.createSection;
+    if (created)
+      saved = {
+        ...saved,
+        sections: [...saved.sections, { ...created, order: 1 }],
+      };
+    const target = created?.id ?? intent.sectionId;
+    const assignments = { ...saved.assignments };
+    if (intent.channelId !== undefined) {
+      if (target) assignments[intent.channelId] = target;
+      else delete assignments[intent.channelId];
+    }
+    saved = { ...saved, assignments };
+    return saved;
+  });
+  const store = createSidebarPreferencesStore({
+    read: async () => {
+      await reads.hold;
+      return saved;
+    },
+    available: true,
+    groupsOnly: true,
+    write,
+  });
+  await store.queries.ensure();
+  const assign = vi.fn(store.queries.assign);
+  const session = {
+    soloPreferences: Object.create(store.queries, {
+      assign: { value: assign },
+    }),
+  } as unknown as RelaySession;
+  return { session, write, assign, reads };
+}
+
 it.each(
   [
     { chat: "a new chat", trigger: "Add workspace", channelId: undefined },
@@ -204,13 +265,10 @@ it.each(
     { ...chat, submit: "Enter" },
   ]),
 )(
-  "creates a workspace from the composer and picks it for $chat ($submit)",
+  "creates a workspace from the composer and picks it for $chat in one write ($submit)",
   async ({ trigger, channelId, submit }) => {
     vi.stubGlobal("crypto", webcrypto);
-    const { session, assign, createSection } = fixture();
-    // A move waits on the relay, and the control stays busy until it ends.
-    let moved!: () => void;
-    assign.mockReturnValue(new Promise<void>((resolve) => (moved = resolve)));
+    const { session, write, assign } = await storeFixture();
     const change = vi.fn();
     // The control sits in the composer's form; the dialog's submit is its own.
     const composerSubmit = vi.fn((event: FormEvent) => event.preventDefault());
@@ -239,25 +297,24 @@ it.each(
       await user.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     await waitFor(() => expect(control).toHaveFocus());
-    // jsdom focuses a disabled button; a browser can't, so the control must
-    // not be natively disabled while it waits on the move.
-    expect(control).not.toBeDisabled();
+    expect(control).not.toHaveAttribute("disabled");
     expect(composerSubmit).not.toHaveBeenCalled();
-    expect(createSection).toHaveBeenCalledWith({
-      id: expect.any(String),
-      name: "Planning",
-    });
-    const id = createSection.mock.calls[0]?.[0].id;
+    // A second write of the groups record within a second is refused, so the
+    // workspace and a saved chat's move into it are one write.
+    expect(write).toHaveBeenCalledOnce();
+    const id = write.mock.calls[0]?.[0].createSection?.id;
+    expect(write).toHaveBeenCalledWith(
+      {
+        ...(channelId ? { channelId } : {}),
+        createSection: { id: expect.any(String), name: "Planning" },
+      },
+      expect.anything(),
+    );
+    expect(assign).not.toHaveBeenCalled();
     if (channelId) {
-      expect(assign).toHaveBeenCalledWith(channelId, id);
       expect(change).not.toHaveBeenCalled();
-      expect(control).toHaveAttribute("aria-disabled", "true");
-      await act(async () => moved());
-      expect(control).not.toHaveAttribute("aria-disabled");
-    } else {
-      expect(change).toHaveBeenCalledWith(id);
-      expect(assign).not.toHaveBeenCalled();
-    }
+      expect(control).toHaveAccessibleName("Workspace: Planning");
+    } else expect(change).toHaveBeenCalledWith(id);
   },
 );
 

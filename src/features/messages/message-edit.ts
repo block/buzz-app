@@ -1,4 +1,7 @@
-import { projectMarkdownAttachments } from "../relay/message-content";
+import {
+  projectMarkdownAttachments,
+  scanMarkdown,
+} from "../relay/message-content";
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { npubEncode } from "nostr-tools/nip19";
@@ -27,14 +30,28 @@ export function messageEditText(
   agents: AgentLibrary["identities"] = [],
 ) {
   const { attachmentSeams: _seams, ...source } = row;
-  return profileMentionParts(
-    { ...source, content: row.sourceContent ?? row.content },
-    profiles,
-    agents,
-  )
-    .map(({ text, target }) =>
-      target ? profileMentionLink(text, target) : text,
-    )
+  const content = row.sourceContent ?? row.content;
+  // A link inside a reference definition would become part of its URL.
+  const definitions: { start: number; end: number }[] = [];
+  const pending = [scanMarkdown(content).tree];
+  for (let node = pending.pop(); node; node = pending.pop()) {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type === "definition") {
+      if (start !== undefined && end !== undefined)
+        definitions.push({ start, end });
+    } else for (const child of node.children ?? []) pending.push(child);
+  }
+  let offset = 0;
+  return profileMentionParts({ ...source, content }, profiles, agents)
+    .map(({ text, target }) => {
+      const start = offset;
+      offset += text.length;
+      return target &&
+        !definitions.some((range) => start < range.end && offset > range.start)
+        ? profileMentionLink(text, target)
+        : text;
+    })
     .join("");
 }
 

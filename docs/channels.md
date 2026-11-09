@@ -563,16 +563,19 @@ removes (the composer, the header's controls or the message history), it moves
 to **Back to channels** for a private channel, or to the preview's history for a
 public one; focus that moved elsewhere meanwhile stays there.
 
-Only relay-confirmed membership counts: membership downloaded from disk that the
-live roster no longer lists at launch shows nothing. The viewer's own Leave or
-Delete for that channel suppresses the notice, because its access loss can
-arrive before its navigation. When the relay cannot confirm that action (“Leave
-channel failed”, as it may have taken effect), the suppression lasts until the
-relay answers for the channel: a ready roster drops it, or a complete roster
-read after the failure still lists it. Live events and exact reads that still
-list it prove nothing, so a Leave the relay applies late is not reported as
-someone else's doing. Once answered, the suppression ends, so a later loss of
-the same channel is shown. A failed or partial roster read, a pending access
+Only relay-confirmed membership counts, in or out of the sidebar: an archived
+channel opened from search is explained too, while membership downloaded from
+disk that the live roster no longer lists at launch shows nothing. The viewer's
+own Leave or Delete for that channel, once confirmed in its dialog, suppresses
+the notice, because its access loss can arrive before its navigation. A
+confirmation still open suppresses nothing: a loss that arrives behind it is
+shown once it is cancelled. When the relay cannot confirm a confirmed action
+(“Leave channel failed”, as it may have taken effect), the suppression lasts
+until the relay answers for the channel: a ready roster drops it, or a complete
+roster read after the failure still lists it. Live events and exact reads that
+still list it prove nothing, so a Leave the relay applies late is not reported
+as someone else's doing. Once answered, the suppression ends, so a later loss
+of the same channel is shown. A failed or partial roster read, a pending access
 check, a new session, Solo chats and DMs show nothing. Both notices render
 inside one status region that stays mounted above the history, so a loss that
 arrives while the channel is open is announced.

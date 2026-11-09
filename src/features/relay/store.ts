@@ -493,7 +493,8 @@ export function createChannelStore(
       next.status === list.status &&
       next.coverage === list.coverage &&
       next.error === list.error &&
-      next.asOf === list.asOf
+      next.asOf === list.asOf &&
+      next.rosterAsOf === list.rosterAsOf
     )
       return;
     list = Object.freeze({
@@ -1879,12 +1880,15 @@ export function createChannelStore(
       for (const id of tails.keys()) if (!authorized(id)) tails.delete(id);
       if (complete) void persistence?.retain([...nextAllowed]).catch(() => {});
       appliedEpoch = epoch;
+      const asOf = now();
+      const rosterAsOf = complete ? asOf : list.rosterAsOf;
       setList(
         {
           status: "ready",
           channels,
           ...(coverage ? { coverage } : {}),
-          asOf: now(),
+          asOf,
+          ...(rosterAsOf !== undefined ? { rosterAsOf } : {}),
         },
         discoveryChanged,
       );

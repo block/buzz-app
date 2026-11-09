@@ -492,8 +492,11 @@ export function createNavigationController(
           if (options?.replace || dismiss) history.replace(target);
           else {
             const { current, previous } = history.snapshot();
+            // Members hands off to what opens from it, but the join dialog
+            // presents over Members, which stays beneath it.
             if (
               !history.snapshot().invalidAddress &&
+              !target.join &&
               current.target.kind === "conversation" &&
               current.target.panel === "members"
             ) {

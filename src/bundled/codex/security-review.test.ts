@@ -176,6 +176,7 @@ it("uses Buzz's recommended model and supported low effort for blank review sele
       "memories.generate_memories": false,
       project_doc_max_bytes: 0,
       "skills.include_instructions": false,
+      thread_unload_delay_secs: 0,
     },
   });
   expect(f.params("turn/start")).toEqual({

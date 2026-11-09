@@ -161,6 +161,19 @@ it("keeps only threads Buzz started for this agent", () => {
   expect(rolloutUsage("t", unscoped, [], there)).toBeUndefined();
 });
 
+it("titles a thread whose request holds a line or paragraph separator", () => {
+  for (const request of ["a\u2028b", "a\u2029b"]) {
+    // JSON leaves both separators raw, as Buzz's prompt records do.
+    const ask = message(
+      1,
+      "user",
+      `<context>\n{"channel_id":"chan"}\n</context>\n<buzz-event>\n{"id":"e"}\nRequest: ${JSON.stringify(request)}\n</buzz-event>`,
+    );
+    const file = [instructions(), ask, record(1000, 1, 0, 1)].join("\n");
+    expect(rolloutUsage("t", file, [], sol)?.title).toBe(request);
+  }
+});
+
 let home: string | undefined;
 afterEach(() => {
   if (home) rmSync(home, { recursive: true, force: true });

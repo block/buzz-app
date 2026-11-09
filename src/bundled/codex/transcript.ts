@@ -67,7 +67,7 @@ function sender(sections: readonly { body: string }[]) {
 
 /** The owner's request inside a Buzz turn input; other framing stays in sections. */
 function request(text: string) {
-  const quoted = [...text.matchAll(/^Request: (".*")$/gm)].pop()?.[1];
+  const quoted = [...text.matchAll(/^Request: ("[^\n]*")$/gm)].pop()?.[1];
   try {
     return quoted ? String(JSON.parse(quoted)) : text;
   } catch {

@@ -1098,7 +1098,7 @@ it("shows the remote execution hint only while the shared account is signed in",
   await loadedInstructions();
   const note = screen.getByRole("note");
   expect(within(note).getByText("Remote agent")).toBeVisible();
-  expect(within(note).getByText("Runs on a Builderlab machine")).toBeVisible();
+  expect(within(note).getByText(/Runs on a Builderlab machine/)).toBeVisible();
   expect(
     within(note).getByRole("link", { name: "Usage and billing" }),
   ).toBeVisible();
@@ -1120,6 +1120,10 @@ it.each(["https://builderlab.example", "https://login.example/deployment/"])(
     expect(link).toHaveAttribute("href", server);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(link.parentElement).toHaveClass("buzz-preference-row-description");
+    expect(link.parentElement).toHaveTextContent(
+      "Runs on a Builderlab machine. Usage and billing",
+    );
   },
 );
 
@@ -1159,7 +1163,7 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   const identity = screen.getByRole("tabpanel", { name: "Identity" });
   const note = within(identity).getByRole("note");
   expect(within(note).getByText("Remote agent")).toBeVisible();
-  expect(within(note).getByText("Runs on a Builderlab machine")).toBeVisible();
+  expect(within(note).getByText(/Runs on a Builderlab machine/)).toBeVisible();
   const harness = within(identity).getByRole("button", {
     name: "Change harness from Builderlab",
   });

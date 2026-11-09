@@ -6,10 +6,10 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 /** Execution guidance sits outside the settings container it explains. */
 export function AgentExecutionNote({
   runtime,
-  trailing,
+  description,
 }: {
   runtime?: string;
-  trailing?: ReactNode;
+  description?: ReactNode;
 }) {
   // Keep the cue compact; the composer explains where remote work happens.
   return (
@@ -18,11 +18,11 @@ export function AgentExecutionNote({
         <PreferenceRow
           icon={<CloudIcon />}
           title="Remote agent"
-          trailing={trailing}
           subtitle={
-            runtime === "block.builderlab/builderlab"
+            description ??
+            (runtime === "block.builderlab/builderlab"
               ? "Runs on a Builderlab machine"
-              : undefined
+              : undefined)
           }
         />
       </SettingsGroup>

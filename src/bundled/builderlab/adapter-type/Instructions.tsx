@@ -102,15 +102,18 @@ export function createSettingsTab(
         {settingsSection !== "runtime" && signedIn && (
           <AgentExecutionNote
             runtime={agent.type}
-            trailing={
-              <a
-                className={inlineStyles.link}
-                href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Usage and billing
-              </a>
+            description={
+              <>
+                Runs on a Builderlab machine.{" "}
+                <a
+                  className={inlineStyles.link}
+                  href={import.meta.env.VITE_BUZZ_BUILDERLAB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Usage and billing
+                </a>
+              </>
             }
           />
         )}

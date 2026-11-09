@@ -56,6 +56,7 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { PluginUpdateFailure } from "./PluginUpdates";
 import { AgentPluginRequests } from "./AgentPluginRequests";
 import {
   ManagedPluginUpdate,
@@ -1334,6 +1335,17 @@ export function Settings({
                       {failure}
                     </p>
                   )}
+                  <PluginUpdateFailure
+                    pluginId={id}
+                    className={styles.pluginRowStatus}
+                    returnFocus={() =>
+                      Array.from(
+                        pluginSection.current?.querySelectorAll<HTMLElement>(
+                          "[data-plugin-id]",
+                        ) ?? [],
+                      ).find((row) => row.dataset.pluginId === id)
+                    }
+                  />
                 </PluginListEntry>
               );
             })}

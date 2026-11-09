@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { PluginManager } from "./manager";
 import type { ImportPreview, PluginInfo, StorageResult } from "./types";
-import { createPluginUpdates } from "./updates";
+import { createPluginUpdates, updateFailure } from "./updates";
 
 afterEach(() => vi.useRealTimers());
 
@@ -373,3 +373,108 @@ it("reuses discovery for plugins in the same repository and reference", async ()
   expect(f.authorize).toHaveBeenCalledTimes(2);
   updates.dispose();
 });
+
+const OFFLINE =
+  "Git could not read this repository: fatal: unable to access 'https://example.com/plugins.git/': Could not resolve host: example.com";
+
+it("gives a failed check a notice only when the owner asked for it, and closing the notice keeps the failure", async () => {
+  const f = fixture();
+  const id = f.plugin.manifest.id;
+  f.checkGit.mockRejectedValue(OFFLINE);
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  const only = () => {
+    const [update] = updates.snapshot();
+    if (!update) throw new Error("Expected a failed check");
+    return update;
+  };
+  await updates.check();
+  expect(only()).toMatchObject({ id, error: OFFLINE });
+  expect(only().manual).toBeUndefined();
+
+  await updates.checkAgain(id);
+  expect(f.checkGit).toHaveBeenCalledTimes(2);
+  expect(only().manual).toBe(true);
+  // A later check that fails the same way leaves the notice up.
+  await updates.check(true);
+  expect(only().manual).toBe(true);
+
+  updates.later(only());
+  expect(only()).toMatchObject({ id, error: OFFLINE });
+  expect(only().manual).toBeUndefined();
+  // Asking again gives the next failure its own notice.
+  await updates.checkAgain(id);
+  expect(only().manual).toBe(true);
+  expect(updates.hidden(only())).toBe(false);
+  updates.dispose();
+});
+
+it("gives a notice only to the plugin the owner asked about", async () => {
+  const f = fixture();
+  const configuration = f.get();
+  if (configuration.status !== "ready") throw new Error("Expected catalog");
+  const other = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "example.other" },
+    updateSource: {
+      repository: "https://example.com/other.git",
+      reference: "main",
+      path: ".",
+    },
+  };
+  f.set({
+    ...configuration,
+    catalog: { ...configuration.catalog, plugins: [f.plugin, other] },
+  });
+  f.checkGit.mockRejectedValue(OFFLINE);
+  const updates = createPluginUpdates(f.manager, f.authorize);
+  await updates.checkAgain("example.other");
+  expect(
+    updates.snapshot().map((update) => [update.id, update.manual]),
+  ).toEqual([
+    [f.plugin.manifest.id, undefined],
+    ["example.other", true],
+  ]);
+  updates.dispose();
+});
+
+const MOVED =
+  "This plugin’s repository moved or was removed. Reinstall it from its new address.";
+const PRIVATE =
+  "This repository is private. Reinstall it using an SSH address.";
+it.each([
+  [
+    "https://github.com/acme/notes",
+    "Git could not read this repository: remote: Repository not found.\nfatal: repository 'https://github.com/acme/notes/' not found",
+    { cause: MOVED, retry: false },
+  ],
+  [
+    "git@github.com:acme/notes.git",
+    "Git could not read this repository: ERROR: Repository not found.\nfatal: Could not read from remote repository.",
+    { cause: MOVED, retry: false },
+  ],
+  [
+    "https://github.com/acme/notes",
+    "Git could not read this repository: fatal: could not read Username for 'https://github.com': terminal prompts disabled Private repositories need an SSH URL, such as git@github.com:owner/repo.git.",
+    { cause: PRIVATE, retry: false },
+  ],
+  ["https://example.com/plugins.git", OFFLINE, { retry: true }],
+  [
+    "https://example.com/plugins.git",
+    "The repository does not match the managed commit. Try again after the recommendation is corrected.",
+    {
+      cause:
+        "The repository does not match the managed commit. Try again after the recommendation is corrected.",
+      retry: true,
+    },
+  ],
+] as const)(
+  "names the cause of a failed check when Buzz knows it (%s, case %#)",
+  (repository, error, expected) => {
+    expect(
+      updateFailure({
+        error,
+        source: { repository, reference: "main", path: "." },
+      }),
+    ).toEqual(expected);
+  },
+);

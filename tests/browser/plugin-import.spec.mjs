@@ -51,6 +51,8 @@ async function nativeImports(
         error: null,
       }),
     );
+    // A journey can start with external plugins already installed.
+    plugins.push(...(window.installedPlugins ?? []));
     const ready = () => ({
       status: "ready",
       externalPluginsPaused: false,
@@ -156,6 +158,7 @@ async function nativeImports(
             : candidate.revision;
         }
         if (command === "plugin_import_git" && args?.checkOnly) {
+          if (window.gitCheckError) throw window.gitCheckError;
           const result = structuredClone(preview);
           if (window.importCategory)
             for (const candidate of result.candidates)
@@ -1917,4 +1920,93 @@ test("an artifact link reviews and installs the pinned URL", async ({
       args: { token: "preview-1", path: "." },
     },
   ]);
+});
+
+// Native IPC throws Git's own text, as plugin_import_git does when offline.
+test("a failed background update check stays on its Settings row, and only Check again raises a notice", async ({
+  page,
+  app,
+}) => {
+  const offline =
+    "Git could not read this repository: fatal: unable to access 'https://github.com/acme/standup-notes/': Could not resolve host: github.com";
+  await page.addInitScript((offline) => {
+    window.gitCheckError = offline;
+    window.installedPlugins = [
+      {
+        manifest: {
+          id: "acme.standup-notes",
+          name: "Standup Notes",
+          apiVersion: 1,
+          updates: { defaultEnabled: true },
+        },
+        source: "external",
+        enabled: true,
+        revision: "one",
+        previous: null,
+        reloadable: true,
+        error: null,
+        updateSource: {
+          repository: "https://github.com/acme/standup-notes",
+          reference: "main",
+          path: ".",
+        },
+      },
+    ];
+  }, offline);
+  await nativeImports(page, [
+    {
+      path: ".",
+      revision: "one",
+      manifest: {
+        id: "acme.standup-notes",
+        name: "Standup Notes",
+        apiVersion: 1,
+        updates: { defaultEnabled: true },
+      },
+    },
+  ]);
+  const checks = () =>
+    page.evaluate(
+      () =>
+        window.importCalls.filter(
+          (call) =>
+            call.command === "plugin_import_git" && call.args?.checkOnly,
+        ).length,
+    );
+  const notice = page.getByText("Couldn’t check Standup Notes for updates");
+  await page.goto(app.origin);
+  await expect.poll(checks).toBe(1);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const status = settingsDialog(page).getByText("Couldn’t check for updates.", {
+    exact: true,
+  });
+  await expect(status).toBeVisible();
+  // The check that failed in the background raised nothing over the app.
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByText(/Cannot check/)).toHaveCount(0);
+  const details = settingsDialog(page).locator("details", {
+    hasText: "Could not resolve host",
+  });
+  await expect(details).not.toHaveAttribute("open");
+  await details.getByText("Details", { exact: true }).click();
+  await expect(details).toHaveAttribute("open");
+  await expect(details).toContainText(offline);
+
+  await button(page, "Check again").click();
+  await expect(notice).toBeVisible();
+  await expect(
+    page.getByText("Check your connection, then try again."),
+  ).toBeVisible();
+  expect(await checks()).toBe(2);
+
+  // Back online, Try again finds nothing wrong and both reports go.
+  await page.evaluate(() => {
+    window.gitCheckError = undefined;
+  });
+  await button(page, "Try again").click();
+  await expect(notice).toHaveCount(0);
+  await expect(status).toHaveCount(0);
+  expect(await checks()).toBe(3);
+  await expect(page.getByText("Update Standup Notes")).toHaveCount(0);
 });

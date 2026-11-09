@@ -13,8 +13,49 @@ export type PluginUpdate = {
   source: GitUpdateSource;
   installedRevision: string;
   candidate?: ImportPreview["candidates"][number];
+  /** Why the check failed: Git's own text, or Buzz's sentence. */
   error?: string;
+  /** The owner asked for this check, so its failure gets a notice. A
+   * background check's failure stays on the plugin's Settings row. */
+  manual?: true;
 };
+
+const MISMATCH =
+  "The repository does not match the managed commit. Try again after the recommendation is corrected.";
+const MISSING = "The saved repository has no plugin at its installed path.";
+
+/** What the owner can do about a failed check: the cause, when Buzz knows
+ * it, and whether checking again can help. Git's text stays behind Details. */
+export function updateFailure({
+  error = "",
+  source,
+}: Pick<PluginUpdate, "error" | "source">): {
+  cause?: string;
+  retry: boolean;
+} {
+  if (
+    /repository not found|repository '[^']*' not found|does not appear to be a git repository/i.test(
+      error,
+    )
+  )
+    return {
+      cause:
+        "This plugin’s repository moved or was removed. Reinstall it from its new address.",
+      retry: false,
+    };
+  // HTTPS checks can't prompt or use credential helpers.
+  if (
+    /^https?:/i.test(source.repository) &&
+    /could not read Username|Authentication failed for/i.test(error)
+  )
+    return {
+      cause: "This repository is private. Reinstall it using an SSH address.",
+      retry: false,
+    };
+  if (error === MISMATCH || error === MISSING)
+    return { cause: error, retry: true };
+  return { retry: true };
+}
 
 export function pluginUpdateSource(plugins: PluginManager, id: string) {
   const { configuration } = plugins.snapshot();
@@ -65,6 +106,8 @@ export function createPluginUpdates(
   let closed = false;
   let pending: Promise<number | undefined> | undefined;
   let retry = false;
+  // Plugins the owner asked to check again, for the next run.
+  const asked = new Set<string>();
   let lastCheck: number | undefined;
   let lastSources = "";
   const dismissed = new Set<string>();
@@ -117,6 +160,8 @@ export function createPluginUpdates(
       return;
     lastCheck = now;
     lastSources = sources;
+    const manual = new Set(asked);
+    asked.clear();
     const repositories = new Map<string, Promise<ImportPreview | null>>();
     const discover = (source: GitUpdateSource) => {
       const key = JSON.stringify([source.repository, source.reference]);
@@ -166,21 +211,23 @@ export function createPluginUpdates(
           source.commit &&
           preview.commit?.toLowerCase() !== source.commit.toLowerCase()
         )
-          throw new Error(
-            "The repository does not match the managed commit. Try again after the recommendation is corrected.",
-          );
+          throw new Error(MISMATCH);
         const candidate = preview.candidates.find(
           (item) => item.manifest.id === id && item.path === source.path,
         );
-        if (!candidate)
-          throw new Error(
-            "The saved repository has no plugin at its installed path.",
-          );
+        if (!candidate) throw new Error(MISSING);
         if (candidate.revision !== plugin.revision)
           update.candidate = candidate;
       } catch (reason) {
         update.error =
           reason instanceof Error ? reason.message : String(reason);
+        const previous = updates.find((item) => item.id === id);
+        // A notice the owner asked for stays until they close it.
+        if (
+          manual.has(id) ||
+          (previous?.manual && previous.error === update.error)
+        )
+          update.manual = true;
       }
       if (current(update))
         publish([
@@ -188,6 +235,26 @@ export function createPluginUpdates(
           ...(update.candidate || update.error ? [update] : []),
         ]);
     }
+  }
+  function check(force = false): Promise<number | undefined> {
+    retry ||= force;
+    pending ??= (async () => {
+      do {
+        const forced = retry;
+        retry = false;
+        await run(forced);
+      } while (retry && !closed);
+      if (
+        closed ||
+        !plugins.imports ||
+        plugins.snapshot().configuration.status !== "ready"
+      )
+        return;
+      return Math.max(0, (lastCheck ?? Date.now()) + 3_600_000 - Date.now());
+    })().finally(() => {
+      pending = undefined;
+    });
+    return pending;
   }
   return {
     snapshot: () => updates,
@@ -199,29 +266,27 @@ export function createPluginUpdates(
     },
     hidden: (update: PluginUpdate) => dismissed.has(key(update)),
     later(update: PluginUpdate) {
+      if (update.manual) {
+        // Closing a failed check's notice leaves the failure on its row.
+        publish(
+          updates.map((item) => {
+            if (item !== update) return item;
+            const { manual: _, ...background } = item;
+            return background;
+          }),
+        );
+        return;
+      }
       dismissed.add(key(update));
       publish([...updates]);
     },
-    check(force = false): Promise<number | undefined> {
-      retry ||= force;
-      pending ??= (async () => {
-        do {
-          const forced = retry;
-          retry = false;
-          await run(forced);
-        } while (retry && !closed);
-        if (
-          closed ||
-          !plugins.imports ||
-          plugins.snapshot().configuration.status !== "ready"
-        )
-          return;
-        return Math.max(0, (lastCheck ?? Date.now()) + 3_600_000 - Date.now());
-      })().finally(() => {
-        pending = undefined;
-      });
-      return pending;
+    /** The owner asked to check `id` again: check now, and give a failure a
+     * notice. */
+    checkAgain(id: string) {
+      asked.add(id);
+      return check(true);
     },
+    check,
     dispose() {
       closed = true;
       unsubscribe();

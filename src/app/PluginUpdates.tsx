@@ -16,6 +16,7 @@ import {
   type PluginUpdate,
   type PluginUpdates as Updates,
   pluginUpdateSource,
+  updateFailure,
   updateSourceKey,
 } from "../plugins/updates";
 import type { AppServices } from "./services";
@@ -41,6 +42,9 @@ const Context = createContext<{
   recommended: readonly string[];
   busy: boolean;
   open(update: PluginUpdate): void;
+  /** Plugins the owner asked to check again, while that check runs. */
+  checking: readonly string[];
+  checkAgain(id: string): Promise<void>;
 } | null>(null);
 const noSubscribe = () => () => {};
 const empty: readonly PluginUpdate[] = [];
@@ -78,22 +82,26 @@ export function PluginUpdates({
     setStore(updates);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;
-    const visible = () => document.visibilityState !== "hidden";
+    // Being offline is normal, so background checks wait for a connection.
+    const ready = () =>
+      document.visibilityState !== "hidden" && navigator.onLine !== false;
     const check = async () => {
       clearTimeout(timer);
-      if (!visible()) return;
+      if (!ready()) return;
       const delay = await updates.check();
-      if (delay === undefined || disposed || !visible()) return;
+      if (delay === undefined || disposed || !ready()) return;
       clearTimeout(timer);
       timer = setTimeout(check, delay);
     };
     void check();
     const unsubscribe = plugins.subscribe(check);
     document.addEventListener("visibilitychange", check);
+    window.addEventListener("online", check);
     return () => {
       disposed = true;
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("online", check);
       unsubscribe();
       updates.dispose();
     };
@@ -128,11 +136,23 @@ export function PluginUpdates({
     );
   };
   const [recovering, setRecovering] = useState<readonly string[]>([]);
+  const [checking, setChecking] = useState<readonly string[]>([]);
+  const checkAgain = async (id: string) => {
+    if (!store) return;
+    setChecking((ids) => (ids.includes(id) ? ids : [...ids, id]));
+    try {
+      await store.checkAgain(id);
+    } finally {
+      setChecking((ids) => ids.filter((item) => item !== id));
+    }
+  };
   return (
     <Context
       value={{
         updates,
         open,
+        checking,
+        checkAgain,
         busy: state.busy || !!action,
         recommended: pendingManaged(
           configuration.status === "ready" ? configuration.managed : undefined,
@@ -141,50 +161,69 @@ export function PluginUpdates({
     >
       {children}
       {updates
-        .filter((update) => !store?.hidden(update) && update.id !== action?.id)
+        .filter(
+          (update) =>
+            // A background check's failure stays on its Settings row.
+            (update.candidate || update.manual) &&
+            !store?.hidden(update) &&
+            update.id !== action?.id,
+        )
         .map((update) => {
           const plugin = catalog?.plugins.find(
             (p) => p.manifest.id === update.id,
           );
+          const name = plugin?.manifest.name ?? update.id;
+          const manage = {
+            label: `Manage ${name} update checks`,
+            open: () =>
+              void navigation.open({
+                version: 1,
+                kind: "settings",
+                section: "plugins",
+                pluginId: update.id,
+              }),
+          };
+          if (update.error) {
+            const { cause, retry } = updateFailure(update);
+            return (
+              <ToastNotice
+                key={update.id}
+                title={`Couldn’t check ${name} for updates`}
+                description={cause ?? "Check your connection, then try again."}
+                tone="error"
+                onDismiss={() => store?.later(update)}
+                closeLabel="Dismiss plugin update notice"
+                navigation={manage}
+              >
+                {retry && (
+                  <Button
+                    size="sm"
+                    loading={checking.includes(update.id)}
+                    onClick={() => void checkAgain(update.id)}
+                  >
+                    Try again
+                  </Button>
+                )}
+              </ToastNotice>
+            );
+          }
           const review = needsReview(update);
           return (
             <ToastNotice
               key={update.id}
-              title={
-                update.error
-                  ? `Cannot check ${plugin?.manifest.name ?? update.id}`
-                  : `Update ${plugin?.manifest.name ?? update.id}`
-              }
-              description={
-                update.error ??
-                "Save unfinished forms and stop active plugin workers first. Updating an enabled plugin reloads it immediately."
-              }
-              tone={update.error ? "error" : "info"}
+              title={`Update ${name}`}
+              description="Save unfinished forms and stop active plugin workers first. Updating an enabled plugin reloads it immediately."
+              tone="info"
               onDismiss={() => store?.later(update)}
               closeLabel="Dismiss plugin update notice"
-              navigation={{
-                label: `Manage ${plugin?.manifest.name ?? update.id} update checks`,
-                open: () =>
-                  void navigation.open({
-                    version: 1,
-                    kind: "settings",
-                    section: "plugins",
-                    pluginId: update.id,
-                  }),
-              }}
+              navigation={manage}
             >
               <Button
                 size="sm"
                 disabled={state.busy || !!action}
-                onClick={() =>
-                  update.error ? void store?.check(true) : open(update)
-                }
+                onClick={() => open(update)}
               >
-                {update.error
-                  ? "Retry"
-                  : review
-                    ? "Review permissions"
-                    : "Update and reload"}
+                {review ? "Review permissions" : "Update and reload"}
               </Button>
               <Button size="sm" onClick={() => store?.later(update)}>
                 Later
@@ -259,7 +298,10 @@ export function PluginUpdatesMenu({
   recommendations: number;
 }) {
   const context = useContext(Context);
-  const updates = context?.updates ?? empty;
+  // A failed check is reported on its plugin's row in Manage plugins.
+  const updates = (context?.updates ?? empty).filter(
+    (update) => update.candidate,
+  );
   const count =
     recommendations +
     updates.filter((update) => !context?.recommended.includes(update.id))
@@ -288,13 +330,64 @@ export function PluginUpdatesMenu({
             disabled={context?.busy}
             onClick={() => context?.open(update)}
           >
-            {update.error ? "Retry update" : "Update"}{" "}
-            {update.candidate?.manifest.name ?? update.id}
+            Update {update.candidate?.manifest.name ?? update.id}
           </MenuItem>
         ))}
         <MenuSeparator />
         <MenuItem onClick={onManage}>Manage plugins</MenuItem>
       </MenuSubmenuPopup>
     </MenuSubmenu>
+  );
+}
+
+/** A background check's failure, on its plugin's row in Settings → Plugins:
+ * what happened, Check again when that can help, and Git's text behind
+ * Details. Nothing shows outside `PluginUpdates`. */
+export function PluginUpdateFailure({
+  pluginId,
+  className,
+  returnFocus,
+}: {
+  pluginId: string;
+  className?: string | undefined;
+  /** Where focus goes when a successful check removes Check again. */
+  returnFocus?: () => HTMLElement | null | undefined;
+}) {
+  const context = useContext(Context);
+  const update = context?.updates.find(
+    (item) => item.id === pluginId && item.error,
+  );
+  if (!context || !update?.error) return null;
+  const { cause, retry } = updateFailure(update);
+  return (
+    <div className={className}>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="m-0 text-body-sm error">
+          Couldn’t check for updates.{cause ? ` ${cause}` : ""}
+        </p>
+        {retry && (
+          <Button
+            size="sm"
+            variant="subtle"
+            loading={context.checking.includes(pluginId)}
+            onClick={async (event) => {
+              const button = event.currentTarget;
+              await context.checkAgain(pluginId);
+              const active = document.activeElement;
+              if (!button.isConnected && (!active || active === document.body))
+                returnFocus?.()?.focus();
+            }}
+          >
+            Check again
+          </Button>
+        )}
+      </div>
+      {update.error !== cause && (
+        <details>
+          <summary className="text-body-sm">Details</summary>
+          <p className="m-0 text-body-sm text-subtle">{update.error}</p>
+        </details>
+      )}
+    </div>
   );
 }

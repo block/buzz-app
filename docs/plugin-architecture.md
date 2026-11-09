@@ -261,6 +261,16 @@ review and remains subject to native signing rules. **Later** hides the notice
 for the current app run and candidate. The update stays in the profile menu's
 **Plugins** submenu. A newer candidate can show a notice again.
 
+A background check that fails raises no notice. The plugin's row in Settings →
+Plugins says **Couldn’t check for updates.** with **Check again**, and keeps the
+raw Git text behind **Details**. Background checks wait while the browser reports
+offline and run on its `online` event. Only a check the user asked for
+(**Check again**, or **Try again** on its notice) raises a notice, and closing
+that notice leaves the row. `updateFailure()` in `src/plugins/updates.ts` names
+the Git causes Buzz recognizes: a repository that moved or was removed, and a
+private repository added over HTTPS. For those it hides **Check again** and asks
+for a reinstall. Failures don't appear in the profile menu's **Plugins** submenu.
+
 An update action fetches a fresh immutable preview. The importer checks access
 and publisher data from that preview before it applies the update. It checks
 the live source again before installation. A managed source retains its commit

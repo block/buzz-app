@@ -549,8 +549,12 @@ test("opens an active message's empty thread without losing its activity preview
     thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeVisible();
   await expect(activity).toBeVisible();
-  await activity.focus();
-  await page.keyboard.press("Enter");
+  // Reopening schedules composer focus after the pane becomes visible.
+  // Observe that handoff before sending a key to another control.
+  await expect(
+    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeFocused();
+  await activity.press("Enter");
   await expect(
     page.getByRole("tab", { name: "Activity", selected: true }),
   ).toBeVisible();

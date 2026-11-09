@@ -84,12 +84,20 @@ const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
 const STALE = "The member list is out of date. Retry before making changes.";
 
+export type MembershipMethod = "members" | "invite" | "direct";
+type MembershipSelection = {
+  selectedMethod?: MembershipMethod | undefined;
+  onMethodChange?: ((method: MembershipMethod) => void) | undefined;
+};
+
 export function CommunityAdmin({
   relay,
   membership: suppliedMembership,
   communityName,
   active,
-}: {
+  selectedMethod,
+  onMethodChange,
+}: MembershipSelection & {
   relay: RelayData;
   membership?: CommunityMembership;
   communityName?: string;
@@ -125,6 +133,8 @@ export function CommunityAdmin({
           viewer={connection.viewer}
           membership={membership}
           active={active}
+          selectedMethod={selectedMethod}
+          onMethodChange={onMethodChange}
         />
       ) : (
         <p role="status">Choose a connected community to manage members.</p>
@@ -141,7 +151,9 @@ function Members({
   viewer,
   membership,
   active,
-}: {
+  selectedMethod,
+  onMethodChange,
+}: MembershipSelection & {
   session: RelaySession;
   community: string;
   viewer: string;
@@ -285,6 +297,8 @@ function Members({
   } as const;
   return (
     <MembershipContent
+      selectedMethod={selectedMethod}
+      onMethodChange={onMethodChange}
       busy={busy || !!pending}
       community={community}
       members={members}
@@ -511,7 +525,9 @@ function MembershipContent({
   active,
   retry,
   add,
-}: {
+  selectedMethod,
+  onMethodChange,
+}: MembershipSelection & {
   children: ReactNode;
   busy: boolean;
   community: string;
@@ -523,9 +539,8 @@ function MembershipContent({
   retry(): void;
   add(pubkey: string, role: "admin" | "member"): Promise<void>;
 }) {
-  const [requestedMethod, setMethod] = useState<
-    "members" | "invite" | "direct"
-  >("members");
+  const [localMethod, setMethod] = useState<MembershipMethod>("members");
+  const requestedMethod = selectedMethod ?? localMethod;
   const method =
     !DIRECT_MEMBER_ADD_ENABLED && requestedMethod === "direct"
       ? "members"
@@ -640,7 +655,7 @@ function MembershipContent({
       <div className={styles.tabs}>
         <Tabs
           value={method}
-          onValueChange={setMethod}
+          onValueChange={onMethodChange ?? setMethod}
           label="Membership sections"
           variant="panel"
           items={[

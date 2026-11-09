@@ -311,6 +311,17 @@ test.describe("community administration permissions", () => {
     ).toBeVisible();
     const dialog = settingsDialog(page);
     await page.getByRole("tab", { name: "Invite", exact: true }).click();
+    await expect(
+      page.getByRole("tab", { name: "Invite", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.goBack();
+    await expect(
+      page.getByRole("tab", { name: "Members", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await page.goForward();
+    await expect(
+      page.getByRole("tab", { name: "Invite", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("dialog")).toHaveCount(1);
     await expect(
       dialog.getByRole("textbox", { name: "Community invite link" }),

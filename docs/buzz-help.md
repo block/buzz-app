@@ -201,7 +201,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - Community owners and admins manage access in the community's **Membership**
   settings (also reached from **Invite to community** in the community picker's
   right-click menu). **Members** shows the roster and updates as membership changes arrive.
-  If loading fails, use **Retry**. Switch to **Invite** in the same screen.
+  If loading fails, use **Retry**. Switch to **Invite** in the same screen;
+  Back and Forward restore the visited Membership tab.
   Invite shows a QR code in the desktop app alongside the invite URL,
   **Copy link**, and shared expiry and use limits. On macOS, hover over the QR
   or focus its action with the keyboard to reveal **Share**, which opens the

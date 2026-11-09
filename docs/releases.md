@@ -210,9 +210,11 @@ gh workflow run desktop-stable-feed.yml --repo block/buzz-app --ref main \
   -f version=1.0.0
 ```
 
-It waits for approval in the `desktop-stable-feed` environment, then runs the
-preview feed's promotion gate against the stable feed: it requires a published
-non-prerelease `v1.0.0`, verifies every updater signature against the pinned
+It waits for approval in the `desktop-stable-feed` environment, and fails unless
+that environment has required reviewers and deploys only from `main` (GitHub
+creates a missing environment without protection). It then runs the preview
+feed's promotion gate against the stable feed: it requires a published,
+non-draft, non-prerelease `v1.0.0`, verifies every updater signature against the pinned
 key and the stable endpoint in the Apple Silicon executable, refuses rollback
 and changed same-version metadata, replaces `stable-feed/latest.json` last and
 reads it back. Only `X.Y.Z` versions can be promoted, so betas and previews
@@ -245,7 +247,8 @@ A repository admin sets these up once, before the first stable tag:
   could then create a stable tag. With the exclusion, preview tags stay as
   unprotected as they are today; the stable workflow ignores them.
 - **Environment.** Create `desktop-stable-feed` with required reviewers and a
-  deployment branch policy that allows only `main`. It holds no secrets.
+  custom deployment branch policy that allows only the `main` branch. It holds
+  no secrets. Promotion checks both and refuses to run without them.
 - **Signing.** Stable builds use the [signing secrets](#signing) previews use.
   The macOS signing role must trust this repository's tag runs as well as
   `main`: confirm its OIDC trust policy accepts `refs/tags/v*` before the

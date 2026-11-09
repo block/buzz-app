@@ -24,6 +24,10 @@ function temp(t) {
   return dir;
 }
 
+// gh's --jq on a fixture response: the last argument is the filter.
+const jq = (json) =>
+  `jq -r "\${@: -1}" <<< ${JSON.stringify(JSON.stringify(json)).replace(/\$/g, "\\$")}`;
+
 // A fake gh answers from environment variables and logs every call.
 function fakeGh(dir, script) {
   mkdirSync(join(dir, "bin"), { recursive: true });
@@ -67,15 +71,40 @@ test("stable tags build from main history with the tag's version, never preview 
     "id-token": "write",
   });
   const check = jobs.source.steps[0].run;
-  const source = (tag, { tagged = sha, base = sha, ruleset = "7" } = {}) => {
+  // The live desktop-v* ruleset, and the v* one the setup docs describe.
+  const desktopRuleset = {
+    id: 6,
+    target: "tag",
+    enforcement: "active",
+    conditions: {
+      ref_name: { include: ["refs/tags/desktop-v*"], exclude: [] },
+    },
+    rules: ["deletion", "non_fast_forward", "creation", "update"].map(
+      (type) => ({ type }),
+    ),
+  };
+  const stableRuleset = {
+    ...desktopRuleset,
+    id: 7,
+    conditions: {
+      ref_name: {
+        include: ["refs/tags/v*"],
+        exclude: ["refs/tags/v*-preview.*"],
+      },
+    },
+  };
+  const source = (
+    tag,
+    { tagged = sha, base = sha, ruleset = stableRuleset } = {},
+  ) => {
     const dir = temp(t);
     fakeGh(
       dir,
       `args="$*"; echo "\${args//$'\\n'/ }" >> "$DIR/calls"
-# gh applies each --jq filter; this answers with the filtered result.
 case "$2" in
-  */rulesets) echo 7 ;;
-  */rulesets/7) echo "$RULESET" ;;
+  */rulesets) ${jq([desktopRuleset, ruleset])} ;;
+  */rulesets/6) ${jq(desktopRuleset)} ;;
+  */rulesets/7) ${jq(ruleset)} ;;
   */commits/refs/tags/*) echo "$TAGGED" ;;
   */git/ref/heads/main) echo "${"b".repeat(40)}" ;;
   */compare/*) echo "$BASE" ;;
@@ -90,7 +119,6 @@ esac
       SOURCE_SHA: sha,
       TAGGED: tagged,
       BASE: base,
-      RULESET: ruleset,
       GITHUB_OUTPUT: output,
     });
     return { ...result, output: readFileSync(output, "utf8") };
@@ -102,16 +130,20 @@ esac
     const result = source(tag);
     assert.equal(result.status, 0, result.stderr + result.stdout);
     assert.equal(result.output, `version=${version}\n`);
-    assert.equal(result.calls.length, 5);
+    assert.equal(result.calls.length, 6);
     assert.match(
       result.calls[0],
       /^api repos\/block\/buzz-app\/rulesets --jq /,
     );
     assert.match(
       result.calls[1],
+      /^api repos\/block\/buzz-app\/rulesets\/6 --jq /,
+    );
+    assert.match(
+      result.calls[2],
       /^api repos\/block\/buzz-app\/rulesets\/7 --jq /,
     );
-    assert.deepEqual(result.calls.slice(2), [
+    assert.deepEqual(result.calls.slice(3), [
       `api repos/block/buzz-app/commits/refs/tags/${tag} --jq .sha`,
       "api repos/block/buzz-app/git/ref/heads/main --jq .object.sha",
       `api repos/block/buzz-app/compare/${sha}...${"b".repeat(40)} --jq .merge_base_commit.sha`,
@@ -131,9 +163,35 @@ esac
     assert.equal(result.output, "", tag);
   }
   // Unprotected v* tags never publish: anyone with write access can push one.
-  assert.match(
-    source("v1.0.0", { ruleset: "" }).stdout,
-    /No active tag ruleset restricts/,
+  const condition = (ref_name) => ({ ...stableRuleset.conditions, ref_name });
+  for (const ruleset of [
+    { ...stableRuleset, enforcement: "evaluate" },
+    { ...stableRuleset, rules: stableRuleset.rules.slice(1) },
+    {
+      ...stableRuleset,
+      conditions: condition({
+        include: ["refs/tags/v*"],
+        exclude: ["refs/tags/v1*"],
+      }),
+    },
+    {
+      ...stableRuleset,
+      conditions: condition({ include: ["refs/tags/v1*"], exclude: [] }),
+    },
+  ])
+    assert.match(
+      source("v1.0.0", { ruleset }).stdout,
+      /No active tag ruleset restricts/,
+    );
+  // Protecting previews' tags as well is accepted: the stable lane is safe.
+  assert.equal(
+    source("v1.0.0", {
+      ruleset: {
+        ...stableRuleset,
+        conditions: condition({ include: ["refs/tags/v*"], exclude: [] }),
+      },
+    }).status,
+    0,
   );
   // The tag must be this run's commit, and that commit must be on main.
   assert.match(
@@ -153,8 +211,11 @@ test("stable feed promotion is a manual, approved dispatch from main", (t) => {
   assert.equal(concurrency.group, "desktop-stable-feed");
   const { promote } = jobs;
   assert.equal(promote.environment, "desktop-stable-feed");
-  assert.deepEqual(promote.permissions, { contents: "write" });
-  const [requireMain, , promotion] = promote.steps;
+  assert.deepEqual(promote.permissions, {
+    actions: "read",
+    contents: "write",
+  });
+  const [requireMain, requireEnvironment, , promotion] = promote.steps;
   for (const [ref, status] of [
     ["refs/heads/main", 0],
     ["refs/heads/feature", 1],
@@ -167,6 +228,45 @@ test("stable feed promotion is a manual, approved dispatch from main", (t) => {
       ref,
     );
   }
+  // GitHub creates a missing environment unprotected; promotion fails closed.
+  const reviewers = {
+    type: "required_reviewers",
+    reviewers: [{ type: "User", reviewer: { login: "example" } }],
+  };
+  const custom = { custom_branch_policies: true, protected_branches: false };
+  const main = [{ name: "main", type: "branch" }];
+  const environment = (rules, policy, branches) => {
+    const dir = temp(t);
+    fakeGh(
+      dir,
+      `echo "$2" >> "$DIR/calls"
+case "$2" in
+  */environments/desktop-stable-feed) ${jq({ protection_rules: rules, deployment_branch_policy: policy })} ;;
+  */deployment-branch-policies) ${jq({ branch_policies: branches })} ;;
+  *) exit 64 ;;
+esac
+`,
+    );
+    return run(dir, requireEnvironment.run, {}).status;
+  };
+  assert.equal(
+    environment([reviewers, { type: "branch_policy" }], custom, main),
+    0,
+  );
+  for (const [rules, policy, branches] of [
+    [[], null, []],
+    [[{ type: "branch_policy" }], custom, main],
+    [[{ ...reviewers, reviewers: [] }], custom, main],
+    [[reviewers], null, []],
+    [
+      [reviewers],
+      { custom_branch_policies: false, protected_branches: true },
+      [],
+    ],
+    [[reviewers], custom, [...main, { name: "release/*", type: "branch" }]],
+    [[reviewers], custom, [{ name: "main", type: "tag" }]],
+  ])
+    assert.notEqual(environment(rules, policy, branches), 0);
   assert.equal(
     promotion.run,
     'scripts/promote-updater-feed.sh stable-feed "$VERSION"',
@@ -175,24 +275,22 @@ test("stable feed promotion is a manual, approved dispatch from main", (t) => {
 });
 
 test("feed promotion serves each version only on its own feed and release type", (t) => {
-  const promote = (feed, version, prerelease = "false") => {
+  const promote = (feed, version, prerelease = false, draft = false) => {
     const dir = temp(t);
     // Stops after the release-type check: later steps are preview-feed.test.mjs's.
     fakeGh(
       dir,
-      `echo "$*" >> "$DIR/calls"
-[ "$1 $2" = "release view" ] && { echo "$PRERELEASE"; exit 0; }
+      `echo "$1 $2 $3" >> "$DIR/calls"
+[ "$1 $2" = "release view" ] && { ${jq({ isDraft: draft, isPrerelease: prerelease })}; exit 0; }
 exit 1
 `,
     );
     return run(dir, `scripts/promote-updater-feed.sh ${feed} ${version}`, {
-      PRERELEASE: prerelease,
       RUNNER_TEMP: dir,
       GITHUB_SHA: sha,
     });
   };
-  const view = (version) =>
-    `release view v${version} --json isPrerelease --jq .isPrerelease`;
+  const view = (version) => `release view v${version}`;
   // Betas and previews are refused before any release is read.
   for (const [feed, version] of [
     ["stable-feed", "1.0.0-beta.1"],
@@ -205,22 +303,25 @@ exit 1
     assert.notEqual(result.status, 0, `${feed} ${version}`);
     assert.deepEqual(result.calls, [], `${feed} ${version}`);
   }
-  // Stable feeds serve full releases; preview feeds serve prereleases.
-  for (const [feed, version, prerelease] of [
-    ["stable-feed", "1.0.0", "true"],
-    ["preview-feed", "1.0.0-preview.2.1", "false"],
+  // Stable feeds serve full releases; preview feeds serve prereleases. Neither
+  // serves a draft a failed publication left: its asset URLs 404 publicly.
+  for (const [feed, version, prerelease, draft] of [
+    ["stable-feed", "1.0.0", true, false],
+    ["preview-feed", "1.0.0-preview.2.1", false, false],
+    ["stable-feed", "1.0.0", false, true],
+    ["preview-feed", "1.0.0-preview.2.1", true, true],
   ]) {
-    const result = promote(feed, version, prerelease);
+    const result = promote(feed, version, prerelease, draft);
     assert.notEqual(result.status, 0);
     assert.deepEqual(result.calls, [view(version)]);
   }
   for (const [feed, version, prerelease] of [
-    ["stable-feed", "1.0.0", "false"],
-    ["preview-feed", "1.0.0-preview.2.1", "true"],
+    ["stable-feed", "1.0.0", false],
+    ["preview-feed", "1.0.0-preview.2.1", true],
   ]) {
     const result = promote(feed, version, prerelease);
     // The type check passed, so the next call is the first asset download.
     assert.equal(result.calls[0], view(version));
-    assert.match(result.calls[1], new RegExp(`^release download v${version} `));
+    assert.match(result.calls[1], new RegExp(`^release download v${version}$`));
   }
 });

@@ -27,6 +27,8 @@ jobs:
     environment: desktop-stable-feed
     timeout-minutes: 10
     permissions:
+      # Reads the environment's protection rules.
+      actions: read
       contents: write
     steps:
       - name: Require the reviewed workflow from main
@@ -34,6 +36,21 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           test "$DISPATCH_REF" = refs/heads/main || { echo "::error::Promote from main, not $DISPATCH_REF"; exit 1; }
+      # GitHub creates a missing environment without protection, so check it
+      # rather than trust that it was set up.
+      - name: Require an approval environment limited to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          environment="repos/$GH_REPO/environments/desktop-stable-feed"
+          gh api "$environment" --jq '
+            ([.protection_rules[] | select(.type == "required_reviewers") | .reviewers | length] | add // 0) > 0
+            and .deployment_branch_policy.custom_branch_policies == true' | grep -qx true ||
+            { echo '::error::desktop-stable-feed needs required reviewers and a custom deployment branch policy'; exit 1; }
+          branches=$(gh api "$environment/deployment-branch-policies" --jq '[.branch_policies[] | "\(.type):\(.name)"] | sort | join(",")')
+          [[ "$branches" == "branch:main" ]] || { echo "::error::desktop-stable-feed must deploy only from main, not $branches"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

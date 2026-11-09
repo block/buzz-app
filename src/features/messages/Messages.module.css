@@ -4159,17 +4159,33 @@ html[data-keyboard-navigation] .activityExpansion {
   background: var(--reaction-surface, var(--affordance-reaction));
   box-shadow: none;
 }
-.messageBubble > .activityBubbleTrigger {
+.messageBubble > .activityBubbleTrigger,
+.activityBubbleTrigger:where([data-activity-controls])
+  > .activityBubbleTrigger {
   width: 100%;
   padding: var(--space-2) var(--space-4);
   border-radius: inherit;
 }
 :where(html[data-message-density="compact"])
   .messageBubble
+  > .activityBubbleTrigger,
+:where(html[data-message-density="compact"])
+  .activityBubbleTrigger:where([data-activity-controls])
   > .activityBubbleTrigger {
   min-height: calc(var(--space-6) + var(--space-half));
   padding: calc(var(--space-1) + var(--space-half) / 2)
     calc(var(--space-1h) + var(--space-half) / 2);
+}
+
+.messageBubble > .activityBubbleTrigger:where([data-activity-controls]) {
+  padding: 0;
+  gap: 0;
+}
+.activityBubbleTrigger:where([data-activity-controls])
+  > .activityBubbleTrigger {
+  min-width: 0;
+  flex: 1;
+  align-self: stretch;
 }
 
 /* Activity interactions paint their shared bubble, never a second pill inside it. */

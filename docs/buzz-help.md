@@ -933,8 +933,11 @@ available rather than silently discarding it.
   message shows an agent working, it is that agent's only working indicator.
   Otherwise dots remain at the end of the conversation while agents work,
   alongside current step details when available. With Reduce Motion enabled,
-  the dots stay still. Open the live indicator or expand recorded work to view
-  the agent’s activity or **Stop** the running request. The live indicator
+  the dots stay still. For one agent, click the live activity bubble to open
+  its activity; hover or focus the bubble to reveal **Stop** (always visible on
+  touch screens). For several agents, open or hover the bubble to choose an
+  agent’s activity or stop an individual request. Expand recorded work for its
+  activity controls. The live indicator
   keeps its controls while recorded updates are visible. Stop availability
   depends on the agent type.
 - Agent-to-agent messages stay in the conversation as collapsed history after

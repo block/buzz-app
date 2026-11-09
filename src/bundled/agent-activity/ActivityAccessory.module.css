@@ -64,3 +64,20 @@
   gap: var(--space-1);
   padding: var(--space-1);
 }
+
+.inlineStop {
+  flex-shrink: 0;
+  padding-inline-end: var(--space-1);
+}
+@media (hover: hover) and (pointer: fine) {
+  .inlineStop {
+    opacity: 0;
+    pointer-events: none;
+  }
+  :hover > .inlineStop,
+  :focus-within > .inlineStop,
+  .inlineStop[data-stopping] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

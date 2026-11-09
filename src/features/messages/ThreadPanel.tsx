@@ -2026,6 +2026,7 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
+          slashCommands
           onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}

@@ -63,6 +63,7 @@ mod tests {
         prepare_executables(&resources, &target.join("build/buzz/out")).unwrap();
         assert_eq!(fs::read(target.join("bin/unrelated")).unwrap(), b"keep");
         // A relative path without a `build` component has no Cargo target directory.
-        assert!(prepare_executables(&resources, Path::new("out")).is_err());
+        let error = prepare_executables(&resources, Path::new("out")).unwrap_err();
+        assert_eq!(error.to_string(), "Could not find Cargo target directory");
     }
 }

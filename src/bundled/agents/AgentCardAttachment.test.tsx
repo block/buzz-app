@@ -226,9 +226,9 @@ it("links Manage plugins from a card while no agent type plugin is on", async ()
   await user.click(button);
   const dialog = screen.getByRole("dialog", { name: "Ada" });
   expect(
-    within(dialog).getByText(/No agent plugin is turned on/),
+    within(dialog).getByText(/No harness that runs agents on this computer/),
   ).toHaveTextContent(
-    "No agent plugin is turned on. Turn one on in Manage plugins.",
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
   );
   await user.click(
     within(dialog).getByRole("button", { name: "Manage plugins" }),

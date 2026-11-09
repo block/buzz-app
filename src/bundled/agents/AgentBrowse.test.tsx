@@ -555,14 +555,16 @@ async function noTypes(
   return screen.getByRole("dialog", { name: "Shared helper" });
 }
 
-// Desktop with no local agent type plugin on.
+// Desktop where no plugin registered a type that runs agents here: every
+// agent plugin off, or one on that failed to activate. The component cannot
+// tell these apart, so it names what is missing, not why.
 it("says why a shared agent can't be imported here, and links Manage plugins", async () => {
   const openSettings = vi.fn();
   const dialog = await noTypes("ready", openSettings);
   expect(
-    within(dialog).getByText(/No agent plugin is turned on/),
+    within(dialog).getByText(/No harness that runs agents on this computer/),
   ).toHaveTextContent(
-    "No agent plugin is turned on. Turn one on in Manage plugins.",
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
   );
   expect(within(dialog).getByRole("button", { name: "Import" })).toBeDisabled();
   fireEvent.click(
@@ -573,6 +575,39 @@ it("says why a shared agent can't be imported here, and links Manage plugins", a
   expect(
     screen.queryByRole("dialog", { name: "Shared helper" }),
   ).not.toBeInTheDocument();
+});
+
+// Only a hosted type is on, so Manage plugins shows a plugin enabled. The
+// page keeps hosted types out of Import, since an imported agent needs a key
+// here, and the dialog must not claim no plugin is on.
+it("does not say no plugin is on when only a hosted type is", async () => {
+  const read = vi.fn().mockResolvedValue([shared]);
+  const props = importing([], [], "ready");
+  const hosted = [
+    { ...echo, key: "test/cloud", title: "Cloud", remote: {} },
+  ] as unknown as RegisteredAgentType[];
+  props.agents.types = () => hosted;
+  const openSettings = vi.fn();
+  render(
+    <AgentBrowse
+      relay={community(read)}
+      {...props}
+      openSettings={openSettings}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Shared helper" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import" }));
+  const dialog = screen.getByRole("dialog", { name: "Shared helper" });
+  expect(
+    within(dialog).getByText(/No harness that runs agents on this computer/),
+  ).toHaveTextContent(
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
+  );
+  expect(within(dialog).queryByText(/plugin is turned on/)).toBeNull();
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Manage plugins" }),
+  );
+  expect(openSettings).toHaveBeenCalledExactlyOnceWith("plugins");
 });
 
 it("keeps Manage plugins plain text while a shared agent is still importing", async () => {
@@ -610,9 +645,9 @@ it("keeps Manage plugins plain text while a shared agent is still importing", as
     />,
   );
   expect(
-    within(dialog).getByText(/No agent plugin is turned on/),
+    within(dialog).getByText(/No harness that runs agents on this computer/),
   ).toHaveTextContent(
-    "No agent plugin is turned on. Turn one on in Manage plugins.",
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
   );
   // Opening Settings would close the dialog over the import, which Close
   // may not do either, so the link waits as plain text.
@@ -662,7 +697,7 @@ it("waits for agent types to register instead of asking for a plugin", async () 
     await within(dialog).findByRole("status", undefined, { timeout: 2000 }),
   ).toHaveTextContent("Loading agent types…");
   expect(
-    within(dialog).queryByText(/No agent plugin is turned on/),
+    within(dialog).queryByText(/No harness that runs agents on this computer/),
   ).not.toBeInTheDocument();
   expect(within(dialog).queryByText(/Manage plugins/)).not.toBeInTheDocument();
 });

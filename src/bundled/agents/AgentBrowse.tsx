@@ -451,8 +451,13 @@ function copies(
 }
 
 /** Why Import has no type to import as: agents run only in the desktop app,
- * they could not load, their types are still registering, or no agent type
- * plugin is on. Only the last has a fix in Settings. */
+ * they could not load, their types are still registering, or no harness that
+ * runs agents on this computer is available. Only the last has a remedy in
+ * Settings, and it has more than one cause: every agent plugin is off, only a
+ * hosted type (one its provider runs, so it cannot take an imported key) is
+ * on, or a plugin that is on failed to activate. The snapshot being ready
+ * says the inventory loaded, not that a plugin activated, so this names what
+ * is missing rather than why. */
 export function NoImportTypes({
   agents,
   openSettings,
@@ -473,7 +478,7 @@ export function NoImportTypes({
         `Agents could not load. ${snapshot.error ?? "Try again."}`
       ) : (
         <>
-          No agent plugin is turned on. Turn one on in{" "}
+          No harness that runs agents on this computer is available. Check{" "}
           <SettingsSectionLink section="plugins" open={openSettings}>
             Manage plugins
           </SettingsSectionLink>

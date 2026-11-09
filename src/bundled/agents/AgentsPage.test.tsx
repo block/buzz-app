@@ -3960,7 +3960,9 @@ it("tells Import an agent that agents could not load, as the page does", async (
   expect(within(dialog).queryByText(/Manage plugins/)).not.toBeInTheDocument();
 });
 
-it("links Import an agent to Manage plugins while no agent type plugin is on", async () => {
+// No plugin registered a type that runs agents here: every agent plugin off,
+// or one on that failed to activate. The dialog names what is missing.
+it("links Import an agent to Manage plugins while no type runs agents here", async () => {
   const user = userEvent.setup();
   const navigator = {
     open: vi.fn(async () => ({ status: "opened" as const })),
@@ -3974,9 +3976,9 @@ it("links Import an agent to Manage plugins while no agent type plugin is on", a
   );
   const dialog = await screen.findByRole("dialog", { name: "Import an agent" });
   expect(
-    within(dialog).getByText(/No agent plugin is turned on/),
+    within(dialog).getByText(/No harness that runs agents on this computer/),
   ).toHaveTextContent(
-    "No agent plugin is turned on. Turn one on in Manage plugins.",
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
   );
   await user.click(
     within(dialog).getByRole("button", { name: "Manage plugins" }),
@@ -3990,6 +3992,44 @@ it("links Import an agent to Manage plugins while no agent type plugin is on", a
   expect(
     screen.queryByRole("dialog", { name: "Import an agent" }),
   ).not.toBeInTheDocument();
+});
+
+// Only a hosted type is on. Import keeps it out, since an imported agent
+// needs a key here, and must not claim no plugin is on: Manage plugins shows
+// one enabled.
+it("does not say no plugin is on when only a hosted type is", async () => {
+  const user = userEvent.setup();
+  const navigator = {
+    open: vi.fn(async () => ({ status: "opened" as const })),
+  } as unknown as Navigation;
+  const { agents, types } = setup([agent("Ada", 1)], { page: { navigator } });
+  const cloud = {
+    ...types[0],
+    key: "test/cloud",
+    title: "Cloud",
+    remote: {},
+  } as unknown as RegisteredAgentType;
+  const hosted = [cloud];
+  agents.types = () => hosted;
+  await user.click(screen.getByRole("button", { name: "New agent" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Import an agent" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Import an agent" });
+  expect(
+    within(dialog).getByText(/No harness that runs agents on this computer/),
+  ).toHaveTextContent(
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
+  );
+  expect(within(dialog).queryByText(/plugin is turned on/)).toBeNull();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Manage plugins" }),
+  );
+  expect(navigator.open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+  });
 });
 
 it("keeps Manage plugins plain text while an import is still running", async () => {
@@ -4017,9 +4057,9 @@ it("keeps Manage plugins plain text while an import is still running", async () 
   agents.types = () => none;
   act(() => change({}));
   expect(
-    within(dialog).getByText(/No agent plugin is turned on/),
+    within(dialog).getByText(/No harness that runs agents on this computer/),
   ).toHaveTextContent(
-    "No agent plugin is turned on. Turn one on in Manage plugins.",
+    "No harness that runs agents on this computer is available. Check Manage plugins.",
   );
   // Opening Settings would close the dialog over the import, which Close
   // and Escape may not do either, so the link waits as plain text.

@@ -8,7 +8,8 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Button } from "../../../shared/design-system/ui/Button";
+import { Button as BaseButton } from "@base-ui/react/button";
+import inlineStyles from "../../../shared/InlineReference.module.css";
 import { useRelayConnection } from "../../../features/relay/react";
 import type { RelayData } from "../../../features/relay/service";
 import type { RelaySession } from "../../../features/relay/session";
@@ -188,6 +189,10 @@ function ActivityFeed({
       .filter((turn) => turn.agent === agent.pubkey)
       .map((turn) => [turn.turnId, turn.state]),
   );
+  // Turns link to their conversation unless the view is already that one:
+  // a thread, or a channel whose turns name no thread (its one session).
+  const linked =
+    !rootId && transcript.turns.some((turn) => !!turn.threadRootId);
   return (
     <ActivityTranscript
       transcript={transcript}
@@ -197,20 +202,25 @@ function ActivityFeed({
       community={agent.relay}
       state={(turnId) => state.get(turnId)}
       follow={false}
-      openConversation={here ? undefined : openConversation}
+      openConversation={!here || linked ? openConversation : undefined}
       before={
         <>
           <Note>
             {`Turns from ${here ? "this conversation" : "all of this agent's conversations"}, captured while Buzz has been open. Earlier turns aren't shown.`}
           </Note>
           {conversation && (
-            <div className="flex">
-              <Button size="sm" onClick={() => setEverywhere(!everywhere)}>
+            // An inline link wraps in a narrow pane at large text sizes.
+            <p className="text-body-sm text-secondary">
+              <BaseButton
+                data-buzz-ui=""
+                className={inlineStyles.link}
+                onClick={() => setEverywhere(!everywhere)}
+              >
                 {everywhere
                   ? "Show this conversation"
                   : "Show all conversations"}
-              </Button>
-            </div>
+              </BaseButton>
+            </p>
           )}
           {snapshot.status === "interrupted" && (
             <Note>

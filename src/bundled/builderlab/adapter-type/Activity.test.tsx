@@ -319,6 +319,36 @@ it("counts a turn without a thread as its channel's conversation", () => {
   );
   expect(turnText("In the DM")).toBeInTheDocument();
   expect(turnText("Elsewhere")).not.toBeInTheDocument();
+  // It is already the open conversation, so it isn't labeled unknown.
+  expect(screen.queryByText("Conversation unknown")).not.toBeInTheDocument();
+});
+
+it("links each thread's turns when opened from a channel with several", async () => {
+  const user = userEvent.setup();
+  const otherRoot = "d".repeat(64);
+  const { activity } = fakeActivity({
+    records: [
+      record("t1", "In one thread"),
+      record("t2", "In another thread", pubkey, "alpha", otherRoot),
+      record("t3", "In beta", pubkey, "beta"),
+    ] as unknown as Snapshot["records"],
+  });
+  const openConversation = vi.fn();
+  render(
+    <ActivityPanel
+      agent={agent}
+      activity={activity}
+      conversation={{ channelId: "alpha" }}
+      openConversation={openConversation}
+    />,
+  );
+  expect(turnText("In one thread")).toBeInTheDocument();
+  expect(turnText("In another thread")).toBeInTheDocument();
+  expect(turnText("In beta")).not.toBeInTheDocument();
+  await user.click(
+    screen.getByRole("button", { name: `Thread ${otherRoot.slice(0, 8)}` }),
+  );
+  expect(openConversation).toHaveBeenCalledExactlyOnceWith("alpha", otherRoot);
 });
 
 it("shows the opened conversation again for each new transcript request", async () => {

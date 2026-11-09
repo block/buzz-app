@@ -9,9 +9,9 @@ const FRESH_MS = 2 * 60_000;
 
 // A restart Buzz starts itself (first-run sign-in replacing this device's key)
 // asks the next launch to sign in the same way, through this note, and names
-// the key the account it replaced the key for is linked to.
+// the key the account it replaced the key for is linked to. Both live in one
+// item, written in one step, so the note can't be saved without its key.
 const AFTER_RESTART = "buzz.sign-in-after-restart.v1";
-const EXPECTED = "buzz.sign-in-after-restart.expected.v1";
 // Signing out may wait on paired tools and agents before the restart.
 const RESTART_MS = 5 * 60_000;
 
@@ -58,16 +58,16 @@ export function requestSignInAfterRestart(
   now = Date.now(),
 ): () => void {
   try {
-    localStorage.setItem(AFTER_RESTART, String(now));
-    if (linked) localStorage.setItem(EXPECTED, linked);
-    else localStorage.removeItem(EXPECTED);
+    localStorage.setItem(
+      AFTER_RESTART,
+      JSON.stringify(linked ? { at: now, expected: linked } : { at: now }),
+    );
   } catch {
     // Storage refused: the landing shows Sign in instead.
   }
   return () => {
     try {
       localStorage.removeItem(AFTER_RESTART);
-      localStorage.removeItem(EXPECTED);
     } catch {
       // Nothing saved to withdraw.
     }
@@ -81,16 +81,33 @@ export function requestSignInAfterRestart(
 function takeRestartNote(now: number): boolean {
   expected = undefined;
   try {
-    const noted = Number(localStorage.getItem(AFTER_RESTART));
-    const linked = localStorage.getItem(EXPECTED);
+    const note = readNote(localStorage.getItem(AFTER_RESTART));
     localStorage.removeItem(AFTER_RESTART);
-    localStorage.removeItem(EXPECTED);
-    const fresh = noted > 0 && now - noted <= RESTART_MS;
-    if (fresh && linked) expected = linked;
+    const fresh = note.at > 0 && now - note.at <= RESTART_MS;
+    if (fresh && note.expected) expected = note.expected;
     return fresh;
   } catch {
     return false;
   }
+}
+
+/** A note's time and key; an earlier build's note is the bare time. */
+function readNote(saved: string | null): { at: number; expected?: string } {
+  if (saved === null) return { at: 0 };
+  try {
+    const note: unknown = JSON.parse(saved);
+    if (typeof note === "number") return { at: note };
+    if (typeof note === "object" && note !== null) {
+      const { at, expected } = note as Record<string, unknown>;
+      const time = typeof at === "number" ? at : 0;
+      return typeof expected === "string"
+        ? { at: time, expected }
+        : { at: time };
+    }
+  } catch {
+    // Not a note this build wrote.
+  }
+  return { at: 0 };
 }
 
 export function onSignInRequest(listener: () => void): () => void {

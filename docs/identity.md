@@ -73,8 +73,9 @@ computer** does) or to copy its private key from Settings → Identity first.
 **Replace** runs that dialog's Replace: it signs this key out without erase
 and restarts, and the sign-in after the restart takes the lane for a device
 with no key, where Welcome back restores the account's key. The restart's note
-names that key (`buzz.sign-in-after-restart.expected.v1`), and an **Open
-Buzz** that resumes that sign-in keeps it: when the browser signs in to an
+(`buzz.sign-in-after-restart.v1`) names that key in the same stored item, so a
+storage failure can't save the note without it, and an **Open Buzz** that
+resumes that sign-in keeps it: when the browser signs in to an
 account linked to another key, or to none, setup fails before it
 creates, links or restores any key, offering only **Use a different account**,
 which drops the expectation, as **Create account** does: a new account can't

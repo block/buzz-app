@@ -8843,8 +8843,10 @@ it("Replace on the open app's prompt signs this key out to restart and sign in a
     ]),
   );
   // The restart signs in by itself, into the account's Welcome back.
-  expect(localStorage.getItem(AFTER_RESTART)).not.toBeNull();
-  expect(localStorage.getItem(EXPECTED_AFTER_RESTART)).toBe(owned.pubkey);
+  expect(JSON.parse(localStorage.getItem(AFTER_RESTART) ?? "null")).toEqual({
+    at: expect.any(Number),
+    expected: owned.pubkey,
+  });
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent("Signing in…");
   identity.dispose();
@@ -8867,22 +8869,22 @@ it("a refused Replace from the open app fails setup, withdraws the sign-in after
     await screen.findByText("Couldn't revoke paired command-line tools"),
   ).toBeVisible();
   expect(localStorage.getItem(AFTER_RESTART)).toBeNull();
-  expect(localStorage.getItem(EXPECTED_AFTER_RESTART)).toBeNull();
   expect(identity.snapshot()).toEqual({ status: "ready", viewer });
   await user.click(screen.getByRole("button", { name: "Back" }));
   expect(await screen.findByText("Signed in")).toBeVisible();
   identity.dispose();
 });
 
-const EXPECTED_AFTER_RESTART = "buzz.sign-in-after-restart.expected.v1";
 /** The launch after Replace restarted Buzz for the account linked to `owned`. */
 function launchAfterReplace(
   account: AccountFor,
   connect = vi.fn().mockResolvedValue(credential),
 ) {
   missingKey();
-  localStorage.setItem(AFTER_RESTART, String(Date.now()));
-  localStorage.setItem(EXPECTED_AFTER_RESTART, owned.pubkey);
+  localStorage.setItem(
+    AFTER_RESTART,
+    JSON.stringify({ at: Date.now(), expected: owned.pubkey }),
+  );
   const identity = createIdentity();
   render(
     <Welcome

@@ -1,7 +1,7 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-import { openPage } from "./navigation.mjs";
+import { activityRow, openPage } from "./navigation.mjs";
 
 // Browser-only contract: actual sidebar/plugin routing -> exact thread target,
 // browser history, and responsive/light-dark CSS. Matrices stay in RTL/unread tests.
@@ -19,9 +19,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   app,
 }, testInfo) => {
   await open(page, app);
-  const inboxButton = page
-    .getByRole("navigation", { name: "Apps dock", exact: true })
-    .getByRole("tab", { name: "Activity", exact: true });
+  const inboxButton = activityRow(page);
   await inboxButton.click();
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
   await expect(
@@ -602,10 +600,8 @@ test("narrow Inbox keeps a rejected read save and its captured Retry behind an o
   const base = Date.now();
   await page.clock.install({ time: base });
   await open(page, app);
-  await page
-    .getByRole("navigation", { name: "Apps dock", exact: true })
-    .getByRole("tab", { name: "Activity", exact: true })
-    .click();
+  // At this width the Messages sidebar, and its Activity row, is collapsed.
+  await openPage(page, "Activity");
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
   await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
   const filters = inbox.getByRole("button", { name: /^From / });
@@ -767,10 +763,7 @@ test.describe("Inbox names after leaving a channel", () => {
       ),
     );
     await open(page, app);
-    await page
-      .getByRole("navigation", { name: "Apps dock", exact: true })
-      .getByRole("tab", { name: "Activity", exact: true })
-      .click();
+    await activityRow(page).click();
     const row = page
       .getByRole("region", { name: "Activity", exact: true })
       .getByRole("list", { name: "Activity", exact: true })

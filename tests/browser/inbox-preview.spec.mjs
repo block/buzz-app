@@ -1,5 +1,6 @@
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import {
+  activityRow,
   openSettings,
   selectSettingsSection,
   chooseColorMode,
@@ -9,7 +10,7 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { animationsSettled } from "./animations.mjs";
 
-// Browser-only contract: a real pointer resting on the dock tab opens the
+// Browser-only contract: a real pointer resting on the sidebar row opens the
 // card, which sits just past the row, and its row navigates without opening
 // Activity. Shell gating and the card's states stay in RTL tests.
 test.use({
@@ -21,7 +22,7 @@ test.use({
   historyCounts: { alpha: 2, beta: 1 },
 });
 
-test("hovering the dock Activity tab previews recent conversations and opens one directly", async ({
+test("hovering the sidebar Activity row previews recent conversations and opens one directly", async ({
   page,
   app,
 }, testInfo) => {
@@ -67,11 +68,7 @@ test("hovering the dock Activity tab previews recent conversations and opens one
   app.relay.publish("primary", solo, { requireSubscriber: false });
   app.relay.publish("primary", shared, { requireSubscriber: false });
   await open(page, app);
-  const pages = page.getByRole("navigation", {
-    name: "Apps dock",
-    exact: true,
-  });
-  const inboxRow = pages.getByRole("tab", { name: "Activity", exact: true });
+  const inboxRow = activityRow(page);
   const card = page.getByRole("dialog", { name: "Activity", exact: true });
   const rows = card.getByRole("list", { name: "Recent activity" });
   // Beside the row, inside the window, in both themes, at an intermediate
@@ -139,7 +136,7 @@ test("hovering the dock Activity tab previews recent conversations and opens one
     if (width >= 1280) {
       const header = await card.locator("header").boundingBox();
       expect(Math.abs(box.x - (row.x + row.width + 6))).toBeLessThanOrEqual(1);
-      // The first dock item can be too high for header-line alignment; the
+      // The first sidebar row can be too high for header-line alignment; the
       // card then keeps an 8px gutter below the window header instead.
       const workspaceTop = await page
         .locator(".shell-workspace")
@@ -205,31 +202,27 @@ test("hovering the dock Activity tab previews recent conversations and opens one
   await expect(
     page.getByRole("region", { name: "Thread messages", exact: true }),
   ).toBeVisible();
-  await expect(inboxRow).toHaveAttribute("aria-selected", "false");
+  await expect(inboxRow).not.toHaveAttribute("aria-current");
   await expect(
     page.getByRole("region", { name: "Activity", exact: true }),
   ).toHaveCount(0);
 
   // While Activity is the open page, its row offers no preview.
   await inboxRow.click();
-  await expect(inboxRow).toHaveAttribute("aria-selected", "true");
+  await expect(inboxRow).toHaveAttribute("aria-current", "page");
   await expect(inboxRow).not.toHaveAttribute("aria-haspopup");
   await expect(
     page
       .getByRole("region", { name: "Activity", exact: true })
       .getByRole("switch", { name: "Unread", exact: true }),
   ).not.toBeChecked();
-  // Selected dock items use the same instant right-side label as their peers.
+  // The selected row's label is visible, so hovering it shows only the
+  // ordinary title hint, never the card.
   await page.mouse.move(1200, 880);
   await inboxRow.hover();
-  const hint = page.getByRole("tooltip", { name: "Activity", exact: true });
-  await expect(hint).toBeVisible();
-  const triggerBounds = await inboxRow.boundingBox();
-  const hintBounds = await hint.boundingBox();
-  expect(hintBounds.x).toBeGreaterThanOrEqual(
-    triggerBounds.x + triggerBounds.width,
-  );
+  await expect(inboxRow).toHaveAttribute("title", "Activity");
+  await expect(card).toHaveCount(0);
   await page.screenshot({
-    path: testInfo.outputPath("selected-inbox-tooltip.png"),
+    path: testInfo.outputPath("selected-inbox-row.png"),
   });
 });

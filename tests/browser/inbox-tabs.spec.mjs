@@ -2,6 +2,7 @@ import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import {
+  activityRow,
   openPage,
   openSettings,
   selectSettingsSection,
@@ -458,10 +459,7 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   );
   history.push(liveReaction);
   app.relay.publish("primary", liveReaction);
-  const icon = page
-    .getByRole("navigation", { name: "Apps dock", exact: true })
-    .getByRole("tab", { name: "Activity", exact: true })
-    .locator("[data-active]");
+  const icon = activityRow(page).locator("[data-active]");
   await expect(icon).toHaveText("✅");
   await expect(icon).toHaveAttribute("aria-hidden", "true");
   await page.screenshot({ path: testInfo.outputPath("reaction-bell.png") });
@@ -489,8 +487,8 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   history.push(custom);
   app.relay.publish("primary", custom);
   await expect(icon.locator("img")).toBeVisible();
-  // The dock tile is larger than a sidebar row, and so is its emoji.
-  await expect(icon.locator("img")).toHaveCSS("width", "18px");
+  // The emoji fills the sidebar row's 16px icon slot.
+  await expect(icon.locator("img")).toHaveCSS("width", "16px");
   await expect(icon.locator("img").locator("..")).toHaveCSS("opacity", "1");
   await page.screenshot({ path: testInfo.outputPath("reaction-custom.png") });
   await expect(icon).toHaveCount(0);

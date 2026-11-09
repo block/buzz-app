@@ -203,7 +203,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   right-click menu). **Members** shows the roster and updates as membership changes arrive.
   If loading fails, use **Retry**. Switch to **Invite** in the same screen.
   Invite shows a QR code in the desktop app alongside the invite URL,
-  **Copy link**, and shared expiry and use limits.
+  **Copy link**, and shared expiry and use limits. On macOS, **Share** beneath
+  the QR opens the system share menu with a QR image and the invite link.
 - To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
   in builds without Builderlab). When you're signed in with Builderlab and your
   account holds this identity's backup, it says to install the app (with store

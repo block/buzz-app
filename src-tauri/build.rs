@@ -71,6 +71,7 @@ fn main() {
             "pairing_deny",
             "pairing_cancel",
             "qr_code",
+            "share_image",
             "identity_restore",
             "identity_import",
             "identity_legacy_available",

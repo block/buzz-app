@@ -653,10 +653,10 @@ it("draws the invite code in the color mode's variant and redraws it when the mo
   try {
     render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
     await user.click(
-      await screen.findByRole("button", { name: "Invite members" }),
+      await screen.findByRole("tab", { name: "Invite" }),
     );
-    const dialog = await screen.findByRole("dialog", {
-      name: "Add or invite people",
+    const dialog = await screen.findByRole("region", {
+      name: "Membership",
     });
     const name = { name: "Scan this QR code to open the invite link" };
     const src = (variant: string) =>
@@ -681,4 +681,64 @@ it("draws the invite code in the color mode's variant and redraws it when the mo
   } finally {
     delete document.documentElement.dataset.colorMode;
   }
+});
+
+it("shares the current invite on macOS and recovers when the native menu fails", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  vi.stubGlobal(
+    "Image",
+    class {
+      src = "";
+      decode = async () => {};
+    },
+  );
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage() {},
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(
+    "data:image/png;base64,cG5n",
+  );
+  let fail = true;
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "qr_code") return "<svg/>";
+    if (command === "share_image") {
+      if (fail) throw new Error("unavailable");
+      return;
+    }
+    expect(command).toBe("relay_http");
+    return {
+      status: 200,
+      headers: {},
+      body: JSON.stringify({
+        code: "share",
+        url: "https://primary.example/invite/share",
+      }),
+    };
+  });
+  render(<CommunityAdmin relay={relay(admin).relay} active={() => true} />);
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  const share = await screen.findByRole("button", { name: "Share" });
+  await waitFor(() => expect(share).toBeEnabled());
+  await user.click(share);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not open sharing. Try again or copy the link.",
+  );
+  expect(screen.getByRole("button", { name: "Copy link" })).toBeEnabled();
+  fail = false;
+  await user.click(share);
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(invoke).toHaveBeenCalledWith(
+    "share_image",
+    expect.objectContaining({
+      url: "https://primary.example/invite/share",
+      png: "cG5n",
+    }),
+  );
+  expect(share).toBeEnabled();
 });

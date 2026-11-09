@@ -66,6 +66,7 @@ import {
 } from "../../shared/QrCode";
 import styles from "./CommunityAdmin.module.css";
 import { DIRECT_MEMBER_ADD_ENABLED } from "./features";
+import { canShareInvite, shareInvite } from "./shareInvite";
 
 const DAY = 24 * 60 * 60;
 const EXPIRY = [1, 3, 7, 30].map((days) => ({
@@ -538,6 +539,7 @@ function MembershipContent({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
+  const [sharing, setSharing] = useState(false);
   // The QR code drawn for one link, or no svg when it failed; it never shows
   // for another link.
   const [qr, setQr] = useState<{
@@ -699,6 +701,31 @@ function MembershipContent({
                   />
                 )}
               </div>
+            )}
+            {showQr && canShareInvite() && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!url || !drawn?.svg || locked}
+                loading={sharing}
+                onClick={async (event) => {
+                  if (!url || sharing) return;
+                  const anchor = event.currentTarget.getBoundingClientRect();
+                  setSharing(true);
+                  setError("");
+                  try {
+                    await shareInvite(url, anchor);
+                  } catch {
+                    setError(
+                      "Could not open sharing. Try again or copy the link.",
+                    );
+                  } finally {
+                    setSharing(false);
+                  }
+                }}
+              >
+                Share
+              </Button>
             )}
           </div>
           <div className="flex min-w-0 flex-col gap-4">

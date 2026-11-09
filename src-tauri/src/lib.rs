@@ -15,6 +15,7 @@ mod pairing;
 mod qr;
 #[cfg(unix)]
 mod quit_signal;
+mod sharing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_set_media_suspended, browser_status,
@@ -703,6 +704,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_deny,
         pairing::pairing_cancel,
         qr::qr_code,
+        sharing::share_image,
         identity_restore,
         identity_import,
         identity_legacy_available,

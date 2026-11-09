@@ -2423,6 +2423,12 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
     if (!current) throw new Error("Missing follow-up activity");
     return (
       <ActivityIndicatorPresentation>
+        {/* The root's live bubble shows only the failed request's outcome. */}
+        <ActivityAccessory
+          {...f.props}
+          session={session}
+          messageLayout="thread"
+        />
         {row(old, top.byRow.get(old.id))}
         {branch && (
           <ActivityGroupPreview
@@ -2458,6 +2464,9 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
   const cue = () =>
     screen.queryByRole("button", { name: /Activity: .*working/ });
   const check = (branch: boolean, working = true) => {
+    expect(
+      screen.getByLabelText("Agent activity on this message"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Earlier root progress")).not.toHaveAttribute(
       "data-active",
     );
@@ -2490,6 +2499,123 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
     check(true);
     f.send(A, "t1", 2, "turn_completed");
     check(true, false);
+  } finally {
+    view.unmount();
+    owner.dispose();
+    f.dispose();
+  }
+});
+
+it("keeps a failed follow-up's update, replying to the root, from borrowing the root request's remote work", () => {
+  const f = fixture();
+  const owner = createRelaySession(null);
+  const session = { ...owner.session, ...f.props.session };
+  f.send(A, "t0", 1, "turn_started", {
+    triggeringEventIds: [root],
+    threadRootEventId: root,
+  });
+  f.send(A, "t1", 1, "turn_started", {
+    triggeringEventIds: [next],
+    threadRootEventId: root,
+  });
+  f.send(A, "t1", 2, "turn_error");
+  const update = {
+    ...f.props.message,
+    authorId: A,
+    threadRootId: root,
+    replyParentId: root,
+    audience: "agents" as const,
+  };
+  const old = { ...update, id: "old", content: "Checking the root" };
+  const followUp = {
+    ...f.props.message,
+    id: next,
+    threadRootId: root,
+    replyParentId: root,
+    content: "Follow-up",
+  };
+  // Signed for the follow-up, though its reply is flattened to the root.
+  const step = {
+    ...update,
+    id: "step",
+    request: next,
+    content: "Checking the follow-up",
+  };
+  const rows = [old, followUp, step];
+  const agents = new Set([A]);
+  function Thread() {
+    const presentation = useActivityPresentation(
+      rows,
+      f.props.session.agentActivity,
+      agents,
+      root,
+    );
+    return (
+      <ActivityIndicatorPresentation>
+        {presentation.groups.map((group) => (
+          <ActivityGroupPreview
+            key={group.ids[0]}
+            session={session}
+            group={group}
+            profiles={f.profiles}
+            media={() => undefined}
+            expanded
+            onToggle={() => {}}
+            renderHistory={(entry) => {
+              const activity = presentation.byRow.get(entry.id);
+              if (!activity) throw new Error("Missing recorded activity");
+              return (
+                <MessageRow
+                  row={entry}
+                  session={session}
+                  profile={f.profiles.get(A)}
+                  media={() => undefined}
+                  onOpenLink={f.props.open}
+                  day={false}
+                  retry={undefined}
+                  recordedActivity={{ ...activity, container: "history" }}
+                />
+              );
+            }}
+          />
+        ))}
+        <TypingIndicator
+          session={session}
+          channelId="c"
+          threadRootId={root}
+          inFlow
+        />
+      </ActivityIndicatorPresentation>
+    );
+  }
+  const dots = () => [...document.querySelectorAll('[data-state="working"]')];
+  const owned = (id: string) =>
+    dots().filter(
+      (dot) =>
+        dot.closest("[data-message-id]")?.getAttribute("data-message-id") ===
+        id,
+    );
+  const view = render(<Thread />);
+  try {
+    expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
+      "data-active",
+    );
+    expect(owned(step.id)).toHaveLength(0);
+    // The root request's own update is its one working cue.
+    expect(screen.getByText("Checking the root")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(dots()).toHaveLength(1);
+    expect(owned(old.id)).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: /Activity: .*working/ }),
+    ).toBeNull();
+    f.send(A, "t0", 2, "turn_completed");
+    expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
+      "data-active",
+    );
+    expect(dots()).toHaveLength(0);
   } finally {
     view.unmount();
     owner.dispose();

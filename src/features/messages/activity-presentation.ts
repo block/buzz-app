@@ -198,6 +198,9 @@ export function activityPresentation(
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
   canAbsorbFailure: (failure: ChannelMessage) => boolean = () => true,
+  /** The whole loaded conversation, when rows are one displayed level of it:
+   * a signed claim may name a request loaded at another level. */
+  loaded: readonly ChannelMessage[] = rows,
 ) {
   const following = new Map(
     rows.map((row, index) => [row.id, rows[index + 1]]),
@@ -228,7 +231,7 @@ export function activityPresentation(
     !agents.has(row.authorId);
   // Indexed up front: a skewed clock can order a claim before its request.
   const humanRequests = new Map(
-    rows.filter(isRequest).map((row) => [row.id, row]),
+    loaded.filter(isRequest).map((row) => [row.id, row]),
   );
   let request = rootId;
   for (const row of rows) {

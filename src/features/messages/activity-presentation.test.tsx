@@ -230,4 +230,36 @@ it("binds an agent update to the request it claims only when that is a loaded hu
   ])
     expect(request(id)).toBe("root");
   expect(request("toAgentRoot")).toBe("agentFollowUp");
+
+  // A displayed level may claim a request loaded at another level, still
+  // within the same conversation.
+  const nested = message("nested", human, {
+    threadRootId: "root",
+    replyParentId: "old",
+  });
+  const level = [
+    update("flattened", "nested"),
+    update("toElsewhere", "elsewhere"),
+  ];
+  const levelRequest = (loaded?: ChannelMessage[]) => {
+    const { byRow } = activityPresentation(
+      level,
+      undefined,
+      new Set([agent]),
+      "root",
+      undefined,
+      loaded,
+    );
+    return (id: string) => byRow.get(id)?.requestId;
+  };
+  const loaded = [
+    message("root", human),
+    update("old", undefined),
+    nested,
+    message("elsewhere", human, { threadRootId: "otherRoot" }),
+    ...level,
+  ];
+  expect(levelRequest(loaded)("flattened")).toBe("nested");
+  expect(levelRequest(loaded)("toElsewhere")).toBe("root");
+  expect(levelRequest()("flattened")).toBe("root");
 });

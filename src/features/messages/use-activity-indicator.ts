@@ -42,7 +42,23 @@ export function useActivityIndicator(
   const matches = (root: string | null | undefined) =>
     root === (row.threadRootId ?? null) ||
     (!row.threadRootId && !!requestId && root === requestId);
-  const requestIds = new Set([row.id, row.replyParentId, requestId]);
+  // A proven cause (the local run that published this row, or its honored
+  // signed claim) outranks a contradictory, possibly flattened, reply link.
+  const proven =
+    !!requestId &&
+    (row.request === requestId ||
+      (activity?.local ?? []).some(
+        (work) =>
+          work.agent === row.authorId &&
+          work.channelId === row.channelId &&
+          work.messageId === requestId &&
+          !!work.publishedMessageIds?.includes(row.id),
+      ));
+  const requestIds = new Set([
+    row.id,
+    requestId,
+    ...(proven ? [] : [row.replyParentId]),
+  ]);
   const liveDetails = [...(detail ?? [])].filter(([agent, value]) => {
     if (!represented.has(agent) || !value.roots.some(matches)) return false;
     // Known local requests take precedence over conversation-only typing.

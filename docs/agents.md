@@ -1368,7 +1368,8 @@ dots in the collapsed summary, or on the active update when expanded, beside the
 shimmering text. The conversation indicator adds no second one, but it stays
 visible for any request of that agent here that nothing mounted presents, and
 returns when that history unmounts or is closed. History that is mounted but
-scrolled out of view still counts, as the live bubble does. Reduced motion
+scrolled out of view still counts, as the live bubble does. A bubble showing
+only a settled outcome, such as an error, does not count. Reduced motion
 leaves the dots static.
 When local work or a remote turn's triggering IDs identify the request, old
 activity does not inherit the working/thinking state of a different request in
@@ -1385,9 +1386,10 @@ message IDs select request lifecycle evidence; a nearby human message or shared
 thread root is not proof of a turn. Thread replies flatten to the thread root, so an
 update binds first to the request whose local run published it, then to a signed
 `["buzz:request", <id>]` tag naming a loaded human request in the same channel
-and thread. The `send` and `reply_in_subthread` tools add that tag from their
-`request` argument, the turn's triggering message. Untagged or unverifiable
-updates keep their reply link. Finishing a request retires its live treatment,
+and thread, at any reply level. The `send` and `reply_in_subthread` tools add
+that tag from their `request` argument, the turn's triggering message. That
+request, not the reply link, then decides which live work the update shows.
+Untagged or unverifiable updates keep their reply link. Finishing a request retires its live treatment,
 not its messages. When lifecycle evidence is missing, a related public reply can
 retire the old live treatment without claiming that execution completed. Current
 work continues to appear in the conversation indicator.

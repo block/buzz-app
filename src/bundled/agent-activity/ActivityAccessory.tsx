@@ -324,7 +324,8 @@ function MessageActivity(
       >
         {shown.map((entry) => (
           <TypingReplacement
-            shared
+            // A settled outcome is not working, so it leaves the cue alone.
+            shared={entry.working || entry.state === "waiting"}
             key={entry.agent}
             {...props}
             agent={entry.agent}

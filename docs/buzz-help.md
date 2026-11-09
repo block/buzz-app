@@ -249,10 +249,6 @@ revokes all of them, and a pairing unused for 30 days expires.
   forwarded message in that DM. The link previews the original message; the
   recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
-- With **Pins** enabled, choose **Pin to channel** in a message's More menu.
-  Pinned messages show a pin beside their time, and the pin button in the
-  channel header lists the channel's pins; choose one to jump to it. You can
-  unpin your own pins; channel owners and admins can unpin anyone's.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.
@@ -948,7 +944,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   a notice again. Failed checks offer **Retry**. If the updated plugin cannot
   start, use **Retry activation** or its recovery menu to **Roll back**, when
   available. Checks, review, Later, and cancellation keep plugin work running.
-- **Reminders**, **Workflows** and **Pins** start off on fresh installs. Upgrades preserve
+- **Reminders** and **Workflows** start off on fresh installs. Upgrades preserve
   their previous state, including when no choice was saved. Enable or disable
   them in **Manage plugins**; saved choices persist.
 - A plugin's details in Manage plugins link to the Settings sections that hold

@@ -1152,7 +1152,6 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.usage"
                 | "buzz.relay-notes"
                 | "buzz.reminders"
-                | "buzz.pins"
                 | "buzz.workflows"
                 | "buzz.mesh-compute"
                 | "buzz.focus"

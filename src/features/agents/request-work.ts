@@ -15,10 +15,17 @@ export type RequestWork = {
   dismissed?: boolean;
   /** Its harness can stop the turn this local request is in. */
   stoppable?: boolean;
+  /** This local request can be asked again once it fails. */
+  retryable?: boolean;
   selected: ReturnType<typeof requestActivity>;
   turns: Snapshot["turns"];
   working: boolean;
 };
+/** Work that no longer needs a pending activity presentation. Errors remain visible. */
+export function isSettledWork(entry: Pick<RequestWork, "state">): boolean {
+  return ["done", "ended", "superseded", "stopped"].includes(entry.state);
+}
+
 /** Only explicit triggering IDs associate work with a message. Typing is not
  * message evidence, and a sibling request must never inherit the same bubble. */
 export function requestWork(
@@ -36,6 +43,13 @@ export function requestWork(
       .filter((record) => record.channelIds.includes(channelId))
       .map((record) => record.agent),
     ...requests.map((request) => request.agent),
+    ...snapshot.turns
+      .filter(
+        (turn) =>
+          turn.channelId === channelId &&
+          turn.triggeringEventIds?.some((id) => ids.has(id)),
+      )
+      .map((turn) => turn.agent),
   ]);
   return [...agents].sort().flatMap<RequestWork>((agent) => {
     const local = requests.filter((entry) => entry.agent === agent);
@@ -63,11 +77,19 @@ export function requestWork(
           lifecycle: true,
           ...(chosen.dismissed ? { dismissed: true } : {}),
           ...(chosen.stoppable ? { stoppable: true } : {}),
+          ...(chosen.retryable ? { retryable: true } : {}),
         },
       ];
     }
-    const selected = requestActivity(records, agent, channelId, messageId);
+    const selected = requestActivity(
+      records,
+      agent,
+      channelId,
+      messageId,
+      snapshot.turns,
+    );
     if (!selected.turnIds.size) return [];
+    if (snapshot.turnsTrimmed) selected.uncertain = true;
     const turns = snapshot.turns.filter(
       (turn) =>
         turn.agent === agent &&

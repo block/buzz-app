@@ -280,6 +280,13 @@ it("byte LRU enforces both budgets and rejects a single oversize object", () => 
   expect(cache.stats().bytes).toBe(8);
   expect(cache.set("d", "D", 20)).toBe(false);
   expect(cache.keys()).toEqual(["a", "c"]);
+  // Replacing keeps recency, so the replaced entry is still evicted first.
+  expect(cache.replace("a", "A2", 5)).toBe(true);
+  expect(cache.replace("d", "D", 1)).toBe(false);
+  expect(cache.keys()).toEqual(["a", "c"]);
+  expect(cache.stats().bytes).toBe(9);
+  cache.set("e", "E", 1);
+  expect(cache.keys()).toEqual(["c", "e"]);
 });
 it("storage failure does not block foreground reads", async () => {
   const disk = memoryDisk();
@@ -346,7 +353,7 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   await flush();
   const names = next();
   expect(names.filters).toEqual([
-    { kinds: [39000], "#d": ["a", "b"], limit: 500 },
+    { kinds: [39000], authors: [relay.pubkey], "#d": ["a", "b"], limit: 500 },
   ]);
   expect(
     queries.list().channels.map((channel) => channel.metadataPending),
@@ -381,7 +388,7 @@ it("reads rosters scoped to the viewer, then metadata only for unnamed channels"
   const nameRead = pending.at(-1);
   assert.exists(nameRead);
   expect(nameRead.filters).toEqual([
-    { kinds: [39000], "#d": ["a"], limit: 500 },
+    { kinds: [39000], authors: [relay.pubkey], "#d": ["a"], limit: 500 },
   ]);
   next().respond([metadata(relay, "a", "Alpha")]);
   await flush();
@@ -466,6 +473,7 @@ it("hides DM channels behind the NIP-29 hidden tag", async () => {
       joinRole: "member",
       hidden: true,
       members: [viewer.pubkey, alice.pubkey].sort(),
+      owners: [],
       preview: undefined,
     },
   ]);

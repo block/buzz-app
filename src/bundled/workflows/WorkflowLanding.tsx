@@ -1,3 +1,4 @@
+import { useProfileGeneration } from "../../features/relay/react";
 import {
   AnimatePresence,
   motion,
@@ -61,6 +62,7 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
+  MenuNote,
   MenuIcon,
   MenuRadioGroup,
   MenuRadioItem,
@@ -84,6 +86,7 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { messages } from "./WorkflowOperations";
 import { ConfirmAction } from "./ConfirmAction";
+import { useWorkflowCanDelete } from "./useWorkflowCanDelete";
 import { WorkflowRuns } from "./WorkflowRuns";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
 import {
@@ -545,6 +548,7 @@ function WorkflowCard({
   const presentation = workflowCardPresentation(definition.yaml);
   const enabled = fields.enabled !== false;
   const readonly = definition.owner !== viewer;
+  const canDelete = useWorkflowCanDelete(capability, definition);
   const submittedOperation = operations.find(
     (operation) => operation.eventId === submitted?.operationId,
   );
@@ -561,6 +565,7 @@ function WorkflowCard({
           ? "Saving is unavailable from this host."
           : undefined;
   const reasonId = useId();
+  const deleteReasonId = useId();
   const descriptionId = useId();
   const statusId = useId();
   const warning = getWorkflowActivationWarning(definition.yaml);
@@ -675,8 +680,9 @@ function WorkflowCard({
           </MenuItem>
           <MenuItem
             tone="danger"
+            aria-describedby={!canDelete ? `${deleteReasonId}-row` : undefined}
             disabled={
-              readonly ||
+              !canDelete ||
               locked ||
               awaitingReadback ||
               !capability.availability.delete
@@ -688,6 +694,12 @@ function WorkflowCard({
             </MenuIcon>
             Delete workflow
           </MenuItem>
+          {!canDelete && (
+            <MenuNote id={`${deleteReasonId}-row`}>
+              Only the author or their verified agent owner can delete this
+              workflow.
+            </MenuNote>
+          )}
         </MenuPopup>
       </MenuRoot>
     </div>
@@ -767,8 +779,11 @@ function WorkflowCard({
             <MenuPopup size="compact" align="end">
               <MenuItem
                 tone="danger"
+                aria-describedby={
+                  !canDelete ? `${deleteReasonId}-detail` : undefined
+                }
                 disabled={
-                  readonly ||
+                  !canDelete ||
                   locked ||
                   awaitingReadback ||
                   !capability.availability.delete
@@ -780,6 +795,12 @@ function WorkflowCard({
                 </MenuIcon>
                 Delete workflow
               </MenuItem>
+              {!canDelete && (
+                <MenuNote id={`${deleteReasonId}-detail`}>
+                  Only the author or their verified agent owner can delete this
+                  workflow.
+                </MenuNote>
+              )}
             </MenuPopup>
           </MenuRoot>
         </div>
@@ -1505,7 +1526,9 @@ export function WorkflowLanding({
   );
   // Fallback keys share one suffix length so visible owners stay distinguishable.
   const ownerKeyLabels = useMemo(() => publicKeyLabels(ownerIds), [ownerIds]);
+  const profileGeneration = useProfileGeneration(session?.profiles);
   useEffect(() => {
+    void profileGeneration;
     if (!session) return;
     // Match the profile directory's query batch size and stay within its
     // per-call budget even when discovery spans many channels and owners.
@@ -1514,7 +1537,7 @@ export function WorkflowLanding({
         .ensure(ownerIds.slice(offset, offset + 500), "background")
         .catch(() => {});
     }
-  }, [session, ownerIds]);
+  }, [session, ownerIds, profileGeneration]);
   return (
     <>
       <fieldset
@@ -1659,7 +1682,7 @@ export function WorkflowLanding({
           }
           description={
             emptyFromOwnership
-              ? "Workflows you own appear here. Other people’s workflows are in All channel workflows."
+              ? "Workflows you authored appear here. Other authors’ workflows are in All channel workflows."
               : emptyFromFilters
                 ? "Try changing or clearing your filters."
                 : "Automations that keep your community moving."

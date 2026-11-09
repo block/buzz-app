@@ -15,6 +15,7 @@ import { listByteSize } from "./budget";
 import { foldMessages } from "./fold";
 import { compareMessages, MessageClock } from "./message-order";
 import { shareMessageRows } from "./row-identity";
+import { RESUME_READ_AGE } from "./live";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
@@ -63,6 +64,18 @@ export type ThreadView = {
   retarget(messageId: string, signal: AbortSignal): Promise<ThreadRetarget>;
   dispose(): void;
 };
+/** Why an exact read can't show its target: this channel holds no such message
+ * (`not-found`), or the read failed (`unavailable`). A failed thread read also
+ * fails a target that is its `root`. Undefined while the read may still show it. */
+export function threadFailure(
+  snapshot: ThreadSnapshot,
+  root: boolean,
+): "not-found" | "unavailable" | undefined {
+  if (root && snapshot.status === "error") return "unavailable";
+  if (snapshot.targetStatus === "unavailable") return "not-found";
+  if (snapshot.targetStatus === "error") return "unavailable";
+  return undefined;
+}
 
 /** Session-owned evidence. Finite page cursors NEVER come from the live/local display union. */
 export function createThreadView({
@@ -85,6 +98,7 @@ export function createThreadView({
   admit = (events) => events,
   clock = new MessageClock(),
   dropped: openedDropped = false,
+  now = Date.now,
 }: {
   channelId: string;
   messageId: string;
@@ -116,6 +130,8 @@ export function createThreadView({
   /** Opened while the stream was down, or before it was up: the first read
    * is the snapshot its establishment refresh must reach. */
   dropped?: boolean;
+  /** The store's clock: a thread resumes with no read on the same age rule. */
+  now?: (() => number) | undefined;
 }) {
   // These finite thread reads have no session recovery source. Their existing
   // selection/page controllers still own cancellation and stale-result fencing.
@@ -169,9 +185,17 @@ export function createThreadView({
   /** The stream is down: a completed refresh keeps `held`, taking one from
    * its replies if the view has none. Only its establishment refresh clears it. */
   let dropped = openedDropped;
+  /** The view was ready, with no read running, when the stream dropped, and
+   * its replies came from a refresh started at most `RESUME_READ_AGE` before:
+   * they reached the live stream then. Cleared by any establishment. */
+  let liveAtDrop = false;
+  /** When the refresh whose replies the view holds started. */
+  let readAt = -Infinity;
   let controller: AbortController | undefined;
   /** A refresh requested while a read runs; the stream's return carries over. */
   let again: false | "refresh" | "established" = false;
+  /** An older page requested during a background repair, which stays ready. */
+  let older = false;
   let snapshot: ThreadSnapshot = Object.freeze({
     status: "idle",
     root: undefined,
@@ -227,12 +251,16 @@ export function createThreadView({
       ...new Map(batches.flat().map((event) => [event.id, event])).values(),
     ];
   }
-  function notifyListeners() {
+  /** A fold that changed nothing keeps the snapshot and notifies no one. */
+  function emit(next: ThreadSnapshot) {
+    const keys = Object.keys(next) as (keyof ThreadSnapshot)[];
+    if (keys.every((key) => next[key] === snapshot[key])) return;
+    snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
   function publishStatus(patch: Partial<ThreadSnapshot>) {
     if (disposed) return;
-    snapshot = Object.freeze({
+    emit({
       ...snapshot,
       ...patch,
       ...(exact
@@ -242,7 +270,6 @@ export function createThreadView({
           }
         : {}),
     });
-    notifyListeners();
   }
   /** This thread's local operations; others never reach its fold. */
   function localOperations() {
@@ -314,7 +341,7 @@ export function createThreadView({
       snapshot.replies.every((row, index) => row === nextReplies[index])
         ? snapshot.replies
         : Object.freeze(nextReplies);
-    snapshot = Object.freeze({
+    emit({
       ...snapshot,
       ...patch,
       root: !rootUnavailable
@@ -323,7 +350,6 @@ export function createThreadView({
       replies,
       ...(exact ? { target, targetStatus } : {}),
     });
-    notifyListeners();
   }
   function retain(events: readonly RelayEvent[], commit = true) {
     if (events.length > MAX_EVENTS || listByteSize(events) > MAX_BYTES) {
@@ -337,6 +363,7 @@ export function createThreadView({
       cursor = undefined;
       pages = 0;
       again = false;
+      older = false;
       if (exact) targetStatus = "error";
       publish({
         status: "error",
@@ -364,12 +391,16 @@ export function createThreadView({
     publish();
   }
   function purge(clear = false) {
+    // A purged view no longer holds what the stream delivered before the drop.
+    liveAtDrop = false;
+    readAt = -Infinity;
     controller?.abort();
     selectionController?.abort();
     selectionController = undefined;
     selectionStaged = [];
     controller = undefined;
     again = false;
+    older = false;
     staged = [];
     if (exact) targetStatus = "loading";
     if (clear || !canAccess()) {
@@ -536,6 +567,7 @@ export function createThreadView({
     if (controller) {
       if (established) again = "established";
       else if (replace) again ||= "refresh";
+      else older = true;
       return;
     }
     if (!canAccess()) {
@@ -545,6 +577,10 @@ export function createThreadView({
     if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
     const owned = new AbortController();
     controller = owned;
+    const startedAt = now();
+    // A read after the drop can fail or replace the rows the stream kept live,
+    // so only an untouched view may skip its establishment refresh.
+    liveAtDrop = false;
     // Cleared as this refresh starts, not when the stream came back: a refresh
     // it supersedes still completes against the replies held across the drop.
     if (established) dropped = false;
@@ -557,11 +593,14 @@ export function createThreadView({
     // Repair retains already-verified presentation; only a new/unavailable
     // selection waits for its initial fold. Never unmount a reader on reconnect.
     if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
-    publishStatus({
-      status: "loading",
-      error: undefined,
-      readKind: replace ? "refresh" : "older",
-    });
+    // A stream establishment (a reconnect, or a minute renewal) repairs a ready
+    // view in the background: it stays ready unless the repair changes it.
+    if (!established || snapshot.status !== "ready")
+      publishStatus({
+        status: "loading",
+        error: undefined,
+        readKind: replace ? "refresh" : "older",
+      });
     try {
       if (exact && replace) {
         const revision = selectionRevision;
@@ -782,6 +821,7 @@ export function createThreadView({
       rootUnavailable = false;
       cursor = nextCursor;
       pages = nextPages;
+      if (replace) readAt = startedAt;
       // While the stream is down (a drop mid-refresh ran stale() first) the
       // held replies stand; a view holding none, or a fill that gave them up,
       // takes the replies now.
@@ -797,6 +837,9 @@ export function createThreadView({
       });
     } catch (error) {
       if (active()) {
+        // A failed repair stays visible with Retry; the page queued behind it
+        // would clear that error.
+        older = false;
         if (targetStatus === "loading") targetStatus = "error";
         publishStatus({ status: "error", error: String(error) });
       }
@@ -808,6 +851,9 @@ export function createThreadView({
           const established = again === "established";
           again = false;
           void run(true, established);
+        } else if (older && !disposed) {
+          older = false;
+          void run(false);
         }
       }
     }
@@ -826,13 +872,34 @@ export function createThreadView({
     /** The stream dropped: the replies held now are what its establishment
      * refresh must reach. */
     stale() {
+      // Only the first drop: a later one keeps the views the first took.
+      if (!dropped)
+        liveAtDrop =
+          snapshot.status === "ready" &&
+          !controller &&
+          !again &&
+          now() - readAt <= RESUME_READ_AGE;
       dropped = true;
       held ??= unverified();
       // A queued establishment was for the stream that just dropped.
       if (again === "established") again = "refresh";
     },
-    /** The stream is back: refresh, reaching the replies held across the drop. */
-    established: () => run(true, true),
+    /** The stream is back: refresh, reaching the replies held across the drop.
+     * When the channel's replay was continuous (`resumed`) and the view was
+     * live at the drop, the replay delivered every reply since: no read. */
+    established(resumed = false) {
+      const live =
+        resumed &&
+        liveAtDrop &&
+        dropped &&
+        !controller &&
+        snapshot.status === "ready";
+      liveAtDrop = false;
+      if (!live) return run(true, true);
+      dropped = false;
+      held = undefined;
+      return Promise.resolve();
+    },
     localChanged() {
       const next = localOperations();
       if (

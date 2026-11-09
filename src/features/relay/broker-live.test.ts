@@ -116,7 +116,7 @@ function fixture() {
     },
   };
 }
-it("rejects status snapshots beyond channel interests plus both globals and observer", async () => {
+it("rejects status deltas beyond the bounded frame size", async () => {
   vi.useFakeTimers();
   const f = fixture();
   const t = await connectBrokerTransport();
@@ -124,9 +124,11 @@ it("rejects status snapshots beyond channel interests plus both globals and obse
   try {
     f.accept(0);
     await tick();
-    f.publish(0, {
+    f.frame("state-delta", {
       status: "connected",
-      routes: Array.from({ length: 1028 }, (_, i) => ({
+      removed: [],
+      interestRevision: 0,
+      routes: Array.from({ length: 513 }, (_, i) => ({
         id: `route-${i}`,
         status: "pending",
         replay: "unknown",
@@ -136,7 +138,7 @@ it("rejects status snapshots beyond channel interests plus both globals and obse
     expect(f.snapshots.at(-1)).toEqual({
       status: "retrying",
       routes: [],
-      error: "Invalid live broker status",
+      error: "Invalid live status delta",
     });
   } finally {
     owner.dispose();
@@ -175,6 +177,48 @@ it("pre-header clicks preserve in-progress POST; duplicate controls coalesce", a
     owner.dispose();
   }
 });
+it.each([false, true])(
+  "successful retry clears its old control error without erasing a newer failure: %s",
+  async (newerFailure) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const transport = await connectBrokerTransport();
+    const owner = required(transport.subscribe)(f.callbacks);
+    try {
+      f.accept(0);
+      await tick();
+      f.publish(0);
+      await tick();
+      owner.retry();
+      required(f.controls[0]).resolve(new Response(null, { status: 503 }));
+      await tick();
+      expect(f.snapshots.at(-1)).toMatchObject({
+        error: "Live retry control failed (503)",
+      });
+      if (newerFailure) {
+        f.publish(0, {
+          status: "connected",
+          routes: [],
+          error: "restricted: account needs attention",
+        });
+        await tick();
+      }
+      owner.retry();
+      required(f.controls[1]).resolve(new Response(null, { status: 200 }));
+      await tick();
+      expect(f.snapshots.at(-1)).toEqual({
+        status: "connected",
+        routes: [],
+        ...(newerFailure
+          ? { error: "restricted: account needs attention" }
+          : {}),
+      });
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 for (const finish of ["replacement", "dispose"] as const)
   for (const outcome of ["status", "reject"] as const)
     it(`late retry ${outcome} cannot update ${finish}`, async () => {
@@ -415,6 +459,97 @@ it("atomically carries joined classification and fences h-less traffic while the
   }
 });
 
+it("passes a global route's continuity through, and reports none for a malformed one", async () => {
+  const f = fixture();
+  const established = vi.fn();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({ ...f.callbacks, established });
+  try {
+    f.accept(0);
+    await tick();
+    f.frame("established", {
+      global: { route: "profiles", continuous: true },
+      interestRevision: 0,
+    });
+    f.frame("established", {
+      global: { route: "membership", continuous: "yes" },
+      interestRevision: 0,
+    });
+    await tick();
+    expect(established.mock.calls).toEqual([
+      [undefined, { route: "profiles", continuous: true }],
+      [undefined, undefined],
+    ]);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("passes the channels whose replay was continuous through, only among those established", async () => {
+  const f = fixture();
+  const established = vi.fn();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({ ...f.callbacks, established });
+  try {
+    owner.update(["a", "b", "c"], ["a", "b"]);
+    f.accept(0);
+    await tick();
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    f.frame("established", {
+      channels: ["a", "b"],
+      // c is not in this establishment; 7 is not an ID.
+      continuous: ["b", "c", 7, "b"],
+      interestRevision: 1,
+    });
+    f.frame("established", {
+      channelId: "c",
+      continuous: ["c"],
+      interestRevision: 1,
+    });
+    // A malformed list reports none.
+    f.frame("established", {
+      channels: ["a", "b"],
+      continuous: "a",
+      interestRevision: 1,
+    });
+    await tick();
+    expect(established.mock.calls).toEqual([
+      [["a", "b"], undefined, ["b"]],
+      ["c", undefined, ["c"]],
+      [["a", "b"]],
+    ]);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("reports no channel of a batch continuous once one of its channels is no longer current", async () => {
+  const f = fixture();
+  const established = vi.fn();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({ ...f.callbacks, established });
+  try {
+    owner.update(["a", "b"], ["a", "b"]);
+    f.accept(0);
+    await tick();
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    // a changes membership class while the batch replays: the broker drops
+    // the batch's untagged traffic, so b's replay may be incomplete too.
+    owner.update(["a", "b"], ["b"]);
+    f.frame("established", {
+      channels: ["a", "b"],
+      continuous: ["a", "b"],
+      interestRevision: 1,
+    });
+    await tick();
+    expect(established.mock.calls).toEqual([[["b"]]]);
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("coalesced remove/re-add with the same final IDs still advances host interest revision", async () => {
   const f = fixture();
   const t = await connectBrokerTransport();
@@ -524,6 +659,85 @@ it("in-place channel interests preserve an outstanding presence publication", as
     owner.dispose();
   }
 });
+
+it("keeps current status when old delta frames follow a removed and re-added channel", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const established = vi.fn();
+  const owner = required(t.subscribe)({ ...f.callbacks, established });
+  const row = {
+    id: "channel:a",
+    channelId: "a",
+    status: "live",
+    replay: "unknown",
+  };
+  const delta = (revision: number, routes: unknown[], removed: string[] = []) =>
+    f.frame("state-delta", {
+      status: "connected",
+      routes,
+      removed,
+      interestRevision: revision,
+    });
+  try {
+    owner.update(["a"], ["a"]);
+    f.accept(0);
+    await tick();
+    delta(1, [row]);
+    f.frame("established", { channels: ["a"], interestRevision: 1 });
+    await tick();
+    expect(established).toHaveBeenCalledExactlyOnceWith(["a"]);
+    owner.update([]);
+    owner.update(["a"], ["a"]);
+    delta(1, [row]);
+    await tick();
+    expect(f.snapshots.at(-1)).toMatchObject({
+      routes: [expect.objectContaining({ channelId: "a", status: "pending" })],
+    });
+    delta(3, [row]);
+    f.frame("established", { channels: ["a"], interestRevision: 3 });
+    await tick();
+    delta(1, [], ["channel:a"]);
+    await tick();
+    expect(f.snapshots.at(-1)).toMatchObject({
+      routes: [expect.objectContaining({ channelId: "a", status: "live" })],
+    });
+    expect(established).toHaveBeenCalledTimes(2);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each([
+  { id: "unknown", status: "live", replay: "unknown" },
+  { id: "fake-channel:a", channelId: "a", status: "live", replay: "unknown" },
+])(
+  "rejects a delta key outside the current route namespace: $id",
+  async (route) => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const t = await connectBrokerTransport();
+    const owner = required(t.subscribe)(f.callbacks);
+    try {
+      f.accept(0);
+      await tick();
+      f.frame("state-delta", {
+        status: "connected",
+        interestRevision: 0,
+        removed: [],
+        routes: [route],
+      });
+      await tick();
+      expect(f.snapshots.at(-1)).toMatchObject({
+        status: "retrying",
+        error: "Invalid live status delta",
+      });
+    } finally {
+      owner.dispose();
+    }
+  },
+);
+
 it("keeps the reconnect backoff growing for streams that drop right after their first frame", async () => {
   vi.useFakeTimers();
   const f = fixture();

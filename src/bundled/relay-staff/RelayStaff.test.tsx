@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import type {
   ProbeDto,
   RelayStaffBackend,
@@ -30,7 +31,8 @@ import { foldProfiles } from "../../features/relay/profiles";
 import { StrictMode, useState, useSyncExternalStore } from "react";
 import { createSession, SessionProvider, useRead, useWrite } from "./session";
 import { createStaff, type Staff, type StaffTarget } from "./staff";
-import { SEARCH_DEBOUNCE_MS, useRetry } from "./ui";
+import { useRetry } from "./ui";
+import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 
 const signer = "a".repeat(64);
 const member = "b".repeat(64);
@@ -952,6 +954,32 @@ it("directory search waits for typing to pause before sending", async () => {
   }
 });
 
+it("directory search sends nothing for one character and lists every community", async () => {
+  mount();
+  fireEvent.click(await screen.findByRole("tab", { name: "Communities" }));
+  await screen.findByRole("button", { name: /team\.example\.com/ });
+  const search = screen.getByLabelText("Search communities");
+  vi.useFakeTimers();
+  try {
+    const before = sent("listCommunities").length;
+    fireEvent.change(search, { target: { value: "t" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("listCommunities")).toHaveLength(before);
+    fireEvent.change(search, { target: { value: "te" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("listCommunities").slice(before)).toEqual([
+      { route: "listCommunities", q: "te" },
+    ]);
+    fireEvent.change(search, { target: { value: "t" } });
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("listCommunities").at(-1)).toEqual({
+      route: "listCommunities",
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("config-backed staff can't be removed, and removing yourself re-probes", async () => {
   const fixedKey = "c".repeat(64);
   routes.probe = () => probe({ role: "operator", canStaff: true });
@@ -1269,6 +1297,28 @@ it("a late member search for an earlier query is dropped", async () => {
   await screen.findByRole("option", { name: /Newbie/ });
   await act(async () => release(result("Oldie", "c".repeat(64))));
   expect(screen.queryByRole("option", { name: /Oldie/ })).toBeNull();
+});
+
+it("a pasted nostr: npub offers that member without a name search", async () => {
+  mount();
+  await reopenActions();
+  const input = await screen.findByLabelText("Member");
+  const before = sent("searchMembers").length;
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, {
+      target: { value: `nostr:${npubEncode(member)}` },
+    });
+    // The typing pause has passed, so a name search would have been sent.
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(sent("searchMembers")).toHaveLength(before);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+  fireEvent.click(screen.getByRole("option"));
+  expect(await screen.findByText("Role: member")).toBeVisible();
+  expect(sent("getMember").at(-1)).toMatchObject({ pubkey: member });
 });
 
 /**
@@ -1686,6 +1736,20 @@ it("a lift refused after reopening shows on the active Restrictions view, once",
   await openRestrictions();
   await screen.findByRole("button", { name: "Lift ban" });
   expect(screen.queryByText("Lift refused")).toBeNull();
+});
+
+it("adds staff by a pasted nostr: npub as its hex key", async () => {
+  routes.probe = () => probe({ role: "operator", canStaff: true });
+  routes.listOperators = () => ok([]);
+  routes.putOperator = () => ok(null);
+  mount();
+  fireEvent.click(await screen.findByRole("tab", { name: "Staff" }));
+  fireEvent.change(await screen.findByLabelText("Public key"), {
+    target: { value: `nostr:${npubEncode(member)}` },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  await waitFor(() => expect(sent("putOperator")).toHaveLength(1));
+  expect(sent("putOperator")[0]).toMatchObject({ pubkey: member });
 });
 
 it("operator changes without a request id start fresh each time", async () => {
@@ -2324,7 +2388,7 @@ it("member search fetches every unknown result profile in one batch", async () =
   );
   fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
   fireEvent.change(screen.getByLabelText("Member"), {
-    target: { value: "x" },
+    target: { value: "xy" },
   });
   await screen.findByRole("listbox");
   await waitFor(() =>
@@ -2789,6 +2853,30 @@ it("member search waits for typing to pause before sending one request", async (
   ]);
 });
 
+it("member search sends nothing for one character", async () => {
+  mount();
+  await reopenActions();
+  const input = await screen.findByLabelText("Member");
+  vi.useFakeTimers();
+  try {
+    fireEvent.change(input, { target: { value: "B" } });
+    await act(async () => {
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+    expect(sent("searchMembers")).toHaveLength(0);
+    fireEvent.change(input, { target: { value: "Bo" } });
+    await act(async () => {
+      vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+  await screen.findByRole("option", { name: /Bob/ });
+  expect(sent("searchMembers")).toEqual([
+    { route: "searchMembers", communityHost: "team.example.com", q: "Bo" },
+  ]);
+});
+
 it("Load more appends the next restrictions page, and a late page after a restart is dropped", async () => {
   let late: ((outcome: StaffOutcome<unknown>) => void) | null = null;
   routes.listRestrictions = (request) =>
@@ -2846,7 +2934,7 @@ it("Load more appends the next directory page, and a late page after a new searc
       return new Promise((resolve) => {
         late = resolve;
       });
-    if (q === "x")
+    if (q === "xe")
       return ok({ items: [community("x.example.com")], nextCursor: null });
     return ok({ items: [community("one.example.com")], nextCursor: "p2" });
   };
@@ -2872,7 +2960,7 @@ it("Load more appends the next directory page, and a late page after a new searc
   fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
   await waitFor(() => expect(late).toBeTypeOf("function"));
   fireEvent.change(screen.getByLabelText("Search communities"), {
-    target: { value: "x" },
+    target: { value: "xe" },
   });
   await screen.findByRole("button", { name: "x.example.com" });
   await act(async () =>

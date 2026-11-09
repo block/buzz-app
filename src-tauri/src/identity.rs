@@ -1,6 +1,7 @@
 //! One create-only human identity. Never consult legacy, agent, file or environment keys.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
+use buzz_agent_controller::LegacyHumanError;
 use buzz_credential_store as credentials;
 use nostr::{
     event::Event,
@@ -10,7 +11,7 @@ use nostr::{
 use secp256k1::{Keypair, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use zeroize::Zeroizing;
 
 type Result<T> = std::result::Result<T, String>;
@@ -36,7 +37,9 @@ fn decrypt_with_conversation(
 }
 
 // No Debug/Serialize: only deliberate export may return the secret to the main UI.
-struct Key(Zeroizing<[u8; 32]>);
+/// The secret, and its public key derived once: socket frames and HTTP
+/// requests read it.
+struct Key(Zeroizing<[u8; 32]>, OnceLock<String>);
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -119,7 +122,7 @@ impl Key {
         if values.next().is_some() {
             return Err(INVALID.into());
         }
-        let key = Self(bytes);
+        let key = Self::new(bytes);
         key.viewer()?;
         Ok(key)
     }
@@ -127,20 +130,26 @@ impl Key {
         loop {
             let mut bytes = Zeroizing::new([0; 32]);
             getrandom::fill(bytes.as_mut()).map_err(|_| "Could not create an identity")?;
-            let key = Self(bytes);
+            let key = Self::new(bytes);
             if key.viewer().is_ok() {
                 return Ok(key);
             }
         }
     }
+    fn new(secret: Zeroizing<[u8; 32]>) -> Self {
+        Self(secret, OnceLock::new())
+    }
     fn viewer(&self) -> Result<String> {
+        if let Some(public) = self.1.get() {
+            return Ok(public.clone());
+        }
         let mut key = SecretKey::from_byte_array(*self.0).map_err(|_| INVALID)?;
         let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key)
             .x_only_public_key()
             .0
             .to_string();
         key.non_secure_erase();
-        Ok(public)
+        Ok(self.1.get_or_init(|| public).clone())
     }
     fn nsec(&self) -> Result<String> {
         bech32::encode::<Bech32>(Hrp::parse("nsec").map_err(|_| INVALID)?, self.0.as_ref())
@@ -152,13 +161,18 @@ trait Store: Send + Sync {
     fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     fn add(&self, value: &[u8]) -> Result<()>;
     /// The key installed old Buzz saved, read-only, after the person asks for it.
-    fn legacy(&self) -> Result<Zeroizing<String>>;
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError>;
     /// Only Sign out may call this, from the next launch; an absent item is success.
     fn delete(&self) -> Result<()>;
     /// The key saved under its service from before 1.0, which reads copy.
     fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>>;
     /// Sign out removes the key under both services; an absent item is success.
     fn delete_previous(&self) -> Result<()>;
+    /// The key under this build's own service, which Sign out removes. It differs
+    /// from `read` only when `just desktop me` signs in with the release key.
+    fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        self.read()
+    }
 }
 struct OsStore;
 #[cfg(not(test))]
@@ -175,20 +189,19 @@ fn read_saved(
     }
 }
 #[cfg(not(test))]
-fn read_legacy() -> Result<Zeroizing<String>> {
+fn read_legacy() -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
     buzz_agent_controller::PlatformCredentials::default()
         .read_legacy_human(buzz_agent_controller::LegacySource::Installed)
 }
 #[cfg(all(target_os = "macos", not(test)))]
 mod platform {
     use super::*;
-    use security_framework::os::macos::keychain::SecKeychain;
-    fn error(error: security_framework::base::Error) -> String {
-        match error.code() {
-            -25299 => {
+    fn error(error: credentials::Error) -> String {
+        match error {
+            credentials::Error::Occupied => {
                 "An identity is already saved; nothing was overwritten. Restart to restore it."
             }
-            -128 | -25293 | -25308 => {
+            credentials::Error::Denied => {
                 "Keychain access was denied. Allow access and retry; no identity was created."
             }
             _ => "Your identity could not be accessed in Keychain. Retry without changing keys.",
@@ -199,21 +212,22 @@ mod platform {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_human)
         }
+        fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_own_human)
+        }
         fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_previous_human)
         }
-        fn legacy(&self) -> Result<Zeroizing<String>> {
+        fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
-            SecKeychain::default()
-                .map_err(error)?
-                .add_generic_password(
-                    credentials::HUMAN_SERVICE,
-                    credentials::HUMAN_ACCOUNT,
-                    value,
-                )
-                .map_err(error)
+            credentials::add(
+                credentials::HUMAN_SERVICE,
+                credentials::HUMAN_ACCOUNT,
+                value,
+            )
+            .map_err(error)
         }
         fn delete(&self) -> Result<()> {
             delete(credentials::HUMAN_SERVICE)
@@ -257,10 +271,13 @@ mod keyring_platform {
         fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_human)
         }
+        fn own(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+            read_saved(credentials::read_own_human)
+        }
         fn previous(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
             read_saved(credentials::read_previous_human)
         }
-        fn legacy(&self) -> Result<Zeroizing<String>> {
+        fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
             read_legacy()
         }
         fn add(&self, value: &[u8]) -> Result<()> {
@@ -297,8 +314,11 @@ impl Store for OsStore {
     fn add(&self, _: &[u8]) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
     }
-    fn legacy(&self) -> Result<Zeroizing<String>> {
-        Err("Secure identity storage is not available on this platform yet".into())
+    fn legacy(&self) -> std::result::Result<Zeroizing<String>, LegacyHumanError> {
+        Err(LegacyHumanError {
+            message: "Secure identity storage is not available on this platform yet".into(),
+            transient: false,
+        })
     }
     fn delete(&self) -> Result<()> {
         Err("Secure identity storage is not available on this platform yet".into())
@@ -316,7 +336,7 @@ impl Store for OsStore {
 fn remove_key(store: &dyn Store) -> Result<()> {
     store.delete_previous()?;
     store.delete()?;
-    match (store.read()?, store.previous()?) {
+    match (store.own()?, store.previous()?) {
         (None, None) => Ok(()),
         _ => Err("Your key is still saved in secure storage".into()),
     }
@@ -343,6 +363,10 @@ enum State {
 struct Identity {
     state: State,
     store: Box<dyn Store>,
+    /// Old Buzz's key as `sign_legacy` read it, held only in memory so the
+    /// import that follows a link saves that same key without a second read
+    /// (and a second OS prompt).
+    legacy: Option<Key>,
 }
 impl Identity {
     fn restore(&mut self) -> Result<Option<String>> {
@@ -376,19 +400,54 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key); // Commit in memory only after secure persistence.
+        self.legacy = None;
         Ok(viewer)
     }
     /// Adopts the key installed old Buzz saved, exactly as a pasted import would.
-    fn import_legacy(&mut self) -> Result<String> {
+    /// With `expected`, only when it is that key: another key is kept in memory,
+    /// unsaved, and nothing is returned.
+    fn import_legacy(&mut self, expected: Option<&str>) -> Result<Option<String>> {
         if self.restore()?.is_some() {
             return Err("An identity is already saved; nothing was overwritten".into());
         }
-        let nsec = self.store.legacy()?;
-        let nsec = nsec.trim();
-        if Key::parse(nsec).is_err() {
-            return Err("The earlier Buzz app's identity is malformed; nothing was changed".into());
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => Key::parse(self.store.legacy().map_err(|error| error.message)?.trim())
+                .map_err(|_| "The earlier Buzz app's identity is malformed; nothing was changed")?,
+        };
+        if let Some(expected) = expected {
+            if key.viewer()? != expected {
+                self.legacy = Some(key);
+                return Ok(None);
+            }
         }
-        self.save(Some(nsec))
+        let nsec = Zeroizing::new(key.nsec()?);
+        self.save(Some(&nsec)).map(Some)
+    }
+    /// Signs with the key installed old Buzz saved, read from its storage and
+    /// never saved here, so first run can link it before adopting it: a key
+    /// that can't be linked never lands on this device. `None` when no usable
+    /// key is there (absent, denied or malformed), so first run makes a new
+    /// one; any other failure, a busy or locked store included, is an error,
+    /// so a retry still links old Buzz's.
+    fn sign_legacy(&mut self, event: EventTemplate) -> Result<Option<serde_json::Value>> {
+        if self.restore()?.is_some() {
+            return Err("An identity is already saved; nothing was signed".into());
+        }
+        let key = match self.legacy.take() {
+            Some(key) => key,
+            None => match self.store.legacy() {
+                Ok(nsec) => match Key::parse(nsec.trim()) {
+                    Ok(key) => key,
+                    Err(_) => return Ok(None),
+                },
+                Err(error) if error.transient => return Err(error.message),
+                Err(_) => return Ok(None),
+            },
+        };
+        let signed = key.sign(event);
+        self.legacy = Some(key);
+        signed.map(Some)
     }
     fn require_missing(&mut self) -> Result<()> {
         if self.restore()?.is_some() || self.store.read()?.is_some() {
@@ -398,7 +457,7 @@ impl Identity {
     }
     fn install_recovered(&mut self, secret: Zeroizing<[u8; 32]>, expected: &str) -> Result<String> {
         self.require_missing()?;
-        let key = Key(secret);
+        let key = Key::new(secret);
         let viewer = key.viewer()?;
         if viewer != expected {
             return Err("The recovered identity could not be verified".into());
@@ -406,10 +465,12 @@ impl Identity {
         let nsec = Zeroizing::new(key.nsec()?);
         self.store.add(nsec.as_bytes())?;
         self.state = State::Ready(key);
+        self.legacy = None;
         Ok(viewer)
     }
     fn close(&mut self) {
         self.state = State::Closed;
+        self.legacy = None;
     }
     fn export(&mut self) -> Result<String> {
         self.restore()?;
@@ -533,11 +594,12 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
         "main-agent" => {
             let agent = data.get("agent").ok_or_else(invalid)?;
             if data.len() != 2
-                || !agent.as_str().is_some_and(|v| {
-                    v.len() == 64
-                        && v.bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                })
+                || !(agent.is_null()
+                    || agent.as_str().is_some_and(|v| {
+                        v.len() == 64
+                            && v.bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    }))
             {
                 return Err(invalid());
             }
@@ -549,7 +611,7 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             coordinate,
             "channel-sections" | "channel-sort" | "channel-filter"
         ) {
-            validate_sidebar_meta(coordinate, meta)?;
+            validate_sidebar_meta(coordinate, meta, false)?;
             let projection = project_sidebar_meta(coordinate, meta);
             let projected = projection.as_object().ok_or_else(invalid)?;
             if projected
@@ -560,12 +622,28 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             }
         }
     }
+    if coordinate == "channel-sort" {
+        if let Some(choices) = data.get("pluginSort") {
+            if !choices
+                .get("g")
+                .and_then(|v| v.as_object())
+                .is_some_and(|g| g.len() <= 104)
+            {
+                return Err(invalid());
+            }
+            validate_sidebar_meta(coordinate, choices, true)?;
+        }
+    }
     Ok(())
 }
 
 // The signer admits only the bounded Desktop register schema, not arbitrary
 // renderer-controlled trees. Retained tombstones share the plaintext byte budget.
-fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<()> {
+fn validate_sidebar_meta(
+    coordinate: &str,
+    value: &serde_json::Value,
+    plugin_sort: bool,
+) -> Result<()> {
     use serde_json::Value;
     const MAX_SAFE: u64 = 9_007_199_254_740_991;
     fn text(value: &Value, max: usize) -> bool {
@@ -612,12 +690,16 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
     let valid = if matches!(coordinate, "channel-sort" | "channel-filter") {
         map(meta.get("g"), 264, |v| {
             reg(v, |v| {
-                v.is_null()
-                    || if coordinate == "channel-filter" {
-                        matches!(v.as_str(), Some("unreads" | "active"))
-                    } else {
-                        matches!(v.as_str(), Some("alpha" | "recent"))
-                    }
+                if plugin_sort {
+                    v.as_str().is_some_and(valid_plugin_sidebar_sort_mode)
+                } else {
+                    v.is_null()
+                        || if coordinate == "channel-filter" {
+                            matches!(v.as_str(), Some("unreads" | "active"))
+                        } else {
+                            matches!(v.as_str(), Some("alpha" | "recent"))
+                        }
+                }
             })
         })
     } else {
@@ -641,6 +723,22 @@ fn validate_sidebar_meta(coordinate: &str, value: &serde_json::Value) -> Result<
         return Err(invalid());
     }
     Ok(())
+}
+
+fn valid_plugin_sidebar_sort_mode(value: &str) -> bool {
+    let Some(value) = value.strip_prefix("plugin:").filter(|_| value.len() <= 512) else {
+        return false;
+    };
+    let parts: Vec<_> = value.split('/').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            part.as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+        })
 }
 
 // Called only after shape validation. Requiring these exact fields also binds
@@ -736,7 +834,7 @@ pub struct IdentityHost(Arc<Mutex<Identity>>);
 impl IdentityHost {
     #[cfg(test)]
     pub(crate) fn fixture() -> Self {
-        Self::fixture_in(State::Ready(Key(Zeroizing::new([1; 32]))))
+        Self::fixture_in(State::Ready(Key::new(Zeroizing::new([1; 32]))))
     }
     /// No saved key, or a key that cannot be read (a signing-out host refuses every read).
     #[cfg(test)]
@@ -752,6 +850,7 @@ impl IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 
@@ -1094,6 +1193,7 @@ impl Default for IdentityHost {
         Self(Arc::new(Mutex::new(Identity {
             state: State::Unread,
             store: Box::new(OsStore),
+            legacy: None,
         })))
     }
 }
@@ -1177,17 +1277,29 @@ impl BuilderlabChallenge {
     }
 }
 /// Signs only a valid Builderlab binding challenge; never a general event signer.
+/// `legacy` signs with installed old Buzz's key instead, only while no key is
+/// saved here, and saves nothing; it answers null when that key can't be read.
 #[tauri::command]
 pub async fn identity_sign_builderlab_binding(
     host: tauri::State<'_, IdentityHost>,
     challenge: BuilderlabChallenge,
+    legacy: Option<bool>,
 ) -> Result<serde_json::Value> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "System clock is before 1970")?
         .as_secs();
-    host.sign(challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?)
+    let event = challenge.template(now, buzzodz_plugins::BUILDERLAB_ORIGIN)?;
+    if legacy == Some(true) {
+        with_identity(host.inner().clone(), move |identity| {
+            identity
+                .sign_legacy(event)
+                .map(|signed| signed.unwrap_or(serde_json::Value::Null))
+        })
         .await
+    } else {
+        host.sign(event).await
+    }
 }
 #[tauri::command]
 pub async fn identity_restore(host: tauri::State<'_, IdentityHost>) -> Result<Option<String>> {
@@ -1218,15 +1330,23 @@ pub fn identity_legacy_available<R: tauri::Runtime>(app: tauri::AppHandle<R>) ->
             .is_dir()
     })
 }
+/// `expected` saves old Buzz's key only when it is that key, as setup does for
+/// the key an account already holds; otherwise nothing is saved or returned.
 #[tauri::command]
 pub async fn identity_import_legacy(
     host: tauri::State<'_, IdentityHost>,
     backup: tauri::State<'_, crate::nsec_backup::NsecBackupHost>,
-) -> Result<String> {
-    let public = with_identity(host.inner().clone(), Identity::import_legacy).await?;
-    let backup = backup.inner().clone();
-    let identity = host.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    expected: Option<String>,
+) -> Result<Option<String>> {
+    let public = with_identity(host.inner().clone(), move |identity| {
+        identity.import_legacy(expected.as_deref())
+    })
+    .await?;
+    if public.is_some() {
+        let backup = backup.inner().clone();
+        let identity = host.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || backup.local_key_installed(identity));
+    }
     Ok(public)
 }
 #[tauri::command]

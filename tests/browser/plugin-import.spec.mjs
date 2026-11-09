@@ -27,12 +27,18 @@ async function openPlugins(page, origin) {
   await selectSettingsSection(page, "Manage plugins");
 }
 // Native IPC is the boundary fixture; Settings -> manager -> platform adapter are production.
-async function nativeImports(page, samples = [], previewOptions = {}) {
-  const input = { samples, previewOptions };
-  await page.addInitScript(({ samples, previewOptions }) => {
+async function nativeImports(
+  page,
+  samples = [],
+  previewOptions = {},
+  links = [],
+  hold = false,
+) {
+  const input = { samples, previewOptions, links, hold };
+  await page.addInitScript(({ samples, previewOptions, links, hold }) => {
     window.isTauri = true;
     window.importCalls = [];
-    window.importDelay = false;
+    window.importDelay = hold;
     const plugins = ["channels", "github", "bestie", "repos", "workflows"].map(
       (name) => ({
         manifest: { id: `buzz.${name}`, name, apiVersion: 1 },
@@ -54,6 +60,26 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
         location: "isolated IPC",
         plugins: structuredClone(plugins),
       },
+      ...(window.managedPolicy && {
+        managed: {
+          ...window.managedPolicy,
+          plugins: window.managedPolicy.plugins.map((entry) => {
+            const plugin = plugins.find(
+              (plugin) => plugin.manifest.id === entry.id,
+            );
+            return {
+              ...entry,
+              state: !plugin
+                ? "missing"
+                : plugin.revision === entry.sha256
+                  ? "current"
+                  : plugin.updateSource?.url
+                    ? "outdated"
+                    : "other",
+            };
+          }),
+        },
+      }),
     });
     let importSource = null;
     let pendingPreview = null;
@@ -94,7 +120,7 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
       },
       invoke: async (command, args) => {
         window.importCalls.push({ command, args });
-        if (command === "deep_link_take") return [];
+        if (command === "deep_link_take") return links.splice(0);
         if (command === "deep_link_watch") {
           const wireChannel = args.onEvent.toJSON();
           if (
@@ -102,6 +128,14 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             !callbacks.has(args.onEvent.id)
           )
             throw new Error("Invalid deep-link channel");
+          let index = 0;
+          window.deliverPluginLink = (url) => {
+            links.push(url);
+            callbacks.get(args.onEvent.id)({
+              index: index++,
+              message: { pending: links.length },
+            });
+          };
           return;
         }
         if (command === "plugin_catalog") return ready();
@@ -130,7 +164,8 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
         if (
           command === "plugin_update_preview" ||
           command === "plugin_import_folder" ||
-          command === "plugin_import_git"
+          command === "plugin_import_git" ||
+          command === "plugin_import_url"
         ) {
           if (importLocked) throw new Error("Another import is in progress");
           importLocked = true;
@@ -144,19 +179,28 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
               throw new Error(window.importAcquisitionError);
             if (args?.repository === "bad")
               throw new Error("Repository unavailable");
+            if (
+              command === "plugin_import_url" &&
+              args.sha256 !== window.artifactSha256
+            )
+              throw new Error(
+                `The downloaded plugin has SHA-256 ${window.artifactSha256}, not the expected ${args.sha256}`,
+              );
             importSource =
-              command === "plugin_import_git"
-                ? { repository: args.repository, reference: args.reference }
-                : args?.upload
-                  ? null
-                  : {
-                      root:
-                        command === "plugin_update_preview"
-                          ? plugins.find(
-                              (plugin) => plugin.manifest.id === args.id,
-                            )?.updateSource?.root
-                          : "/fixture/plugins",
-                    };
+              command === "plugin_import_url"
+                ? { url: args.url, sha256: args.sha256 }
+                : command === "plugin_import_git"
+                  ? { repository: args.repository, reference: args.reference }
+                  : args?.upload
+                    ? null
+                    : {
+                        root:
+                          command === "plugin_update_preview"
+                            ? plugins.find(
+                                (plugin) => plugin.manifest.id === args.id,
+                              )?.updateSource?.root
+                            : "/fixture/plugins",
+                      };
             if (window.importCategory)
               for (const candidate of preview.candidates) {
                 candidate.revision = `${candidate.path}-${window.importCategory}`;
@@ -167,6 +211,10 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
 
             pendingPreview = {
               ...structuredClone(preview),
+              ...(command === "plugin_import_url" && {
+                source: args.url,
+                commit: null,
+              }),
               token: `preview-${++previewSequence}`,
             };
             return structuredClone(pendingPreview);
@@ -204,9 +252,11 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
               existing.manifest = structuredClone(candidate.manifest);
               existing.previous = existing.revision;
               existing.revision = candidate.revision;
-              existing.updateSource = importSource
-                ? { ...importSource, path: candidate.path }
-                : null;
+              existing.updateSource = importSource?.url
+                ? importSource
+                : importSource
+                  ? { ...importSource, path: candidate.path }
+                  : null;
             } else
               plugins.push({
                 ...candidate,
@@ -214,9 +264,11 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
                 enabled: false,
                 previous: null,
                 reloadable: true,
-                updateSource: importSource
-                  ? { ...importSource, path: candidate.path }
-                  : null,
+                updateSource: importSource?.url
+                  ? importSource
+                  : importSource
+                    ? { ...importSource, path: candidate.path }
+                    : null,
                 error: null,
               });
             return ready();
@@ -247,6 +299,7 @@ async function nativeImports(page, samples = [], previewOptions = {}) {
             samples.find((sample) => sample.manifest.id === args.id)?.code ??
             "export function apply() {}"
           );
+        if (command === "credential_pairing_communities") return;
         throw new Error(`Unexpected command ${command}`);
       },
     };
@@ -457,11 +510,11 @@ test("Settings controls scale together and keep enlarged labels reachable", asyn
       // The shell toolbar stays mounted, though hidden, behind the modal.
       await expect(
         page.getByRole("button", {
-          name: "Search Buzz",
+          name: "Your profile",
           exact: true,
           includeHidden: true,
         }),
-      ).toHaveAttribute("data-icon-size", "md");
+      ).toHaveAttribute("data-icon-size", "sm");
       await expect
         .poll(() =>
           settingsDialog(page)
@@ -622,7 +675,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     .screenshot({ path: info.outputPath("plugin-choose-light.png") });
   await button(page, "Continue").click();
   await expect(page.getByRole("dialog")).toHaveAccessibleName(
-    "Review plugin access",
+    /^Review .+ access$/,
   );
   await expect(page.getByRole("dialog")).toHaveAccessibleDescription(
     "Only install code you trust.",
@@ -713,6 +766,26 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await activate(enabled);
   await expect(enabled).toHaveAccessibleName("Disable Example two");
   await expect(button(page, "Reload")).toHaveCount(0);
+  const details = page.getByRole("complementary", {
+    name: "Example two details",
+  });
+  const actionPositions = () =>
+    details
+      .getByRole("button", { name: /^(Disable|More plugin actions)$/ })
+      .evaluateAll((buttons) =>
+        buttons.map((button) => {
+          const { x, y, width, height } = button.getBoundingClientRect();
+          return { x, y, width, height };
+        }),
+      );
+  await details.evaluate(async (node) => {
+    await Promise.all(
+      node
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished),
+    );
+  });
+  const settledActions = await actionPositions();
   await page.evaluate(() => {
     window.importCategory = "productivity";
   });
@@ -724,7 +797,8 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   });
   await expect(
     updatingPane.getByRole("button", { name: "Disable", exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
+  await expect.poll(actionPositions).toEqual(settledActions);
   await expect(button(page, "Update Example two")).toBeVisible();
   await updatingPane.screenshot({
     path: info.outputPath("primary-update-pane.png"),
@@ -732,15 +806,18 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "More plugin actions").click();
   await expect(page.getByRole("menuitem")).toHaveText([
     "Review access",
-    "Disable",
     "Delete",
   ]);
   await page
     .getByRole("menu")
     .screenshot({ path: info.outputPath("primary-update-menu.png") });
-  await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
-  await button(page, "More plugin actions").click();
-  await page.getByRole("menuitem", { name: "Enable", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await updatingPane
+    .getByRole("button", { name: "Disable", exact: true })
+    .click();
+  await updatingPane
+    .getByRole("button", { name: "Enable", exact: true })
+    .click();
   await button(page, "More plugin actions").click();
   await page
     .getByRole("menuitem", { name: "Review access", exact: true })
@@ -806,6 +883,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
     page.getByRole("status").filter({ hasText: "Up to date" }),
   ).toBeVisible();
   await expect(button(page, "Update")).toHaveCount(0);
+  await expect.poll(actionPositions).toEqual(settledActions);
   const pane = page.getByRole("complementary", { name: "Example two details" });
   const paneActions = pane.getByRole("button", {
     name: /^Disable$/,
@@ -865,7 +943,9 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
       name: "Cancel",
       exact: true,
     });
-    await expect(cancel).toBeFocused();
+    await expect(
+      rollback.getByRole("button", { name: "Roll back", exact: true }),
+    ).toBeFocused();
     await expect(rollback).not.toContainText("enabled or disabled");
     const scrim = page.locator(".buzz-dialog-backdrop[data-alert-dialog]");
     await expect(scrim).toBeVisible();
@@ -1208,13 +1288,15 @@ test("Add keeps a rejected install reachable and retries the same preview", asyn
   const dialog = page
     .getByRole("dialog")
     .and(page.locator('[aria-modal="true"]'));
-  await expect(dialog).toHaveAccessibleName("Review plugin access");
+  await expect(dialog).toHaveAccessibleName(
+    "Review Retry plugin Plugin access",
+  );
   await expect(dialog.getByRole("radio")).toHaveCount(0);
   await expect(
     dialog.getByText("Choose a plugin folder", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    dialog.getByRole("heading", { name: "Retry plugin" }),
+    dialog.getByRole("heading", { name: "Retry plugin", exact: true }),
   ).toHaveCount(0);
   await expect(dialog.getByText("example.retry", { exact: true })).toHaveCount(
     0,
@@ -1516,3 +1598,332 @@ for (const source of ["folder", "git"]) {
     ).toBeFocused();
   });
 }
+
+for (const mode of ["Light", "Dark"]) {
+  test(`plugin deep link opens the consent flow in ${mode} mode`, async ({
+    page,
+    app,
+  }, info) => {
+    const repository = "ssh://git@github.com/example/plugin.git";
+    const reference = "release/stable";
+    const link = `buzz://plugin-install?repository=${encodeURIComponent(repository)}&ref=${encodeURIComponent(reference)}`;
+    await nativeImports(
+      page,
+      [
+        {
+          path: ".",
+          manifest: {
+            id: "example.linked",
+            name: "Linked plugin",
+            apiVersion: 1,
+            host: { files: true },
+          },
+          revision: "one",
+        },
+      ],
+      { warnings: [] },
+      [link],
+    );
+    await page.goto(app.origin);
+    const review = page.getByRole("dialog", {
+      name: "Review Linked plugin Plugin access",
+      exact: true,
+    });
+    await expect(review).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Computer access" }),
+    ).toBeVisible();
+    await review.getByRole("button", { name: "Back", exact: true }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Add a plugin",
+      exact: true,
+    });
+    await expect(dialog.getByLabel("Git or GitHub repository")).toHaveValue(
+      repository,
+    );
+    await expect(dialog.getByLabel("Branch or tag (optional)")).toHaveValue(
+      reference,
+    );
+    await dialog.press("Escape");
+    await expect(dialog).toBeHidden();
+    await selectSettingsSection(page, "Appearance");
+    await page.goBack();
+    await expect(dialog).toBeHidden();
+    await expect(review).toBeHidden();
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, mode);
+    await page.evaluate((link) => window.deliverPluginLink(link), link);
+    await expect(review).toBeVisible();
+    await review.press("Escape");
+    await expect(review).toBeHidden();
+    await page.evaluate((link) => window.deliverPluginLink(link), link);
+    await expect(review).toBeVisible();
+    const install = page.getByRole("button", {
+      name: "Install plugin",
+      exact: true,
+    });
+    await expect(install).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Computer access" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        window.importCalls.filter(
+          (call) => call.command === "plugin_import_install",
+        ),
+      ),
+    ).toHaveLength(0);
+    await page.screenshot({
+      path: info.outputPath(`plugin-link-${mode.toLowerCase()}.png`),
+    });
+    await install.click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.importCalls.filter(
+              (call) => call.command === "plugin_import_install",
+            ).length,
+        ),
+      )
+      .toBe(1);
+    await expect(review).toBeHidden();
+    await selectSettingsSection(page, "Appearance");
+    await page.goBack();
+    await expect(review).toBeHidden();
+    await expect(dialog).toBeHidden();
+  });
+}
+
+test("a linked preview can close during acquisition and a later link still opens", async ({
+  page,
+  app,
+}) => {
+  const link = "buzz://plugin-install?repository=org%2Frepo&ref=first";
+  await nativeImports(
+    page,
+    [
+      {
+        path: ".",
+        manifest: {
+          id: "example.linked",
+          name: "Linked",
+          apiVersion: 1,
+          host: { files: true },
+        },
+        revision: "one",
+      },
+    ],
+    { warnings: [] },
+    [link],
+    true,
+  );
+  await page.goto(app.origin);
+  const loading = page.getByRole("dialog", {
+    name: "Add a plugin",
+    exact: true,
+  });
+  await expect(loading).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => typeof window.resolveImport))
+    .toBe("function");
+  await expect(
+    loading.getByRole("button", { name: "Close", exact: true }),
+  ).toBeEnabled();
+  await loading.press("Escape");
+  await expect(loading).toBeHidden();
+  await page.evaluate((link) => {
+    window.importDelay = false;
+    window.deliverPluginLink(link.replace("ref=first", "ref=next"));
+  }, link);
+  await expect(loading).toBeVisible();
+  await page.evaluate(() => window.resolveImport());
+  const review = page.getByRole("dialog", {
+    name: "Review Linked Plugin access",
+    exact: true,
+  });
+  await expect(review).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.importCalls.filter(
+        (call) => call.command === "plugin_import_install",
+      ),
+    ),
+  ).toHaveLength(0);
+  expect(
+    await page.evaluate(() =>
+      window.importCalls
+        .filter((call) => call.command === "plugin_import_git")
+        .map((call) => call.args.reference),
+    ),
+  ).toEqual(["first", "next"]);
+});
+
+const artifactSha =
+  "13fca413ba8975075fdec01a0087be6114ace8d935055f7d9ab1d57dd8e706a5";
+const artifactUrl = `https://plugins.example.org/artifacts/example.artifact-${artifactSha}.json`;
+const artifactPlugin = [
+  {
+    path: ".",
+    manifest: {
+      id: "example.artifact",
+      name: "Artifact",
+      apiVersion: 1,
+      host: { files: true },
+    },
+    revision: artifactSha,
+  },
+];
+async function recommendArtifact(page, sha256 = artifactSha) {
+  await page.addInitScript(
+    (policy) => {
+      window.managedPolicy = policy;
+    },
+    {
+      status: "ready",
+      path: "/fixture/managed-plugins.json",
+      source: "Example Org",
+      problems: [],
+      plugins: [{ id: "example.artifact", url: artifactUrl, sha256 }],
+    },
+  );
+}
+async function openRecommendedPlugins(page, origin) {
+  await page.goto(origin);
+  await openSettings(page);
+  await selectSettingsSection(
+    page,
+    "Manage plugins 1 recommended plugin",
+    "Manage plugins",
+  );
+}
+async function servesArtifact(page) {
+  await page.addInitScript((sha) => {
+    window.artifactSha256 = sha;
+  }, artifactSha);
+}
+const importCalls = (page) =>
+  page.evaluate(() =>
+    window.importCalls
+      .filter(({ command }) =>
+        [
+          "plugin_import_url",
+          "plugin_import_git",
+          "plugin_import_install",
+        ].includes(command),
+      )
+      .map(({ command, args }) => ({ command, args })),
+  );
+
+test("a recommended plugin URL installs the pinned artifact without Git", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await recommendArtifact(page);
+  await servesArtifact(page);
+  await openRecommendedPlugins(page, app.origin);
+  const recommended = page.getByRole("region", {
+    name: "Recommended by Example Org",
+    exact: true,
+  });
+  await expect(recommended).toContainText(artifactUrl);
+  await recommended
+    .getByRole("button", { name: "Review and install example.artifact" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await expect(review).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(review).toContainText("Recommended by Example Org");
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await expect(recommended).toBeHidden();
+  await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
+    "Disable Artifact",
+  );
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});
+
+test("a recommended plugin URL whose download doesn't match its SHA-256 never installs", async ({
+  page,
+  app,
+}) => {
+  const pinned = "0".repeat(64);
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await recommendArtifact(page, pinned);
+  await servesArtifact(page);
+  await openRecommendedPlugins(page, app.origin);
+  await page
+    .getByRole("button", { name: "Review and install example.artifact" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review example.artifact",
+    exact: true,
+  });
+  await expect(review.getByRole("alert")).toHaveText(
+    `The downloaded plugin has SHA-256 ${artifactSha}, not the expected ${pinned}`,
+  );
+  await expect(
+    review.getByRole("button", { name: "Install plugin" }),
+  ).toHaveCount(0);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: pinned },
+    },
+  ]);
+});
+
+test("an artifact link reviews and installs the pinned URL", async ({
+  page,
+  app,
+}) => {
+  const link = `buzz://plugin-install?id=example.artifact&url=${encodeURIComponent(artifactUrl)}&sha256=${artifactSha}`;
+  await nativeImports(page, artifactPlugin, { warnings: [] }, [link]);
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await expect(review).toContainText("Requested by A link");
+  await expect(review).toContainText(artifactUrl);
+  await expect(review).toContainText(`SHA-256: ${artifactSha}`);
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await settingsDialog(page)
+    .getByRole("button", { name: "View Artifact details", exact: true })
+    .click();
+  const updates = page.getByRole("region", {
+    name: "Plugin updates",
+    exact: true,
+  });
+  await expect(updates).toContainText(artifactUrl);
+  await expect(updates).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(page.getByText(/No saved source/)).toHaveCount(0);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});

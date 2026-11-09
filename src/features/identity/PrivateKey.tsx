@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -46,11 +47,22 @@ export function PrivateKey({
   const warningId = useId();
   const fieldRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const focusReveal = useRef(false);
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
   const generation = useRef(0);
+  useLayoutEffect(() => {
+    // A late reveal replaces the trigger after the menu already returned focus.
+    if (
+      secret &&
+      focusReveal.current &&
+      document.activeElement === document.body
+    )
+      fieldRef.current?.focus();
+    focusReveal.current = false;
+  }, [secret]);
   useEffect(() => {
     const clear = () => {
       generation.current++;
@@ -98,7 +110,12 @@ export function PrivateKey({
           setMessage(
             "Private key copied. Keep it somewhere safe; your clipboard now contains it.",
           );
-      } else setSecret(value);
+      } else {
+        focusReveal.current =
+          presentation === "magnetic" &&
+          document.activeElement === triggerRef.current;
+        setSecret(value);
+      }
       if (current === generation.current) onInteraction?.();
     } catch {
       if (current === generation.current) {

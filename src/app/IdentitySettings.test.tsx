@@ -154,6 +154,41 @@ async function chooseKeyAction(
   await user.click(await screen.findByRole("menuitem", { name }));
 }
 
+it.each([false, true])(
+  "keeps focus after a delayed private-key reveal (moved elsewhere: %s)",
+  async (moved) => {
+    const h = backupHost(at(1, { status: "idle" }));
+    let finish!: (key: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    vi.mocked(h.identity.exportKey).mockReturnValue(pending);
+    render(
+      <>
+        <IdentitySettings viewer={viewer} identity={h.identity} />
+        <button type="button">Elsewhere</button>
+      </>,
+    );
+    await h.settled();
+    const user = userEvent.setup();
+    await showKeyDetails();
+    await chooseKeyAction(user, "Reveal private key");
+    const trigger = screen.getByRole("button", { name: "Private key actions" });
+    // Hold export until the menu has closed and returned focus to the masked trigger.
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+    if (moved) await user.click(elsewhere);
+    await act(async () => {
+      finish("nsec-public-test-fixture");
+      await pending;
+    });
+    const field = screen.getByLabelText("Private key (nsec)");
+    expect(field).toHaveValue("nsec-public-test-fixture");
+    expect(moved ? elsewhere : field).toHaveFocus();
+  },
+);
+
 it("clears a pending private-key reveal when the badge flips back", async () => {
   const h = backupHost(at(1, { status: "idle" }));
   let finish!: (key: string) => void;

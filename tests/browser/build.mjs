@@ -37,7 +37,7 @@ export async function buildApp(
               {
                 name: "pairing-fixture",
                 transform(code, id) {
-                  if (id !== join(root, "src/bundled/pairing/index.tsx"))
+                  if (id !== join(root, "src/bundled/pairing/MobileApp.tsx"))
                     return;
                   return code.replace(
                     'import { PairingSettings } from "./PairingSettings";',

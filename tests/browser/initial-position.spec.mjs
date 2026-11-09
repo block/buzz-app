@@ -167,13 +167,99 @@ activityHead(
       );
     app.append("primary", "alpha", "Latest public message", false);
     const latest = history(page).getByText("Latest public message");
+    // PROBE (experiment only): record timeline geometry every frame.
+    await page.addInitScript(() => {
+      const records = [];
+      window.__probe = records;
+      window.__mark = (label) =>
+        records.push({ t: Math.round(performance.now()), mark: label });
+      const sample = () => {
+        const el = document.querySelector(
+          '[aria-label="Channel message history"]',
+        );
+        if (el) {
+          const top = el.getBoundingClientRect().top;
+          const list = el.querySelector("ol");
+          const rows = [...el.querySelectorAll("[data-message-id]")]
+            .map((row) => {
+              const r = row.getBoundingClientRect();
+              return [
+                row.textContent
+                  .replace(
+                    /^.*?(Agent update \\d+|alpha message \\d+|Latest public message).*$/s,
+                    "$1",
+                  )
+                  .slice(0, 24),
+                Math.round(r.top - top),
+                Math.round(r.height),
+              ];
+            })
+            .filter(([, , h]) => h > 0);
+          const preview = el.querySelector("[data-activity-group-id]");
+          const record = {
+            t: Math.round(performance.now()),
+            st: Math.round(el.scrollTop),
+            sh: el.scrollHeight,
+            ch: el.clientHeight,
+            lh: list?.style.height,
+            n: list?.children.length,
+            pv: preview
+              ? Math.round(preview.getBoundingClientRect().top - top)
+              : null,
+            first: rows[0],
+            last: rows.at(-1),
+          };
+          const previous = records.findLast((r) => r.st !== undefined);
+          if (
+            !previous ||
+            ["st", "sh", "lh", "n", "pv"].some(
+              (k) => previous[k] !== record[k],
+            ) ||
+            JSON.stringify(previous.last) !== JSON.stringify(record.last)
+          )
+            records.push(record);
+          if (records.length > 4000) records.splice(0, 1000);
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+      addEventListener(
+        "scroll",
+        (event) => {
+          if (event.target?.ariaLabel === "Channel message history")
+            records.push({
+              t: Math.round(performance.now()),
+              scroll: Math.round(event.target.scrollTop),
+            });
+        },
+        true,
+      );
+    });
+    const mark = (label) => page.evaluate((l) => window.__mark?.(l), label);
+    const dump = async (name) => {
+      const body = await page
+        .evaluate(() => JSON.stringify(window.__probe ?? []))
+        .catch(() => "[]");
+      await import("node:fs").then((fs) =>
+        fs.writeFileSync(test.info().outputPath(`probe-${name}.json`), body),
+      );
+    };
     const filled = async (visit) => {
+      await mark(`filled? ${visit}`);
       await expect
         .poll(() =>
           history(page).evaluate((e) => e.scrollHeight - e.clientHeight),
         )
         .toBeGreaterThan(0);
-      await bottom(page, app, `${visit} filled activity head`);
+      await mark(`bottom? ${visit}`);
+      await bottom(page, app, `${visit} filled activity head`).catch(
+        async (error) => {
+          await mark(`FAILED ${visit}`);
+          await dump(visit.replace(/ /g, "-"));
+          throw error;
+        },
+      );
+      await mark(`ok ${visit}`);
       await expect(latest).toBeInViewport();
       expect(
         app.pending,
@@ -198,10 +284,14 @@ activityHead(
         await history(page).evaluate((e) => e.scrollHeight - e.clientHeight),
         `${visit} head alone leaves nothing to scroll`,
       ).toBeLessThanOrEqual(0);
+      await mark(`release ${visit}`);
       read.release();
       await filled(visit);
+      await dump(visit);
       // A return in the same session keeps the filled rows: no page is reread.
+      await mark(`to beta ${visit}`);
       await select(page, "Beta");
+      await mark(`to alpha ${visit}`);
       await select(page, "Alpha");
       await filled(`${visit} returned`);
     }

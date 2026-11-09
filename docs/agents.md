@@ -473,10 +473,12 @@ anchor in place of the event (the thread's `e` tag, and a random id), and a
 woke the agent, that neither the owner nor anyone in the channel wrote it, and
 that its text is data. The anchor's id is never published: failure reports and
 typing go to the thread root, or the channel itself in a Solo chat, and a wake
-with no `root` outside a Solo chat is ignored. A wake is not saved for resume
-and shows no activity row or Stop. Pi, which continues the runs an app left,
-ends a wake's run instead, unless a mention or Attention wake left in the same
-conversation would end with it or stay queued behind it. Then the wake's run
+with no `root` outside a Solo chat is ignored. A wake is not saved for resume.
+It shows a local Work row with its status and a retry action after failure.
+Stop is available when the agent supports interruption. Pi, which continues
+the runs an app left, ends a wake's run instead, unless a mention or Attention
+wake left in the same conversation would end with it or stay queued behind it.
+Then the wake's run
 goes on, and only what it sends is posted. Pi still waits for the wake, so a
 run of its own that fails fails what is queued behind it too, which reports it.
 

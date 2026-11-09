@@ -3,8 +3,8 @@ use crate::{
     access::{AccessRules, Transport},
     artifact_from_parts, err, hash, icon_revision,
     managed::{valid_commit, valid_reference},
-    Catalog, GitSource, InstallSource, Manager, Manifest, Release, ReloadSource, Result, BASE64,
-    LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
+    Catalog, GitSource, InstallSource, Manager, Manifest, Release, ReloadSource, Result, UrlSource,
+    BASE64, LIMIT, MAX_ICON_BYTES, MAX_README_BYTES,
 };
 use base64::Engine as _;
 use nostr::event::Event;
@@ -49,6 +49,7 @@ pub struct PreparedImport {
     pub preview: Preview,
     folder_root: Option<PathBuf>,
     git_source: Option<GitSource>,
+    url_source: Option<UrlSource>,
     artifacts: BTreeMap<String, Release>,
     unbuilt: Vec<(String, Option<String>, String)>,
 }
@@ -66,6 +67,7 @@ impl PreparedImport {
             },
             folder_root,
             git_source: None,
+            url_source: None,
             artifacts: BTreeMap::new(),
             unbuilt: vec![],
         })
@@ -159,7 +161,8 @@ impl PreparedImport {
                     source.path = path.to_owned();
                     InstallSource::Git(source)
                 })
-            });
+            })
+            .or_else(|| self.url_source.clone().map(InstallSource::Url));
         manager.install_artifact(release, source)
     }
 }
@@ -594,6 +597,74 @@ pub fn repository_url(input: &str) -> Result<String> {
         return Err("Use the GitHub repository URL, not a tree/file URL. Enter the branch or tag separately, then select a plugin folder.".into());
     }
     Ok(url.to_string())
+}
+
+/// An HTTPS URL for a single plugin artifact: no credentials, query string or fragment,
+/// so the URL itself is a stable, shareable identity.
+pub fn plugin_url(input: &str) -> Result<String> {
+    let input = input.trim();
+    if input.len() > 2048 {
+        return Err("Plugin URL is too long".into());
+    }
+    let url = url::Url::parse(input).map_err(|_| "Enter an HTTPS plugin URL")?;
+    if url.scheme() != "https"
+        || url.host_str().is_none_or(|host| host.starts_with('-'))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path().trim_matches('/').is_empty()
+    {
+        return Err(
+            "Use an HTTPS plugin URL without credentials, a query string or a fragment".into(),
+        );
+    }
+    Ok(url.to_string())
+}
+
+pub fn valid_sha256(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Previews a downloaded artifact. The caller fetches `bytes` from `url`; nothing is
+/// accepted unless it hashes to `sha256`, so the download itself needs no trust.
+pub fn prepare_url(url: &str, sha256: &str, bytes: Vec<u8>) -> Result<PreparedImport> {
+    let url = plugin_url(url)?;
+    let sha256 = sha256.trim().to_ascii_lowercase();
+    if !valid_sha256(&sha256) {
+        return Err("sha256 must be 64 hexadecimal digits".into());
+    }
+    if bytes.len() as u64 > LIMIT {
+        return Err("Plugin artifact exceeds 8 MiB".into());
+    }
+    let actual = hash(&bytes);
+    if actual != sha256 {
+        return Err(format!(
+            "The downloaded plugin has SHA-256 {actual}, not the expected {sha256}"
+        ));
+    }
+    let mut prepared = PreparedImport::new(url.clone(), None, None)?;
+    prepared.url_source = Some(UrlSource { url, sha256 });
+    prepared.add(
+        ".".into(),
+        Ok(Release {
+            bytes,
+            signature: None,
+        }),
+    )?;
+    if prepared.preview.candidates.is_empty() {
+        return Err(prepared
+            .preview
+            .warnings
+            .pop()
+            .unwrap_or_else(|| "Not a plugin artifact".into())
+            .trim_start_matches("Selected folder: ")
+            .to_owned());
+    }
+    Ok(prepared)
 }
 
 struct Git {
@@ -1157,6 +1228,64 @@ mod tests {
         assert_eq!(
             manager.module("example.drop", &plugin.revision).unwrap(),
             "export function apply() {}"
+        );
+    }
+
+    #[test]
+    fn url_artifacts_install_only_at_their_pinned_hash() {
+        let bytes = crate::artifact_from_text(
+            r#"{"id":"example.url","name":"From URL","apiVersion":1}"#,
+            "export function apply() {}".into(),
+        )
+        .unwrap();
+        let digest = hash(&bytes);
+        let url = "https://cdn.example.com/plugins/example.url.json";
+        let wrong = prepare_url(url, &"0".repeat(64), bytes.clone())
+            .err()
+            .unwrap();
+        assert!(wrong.contains("not the expected"), "{wrong}");
+        for (bad_url, bad_hash) in [
+            ("http://cdn.example.com/p.json", digest.as_str()),
+            ("https://cdn.example.com/p.json?sig=1", digest.as_str()),
+            ("https://u:p@cdn.example.com/p.json", digest.as_str()),
+            (url, "not-a-hash"),
+        ] {
+            assert!(prepare_url(bad_url, bad_hash, bytes.clone()).is_err());
+        }
+        assert!(prepare_url(url, &digest, b"{}".to_vec()).is_err());
+
+        let prepared = prepare_url(url, &digest.to_ascii_uppercase(), bytes).unwrap();
+        assert_eq!(prepared.preview.source, url);
+        assert_eq!(prepared.preview.candidates.len(), 1);
+        assert_eq!(prepared.preview.candidates[0].path, ".");
+        assert_eq!(prepared.preview.candidates[0].revision, digest);
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let catalog = prepared
+            .install(&manager, &prepared.preview.token, ".")
+            .unwrap();
+        let plugin = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.url")
+            .unwrap();
+        assert_eq!(plugin.revision, digest);
+        assert_eq!(
+            plugin.update_source,
+            Some(InstallSource::Url(UrlSource {
+                url: url.into(),
+                sha256: digest.clone(),
+            }))
+        );
+        let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let again = reopened.catalog().unwrap();
+        assert_eq!(
+            again
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "example.url")
+                .and_then(|p| p.update_source.clone()),
+            plugin.update_source
         );
     }
 

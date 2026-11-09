@@ -474,11 +474,44 @@ function CommunitySearch({
       )
       ?.focus();
   }, [view]);
+  // Saved conversations stay searchable while the community connects or is
+  // unreachable; message, people and open-channel search wait for the relay.
+  const saved = !!connection.cached && !scopedChannelId;
+  const connecting = connection.status === "connecting";
+  const notice =
+    !enabled || !client.selected || connection.status === "ready"
+      ? undefined
+      : saved
+        ? `Only saved conversations are searched ${connecting ? "until this community connects" : "while this community is disconnected"}.`
+        : !connecting
+          ? "Message search is unavailable while this community is disconnected."
+          : query.trim() && !scopedChannelId
+            ? "Connecting to this community…"
+            : undefined;
+  const offline = notice && (
+    <div className="px-3 text-body-sm text-subtle" aria-live="polite">
+      <p>{notice}</p>
+      {!connecting && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            // Retrying removes this focused button; the field owns keyboard
+            // navigation, so focus returns there before the retry starts.
+            input.current?.focus();
+            services.communities.relay.retry();
+          }}
+        >
+          Retry connection
+        </Button>
+      )}
+    </div>
+  );
   if (
     !enabled ||
     !client.selected ||
     !client.viewer ||
-    connection.status !== "ready"
+    (connection.status !== "ready" && !saved)
   ) {
     return (
       <SearchChoices
@@ -521,25 +554,8 @@ function CommunitySearch({
                   },
                 ]
         }
-      >
-        {enabled &&
-          client.selected &&
-          ["error", "disconnected"].includes(connection.status) && (
-            <div className="px-3 text-body-sm text-subtle" aria-live="polite">
-              <p>
-                Message search is unavailable while this community is
-                disconnected.
-              </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => services.communities.relay.retry()}
-              >
-                Retry connection
-              </Button>
-            </div>
-          )}
-      </SearchChoices>
+        footer={offline}
+      />
     );
   }
   const scope = {
@@ -572,7 +588,7 @@ function CommunitySearch({
     });
   };
   const views =
-    !scopedChannelId && connection.session.channels.readDirectory
+    !scopedChannelId && !saved && connection.session.channels.readDirectory
       ? {
           resultsLabel: view === "channels" ? "Channels" : "Search results",
           panelId: `search-view-${view}`,
@@ -623,6 +639,7 @@ function CommunitySearch({
         usageScope={usageScope(scope)}
         sidebarScope={connection.scope}
         views={views}
+        offline={saved ? offline : undefined}
         openConversation={openConversation}
         openAgentSession={(pubkey) => {
           const current = services.communities.snapshot();

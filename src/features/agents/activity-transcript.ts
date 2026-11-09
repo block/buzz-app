@@ -1,7 +1,9 @@
 /** Owner-only display projection of observer telemetry into turns and items.
  * Raw session retention is unchanged; this reads allowlisted ACP fields only. */
+import { isMessageTool } from "../../buzz-mcp/message-tools";
 import { readEventBody } from "../agent-harness/turn-records";
 import { terminalOutcome } from "./observer";
+import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
 
 type Source = Readonly<{
   id: string;
@@ -18,7 +20,12 @@ type Base = { id: string; at: number };
 /** ACP `diff` tool content; a missing old text is a new file. */
 export type ToolDiff = { path: string; oldText?: string; newText: string };
 /** Tool names and inputs are adapter-specific, so they are shown as sent;
- * only ACP's standard `kind`, `status`, `locations` and content are read. */
+ * only ACP's standard `kind`, `status`, `locations` and content are read.
+ * The exception is a Buzz message tool, recognized by a title of
+ * `buzz__<tool>` or `mcp__buzz__<tool>`: when it completes with a
+ * `rawInput.text` and no `rawOutput.isError`, it is shown as the agent's
+ * posted message instead of as a tool. Renaming those titles or fields in an
+ * adapter turns its sends back into tool rows. */
 export type ToolItem = Base & {
   type: "tool";
   toolCallId: string;
@@ -88,6 +95,12 @@ const object = (value: unknown): Json | undefined =>
     ? (value as Json)
     : undefined;
 const str = (value: unknown) => (typeof value === "string" ? value : "");
+/** Whether a tool title names a Buzz message tool, as goose (and so kgoose)
+ * names it, `buzz__send`, or as Claude Code does, `mcp__buzz__send`. */
+const postsMessage = (title: string) => {
+  const name = /^(?:mcp__)?buzz__(\w+)$/.exec(title.trim())?.[1];
+  return !!name && isMessageTool(name);
+};
 const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const eventId = (value: unknown) =>
@@ -348,6 +361,10 @@ function buildTranscript(
 
   type Draft = TranscriptTurn & {
     tools: Map<string, ToolItem>;
+    /** Text of each call's arguments, for calls that may post a message. */
+    sent: Map<string, string>;
+    /** Calls whose result reported an error, whatever their status says. */
+    errored: Set<string>;
     plan?: Extract<TranscriptItem, { type: "plan" }>;
     piStartup?: string;
     payloadThread?: string;
@@ -428,6 +445,8 @@ function buildTranscript(
         partial: true,
         items: [],
         tools: new Map(),
+        sent: new Map(),
+        errored: new Set(),
       };
       turns.set(turnId, turn);
     }
@@ -441,9 +460,20 @@ function buildTranscript(
       const started = Date.parse(str(event.startedAt));
       turn.startedAt = Number.isFinite(started) ? started : at;
       if (str(payload.source)) turn.source = str(payload.source);
-      turn.triggeringEventIds = Array.isArray(payload.triggeringEventIds)
-        ? payload.triggeringEventIds.flatMap((value) => eventId(value) ?? [])
-        : [];
+      turn.triggeringEventIds.push(
+        ...freshTurnTriggers(
+          turn.triggeringEventIds,
+          turnTriggerIds(payload.triggeringEventIds),
+        ),
+      );
+    } else if (kind === "turn_steered") {
+      // A message that joined this running turn.
+      turn.triggeringEventIds.push(
+        ...freshTurnTriggers(
+          turn.triggeringEventIds,
+          turnTriggerIds(payload.triggeringEventIds),
+        ),
+      );
     } else if (kind === "session_resolved") {
       if (str(payload.sessionId)) turn.sessionId = str(payload.sessionId);
       turn.newSession = payload.isNewSession === true;
@@ -576,8 +606,14 @@ function buildTranscript(
           if (str(update.title)) item.title = str(update.title);
           if (str(update.kind)) item.kind = str(update.kind);
           if (str(update.status)) item.status = str(update.status);
-          if (update.rawInput !== undefined)
+          if (update.rawInput !== undefined) {
             item.input = display(update.rawInput);
+            const text = str(object(update.rawInput)?.text);
+            if (text.trim()) turn.sent.set(callId, text);
+          }
+          // MCP application errors can arrive as completed calls.
+          if (object(update.rawOutput)?.isError === true)
+            turn.errored.add(callId);
           const { diffs, output } = toolContent(update);
           if (output) item.output = output;
           if (diffs.length) item.diffs = diffs;
@@ -650,12 +686,26 @@ function buildTranscript(
     turns: drafts.map((draft) => {
       const {
         tools: _tools,
+        sent,
+        errored,
         plan: _plan,
         piStartup: _piStartup,
         payloadThread,
         promptThread: prompt,
         ...turn
       } = draft;
+      // A Buzz message a tool posted reads as the agent's reply, as the local
+      // harnesses' transcripts show it. A failed, erroring or unfinished send
+      // stays a tool, with its error.
+      turn.items = turn.items.map((item) => {
+        const text = item.type === "tool" && sent.get(item.toolCallId);
+        return text &&
+          item.status === "completed" &&
+          !errored.has(item.toolCallId) &&
+          postsMessage(item.title)
+          ? { id: item.id, at: item.at, type: "message", text, posted: true }
+          : item;
+      });
       // Older harnesses omit threadRootEventId; the prompt context still names it.
       turn.threadRootId = payloadThread ?? prompt;
       return turn;

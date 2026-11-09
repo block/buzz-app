@@ -101,7 +101,8 @@ jobs:
   native:
     if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: ubuntu-x86-runners
     # A Cargo.lock change rebuilds most crates from a cold cache, and only a
     # finished main push saves a warm one, so leave room for that cold run.
     timeout-minutes: 30
@@ -279,7 +280,8 @@ jobs:
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
     needs: [browser_fixture]
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: ubuntu-x86-runners
     # Match package.json's Playwright version and pin immutable browser/OS layers.
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27

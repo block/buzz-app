@@ -20,15 +20,22 @@ the interface unless an available tool actually supports that action.
 On supported desktop hosts, a running local agent with voice support joins your
 connected Huddle when it is also a member of that Huddle's room. Membership of
 the parent conversation alone is insufficient. Several agents can participate.
-Your own active agents show “listening to you” in the Huddle. Remote participants
-see no listening badge: the agent’s own client enforces who it hears, and other
-clients cannot verify that. Each filters for audio from your connected devices
+Starting a Huddle in a one-to-one DM with your running voice-capable agent
+adds it to the Huddle room; joining an existing Huddle does not. You can also
+add agents through the Huddle's member controls. On the hosting computer, a
+seated agent starts at normal size, shrinks by 20% while you speak, and shows a
+rotating ring while it works (activity dots in the compact player). It returns
+to normal size while speaking, with the same pulse as people. This state is
+not shared with remote participants. The agent’s own client enforces who it
+hears. Each filters for audio from your connected devices
 and speaks to everyone. The current audio protocol can briefly misattribute delayed
 audio when a connection slot is reused; this is not a strict privacy guarantee.
 Other people or speakers near your microphones can also be heard. Simultaneous
 audio from your devices is mixed together.
-Voice work uses the same permissions as your text requests. Joining on another
-device does not seat an agent running here. Leaving closes its voice connection.
+Voice work uses the same permissions as your text requests. Joining your Codex agent’s DM huddle from mobile can activate that agent on
+this desktop. Keep Buzz and the Codex agent running here; the desktop microphone
+does not turn on. Other calls on another device do not seat an agent here.
+Leaving on every connected owner device closes the remote voice connection.
 If agent voice stops, the compact player and Huddle window show the reason;
 leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
@@ -79,9 +86,14 @@ mention anyone. Explicit agent watches on that room can still receive them.
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,
   with no **Join Community** confirmation. Other Builderlab deployments do not
-  offer it during setup. When the owner of a community with no channels yet
+  offer it during setup. Later, **Create community** in **Settings → Plugins →
+  Builderlab → Communities** opens the join for the new community at once; after its profile
+  step it opens and is listed in the community picker. When the owner of a community with no channels yet
   opens Messages, Buzz creates one open **#general**, marked as the starter
   channel for new members, and opens it.
+  The picker's **Create community** opens that form directly. If Builderlab is
+  signed out, sign in remains available in both management sections; a picker
+  creation resumes after sign-in.
   Existing community profiles are preserved and skip setup. A new profile needs a name; an avatar is optional. A returning account may restore
   its backed-up key where the build and account allow it. If the older Buzz app
   was used on this computer, a **Continue with your Buzz identity?** dialog
@@ -94,7 +106,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   **Add people** and after `@` in a message. The **private key**, shown as an
   `nsec`, lets someone act as that identity. Never ask anyone to paste a
   private key into a conversation or send it to you.
-- In native desktop builds, **Settings → Buzz → Identity → Authorize external identity** creates an
+- In native desktop builds, **Settings → Buzz → Security → Authorize external identity** creates an
   ownership proof for an application such as Nexus that holds its own agent key.
   Enter that application's public key in hex, select **Authorize identity**,
   review the exact identity and permission in the confirmation, then select
@@ -111,9 +123,37 @@ mention anyone. Explicit agent watches on that room can still receive them.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.
+- **Settings → Plugins → Builderlab** shows previews of your hosted communities
+  and remote agents. Open either card to manage it, then use the left caret beside the title to return. Both lists load when the overview opens and refresh
+  when the window regains focus; opening a section preserves its current draft.
+  Hosted communities have Active/Archived filters, name/address search and row
+  menus for copying addresses and available management actions. **Create**
+  opens the address form; quota and identity checks still govern creation.
+  After **Copy address**, a hint appears above the row’s **…** menu without moving
+  the list; Escape dismisses it. The **Refresh** icon beside search checks
+  communities again, including after a failed read. Automatic
+  refresh keeps the current list usable and waits while a community dialog is open.
+  A green check beside Refresh means the Builderlab account is linked to this
+  device’s Buzz identity; hover or focus it for details. The creation dialog
+  focuses the address field and shows quota usage beside its actions. Archived
+  communities still count toward quota until deletion cleanup finishes.
+  Remote agents show their model and setup state.
+  The title includes the count. Each row’s **…** menu offers **Copy key**.
+  Saved agents show their community avatar and open their **Agents** pane when
+  clicked, with **View Agent** also available in the menu. **In Agents** marks
+  these available panes. **Configured** means Builderlab reports Active with a valid
+  model selection; it does not indicate live presence.
+  Creation dates and full keys are not displayed in this compact list.
+  Load errors include **Try again**.
+  Use **Open Agents** from the empty list to create one.
+  In builds using a shared sign-in, Builderlab's account notice names the provider;
+  **Manage account** opens Identity, where that sign-in is managed.
 - Some organization builds ask you to sign in to your organization when Buzz
   opens, and again when that sign-in ends. Before it ends, a notice offers
   **Sign in again** so Buzz stays open. Finish in the browser and Buzz opens.
+  The callback tab attempts to close after three seconds. On macOS, Buzz can
+  regain focus after verification while the sign-in browser is still foreground.
+  If the tab stays open, you can close it yourself.
   **Not now** opens Buzz anyway, but that organization's communities stay
   unavailable until you sign in. Sign-in, sign-out and when the current
   sign-in ends also live under
@@ -141,7 +181,15 @@ mention anyone. Explicit agent watches on that room can still receive them.
   offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
-  more than one community.
+  more than one community. To add another, choose **Join a community** in the
+  community picker and paste an invite link or type an address such as
+  `relay.example.com`; an invite link fills in its invite code. Paste the whole
+  link there; a code on its own is refused.
+- Community owners and admins invite people with **Invite members** in the
+  community's **Membership** settings (also reached from **Invite to community**
+  in the community picker's right-click menu). The dialog creates an invite
+  link with an expiry and use limit to copy, or adds someone directly by npub.
+  The desktop app also shows that link as a QR code to scan with a phone.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
@@ -193,11 +241,16 @@ that agent in Buzz; they do not notify the external app through this connection.
 
 ## Pair a command-line tool
 
-Run `buzz auth desktop pair` in a terminal while Buzz is open. Buzz asks
-whether to let that tool use Buzz as you; select **Allow** only when you ran the
-command. The tool can then post, read and use your sign-in through Buzz, and
-your key stays in Buzz. It can't edit your profile, delete, or manage members,
-agents or moderation: do those in Buzz.
+Run `buzz --relay <community address> auth desktop pair` in a terminal while
+Buzz is open, using the **Community address** shown in that community's
+**Settings → Local settings**. Buzz asks whether to let that tool use Buzz as
+you; select **Allow** only when you ran the command. Buzz pairs only for a
+community you've joined in Buzz, and otherwise tells the tool so without
+asking. Until you've finished signing in or setting up Buzz, it refuses
+pairing; finish, then run the command again. Once allowed, the tool can post,
+read and use your sign-in through Buzz, and your key stays in Buzz. It can't
+edit your profile, delete, or manage members, agents or moderation: do those
+in Buzz.
 **Settings → Security** lists paired tools. **Revoke** stops one. Signing out
 revokes all of them, and a pairing unused for 30 days expires.
 
@@ -262,9 +315,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
 - **Forward message** in a message's hover actions or message menu sends its link
-  to one person in the current community, with an optional note. Buzz opens or
-  creates the direct message for you. The link previews the original message;
-  the recipient still needs access to its conversation. Forwarding is unavailable
+  to one person in the current community, with an optional note. Buzz sends it
+  in your direct message with them, starting one if needed, and you stay where
+  you are; select the confirmation notice while it's showing to open the
+  forwarded message in that DM. The link previews the original message; the
+  recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered
@@ -293,6 +348,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   notice ends this recovery option.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
+  New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
+  which archives the chat after a set time without activity. To start every new
+  chat temporary, open the community's **Settings → Local settings** and choose
+  a lifetime under **New Solo chats**: Ongoing, or Temporary after 1 day, 7
+  days or 2 weeks. It saves at once and applies on this device to this
+  community and account only. It covers chats started with **New chat**; a
+  chat's own settings can still choose another lifetime, and existing chats do
+  not change.
 - **Team** contains community channels and their threads. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
@@ -304,7 +367,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
   until you add one or turn worktree mode off.
-- **Activity** (the bell in the sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
+- **Activity** (the bell in the app dock) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
@@ -325,7 +388,17 @@ revokes all of them, and a pairing unused for 30 days expires.
   later. It may also be absent when unread evidence is incomplete, or when read
   intent or the read evidence needed to locate the boundary changes before it is
   established.
-- **Communities** have their own channels, people, and agents. Switching
+- **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
+  dot and the thread dot. Switching away from Buzz pauses this: new messages
+  can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked
+  read: unread threads keep their dots in the conversation and in Activity →
+  Threads, and **New messages** still marks where you left off. A mention, DM or
+  reply to you that arrives after you leave lights the row again, as does any
+  newer message; **Mark as unread** still shows on it. On another device, rows
+  with unread mentions, DMs or replies to you light again until you read them.
+- **Communities** have their own channels, people, and agents. Switch with
+  the community switcher at the bottom of the dock; in **Personal space**,
+  Messages offers **Choose a community**, which opens it. Switching
   communities changes the available context. A channel reopens where you
   stopped reading, or at the latest message once you had caught up. You and
   the person asking may have different channel access. A link alone never
@@ -333,6 +406,22 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Offline**: when Buzz can't reach a community, it shows the conversations
   saved on this device. Once Buzz reconnects, you can load messages older than
   those, and the top of the conversation says so.
+- **Losing the connection**: Buzz keeps retrying on its own and says nothing
+  for the first 30 seconds. If it still can't connect, a notice at the bottom
+  right says "Buzz is having trouble connecting" until it reconnects. There is
+  nothing to press.
+- **Refused by a community**: if a community refuses your account, one
+  notice at the bottom right says so on every page, with what fixes it. It
+  doesn't retry on its own.
+  - **Sign in to open this community**: your sign-in ended or expired.
+    **Sign in with** that community's server. If Buzz still thinks you're
+    signed in, **Sign in again** signs you out of that server and back in.
+  - **This community needs a sign-in Buzz doesn't support yet**: this build
+    can't sign in to that community. Ask its admin which Buzz version or
+    server to use.
+  - **You don't have access to this community**: when you're signed in through
+    the community's server, it names the account it refused and offers
+    **Switch account**. **Check again** once an admin has added you.
 - **Finding channels**: search's **Channels** tab lists the community's open
   channels you can join, with their member counts; typing also matches channels
   you're in. Opening an unjoined channel shows a preview with **Join**. Private
@@ -349,6 +438,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   name, or **Open in channel** in the thread tab's menu, to open the thread in
   Channels beside its original message, which the channel history shows and
   highlights.
+- **Sidebar activity**: rest the pointer on a sidebar row to list its unread
+  mentions of you and its unread threads, mentions first. Open one or mark it
+  read from the list; just looking marks nothing read.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.
@@ -404,6 +496,10 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
   if a lookup takes more than a second. You can open results already shown
   while the rest of the search finishes.
+- **Search while offline**: while a community is offline or still connecting,
+  search finds and opens the conversations saved on this device, and a line
+  under the results says so. Messages, people and open channels are searched
+  once it connects; while it is offline, **Retry connection** tries again.
 - **Join** in a View only chat or channel adds you as a viewer, with a sidebar
   entry and normal unread tracking. Notifications follow your existing settings
   and mention/thread rules. You appear in People as **Viewing only**; you still
@@ -644,6 +740,13 @@ available rather than silently discarding it.
 
 ## Choosing and customizing agents
 
+- Open an agent’s **Memory** tab and expand a memory to read it with Markdown
+  formatting, including headings, lists, code, tables, and line breaks. Memory
+  images stay as text rather than loading remote content. **Copy full body** in
+  a memory’s context menu copies its original Markdown.
+  Buzz links use the app’s link labels and previews and open their destination
+  in the same community. Links inside code stay as text.
+
 - Buzz supports different agent types, including Claude, Codex, Goose, and Pi.
   A **harness** is the software that runs an agent; a **model** is the AI it
   uses. Available types and models depend on the platform, active plugins, and
@@ -676,9 +779,16 @@ available rather than silently discarding it.
   then choose a supported **Thinking** level. If Builderlab recommends a model
   and thinking level, both start selected; change either to choose your own. Both
   choices are required; changing the model clears the thinking choice.
+  A bolt after a model's name means Builderlab serves it on faster hardware, so
+  it replies sooner. When only some models are fast, the menu also lists them
+  in a **Fast** section at the top, above the families.
   Instructions are optional. **Create agent** stays disabled until its name and
   required choices are complete; Builderlab also waits for sign-in and its model
   catalog.
+  A Builderlab agent runs on your Builderlab account; the creation form links
+  that Builderlab server's site, where the account's usage and billing are.
+  The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
+  also links to **See usage and billing** on that site.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab
@@ -720,7 +830,18 @@ available rather than silently discarding it.
   where it runs; received tool details take precedence.
   Available model, effort and session controls keep their gauge beside Send.
   Activity keeps its transcript and feed guidance without a separate workspace
-  note.
+  note. Opened from a conversation, it shows that conversation's turns;
+  **Show all conversations** lists the agent's other turns too. It shows only
+  turns captured while Buzz has been open.
+- **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar
+  shows the green Online badge to everyone in the community while its owner
+  has set it up on a remote runtime and has not deleted it. The badge means the
+  agent is configured to run remotely and wakes when mentioned; it does not
+  prove the runtime is up right now, and a working indicator still shows actual
+  work. Deleting the agent clears the badge for other viewers within a few
+  minutes. Agents that run on someone's computer, and people, keep their badge
+  from recent Buzz activity, so a local agent goes grey when its owner's Buzz
+  is closed.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you
@@ -749,7 +870,8 @@ available rather than silently discarding it.
   sidebar omits the duplicate Bestie row. Bestie uses the same conversation tabs as
   Messages: threads open beside the chat (or in the main pane, following your
   thread placement setting), and can be moved, renamed, or closed. Collapsing
-  the side pane keeps its open threads and reply drafts.
+  the side pane keeps its open threads and reply drafts. Its header includes the
+  same DM controls and actions, including Huddle when supported and enabled.
   A verified existing DM stays available if
   agent discovery fails. If a replacement save fails, the last confirmed Bestie
   remains selected and the confirmation offers another attempt. Being the bestie
@@ -769,9 +891,21 @@ available rather than silently discarding it.
   depend on the type. Do not assume a provider is configured or signed in.
   Builderlab shows **Unavailable for this account** when signed in without
   remote-agent access. Manage its account in **Settings → Builderlab**.
+  Builderlab permissions are re-read at most once a minute while the app uses
+  them, so a newly granted or removed permission applies without signing in
+  again; a failed check keeps the previous permissions.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there (or when creating a Claude agent), once for every Claude agent. Buzz
-  keeps it in the system's secure credential store (Keychain on macOS) and
+  there, once for every Claude agent. When creating a Claude agent or editing
+  one that runs on this computer, click **Add key** beside **Harness** to open
+  **Set up Claude**. Builds with interactive authentication show **Sign in**
+  instead. Selecting Claude does not open setup automatically; closing setup
+  keeps Claude selected. An interactive sign-in continues if you navigate Back;
+  returning to creation restores its pending controls with **Cancel**, without
+  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
+  **Model**, **Thinking**, and agent creation wait until credentials are saved.
+  Agents on execution targets use that target's credentials, not a key on this
+  computer. Buzz keeps the API key in the system's secure credential store
+  (Keychain on macOS) and
   gives it to every Claude process, security reviews included. Commands a
   Claude agent runs inherit it, so they can read the key. Until a key is
   saved, Claude agents don't answer and Claude reviews fail closed.
@@ -847,17 +981,25 @@ available rather than silently discarding it.
   sessions**, which searches goose's local history and can take a while. Watch
   and timer turns from before this version aren't listed, and **Search older
   sessions** doesn't find them, because it only matches channel conversations.
-- Failed requests show **Couldn’t finish**, cancelled requests **Stopped**, and
-  unconfirmed outcomes **Status unavailable**. Choose **Details** for status
-  information. For your remote agents, Buzz checks again automatically when no
-  final result is available yet, or after a temporary lookup failure, while you
-  stay signed in and connected. Requests sent to several agents keep each
-  agent's stopped outcome visible alongside another agent's failure.
-- Automatic failure replies appear below their request as a compact status line;
-  **Details** expands the explanation inline. Failures of channel requests also
-  appear in the channel.
-- For agents running on this device, **Details** can offer **Retry** to ask again
-  and **Dismiss** to hide the failure.
+- Confirmed failures keep **Couldn’t finish** visible after the working indicator
+  stops, even when the agent sends no reply. Cancelled requests show **Stopped**.
+  There is no viewing timer. Outcomes supplied only by live activity may be lost
+  after restarting Buzz; signed failure messages remain in conversation history.
+  An uncertain status does not create an error balloon.
+  Expand the summary to read the explanation and recorded updates, view Activity,
+  or use supported recovery actions. The expanded outcome sits below **Collapse**;
+  collapsing keeps the outcome visible.
+  For your remote agents, Buzz checks again automatically when no final result is
+  available yet, or after a temporary lookup failure, while you stay signed in
+  and connected. Requests sent to several agents keep each agent's outcome visible.
+- Automatic failure explanations share the related activity history when linked
+  to the same request. Otherwise they have their own expandable outcome bubble.
+  Ordinary replies and partial results remain visible. Failures of channel
+  requests also appear in the channel.
+- For agents running on this device, expanded outcomes can offer **Retry** to ask
+  again and **Dismiss** to hide the outcome for the current app session. Dismiss
+  does not delete a recorded failure message; it can show the outcome again after
+  restarting Buzz.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,
   vibe level, where new threads open, Solo follow-up behavior, automatic
@@ -1004,9 +1146,10 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
 
-On macOS, debug builds can use a trusted local credential helper for human restore
-and agent creation, restore, and deletion. See [local helper setup](identity.md#local-restore-helper-on-macos).
-Release builds ignore this optional helper.
+On macOS, `just desktop me` debug builds keep their Keychain items through a local
+credential helper, so Keychain asks once per item rather than after each rebuild.
+See [local credential helper](identity.md#local-credential-helper-on-macos).
+Release builds ignore it.
 
 ### Builderlab in development
 

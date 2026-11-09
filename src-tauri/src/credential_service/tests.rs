@@ -153,6 +153,8 @@ pub(crate) fn service_over(
         Arc::new(move |notice| notices.lock().unwrap().push(notice)),
     );
     *service.0.pairings.communities.lock().unwrap() = Some(vec![RELAY.into()]);
+    // The page's prompt is listening, as it is once the app shell shows.
+    service.0.pairings.prompt(true);
     service
 }
 

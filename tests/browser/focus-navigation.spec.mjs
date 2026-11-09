@@ -322,7 +322,12 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
     await expect(search).toBeFocused();
     await expect(alpha).toHaveText("Alpha draft");
   }
-  // Repeat with a notification above the competing dock.
+  // Repeat with a notification above the competing dock. Toasts now rise above
+  // docked composers; pin the stack to its base offset so a covered composer's
+  // focus recovery stays exercised.
+  await page.addStyleTag({
+    content: ":root { --buzz-toast-clearance: 0px !important; }",
+  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await composer.fill("Toast draft");
   await composer.evaluate((input) => {

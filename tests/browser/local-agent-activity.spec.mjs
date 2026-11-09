@@ -2,6 +2,7 @@ import { finalizeEvent } from "nostr-tools";
 import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 const localAgentKey =
   "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -62,7 +63,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   const second = send("Second local request");
   const secondRow = thread.locator(`[data-message-id="${second.id}"]`);
   const waiting = secondRow.getByRole("button", {
-    name: /^View agent activity:/,
+    name: /^(View agent activity|Show activity history|Collapse activity history):/,
   });
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Received · waiting to start/,
@@ -117,7 +118,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
   await expect(
     secondRow.getByText("Couldn’t finish", { exact: true }),
   ).toBeVisible();
-  await expect(waiting).toHaveText("Details");
+  await expect(waiting).toHaveText("Couldn’t finish");
   await expect(liveStep).toHaveCount(0);
   await expect(waiting).toHaveAccessibleName(
     /Local tester, Fixture provider unavailable/,
@@ -130,19 +131,16 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
       await page.setViewportSize({ width, height: 950 });
       await waiting.focus();
       await page.keyboard.press("Enter");
-      const popup = page.getByRole("dialog", {
-        name: "Agent activity",
-        exact: true,
-      });
+      const popup = secondRow.locator("[data-activity-details]");
       await expect(popup).toContainText("Fixture provider unavailable");
       await expect(popup).not.toHaveAttribute("data-starting-style", "");
       const box = await popup.boundingBox();
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
-      // Errors stay on one line; the full reason remains in the accessible name.
+      // The full explanation stays readable inside the expanded history.
       await expect(popup.getByText("Fixture provider unavailable")).toHaveCSS(
         "white-space",
-        "nowrap",
+        "normal",
       );
       const dismiss = await popup
         .getByRole("button", { name: /^Dismiss error from / })
@@ -156,7 +154,7 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
       await page.screenshot({
         path: testInfo.outputPath(`local-activity-${colorScheme}-${width}.png`),
       });
-      await page.keyboard.press("Escape");
+      await waiting.click();
       await expect(popup).toBeHidden();
       await expect(waiting).toBeFocused();
     }
@@ -321,7 +319,12 @@ test("Stop in a message's activity ends its local work quietly", async ({
   await expect(
     page.getByText("Stopped Local tester", { exact: true }),
   ).toBeVisible();
-  const note = row.getByText("Local tester · Stopped", { exact: true });
+  await expect(
+    row.getByRole("button", {
+      name: /activity history: Local tester, Stopped/,
+    }),
+  ).toBeFocused();
+  const note = row.getByText("Stopped", { exact: true });
   await expect(note).toBeVisible();
   await row.screenshot({
     path: testInfo.outputPath("local-activity-stopped.png"),
@@ -430,8 +433,12 @@ test("Stop in a channel response activity stops its work", async ({
   await expect(
     page.getByRole("button", { name: /^Collapse activity history:/ }),
   ).toBeFocused();
-  const note = row.locator("[data-activity-stopped]");
-  await expect(note).toContainText("Local tester · Stopped");
+  // These legacy updates have no explicit reply IDs, so they cannot claim
+  // this request's terminal outcome. It stays on the request itself.
+  const note = row.getByRole("button", {
+    name: /activity history: Local tester, Stopped/,
+  });
+  await expect(note).toContainText("Stopped");
   const [bounds, noted] = await Promise.all([
     row.boundingBox(),
     note.boundingBox(),
@@ -635,14 +642,7 @@ for (const focusOn of ["bubble", "popup", "composer"]) {
     });
     await expect(bubble).toBeVisible();
     // Finish entrance and hold only the exit so the intermediate state is testable.
-    await message.locator("section").evaluate(async (element) => {
-      await Promise.all(
-        element
-          .getAnimations({ subtree: true })
-          .filter((a) => a.effect.getTiming().iterations !== Infinity)
-          .map((a) => a.finished),
-      );
-    });
+    await animationsSettled(message.locator("section"), { subtree: true });
     // Hold the actual exit animation before its first frame, rather than racing
     // a delayed animationstart event on a busy runner. Release in finally.
     const exitGate = await page.addStyleTag({

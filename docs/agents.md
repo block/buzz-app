@@ -36,8 +36,9 @@ and reported as migration errors.
 
 The shared tools offer `agent_types` to list installed local runtimes and
 `agent_create` to submit an unsaved creation draft using a listed type key and a display name,
-optionally with a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
-the usual Create agent form, may edit the name, runtime and settings, and creates
+optionally with instructions for types that take them and a picture. It returns a request ID and `saved: false`; no identity exists yet. The owner reviews
+the usual Create agent form, filled in with any requested instructions and picture, may edit
+the name, runtime and settings, and creates
 only by submitting it. Closing the form discards the request. Requests are local,
 bounded to 16 and do not survive reload or a change of signed-in owner.
 Approval binds the identity to the requesting agent's owner and community, even
@@ -1343,6 +1344,16 @@ failure, and `cancelled` to stopped without identifying who cancelled. Exact
 trigger IDs and outcomes survive raw-record trimming. Losing a lifecycle turn
 makes aggregate request completion uncertain.
 
+A `turn_started` frame's `triggeringEventIds` names the messages a turn started
+for, and a second start under the same turn ID makes the turn ambiguous. A
+`turn_steered` frame names messages the agent added to its running turn, as a
+remote agent's safe-point steer does. They join that turn's triggers, so they
+show working and end with it; their activity reads from the turn's start. A
+start or steer that arrives late, after the turn ended or after a newer frame,
+still records membership without reviving or refreshing the turn. Every list is
+admitted whole, up to 64 messages per turn, and the lifecycle's retained
+membership decides which messages a turn's activity belongs to.
+
 With Builderlab sign-in, stale activity or reconnect triggers an owner-only
 `/v3/beekeeper/get-agent-turn-status` read for retained exact tasks. Reads batch
 up to 64 tasks per agent/session/channel using existing bounded retries. Missing
@@ -1398,6 +1409,20 @@ the exchange or received the helper’s last update. It never overrides availabl
 pending, failed, or uncertain lifecycle evidence. Durable cross-host completion
 would require retained request/turn relationships and terminal events; the
 current live-only feed does not provide that guarantee.
+
+Outcomes use the same response frame and inline disclosure as recorded history.
+Confirmed failure shows a danger warning and “Couldn’t finish”; stopped requests
+use neutral “Stopped”. Passive uncertainty creates no outcome balloon and remains
+available internally for status recovery. A signed execution-failure message still
+proves failure when telemetry is uncertain. Confirmed outcomes remain after live
+progress retires, with no viewing timeout or replacement completion message.
+The expanded outcome sits below Collapse, above the details. Supported local Retry/Dismiss
+and Activity navigation live inside the disclosure; remote retry is not inferred.
+An unedited, attachmentless signed execution-failure reply immediately following
+its author's coordination run folds into that history only with an explicit
+reply link to the same request, channel, thread level and day. Its original
+message and anchor remain readable after reload. Otherwise it has a standalone
+outcome disclosure. Ordinary replies and partial results retain their own rows.
 
 ### Try with an existing owner account
 
@@ -1526,8 +1551,12 @@ URLs, never file URLs or SVG data.
 The inventory joins exact public keys, not equal names; explicit profile references
 use the publisher's slug mapping only when local definitions do not collide. Local
 names and artwork win for matching keys. A failed source leaves the other source
-visible with a warning. Reads are lazy (once per demand or Refresh), with no polling
-or relay-directory startup scan.
+visible; the mention menu and agent picker report the failure with Retry, and the
+composer shows no standing notice. Reads are lazy (once per demand or Refresh), with
+no polling or relay-directory startup scan. A connection's first establishment
+rereads retained inventory that failed, wholly or partly; a read already in flight
+is reused and reread once if it fails. Each failed source's reason is logged as a
+console warning.
 Relay inventory uses foreground read capacity because Solo needs complete
 inventory to restore its recipients; it keeps the normal ten-second deadline.
 

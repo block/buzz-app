@@ -20,6 +20,7 @@ import {
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
+import { createHostedAgents, withHostedAgents } from "../presence/hosted";
 import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
@@ -977,7 +978,7 @@ export function createRelaySession(
         timers.add(timer);
       });
   }
-  const presence = createPresence(
+  const observedPresence = createPresence(
     transport,
     options.presenceActivity,
     (status, signal) =>
@@ -997,6 +998,18 @@ export function createRelaySession(
             traffic?.syncVerifiedProfiles?.(filter, sink),
         }
       : undefined,
+  );
+  const presence = withHostedAgents(
+    observedPresence,
+    createHostedAgents({
+      owner: (pubkey) => profiles.queries.owner?.(pubkey),
+      subscribeOwners: profiles.queries.subscribe,
+      limited: observedPresence.limited,
+      subscribeSelection: observedPresence.subscribeSelection,
+      activity: options.presenceActivity,
+      read: (filters, signal) => readVerified(filters, { signal }, false),
+      notify,
+    }),
   );
   const emoji = createEmojiDirectory(
     verified,

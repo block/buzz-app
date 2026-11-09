@@ -19,6 +19,7 @@ import {
 } from "../../features/channel-navigation/routes";
 
 import { fixture, owners, id, viewer, scope } from "./sidebar-testing";
+import { federatedFixture } from "../../features/federated-identity/testing";
 import type { ChannelDetails } from "../../features/relay/channel-details-protocol";
 import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { PrimarySidebar } from "./PrimarySidebar";
@@ -1003,6 +1004,48 @@ it("collapsing the contributed Solo section in All hides its ordinary chats", as
   }
 });
 
+// A refused community gets one notice in the toast stack on every page, with
+// what fixes it. The sidebar's sign-in prompt and Try again would repeat it.
+it("moves a refusal's recovery from the sidebar to its one notice", async () => {
+  const h = federatedFixture();
+  const f = fixture(
+    true,
+    false,
+    undefined,
+    undefined,
+    0,
+    undefined,
+    undefined,
+    {
+      federatedIdentity: h.service,
+    },
+  );
+  const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
+  // A connection failure with native's sign-in error asks for sign-in here.
+  f.connection({ status: "error", error: "Federated sign-in is required" });
+  expect(
+    within(sidebar()).getByRole("button", {
+      name: "Sign in with builderlab.example",
+    }),
+  ).toBeVisible();
+  f.connection({ denied: true, refusal: "sign-in" });
+  const notice = await screen.findByRole("dialog", {
+    name: "Sign in to open this community",
+  });
+  expect(
+    within(notice).getByRole("button", {
+      name: "Sign in with builderlab.example",
+    }),
+  ).toBeVisible();
+  expect(
+    within(notice).queryByRole("button", { name: "Try again" }),
+  ).toBeNull();
+  expect(
+    within(sidebar()).queryByRole("button", { name: /Sign in|Try again/ }),
+  ).toBeNull();
+  expect(within(sidebar()).queryByText(/sign-in/)).toBeNull();
+});
+
 it("shows Try again beside a settled failure, and Connecting while the connection retries", async () => {
   const f = fixture(true);
   const retry = vi.spyOn(f.relay, "retry");
@@ -1015,19 +1058,24 @@ it("shows Try again beside a settled failure, and Connecting while the connectio
     .setup()
     .click(within(sidebar()).getByRole("button", { name: "Try again" }));
   expect(retry).toHaveBeenCalledOnce();
-  // A refusal is about access, not the connection.
+  // A refusal is about access, not the connection. Its notice reports it on
+  // every page; the sidebar neither repeats it nor offers Try again.
   f.connection({
     status: "error",
     error: "ReadError: Relay read failed (403)",
     denied: true,
   });
+  const notice = await screen.findByRole("dialog", {
+    name: "You don’t have access to this community",
+  });
   expect(
-    within(sidebar()).getByText("You don’t have access to this community."),
+    within(notice).getByRole("button", { name: "Check again" }),
   ).toBeVisible();
   expect(within(sidebar()).queryByText("Couldn’t load channels.")).toBeNull();
+  expect(within(sidebar()).queryByText(/have access/)).toBeNull();
   expect(
-    within(sidebar()).getByRole("button", { name: "Try again" }),
-  ).toBeVisible();
+    within(sidebar()).queryByRole("button", { name: "Try again" }),
+  ).toBeNull();
   for (const working of [
     { status: "connecting" },
     { status: "error", error, retrying: true },

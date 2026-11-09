@@ -1,3 +1,4 @@
+import { finalizeEvent, generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -139,6 +140,27 @@ test.describe("thread activity", () => {
     await open(page, app);
     const section = page.locator('[data-sidebar-section="starred"]');
     const alpha = section.locator('button[data-channel-id="alpha"]');
+    // Opening Alpha quieted its row; move to Beta, then a later reply in a
+    // followed thread lights it again.
+    await page.locator('button[data-channel-id="beta"]').first().click();
+    await expect(alpha.locator("[data-channel-activity]")).toHaveCount(0);
+    const root = app.histories.get("primary/alpha").at(-2);
+    app.relay.publish(
+      "primary",
+      finalizeEvent(
+        {
+          kind: 9,
+          created_at: Math.floor(Date.now() / 1000),
+          content: "Later broadcast reply",
+          tags: [
+            ["h", "alpha"],
+            ["e", root.id, "", "reply"],
+            ["broadcast", "1"],
+          ],
+        },
+        generateSecretKey(),
+      ),
+    );
     await expect(alpha.locator("[data-channel-activity]")).toHaveCount(1);
     // The timeline's public read operation clears top-level backlog, preserving
     // replies until their own thread is read. This is real engine state.

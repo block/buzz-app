@@ -221,6 +221,66 @@ it("shows automatic failure captions beside their request while ordinary replies
   expect(screen.getByText("child")).toBeVisible();
   expect(screen.getByText("failure")).toBeVisible();
 });
+it.each(["first update", "second update", "failure"])(
+  "preserves activity grouping and reachable replies when someone replies to %s",
+  (parent) => {
+    const h = setup();
+    const agent = "b".repeat(64);
+    const update = (id: string): ChannelMessage => ({
+      ...row(id, "root"),
+      threadRootId: "root",
+      authorId: agent,
+      audience: "agents",
+    });
+    const failure: ChannelMessage = {
+      ...row("failure", "root"),
+      threadRootId: "root",
+      authorId: agent,
+      agentEnvelope: true,
+      notice: "execution-failure",
+    };
+    const history = [update("first update"), update("second update"), failure];
+    h.update(history);
+    const disclosure = () =>
+      screen.queryByRole("button", { name: /^Show activity history:/ });
+    expect(disclosure()).toBeVisible();
+    expect(screen.queryByText("first update")).not.toBeInTheDocument();
+    expect(screen.queryByText("failure")).not.toBeInTheDocument();
+
+    h.update([
+      ...history,
+      { ...row("follow-up", parent), threadRootId: "root" },
+    ]);
+    if (parent === "failure") {
+      expect(disclosure()).toBeVisible();
+      expect(screen.queryByText("first update")).not.toBeInTheDocument();
+      expect(screen.getByText("failure")).toBeVisible();
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Show activity history:/ }),
+      );
+    } else {
+      // Coordination rows with children must still expose their own branch.
+      expect(disclosure()).not.toBeInTheDocument();
+    }
+    expect(screen.getAllByText("failure")).toHaveLength(1);
+    expect(screen.getByText("first update")).toBeVisible();
+    expect(screen.getByText("second update")).toBeVisible();
+    expect(screen.queryByText("follow-up")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
+    expect(screen.getByText("follow-up")).toBeVisible();
+    if (parent === "failure") {
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Collapse activity history:/ }),
+      );
+      expect(screen.getByText("failure")).toBeVisible();
+      expect(screen.getByText("follow-up")).toBeVisible();
+      expect(screen.queryByText("first update")).not.toBeInTheDocument();
+    }
+    h.update(history);
+    expect(disclosure()).toBeVisible();
+    expect(screen.queryByText("failure")).not.toBeInTheDocument();
+  },
+);
 it("moves a follow-up outcome to its latest reply within an expanded branch", () => {
   const h = setup();
   const agent = "b".repeat(64);

@@ -102,6 +102,9 @@
     padding: var(--space-control-inset);
     resize: vertical;
   }
+  .buzz-input[data-text-size="large"] {
+    @apply text-body-lg;
+  }
   /* Agent instructions intentionally use one outlined boundary and no inset fill. */
   .buzz-textarea:where([data-appearance="outlined"]) {
     --border: var(--border-standard);
@@ -477,6 +480,15 @@
     border-radius: 0;
     padding-inline: 0;
     background: transparent;
+  }
+  .buzz-input-group[data-wrap] {
+    flex-wrap: wrap;
+    padding-block: var(--space-2);
+  }
+  .buzz-input-group[data-wrap] > .buzz-input {
+    flex-basis: min(12ch, 100%);
+    min-height: 1lh;
+    padding-block: 0;
   }
   .buzz-input-leading {
     display: flex;

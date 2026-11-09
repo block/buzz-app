@@ -568,6 +568,8 @@ async function markRead(h: ReturnType<typeof fixture>, channelId: string) {
     for (const item of items)
       if (item.target.kind === "channel")
         await h.session.unread.prepareChannelRead(channelId)();
+      else if (item.timeline)
+        await h.session.unread.markTimelineRead(channelId, item.messageIds);
       else
         for (const step of item.readThrough)
           await h.session.unread.markThrough(step.target, step.messageId);
@@ -580,7 +582,7 @@ it("previews recent conversations and opens a row directly", async () => {
   render(previewAt(h, close));
   await waitFor(() => expect(previewRows()).toHaveLength(3));
   expect(
-    screen.getByText("1 mention · 1 thread · 1 DM unread"),
+    screen.getByText("3 unread · 1 mention · 1 thread · 1 DM"),
   ).toBeInTheDocument();
 
   // The newest #Design row opens at its exact message, in its thread when it has one.
@@ -619,7 +621,9 @@ it("keeps Unread only to the card and offers recent activity once caught up", as
   expect(screen.getByRole("switch", { name: "Unread only" })).not.toBeChecked();
   await markRead(h, "dm-room");
   await waitFor(() =>
-    expect(screen.getByText("1 mention · 1 thread unread")).toBeInTheDocument(),
+    expect(
+      screen.getByText("2 unread · 1 mention · 1 thread"),
+    ).toBeInTheDocument(),
   );
   const unreadOnly = () => screen.getByRole("switch", { name: "Unread only" });
   fireEvent.click(unreadOnly());
@@ -639,6 +643,37 @@ it("keeps Unread only to the card and offers recent activity once caught up", as
   fireEvent.click(screen.getByRole("button", { name: "Show recent activity" }));
   await waitFor(() => expect(previewRows()).toHaveLength(3));
   expect(unreadOnly()).not.toBeChecked();
+});
+
+it("leads the card's header with the total and counts a mention only while it is unread", async () => {
+  const h = fixture({ withSolo: true });
+  render(previewAt(h));
+  await waitFor(() => expect(previewRows()).toHaveLength(3));
+  expect(
+    screen.getByText("3 unread · 1 mention · 1 thread"),
+  ).toBeInTheDocument();
+  // A Solo chat's flat row has no kind, so only the total counts it.
+  await markRead(h, "room");
+  expect(await screen.findByText("1 unread")).toBeInTheDocument();
+
+  const reply = (content: string, at: number, tags: string[][] = []) => {
+    const event = message(h.alice, "room", content, at, [
+      ["e", h.root?.id ?? "", "", "reply"],
+      ...tags,
+    ]);
+    h.addEvent(event);
+    act(() => h.emit([event]));
+  };
+  reply("Can you check this?", 30, [["p", h.viewer.pubkey]]);
+  expect(await screen.findByText("2 unread · 1 mention")).toBeInTheDocument();
+
+  // A plain reply after the mention was read is thread activity, as Mentions
+  // with Unread only would list nothing.
+  await markRead(h, "room");
+  await markRead(h, "solo-room");
+  expect(await screen.findByText("Nothing unread")).toBeInTheDocument();
+  reply("Following up", 31);
+  expect(await screen.findByText("1 unread · 1 thread")).toBeInTheDocument();
 });
 
 it("shows the card's connection and read failures with their recovery", async () => {
@@ -778,6 +813,19 @@ it("retries the card's connection, activity and read-state failures", async () =
   expect(await screen.findByText("relay offline")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry connection" }));
   expect(h.retryConnection).toHaveBeenCalledOnce();
+  // A refusal is the community's, not the connection's: its notice on every
+  // page offers what fixes it, so Activity neither shows the relay's raw text
+  // nor a retry of the same request.
+  act(() =>
+    h.failConnection("restricted: authorization denied", { denied: true }),
+  );
+  expect(
+    await screen.findByText("You don’t have access to this community"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/restricted:/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry connection" }),
+  ).not.toBeInTheDocument();
 });
 
 function fixture(
@@ -785,6 +833,7 @@ function fixture(
     failRoster?: boolean;
     archivedChannel?: boolean;
     withDm?: boolean;
+    withSolo?: boolean;
     withSenders?: boolean;
     holdProfiles?: boolean;
     withWriter?: boolean;
@@ -916,6 +965,17 @@ function fixture(
             ["hidden"],
           ]),
           message(alice, "dm-room", "A direct reply", 23),
+        ]
+      : []),
+    ...(options.withSolo
+      ? [
+          roster(relayKey, "solo-room", [viewer.pubkey, alice.pubkey], 10),
+          metadata(relayKey, "solo-room", "Notes", 10, [
+            ["t", "stream"],
+            ["private"],
+            ["t", "buzz.solo"],
+          ]),
+          message(alice, "solo-room", "A Solo update", 23),
         ]
       : []),
     ...(options.withSenders
@@ -1394,8 +1454,14 @@ function fixture(
         : undefined;
       for (const listener of syncListeners) listener();
     },
-    failConnection(error: string) {
-      connection = { ...connection, status: "error", error, generation: 2 };
+    failConnection(error: string, refused?: Partial<RelaySnapshot>) {
+      connection = {
+        ...connection,
+        status: "error",
+        error,
+        generation: 2,
+        ...refused,
+      };
       for (const listener of subscribers) listener();
     },
   };

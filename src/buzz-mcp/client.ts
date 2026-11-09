@@ -238,6 +238,7 @@ export interface BuzzClient {
     input: Readonly<{
       type: string;
       name: string;
+      instructions?: string;
       /** Uploads the picture once the request is valid: its URL. */
       picture?: () => Promise<string>;
     }>,

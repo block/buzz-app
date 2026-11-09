@@ -146,6 +146,21 @@ hosted communities:
 }
 ```
 
+With the built-in server, a build also trusts a server for each Builderlab
+customer, named by the community's host: `buzz.{name}.builderlab.xyz` signs in
+at `https://{name}.builderlab.xyz/api/goose`, on demand, with no organization
+name. `{name}` is one DNS label. The server is added the first time one of its
+communities connects, with its own session saved under its own fingerprint, and
+listed (hosts only) so every later launch adds it again, even once none of its
+communities remain: its session stays in Settings, and deleting an agent still
+retires the agent's grant there. A full Buzz sign-out deletes the list. Its id
+is `bb-{name}`, as Builderlab names its deployments, so its descriptor matches
+one a build lists for the same deployment and a dev build finds the session
+that build saved. For names of 61 to 63 bytes, which would exceed the 64-byte
+id limit, it is the name's first 44 bytes and 16 hex digits of its SHA-256. A
+listed server that covers the host, or has the same id, wins: a distributor's build keeps at-launch sign-in and its organization name
+by listing its server. Builds without the built-in server have none of these.
+
 `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` adds servers to it. Unset, the build
 has the built-in server only. Empty, it has no sign-in servers. Otherwise it is
 a public JSON descriptor, or a JSON list of them, placed before the built-in

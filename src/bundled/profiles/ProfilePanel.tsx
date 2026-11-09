@@ -81,8 +81,11 @@ import type {
 } from "../../features/agents/service";
 import type { CommunityReader } from "../../features/communities/service";
 import { agentSections } from "../../features/agents/tabs";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { useAgentSettingsHost } from "../agents/AgentSettingsHost";
 import { conversationOpener } from "../agents/routes";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import type { NavigationScope } from "../../features/navigation/targets";
 import { avatarMedia } from "../../shared/avatar-source";
 import { writeClipboardText } from "../../shared/clipboard";
 
@@ -123,6 +126,7 @@ export function ProfilePanel({
   navigation,
   agents,
   communities,
+  linkRenderers,
   close,
 }: PanelProps & {
   relay: RelayData;
@@ -130,6 +134,7 @@ export function ProfilePanel({
   /** Agents show their type's tabs. */
   agents?: Agents;
   communities?: CommunityReader | undefined;
+  linkRenderers?: ConversationExtensions["links"] | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
@@ -180,6 +185,7 @@ export function ProfilePanel({
   )
     return (
       <OwnedAgentProfile
+        linkRenderers={linkRenderers}
         target={target}
         key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
         agents={agents}
@@ -189,6 +195,7 @@ export function ProfilePanel({
         pubkey={pubkey}
         relay={relay}
         session={connection.session}
+        scope={panelCommunity(connection.scope, connection.viewer)}
         navigation={navigation}
         context={context}
         openConversation={openConversation}
@@ -197,6 +204,7 @@ export function ProfilePanel({
     );
   return (
     <ProfileDetails
+      linkRenderers={linkRenderers}
       key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
       initialTranscript={initialTranscript}
@@ -215,6 +223,7 @@ export function ProfilePanel({
   );
 }
 function OwnedAgentProfile({
+  linkRenderers,
   target,
   agents,
   communities,
@@ -223,12 +232,14 @@ function OwnedAgentProfile({
   pubkey,
   relay,
   session,
+  scope,
   navigation,
   context,
   openConversation,
   close,
 }: {
   target: string;
+  linkRenderers: ConversationExtensions["links"] | undefined;
   agents: Agents;
   communities: CommunityReader | undefined;
   initialActivity: boolean;
@@ -236,6 +247,7 @@ function OwnedAgentProfile({
   pubkey: string;
   relay: RelayData;
   session: RelaySession;
+  scope: NavigationScope | undefined;
   navigation: Navigation | undefined;
   context: PanelProps["context"];
   openConversation: AgentViewProps["openConversation"];
@@ -250,7 +262,25 @@ function OwnedAgentProfile({
   if (leaving && !unsaved.dirty) setLeaving(undefined);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
-  const go = (link: string) => (context?.push ?? context?.open)?.(link);
+  const conversationTarget = (link: string) => {
+    const target = scope && buzzLinkTarget(link, scope);
+    return target?.kind === "conversation" ? target : undefined;
+  };
+  const go = (link: string) => {
+    const target = conversationTarget(link);
+    if (target && navigation) {
+      void navigation.open(target);
+      return true;
+    }
+    return (context?.push ?? context?.open)?.(link);
+  };
+  const openLink = (link: string) => {
+    if (!context?.canOpen(link) && !(navigation && conversationTarget(link)))
+      return false;
+    if (!unsaved.saving && !unsaved.dirty) return !!go(link);
+    if (!unsaved.saving) setLeaving(link);
+    return false;
+  };
   return (
     <AgentSaveState value={reportUnsaved}>
       <AgentDetails
@@ -279,20 +309,13 @@ function OwnedAgentProfile({
         types={types}
         channels={channels}
         memories={session.agentMemories}
+        memoryLinks={{ session, registry: linkRenderers, open: openLink }}
         onRemoved={close}
         initialActivity={initialActivity}
         initialTranscript={initialTranscript}
         close={close}
         openConversation={openConversation}
-        openLink={
-          context &&
-          ((link) => {
-            if (!context.canOpen(link)) return false;
-            if (!unsaved.saving && !unsaved.dirty) return !!go(link);
-            if (!unsaved.saving) setLeaving(link);
-            return false;
-          })
-        }
+        openLink={context && openLink}
         canOpenLink={context && ((link) => context.canOpen(link))}
         conversation={openedFrom(session, context)}
         messageAction={(variant) => (
@@ -325,6 +348,7 @@ function OwnedAgentProfile({
 }
 
 function ProfileDetails({
+  linkRenderers,
   initialTab,
   initialTranscript,
   agentHint,
@@ -340,6 +364,7 @@ function ProfileDetails({
   close,
 }: {
   agents: Agents | undefined;
+  linkRenderers: ConversationExtensions["links"] | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
   initialTranscript: TranscriptRequest | undefined;
@@ -408,6 +433,11 @@ function ProfileDetails({
           agent: settings.agent,
           type: settings.type,
           memories: session.agentMemories,
+          memoryLinks: {
+            session,
+            registry: linkRenderers,
+            open: (url) => !!context?.open(url),
+          },
           communities,
           conversation: openedFrom(session, context),
           initialTranscript,

@@ -19,7 +19,7 @@ pub mod managed;
 mod migrate_agent_flag;
 
 pub type Result<T> = std::result::Result<T, String>;
-const LIMIT: u64 = 8 * 1024 * 1024;
+pub const LIMIT: u64 = 8 * 1024 * 1024;
 const MAX_README_BYTES: usize = 256 * 1024;
 const MAX_ICON_BYTES: usize = 1024 * 1024;
 const MAX_ICON_DIMENSION: u32 = 4096;
@@ -88,6 +88,10 @@ pub struct HostGrants {
     /// Pathless temporary saves in host-selected private storage; no read access.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed_files: bool,
+    /// `requestBytes` may also read raster images from any public HTTPS
+    /// address, one hop at a time, with no cookies; never pages.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub public_images: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -613,6 +617,7 @@ impl ReloadSource {
 pub enum InstallSource {
     Folder(ReloadSource),
     Git(GitSource),
+    Url(UrlSource),
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -622,6 +627,13 @@ pub struct GitSource {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
+}
+/// A single plugin artifact downloaded over HTTPS and accepted only if its SHA-256 matches.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UrlSource {
+    pub url: String,
+    pub sha256: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1443,6 +1455,14 @@ fn prepare_artifact(directory: &Path) -> Result<Release> {
 pub fn release_manifest(directory: &Path) -> Result<Manifest> {
     prepare_artifact(directory)?.validate()
 }
+/// The single-file artifact a URL source serves, and its SHA-256: the exact bytes Buzz
+/// installs. A release signature is not part of it.
+pub fn pack_release(directory: &Path) -> Result<(Manifest, Vec<u8>, String)> {
+    let release = prepare_artifact(directory)?;
+    let manifest = release.validate()?;
+    let digest = hash(&release.bytes);
+    Ok((manifest, release.bytes, digest))
+}
 fn prepare_reload_artifact(source: &InstallSource) -> Result<Release> {
     let InstallSource::Folder(source) = source else {
         return Err("Plugin was not installed from a reloadable folder".into());
@@ -2230,6 +2250,21 @@ mod tests {
         );
         managed["host"]["managedFiles"] = serde_json::json!("true");
         assert!(serde_json::from_value::<Manifest>(managed).is_err());
+        assert!(!old.host.as_ref().unwrap().public_images);
+        let mut images = manifest.clone();
+        images["host"]["publicImages"] = serde_json::json!(false);
+        let parsed: Manifest = serde_json::from_value(images.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), manifest);
+        images["host"]["publicImages"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(images.clone()).unwrap();
+        assert!(parsed.host.as_ref().unwrap().public_images);
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), images);
+        assert_ne!(
+            artifact_from_text(&manifest.to_string(), "export const x = 1".into()).unwrap(),
+            artifact_from_text(&images.to_string(), "export const x = 1".into()).unwrap()
+        );
+        images["host"]["publicImages"] = serde_json::json!("true");
+        assert!(serde_json::from_value::<Manifest>(images).is_err());
         for limit in [1, 4096, MAX_HOST_COMMAND_OUTPUT_BYTES] {
             let mut valid = manifest.clone();
             valid["host"]["commands"][0]["maxOutputBytes"] = serde_json::json!(limit);

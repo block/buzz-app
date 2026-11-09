@@ -24,6 +24,7 @@ export type HuddleView = {
     picture: string | null;
     own: boolean;
     listening?: boolean;
+    thinking?: boolean;
     level: number;
   }[];
 };
@@ -174,6 +175,8 @@ export function createHuddleWindow(
           own: key === call.destination?.viewer,
           listening:
             call.phase === "connected" && !!call.listening?.includes(key),
+          thinking:
+            call.phase === "connected" && !!call.thinking?.includes(key),
           level: call.speakers?.[key] ?? 0,
         };
       }),

@@ -2,6 +2,7 @@ import { ActivityNavigationProvider } from "./ActivityNavigation";
 import { PageNavigation } from "./PageNavigation";
 import { navigationOwner, orderPages, pagePlacement } from "./presentation";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -22,9 +23,12 @@ import type { AccountActionsService } from "../../features/account-actions/servi
 import type { Communities } from "../../features/communities/service";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
-import type { InviteLink } from "../../features/communities/invite-link";
+import type { JoinRequest } from "../../features/communities/invite-intent";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { CommunityPicker } from "../../features/communities/CommunityPicker";
+import {
+  CommunityPicker,
+  OpenCommunitySwitcher,
+} from "../../features/communities/CommunityPicker";
 import { ProfileButton } from "./ProfileButton";
 import { CommunityShortcuts } from "./CommunityShortcuts";
 import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
@@ -97,7 +101,7 @@ function AppShellContent({
   workspaceRef?: Ref<HTMLDivElement>;
   sidebar?: (pages: ReactNode, creationAction: ReactNode) => ReactNode;
   communities: Communities;
-  invite?: (InviteLink & { requestId: number }) | undefined;
+  invite?: (JoinRequest & { requestId: number }) | undefined;
   onInviteClose?: ((requestId: number) => void) | undefined;
   settingsCards?: SettingsCards | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
@@ -174,6 +178,8 @@ function AppShellContent({
   const [creationContainer, setCreationContainer] =
     useState<HTMLDivElement | null>(null);
   const [creationOpen, setCreationOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const openSwitcher = useCallback(() => setSwitcherOpen(true), []);
   const connection = useRelayConnection(communities.relay);
   const sidebarScope = connection.scope ?? "disconnected";
   const owner = navigationOwner(pages, selected);
@@ -371,6 +377,8 @@ function AppShellContent({
               federatedIdentity={federatedIdentity}
               onSelect={onCommunitySelect}
               onOpenTarget={onOpenTarget}
+              open={switcherOpen}
+              onOpenChange={setSwitcherOpen}
             />
             <ProfileButton
               communities={communities}
@@ -454,7 +462,9 @@ function AppShellContent({
                               : "mx-auto w-full max-w-4xl"
                           }
                         >
-                          {children}
+                          <OpenCommunitySwitcher value={openSwitcher}>
+                            {children}
+                          </OpenCommunitySwitcher>
                         </div>
                       </div>
                     </PanelFrame>

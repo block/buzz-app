@@ -572,7 +572,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     for (const surface of [feed, history]) {
       const paragraph = surface
         .locator("p")
-        .filter({ hasText: /^first\s+second$/ });
+        .filter({ hasText: /^first\s*second$/ });
       await expect(paragraph.locator("br")).toHaveCount(1);
       const geometry = await paragraph.evaluate((element) => {
         const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);

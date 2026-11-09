@@ -58,10 +58,19 @@ import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
 import { AgentPluginRequests } from "./AgentPluginRequests";
-import { ManagedPluginUpdate, ManagedPlugins } from "./ManagedPlugins";
+import {
+  ManagedPluginUpdate,
+  ManagedPlugins,
+  UrlPluginInstallReview,
+  UrlPluginDetails,
+} from "./ManagedPlugins";
 import { managedBy, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
-import type { PluginInstallRequests } from "../plugins/installer";
+import {
+  isUrlInstallSource,
+  type PluginInstallRequest,
+  type PluginInstallRequests,
+} from "../plugins/installer";
 import { PluginReadme } from "./PluginReadme";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
@@ -523,24 +532,33 @@ function PluginDetails({
           {...(authorizeGit ? { authorizeGit } : {})}
         />
       )}
-      {plugin.source === "external" && plugins.imports && !managed && (
-        <PluginImport
-          key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
-          initialUpdateAvailable={initialUpdateAvailable}
-          actionTarget={actionTarget}
-          onUpdateAvailableChange={onUpdateAvailableChange}
-          reviewRequested={reviewRequested}
-          onReviewHandled={onReviewHandled}
-          holdReview={holdReview}
-          statusTarget={installedStatus}
-          returnFocus={() => close.current}
-          updateId={plugin.manifest.id}
-          plugins={plugins}
-          catalog={catalog}
-          busy={busy}
-          {...(authorizeGit ? { authorizeGit } : {})}
-        />
-      )}
+      {plugin.source === "external" &&
+        !managed &&
+        plugin.updateSource &&
+        "url" in plugin.updateSource && (
+          <UrlPluginDetails source={plugin.updateSource} />
+        )}
+      {plugin.source === "external" &&
+        plugins.imports &&
+        !managed &&
+        !(plugin.updateSource && "url" in plugin.updateSource) && (
+          <PluginImport
+            key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
+            initialUpdateAvailable={initialUpdateAvailable}
+            actionTarget={actionTarget}
+            onUpdateAvailableChange={onUpdateAvailableChange}
+            reviewRequested={reviewRequested}
+            onReviewHandled={onReviewHandled}
+            holdReview={holdReview}
+            statusTarget={installedStatus}
+            returnFocus={() => close.current}
+            updateId={plugin.manifest.id}
+            plugins={plugins}
+            catalog={catalog}
+            busy={busy}
+            {...(authorizeGit ? { authorizeGit } : {})}
+          />
+        )}
       {sections.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: This names links to Settings sections, not a fieldset of form controls.
         <p
@@ -704,6 +722,10 @@ export function Settings({
     installRequests?.subscribe ?? noAccessSubscription,
     installRequests?.snapshot ?? noInstallRequest,
   );
+  const linkedPlugin =
+    navigation?.target.kind === "settings"
+      ? navigation.target.pluginImport
+      : undefined;
   const settingsMounted = useRef(false);
   useEffect(() => {
     settingsMounted.current = true;
@@ -1406,6 +1428,7 @@ export function Settings({
                   return (
                     <Card
                       active={active}
+                      navigation={navigation}
                       {...(!card.group && selectedCommunity
                         ? { community: selectedCommunity }
                         : {})}
@@ -1464,7 +1487,9 @@ export function Settings({
             lastActive={lastActive}
           />
         )}
-        {selected === "security" && <SecuritySettings />}
+        {selected === "security" && (
+          <SecuritySettings viewer={identity ? client.viewer : undefined} />
+        )}
         {developerMode && (
           <div hidden={selected !== "developer"}>
             <DeveloperSettings relay={communities.relay} />
@@ -1543,17 +1568,40 @@ export function Settings({
                 </motion.div>
               </motion.div>
             )}
+            {catalog && installRequest && installRequests && (
+              <UrlInstallRequestReview
+                key={installRequest.id}
+                request={installRequest}
+                requests={installRequests}
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                returnFocus={() => pluginSection.current}
+              />
+            )}
+            {catalog && linkedPlugin && "url" in linkedPlugin && (
+              <UrlPluginInstallReview
+                key={`url:${navigation?.entryId}`}
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                source={linkedPlugin}
+                requester="A link"
+                holdReview={installRequests?.holdReview}
+                returnFocus={() => pluginSection.current}
+                onClose={() => onPluginImportClosed?.()}
+              />
+            )}
             {catalog ? (
               <PluginImport
                 key={
-                  navigation?.target.kind === "settings" &&
-                  navigation.target.pluginImport
-                    ? navigation.entryId
+                  linkedPlugin && !("url" in linkedPlugin)
+                    ? navigation?.entryId
                     : "add"
                 }
                 initialGit={
-                  navigation?.target.kind === "settings"
-                    ? navigation.target.pluginImport
+                  linkedPlugin && !("url" in linkedPlugin)
+                    ? linkedPlugin
                     : undefined
                 }
                 requestSignal={navigation?.signal}
@@ -1569,7 +1617,11 @@ export function Settings({
                   onPluginImportClosed?.();
                 }}
                 actionTarget={pluginImportActions}
-                request={installRequest}
+                request={
+                  installRequest && !isUrlInstallSource(installRequest.source)
+                    ? { ...installRequest, source: installRequest.source }
+                    : undefined
+                }
                 onRequestSettled={installRequests?.settle}
                 onRequestClaimed={installRequests?.claim}
                 onRequestConfirmed={installRequests?.confirm}
@@ -1809,5 +1861,28 @@ export function Settings({
         </div>
       </Panel>
     </div>
+  );
+}
+
+function UrlInstallRequestReview({
+  request,
+  requests,
+  ...props
+}: Omit<
+  Parameters<typeof UrlPluginInstallReview>[0],
+  "source" | "requester" | "request" | "holdReview"
+> & {
+  request: PluginInstallRequest;
+  requests: PluginInstallRequests;
+}) {
+  if (!isUrlInstallSource(request.source)) return null;
+  return (
+    <UrlPluginInstallReview
+      {...props}
+      source={request.source}
+      requester={request.origin.name}
+      holdReview={requests.holdReview}
+      request={{ ...requests, id: request.id }}
+    />
   );
 }

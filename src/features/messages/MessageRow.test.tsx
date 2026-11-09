@@ -87,7 +87,7 @@ it("discloses an automatic failure reply while keeping its original text availab
   try {
     const view = renderDom(<MessageRow {...props} />);
     const details = screen.getByRole("button", {
-      name: "Spongebob: Couldn’t finish · Details",
+      name: "Show activity history: Spongebob: Couldn’t finish",
     });
     expect(details).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText(content)).not.toBeInTheDocument();
@@ -95,7 +95,7 @@ it("discloses an automatic failure reply while keeping its original text availab
     expect(screen.getByText(content)).toBeVisible();
     expect(details).toHaveAttribute("aria-expanded", "true");
     expect(details).toHaveAccessibleName(
-      "Spongebob: Couldn’t finish · Hide details",
+      "Collapse activity history: Spongebob: Couldn’t finish",
     );
     fireEvent.click(details);
     expect(details).toHaveAttribute("aria-expanded", "false");
@@ -111,7 +111,9 @@ it("discloses an automatic failure reply while keeping its original text availab
     );
     expect(screen.getByText("Here is the useful result.")).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: /Couldn’t finish · Details/ }),
+      screen.queryByRole("button", {
+        name: /activity history: Spongebob: Couldn’t finish/,
+      }),
     ).not.toBeInTheDocument();
     view.rerender(<MessageRow {...props} row={{ ...row, content }} />);
     expect(screen.getByText(content)).toBeVisible();
@@ -120,7 +122,7 @@ it("discloses an automatic failure reply while keeping its original text availab
   }
 });
 
-it("aligns a failure caption with its request rather than the agent author", () => {
+it("keeps automatic failure explanations in the incoming agent frame for every request author", () => {
   const request = { ...row, id: "request", authorId: "viewer" };
   const props = {
     row: { ...row, notice: "execution-failure" as const },
@@ -137,10 +139,13 @@ it("aligns a failure caption with its request rather than the agent author", () 
     const caption = () =>
       screen
         .getByRole("button", {
-          name: "Spongebob: Couldn’t finish · Details",
+          name: "Show activity history: Spongebob: Couldn’t finish",
         })
         .closest("[data-message-notice]");
-    expect(caption()).toHaveAttribute("data-viewer-message");
+    expect(caption()).not.toHaveAttribute("data-viewer-message");
+    expect(
+      caption()?.closest("[data-agent-response-preview]"),
+    ).toBeInTheDocument();
     view.rerender(
       <MessageRow
         {...props}

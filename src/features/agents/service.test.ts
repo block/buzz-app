@@ -1,3 +1,6 @@
+import { federatedFixture } from "../federated-identity/testing";
+import { createNativeSession } from "../../bundled/builderlab/session";
+import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
@@ -6575,6 +6578,63 @@ it("without a key the classifier does not run and the turn is told so", async ()
   expect(service.classifier()).toBe("unavailable");
 });
 
+it("discovers newly granted Decisions access before Attention skips an unconfigured classifier", async () => {
+  const jev = fakeJev(false);
+  const h = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(h.ctx.decisions.status()).toBe("needs-setup"));
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  let granted = false;
+  const identity = federatedFixture();
+  identity.request.mockImplementation(async () => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      subject: "user",
+      capabilities: { can_use_builderlab_decisions: granted },
+    }),
+  }));
+  const session = createNativeSession(identity.service);
+  const decide = vi.fn(async (input: unknown) => {
+    const state = JSON.parse((input as DecisionRequest).state) as {
+      event: { content: string };
+    };
+    return answered(state.event.content === "qualifies" ? 0.9 : 0.2);
+  });
+  const plugin = h.ctx
+    .extend({ pluginOwner: { id: "block.builderlab", revision: "one" } })
+    .plugin((ctx) => offerBuilderlabDecisions(ctx, session, true, decide));
+  try {
+    await plugin.await();
+    await session.signIn();
+    await vi.waitFor(() => expect(session.snapshot().status).toBe("signed-in"));
+    expect(h.ctx.decisions.status()).toBe("needs-setup");
+    expect(identity.request).toHaveBeenCalledOnce();
+    granted = true;
+    now += 60_000;
+    h.emit({
+      events: [
+        event("a", { content: "does not qualify" }),
+        event("b", { content: "qualifies" }),
+      ],
+    });
+    await vi.waitFor(() => expect(h.run).toHaveBeenCalledOnce());
+    expect(h.run.mock.calls[0]?.[0].trigger).toMatchObject({
+      type: "watch",
+      event: { content: "qualifies" },
+      classifier: { outcome: "passed" },
+    });
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(identity.request).toHaveBeenCalledTimes(2);
+    expect(identity.service.signIn).toHaveBeenCalledOnce();
+  } finally {
+    await h.ctx.fiber.dispose();
+    session.dispose();
+    clock.mockRestore();
+  }
+});
+
 it("a key set or cleared takes effect at once, and one removed elsewhere is noticed", async () => {
   const jev = fakeJev(false);
   const { service, typesafe, run, emit } = await classifiedAgent(jev);
@@ -11825,6 +11885,17 @@ it("leaves an agent another copy of the app holds to that copy, and does not say
   expect(said(presence)).toEqual([`online:${bot}`]);
 });
 
+it("tells each community which agent types run remotely, so their agents show online", async () => {
+  vi.useFakeTimers();
+  const { service, plugin, session } = await setup();
+  plugin.agents.register(cloud().type);
+  await service.create({ type: "example/echo", name: "Echo" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  const told = vi.mocked(session.presence.remoteRuntimes)?.mock.calls ?? [];
+  expect(told.length).toBeGreaterThan(0);
+  expect([...(told.at(-1)?.[0] ?? [])]).toEqual(["example/cloud"]);
+});
+
 it("tries a refused presence again after half a minute, not every tick", async () => {
   vi.useFakeTimers();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -12670,6 +12741,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
     (await callTool(client, {}, "agent_create", {
       type: "example/echo",
       name: " Child ",
+      instructions: "Review PRs.",
     })) as string,
   );
   expect(result).toEqual({ requestId: expect.any(String), saved: false });
@@ -12679,6 +12751,7 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
     id: result.requestId,
     type: "example/echo",
     name: "Child",
+    instructions: "Review PRs.",
     requester: bot,
     community: "https://relay.example.test",
   });
@@ -12720,7 +12793,15 @@ it("dismisses a creation draft without creating an identity", async () => {
 });
 
 it("refuses agent creation through a stale handle or an unavailable type", async () => {
-  const { service, native, plugin, connect } = await setup();
+  const { service, native, plugin, connect, ctx } = await setup();
+  ctx
+    .extend({ pluginOwner: Object.freeze({ id: "other", revision: "one" }) })
+    .agents.register({
+      id: "plain",
+      title: "Plain",
+      defaults: () => ({ config: {} }),
+      run: vi.fn(),
+    });
   await service.create({ type: "example/echo", name: "Parent" });
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const handle = plugin.agents.handle(bot);
@@ -12731,6 +12812,14 @@ it("refuses agent creation through a stale handle or an unavailable type", async
   await expect(
     handle.createAgent?.({ type: "example/echo", name: " " }),
   ).rejects.toThrow("Name the agent");
+  await expect(
+    handle.createAgent?.({
+      type: "other/plain",
+      name: "Child",
+      instructions: "Triage.",
+    }),
+  ).rejects.toThrow("Plain agents have no instructions to set");
+  expect(service.creationRequests()).toEqual([]);
   connect(false);
   await expect(
     handle.createAgent?.({ type: "example/echo", name: "Child" }),

@@ -17,10 +17,13 @@ type Seat = {
   stop(): Promise<void>;
 };
 
-/** The connected human call is the sole roster source on this desktop.
+/** A local call or verified owner participation on another device supplies the call.
  * Membership is the room's signed roster; parent membership never seats an agent. */
 export function createHuddleVoices(
-  huddles: Pick<Huddles, "snapshot" | "subscribe" | "voiceListening">,
+  huddles: Pick<
+    Huddles,
+    "snapshot" | "subscribe" | "voiceListening" | "voiceThinking"
+  > & { voiceAgent?(): string | undefined },
   agents: Pick<Agents, "snapshot" | "subscribe" | "types">,
   relay: RelayData,
   bridge: HuddleBridge,
@@ -75,6 +78,7 @@ export function createHuddleVoices(
       });
       // Publishing re-enters sync: closing must already guard stop().
       huddles.voiceListening(call, agent.pubkey, false);
+      huddles.voiceThinking(call, agent.pubkey, false);
       return closing;
     }
     // Start in a microtask so the seat is recorded before callbacks can re-enter sync.
@@ -114,6 +118,10 @@ export function createHuddleVoices(
           conversation: { channelId: room },
           signal: abort.signal,
           ended: fail,
+          thinking: (active) => {
+            if (!abort.signal.aborted)
+              huddles.voiceThinking(call, agent.pubkey, active);
+          },
           output: sender.send,
         });
         if (abort.signal.aborted) await opened.close();
@@ -156,6 +164,8 @@ export function createHuddleVoices(
             .snapshot()
             .running.filter(
               (agent) =>
+                (!huddles.voiceAgent?.() ||
+                  agent.pubkey === huddles.voiceAgent()) &&
                 agent.place === "here" &&
                 agent.owner === destination.viewer &&
                 relayOrigin(agent.relay) ===
@@ -188,7 +198,10 @@ export function createHuddleVoices(
       !channel.pending &&
       !channel.cached &&
       !channel.archived &&
-      !channel.readOnly;
+      !channel.readOnly &&
+      (!huddles.voiceAgent?.() ||
+        (channel.huddle === true &&
+          channel.parentChannelId === destination?.channelId));
     const running = available
       ? candidates.filter((agent) => channel.members?.includes(agent.pubkey))
       : [];

@@ -136,6 +136,12 @@ unless it matches. A link that carries `path` or `commit` locks the repository a
 reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
 `path` and `commit` may appear once; a repeated key makes the link invalid.
 
+`buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
+a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
+downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
+review as a recommended plugin. It never mixes with the Git keys, and each key may
+appear once.
+
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
 enable, or grant access. You can close the dialog while the preview loads. A late
@@ -321,12 +327,20 @@ lookup returns `undefined` when an older host has not provided it.
 
 ```ts
 type PluginInstaller = {
-  requestInstall(source: {
-    repository: string; // https://, ssh:// or scp-style git URL
-    reference: string; // branch or tag
-    path?: string; // relative folder inside the repository
-    commit?: string; // 40- or 64-hex; install exactly this commit
-  }): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
+  requestInstall(
+    source:
+      | {
+          repository: string; // https://, ssh:// or scp-style git URL
+          reference: string; // branch or tag
+          path?: string; // relative folder inside the repository
+          commit?: string; // 40- or 64-hex; install exactly this commit
+        }
+      | {
+          id: string; // the artifact's plugin ID
+          url: string; // https:// artifact from `buzzodz plugin pack`
+          sha256: string; // 64-hex; install exactly these bytes
+        },
+  ): Promise<"installed" | "updated" | "cancelled" | "unavailable">;
   getInstallationStatus(
     id: string,
   ): "installed" | "absent" | "unavailable";
@@ -360,7 +374,13 @@ Settings closes, a `buzz://plugin-install` link replaces its review, or the requ
 plugin is disabled or removed, unless the user has already confirmed the install. A plugin that updates itself is replaced during that
 install and still resolves `updated`.
 
-A request can install a new plugin, or update an installed plugin only from the same
+`pluginInstaller.sources` lists the source kinds a host accepts (`["git", "url"]`).
+Hosts that accept only Git leave it out, so check it before requesting a URL source.
+A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
+its SHA-256 and plugin ID match, and shows the access review for the owner to
+confirm. It can install a new plugin or update one installed from a URL.
+
+A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
 including a local folder or an unknown one, is refused with a message naming both
 sources; remove it first to install it from the new one. Dismissing the review of a
@@ -981,7 +1001,10 @@ cards such as Pair mobile that collect their own community address; it cannot be
 combined with `group` or `section`.
 Its section id is the contribution key (`plugin/card`) and disappears with the plugin. The optional `icon`
 uses the shared design-system icon gateway; the host supplies a fallback when omitted.
-Cards receive `active()` and use ordinary
+Cards receive `active()` and optional `navigation` for the current Settings visit.
+A Settings target can carry bounded `route: { version, params }` presentation
+data; the card interprets supported versions and ignores unknown routes. Opening
+a route must never submit a write. Cards use ordinary
 session capabilities through injection. Host boundaries isolate rendering errors;
 exact registration identity and mounted lifetime revoke callbacks on removal.
 
@@ -1058,7 +1081,9 @@ in the bottom drawer by default or the existing companion column when the contri
 sets `channelPlacement: "side"`. The bottom drawer closes when the viewer leaves the
 channel. A side-column panel stays open in the channel's workspace: leaving the channel
 or page unmounts it, and returning shows it again until the viewer closes it, another
-channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. With `channelPlacement: "tab"` the launcher instead
+channel panel or Details replaces it, or the plugin is disabled. While the channel is read-only or cached it stays hidden. For a side panel, `pressed` means the panel is shown in
+the open pane, not merely selected: while the pane is hidden the panel stays selected but
+reads unpressed, and `toggle` shows it again. With `channelPlacement: "tab"` the launcher instead
 opens one tab per channel in the side pane, grouped with thread and other panel tabs;
 a new target replaces that tab, and a link tab already open for the target becomes it.
 The tab receives `PanelProps.context` too, so it can open or push further tabs. A launcher
@@ -1708,12 +1733,36 @@ const saved = response && await ctx.host.saveBytes?.(response.body, { sha256 });
 
 `requestBytes({url,maxBytes,timeoutMs?})` performs only GET, with no caller headers,
 body or cookies and no redirects. The destination must be an exact declared
-HTTPS origin of the current enabled plugin revision, checked again before handoff.
+HTTPS origin of the current enabled plugin revision (or, with `host.publicImages`,
+any public HTTPS address, below), checked again before handoff.
 `maxBytes` is a required integer from 1 through 16777216 (16 MiB); actual chunks
 are counted regardless of Content-Length. The deadline defaults to 30000 ms and
 can be 1–30000 ms. Empty bodies and non-2xx statuses are returned, not reclassified
 as successful operations. Existing ordinary GET client retry semantics remain;
 this is not an at-most-one GET promise or an application retry policy.
+
+Declare `host: { publicImages: true }` to let `requestBytes` also read images from
+any public HTTPS site, outside `networkOrigins`: for example a link preview's
+`og:image`, whose host can't be known ahead of time. It widens only
+`requestBytes`: `request`, `upload` and `uploadBytesOnce` still need a declared
+origin. A declared origin keeps its ordinary behavior. Any other URL must use
+port 443, and native code resolves its name and refuses it unless every address is public (not loopback, private,
+shared 100.64.0.0/10, link-local, multicast, documentation or reserved space,
+including IPv4 embedded in IPv6), then connects only to those addresses, with no
+proxy, no cookies and Buzz's User-Agent. A redirect returns its status and
+`Location` alone: the plugin checks the next hop and asks again. A 2xx PNG,
+JPEG, GIF, WebP or AVIF response returns its `content-type` and body; anything
+else, including SVG and pages, returns its status with no headers or body.
+Names that resolve publicly but are reached only through a VPN (such as a
+company's internal hosts) are not visible to this check, so the plugin must
+refuse them by name on every hop. The site sees the user's IP address.
+
+Only images come back, but the plugin chooses each URL, so the grant lets it
+send data it holds to any public site in the path, query or hostname. It lifts
+the bound `networkOrigins` otherwise puts on where a plugin's data can go; the
+access review says so. Public image reads share the one-at-a-time byte request
+slot with every plugin's `requestBytes` and `saveBytes`, so pass a short
+`timeoutMs`.
 
 The internal raw response is a four-byte big-endian metadata length, UTF-8 JSON
 `{status,headers}` of at most 20 KiB, then the body. At most 64 response headers
@@ -1853,6 +1902,13 @@ or URL is needed. Include both files in the imported folder or Git repository.
 Buzz checks the event ID, signature and exact artifact bytes before install and
 each load. Unsigned `manifest.json` and `plugin.js` builds remain available for
 local development.
+
+`buzzodz plugin pack DIST_DIRECTORY FILE` writes the same single-file artifact,
+unsigned, and prints its SHA-256. An organization can serve that file over HTTPS
+for people without access to the Git host and recommend it with a `url` and
+`sha256` [managed plugin](managed-plugins.md#url-entries) entry. Buzz downloads
+it, refuses any bytes that do not match the pin, and records the URL as the
+plugin's saved source.
 
 A build may also include conventional `README.md`, `icon.png`, and `icon.jpg` files beside
 those required files. README content must be UTF-8 and is limited to 256 KiB.
@@ -2645,8 +2701,11 @@ that were not asked are dropped.
 
 The user chooses the provider in Settings > Decisions API, and the choice is
 kept on this device. Until they choose, the first default provider that is on
-answers: Builderlab (`block.builderlab/builderlab`), then TypeSafe
-(`buzz.typesafe/typesafe`). The same holds while a chosen default is not on.
+and can answer (`ready` or `unconfirmed`) does: Builderlab
+(`block.builderlab/builderlab`), then TypeSafe (`buzz.typesafe/typesafe`).
+When none can, TypeSafe is the provider, and the status is `checking` while
+another default is still finding out whether it can answer. The same holds
+while a chosen default is not on.
 Decision text can include private messages, so no other provider gets it
 without that choice: while a chosen provider that is not a default is not on,
 decisions are `unavailable` and are not sent to another provider. `ctx.decisions.backend()`
@@ -2658,7 +2717,7 @@ so send only what the decision needs.
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
 | `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |
-| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered only while the user is signed in to an account Builderlab allows decisions for | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server allows up to 32 questions per call |
+| `block.builderlab/builderlab` | Builderlab (bundled, in desktop builds with a Builderlab); registered while the user is signed in, and `needs-setup` unless Builderlab allows the account decisions | The user's Builderlab sign-in, which native code sends with each call. Builderlab answers with Jev and bills the request's `community`; its server allows up to 32 questions per call |
 
 ## In-app keyboard shortcuts
 

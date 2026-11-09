@@ -13,6 +13,7 @@ import {
 } from "./navigation.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -60,6 +61,26 @@ async function nativeImports(
         location: "isolated IPC",
         plugins: structuredClone(plugins),
       },
+      ...(window.managedPolicy && {
+        managed: {
+          ...window.managedPolicy,
+          plugins: window.managedPolicy.plugins.map((entry) => {
+            const plugin = plugins.find(
+              (plugin) => plugin.manifest.id === entry.id,
+            );
+            return {
+              ...entry,
+              state: !plugin
+                ? "missing"
+                : plugin.revision === entry.sha256
+                  ? "current"
+                  : plugin.updateSource?.url
+                    ? "outdated"
+                    : "other",
+            };
+          }),
+        },
+      }),
     });
     let importSource = null;
     let pendingPreview = null;
@@ -144,7 +165,8 @@ async function nativeImports(
         if (
           command === "plugin_update_preview" ||
           command === "plugin_import_folder" ||
-          command === "plugin_import_git"
+          command === "plugin_import_git" ||
+          command === "plugin_import_url"
         ) {
           if (importLocked) throw new Error("Another import is in progress");
           importLocked = true;
@@ -158,19 +180,28 @@ async function nativeImports(
               throw new Error(window.importAcquisitionError);
             if (args?.repository === "bad")
               throw new Error("Repository unavailable");
+            if (
+              command === "plugin_import_url" &&
+              args.sha256 !== window.artifactSha256
+            )
+              throw new Error(
+                `The downloaded plugin has SHA-256 ${window.artifactSha256}, not the expected ${args.sha256}`,
+              );
             importSource =
-              command === "plugin_import_git"
-                ? { repository: args.repository, reference: args.reference }
-                : args?.upload
-                  ? null
-                  : {
-                      root:
-                        command === "plugin_update_preview"
-                          ? plugins.find(
-                              (plugin) => plugin.manifest.id === args.id,
-                            )?.updateSource?.root
-                          : "/fixture/plugins",
-                    };
+              command === "plugin_import_url"
+                ? { url: args.url, sha256: args.sha256 }
+                : command === "plugin_import_git"
+                  ? { repository: args.repository, reference: args.reference }
+                  : args?.upload
+                    ? null
+                    : {
+                        root:
+                          command === "plugin_update_preview"
+                            ? plugins.find(
+                                (plugin) => plugin.manifest.id === args.id,
+                              )?.updateSource?.root
+                            : "/fixture/plugins",
+                      };
             if (window.importCategory)
               for (const candidate of preview.candidates) {
                 candidate.revision = `${candidate.path}-${window.importCategory}`;
@@ -181,6 +212,10 @@ async function nativeImports(
 
             pendingPreview = {
               ...structuredClone(preview),
+              ...(command === "plugin_import_url" && {
+                source: args.url,
+                commit: null,
+              }),
               token: `preview-${++previewSequence}`,
             };
             return structuredClone(pendingPreview);
@@ -218,9 +253,11 @@ async function nativeImports(
               existing.manifest = structuredClone(candidate.manifest);
               existing.previous = existing.revision;
               existing.revision = candidate.revision;
-              existing.updateSource = importSource
-                ? { ...importSource, path: candidate.path }
-                : null;
+              existing.updateSource = importSource?.url
+                ? importSource
+                : importSource
+                  ? { ...importSource, path: candidate.path }
+                  : null;
             } else
               plugins.push({
                 ...candidate,
@@ -228,9 +265,11 @@ async function nativeImports(
                 enabled: false,
                 previous: null,
                 reloadable: true,
-                updateSource: importSource
-                  ? { ...importSource, path: candidate.path }
-                  : null,
+                updateSource: importSource?.url
+                  ? importSource
+                  : importSource
+                    ? { ...importSource, path: candidate.path }
+                    : null,
                 error: null,
               });
             return ready();
@@ -577,11 +616,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
   await button(page, "Add").click();
   const sourceDialog = page.getByRole("dialog");
   await expect(sourceDialog).toHaveCSS("opacity", "1");
-  await sourceDialog.evaluate(async (node) => {
-    await Promise.all(
-      node.getAnimations().map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(sourceDialog);
   await sourceDialog.screenshot({
     path: info.outputPath("plugin-source.png"),
   });
@@ -740,13 +775,7 @@ test("folder/Git preview selects the exact subfolder and preserves enabled state
           return { x, y, width, height };
         }),
       );
-  await details.evaluate(async (node) => {
-    await Promise.all(
-      node
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(details, { subtree: true });
   const settledActions = await actionPositions();
   await page.evaluate(() => {
     window.importCategory = "productivity";
@@ -1719,4 +1748,173 @@ test("a linked preview can close during acquisition and a later link still opens
         .map((call) => call.args.reference),
     ),
   ).toEqual(["first", "next"]);
+});
+
+const artifactSha =
+  "13fca413ba8975075fdec01a0087be6114ace8d935055f7d9ab1d57dd8e706a5";
+const artifactUrl = `https://plugins.example.org/artifacts/example.artifact-${artifactSha}.json`;
+const artifactPlugin = [
+  {
+    path: ".",
+    manifest: {
+      id: "example.artifact",
+      name: "Artifact",
+      apiVersion: 1,
+      host: { files: true },
+    },
+    revision: artifactSha,
+  },
+];
+async function recommendArtifact(page, sha256 = artifactSha) {
+  await page.addInitScript(
+    (policy) => {
+      window.managedPolicy = policy;
+    },
+    {
+      status: "ready",
+      path: "/fixture/managed-plugins.json",
+      source: "Example Org",
+      problems: [],
+      plugins: [{ id: "example.artifact", url: artifactUrl, sha256 }],
+    },
+  );
+}
+async function openRecommendedPlugins(page, origin) {
+  await page.goto(origin);
+  await openSettings(page);
+  await selectSettingsSection(
+    page,
+    "Manage plugins 1 recommended plugin",
+    "Manage plugins",
+  );
+}
+async function servesArtifact(page) {
+  await page.addInitScript((sha) => {
+    window.artifactSha256 = sha;
+  }, artifactSha);
+}
+const importCalls = (page) =>
+  page.evaluate(() =>
+    window.importCalls
+      .filter(({ command }) =>
+        [
+          "plugin_import_url",
+          "plugin_import_git",
+          "plugin_import_install",
+        ].includes(command),
+      )
+      .map(({ command, args }) => ({ command, args })),
+  );
+
+test("a recommended plugin URL installs the pinned artifact without Git", async ({
+  page,
+  app,
+}) => {
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await recommendArtifact(page);
+  await servesArtifact(page);
+  await openRecommendedPlugins(page, app.origin);
+  const recommended = page.getByRole("region", {
+    name: "Recommended by Example Org",
+    exact: true,
+  });
+  await expect(recommended).toContainText(artifactUrl);
+  await recommended
+    .getByRole("button", { name: "Review and install example.artifact" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await expect(review).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(review).toContainText("Recommended by Example Org");
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await expect(recommended).toBeHidden();
+  await expect(pluginAction(page, "Artifact")).toHaveAccessibleName(
+    "Disable Artifact",
+  );
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
+});
+
+test("a recommended plugin URL whose download doesn't match its SHA-256 never installs", async ({
+  page,
+  app,
+}) => {
+  const pinned = "0".repeat(64);
+  await nativeImports(page, artifactPlugin, { warnings: [] });
+  await recommendArtifact(page, pinned);
+  await servesArtifact(page);
+  await openRecommendedPlugins(page, app.origin);
+  await page
+    .getByRole("button", { name: "Review and install example.artifact" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Review example.artifact",
+    exact: true,
+  });
+  await expect(review.getByRole("alert")).toHaveText(
+    `The downloaded plugin has SHA-256 ${artifactSha}, not the expected ${pinned}`,
+  );
+  await expect(
+    review.getByRole("button", { name: "Install plugin" }),
+  ).toHaveCount(0);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: pinned },
+    },
+  ]);
+});
+
+test("an artifact link reviews and installs the pinned URL", async ({
+  page,
+  app,
+}) => {
+  const link = `buzz://plugin-install?id=example.artifact&url=${encodeURIComponent(artifactUrl)}&sha256=${artifactSha}`;
+  await nativeImports(page, artifactPlugin, { warnings: [] }, [link]);
+  await servesArtifact(page);
+  await page.goto(app.origin);
+  const review = page.getByRole("dialog", {
+    name: "Review Artifact Plugin access",
+    exact: true,
+  });
+  await expect(review).toContainText("Requested by A link");
+  await expect(review).toContainText(artifactUrl);
+  await expect(review).toContainText(`SHA-256: ${artifactSha}`);
+  await review
+    .getByRole("button", { name: "Install plugin", exact: true })
+    .click();
+  await expect(review).toBeHidden();
+  await settingsDialog(page)
+    .getByRole("button", { name: "View Artifact details", exact: true })
+    .click();
+  const updates = page.getByRole("region", {
+    name: "Plugin updates",
+    exact: true,
+  });
+  await expect(updates).toContainText(artifactUrl);
+  await expect(updates).toContainText(`SHA-256: ${artifactSha}`);
+  await expect(page.getByText(/No saved source/)).toHaveCount(0);
+  expect(await importCalls(page)).toEqual([
+    {
+      command: "plugin_import_url",
+      args: { url: artifactUrl, sha256: artifactSha },
+    },
+    {
+      command: "plugin_import_install",
+      args: { token: "preview-1", path: "." },
+    },
+  ]);
 });

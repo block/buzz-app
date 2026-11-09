@@ -146,8 +146,8 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_create",
-    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; picture is a local image file for its avatar.",
-    { type: str, name: str, picture: str },
+    "Submit an unsaved agent-creation draft for your owner to review. Nothing is created until they save it. Use a type key from agent_types; instructions are optional; picture is a local image file for its avatar.",
+    { type: str, name: str, instructions: str, picture: str },
     ["type", "name"],
   ),
   tool(
@@ -487,9 +487,15 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const type = text(args.type)?.trim();
     const name = text(args.name)?.trim();
     if (!type || !name) throw new Error("type and name are required");
+    const instructions = text(args.instructions);
     const picture = proposedPicture(client, args.picture);
     return JSON.stringify(
-      await client.createAgent({ type, name, ...(picture && { picture }) }),
+      await client.createAgent({
+        type,
+        name,
+        ...(instructions && { instructions }),
+        ...(picture && { picture }),
+      }),
     );
   },
   async self_handoff(tools, args) {

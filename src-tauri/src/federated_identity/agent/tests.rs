@@ -2049,3 +2049,107 @@ async fn a_revision_fenced_sign_out_leaves_a_newer_session_and_its_grants() {
     let snapshot = f.tokens.sign_out(Some(&newer.revision)).await.unwrap();
     assert!(snapshot.status == crate::federated_identity::Status::SignedOut);
 }
+
+#[tokio::test]
+async fn a_builderlab_customer_server_added_later_gets_its_own_tokens() {
+    let first = crate::federated_identity::tests::with_customers(
+        crate::federated_identity::config::Config::parse(
+            crate::federated_identity::config::BUILT_IN,
+        )
+        .unwrap(),
+        Vec::new(),
+        true,
+    );
+    // Added before the tokens exist, and after.
+    let early = first.server_for("wss://buzz.early.builderlab.xyz").unwrap();
+    let tokens = AgentTokens::in_memory(first.clone());
+    tokens.watch(|| Ok(Vec::new()));
+    let late = first.server_for("wss://buzz.late.builderlab.xyz").unwrap();
+    for (server, relay) in [
+        (&early, "wss://buzz.early.builderlab.xyz"),
+        (&late, "wss://buzz.late.builderlab.xyz"),
+    ] {
+        let own = tokens.for_server(server).unwrap();
+        assert!(own.0.identity.is(server));
+        // It follows the owner's account, as compiled servers' tokens do.
+        assert!(own.0.agents.get().is_some());
+        assert!(tokens.server_for(relay).unwrap().0.identity.is(server));
+    }
+    // A community routed by its host alone reaches it too.
+    assert!(tokens
+        .server_for("wss://buzz.third.builderlab.xyz")
+        .unwrap()
+        .0
+        .identity
+        .is(&first.server_for("wss://buzz.third.builderlab.xyz").unwrap()));
+    assert_eq!(tokens.servers().len(), 4);
+}
+
+#[tokio::test]
+async fn deleting_an_agent_retires_its_grant_with_a_customer_no_longer_joined() {
+    use crate::federated_identity::{config, tests::customers_listed_in};
+    let root = tempfile::tempdir().unwrap();
+    let record = root.path().join("first.customers");
+    let launch = || {
+        customers_listed_in(
+            config::Config::parse(config::BUILT_IN).unwrap(),
+            Vec::new(),
+            Some(Some(record.clone())),
+        )
+    };
+    let grants = Arc::new(MemoryGrants::default());
+    let (owner, agent) = ("owner", "agent");
+    // The agent enrolled with a customer whose community was then removed.
+    let customer = launch()
+        .server_for("wss://buzz.gone.builderlab.xyz")
+        .unwrap();
+    let at = customer.agent_grant_key(owner, agent);
+    grants
+        .write(
+            &at,
+            &Grant::new(
+                owner.into(),
+                agent.into(),
+                "a@example.com".into(),
+                "https://gone.builderlab.xyz".into(),
+                "grant".into(),
+            ),
+        )
+        .unwrap();
+    // After a restart, no community routes to it, yet deleting the agent
+    // retires that grant, so importing its key again cannot reuse it.
+    let tokens = AgentTokens::with_store(launch(), grants.clone());
+    tokens.forget(owner, agent).await.unwrap();
+    assert!(grants.read(&at).unwrap().is_none());
+    let again = AgentTokens::with_store(launch(), grants.clone());
+    let server = again
+        .for_server(
+            &again
+                .0
+                .identity
+                .server_for("wss://buzz.gone.builderlab.xyz")
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(server.0.identity.agent_grant_key(owner, agent), at);
+    assert!(grants.read(&at).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_server_added_once_the_first_has_a_supplier_follows_the_account() {
+    let first = crate::federated_identity::tests::with_customers(
+        crate::federated_identity::config::Config::parse(
+            crate::federated_identity::config::BUILT_IN,
+        )
+        .unwrap(),
+        Vec::new(),
+        true,
+    );
+    let tokens = AgentTokens::in_memory(first.clone());
+    // `watch` sets the first server's supplier before listing servers, so one
+    // added in between gets it from `with_stores`; `watch` then offers it again.
+    tokens.follow_account(Arc::new(|| Ok(Vec::new())));
+    let added = first.server_for("wss://buzz.race.builderlab.xyz").unwrap();
+    tokens.watch(|| Ok(Vec::new()));
+    assert!(tokens.for_server(&added).unwrap().0.agents.get().is_some());
+}

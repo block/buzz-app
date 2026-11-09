@@ -1260,3 +1260,196 @@ it("keeps positioning idle when an unrelated activity update leaves the shown ro
     owner.dispose();
   }
 });
+
+// A head of folded agent activity can leave nothing to scroll. Real React
+// schedules the fill's layout effect and frames; Virtua is the mocked boundary.
+function fillFixture({
+  window: patch = {} as Partial<ChannelWindow>,
+  cachedOnly = false,
+  recovering = false,
+} = {}) {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+  const geometry = { scrollHeight: 600 };
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+    () => geometry.scrollHeight,
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++frameId, callback);
+    return frameId;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  const flush = () =>
+    act(() => {
+      for (let round = 0; round < 5 && frames.size; round++)
+        for (const [id, callback] of [...frames]) {
+          frames.delete(id);
+          callback(0);
+        }
+    });
+  viewport.size = 600;
+  const viewer = keypair(),
+    relay = keypair();
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async () => [],
+    },
+    cachedOnly ? { cachedOnly: true } : undefined,
+  );
+  let events = [message(viewer, "alpha", "Latest public message", 100)];
+  let window: ChannelWindow = {
+    channelId: "alpha",
+    rows: foldMessages("alpha", relay.pubkey, events),
+    status: "ready",
+    hasMore: true,
+    loadingOlder: false,
+    freshness: "verified",
+    error: undefined,
+    ...patch,
+  };
+  const recovery = { recovering, attempt: 0, shown: false, reauthorized: 0 };
+  // The store marks the window loading as it accepts a read.
+  const loadOlder = vi.fn(() => {
+    if (!window.loadingOlder) window = { ...window, loadingOlder: true };
+  });
+  const queries = {
+    ...owner.session,
+    channels: { ...owner.session.channels, loadOlder, window: () => window },
+    recovery: {
+      snapshot: () => recovery,
+      subscribe: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const content = () => (
+    <ChannelTimeline
+      channelId="alpha"
+      scope="fill"
+      queries={queries}
+      window={window}
+      onOpenLink={() => false}
+    />
+  );
+  const view = render(content());
+  flush();
+  return {
+    geometry,
+    loadOlder,
+    /** An older page lands, or a read ends with the given patch. */
+    land(next: Partial<ChannelWindow> = {}) {
+      events = [
+        message(viewer, "alpha", `Older ${events.length}`, 100 - events.length),
+        ...events,
+      ];
+      window = {
+        ...window,
+        rows: foldMessages("alpha", relay.pubkey, events),
+        loadingOlder: false,
+        ...next,
+      };
+      view.rerender(content());
+      flush();
+    },
+    dispose() {
+      view.unmount();
+      owner.dispose();
+      viewport.size = 0;
+    },
+  };
+}
+
+it("a settled reader at the bottom fills a screen with nothing to scroll", () => {
+  const h = fillFixture();
+  try {
+    expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("alpha");
+  } finally {
+    h.dispose();
+  }
+});
+
+it("filling reads at most five pages a visit", () => {
+  const h = fillFixture();
+  try {
+    for (let page = 0; page < 6; page++) h.land();
+    expect(h.loadOlder).toHaveBeenCalledTimes(5);
+  } finally {
+    h.dispose();
+  }
+});
+
+it("filling stops once the history can scroll", () => {
+  const h = fillFixture();
+  try {
+    h.geometry.scrollHeight = 601;
+    h.land();
+    expect(h.loadOlder).toHaveBeenCalledOnce();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("a failed fill read is not retried unasked", () => {
+  const h = fillFixture();
+  try {
+    h.land({ error: "Relay requests paused" });
+    expect(h.loadOlder).toHaveBeenCalledOnce();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each([
+  ["no older history", { window: { hasMore: false } }],
+  ["a read in flight", { window: { loadingOlder: true } }],
+  ["limited history", { window: { historyLimited: true } }],
+  ["a failed read", { window: { error: "Relay requests paused" } }],
+  ["an unverified cached head", { window: { freshness: "cached" as const } }],
+  ["a cached-only session", { cachedOnly: true }],
+  ["a recovering connection", { recovering: true }],
+])("does not fill with %s", (_, options) => {
+  const h = fillFixture(options);
+  try {
+    expect(h.loadOlder).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("does not fill while a saved reading place is restored", () => {
+  writeView("fill", "scroll:alpha", {
+    bottom: false,
+    anchor: { id: "missing", y: 0 },
+  });
+  const h = fillFixture();
+  try {
+    expect(h.loadOlder).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it("a filled page keeps the follower at the bottom; a later page is anchored", () => {
+  const h = fillFixture();
+  try {
+    h.geometry.scrollHeight = 2000;
+    viewport.scrollToIndex.mockClear();
+    h.land();
+    expect(viewport.scrollToIndex).toHaveBeenCalledWith(1, { align: "end" });
+    viewport.scrollToIndex.mockClear();
+    h.land();
+    expect(viewport.scrollToIndex).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});

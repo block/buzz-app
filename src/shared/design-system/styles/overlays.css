@@ -586,6 +586,15 @@
   left: auto;
   right: max(var(--space-4), env(safe-area-inset-right));
 }
+/* Above any docked composer (useToastClearance), never over its controls. */
+.buzz-toast-viewport[data-sonner-toaster][data-y-position="bottom"] {
+  bottom: max(var(--offset-bottom), var(--buzz-toast-clearance, 0px));
+}
+@media (max-width: 600px) {
+  .buzz-toast-viewport[data-sonner-toaster][data-y-position="bottom"] {
+    bottom: max(var(--mobile-offset-bottom), var(--buzz-toast-clearance, 0px));
+  }
+}
 .buzz-toast-viewport[data-sonner-toaster] [data-sonner-toast] {
   position: relative;
   flex-shrink: 0;

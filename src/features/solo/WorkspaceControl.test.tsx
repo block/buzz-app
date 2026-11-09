@@ -208,6 +208,9 @@ it.each(
   async ({ trigger, channelId, submit }) => {
     vi.stubGlobal("crypto", webcrypto);
     const { session, assign, createSection } = fixture();
+    // A move waits on the relay, and the control stays busy until it ends.
+    let moved!: () => void;
+    assign.mockReturnValue(new Promise<void>((resolve) => (moved = resolve)));
     const change = vi.fn();
     // The control sits in the composer's form; the dialog's submit is its own.
     const composerSubmit = vi.fn((event: FormEvent) => event.preventDefault());
@@ -222,17 +225,11 @@ it.each(
       </form>,
     );
     const control = screen.getByRole("button", { name: trigger });
-    const open = async () => {
-      await user.click(control);
-      await user.click(
-        await screen.findByRole("menuitem", { name: "New workspace" }),
-      );
-      return screen.findByRole("dialog", { name: "New workspace" });
-    };
-    await open();
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(control).toHaveFocus());
-    const dialog = await open();
+    await user.click(control);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "New workspace" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
     const name = within(dialog).getByRole("textbox", { name: "Name" });
     await user.type(name, "Planning");
     // A browser's Enter submits through the form-associated Create button;
@@ -241,6 +238,10 @@ it.each(
     else
       await user.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    await waitFor(() => expect(control).toHaveFocus());
+    // jsdom focuses a disabled button; a browser can't, so the control must
+    // not be natively disabled while it waits on the move.
+    expect(control).not.toBeDisabled();
     expect(composerSubmit).not.toHaveBeenCalled();
     expect(createSection).toHaveBeenCalledWith({
       id: expect.any(String),
@@ -250,6 +251,9 @@ it.each(
     if (channelId) {
       expect(assign).toHaveBeenCalledWith(channelId, id);
       expect(change).not.toHaveBeenCalled();
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      await act(async () => moved());
+      expect(control).not.toHaveAttribute("aria-disabled");
     } else {
       expect(change).toHaveBeenCalledWith(id);
       expect(assign).not.toHaveBeenCalled();

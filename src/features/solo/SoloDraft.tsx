@@ -244,13 +244,15 @@ export function SoloDraft({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The lifetime Chat settings opened with.
   const [settingsLifetime, setSettingsLifetime] = useState<number>();
-  // The workspace and canvas it opened with. Both can change under the open
-  // dialog, from another window or project entry; following either would
-  // reload the dialog over its unsaved edits. Nothing in this window changes
-  // them while it is open: its Save closes it in the same render. Closing
-  // checks the current pick, as a deletion found here does.
+  // The workspace, canvas and name it opened with. All can change under the
+  // open dialog, from another window or project entry; following the first
+  // two would reload the dialog over its unsaved edits, and following the
+  // name would mark a dialog nobody edited as dirty. Nothing in this window
+  // changes them while it is open: its Save closes it in the same render.
+  // Closing checks the current pick, as a deletion found here does.
   const [settingsProject, setSettingsProject] = useState<string>();
   const [settingsCanvas, setSettingsCanvas] = useState<string>();
+  const [settingsName, setSettingsName] = useState<string>();
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
@@ -893,6 +895,7 @@ export function SoloDraft({
             setSettingsLifetime(draftLifetime(scope, draftSettings));
             setSettingsProject(selectedProject);
             setSettingsCanvas(draftCanvas);
+            setSettingsName(draftSettings.name);
             setSettingsOpen(true);
           }}
         />
@@ -905,7 +908,7 @@ export function SoloDraft({
           session={session}
           projectId={settingsProject || undefined}
           canvas={settingsCanvas}
-          name={draftSettings.name}
+          name={settingsName}
           ttlSeconds={settingsLifetime}
           close={() => setSettingsOpen(false)}
           save={(canvas, ttlSeconds, name) => {

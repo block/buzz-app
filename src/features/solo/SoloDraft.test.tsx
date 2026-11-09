@@ -1919,6 +1919,38 @@ it("another window's saved instructions leave open Chat settings alone; its own 
   });
 });
 
+it("another window's saved name leaves open Chat settings alone; dismissing keeps theirs", async () => {
+  const f = await projectSetup();
+  deletableWorkspaces(f);
+  const user = userEvent.setup();
+  const scope = "renamed-elsewhere-under-settings";
+  writeView(scope, "solo:new-project", "work");
+  writeView(scope, "solo:settings", { name: "Mine", canvas: "Saved notes" });
+  render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  const instructions = await screen.findByRole("textbox", {
+    name: /^Instructions/,
+  });
+  await waitFor(() => expect(instructions).toHaveValue("Saved notes"));
+  act(() =>
+    otherWindowWrites(scope, "solo:settings", {
+      name: "Theirs",
+      canvas: "Saved notes",
+    }),
+  );
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: /^Chat name/ })).toHaveValue(
+    "Mine",
+  );
+  // Nothing was edited here, so dismissing doesn't ask about unsaved changes.
+  await user.keyboard("{Escape}");
+  expect(screen.queryByText("Your settings have unsaved changes.")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(readView(scope, "solo:settings", null)).toMatchObject({
+    name: "Theirs",
+  });
+});
+
 it("Chat settings says its workspace was deleted when its own load finds out", async () => {
   const f = await projectSetup();
   const remove = deletableWorkspaces(f);

@@ -81,7 +81,7 @@ export function provideNavigation(
     request(
       attempt: OpenAttempt,
       owner: PresentationOwner,
-      retainUnderSettings = false,
+      retainWhileCovered = false,
     ) {
       let active = attempt;
       let suspended = false;
@@ -89,14 +89,18 @@ export function provideNavigation(
       let completion:
         | Extract<OpenResult, { status: "opened" | "failed" }>
         | undefined;
-      const retainedSignal = retainUnderSettings
+      const retainedSignal = retainWhileCovered
         ? new AbortController().signal
         : attempt.signal;
       const visit = (key: string) => JSON.stringify([attempt.entry.id, key]);
-      // Another visit covers this page: Settings, or a join dialog opened over
-      // it. A join presented with its own page, as after reload, covers nothing.
+      // Another visit covers this view: Settings or a join dialog over a page,
+      // a join dialog over Settings. A join presented with its own view, as
+      // after reload, covers nothing.
       const covered = (entry: NavigationEntry) =>
-        entry.id !== attempt.entry.id && coversWorkspace(entry.target);
+        entry.id !== attempt.entry.id &&
+        (attempt.entry.target.kind === "settings"
+          ? entry.target.join !== undefined
+          : coversWorkspace(entry.target));
       const sameVisit = (next: OpenAttempt) =>
         next.entry.id === attempt.entry.id &&
         targetKey(next.entry.target) === targetKey(attempt.entry.target);
@@ -124,7 +128,7 @@ export function provideNavigation(
             controller.passThrough(attempt.entry.id, passes),
           resolve: (target) => {
             if (
-              retainUnderSettings &&
+              retainWhileCovered &&
               covered(controller.navigation.snapshot().entry)
             ) {
               resolution = target;
@@ -134,7 +138,7 @@ export function provideNavigation(
           },
           complete: (result) => {
             const state = controller.navigation.snapshot();
-            if (retainUnderSettings && covered(state.entry)) {
+            if (retainWhileCovered && covered(state.entry)) {
               completion = result;
               return false;
             }
@@ -148,12 +152,12 @@ export function provideNavigation(
             if (!owner.valid()) return false;
             if (current()) return true;
             const state = controller.navigation.snapshot();
-            if (retainUnderSettings && !state.ingress && covered(state.entry)) {
+            if (retainWhileCovered && !state.ingress && covered(state.entry)) {
               suspended = true;
               return true;
             }
             return (
-              retainUnderSettings &&
+              retainWhileCovered &&
               suspended &&
               !state.ingress &&
               sameVisit(state.attempt) &&
@@ -175,7 +179,7 @@ export function provideNavigation(
         /** Resume only the original visit; retained content cannot acknowledge Settings. */
         resume(next: OpenAttempt) {
           if (
-            !retainUnderSettings ||
+            !retainWhileCovered ||
             !suspended ||
             presentation.request.signal.aborted ||
             !sameVisit(next) ||

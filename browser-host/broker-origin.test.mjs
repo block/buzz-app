@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
 import { getPublicKey } from "nostr-tools";
-import { createServer } from "vite";
+import { createServer, resolveConfig } from "vite";
 import { expect, it } from "vitest";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 
@@ -97,6 +97,33 @@ it("admits only the configured browser origin through a loopback proxy", async (
     await server.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+it.each([
+  ["serve", "production"],
+  ["build", "development"],
+  ["build", "production"],
+])("refuses a hosted origin for %s in %s mode", async (command, mode) => {
+  await expect(
+    resolveConfig(
+      {
+        configFile: false,
+        mode,
+        plugins: [
+          relayBrokerPlugin({
+            browserOrigin: "https://preview.example.org",
+            identity: () => {
+              throw new Error("Identity read");
+            },
+          }),
+        ],
+      },
+      command,
+      mode,
+    ),
+  ).rejects.toThrow(
+    "browserOrigin requires the Vite development server in development mode",
+  );
 });
 
 it.each([

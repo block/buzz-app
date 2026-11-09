@@ -22,7 +22,9 @@ browser support; see the [consolidation guidance](../docs/contributing.md#broker
 
 `relayBrokerPlugin({ browserOrigin: "https://preview.example.org" })` accepts
 one explicit HTTPS browser origin through a trusted proxy. The listener must
-stay on loopback. The proxy must authenticate its users; the origin setting
+stay on loopback. This setting is an explicit development opt-in. The broker
+refuses it outside the Vite development server in `development` mode, including
+production mode and builds. The proxy must authenticate its users; the origin setting
 does not grant access or authenticate a remote client. Use a simulated identity
 and relay for shared UX previews.
 

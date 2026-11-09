@@ -884,6 +884,15 @@ export function relayBrokerPlugin({
   return {
     name: "buzz-relay-broker",
     configResolved(config) {
+      if (
+        publicOrigin &&
+        (config.command !== "serve" ||
+          config.mode !== "development" ||
+          config.isProduction)
+      )
+        throw new Error(
+          "browserOrigin requires the Vite development server in development mode.",
+        );
       // Request headers express browser origin intent, not remote-client
       // authentication. Check the effective listener, including CLI overrides,
       // before configureServer loads the signing identity.

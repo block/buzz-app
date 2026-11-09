@@ -1,21 +1,32 @@
-import { Component, useEffect, type ReactNode } from "react";
+import { Component, Fragment, useEffect, type ReactNode } from "react";
+import { rawText } from "../relay/user-copy";
+import {
+  ContributionFailure,
+  type FailedPlugin,
+  type PluginOwners,
+  PluginOwnersProvider,
+} from "./ContributionFailure";
 import type { PageProps, RegisteredPage } from "./service";
 
 type BoundaryProps = {
   children: ReactNode;
   page: RegisteredPage;
   navigation?: PageProps["navigation"];
+  plugin?: FailedPlugin | undefined;
 };
 class PageBoundary extends Component<
   BoundaryProps,
   {
-    error: string | null;
+    failure: { details: string | undefined } | null;
+    /** Bumped by Try again so the page remounts with fresh state. */
+    attempt: number;
     page: RegisteredPage;
     navigation: PageProps["navigation"];
   }
 > {
   state = {
-    error: null as string | null,
+    failure: null as { details: string | undefined } | null,
+    attempt: 0,
     page: this.props.page,
     navigation: this.props.navigation,
   };
@@ -26,11 +37,11 @@ class PageBoundary extends Component<
     // A new attempt or registration can retry a failed subtree, even within one visit.
     // Do not remount healthy content on a reclick: its local drafts/focus still belong to it.
     if (props.page !== state.page || props.navigation !== state.navigation)
-      return { error: null, page: props.page, navigation: props.navigation };
+      return { failure: null, page: props.page, navigation: props.navigation };
     return null;
   }
   static getDerivedStateFromError(error: unknown) {
-    return { error: String(error) };
+    return { failure: { details: rawText(error) } };
   }
   componentDidCatch() {
     this.props.navigation?.complete({
@@ -39,41 +50,52 @@ class PageBoundary extends Component<
     });
   }
   render() {
-    return this.state.error ? (
-      <Failure message={this.state.error} />
+    const { failure, attempt } = this.state;
+    return failure ? (
+      <ContributionFailure
+        kind="page"
+        plugin={this.props.plugin}
+        details={failure.details}
+        onRetry={() =>
+          this.setState((state) => ({
+            failure: null,
+            attempt: state.attempt + 1,
+          }))
+        }
+      />
     ) : (
-      this.props.children
+      <Fragment key={attempt}>{this.props.children}</Fragment>
     );
   }
-}
-function Failure({ message }: { message: string }) {
-  return (
-    <div role="alert" className="notice">
-      <h2>This page couldn’t open</h2>
-      <p>{message}</p>
-      <p>Open Settings to disable, delete, or roll back this plugin.</p>
-    </div>
-  );
 }
 export function PageView({
   page,
   companion,
   companionOpening,
   navigation,
-}: { page: RegisteredPage } & PageProps) {
+  owners,
+}: {
+  page: RegisteredPage;
+  /** Names external plugins, so a failed page or panel can name its own and
+   * offer Manage plugin. Without it every failure reads as built-in. */
+  owners?: PluginOwners | undefined;
+} & PageProps) {
   return (
-    <PageBoundary
-      page={page}
-      navigation={navigation}
-      key={`${page.key}:${page.revision}`}
-    >
-      <PresentedPage
+    <PluginOwnersProvider value={owners}>
+      <PageBoundary
         page={page}
-        companion={companion}
-        companionOpening={companionOpening}
         navigation={navigation}
-      />
-    </PageBoundary>
+        plugin={owners?.(page.pluginId)}
+        key={`${page.key}:${page.revision}`}
+      >
+        <PresentedPage
+          page={page}
+          companion={companion}
+          companionOpening={companionOpening}
+          navigation={navigation}
+        />
+      </PageBoundary>
+    </PluginOwnersProvider>
   );
 }
 function PresentedPage({

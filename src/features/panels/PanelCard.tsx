@@ -10,6 +10,7 @@ import { XIcon } from "../../shared/design-system/icons/index";
 import type { PanelProps, RegisteredPanel } from "./service";
 import { PanelSubviewHost } from "./PanelSubview";
 import { PanelView } from "./PanelView";
+import { usePluginOwners } from "../pages/ContributionFailure";
 import styles from "./Panels.module.css";
 
 // Ordinary shared UI: the caller still owns placement and selection.
@@ -24,6 +25,7 @@ export function PanelCard({
   contentKey?: string;
 }) {
   const tabbed = !!usePanelTabHost();
+  const owners = usePluginOwners();
   return (
     <aside
       ref={ref}
@@ -63,7 +65,12 @@ export function PanelCard({
               />
             )}
             <div className={styles.content}>
-              <PanelView panel={panel} contentKey={contentKey} {...props} />
+              <PanelView
+                panel={panel}
+                contentKey={contentKey}
+                plugin={owners?.(panel.pluginId)}
+                {...props}
+              />
             </div>
           </div>
         </PanelSubviewHost>

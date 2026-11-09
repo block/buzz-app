@@ -50,6 +50,21 @@ test.describe("page render failure", () => {
         exact: true,
       }),
     ).toBeVisible();
+    await expect(
+      page.getByText("Something went wrong showing this page.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("If it keeps happening, restart Buzz.", { exact: true }),
+    ).toBeVisible();
+    // The exception text stays behind a collapsed Details.
+    await expect(button(page, "Details")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    await expect(page.getByText("Fixture page render failure")).toHaveCount(0);
+    await expect(page.getByText("Open Settings to disable")).toHaveCount(0);
     await openPage(page, "Retry fixture");
     await expect(button(page, "Break fixture page")).toBeVisible({
       timeout: 1500,
@@ -58,6 +73,35 @@ test.describe("page render failure", () => {
     expect(
       await page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
     ).toBe(entry);
+    expect(
+      app.report.consoleErrors.some((message) =>
+        message.includes("Fixture page render failure"),
+      ),
+    ).toBe(true);
+  });
+  test("Try again remounts a page that crashed after opening", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await openPage(page, "Retry fixture");
+    await button(page, "Break fixture page").click();
+    await expect(
+      page.getByRole("heading", {
+        name: "This page couldn’t open",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await button(page, "Details").click();
+    await expect(
+      page.getByText("Error: Fixture page render failure", { exact: true }),
+    ).toBeVisible();
+    // The page's state is fresh after the remount, so it no longer throws.
+    await button(page, "Try again").click();
+    await expect(button(page, "Break fixture page")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "This page couldn’t open" }),
+    ).toHaveCount(0);
     expect(
       app.report.consoleErrors.some((message) =>
         message.includes("Fixture page render failure"),

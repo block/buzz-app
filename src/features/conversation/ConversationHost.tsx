@@ -10,6 +10,7 @@ import {
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { buzzLinkTarget } from "../navigation/buzz-links";
 import { PanelView } from "../panels/PanelView";
+import { usePluginOwners } from "../pages/ContributionFailure";
 import { panelOpening, type PanelOpening } from "../panels/service";
 import type { ThreadPanelProps } from "../messages/ThreadPanel";
 import { useConversationPresentation } from "./ConversationPresentation";
@@ -60,6 +61,7 @@ export function ConversationHost({
   children,
 }: ConversationHostProps) {
   const presented = useConversationPresentation();
+  const owners = usePluginOwners();
   const presentation = useRef(presented);
   const trigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
@@ -174,6 +176,7 @@ export function ConversationHost({
         >
           <PanelView
             panel={overlay.panel}
+            plugin={owners?.(overlay.panel.pluginId)}
             target={overlay.target}
             close={() => {
               if (shown.current === overlay) setOverlay(undefined);

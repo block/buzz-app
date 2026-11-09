@@ -14,6 +14,7 @@ import type {
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { PanelView } from "../../features/panels/PanelView";
+import { usePluginOwners } from "../../features/pages/ContributionFailure";
 import styles from "./Channels.module.css";
 
 const launcherOrder = (key: string) =>
@@ -59,6 +60,7 @@ export function useChannelPanels(
     fallbackFocus?: RefObject<HTMLElement | null> | undefined;
   }>,
 ) {
+  const owners = usePluginOwners();
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
@@ -205,6 +207,7 @@ export function useChannelPanels(
       >
         <PanelView
           panel={selected.panel}
+          plugin={owners?.(selected.panel.pluginId)}
           target={selected.target}
           channelContext={context}
           context={openingContext(selected)}
@@ -221,6 +224,7 @@ export function useChannelPanels(
           <section aria-label={`${selected.panel.title} drawer`}>
             <PanelView
               panel={selected.panel}
+              plugin={owners?.(selected.panel.pluginId)}
               target={selected.target}
               channelContext={context}
               context={openingContext(selected)}

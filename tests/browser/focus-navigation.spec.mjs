@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import {
+  activityRow,
   closeSettings,
   settlePanelMotion,
   settleShellToggle,
@@ -626,10 +627,7 @@ test.extend({
   async ({ page, app }) => {
     await page.setViewportSize({ width: 1100, height: 900 });
     await open(page, app);
-    await page
-      .getByRole("navigation", { name: "Apps dock", exact: true })
-      .getByRole("tab", { name: "Activity", exact: true })
-      .click();
+    await activityRow(page).click();
     const inbox = page.getByRole("region", { name: "Activity", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
     const row = inbox
@@ -665,6 +663,9 @@ test.extend({
         ),
       ).toBe(false);
     }
+    // Shift+Tab can leave the tabs for the shell's skip link, which close-all
+    // leaves focused, so close from the tab.
+    await tab.focus();
     const handled = await page.evaluate(() => {
       const event = new Event("buzz:close-all-tabs", { cancelable: true });
       window.dispatchEvent(event);
@@ -803,7 +804,7 @@ test("escaping a restored side panel over the conversation returns focus to the 
   const todos = page.getByRole("region", { name: "Todos panel", exact: true });
   await expect(todos).toBeVisible();
   const dock = page.getByRole("navigation", { name: "Apps dock", exact: true });
-  await dock.getByRole("tab", { name: "Activity", exact: true }).click();
+  await activityRow(page).click();
   await expect(todos).toHaveCount(0);
   await dock.getByRole("tab", { name: "Messages", exact: true }).click();
   await expect(todos).toBeVisible();

@@ -68,7 +68,7 @@ const audience = {
 const request = {
   type: "string",
   description:
-    "Id of the message that started this turn, which this post answers or works on. Not the reply target or thread root.",
+    "Id of the message that started this turn, which this post answers or works on, even when the reply targets an earlier thread root.",
 } as const;
 const final = {
   type: "boolean",

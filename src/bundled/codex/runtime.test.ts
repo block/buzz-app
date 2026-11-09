@@ -4691,6 +4691,41 @@ it("always offers the attention tools, on search, keeps the thread when attentio
   await f.complete(1);
 });
 
+it("starts a turn with many plugin tools and can call the last tool", async () => {
+  const f = fixture();
+  const call = vi.fn(async () => "done");
+  for (let index = 0; index < 100; index++) {
+    f.added.push({
+      name: `example_plugin_action_${index}`,
+      description: "Run a plugin action.",
+      inputSchema: { type: "object" },
+      call,
+    });
+  }
+  await f.runtime.run(f.delivery("Run a plugin action"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const thread = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as {
+    dynamicTools: {
+      description: string;
+      tools: { name: string; deferLoading?: boolean }[];
+    }[];
+  };
+  const namespace = thread.dynamicTools[0];
+  expect(namespace?.description.length).toBeLessThanOrEqual(1024);
+  expect(
+    namespace?.tools.filter(({ name }) => name.startsWith("example_plugin_")),
+  ).toHaveLength(100);
+  expect(namespace?.tools.at(-1)).toMatchObject({
+    name: "example_plugin_action_99",
+    deferLoading: true,
+  });
+  const reply = await f.tool("example_plugin_action_99", {});
+  expect(JSON.stringify(reply?.result)).toContain("done");
+  expect(call).toHaveBeenCalledOnce();
+  await f.complete();
+});
+
 it("offers the tools plugins add, runs them as the agent here, and starts a new thread when they change", async () => {
   const f = fixture();
   const call = vi.fn(async () => "created");

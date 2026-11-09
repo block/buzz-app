@@ -57,9 +57,31 @@ it("loads the Buzz tools up front, and attention and plugins' tools on search", 
   );
   expect(load("notes_add")).toBe("search");
   expect(sessionHint([tool("notes_add"), tool("tasks_create")])).toContain(
-    "tools plugins add (notes_add, tasks_create)",
+    "tools from enabled plugins",
   );
 });
+
+it.each([false, true])(
+  "keeps the namespace hint within 1024 characters with many plugin tools (owner: %s)",
+  (owner) => {
+    const added = Array.from({ length: 100 }, (_, index) =>
+      tool(`example_plugin_action_${index}`),
+    );
+    expect(sessionHint(added, owner).length).toBeLessThanOrEqual(1024);
+    expect(
+      sessionTools(added, owner).filter(({ name }) =>
+        name.startsWith("example_plugin_"),
+      ),
+    ).toEqual(
+      added.map(({ name, description, inputSchema }) => ({
+        name,
+        description,
+        inputSchema,
+        load: "search",
+      })),
+    );
+  },
+);
 
 it("lists the tools as the harness has it, and without their load by default", async () => {
   const answer = (method: string, listing?: Listing) =>

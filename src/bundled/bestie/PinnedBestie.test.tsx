@@ -298,6 +298,14 @@ async function fixture({
             }),
           ];
         }
+        // The link's own thread: a top-level message with no replies.
+        if (
+          withLink &&
+          filters.some(
+            (f) => f.ids?.includes(link.id) || f["#e"]?.includes(link.id),
+          )
+        )
+          return [link];
         if (
           withReply &&
           filters.some(
@@ -513,6 +521,10 @@ async function fixture({
           row.dataset.messageId === messageId &&
           !row.closest('[aria-label="Thread"]'),
       ),
+    /** Forgets the rows revealed so far, to assert later reveals alone. */
+    forgetReveals: () => {
+      scrolled.length = 0;
+    },
     mount: () =>
       render(
         <ToastProvider>
@@ -890,6 +902,53 @@ it("reveals a reply's verified root, not the unrelated message its link hinted",
     await within(thread).findByText("Yep, here. What’s up?"),
   ).toBeVisible();
   expect(within(thread).getByText("Are you there?")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  expect(h.revealed(h.f.linkId)).toBeUndefined();
+});
+
+// An open thread's earlier verification is no evidence for a new link into
+// it: its tab takes the reply before its reader agrees, so the hinted root
+// stays unmarked until the reply's own ancestry is verified.
+it("never reveals an open hinted thread's root while a reply linked into it is looked up", async () => {
+  const h = await linkedVisit(
+    ({ linkId }) => ({ messageId: linkId, threadRootId: linkId }),
+    { withLink: true, holdThread: true },
+  );
+  // The hinted thread is open and verified: its own visit revealed its root.
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.linkId)).toBeDefined());
+  h.f.forgetReveals();
+  act(() => {
+    void h.host.navigation.open({
+      version: 1,
+      kind: "conversation",
+      scope: h.scope,
+      channelId: pollenDM,
+      messageId: h.f.replyId,
+      threadRootId: h.f.linkId,
+    });
+  });
+  await waitFor(() =>
+    bestieVisit(h, { messageId: h.f.replyId, threadRootId: h.f.linkId }),
+  );
+  // The hinted root is loaded, but the held reply is not yet verified under
+  // any root: nothing is revealed.
+  expect(chatRow(h.f.linkId)).toBeDefined();
+  await act(() => frames(2));
+  expect(h.revealed(h.f.linkId)).toBeUndefined();
+  await act(async () => h.f.release.thread());
+  // The reply's real thread opens in its own tab beside the hinted one, and
+  // only its verified root is marked in the chat.
+  const reply = await screen.findByText("Yep, here. What’s up?");
+  expect(reply.closest('[aria-label="Thread"]')).not.toBeNull();
+  await waitFor(() =>
+    expect(
+      within(screen.getByLabelText("Bestie panel tabs")).getByRole("tab", {
+        selected: true,
+      }),
+    ).toHaveTextContent("Are you there?"),
+  );
   await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
   expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
   expect(h.revealed(h.f.linkId)).toBeUndefined();

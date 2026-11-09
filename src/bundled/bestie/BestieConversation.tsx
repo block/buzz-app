@@ -27,7 +27,6 @@ import {
   tabPane,
   panelTabId,
   entryPane,
-  threadTab,
   useChannelTabState,
   type ConversationTab,
 } from "../channels/useChannelTabState";
@@ -210,21 +209,18 @@ export function BestieConversation({
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new visit asks again for the same message.
   const visit = useMemo(() => ++visits.current, [navigation?.entryId]);
   // A thread visit's address names its root as the link's hint. The context
-  // reveal follows the root the thread's reader verifies, recorded for the
-  // visit by the tab store, so a hint naming an unrelated message never marks
-  // it; until then nothing is sought.
-  const recordedRoot =
-    routed && navigation
-      ? state.routedVisits?.[navigation.entryId]?.rootId
-      : undefined;
-  const routedTab = recordedRoot
-    ? threadTab(state.tabs, channel.id, recordedRoot)
+  // reveal follows the root a thread's reader verifies for the visit's own
+  // message, recorded on the visit by the tab store: neither a hint naming an
+  // unrelated message nor that message's already-open thread, verified for an
+  // earlier visit, marks it; until then nothing is sought.
+  const record = navigation
+    ? state.routedVisits?.[navigation.entryId]
     : undefined;
-  const verifiedRoot =
-    routedTab?.kind === "thread" ? routedTab.rootId : undefined;
   const sought = handedOff
     ? routed
-      ? verifiedRoot
+      ? record?.verified
+        ? record.rootId
+        : undefined
       : exact?.messageId
     : undefined;
   // The reader's own move in the chat during a thread visit, a scroll or a
@@ -240,8 +236,7 @@ export function BestieConversation({
   }, []);
   // A message visit that opened as a thread returns to that thread. The tab
   // store's record outlives this page's mount and is pruned with history.
-  const recorded =
-    navigation && exact ? state.routedVisits?.[navigation.entryId] : undefined;
+  const recorded = exact ? record : undefined;
   // Without that record, as when the visit was left before history answered
   // or after a reload, Back and Forward decide again between the chat and the
   // thread, without revealing the message.

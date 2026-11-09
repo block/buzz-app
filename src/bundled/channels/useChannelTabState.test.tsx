@@ -429,7 +429,11 @@ test("a tab opened from a wrong hint merges into the verified thread's tab", () 
   act(() => h.result.current.openThreadTab("alpha", "reply", "wrong-hint"));
   expect(h.result.current.tabs).toHaveLength(2);
   act(() =>
-    h.result.current.resolveThreadRoot("thread:alpha:wrong-hint", "root"),
+    h.result.current.resolveThreadRoot(
+      "thread:alpha:wrong-hint",
+      "root",
+      "reply",
+    ),
   );
   expect(h.result.current.tabs).toEqual([
     expect.objectContaining({
@@ -451,7 +455,9 @@ test.each(["side", "main"] as const)(
     const session = {} as RelaySession;
     const h = renderHook(() => useChannelTabState(session, "alpha"));
     act(() => h.result.current.openThreadTab("alpha", "root", "root"));
-    act(() => h.result.current.resolveThreadRoot("thread:alpha:root", "root"));
+    act(() =>
+      h.result.current.resolveThreadRoot("thread:alpha:root", "root", "root"),
+    );
     act(() =>
       h.result.current.openThreadTab("alpha", "reply", "guess", "select", pane),
     );
@@ -459,7 +465,9 @@ test.each(["side", "main"] as const)(
       h.result.current.openThreadTab("alpha", "other", "other", "select", pane),
     );
     act(() => h.result.current.setPaneOpen(false));
-    act(() => h.result.current.resolveThreadRoot("thread:alpha:guess", "root"));
+    act(() =>
+      h.result.current.resolveThreadRoot("thread:alpha:guess", "root", "reply"),
+    );
     expect(h.result.current.paneOpen).toBe(false);
     expect(
       pane === "main"
@@ -478,13 +486,17 @@ test("a selected hidden provisional tab merges without switching the main pane",
   act(() =>
     h.result.current.openThreadTab("alpha", "root", "root", "select", "main"),
   );
-  act(() => h.result.current.resolveThreadRoot("thread:alpha:root", "root"));
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:root", "root", "root"),
+  );
   act(() =>
     h.result.current.openThreadTab("alpha", "other", "other", "select", "main"),
   );
   act(() => h.result.current.openThreadTab("alpha", "reply", "guess"));
   act(() => h.result.current.setPaneOpen(false));
-  act(() => h.result.current.resolveThreadRoot("thread:alpha:guess", "root"));
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:guess", "root", "reply"),
+  );
   expect(h.result.current.mainSelected).toBe("thread:alpha:other");
   expect(h.result.current.paneOpen).toBe(false);
 });
@@ -499,11 +511,11 @@ test.each(["side", "main"] as const)(
     act(() =>
       h.result.current.openThreadTab("alpha", "x", "x", "select", pane),
     );
-    act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "x"));
+    act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "x", "x"));
     act(() =>
       h.result.current.openThreadTab("alpha", "y", "y", "select", otherPane),
     );
-    act(() => h.result.current.resolveThreadRoot("thread:alpha:y", "y"));
+    act(() => h.result.current.resolveThreadRoot("thread:alpha:y", "y", "y"));
     act(() =>
       h.result.current.openThreadTab("alpha", "reply-y", "x", "select", pane),
     );
@@ -520,7 +532,13 @@ test.each(["side", "main"] as const)(
         : h.result.current.mainSelected,
     ).toBe("thread:alpha:reply-y");
     // An already-open verified destination still keeps its own placement.
-    act(() => h.result.current.resolveThreadRoot("thread:alpha:reply-y", "y"));
+    act(() =>
+      h.result.current.resolveThreadRoot(
+        "thread:alpha:reply-y",
+        "y",
+        "reply-y",
+      ),
+    );
     expect(h.result.current.tabs).toHaveLength(2);
     expect(
       otherPane === "main"
@@ -541,7 +559,9 @@ test("verified identity takes precedence over a tab's original hint id", () => {
   const session = {} as RelaySession;
   const h = renderHook(() => useChannelTabState(session, "alpha"));
   act(() => h.result.current.openThreadTab("alpha", "reply-y", "x"));
-  act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "y"));
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:x", "y", "reply-y"),
+  );
   act(() => h.result.current.openThreadTab("alpha", "x", "x"));
   expect(h.result.current.tabs).toHaveLength(2);
   expect(new Set(h.result.current.tabs.map((tab) => tab.id)).size).toBe(2);
@@ -549,6 +569,53 @@ test("verified identity takes precedence over a tab's original hint id", () => {
     messageId: "reply-y",
     rootId: "y",
   });
+});
+
+// A link into an open, verified thread changes the tab's message before its
+// reader agrees. The visit's root is verified only once the reader confirms
+// the visit's own message under it.
+test("a visit's root is verified only for the message its reader confirmed", () => {
+  const session = {} as RelaySession;
+  const h = renderHook(() => useChannelTabState(session, "alpha"));
+  act(() => h.result.current.openThreadTab("alpha", "x", "x"));
+  act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "x", "x"));
+  act(() =>
+    h.result.current.enterVisit("linked:thread", {
+      channelId: "alpha",
+      messageId: "reply-y",
+      rootId: "x",
+    }),
+  );
+  const visit = () => h.result.current.routedVisits?.linked;
+  expect(visit()).toEqual({
+    channelId: "alpha",
+    messageId: "reply-y",
+    rootId: "x",
+  });
+  // The open thread's reader reporting its root for its own message again
+  // verifies nothing for the reply, whatever the tab's message now is.
+  act(() => h.result.current.resolveThreadRoot("thread:alpha:x", "x", "x"));
+  expect(visit()).not.toHaveProperty("verified");
+  act(() => h.result.current.divertThread("thread:alpha:x", "reply-y", "x"));
+  act(() =>
+    h.result.current.resolveThreadRoot("thread:alpha:reply-y", "y", "reply-y"),
+  );
+  expect(visit()).toEqual({
+    channelId: "alpha",
+    messageId: "reply-y",
+    rootId: "y",
+    verified: true,
+  });
+  // Re-entering the visit keeps its verified root.
+  act(() => h.result.current.enterVisit("other:channel"));
+  act(() =>
+    h.result.current.enterVisit("linked:thread", {
+      channelId: "alpha",
+      messageId: "reply-y",
+      rootId: "x",
+    }),
+  );
+  expect(visit()).toMatchObject({ rootId: "y", verified: true });
 });
 
 test("Back to a visit whose only side content is a retained drawer shows that drawer", () => {
@@ -687,7 +754,11 @@ test("dismissal follows verified roots and retains thread visits beyond the layo
     }),
   );
   act(() =>
-    h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+    h.result.current.resolveThreadRoot(
+      "thread:alpha:hint",
+      "verified",
+      "reply",
+    ),
   );
   expect(h.result.current.threadVisits("alpha", "hint")).toEqual([]);
   expect(h.result.current.threadVisits("alpha", "verified")).toEqual([
@@ -762,7 +833,11 @@ test("successors retain verified roots and page/channel retirement partitions", 
     }),
   );
   act(() =>
-    h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+    h.result.current.resolveThreadRoot(
+      "thread:alpha:hint",
+      "verified",
+      "reply",
+    ),
   );
   const old = h.result.current;
   h.rerender({ session: first, channel: "beta", page: "messages" });
@@ -777,7 +852,7 @@ test("successors retain verified roots and page/channel retirement partitions", 
   h.rerender({ session: successor, channel: "alpha", page: "messages" });
   expect(h.result.current.threadVisits("alpha", "verified")).toEqual(["reply"]);
   expect(h.result.current.threadVisits("alpha", "hint")).toEqual([]);
-  act(() => old.resolveThreadRoot("thread:alpha:hint", "stale"));
+  act(() => old.resolveThreadRoot("thread:alpha:hint", "stale", "reply"));
   expect(h.result.current.threadVisits("alpha", "verified")).toEqual(["reply"]);
   act(() =>
     h.result.current.enterVisit("current:thread", {
@@ -787,7 +862,11 @@ test("successors retain verified roots and page/channel retirement partitions", 
     }),
   );
   act(() =>
-    h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+    h.result.current.resolveThreadRoot(
+      "thread:alpha:hint",
+      "verified",
+      "reply",
+    ),
   );
   expect(h.result.current.threadVisits("alpha", "verified")).toEqual([
     "reply",
@@ -819,7 +898,11 @@ test("a rebuilt reply keeps its inherited root before the successor reader resol
     }),
   );
   act(() =>
-    h.result.current.resolveThreadRoot("thread:alpha:reply", "verified"),
+    h.result.current.resolveThreadRoot(
+      "thread:alpha:reply",
+      "verified",
+      "reply",
+    ),
   );
   h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
   act(() =>
@@ -854,7 +937,11 @@ test.each(["channel", "message"])(
     const route = { channelId: "alpha", messageId: "reply", rootId: "hint" };
     act(() => h.result.current.enterVisit("reply:thread", route));
     act(() =>
-      h.result.current.resolveThreadRoot("thread:alpha:hint", "verified"),
+      h.result.current.resolveThreadRoot(
+        "thread:alpha:hint",
+        "verified",
+        "reply",
+      ),
     );
     h.rerender({ session: { scope, viewer: "viewer" } as RelaySession });
     const changed = {
@@ -1248,7 +1335,7 @@ test("an agent's tab name stays with the tab until cleared", () => {
   // A provisional tab that resolves to the same root merges into the named one.
   act(() => remounted.result.current.openThreadTab("alpha", "r2", "hint"));
   act(() =>
-    remounted.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    remounted.result.current.resolveThreadRoot("thread:alpha:hint", "r1", "r2"),
   );
   expect(remounted.result.current.tabs).toMatchObject([
     { id: "thread:alpha:r1", name: "Launch plan" },
@@ -1613,7 +1700,9 @@ test.each(["foreground", "background"])(
     );
     if (branch === "background")
       act(() => page.result.current.select("thread:alpha:r1"));
-    act(() => page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"));
+    act(() =>
+      page.result.current.resolveThreadRoot("thread:alpha:hint", "r1", "r2"),
+    );
     expect(page.result.current.tabs).toHaveLength(1);
     expect(page.result.current.tabs[0]).toMatchObject({ name: "Launch plan" });
   },

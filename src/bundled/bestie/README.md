@@ -47,9 +47,11 @@ or the DM or a message chosen in search, resolves in place to this page's visit
 before Messages presents it. On its first presentation, a thread visit opens
 the thread in its pane, which keeps focus, and marks the thread's root in the
 chat history once it is loaded or found in older history, without hiding the
-history or moving focus. The root marked is the one the thread's reader
-verifies, not the link's thread hint: a hint naming an unrelated message
-never marks that message, and nothing is sought until the thread resolves.
+history or moving focus. The root marked is the one a thread's reader
+verifies for the visit's own message, not the link's thread hint: a hint
+naming an unrelated message never marks that message, even when that
+message's thread is already open and verified, and nothing is sought until
+the reader confirms the linked message's thread.
 A reader who scrolls the history or sends from the main composer first has
 moved on, and the root is neither sought nor marked.
 A message visit holds the history until that message

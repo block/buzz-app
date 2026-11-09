@@ -2021,10 +2021,20 @@ it("shows thinking and its dots once, moving from the live bubble into recorded 
     expect(
       screen.queryByRole("button", { name: /Activity: .*working/ }),
     ).toBeNull();
+    const step = () =>
+      screen.getByRole("button", { name: /Blossom: Thinking/ });
     expect(dots()).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: /Blossom: Thinking/ }),
-    ).toContainElement(dots()[0] as HTMLElement);
+    expect(step()).toContainElement(dots()[0] as HTMLElement);
+    // Opening the working step keeps its one set of dots on the step.
+    for (const state of ["open", "closed"]) {
+      fireEvent.click(step());
+      expect(step()).toHaveAttribute("aria-expanded", `${state === "open"}`);
+      expect(
+        screen.queryByRole("button", { name: /Activity: .*working/ }),
+      ).toBeNull();
+      expect(dots()).toHaveLength(1);
+      expect(step()).toContainElement(dots()[0] as HTMLElement);
+    }
     act(() => work.finish({ ok: true }));
     expect(screen.getByText("Thinking")).not.toHaveAttribute("data-active");
     expect(

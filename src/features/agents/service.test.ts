@@ -17216,25 +17216,51 @@ describe("Retired owner-read tools", () => {
         memories: async () => ({ entries: [], partial: false }),
       });
       // The owner is signed in here, and is in `private`; the agent is not.
-      const read = vi.spyOn(f.session, "read");
-      const remote = vi.spyOn(f.session, "readRemote");
+      // The owner's session would return its messages; the relay gives the
+      // agent's key none.
+      const names = (filters: unknown) =>
+        JSON.stringify(filters).includes('"private"');
+      const secret = [
+        event("s", { content: "OWNER_ONLY", tags: [["h", "private"]] }),
+      ];
+      const ownerRead = f.session.read.bind(f.session);
+      const ownerRemote = f.session.readRemote.bind(f.session);
+      const read = vi
+        .spyOn(f.session, "read")
+        .mockImplementation(async (filters, options) =>
+          names(filters) ? secret : ownerRead(filters, options),
+        );
+      const remote = vi
+        .spyOn(f.session, "readRemote")
+        .mockImplementation(async (filters, options) =>
+          names(filters) ? secret : ownerRemote(filters, options),
+        );
       f.native.query.mockClear();
+      f.native.query.mockImplementation(async (_agent, filters) =>
+        names(filters) ? [] : [event("a", { content: "AGENT_VISIBLE" })],
+      );
       for (const name of RETIRED_OWNER_TOOLS)
         await expect(
           callSessionTool(client, {}, name, { channel: "private" }),
         ).rejects.toThrow(`No tool ${name}`);
-      f.native.query.mockResolvedValue([
-        event("a", { content: "AGENT_VISIBLE" }),
+      expect(f.native.query).not.toHaveBeenCalled();
+      // An ordinary read of `private` runs as the agent and gets nothing.
+      const denied = await callSessionTool(client, {}, "read", {
+        channel: "private",
+      });
+      expect(denied).toBe("No messages.");
+      expect(f.native.query).toHaveBeenCalledWith(expect.anything(), [
+        expect.objectContaining({ "#h": ["private"] }),
       ]);
       await expect(
         callSessionTool(client, {}, "read", { channel }),
       ).resolves.toContain("AGENT_VISIBLE");
-      // The agent's own read runs as the agent.
-      expect(f.native.query).toHaveBeenCalled();
       // Background sync may read; none of it reads the owner-only channel.
       expect(
-        JSON.stringify([...read.mock.calls, ...remote.mock.calls]),
-      ).not.toContain('"private"');
+        [...read.mock.calls, ...remote.mock.calls].some(([filters]) =>
+          names(filters),
+        ),
+      ).toBe(false);
     } finally {
       await f.ctx.fiber.dispose();
       vi.unstubAllEnvs();

@@ -435,6 +435,12 @@ export function useMentionChoices(
     !roster &&
     (list.status === "idle" || list.status === "loading") &&
     !channel?.members;
+  // A read of the agent list that rows wait on: invited agents until the
+  // library lands, and held agents from other communities (README section 6).
+  // The combined agent status is ready once native inventory is, so it alone
+  // misses both. Not `pending`: with native inventory ready, inviting still
+  // lets Space tag a unique local name.
+  const agentsPending = agents.pending && (!!invite || held);
   const pending =
     membersPending ||
     !!draft?.pending ||
@@ -620,6 +626,7 @@ export function useMentionChoices(
       candidates,
       pending,
       missingNames,
+      agentsPending,
       archives,
       spaceId: spaceMention(candidates, local, query, evidence),
       canSelect: (pubkey: string, space = false) => {
@@ -654,6 +661,7 @@ export function useMentionChoices(
     channel,
     roster,
     pending,
+    agentsPending,
     query,
     current,
     complete,

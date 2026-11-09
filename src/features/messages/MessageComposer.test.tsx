@@ -14957,6 +14957,7 @@ function mountDirectoryMention(
     session?: object;
     /** Native agent inventory; absent, the agent list has only the library. */
     control?: LocalAgents;
+    inviteAgents?: boolean;
   } = {},
 ) {
   const completions: readonly Contribution<ComposerCompletion>[] = [
@@ -14982,6 +14983,7 @@ function mountDirectoryMention(
           subscribe: () => () => {},
         },
       },
+      ...(options.inviteAgents ? { inviteAgents: true } : {}),
     },
     options.control,
     undefined,
@@ -15747,6 +15749,73 @@ it("shows the inline chooser loading while the owner's agents here load with nat
   h.setLibrary([]);
   await screen.findByRole("option", { name: /In oss\.example\.com/ });
   expect(screen.queryByText("Loading recipients…")).toBeNull();
+});
+
+/** Open the toolbar picker and focus its search field. */
+async function openPicker(h: ReturnType<typeof mountDirectoryMention>) {
+  h.retarget({ extensions: pickerOnly });
+  await h.user.click(
+    screen.getByRole("button", { name: /^Mention a member( or agent)?$/ }),
+  );
+  const search = screen.getByRole("searchbox");
+  await waitFor(() => expect(search).toHaveFocus());
+  return search;
+}
+
+it("shows the toolbar picker loading, not empty, while inviting agents waits for the library with native inventory ready", async () => {
+  const rocket = { pubkey: "e".repeat(64), name: "Rocket" };
+  const h = mountDirectoryMention({
+    channel: { channelType: "stream" },
+    control: localAgentsFixture(),
+    inviteAgents: true,
+  });
+  h.setLibrary([], "loading");
+  expect(h.session.agentChoices.snapshot().status).toBe("ready");
+  const search = await openPicker(h);
+  expect(search).toHaveAccessibleName("Search members and agents");
+  await h.user.type(search, "rocket");
+  expect(screen.getByText("Loading agents…")).toBeInTheDocument();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
+  h.setLibrary([rocket]);
+  await screen.findByRole("button", { name: /Rocket/ });
+  expect(screen.queryByText("Loading agents…")).toBeNull();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
+});
+
+it("shows the toolbar picker's Retry, not empty, after the agent read fails", async () => {
+  const h = mountDirectoryMention({ channel: { channelType: "stream" } });
+  h.setLibrary([], "error", "Could not read agent inventory.");
+  const search = await openPicker(h);
+  await h.user.type(search, "rocket");
+  expect(
+    screen.getByRole("button", { name: "Retry agent list" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Loading agents…")).toBeNull();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
+  // The read lands with no Rocket: now nothing matches.
+  h.setLibrary([]);
+  await screen.findByText("No matching channel members.");
+  expect(screen.queryByRole("button", { name: "Retry agent list" })).toBeNull();
+});
+
+it("does not say the toolbar picker is loading agents while channel membership loads", async () => {
+  const h = mountDirectoryMention({ channel: { channelType: "stream" } });
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        list: () => ({ status: "loading", channels: [] }),
+        ensureList: () => {},
+      },
+    } as unknown as RelaySession,
+  });
+  await openPicker(h);
+  expect(
+    screen.getByText("Channel membership unavailable."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Loading agents…")).toBeNull();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
 });
 
 it("settles a pending mention into the owner's agent from another community once their agents here load", async () => {

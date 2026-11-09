@@ -349,11 +349,13 @@ These rules keep a row from moving under the user's pointer or keyboard.
   queries: only that read shows whether the key is one of the viewer's agents
   here, which then has its row here. While the read runs, the agent list is
   still loading (section 5), and a chooser SHOULD show that it is loading, not
-  that nothing matches, even when its agent list is otherwise ready. Once it
-  fails, the full choice set stays unknown for that query: only the local step
-  of section 5 applies, over the local choices the client has, and a retry
-  reads again. A client SHOULD start loading the viewer's agents here when a
-  composer that offers such agents opens, so that this wait is rare.
+  that nothing matches, even when its agent list is otherwise ready; the same
+  holds while inviting agents waits for that list. Once it fails, the full
+  choice set stays unknown for that query: only the local step of section 5
+  applies, over the local choices the client has, a chooser SHOULD NOT say
+  that nothing matches, and a retry reads again. A client SHOULD start
+  loading the viewer's agents here when a composer that offers such agents
+  opens, so that this wait is rare.
 - A shown row MUST NOT move while the query and the open chooser stay the same.
   New rows are added only at the bottom. Directory people come after the rows
   already shown. Offered agents (section 1, item 2) that load after the list

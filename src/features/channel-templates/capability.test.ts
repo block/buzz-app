@@ -279,9 +279,11 @@ it("keeps drafts safe from stale Canvas, unresolved writes and access loss", asy
   await expect(f.canvas.save(channel, "New", undefined)).rejects.toThrow(
     CanvasConflictError,
   );
+  // The earlier save landed with other content, and this change was made
+  // against the Canvas before it, so it's out of date.
   f.pending.push({ event: head, delivery: "unknown" });
-  await expect(f.canvas.save(channel, "New", head.id)).rejects.toThrow(
-    /unresolved/,
+  await expect(f.canvas.save(channel, "New", undefined)).rejects.toThrow(
+    CanvasConflictError,
   );
   f.pending.length = 0;
   f.canWrite.mockReturnValue(false);
@@ -301,6 +303,31 @@ it("keeps drafts safe from stale Canvas, unresolved writes and access loss", asy
     ],
     content: "New",
   });
+});
+it("saves a change made against an earlier save that has since landed", async () => {
+  const f = fixture();
+  const earlier = signed(viewer, {
+    kind: 40100,
+    tags: [
+      ["h", channel],
+      ["expected-revision", "none"],
+    ],
+    content: "Earlier",
+    created_at: 1_699_999_000,
+  });
+  f.events.push(earlier);
+  f.pending.push({ event: earlier, delivery: "unknown" });
+  const saved = await f.canvas.save(channel, "Next", earlier.id);
+  expect(saved.content).toBe("Next");
+  expect(f.outbox.send).toHaveBeenCalledWith({
+    kind: 40100,
+    tags: [
+      ["h", channel],
+      ["expected-revision", earlier.id],
+    ],
+    content: "Next",
+  });
+  expect(f.outbox.dismiss).not.toHaveBeenCalled();
 });
 it("never re-signs an expired uncertain operation and clears candidates on retirement", async () => {
   const f = fixture();
@@ -396,18 +423,26 @@ it.each(["recipe", "Canvas"])(
   "waits for the session outbox to hydrate before admitting a replacement %s save",
   async (kind) => {
     const relay = keypair();
+    // Recent enough to land still; an older one would be cleared.
+    const created_at = Math.floor(Date.now() / 1000) - 60;
     const prior = signed(
       viewer,
       kind === "recipe"
         ? {
             kind: 30078,
             content: "encrypted prior recipe",
+            created_at,
             tags: [
               ["d", coordinate(record)],
               ["t", KIT_TAG],
             ],
           }
-        : { kind: 40100, content: "Prior Canvas", tags: [["h", channel]] },
+        : {
+            kind: 40100,
+            content: "Prior Canvas",
+            created_at,
+            tags: [["h", channel]],
+          },
     );
     let hydrate: (rows: readonly OutgoingEvent[]) => void = () => {};
     const hydration = new Promise<readonly OutgoingEvent[]>((resolve) => {
@@ -452,7 +487,9 @@ it.each(["recipe", "Canvas"])(
         kind === "recipe"
           ? owner.session.channelKit.save(record.value, undefined)
           : owner.session.canvas.save(channel, "Replacement", undefined);
-      const rejected = expect(saving).rejects.toThrow(/unresolved/);
+      const rejected = expect(saving).rejects.toThrow(
+        "Your last change is still saving. Wait a moment, then try again.",
+      );
       // Drain read/admission microtasks while storage is explicitly held. No timer
       // delay can stand in for hydration, and no replacement intent may be queued.
       await vi.advanceTimersByTimeAsync(0);
@@ -463,14 +500,19 @@ it.each(["recipe", "Canvas"])(
       expect(
         owner.session.outbox?.snapshot().map((row) => row.event.id),
       ).toEqual([prior.id]);
+      // The prior may still land, so only its own signed bytes are sent again.
       expect(sign).not.toHaveBeenCalled();
-      expect(publish).not.toHaveBeenCalled();
+      expect(
+        (publish.mock.calls as unknown as [RelayEvent][]).map(
+          ([event]) => event,
+        ),
+      ).toEqual(publish.mock.calls.map(() => prior));
       // Discovery queues the outbox's existing access-evidence purge behind
       // hydration. It may persist, but must preserve only the prior intent.
       await vi.advanceTimersByTimeAsync(0);
       for (const [rows] of storageSave.mock.calls)
         expect(rows).toEqual([
-          { event: prior, signed: prior, delivery: "unknown" },
+          expect.objectContaining({ event: prior, signed: prior }),
         ]);
     } finally {
       hydrate([]);
@@ -780,7 +822,7 @@ it("retains an uncertain Canvas after lost ACK and CAS-refused exact retry, bloc
     );
     await expect(
       kit.canvas.save(channel, "Reviewed draft", winner.id),
-    ).rejects.toThrow(/unresolved Canvas save/);
+    ).rejects.toThrow("Your last change is still saving.");
     expect(dismiss).not.toHaveBeenCalled();
     expect(sign).toHaveBeenCalledTimes(1);
     expect(publish.mock.calls.map(([event]) => event)).toEqual([
@@ -991,4 +1033,99 @@ it("keeps a loaded catalog ready while it refreshes in the background", async ()
   }
   await refreshing;
   expect(statuses).toEqual(["ready"]);
+});
+
+it("finishes an earlier save of the same change instead of saving it twice", async () => {
+  const f = fixture();
+  const landed = signed(viewer, {
+    kind: 40100,
+    tags: [
+      ["h", channel],
+      ["expected-revision", "none"],
+    ],
+    content: "Same",
+    created_at: Math.floor(Date.now() / 1000) - 5,
+  });
+  // The relay has it, but its acknowledgment was lost.
+  f.events.push(landed);
+  f.pending.push({ event: landed, delivery: "unknown" });
+  const saved = await f.canvas.save(channel, "Same", undefined);
+  expect(saved.id).toBe(landed.id);
+  expect(f.outbox.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  [
+    "refused",
+    { refused: true as const, error: "restricted: no" },
+    60,
+    "failed",
+  ],
+  ["too old to send", {}, 16 * 60, "failed"],
+  ["unconfirmed and too old to land", {}, 16 * 60, "unknown"],
+] as const)(
+  "clears an earlier save that can’t land (%s) and sends the new one",
+  async (_case, failure, age, delivery) => {
+    const f = fixture();
+    const earlier = signed(viewer, {
+      kind: 40100,
+      tags: [
+        ["h", channel],
+        ["expected-revision", "none"],
+      ],
+      content: "Earlier",
+      created_at: Math.floor(Date.now() / 1000) - age,
+    });
+    const item: OutgoingEvent = { event: earlier, delivery, ...failure };
+    f.pending.push(item);
+    vi.mocked(f.outbox.dismiss).mockImplementation(async (id) => {
+      const index = f.pending.findIndex((entry) => entry.event.id === id);
+      if (index >= 0) f.pending.splice(index, 1);
+    });
+    f.delivered.mockRejectedValueOnce(new Error("Not sent"));
+    const saved = await f.canvas.save(channel, "Next", undefined);
+    expect(f.outbox.dismiss).toHaveBeenCalledWith(earlier.id);
+    expect(saved.content).toBe("Next");
+    expect(f.outbox.send).toHaveBeenCalledOnce();
+  },
+);
+
+it("keeps an old save that is still being sent", async () => {
+  const f = fixture();
+  const earlier = signed(viewer, {
+    kind: 40100,
+    tags: [
+      ["h", channel],
+      ["expected-revision", "none"],
+    ],
+    content: "Earlier",
+    created_at: Math.floor(Date.now() / 1000) - 16 * 60,
+  });
+  // Dismissal leaves an item whose attempt is in progress.
+  f.pending.push({ event: earlier, delivery: "unknown" });
+  await expect(f.canvas.save(channel, "Next", undefined)).rejects.toThrow(
+    "Your last change is still saving. Wait a moment, then try again.",
+  );
+  expect(f.outbox.dismiss).toHaveBeenCalledWith(earlier.id);
+  expect(f.outbox.send).not.toHaveBeenCalled();
+});
+
+it("waits for an earlier save that may still land", async () => {
+  const f = fixture();
+  const earlier = signed(viewer, {
+    kind: 40100,
+    tags: [
+      ["h", channel],
+      ["expected-revision", "none"],
+    ],
+    content: "Earlier",
+    created_at: Math.floor(Date.now() / 1000) - 60,
+  });
+  f.pending.push({ event: earlier, delivery: "failed" });
+  f.delivered.mockRejectedValueOnce(new Error("Failed to fetch"));
+  await expect(f.canvas.save(channel, "Next", undefined)).rejects.toThrow(
+    "Your last change is still saving. Wait a moment, then try again.",
+  );
+  expect(f.outbox.dismiss).not.toHaveBeenCalled();
+  expect(f.outbox.send).not.toHaveBeenCalled();
 });

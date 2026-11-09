@@ -5,7 +5,11 @@ import { profileKey } from "../../features/profiles/target";
 import { safeLinkUrl } from "../../features/relay/message-content";
 import remarkGfm from "remark-gfm";
 import { MessageLink } from "../../features/conversation/MessageLink";
-import { CanvasConflictError } from "../../features/channel-templates/canvas-conflict";
+import {
+  CanvasConflictError,
+  EarlierSavePending,
+} from "../../features/channel-templates/canvas-conflict";
+import { failureText } from "../../features/relay/refusal";
 import {
   type ReactNode,
   useCallback,
@@ -261,7 +265,7 @@ export function TodosPanel({
           });
       } catch (reason) {
         if (active() && generation === operation.current)
-          setError(String(reason));
+          setError(failureText(reason));
       } finally {
         if (active() && generation === operation.current) setBusy(undefined);
       }
@@ -332,7 +336,10 @@ export function TodosPanel({
         setError(
           hasConflict
             ? "Canvas changed elsewhere. Refresh to load the latest todos. Your changes are kept until then."
-            : `Couldn’t save. Your changes are still here. ${reason instanceof Error ? reason.message : String(reason)}`,
+            : // Nothing failed yet: the earlier save is still on its way.
+              reason instanceof EarlierSavePending
+              ? reason.message
+              : `Couldn’t save. Your changes are still here. ${failureText(reason, "Try again.")}`,
         );
       }
     } finally {
@@ -435,7 +442,7 @@ export function TodosPanel({
       update(next);
       void save(next);
     } catch (reason) {
-      setError(String(reason));
+      setError(failureText(reason));
     }
   };
   const saveStatus =
@@ -797,7 +804,7 @@ export function TodosPanel({
                 update(next);
                 void save(next);
               } catch (reason) {
-                setError(String(reason));
+                setError(failureText(reason));
               }
             }}
           >

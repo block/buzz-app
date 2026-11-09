@@ -6,6 +6,7 @@ import type { ChannelKitHost } from "./host";
 import type { ChannelSummary } from "../relay/contracts";
 import {
   CanvasConflictError,
+  EarlierSavePending,
   isDefinitiveCanvasConflict,
 } from "./canvas-conflict";
 import {
@@ -193,7 +194,7 @@ export function createChannelKit({
       const saved = local?.snapshot().find((e) => e.event.id === id);
       if (!saved || Date.now() / 1000 - saved.event.created_at >= 15 * 60)
         throw new Error(
-          "This operation could not be confirmed and is too old to replay. Keep your draft and inspect the current result before making a new save.",
+          "Buzz couldn’t confirm your earlier save, and it’s too old to send again. Your changes are kept. Check what’s saved, then save again.",
         );
       // A proven Canvas CAS refusal cannot become valid by replaying these bytes.
       if (isDefinitiveCanvasConflict(saved)) throw new Error(saved.error);
@@ -204,7 +205,7 @@ export function createChannelKit({
         )
       )
         throw new Error(
-          "Save is awaiting exact relay confirmation; your draft is kept",
+          "Buzz hasn’t confirmed your save yet. Your changes are kept. Try again in a moment.",
         );
     } catch (error) {
       const failed = local?.snapshot().find((item) => item.event.id === id);
@@ -214,6 +215,37 @@ export function createChannelKit({
         throw new CanvasConflictError();
       }
       throw error;
+    }
+  }
+  /** Finishes this device's earlier save before a new one: "landed" once the
+   * relay has it, "dropped" once it is proven never to land and is cleared.
+   * Throws while it may still land. */
+  async function settle(earlier: { event: Pick<RelayEvent, "id"> }) {
+    const id = earlier.event.id;
+    try {
+      await confirm(id);
+      return "landed" as const;
+    } catch (error) {
+      if (error instanceof CanvasConflictError) throw error;
+      const item = local?.snapshot().find((e) => e.event.id === id);
+      const old =
+        !!item && Date.now() / 1000 - item.event.created_at >= 15 * 60;
+      // Refused, or too old for the relay to take, whether it failed or its
+      // delivery is unknown, and the strong read above missed it. A new save
+      // that is refused too says why.
+      if (
+        outbox &&
+        ((item?.delivery === "failed" && (item.refused || old)) ||
+          (item?.delivery === "unknown" && old))
+      ) {
+        await outbox.dismiss(id);
+        // dismiss returns at once, leaving the item, while an attempt is in
+        // progress, and that attempt may still land. Only reading the
+        // snapshot again tells whether it is gone.
+        if (!local?.snapshot().some((e) => e.event.id === id))
+          return "dropped" as const;
+      }
+      throw new EarlierSavePending({ cause: error });
     }
   }
   /** One replaceable private-record write: fresh head check, unresolved-save
@@ -259,7 +291,7 @@ export function createChannelKit({
         preparing.throwIfAborted();
         if (current?.id !== expected)
           throw new Error(
-            "This saved recipe changed. Refresh the catalog and review your draft before replacing it.",
+            "These workspace defaults changed somewhere else. Your draft is kept. Close and reopen to see the latest.",
           );
         const previous = local
           ?.snapshot()
@@ -269,9 +301,10 @@ export function createChannelKit({
               e.event.tags.some((t) => t[0] === "d" && t[1] === d) &&
               !["accepted", "seen"].includes(e.delivery),
           );
-        if (previous)
+        // A landed earlier save changes the head this one replaces.
+        if (previous && (await settle(previous)) === "landed")
           throw new Error(
-            "A save for this recipe is unresolved. Inspect Outbox and refresh before replacing it.",
+            "These workspace defaults changed somewhere else. Your draft is kept. Close and reopen to see the latest.",
           );
         // Replaceable records use seconds. Do not create an ambiguous equal-time replacement.
         if (current && current.created_at >= Math.floor(Date.now() / 1000))
@@ -419,12 +452,6 @@ export function createChannelKit({
         throw new Error(`Keep Canvas below ${LIVE_CANVAS_LIMIT}`);
       await ready;
       signal.throwIfAborted();
-      const head = await canvas.read(channel);
-      if (head?.id !== expected) throw new CanvasConflictError();
-      const unapproved =
-        options?.preserveApproval &&
-        (!head || !(await approvedCanvas(head, viewer)));
-      signal.throwIfAborted();
       const pending = local
         ?.snapshot()
         .find(
@@ -433,10 +460,23 @@ export function createChannelKit({
             e.event.tags.some((t) => t[0] === "h" && t[1] === channel) &&
             !["accepted", "seen"].includes(e.delivery),
         );
-      if (pending)
-        throw new Error(
-          "This channel has an unresolved Canvas save. Inspect Outbox before making another save.",
-        );
+      // Finish the earlier save first. A Retry of the same change ends once
+      // it lands; any other change goes ahead only if it was made against
+      // the Canvas now saved.
+      const landed = !!pending && (await settle(pending)) === "landed";
+      signal.throwIfAborted();
+      const head = await canvas.read(channel);
+      if (
+        landed &&
+        pending?.event.content === content &&
+        head?.id === pending.event.id
+      )
+        return head;
+      if (head?.id !== expected) throw new CanvasConflictError();
+      const unapproved =
+        options?.preserveApproval &&
+        (!head || !(await approvedCanvas(head, viewer)));
+      signal.throwIfAborted();
       if (head && head.created_at >= Math.floor(Date.now() / 1000))
         throw new Error("Please wait a second before saving Canvas again");
       if (!canWrite(channel)) throw new Error("Channel access changed");

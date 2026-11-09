@@ -1,4 +1,7 @@
-import { CanvasConflictError } from "../../features/channel-templates/canvas-conflict";
+import {
+  CanvasConflictError,
+  EarlierSavePending,
+} from "../../features/channel-templates/canvas-conflict";
 import { LIVE_CANVAS_LIMIT } from "../../features/channel-templates/model";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -255,6 +258,19 @@ it("keeps failed save changes through close/reopen and confirms destructive refr
     expect(screen.getByRole("checkbox", { name: "First" })).not.toBeChecked(),
   );
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+it("says an earlier save is still saving without calling it a failure", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  render(<TodosPanel {...f.props} />);
+  f.canvas.save.mockRejectedValueOnce(new EarlierSavePending());
+  await user.click(await screen.findByRole("checkbox", { name: "First" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /^Your last change is still saving\. Wait a moment, then try again\.$/,
+  );
+  await waitFor(() => expect(retry()).toBeEnabled());
+  await user.click(retry());
+  await saved();
 });
 it("retrying a failed read preserves a restored draft without asking to discard", async () => {
   const f = fixture(),

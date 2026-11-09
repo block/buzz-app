@@ -584,7 +584,7 @@ it("deletes the settings when a retried removal finds its unconfirmed groups wri
     );
     await expect(
       f.session.soloPreferences.removeSection("work"),
-    ).rejects.toThrow("awaiting exact relay confirmation");
+    ).rejects.toThrow("Buzz hasn’t confirmed your save yet.");
     expect(written(f).map(({ value }) => value.type)).toEqual(["groups"]);
     unconfirmed = false;
     await f.session.soloPreferences.removeSection("work");

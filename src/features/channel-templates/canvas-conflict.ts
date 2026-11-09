@@ -20,3 +20,15 @@ export class CanvasConflictError extends Error {
     this.name = "CanvasConflictError";
   }
 }
+
+/** An earlier save from this device may still land, so a new one waits. Its
+ * message is the whole answer: nothing failed, and the changes are kept. */
+export class EarlierSavePending extends Error {
+  constructor(options?: ErrorOptions) {
+    super(
+      "Your last change is still saving. Wait a moment, then try again.",
+      options,
+    );
+    this.name = "EarlierSavePending";
+  }
+}

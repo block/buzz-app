@@ -1133,7 +1133,11 @@ it("opens a community-scoped page from another community, but not after leaving 
     ],
     other,
   );
-  await screen.findByRole("tab", { name: "Bestie" });
+  await waitFor(() =>
+    expect(member.plugins.snapshot().activation["fixture.notes"]?.status).toBe(
+      "active",
+    ),
+  );
   let result!: ReturnType<typeof member.navigation.open>;
   act(() => {
     result = member.navigation.open(target);
@@ -1149,7 +1153,11 @@ it("opens a community-scoped page from another community, but not after leaving 
     [{ id: other, name: "Other community" }],
     other,
   );
-  await screen.findByRole("tab", { name: "Bestie" });
+  await waitFor(() =>
+    expect(left.plugins.snapshot().activation["fixture.notes"]?.status).toBe(
+      "active",
+    ),
+  );
   act(() => {
     result = left.navigation.open(target);
   });

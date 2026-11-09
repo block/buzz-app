@@ -140,6 +140,7 @@ it("sends a reference definition's shortcode without the catalog", async () => {
     "[ref]: https://example.com/a，:party:",
     "\u3000[ref]: https://example.com/a，:party:",
     "    [ref]: https://example.com/a，:party:",
+    `${"> ".repeat(101)}[ref]: https://example.com/a，:party:`,
   ];
   const sent = () =>
     contents.flatMap((content) => {

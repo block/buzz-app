@@ -124,8 +124,7 @@ export function definitionRanges(
 ): readonly { start: number; end: number }[] {
   if (!content.includes("]:") || content.length > MAX_MARKDOWN_LENGTH)
     return [];
-  const { tree, tooDeep } = scanMarkdown(content);
-  if (tooDeep) return [];
+  const { tree } = scanMarkdown(content);
   const ranges: { start: number; end: number }[] = [];
   const pending = [tree];
   for (let node = pending.pop(); node; node = pending.pop()) {

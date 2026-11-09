@@ -14951,7 +14951,13 @@ it("leaves Space literal beside a loaded longer member name and selects that nam
  * directory and every member named, so the first Space is undecided. Each
  * `people` read is held until the test releases it. */
 function mountDirectoryMention(
-  options: { agents?: Agents; channel?: object; session?: object } = {},
+  options: {
+    agents?: Agents;
+    channel?: object;
+    session?: object;
+    /** Native agent inventory; absent, the agent list has only the library. */
+    control?: LocalAgents;
+  } = {},
 ) {
   const completions: readonly Contribution<ComposerCompletion>[] = [
     {
@@ -14977,7 +14983,7 @@ function mountDirectoryMention(
         },
       },
     },
-    undefined,
+    options.control,
     undefined,
     options.agents,
   );
@@ -15642,6 +15648,36 @@ it("keeps the agent library on a Retry that does not need it", async () => {
   ).toHaveAttribute("aria-disabled", "false");
 });
 
+/** The composer's toolbar mention picker alone, as the bundled plugin mounts it. */
+const pickerOnly: MessageComposerProps["extensions"] = (() => {
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const picker: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "picker",
+      key: "buzz.mentions/picker",
+      pluginId: "buzz.mentions",
+      revision: "1",
+      title: "Mentions",
+      component: (props) => (
+        <MentionPicker
+          session={props.session}
+          scope={props.scope}
+          channelId={props.channelId}
+          disabled={props.disabled}
+          inviteAgents={props.inviteAgents}
+          select={props.insertMention}
+        />
+      ),
+    },
+  ];
+  return {
+    tools: { snapshot: () => picker, subscribe: () => () => {} },
+    inline: none,
+    completions: none,
+  };
+})();
+
 it.each([
   ["starts", "stream"],
   ["does not start", "dm"],
@@ -15653,34 +15689,7 @@ it.each([
       channel: { channelType },
     });
     h.setLibrary([], "idle");
-    const empty: [] = [];
-    const none = { snapshot: () => empty, subscribe: () => () => {} };
-    const picker: readonly Contribution<ComposerTool>[] = [
-      {
-        id: "picker",
-        key: "buzz.mentions/picker",
-        pluginId: "buzz.mentions",
-        revision: "1",
-        title: "Mentions",
-        component: (props) => (
-          <MentionPicker
-            session={props.session}
-            scope={props.scope}
-            channelId={props.channelId}
-            disabled={props.disabled}
-            inviteAgents={props.inviteAgents}
-            select={props.insertMention}
-          />
-        ),
-      },
-    ];
-    h.retarget({
-      extensions: {
-        tools: { snapshot: () => picker, subscribe: () => () => {} },
-        inline: none,
-        completions: none,
-      },
-    });
+    h.retarget({ extensions: pickerOnly });
     // The composer's picker is mounted; nobody has typed `@`.
     expect(
       screen.getByRole("button", { name: "Mention a member" }),
@@ -15690,6 +15699,55 @@ it.each([
     else expect(h.session.agentLibrary.refresh).not.toHaveBeenCalled();
   },
 );
+
+/** Native inventory is ready, so the agent list reads `ready` while the
+ * library that lists the owner's agents here still loads. */
+function mountNativeReadyHold() {
+  const rocket = { pubkey: "e".repeat(64), name: "Rocket" };
+  const h = mountDirectoryMention({
+    agents: elsewhereAgent(rocket),
+    channel: { channelType: "stream" },
+    control: localAgentsFixture(),
+  });
+  h.setLibrary([], "loading");
+  expect(h.session.agentChoices.snapshot().status).toBe("ready");
+  return h;
+}
+
+it("shows the toolbar picker loading, not empty, while the owner's agents here load with native inventory ready", async () => {
+  const h = mountNativeReadyHold();
+  h.retarget({ extensions: pickerOnly });
+  await h.user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const search = screen.getByRole("searchbox", {
+    name: "Search community people and agents",
+  });
+  await waitFor(() => expect(search).toHaveFocus());
+  await h.user.type(search, "rocket");
+  expect(screen.getByText("Loading agents…")).toBeInTheDocument();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
+  // The directory finds no one; the held agent is still to come.
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [], hasMore: false });
+  expect(screen.getByText("Loading agents…")).toBeInTheDocument();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
+  h.setLibrary([]);
+  // Picker rows are buttons; the inline chooser's are options.
+  await screen.findByRole("button", { name: /Rocket.*In oss\.example\.com/ });
+  expect(screen.queryByText("Loading agents…")).toBeNull();
+  expect(screen.queryByText("No matching channel members.")).toBeNull();
+});
+
+it("shows the inline chooser loading while the owner's agents here load with native inventory ready", async () => {
+  const h = mountNativeReadyHold();
+  await h.user.type(h.input(), "@rocket");
+  await screen.findByText("Loading recipients…");
+  await waitFor(() => expect(h.people).toHaveBeenCalled());
+  await h.release({ people: [], hasMore: false });
+  expect(screen.getByText("Loading recipients…")).toBeInTheDocument();
+  h.setLibrary([]);
+  await screen.findByRole("option", { name: /In oss\.example\.com/ });
+  expect(screen.queryByText("Loading recipients…")).toBeNull();
+});
 
 it("settles a pending mention into the owner's agent from another community once their agents here load", async () => {
   const rocket = { pubkey: "e".repeat(64), name: "Rocket" };

@@ -183,6 +183,11 @@ export function MentionPicker({
   // Underline with the same rule that ranks mentions.
   const matched = (label: string) =>
     search.trim() ? matchPerson(label, search)?.positions : undefined;
+  // Rows may still arrive: the chooser is pending (members, a roster, or the
+  // owner's agents here that hold rows, README section 6) or the agent list
+  // is loading. The combined agent status is ready once native inventory is,
+  // so it alone misses the hold. No results is only known after this.
+  const loading = model.pending || agents.status === "loading";
   return (
     <PopoverRoot
       open={open && !disabled}
@@ -340,7 +345,7 @@ export function MentionPicker({
                 </Button>
               </>
             )}
-            {agents.status === "loading" && !candidates.length && (
+            {loading && !candidates.length && (
               <p role="status">Loading agents…</p>
             )}
             {(agents.status === "error" || !!agents.error) && (
@@ -526,9 +531,10 @@ export function MentionPicker({
                   onClick={() => chooseTeam(team)}
                 />
               ))}
-              {members && !candidates.length && !teams.choices.length && (
-                <p>No matching channel members.</p>
-              )}
+              {members &&
+                !loading &&
+                !candidates.length &&
+                !teams.choices.length && <p>No matching channel members.</p>}
               {audience?.named && (
                 <p className="text-caption text-subtle">
                   Your message tags{" "}

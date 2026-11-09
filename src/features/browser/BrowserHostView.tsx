@@ -14,6 +14,7 @@ import {
   CloudOffIcon,
   DotsThreeIcon,
   LockIcon,
+  UserIcon,
 } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
@@ -101,6 +102,7 @@ export function BrowserHostView({
   builderlab,
   canResumeUrl,
   label,
+  openSignIn,
   platform,
   sessions,
   pollInterval = 300,
@@ -564,6 +566,31 @@ export function BrowserHostView({
                     }}
                   >
                     Open in browser
+                  </Button>
+                </>
+              }
+            />
+          </div>
+        ) : page === "sign-in" ? (
+          <div role="alert" className="page-status">
+            <EmptyState
+              icon={<UserIcon />}
+              title="Sign in again to open this app"
+              description="Builderlab didn’t accept your sign-in. Try again. If that doesn’t work, sign out and back in, then try again."
+              action={
+                <>
+                  {openSignIn && (
+                    <Button type="button" onClick={() => openSignIn()}>
+                      Open settings
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="primary"
+                    loading={retrying}
+                    onClick={() => retryAttach.current?.()}
+                  >
+                    Try again
                   </Button>
                 </>
               }

@@ -71,7 +71,15 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const openIdentity = !nativeBuilderlab()
     ? undefined
     : () => openSettings("identity");
-  applyApps(ctx, session, loginAvailable, dev?.apps);
+  // An app that refuses the sign-in sends you where it is renewed: Identity in
+  // an FI build, this card in live development.
+  applyApps(
+    ctx,
+    session,
+    loginAvailable,
+    dev?.apps,
+    openIdentity ?? (() => openSettings("block.builderlab/login")),
+  );
   const handoff = (signedIn: boolean) =>
     handoffFederatedBackupSession(
       signedIn ? ctx.federatedIdentity.snapshot().revision : null,

@@ -1,5 +1,5 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import type { AttentionValue } from "./attention";
 import { AttentionError } from "./attention-objects";
@@ -7,7 +7,7 @@ import {
   ATTENTION_LABEL,
   ATTENTION_TYPE,
   agentDelivery,
-  attentionChange,
+  attentionChanges,
   attentionD,
   attentionSet,
   emptySet,
@@ -15,8 +15,11 @@ import {
   HEAD_LIMIT,
   mirrored,
   ownerSender,
+  pendingSet,
   publishChange,
+  publishChanges,
   readOnce,
+  relayAttention,
   revision,
   type AttentionSet,
   type Revision,
@@ -217,6 +220,28 @@ describe("attention records", () => {
     expect(set.heads["interest/x"]).toEqual({ id: good.id, d: tag(good, "d") });
   });
 
+  it("never lets a record that names another slug hide that slug", async () => {
+    const good = await record("interest/x", interest, 777);
+    const shadow = sign({
+      ...revision({
+        channel,
+        d: await attentionD(channel, "interest/y"),
+        slug: "interest/x",
+        op: "create",
+        value: interest,
+      }),
+      content: JSON.stringify({ schema: "other", slug: "interest/x" }),
+    });
+    for (const events of [
+      [shadow, good],
+      [good, shadow],
+    ]) {
+      const set = await attentionSet(channel, events);
+      expect(Object.keys(set.attention)).toEqual(["interest/x"]);
+      expect(Object.keys(set.skipped)).toEqual([`invalid/${tag(shadow, "d")}`]);
+    }
+  });
+
   it("applies the first 100 of a group by slug and skips the others", async () => {
     const events = await Promise.all(
       Array.from({ length: 102 }, (_, i) =>
@@ -299,20 +324,27 @@ describe("the mirror", () => {
     expect(removed.timers?.["watch/t"]).toBeUndefined();
   });
 
-  it("finds the one object an edit changes", () => {
-    const base = setAttention(blank, "interest/x", interest, 100);
-    expect(attentionChange(base, base)).toBeUndefined();
-    expect(
-      attentionChange(base, setAttention(base, "interest/x", null)),
-    ).toEqual({ slug: "interest/x", value: null });
-    const two = setAttention(
-      setAttention(blank, "interest/y", interest),
-      "interest/z",
-      interest,
+  it("orders an edit's objects so no watch is left without its Interest", () => {
+    const base = setAttention(
+      setAttention(blank, "interest/x", interest, 100),
+      "watch/t",
+      timer,
+      100,
     );
-    expect(() => attentionChange(base, two)).toThrow(
-      "one Interest or watch at a time",
+    expect(attentionChanges(base, base)).toEqual([]);
+    const removed = setAttention(
+      setAttention(base, "watch/t", null),
+      "interest/x",
+      null,
     );
+    expect(attentionChanges(base, removed)).toEqual([
+      { slug: "watch/t", value: null },
+      { slug: "interest/x", value: null },
+    ]);
+    expect(attentionChanges(blank, base)).toEqual([
+      { slug: "interest/x", value: interest },
+      { slug: "watch/t", value: timer },
+    ]);
     const skipped = {
       ...blank,
       skipped: {
@@ -320,8 +352,35 @@ describe("the mirror", () => {
       },
     };
     expect(
-      attentionChange(skipped, setAttention(skipped, "watch/s", null)),
-    ).toEqual({ slug: "watch/s", value: null });
+      attentionChanges(skipped, setAttention(skipped, "watch/s", null)),
+    ).toEqual([{ slug: "watch/s", value: null }]);
+  });
+
+  it("keeps this device's writes over a set made before they landed", async () => {
+    const r = relay();
+    await publishChange(r.io, await r.set(), {
+      slug: "interest/x",
+      value: interest,
+    });
+    const before = await r.set();
+    const record = mirrored(blank, before);
+    const next = setAttention(
+      setAttention(record, "interest/x", null),
+      "interest/y",
+      interest,
+    );
+    const replaced = await publishChanges(
+      r.io,
+      before,
+      attentionChanges(record, next),
+    );
+    // A set made before the writes: they stay until a set shows them.
+    const stale = pendingSet(before, next, replaced);
+    expect(Object.keys(stale.set.attention)).toEqual(["interest/y"]);
+    expect(stale.settled).toEqual([]);
+    const after = pendingSet(await r.set(), next, replaced);
+    expect([...after.settled].sort()).toEqual(["interest/x", "interest/y"]);
+    expect(Object.keys(after.set.attention)).toEqual(["interest/y"]);
   });
 });
 
@@ -449,6 +508,27 @@ describe("one writer revision", () => {
       "create",
       "delete",
     ]);
+  });
+
+  it("reports an unread head after a lost OK as unsaved, not a conflict", async () => {
+    const r = relay();
+    await publishChange(r.io, await r.set(), {
+      slug: "interest/x",
+      value: interest,
+    });
+    r.answer(() => ({ status: "uncertain", message: "lost" }));
+    const failing = {
+      ...r.io,
+      read: async () => {
+        throw new Error("offline");
+      },
+    };
+    const error = await publishChange(failing, await r.set(), {
+      slug: "interest/x",
+      value: null,
+    }).catch((e: unknown) => e);
+    expect(String(error)).toMatch(/may not have been saved/);
+    expect(error).not.toBeInstanceOf(AttentionError);
   });
 
   it("refuses a create once the channel holds the most records", async () => {
@@ -601,6 +681,28 @@ describe("the attention channel", () => {
     ]);
   });
 
+  it("uses the oldest when another process created one at the same time", async () => {
+    const older = "11111111-1111-4111-8111-111111111111";
+    let created: string | undefined;
+    const f = io([], [["p", agent, "", "owner"]]);
+    const query = f.io.query;
+    f.io.query = async (filters) => {
+      const kinds = (filters[0] as { kinds: number[] }).kinds;
+      // The other process's channel shows once this one has created its own.
+      if (kinds.length === 1 && created)
+        return [metadata(older, 1), metadata(created, 9)];
+      return query(filters);
+    };
+    const publish = f.io.publish;
+    f.io.publish = async (event) => {
+      if (event.kind === 9007) created = event.tags[0]?.[1];
+      return publish(event);
+    };
+    expect(await ensureChannel(f.io)).toBe(older);
+    expect(f.published.map((event) => event.kind)).toEqual([9007, 9000, 9008]);
+    expect(f.published[2]?.tags).toEqual([["h", created]]);
+  });
+
   it("uses the oldest, deletes newer ones and leaves a changed roster alone", async () => {
     const older = "11111111-1111-4111-8111-111111111111";
     const newer = "22222222-2222-4222-8222-222222222222";
@@ -680,5 +782,68 @@ describe("one complete read", () => {
     await expect(read).rejects.toThrow(
       "Attention could not be read: disconnected",
     );
+  });
+});
+
+describe("the kept-current set", () => {
+  it("finds the channel again on resync, keeping the last good set", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    let finds = 0;
+    let snapshot: ArtifactSyncSnapshot = { status: "live", events: [] };
+    const listeners = new Set<() => void>();
+    const relayKey = generateSecretKey();
+    const agent = "a".repeat(64);
+    const channelEvent = finalizeEvent(
+      {
+        kind: 39000,
+        created_at: 1,
+        content: "",
+        tags: [
+          ["d", id],
+          ["t", "system"],
+          ["t", ATTENTION_LABEL],
+          ["P", agent],
+          ["created_at", "1"],
+        ],
+      },
+      relayKey,
+    ) as RelayEvent;
+    const sets: AttentionSet[] = [];
+    const reported: (string | undefined)[] = [];
+    const controller = new AbortController();
+    const kept = relayAttention({
+      channel: {
+        agent,
+        relayAuthor: getPublicKey(relayKey),
+        query: async () => {
+          finds++;
+          return [channelEvent];
+        },
+        publish: async () => ({}),
+      },
+      sync: () => ({
+        snapshot: () => snapshot,
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        dispose() {},
+      }),
+      changed: (set) => sets.push(set),
+      reported: () => reported.push(kept.problem()),
+      signal: controller.signal,
+      retryMs: 10,
+    });
+    await vi.waitFor(() => expect(sets).toHaveLength(1));
+    expect(finds).toBe(1);
+    snapshot = { status: "stale", events: [], error: "resync: lost" };
+    for (const listener of [...listeners]) listener();
+    expect(kept.current()).toBe(sets[0]);
+    expect(reported.at(-1)).toMatch(/out of date/);
+    snapshot = { status: "live", events: [] };
+    await vi.waitFor(() => expect(sets).toHaveLength(2));
+    expect(finds).toBe(2);
+    expect(kept.problem()).toBeUndefined();
+    controller.abort();
   });
 });

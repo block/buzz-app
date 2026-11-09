@@ -122,27 +122,26 @@ export async function attentionSet(
       body && typeof body === "object" && !Array.isArray(body)
         ? (body as Record<string, unknown>)
         : undefined;
-    const slug = typeof fields?.slug === "string" ? fields.slug : undefined;
+    const named = typeof fields?.slug === "string" ? fields.slug : undefined;
+    // The slug is trusted only when `d` derives from it; a record that names
+    // another slug is kept under its own `d`, so it can't hide that slug.
+    const slug =
+      named && (await attentionD(channel, named)) === d ? named : undefined;
     const problem =
       tag(event, "ar") !== "1"
         ? "Unsupported artifact envelope"
         : !fields
           ? "Record content is not a JSON object"
-          : fields.schema !== ATTENTION_SCHEMA
-            ? `Unknown schema ${String(fields.schema)}`
-            : Object.keys(fields).sort().join() !== "schema,slug,value"
-              ? "Record content has other fields than schema, slug and value"
-              : !slug || (await attentionD(channel, slug)) !== d
-                ? "Record identity does not match its slug"
+          : !slug
+            ? "Record identity does not match its slug"
+            : fields.schema !== ATTENTION_SCHEMA
+              ? `Unknown schema ${String(fields.schema)}`
+              : Object.keys(fields).sort().join() !== "schema,slug,value"
+                ? "Record content has other fields than schema, slug and value"
                 : encoder.encode(event.content).length > CONTENT_BYTES
                   ? "Record content is too large"
                   : validateObject(slug, fields.value);
-    // A record whose slug can't be trusted is kept under its own `d`.
-    const key =
-      problem === undefined ||
-      (slug && problem !== "Record identity does not match its slug")
-        ? (slug as string)
-        : `invalid/${d}`;
+    const key = slug ?? `invalid/${d}`;
     if (key in heads) continue;
     heads[key] = { id: event.id, d };
     if (problem !== undefined)
@@ -206,13 +205,19 @@ export function mirrored(
   return same ? next : { ...next, skipped: set.skipped };
 }
 
-/** The single object an edit changes, from `before` to `after` (Writer step
- * 3), or undefined when it changes none. A skipped record's removal counts.
- * Throws when it changes more than one. */
-export function attentionChange(
+export type AttentionEdit = Readonly<{
+  slug: string;
+  value: AttentionValue | null;
+}>;
+
+/** The objects an edit changes, from `before` to `after`, one revision each
+ * (Writer step 3), in an order that never leaves a watch without its
+ * Interest: removed watches, then Interests, then watches, then removed
+ * Interests. A skipped record's removal counts. */
+export function attentionChanges(
   before: AgentRecord,
   after: AgentRecord,
-): Readonly<{ slug: string; value: AttentionValue | null }> | undefined {
+): readonly AttentionEdit[] {
   const changed = new Set<string>();
   for (const slug of new Set([
     ...Object.keys(before.attention),
@@ -225,12 +230,69 @@ export function attentionChange(
   }
   for (const slug of Object.keys(before.skipped ?? {}))
     if (!after.skipped?.[slug] && !after.attention[slug]) changed.add(slug);
-  if (changed.size > 1)
-    throw new Error("Change one Interest or watch at a time");
-  const [slug] = changed;
-  return slug === undefined
-    ? undefined
-    : { slug, value: after.attention[slug]?.value ?? null };
+  const rank = ({ slug, value }: AttentionEdit) => {
+    const interest = slug.startsWith("interest/");
+    if (value === null) return interest ? 3 : 0;
+    return interest ? 1 : 2;
+  };
+  return [...changed]
+    .sort()
+    .map((slug) => ({ slug, value: after.attention[slug]?.value ?? null }))
+    .sort((a, b) => rank(a) - rank(b));
+}
+
+/** What a write replaced, by slug: the head it revised, or undefined for a
+ * create. */
+export type Replaced = ReadonlyMap<string, string | undefined>;
+
+/** Publishes `changes` over `set`, the writer's fresh read, one revision at a
+ * time (Writer steps 4 to 6). Stops at the first that fails; those before it
+ * stay published. Returns the heads each replaced. */
+export async function publishChanges(
+  io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
+  set: AttentionSet,
+  changes: readonly AttentionEdit[],
+): Promise<Replaced> {
+  const replaced = new Map<string, string | undefined>();
+  let current = set;
+  for (const change of changes) {
+    const prior = current.heads[change.slug];
+    const head = await publishChange(io, current, change);
+    replaced.set(change.slug, prior?.id);
+    const { [change.slug]: _, ...heads } = current.heads;
+    current = {
+      ...current,
+      heads: head ? { ...heads, [change.slug]: head } : heads,
+      count: current.count + (head && !prior ? 1 : 0),
+    };
+  }
+  return replaced;
+}
+
+/** `set` with the objects of `record` this device wrote kept, while `set`
+ * still holds the heads those writes replaced: a set made before a write
+ * landed must not undo it. Returns the slugs whose writes `set` shows. */
+export function pendingSet(
+  set: AttentionSet,
+  record: AgentRecord,
+  replaced: Replaced,
+): Readonly<{ set: AttentionSet; settled: readonly string[] }> {
+  const settled: string[] = [];
+  let attention = set.attention;
+  let skipped = set.skipped;
+  for (const [slug, head] of replaced) {
+    if (set.heads[slug]?.id !== head) {
+      settled.push(slug);
+      continue;
+    }
+    const { [slug]: _a, ...otherAttention } = attention;
+    const { [slug]: _s, ...otherSkipped } = skipped;
+    const object = record.attention[slug];
+    const skip = record.skipped?.[slug];
+    attention = object ? { ...otherAttention, [slug]: object } : otherAttention;
+    skipped = skip ? { ...otherSkipped, [slug]: skip } : otherSkipped;
+  }
+  return { set: { ...set, attention, skipped }, settled };
 }
 
 /** The revision to sign: a complete snapshot, or a deletion. */
@@ -358,9 +420,9 @@ export async function publishChange(
       sent.status === "uncertain" && attempt < 2;
       attempt++
     ) {
-      const current = await readHead(io.read, set.channel, d).catch(
-        () => undefined,
-      );
+      const current = await readHead(io.read, set.channel, d).catch(() => null);
+      // An unread head tells nothing: no conflict, and no second send.
+      if (current === null) break;
       if (sent.id && current?.id === sent.id)
         return { status: "accepted" as const, id: sent.id };
       if (current?.id !== prev && !(prev === undefined && !current))
@@ -498,13 +560,18 @@ export async function ensureChannel(io: AgentChannelIO): Promise<string> {
         ["role", "owner"],
       ],
     });
-  const [found, ...extra] = await findChannels(io);
-  for (const id of extra)
-    await io
-      .publish({ kind: 9008, content: "", tags: [["h", id]] })
-      .catch((error) =>
-        console.warn("Extra attention channel was not deleted", error),
-      );
+  /** The oldest channel found, after deleting the others. */
+  const oldest = async () => {
+    const [found, ...extra] = await findChannels(io);
+    for (const id of extra)
+      await io
+        .publish({ kind: 9008, content: "", tags: [["h", id]] })
+        .catch((error) =>
+          console.warn("Extra attention channel was not deleted", error),
+        );
+    return found;
+  };
+  const found = await oldest();
   if (!found) {
     const channel = crypto.randomUUID();
     await io.publish({
@@ -519,7 +586,9 @@ export async function ensureChannel(io: AgentChannelIO): Promise<string> {
       ],
     });
     await addOwner(channel);
-    return channel;
+    // Another process of the agent may have created one too: all use the
+    // oldest, and this one deletes the newer.
+    return (await oldest()) ?? channel;
   }
   if (owner) {
     const events = await io.query([
@@ -621,13 +690,14 @@ export function relayAttention(input: {
     });
     return channel;
   };
-  /** From Find again, after `retryMs`. */
-  const later = (reason: string, refind: boolean) => {
+  let resyncs = 0;
+  /** From Find again, after `delay`. */
+  const later = (reason: string, refind: boolean, delay = retryMs) => {
     close();
     report(reason);
     if (refind) channel = undefined;
     clearTimeout(retry);
-    if (!signal.aborted) retry = setTimeout(start, retryMs);
+    if (!signal.aborted) retry = setTimeout(start, delay);
   };
   async function start() {
     const run = ++generation;
@@ -664,10 +734,19 @@ export function relayAttention(input: {
           const next = await attentionSet(id, events);
           if (run !== generation || view !== opened) return;
           set = next;
+          resyncs = 0;
           report(undefined);
           input.changed(next);
         });
-      } else if (snapshot.status === "stale")
+      } else if (snapshot.error?.startsWith("resync:"))
+        // A lost change: from Find again (Reader step 6), soon, backing off
+        // when it repeats. The last good set stays meanwhile.
+        later(
+          "Attention may be out of date; reading it again",
+          true,
+          Math.min(retryMs, 1000 * 2 ** resyncs++),
+        );
+      else if (snapshot.status === "stale")
         report("Attention may be out of date; reconnecting");
       else if (snapshot.status === "restricted")
         later("The attention channel can't be read; finding it again", true);

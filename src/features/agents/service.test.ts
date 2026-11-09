@@ -17683,7 +17683,9 @@ it("fails an agent's attention write that agent storage could not save, and keep
 
 /** An agent whose attention is on the relay: its record says so, and the
  * community holds its attention channel, with the records `seed` puts there. */
-async function relayAttentionSetup(options: { synced?: boolean } = {}) {
+async function relayAttentionSetup(
+  options: { synced?: boolean; enabled?: boolean } = {},
+) {
   const relayKey = generateSecretKey();
   const writerKey = generateSecretKey();
   const home = "5e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
@@ -17725,6 +17727,7 @@ async function relayAttentionSetup(options: { synced?: boolean } = {}) {
       attention: {},
       config: { reply: "ok" },
       attentionStorage: "relay",
+      ...(options.enabled && { attentionEnabled: true }),
     }),
   );
   const f = await setup({
@@ -17989,7 +17992,7 @@ it("fails a relay agent's write with conflict when the relay changed, from the f
   ).toMatchObject({ instructions: "Theirs." });
 });
 
-it("signs an owner's Attention edit of a relay agent as the owner, one object at a time", async () => {
+it("signs an owner's Attention edit of a relay agent as the owner, one revision per object", async () => {
   const f = await relayAttentionSetup();
   await f.seed("interest/default", {
     type: "interest",
@@ -18008,15 +18011,95 @@ it("signs an owner's Attention edit of a relay agent as the owner, one object at
   ).toEqual(["create"]);
   expect(f.agentWrites()).toHaveLength(0);
   expect(f.service.find(bot)?.attention["interest/other"]).toBeDefined();
-  await expect(
-    f.service.save(bot, {
-      attention: {
-        "interest/a": { type: "interest", instructions: "A." },
-        "interest/b": { type: "interest", instructions: "B." },
-      },
-    }),
-  ).rejects.toThrow("Change one Interest or watch at a time");
-  expect(f.ownerWrites).toHaveLength(1);
+  const timer = {
+    type: "timer" as const,
+    interest_id: "other",
+    prompt: "tick",
+    enabled: true,
+    interval_secs: 3600,
+    armed_at: Math.floor(Date.now() / 1000),
+    max_occurrences: 3,
+    expires_at: null,
+  };
+  await f.service.save(bot, { attention: { "watch/t": timer } });
+  // Removing an Interest with its watch: the watch goes first.
+  await f.service.save(bot, {
+    attention: { "interest/other": null, "watch/t": null },
+  });
+  const sent = f.ownerWrites.map((event) => [
+    event.tags.find((t) => t[0] === "op")?.[1],
+    event.tags.find((t) => t[0] === "title")?.[1],
+  ]);
+  expect(sent.slice(2)).toEqual([
+    ["delete", undefined],
+    ["delete", undefined],
+  ]);
+  const deleted = await Promise.all(
+    ["watch/t", "interest/other"].map((slug) => attentionD(f.home, slug)),
+  );
+  expect(
+    f.ownerWrites
+      .slice(2)
+      .map((event) => event.tags.find((t) => t[0] === "d")?.[1]),
+  ).toEqual(deleted);
+  expect(f.service.find(bot)?.attention["interest/other"]).toBeUndefined();
+  expect(f.service.find(bot)?.attention["watch/t"]).toBeUndefined();
+  // A live set made before those writes does not bring them back.
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "Edited.",
+  });
+  await vi.waitFor(() =>
+    expect(
+      f.service.find(bot)?.attention["interest/default"]?.value,
+    ).toMatchObject({ instructions: "Edited." }),
+  );
+  expect(f.service.find(bot)?.attention["interest/other"]).toBeUndefined();
+});
+
+it("removes a relay agent's spent timer as the agent, with prev, after its last task", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const f = await relayAttentionSetup({ enabled: true });
+  await f.seed("interest/default", { type: "interest", instructions: "Hi." });
+  await f.seed("watch/once", {
+    type: "timer",
+    interest_id: "default",
+    prompt: "tick",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000_000,
+    max_occurrences: 1,
+    expires_at: null,
+  });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined(),
+  );
+  const seeded = f.heads.get(await attentionD(f.home, "watch/once"));
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/once"]).toBeUndefined(),
+  );
+  const removal = f.agentWrites().at(-1);
+  expect(removal?.tags).toEqual(
+    expect.arrayContaining([
+      ["op", "delete"],
+      ["prev", seeded?.id as string],
+    ]),
+  );
+});
+
+it("shows why a relay agent's attention is not current", async () => {
+  const f = await relayAttentionSetup({ synced: false });
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBe(
+      "Reading this agent's attention from its community",
+    ),
+  );
+  f.sync();
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
+  );
 });
 
 it("stops watches and timers while attention is off, keeps every object, and resumes them", async () => {

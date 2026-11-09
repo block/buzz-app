@@ -510,7 +510,7 @@ it("withholds a read an unprotected Stop overtook, which later work cannot reviv
   const t = await heldTurns();
   try {
     t.fake.hold = true;
-    const stopped = t.claude.send("list my channels");
+    const stopped = t.claude.send("check my notes");
     await flush();
     t.ask("r1");
     await t.reading;
@@ -539,7 +539,7 @@ it("answers a turn of its own after a Stop, while a call held across the Stop st
   const t = await heldTurns();
   try {
     t.fake.hold = true;
-    const stopped = t.claude.send("list my channels");
+    const stopped = t.claude.send("check my notes");
     await flush();
     t.ask("r1");
     await t.reading;
@@ -575,11 +575,11 @@ it.each([
     const t = await heldTurns(env);
     const idle = !env;
     t.fake.hold = true;
-    const stopped = t.claude.send("list my channels");
+    const stopped = t.claude.send("check my notes");
     await flush();
     if (idle) sessionState(t.fake, "running");
     await t.claude.interrupt();
-    const folded = t.claude.send("and my DMs");
+    const folded = t.claude.send("and the later ones");
     await flush();
     // A call the stopped turn makes late is still stopped.
     t.ask("r1", "core");
@@ -617,7 +617,7 @@ it("stops a turn that starts while an earlier Stop awaits Claude's answer", asyn
   const t = await heldTurns();
   t.holdStops();
   t.fake.hold = true;
-  const sent = t.claude.send("list my channels");
+  const sent = t.claude.send("check my notes");
   await flush();
   const first = t.claude.interrupt();
   abortTools(t.fake);
@@ -640,7 +640,7 @@ it("asks Claude once for Stops made together, which share its refusal", async ()
   const t = await heldTurns();
   t.fake.hold = true;
   t.fake.interruptError = "not now";
-  const sent = t.claude.send("list my channels");
+  const sent = t.claude.send("check my notes");
   await flush();
   const first = t.claude.interrupt();
   const second = t.claude.interrupt();
@@ -657,7 +657,7 @@ it("asks Claude once for Stops made together, which share its refusal", async ()
 it("keeps work stopped when Claude refuses a repeated Stop", async () => {
   const t = await heldTurns();
   t.fake.hold = true;
-  const sent = t.claude.send("list my channels");
+  const sent = t.claude.send("check my notes");
   await flush();
   await t.claude.interrupt();
   t.fake.interruptError = "already stopping";

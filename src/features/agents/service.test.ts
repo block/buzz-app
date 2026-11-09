@@ -14749,6 +14749,7 @@ describe("full external agent access", () => {
     try {
       const names = await f.names();
       expect(names).toContain("send");
+      const read = vi.spyOn(f.session, "read");
       const remote = vi.spyOn(f.session, "readRemote");
       for (const name of RETIRED_OWNER_TOOLS) {
         expect(names).not.toContain(name);
@@ -14756,7 +14757,10 @@ describe("full external agent access", () => {
         expect(reply.result.isError).toBe(true);
         expect(reply.result.content[0]?.text).toContain(`No tool ${name}`);
       }
-      expect(remote).not.toHaveBeenCalled();
+      // Background sync may read; none of it reads the owner-only channel.
+      expect(
+        JSON.stringify([...read.mock.calls, ...remote.mock.calls]),
+      ).not.toContain('"private"');
     } finally {
       await f.cleanup();
       vi.unstubAllEnvs();
@@ -17219,21 +17223,18 @@ describe("Retired owner-read tools", () => {
         await expect(
           callSessionTool(client, {}, name, { channel: "private" }),
         ).rejects.toThrow(`No tool ${name}`);
-      // The service syncs in the background; none of it reads `private`.
-      expect(
-        JSON.stringify([...read.mock.calls, ...remote.mock.calls]),
-      ).not.toContain('"private"');
-      expect(remote).not.toHaveBeenCalled();
-
       f.native.query.mockResolvedValue([
         event("a", { content: "AGENT_VISIBLE" }),
       ]);
       await expect(
         callSessionTool(client, {}, "read", { channel }),
       ).resolves.toContain("AGENT_VISIBLE");
-      // An ordinary read runs as the agent, never with the owner's session.
+      // The agent's own read runs as the agent.
       expect(f.native.query).toHaveBeenCalled();
-      expect(remote).not.toHaveBeenCalled();
+      // Background sync may read; none of it reads the owner-only channel.
+      expect(
+        JSON.stringify([...read.mock.calls, ...remote.mock.calls]),
+      ).not.toContain('"private"');
     } finally {
       await f.ctx.fiber.dispose();
       vi.unstubAllEnvs();

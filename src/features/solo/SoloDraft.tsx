@@ -244,6 +244,11 @@ export function SoloDraft({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The lifetime Chat settings opened with.
   const [settingsLifetime, setSettingsLifetime] = useState<number>();
+  // The workspace it opened with. The pick can change under the open dialog,
+  // from another window or project entry; following it would reload the dialog
+  // over its unsaved edits. Closing checks the current pick, as a deletion
+  // found here does.
+  const [settingsProject, setSettingsProject] = useState<string>();
   // New chats tag their agent in the draft: the one the route names, else the
   // default.
   const defaultAgent = useDefaultAgent(session, scope, agent);
@@ -884,6 +889,7 @@ export function SoloDraft({
           disabled={busy}
           onClick={() => {
             setSettingsLifetime(draftLifetime(scope, draftSettings));
+            setSettingsProject(selectedProject);
             setSettingsOpen(true);
           }}
         />
@@ -894,7 +900,7 @@ export function SoloDraft({
         <DraftSettings
           finalFocus={settingsTrigger}
           session={session}
-          projectId={selectedProject || undefined}
+          projectId={settingsProject || undefined}
           canvas={draftCanvas}
           name={draftSettings.name}
           ttlSeconds={settingsLifetime}

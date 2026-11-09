@@ -1771,8 +1771,8 @@ function deletableWorkspaces(f: Awaited<ReturnType<typeof projectSetup>>) {
     { id: "work", name: "Work" },
     { id: "other", name: "Other" },
   ];
-  const remove = () => {
-    sections = sections.filter((section) => section.id !== "work");
+  const remove = (id = "work") => {
+    sections = sections.filter((section) => section.id !== id);
     for (const listener of listeners) listener();
   };
   Object.assign(f.session.soloPreferences, {
@@ -1812,6 +1812,77 @@ it("keeps Chat settings' edits when its workspace is deleted, and drops the work
   expect(readView(scope, "solo:settings", null)).toMatchObject({
     canvas: "My own notes",
   });
+});
+
+/** A same-origin window's write of a view key, as its storage event reports it. */
+function otherWindowWrites(scope: string, key: string, value: string) {
+  const name = `buzz-view.v1:${JSON.stringify([scope, key])}`;
+  const newValue = JSON.stringify(value);
+  localStorage.setItem(name, newValue);
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      key: name,
+      newValue,
+      storageArea: localStorage,
+    }),
+  );
+}
+
+it("another window dropping the workspace leaves open Chat settings alone; the draft follows once they close", async () => {
+  const f = await projectSetup();
+  deletableWorkspaces(f);
+  const user = userEvent.setup();
+  const scope = "dropped-elsewhere-under-settings";
+  writeView(scope, "solo:new-project", "work");
+  render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  const instructions = await screen.findByRole("textbox", {
+    name: /^Instructions/,
+  });
+  await waitFor(() => expect(instructions).toHaveValue("work instructions"));
+  await user.clear(instructions);
+  await user.type(instructions, "My own notes");
+  act(() => otherWindowWrites(scope, "solo:new-project", ""));
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "My own notes",
+  );
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+  expect(readView(scope, "solo:settings", null)).toMatchObject({
+    canvas: "My own notes",
+  });
+});
+
+it("a workspace another window picks under open Chat settings is dropped on close if deleted", async () => {
+  const f = await projectSetup();
+  const remove = deletableWorkspaces(f);
+  const user = userEvent.setup();
+  const scope = "picked-elsewhere-under-settings";
+  writeView(scope, "solo:new-project", "work");
+  render(<SoloDraft session={f.session} scope={scope} onStarted={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  const instructions = await screen.findByRole("textbox", {
+    name: /^Instructions/,
+  });
+  await waitFor(() => expect(instructions).toHaveValue("work instructions"));
+  await user.clear(instructions);
+  await user.type(instructions, "My own notes");
+  act(() => otherWindowWrites(scope, "solo:new-project", "other"));
+  // Other's defaults would have loaded by the time it is deleted.
+  await act(async () => {});
+  act(() => remove("other"));
+  await act(async () => {});
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "My own notes",
+  );
+  expect(readView(scope, "solo:new-project", null)).toBe("other");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
 });
 
 it("Chat settings says its workspace was deleted when its own load finds out", async () => {

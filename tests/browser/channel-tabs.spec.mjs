@@ -89,7 +89,7 @@ test("middle-click closes a content tab without selecting it", async ({
   ).toBeFocused();
 });
 
-test("Open in channel takes a content tab to its conversation with its composer focused", async ({
+test("Open chat takes a content tab to its conversation with its composer focused", async ({
   page,
   app,
 }) => {
@@ -108,9 +108,7 @@ test("Open in channel takes a content tab to its conversation with its composer 
     .locator("[data-panel-workspace]")
     .getByRole("tab", { name: "Beta", exact: true })
     .click({ button: "right" });
-  await page
-    .getByRole("menuitem", { name: "Open in channel", exact: true })
-    .click();
+  await page.getByRole("menuitem", { name: "Open chat", exact: true }).click();
   await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(
     page.evaluate(() => history.state.buzzNavigationV1.entry.target),
@@ -623,4 +621,91 @@ test.describe("archived Canvas", () => {
       canvas.getByRole("button", { name: "Restore this version" }),
     ).toBeDisabled();
   });
+});
+
+// Real focus, virtualized positioning and browser Back/Forward cannot be
+// established by the owner-level routing tests.
+test("a same-channel source action retains a main thread and its draft", async ({
+  page,
+  app,
+}, testInfo) => {
+  await open(page, app);
+  const root = app.append(
+    "primary",
+    "alpha",
+    "Source navigation root",
+    true,
+    false,
+  );
+  app.append(
+    "primary",
+    "alpha",
+    "Source navigation reply",
+    true,
+    false,
+    root.id,
+  );
+  const timeline = page.locator('[data-channel-timeline="alpha"]');
+  const row = timeline.locator(`[data-message-id="${root.id}"]`);
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const draft = thread.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await draft.fill("Keep source draft");
+  const tab = page.locator(
+    `[role="tab"][data-tab-value="thread:alpha:${root.id}"]`,
+  );
+  await tab.focus();
+  await page.keyboard.press("Alt+Shift+ArrowLeft");
+  await expect(tab).toBeFocused();
+  const source = thread.getByRole("button", { name: "#Alpha", exact: true });
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, theme);
+    for (const width of [1440, 800]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.evaluate(() => {
+        document.documentElement.style.fontSize = "20px";
+      });
+      await expect(source).toBeInViewport();
+      await page.screenshot({
+        path: testInfo.outputPath(`source-${theme}-${width}.png`),
+      });
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = "";
+  });
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await source.focus();
+  await page.keyboard.press("Enter");
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+  await expect(tab).toHaveAttribute("aria-selected", "false");
+  await page.goBack();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await expect(draft).toHaveText("Keep source draft");
+  await page.goForward();
+  await expect(row).toBeInViewport();
+  await tab.click({ button: "right" });
+  await page
+    .getByRole("menuitem", {
+      name: "Show original message in channel",
+      exact: true,
+    })
+    .click();
+  await expect(row).toBeFocused();
+  await expect(tab).toHaveCount(1);
+  await tab.click();
+  await expect(draft).toHaveText("Keep source draft");
+  await source.click();
+  await expect(tab).toHaveAttribute("aria-selected", "false");
+  await expect(row).toBeFocused();
 });

@@ -471,10 +471,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   replies previews its newest unread reply and opens it in its thread. Muted
   conversations are left out. Turn this off with **Show unread first in
   search** in Settings → Appearance → Conversations.
-- **Activity** threads name their channel above the original message. Select that
-  name, or **Open in channel** in the thread tab's menu, to open the thread in
-  Channels beside its original message, which the channel history shows and
-  highlights.
+- **Find a tab’s source**: thread tabs show **In #channel-name** (or the chat
+  name) above their messages, including in the current channel. Select that name,
+  or **Show original message in channel** in the tab’s context menu, to reveal
+  and highlight the original message in the main timeline. Chat tabs use “chat”
+  in the action label. The thread tab stays available; Back restores the prior
+  view. Conversation tabs offer **Open channel/chat**, or **Show message in
+  channel/chat** when opened at a message. If the original cannot be found,
+  Buzz shows a failure with Retry.
 - **Sidebar activity**: rest the pointer on a sidebar row to list its unread
   mentions of you and its unread threads, mentions first. Open one or mark it
   read from the list; just looking marks nothing read.

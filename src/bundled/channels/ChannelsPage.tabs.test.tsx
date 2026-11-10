@@ -1120,7 +1120,7 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
   expect(screen.getByRole("button", { name: "Retry move" })).toBeVisible();
 });
 
-it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {
+it("opens both current and other conversations from their tab menus", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {
     open,
@@ -1143,14 +1143,20 @@ it("opens another conversation's tab in its channel, but not the current channel
     });
     return within(await screen.findByRole("menu"));
   };
-  expect(
-    (await menu("Thread · Alpha")).queryByRole("menuitem", {
-      name: "Open in channel",
-    }),
-  ).not.toBeInTheDocument();
-  await h.user.keyboard("{Escape}");
   await h.user.click(
-    (await menu("Beta")).getByRole("menuitem", { name: "Open in channel" }),
+    (await menu("Thread · Alpha")).getByRole("menuitem", {
+      name: "Show original message in channel",
+    }),
+  );
+  expect(open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      channelId: "alpha",
+      messageId: root,
+      context: "timeline",
+    }),
+  );
+  await h.user.click(
+    (await menu("Beta")).getByRole("menuitem", { name: "Open channel" }),
   );
   const scope = {
     viewer: h.viewer,
@@ -1179,7 +1185,7 @@ it("opens another conversation's tab in its channel, but not the current channel
   );
   await h.user.click(
     (await menu("Thread · Beta")).getByRole("menuitem", {
-      name: "Open in channel",
+      name: "Show original message in channel",
     }),
   );
   await vi.waitFor(() =>
@@ -1189,8 +1195,7 @@ it("opens another conversation's tab in its channel, but not the current channel
       scope,
       channelId: "beta",
       messageId: other,
-      threadRootId: other,
-      context: "channel",
+      context: "timeline",
     }),
   );
 });

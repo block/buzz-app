@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import type { ComponentProps, ReactElement } from "react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
@@ -530,4 +530,70 @@ it("Back to the visit seeks again once the channel has dropped the pages it read
       inlineTarget: { messageId: fixture.root.id, signal: back.signal },
     }),
   );
+});
+
+it("reveals a reply's verified source in cold timeline history without opening a thread", async () => {
+  const h = await channelsPage();
+  const visit = h.visit(
+    h.target("alpha", {
+      messageId: fixture.reply.id,
+      threadRootId: "f".repeat(64),
+      context: "timeline",
+    }),
+    "source",
+  );
+  h.go(visit);
+  await vi.waitFor(() => expect(h.held).toHaveLength(1));
+  try {
+    expect(latest("alpha")?.holding).toBe(true);
+    expect(
+      screen.queryByRole("tab", { name: "Thread root" }),
+    ).not.toBeInTheDocument();
+  } finally {
+    await h.release();
+  }
+  await vi.waitFor(() =>
+    expect(latest("alpha")).toMatchObject({
+      holding: false,
+      navigation: {
+        target: { messageId: fixture.root.id, context: "timeline" },
+      },
+    }),
+  );
+  expect(
+    screen.queryByRole("tab", { name: "Thread root" }),
+  ).not.toBeInTheDocument();
+});
+
+it("reports an unavailable source instead of opening a replacement thread", async () => {
+  const h = await channelsPage({ root: false });
+  h.go(
+    h.visit(
+      h.target("alpha", { messageId: fixture.reply.id, context: "timeline" }),
+      "source",
+    ),
+  );
+  await screen.findByText("Couldn't show the original message.");
+  expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+  expect(latest("alpha")?.navigation).toBeUndefined();
+});
+
+it("cancels an obsolete source seek when navigation leaves the channel", async () => {
+  const h = await channelsPage();
+  h.go(
+    h.visit(
+      h.target("alpha", { messageId: fixture.root.id, context: "timeline" }),
+      "source",
+    ),
+  );
+  await vi.waitFor(() => expect(h.held).toHaveLength(1));
+  h.go(h.visit(h.target("beta"), "other"));
+  await h.release();
+  await vi.waitFor(() => expect(latest("beta")?.holding).toBe(false));
+  expect(
+    screen.queryByText("Couldn't show the original message."),
+  ).not.toBeInTheDocument();
+  expect(latest("beta")?.navigation?.target).toMatchObject({
+    channelId: "beta",
+  });
 });

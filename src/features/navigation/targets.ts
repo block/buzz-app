@@ -66,9 +66,9 @@ export type OpenTarget =
       messageId?: string;
       /** Hint only. Resolve the actual root from verified message evidence. */
       threadRootId?: string;
-      /** With threadRootId: the thread opens beside that root, revealed in the
-       * channel timeline even beyond its newest page, as Open in channel asks. */
-      context?: "channel";
+      /** Timeline: reveal the verified top-level source without opening a thread.
+       * Channel: legacy thread-plus-root presentation, requiring threadRootId. */
+      context?: "channel" | "timeline";
       /** Presentation within this conversation; never mutation or confirmation state. */
       panel?: "members";
       /** Message selected for the forwarding dialog; never submission state. */
@@ -396,7 +396,10 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           throw invalid();
         if (
           value.context !== undefined &&
-          (value.context !== "channel" || value.threadRootId === undefined)
+          !(
+            (value.context === "channel" && value.threadRootId !== undefined) ||
+            (value.context === "timeline" && value.messageId !== undefined)
+          )
         )
           throw invalid();
         if (
@@ -431,7 +434,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.threadRootId !== undefined
             ? { threadRootId: text(value.threadRootId, hex).toLowerCase() }
             : {}),
-          ...(value.context === "channel" ? { context: value.context } : {}),
+          ...(value.context === "channel" || value.context === "timeline"
+            ? { context: value.context }
+            : {}),
           ...(value.panel === "members" ? { panel: value.panel } : {}),
           ...(value.forward !== undefined
             ? { forward: text(value.forward, hex).toLowerCase() }

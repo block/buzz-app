@@ -350,8 +350,7 @@ it("names a thread's conversation inside it, linking where the menu's Open in ch
     scope: { viewer: "viewer", communityOrigin: "origin" },
     channelId: "alpha",
     messageId: "reply",
-    threadRootId: "root",
-    context: "channel",
+    context: "timeline",
   });
   page.open({ channelId: "dm", threadId: "root" });
   expect(screen.getByRole("button", { name: "DM · Alice" })).toBeVisible();
@@ -379,7 +378,9 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
   const thread = screen.getByRole("tab", { name: /Root text/ });
   await user.pointer({ keys: "[MouseRight]", target: thread });
   await user.click(
-    await screen.findByRole("menuitem", { name: "Open in channel" }),
+    await screen.findByRole("menuitem", {
+      name: "Show original message in channel",
+    }),
   );
   await vi.waitFor(() => expect(focused).toBe(thread));
   expect(page.navigation.open).toHaveBeenLastCalledWith({
@@ -388,8 +389,7 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
     scope,
     channelId: "alpha",
     messageId: "reply",
-    threadRootId: "root",
-    context: "channel",
+    context: "timeline",
   });
   page.open({ channelId: "beta" });
   await user.pointer({
@@ -397,7 +397,7 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
     target: screen.getByRole("tab", { name: /beta/ }),
   });
   await user.click(
-    await screen.findByRole("menuitem", { name: "Open in channel" }),
+    await screen.findByRole("menuitem", { name: "Open channel" }),
   );
   await vi.waitFor(() =>
     expect(page.navigation.open).toHaveBeenLastCalledWith({

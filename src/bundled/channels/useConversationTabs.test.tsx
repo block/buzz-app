@@ -2180,3 +2180,50 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   });
   expect(rowRenders).toContain(`${roots.r1}:reply`);
 });
+
+it("revokes a deferred source menu action when its tab host unmounts", () => {
+  const channels = [
+    { id: "alpha", name: "Alpha" },
+    { id: "beta", name: "Beta" },
+  ];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const available: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const open = vi.fn();
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      profiles: new Map(),
+      scope: "origin:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+      navigation: { open },
+    });
+    return { state, workspace };
+  });
+  act(() => h.result.current.state.openThreadTab("beta", "root", "root"));
+  const item = h.result.current.workspace.items[0];
+  const action = item && "actions" in item ? item.actions?.[0] : undefined;
+  expect(action).toBeDefined();
+  h.unmount();
+  action?.run();
+  expect(open).not.toHaveBeenCalled();
+});

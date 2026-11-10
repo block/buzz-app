@@ -62,6 +62,8 @@ import { createAgentLibrary } from "../agents/library";
 import { localAgentsFixture } from "../agents/local-testing";
 import { forgetDefaultAgent, setDefaultAgent } from "../solo/default-agent";
 import type { RegisteredPage } from "../pages/service";
+import type { Shortcut, ShortcutsService } from "../shortcuts/service";
+import { SHOW_ALL_DURATION } from "./ChannelInventory";
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
   rowRender: vi.fn(),
@@ -130,6 +132,7 @@ function fixture(
   ],
   sidebarSections?: SidebarSections,
   sidebarRows?: SidebarRows,
+  shortcuts?: Pick<ShortcutsService, "registerHost">,
 ) {
   const owner = createRelaySession(null);
   owners.push(owner);
@@ -240,6 +243,7 @@ function fixture(
             }}
             sidebarSections={sidebarSections}
             sidebarRows={sidebarRows}
+            shortcuts={shortcuts}
           >
             {pages}
           </PrimarySidebar>
@@ -588,6 +592,186 @@ it("uses relay section filters across navigation and remount, and offers only hi
   ).not.toHaveProperty("sectionFilters");
   expect(filters).toEqual({});
   preferences.dispose();
+});
+
+function filteredChannels() {
+  const writeFilter = vi.fn(async () => ({
+    filters: {},
+    activeWindowSeconds: {},
+  }));
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+      filters: { channels: "unreads" },
+    }),
+    available: true,
+    writeFilter,
+  });
+  let shortcut: Shortcut | undefined;
+  const remove = vi.fn(() => {
+    shortcut = undefined;
+  });
+  const shortcuts = {
+    registerHost: vi.fn((entry: Shortcut) => {
+      shortcut = entry;
+      return remove;
+    }),
+  };
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    undefined,
+    undefined,
+    undefined,
+    shortcuts,
+  );
+  return {
+    h,
+    preferences,
+    writeFilter,
+    remove,
+    shortcut: () => {
+      assert(shortcut);
+      return shortcut;
+    },
+  };
+}
+
+it("shows every filtered conversation from a section's Filter menu without saving, until a filter choice", async () => {
+  const user = userEvent.setup();
+  const { h, preferences, writeFilter } = filteredChannels();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "alpha" });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull(),
+  );
+  const openFilter = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "More actions for Channels" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+    return screen.findByRole("menuitemcheckbox", {
+      name: "Show all conversations",
+    });
+  };
+  const showAll = await openFilter();
+  expect(showAll).toHaveAttribute("aria-checked", "false");
+  fireEvent.click(showAll);
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "beta" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
+  });
+  expect(await openFilter()).toHaveAttribute("aria-checked", "true");
+  // The saved choice stays selected and unsaved while everything shows.
+  expect(
+    screen.getByRole("menuitemradio", { name: "Unreads" }),
+  ).toHaveAttribute("aria-checked", "true");
+  expect(writeFilter).not.toHaveBeenCalled();
+  // Choosing a filter means seeing it applied.
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Unreads" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull(),
+  );
+  preferences.dispose();
+});
+
+it("offers Show all conversations only while a section is filtered", async () => {
+  const user = userEvent.setup();
+  const registerHost = vi.fn((_: Shortcut) => () => {});
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    available: true,
+  });
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    undefined,
+    undefined,
+    undefined,
+    { registerHost },
+  );
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "gamma" });
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  await screen.findByRole("menuitemradio", { name: "All" });
+  expect(
+    screen.queryByRole("menuitemcheckbox", { name: "Show all conversations" }),
+  ).toBeNull();
+  expect(registerHost.mock.calls[0]?.[0].when?.()).toBe(false);
+  preferences.dispose();
+});
+
+it("expires Show all conversations after two minutes, keeping the open conversation, and clears its timer on teardown", async () => {
+  const { h, preferences, remove, shortcut } = filteredChannels();
+  const mounted = render(h.view("alpha"));
+  await screen.findByRole("button", { name: "alpha" });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull(),
+  );
+  expect(shortcut()).toMatchObject({
+    id: "show-all-conversations",
+    title: "Show all conversations",
+    binding: { key: "f", mod: true, shift: true },
+    allowInEditable: true,
+  });
+  expect(shortcut().when?.()).toBe(true);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const setTimer = vi.spyOn(window, "setTimeout");
+  const clearTimer = vi.spyOn(window, "clearTimeout");
+  const showAllTimers = () =>
+    setTimer.mock.results
+      .filter(
+        (_, index) => setTimer.mock.calls[index]?.[1] === SHOW_ALL_DURATION,
+      )
+      .map(({ value }) => value);
+  const toggle = () => act(() => void shortcut().run());
+  try {
+    toggle();
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(SHOW_ALL_DURATION - 1));
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "gamma" })).toBeNull();
+    expect(screen.getByRole("button", { name: "alpha" })).toBeInTheDocument();
+
+    // A second press ends it early; the next starts a fresh window.
+    toggle();
+    act(() => vi.advanceTimersByTime(SHOW_ALL_DURATION / 2));
+    toggle();
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    expect(clearTimer).toHaveBeenCalledWith(showAllTimers()[1]);
+    toggle();
+    act(() => vi.advanceTimersByTime(SHOW_ALL_DURATION - 1));
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+
+    // A reconnect remounts the inventory with the saved filters and no timer.
+    h.connection({ ...h.snapshot, generation: 2 });
+    expect(clearTimer).toHaveBeenCalledWith(showAllTimers()[2]);
+    // Testing Library's waitFor cannot poll under Vitest's fake timers.
+    await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
+    expect(screen.getByRole("button", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    toggle();
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+    mounted.unmount();
+    expect(clearTimer).toHaveBeenCalledWith(showAllTimers()[3]);
+    expect(remove).toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+    preferences.dispose();
+  }
 });
 
 it("ignores local and legacy filter state", async () => {

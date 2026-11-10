@@ -31,6 +31,7 @@ import {
   type SidebarRows,
   type RegisteredSidebarRows,
 } from "./sidebar-rows-service";
+import type { ShortcutsService } from "../shortcuts/service";
 import { useSidebarRowUnread } from "./useSidebarRowUnread";
 import type { SidebarSortMode } from "../relay/sidebar-sort";
 import type { SidebarFrame } from "./SidebarFrame";
@@ -130,6 +131,8 @@ type Inventory = {
 };
 
 const noSubscription = () => () => {};
+/** How long Show all conversations pauses the saved section filters. */
+export const SHOW_ALL_DURATION = 2 * 60_000;
 const emptyContributions: readonly RegisteredSidebarSection[] = [];
 const noSidebarSections = () => emptyContributions;
 const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
@@ -156,6 +159,7 @@ export function ChannelInventory({
   viewer,
   sidebarSections: contributedSections,
   sidebarRows: contributedRows,
+  shortcuts,
   render,
 }: {
   relay: RelayData;
@@ -171,6 +175,8 @@ export function ChannelInventory({
   viewer?: string | undefined;
   sidebarSections?: SidebarSections | undefined;
   sidebarRows?: SidebarRows | undefined;
+  /** Registers Show all conversations while this inventory is mounted. */
+  shortcuts?: Pick<ShortcutsService, "registerHost"> | undefined;
   render(inventory: Inventory): ReactNode;
 }) {
   const contributions = useSyncExternalStore(
@@ -604,14 +610,43 @@ export function ChannelInventory({
         : sections,
     [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
   );
+  const savedFilters = Object.fromEntries(
+    Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
+      key.startsWith("section:") ? `group:${key.slice(8)}` : key,
+      mode,
+    ]),
+  );
+  // Pausing every filter is brief and unsaved: the saved filters return after
+  // SHOW_ALL_DURATION, on reload or reconnect, or with a new filter choice.
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => {
+    if (!showAll) return;
+    const timer = window.setTimeout(() => setShowAll(false), SHOW_ALL_DURATION);
+    return () => window.clearTimeout(timer);
+  }, [showAll]);
+  const filtering = sortedSections.some(
+    ({ key }) => (savedFilters[key] ?? "all") !== "all",
+  );
+  const showAllAvailable = useRef(false);
+  useLayoutEffect(() => {
+    showAllAvailable.current = filtering || showAll;
+  });
+  useEffect(
+    () =>
+      shortcuts?.registerHost({
+        id: "show-all-conversations",
+        title: "Show all conversations",
+        binding: { key: "f", mod: true, shift: true },
+        order: 77,
+        allowInEditable: true,
+        when: () => showAllAvailable.current,
+        run: () => setShowAll((paused) => !paused),
+      }),
+    [shortcuts],
+  );
   const filteredSections = useSidebarFilters(
     sortedSections,
-    Object.fromEntries(
-      Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
-        key.startsWith("section:") ? `group:${key.slice(8)}` : key,
-        mode,
-      ]),
-    ),
+    showAll ? {} : savedFilters,
     current?.id,
     queries.unread,
     Object.fromEntries(
@@ -1414,8 +1449,10 @@ export function ChannelInventory({
                             ? `section:${section.key.slice(6)}`
                             : section.key
                         ],
-                      change: (mode, seconds) =>
-                        setSectionFilter(section.key, mode, seconds),
+                      change: (mode, seconds) => {
+                        setShowAll(false);
+                        return setSectionFilter(section.key, mode, seconds);
+                      },
                       dismissError: () =>
                         preferences.dismissFilterError(
                           section.key.startsWith("group:")
@@ -1423,6 +1460,11 @@ export function ChannelInventory({
                             : section.key,
                         ),
                     }
+                  : undefined
+              }
+              showAll={
+                filtering || showAll
+                  ? { checked: showAll, change: setShowAll }
                   : undefined
               }
               channels={{

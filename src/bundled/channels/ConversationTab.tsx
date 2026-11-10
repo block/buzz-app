@@ -186,6 +186,7 @@ export function ConversationTab({
           />
         ) : (
           <SoloColumn enabled={soloConversation}>
+            <SoloForkPreview session={session} state={forkLock} />
             <ChannelBody
               viewer={session.viewer}
               cached={!!channel.cached}
@@ -204,7 +205,6 @@ export function ConversationTab({
               }
               marksRead={opening?.markRead !== false}
             />
-            <SoloForkPreview session={session} state={forkLock} />
             <ConversationComposer
               // Shown follows the tab, not whether showing it visits the chat.
               shown={active}

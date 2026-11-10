@@ -441,3 +441,23 @@ it.each([
     expect(info.membershipRequired).toBe(nips.includes(43));
   },
 );
+
+it.each([undefined, [], ["buzz-solo-fork-v1"], "buzz-solo-fork-v1"])(
+  "projects only an explicitly advertised Solo fork extension: %j",
+  async (supported_extensions) => {
+    vi.mocked(invoke).mockImplementation(async (_command, args) => ({
+      status: 200,
+      headers: {},
+      body: JSON.stringify(
+        (args as { path: string }).path === "/"
+          ? { self: key.pubkey, supported_extensions }
+          : { policy: null },
+      ),
+    }));
+    const info = await communityRequest<CommunityInfo>(community, "info");
+    expect(info.soloFork).toBe(
+      Array.isArray(supported_extensions) &&
+        supported_extensions.includes("buzz-solo-fork-v1"),
+    );
+  },
+);

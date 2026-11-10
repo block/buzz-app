@@ -4376,3 +4376,30 @@ test("Builderlab pending sign-in survives its initiating page disconnecting", as
     await h.close();
   }
 });
+
+test.each([undefined, [], ["buzz-solo-fork-v1"], "buzz-solo-fork-v1"])(
+  "projects the current fork advertisement without changing presentation: %j",
+  async (supported_extensions) => {
+    const h = await harness((call) =>
+      Response.json(
+        call.url === fixtureRelayUrl
+          ? { name: "Community", supported_extensions }
+          : { policy: null },
+      ),
+    );
+    try {
+      expect(await (await h.get("info")).json()).toMatchObject({
+        name: "Community",
+        policy: null,
+        soloFork:
+          Array.isArray(supported_extensions) &&
+          supported_extensions.includes("buzz-solo-fork-v1"),
+      });
+      expect(await (await h.get("icon-info")).json()).toEqual({
+        name: "Community",
+      });
+    } finally {
+      await h.close();
+    }
+  },
+);

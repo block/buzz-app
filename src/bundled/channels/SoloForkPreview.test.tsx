@@ -11,6 +11,7 @@ it("labels the collapsed inherited excerpt as current history, not previous prom
   const owner = createRelaySession(null);
   const retry = vi.fn();
   const state: ReturnType<typeof useSoloForkLock> = {
+    createEventId: undefined,
     disabled: false,
     pending: false,
     reason: undefined,
@@ -66,6 +67,7 @@ it("shows read failures immediately with the hook's retry, and nothing for ordin
   const owner = createRelaySession(null);
   const retry = vi.fn();
   const state: ReturnType<typeof useSoloForkLock> = {
+    createEventId: "ef".repeat(32),
     disabled: true,
     pending: false,
     reason: "Source access revoked",
@@ -76,6 +78,9 @@ it("shows read failures immediately with the hook's retry, and nothing for ordin
     const mounted = render(
       <SoloForkPreview session={owner.session} state={state} />,
     );
+    expect(screen.getByText(/Retained create event ID/)).toHaveTextContent(
+      "ef".repeat(32),
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Source access revoked",
     );
@@ -84,7 +89,12 @@ it("shows read failures immediately with the hook's retry, and nothing for ordin
     mounted.rerender(
       <SoloForkPreview
         session={owner.session}
-        state={{ ...state, disabled: false, reason: undefined }}
+        state={{
+          ...state,
+          createEventId: undefined,
+          disabled: false,
+          reason: undefined,
+        }}
       />,
     );
     expect(mounted.container).toBeEmptyDOMElement();

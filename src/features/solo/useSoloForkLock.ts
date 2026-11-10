@@ -14,6 +14,16 @@ export function useSoloForkLock(
   const enabled = channel?.forkClaim === true;
   const pending = !!(channel?.pending || channel?.metadataPending);
   const [attempt, retry] = useState(0);
+  const createEventId = useSyncExternalStore(
+    (listener) =>
+      enabled ? (session.outbox?.subscribe(listener) ?? (() => {})) : () => {},
+    () =>
+      enabled && id
+        ? session.outbox
+            ?.snapshot()
+            .find((row) => row.recovery?.key === `solo-fork:${id}`)?.signed?.id
+        : undefined,
+  );
   const failure = useSyncExternalStore(
     (listener) => forkFailures.subscribe(session, listener),
     () => (enabled && id ? forkFailures.get(session, id) : undefined),
@@ -80,6 +90,7 @@ export function useSoloForkLock(
     enabled && (!current || !!current.error || !!failure || pending);
   return {
     disabled,
+    createEventId,
     pending: enabled && !failure && (!current || (pending && !current.error)),
     reason: disabled
       ? (failure?.reason ?? current?.error ?? "Confirming chat context…")

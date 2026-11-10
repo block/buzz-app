@@ -1,3 +1,4 @@
+import { ForkSoloChat, canForkSolo } from "./ForkSoloChat";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
@@ -51,6 +52,25 @@ export const apply: PluginModule["apply"] = (ctx) => {
       (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
     component: ({ message, session }) => (
       <StartLinkedChat
+        session={session}
+        navigation={navigator}
+        channelId={message.channelId}
+        message={message}
+      />
+    ),
+  });
+  ctx.conversation.registerMessageAction({
+    id: "fork-solo-chat",
+    title: "Fork chat from here",
+    placement: "menu",
+    icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
+    matches: (message, session) =>
+      canForkSolo(session, message.channelId) &&
+      !message.membership &&
+      !message.diff &&
+      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
+    component: ({ message, session }) => (
+      <ForkSoloChat
         session={session}
         navigation={navigator}
         channelId={message.channelId}

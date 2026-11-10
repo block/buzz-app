@@ -10,6 +10,8 @@ import type { RelaySession } from "../relay/session";
 import type { JoinPolicy } from "./join-policy";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
+  /** Current NIP-11 advertisement; hosts still enforce it at signing/publication. */
+  soloFork?: boolean;
   /** NIP-43 is advertised only when Buzz enforces relay membership. */
   membershipRequired?: boolean;
   name?: string;

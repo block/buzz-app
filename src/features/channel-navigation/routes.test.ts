@@ -1,6 +1,12 @@
 import { expect, it } from "vitest";
 import type { JsonValue, OpenTarget } from "../navigation/targets";
-import { isChannelRoute, soloDraft, soloDraftTarget } from "./routes";
+import {
+  isChannelRoute,
+  soloDraft,
+  soloDraftTarget,
+  soloForkDraft,
+  soloForkTarget,
+} from "./routes";
 
 const viewer = "c".repeat(64);
 const scope = { viewer, communityOrigin: "https://relay.test" };
@@ -55,4 +61,26 @@ it("builds Solo draft destinations in the community", () => {
     page("buzz.channels", "channels", { kind: "solo-draft", agent }),
   );
   expect(() => soloDraftTarget("bad")).toThrow();
+});
+
+it("restores fork presentation intent, never an executable command", () => {
+  const draft = {
+    channelId: "11111111-1111-4111-8111-111111111111",
+    destination: "22222222-2222-4222-8222-222222222222",
+    messageId: "d".repeat(64),
+  };
+  const params = { kind: "solo-fork", ...draft };
+  expect(soloForkDraft(params)).toEqual(draft);
+  expect(isChannelRoute(params)).toBe(true);
+  expect(soloForkTarget(partition, draft)).toEqual(
+    page("buzz.channels", "channels", params),
+  );
+  for (const invalid of [
+    { ...params, destination: draft.channelId },
+    { ...params, destination: "00000000-0000-0000-0000-000000000000" },
+    { ...params, messageId: "D".repeat(64) },
+    { ...params, submit: true },
+    { ...params, title: "draft text" },
+  ])
+    expect(soloForkDraft(invalid)).toBeUndefined();
 });

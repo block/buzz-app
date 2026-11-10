@@ -1,3 +1,4 @@
+import { SoloForkDialog } from "./ForkSoloChat";
 import { useSoloForkLock } from "../../features/solo/useSoloForkLock";
 import { SoloForkPreview } from "./SoloForkPreview";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
@@ -38,6 +39,7 @@ import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { ChannelHeaderIdentity, memberAccess } from "./ChannelHeaderIdentity";
 import {
   soloDraft,
+  soloForkDraft,
   soloDraftTarget,
 } from "../../features/channel-navigation/routes";
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
@@ -383,6 +385,13 @@ function ChannelWorkspace({
         : undefined,
     [draftTarget],
   );
+  const forkDraft = useMemo(
+    () =>
+      draftTarget?.kind === "page"
+        ? soloForkDraft(draftTarget.route?.params)
+        : undefined,
+    [draftTarget],
+  );
   // The draft consumes its source on creation. Keep this visit's source while
   // membership and first-send work settles; a later visit reads storage anew.
   const linkedSource = useMemo(
@@ -487,7 +496,7 @@ function ChannelWorkspace({
   const requestedChannel =
     navigation?.target.kind === "conversation"
       ? navigation.target.channelId
-      : undefined;
+      : forkDraft?.channelId;
   const [resolved, setResolved] = useState<{
     request: PageNavigation;
     available: boolean;
@@ -617,7 +626,7 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (composingMessage || draft) {
+    if (composingMessage || draft || forkDraft) {
       navigation?.complete({ status: "opened" });
       return;
     }
@@ -656,6 +665,7 @@ function ChannelWorkspace({
   }, [
     cached,
     composingMessage,
+    forkDraft,
     metadataPending,
     emptyDestination,
     draft,
@@ -2040,6 +2050,7 @@ function ChannelWorkspace({
   const body = (
     <div className={styles.conversationBody}>
       <MessageManagementStatus />
+      <SoloForkPreview session={queries} state={forkLock} />
       <section
         data-channel-history
         aria-label={
@@ -2126,7 +2137,6 @@ function ChannelWorkspace({
           }
         />
       )}
-      <SoloForkPreview session={queries} state={forkLock} />
       {current &&
         !current.archived &&
         current.viewerRole !== "guest" &&
@@ -2174,6 +2184,15 @@ function ChannelWorkspace({
       style={split.style}
       className={`${styles.board} ${panelStyles.splitMotion}`}
     >
+      {forkDraft && navigation && (
+        <SoloForkDialog
+          key={`${scope}:${forkDraft.destination}:${navigation.entryId}`}
+          session={queries}
+          navigation={navigator}
+          visit={navigation}
+          draft={forkDraft}
+        />
+      )}
       {current && membersOpen && (
         <ChannelMembersDialog
           key={current.id}

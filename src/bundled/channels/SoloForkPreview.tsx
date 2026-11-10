@@ -18,6 +18,11 @@ export function SoloForkPreview({
   const source = seed && session.channels.get?.(seed.fork.channelId);
   return (
     <div className={styles.preview}>
+      {state.createEventId && (
+        <p className={`text-caption text-subtle ${styles.body}`}>
+          Retained create event ID: {state.createEventId}
+        </p>
+      )}
       <LoadingRegion
         pending={state.pending}
         label="Confirming chat context…"

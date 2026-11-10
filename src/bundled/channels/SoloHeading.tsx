@@ -1,3 +1,4 @@
+import { ForkSoloChat, canForkSolo } from "./ForkSoloChat";
 import type { Conversation } from "../../features/conversation/service";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useSoloNavigation } from "../../features/channel-navigation/solo-navigation-react";
@@ -203,6 +204,13 @@ export function SoloToolbar({
               }
               onReadResult={setReadError}
             >
+              {navigator && canForkSolo(session, channel.id) && (
+                <ForkSoloChat
+                  session={session}
+                  navigation={navigator}
+                  channelId={channel.id}
+                />
+              )}
               {menus
                 ?.slice()
                 .sort(

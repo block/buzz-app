@@ -88,10 +88,15 @@ async fn read_from(
         return Ok(reply);
     }
     let mut bytes = Vec::new();
+    let mut boundary_seen = false;
     while let Some(chunk) = response.chunk().await.map_err(|_| "Host response failed")? {
+        let from = bytes.len().saturating_sub(5);
         let room = MAX_HEAD_BYTES - bytes.len();
         bytes.extend_from_slice(&chunk[..chunk.len().min(room)]);
-        if bytes.len() >= MAX_HEAD_BYTES || head_ended(&bytes) {
+        boundary_seen = boundary_seen || may_end_head(&bytes[from..]);
+        if bytes.len() >= MAX_HEAD_BYTES
+            || (boundary_seen && scan(&String::from_utf8_lossy(&bytes)).ended)
+        {
             break;
         }
     }
@@ -99,17 +104,44 @@ async fn read_from(
     Ok(reply)
 }
 
-fn head_ended(bytes: &[u8]) -> bool {
-    let tail = &bytes[bytes.len().saturating_sub(64 * 1024)..];
-    tail.windows(6)
-        .any(|w| w.eq_ignore_ascii_case(b"</head") || w[..5].eq_ignore_ascii_case(b"<body"))
+/// A cheap check for `</head` or `<body` bytes; `scan` decides whether they
+/// end the head or sit inside a script, comment or attribute.
+fn may_end_head(bytes: &[u8]) -> bool {
+    bytes
+        .windows(5)
+        .any(|w| w.eq_ignore_ascii_case(b"</hea") || w.eq_ignore_ascii_case(b"<body"))
 }
 
 /// The preview fields `html`'s head names, with URLs resolved against `base`.
 pub(crate) fn preview(html: &str, base: &reqwest::Url) -> PagePreview {
+    let Scan {
+        meta, title, icon, ..
+    } = scan(html);
+    let value = |field: Ranked| field.map(|(_, value)| value);
+    let mut images = meta.images;
+    images.sort_by_key(|(rank, _)| *rank);
+    PagePreview {
+        title: text(value(meta.title).or(title), 300),
+        description: text(value(meta.description), 600),
+        site_name: text(value(meta.site_name), 100),
+        image: images.iter().find_map(|(_, url)| https(url, base)),
+        image_alt: text(value(meta.image_alt), 300),
+        icon: icon.and_then(|url| https(&url, base)),
+    }
+}
+
+struct Scan {
+    meta: Meta,
+    title: Option<String>,
+    icon: Option<String>,
+    ended: bool,
+}
+
+fn scan(html: &str) -> Scan {
     let mut meta = Meta::default();
     let mut title = None;
     let mut icon = None;
+    let mut ended = false;
     let lower = html.to_ascii_lowercase();
     let mut at = 0;
     while let Some(offset) = lower[at..].find('<') {
@@ -128,7 +160,10 @@ pub(crate) fn preview(html: &str, base: &reqwest::Url) -> PagePreview {
             .collect();
         at = end + 1;
         match name.as_str() {
-            "/head" | "body" => break,
+            "/head" | "body" => {
+                ended = true;
+                break;
+            }
             "meta" => {
                 let attributes = attributes(&html[start..end]);
                 let key = attribute(&attributes, "property")
@@ -159,14 +194,11 @@ pub(crate) fn preview(html: &str, base: &reqwest::Url) -> PagePreview {
             _ => {}
         }
     }
-    let value = |field: Ranked| field.map(|(_, value)| value);
-    PagePreview {
-        title: text(value(meta.title).or(title), 300),
-        description: text(value(meta.description), 600),
-        site_name: text(value(meta.site_name), 100),
-        image: value(meta.image).and_then(|url| https(&url, base)),
-        image_alt: text(value(meta.image_alt), 300),
-        icon: icon.and_then(|url| https(&url, base)),
+    Scan {
+        meta,
+        title,
+        icon,
+        ended,
     }
 }
 
@@ -177,9 +209,12 @@ struct Meta {
     title: Ranked,
     description: Ranked,
     site_name: Ranked,
-    image: Ranked,
+    images: Vec<(u8, String)>,
     image_alt: Ranked,
 }
+
+/// Image candidates kept per page; the first, by rank, that is HTTPS wins.
+const MAX_IMAGES: usize = 8;
 
 impl Meta {
     /// Open Graph wins over Twitter cards, which win over plain `description`.
@@ -191,14 +226,20 @@ impl Meta {
             "twitter:description" => (&mut self.description, 1),
             "description" => (&mut self.description, 2),
             "og:site_name" => (&mut self.site_name, 0),
-            "og:image" | "og:image:url" | "og:image:secure_url" => (&mut self.image, 0),
-            "twitter:image" | "twitter:image:src" => (&mut self.image, 1),
+            "og:image" | "og:image:url" | "og:image:secure_url" => return self.image(0, content),
+            "twitter:image" | "twitter:image:src" => return self.image(1, content),
             "og:image:alt" => (&mut self.image_alt, 0),
             "twitter:image:alt" => (&mut self.image_alt, 1),
             _ => return,
         };
         if !content.trim().is_empty() && field.as_ref().is_none_or(|(held, _)| rank < *held) {
             *field = Some((rank, content.to_owned()));
+        }
+    }
+
+    fn image(&mut self, rank: u8, content: &str) {
+        if !content.trim().is_empty() && self.images.len() < MAX_IMAGES {
+            self.images.push((rank, content.to_owned()));
         }
     }
 }
@@ -385,6 +426,39 @@ mod tests {
         assert_eq!(page.icon, None);
         let html = r#"<meta property="og:image" content="https://user:pw@example.com/a.png">"#;
         assert_eq!(preview(html, &base()).image, None);
+    }
+
+    #[test]
+    fn an_https_image_behind_an_http_one_still_comes_back() {
+        let html = r#"<meta property="og:image" content="http://example.com/a.png">
+            <meta property="og:image:secure_url" content="https://example.com/a.png">
+            <meta name="twitter:image" content="https://example.com/b.png">"#;
+        assert_eq!(
+            preview(html, &base()).image.as_deref(),
+            Some("https://example.com/a.png")
+        );
+        let html = r#"<meta property="og:image" content="http://example.com/a.png">
+            <meta name="twitter:image" content="https://example.com/b.png">"#;
+        assert_eq!(
+            preview(html, &base()).image.as_deref(),
+            Some("https://example.com/b.png")
+        );
+    }
+
+    #[test]
+    fn only_a_real_boundary_ends_the_head() {
+        for html in [
+            "<head><script>let s = '</head><body>';</script>",
+            "<head><!-- </head> <body> -->",
+            r#"<head><meta name="x" content="</head><body>">"#,
+            "<head><title></head></title>",
+            "<head></head",
+        ] {
+            assert!(may_end_head(html.as_bytes()), "{html}");
+            assert!(!scan(html).ended, "{html}");
+        }
+        assert!(scan("<head><script>'</head>'</script></head>").ended);
+        assert!(scan("<head><BODY class=x>").ended);
     }
 
     #[test]

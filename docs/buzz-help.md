@@ -1769,10 +1769,13 @@ These labels only help identify the conversation you select.
 Your agents act only on messages from you, from your other agents, and from
 workflows that you or your agents own and that direct them. When your own
 workflow posts a message that mentions one of your agents on this computer but
-doesn’t direct it, a short note under the message says so: **“‹Agent› didn’t
-respond to this workflow message. This community limits which workflows can use
-agents, so other people can’t use yours. The workflow’s Runs tab shows why it
-didn’t respond this time.”** Only you see it, on this device; nothing is posted.
+doesn’t direct it, a short note under the message says so. On a relay that uses
+owner-only agent mentions it reads: **“‹Agent› didn’t respond to this workflow
+message. This community limits which workflows can use agents, so other people
+can’t use yours. The workflow’s Runs tab shows why it didn’t respond this
+time.”** Elsewhere it reads: **“‹Agent› didn’t respond because this workflow
+message wasn’t set up to direct agents.”** Only you see it, on this device;
+nothing is posted.
 Other ignored mentions show no note.
 
 On a relay that uses owner-only agent mentions, the desktop workflow editor

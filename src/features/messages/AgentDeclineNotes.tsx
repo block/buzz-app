@@ -1,11 +1,14 @@
 import { useSyncExternalStore } from "react";
+import { useWorkflowAgentMentions } from "../../bundled/workflows/useWorkflowAgentMentions";
 import type { MentionRefusal } from "../agents/owner-attestation";
 import type { RelaySession } from "../relay/session";
 import styles from "./Messages.module.css";
 
 const noSubscribe = () => () => {};
 
-export function agentDeclineText(name: string) {
+export function agentDeclineText(name: string, ownerOnly: boolean) {
+  if (!ownerOnly)
+    return `${name} didn't respond because this workflow message wasn't set up to direct agents.`;
   return `${name} didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.`;
 }
 
@@ -13,10 +16,12 @@ export function agentDeclineText(name: string) {
  * the decisions are this app's, and nothing is published. */
 export function AgentDeclineNotes({
   session,
+  scope,
   channelId,
   messageId,
 }: {
   session: Pick<RelaySession, "agentActivity" | "agentChoices">;
+  scope: string;
   channelId: string;
   messageId: string;
 }) {
@@ -35,21 +40,36 @@ export function AgentDeclineNotes({
       read,
     ),
   ) as [string, MentionRefusal][];
-  // Read only once there is a note: test and preview sessions may have none.
-  const readChoices = () =>
-    declined.length ? session.agentChoices.snapshot() : undefined;
+  return declined.length ? (
+    <Notes session={session} scope={scope} agents={declined.map(([a]) => a)} />
+  ) : null;
+}
+
+/** Mounted only when there is a note, so the relay-info read happens only then. */
+function Notes({
+  session,
+  scope,
+  agents,
+}: {
+  session: Pick<RelaySession, "agentChoices">;
+  scope: string;
+  agents: string[];
+}) {
+  const ownerOnly = useWorkflowAgentMentions(scope) === "owner";
+  // Test and preview sessions may have no choices store.
+  const readChoices = () => session.agentChoices?.snapshot();
   const choices = useSyncExternalStore(
-    (declined.length && session.agentChoices.subscribe) || noSubscribe,
+    session.agentChoices?.subscribe ?? noSubscribe,
     readChoices,
     readChoices,
   );
-  return declined.map(([agent]) => {
+  return agents.map((agent) => {
     const name =
       choices?.identities.find((choice) => choice.pubkey === agent)?.name ??
       "Your agent";
     return (
       <p key={agent} role="status" className={styles.agentNote}>
-        {agentDeclineText(name)}
+        {agentDeclineText(name, ownerOnly)}
       </p>
     );
   });

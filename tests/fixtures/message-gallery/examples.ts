@@ -9,6 +9,7 @@ import type { TimelineRow } from "../../../src/features/messages/membership-rows
 import video from "./assets/sample.mp4";
 import avatar from "../design-system/assets/avatar.png";
 import animatedGif from "../attachment-media/animated.gif";
+import agentCard from "../../../src/bundled/agent-ui/example.json";
 
 export const reader = "a".repeat(64);
 export const teammate = "b".repeat(64);
@@ -98,6 +99,28 @@ const references =
 const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
+  {
+    id: "agent-cards",
+    title: "Agent cards",
+    description:
+      "Editable, local drafts in the conversation's existing code frame.",
+    examples: [
+      single(
+        "agent-card",
+        "Edit and copy a draft",
+        "Fields stay local; copying does not send mail or approve work.",
+        `Here is your draft.\n\n\`\`\`buzz-ui\n${JSON.stringify(agentCard, null, 2)}\n\`\`\``,
+        { authorId: agent, agentEnvelope: true },
+      ),
+      single(
+        "invalid-agent-card",
+        "Unknown version",
+        "An unsupported card stays readable as code.",
+        `\`\`\`buzz-ui\n${JSON.stringify({ ...agentCard, version: 2 }, null, 2)}\n\`\`\``,
+        { authorId: agent, agentEnvelope: true },
+      ),
+    ],
+  },
   {
     id: "agent-coordination",
     title: "Agent coordination",

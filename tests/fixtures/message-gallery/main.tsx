@@ -12,6 +12,7 @@ import { LinkLabel, linkKind } from "../../../src/bundled/links/InlineLink";
 import { DiffMessage } from "../../../src/bundled/diffs/DiffMessage";
 import { MermaidDiagram } from "../../../src/bundled/mermaid/MermaidDiagram";
 import { MermaidExpand } from "../../../src/bundled/mermaid/MermaidExpand";
+import { AgentUiBlock } from "../../../src/bundled/agent-ui/AgentUiBlock";
 import { parseAccent } from "../../../src/shared/theme/accent";
 import referenceStyles from "../../../src/shared/InlineReference.module.css";
 import { CustomEmoji } from "../../../src/bundled/emoji/CustomEmoji";
@@ -88,6 +89,15 @@ const messages: readonly Contribution<MessageRenderer>[] = [
   },
 ];
 const codeBlocks: readonly Contribution<CodeBlockRenderer>[] = [
+  {
+    id: "agent-ui",
+    key: "gallery/agent-ui",
+    pluginId: "gallery",
+    revision: "1",
+    title: "Agent card",
+    matches: (language) => language === "buzz-ui",
+    component: AgentUiBlock,
+  },
   {
     id: "mermaid",
     key: "gallery/mermaid",

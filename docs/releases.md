@@ -244,8 +244,8 @@ To update Goose, verify every target archive against the exact release identity:
 ```sh
 gh attestation verify <archive> --repo aaif-goose/goose \
   --signer-workflow aaif-goose/goose/.github/workflows/release.yml \
-  --source-ref refs/tags/v1.57.0 \
-  --source-digest 30bba95105e59bc3e7df624cf6b4d433690cfe12 \
+  --source-ref refs/tags/v1.58.0 \
+  --source-digest 7c039ac9f90f5d61cf2953d32baf26e7ad1219ae \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   --deny-self-hosted-runners
 ```
@@ -258,15 +258,17 @@ Never resolve
 `latest` at build time.
 The obsolete `target/goose-acp-src` and `target/goose-acp-build` caches are unused
 and can be removed locally when no old source build is running.
-Version 1.57.0 also advances Goose 26 commits from the previous source pin;
-distribution parity alone does not establish runtime compatibility. Before
+Version 1.58.0 advances Goose 25 commits from v1.57.0, which itself advanced
+26 commits from the previous source pin; distribution parity alone does not
+establish runtime compatibility. Before
 shipping, exercise provider sessions, HTTP MCP, steering/cancellation, secret
 non-persistence and session history, plus native Windows/Linux startup and
 packaged signing/installers.
 The candidate is known to fail the MCP credential non-persistence check: the
 client HTTP URL and bearer header are stored in session data and export.
 An isolated canary probe reproduced this in both the old source-built 1.56.0
-executable and v1.57.0; upstream #12908 is not included in either version. This
+executable and v1.57.0; upstream #12908 was closed unmerged, so v1.58.0 does
+not include it either. This
 remains a separate existing acceptance failure, not a distribution regression.
 
 ## Bundled buzz CLI

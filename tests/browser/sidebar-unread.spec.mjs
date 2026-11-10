@@ -592,6 +592,26 @@ test("priority dots stay aligned and use pink unread color in both modes", async
     });
     await expect(dot).toHaveCSS("background-color", primary);
   }
+  // The existing selected-row recipe uses its accent fill's paired ink.
+  // A pink dot would disappear on the light Magenta selection fill.
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "light";
+    document.documentElement.dataset.accent = "magenta";
+  });
+  const dm = row(page, "dm-030");
+  await dm.click();
+  await expect(dm).toHaveAttribute("aria-current", "page");
+  await dm.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Mark as read", exact: true })
+    .click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await dm.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Mark as unread", exact: true })
+    .click();
+  await expect(dot).toBeVisible();
+  await expect(dot).toHaveCSS("background-color", "rgb(255, 255, 255)");
 });
 
 // One small real-app journey owns preview wiring and CSS geometry. The component

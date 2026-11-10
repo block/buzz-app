@@ -171,6 +171,55 @@ export async function clearDefaultAgent(session: RelaySession, scope: string) {
   if (revision(account) === attempt) remember(account, undefined);
 }
 
+/** The viewer's Bestie as their agents read and change it: what this device
+ * and the account saved (null for none), and whether the device's choice is an
+ * agent the viewer can tag here, by the choices Make my bestie offers. */
+export function defaultAgentControl(session: RelaySession, scope: string) {
+  const tagged = async (pubkey: string | undefined) => {
+    if (!pubkey) return { here: false };
+    session.agentChoices.ensure(false, true);
+    await session.agentChoices.refresh();
+    const choices = session.agentChoices.snapshot();
+    return {
+      here: choices.selectable.some((agent) => agent.pubkey === pubkey),
+      error: choices.error,
+    };
+  };
+  const state = (account: string | null, here: boolean) => ({
+    device: chosenAgent(scope) ?? null,
+    account,
+    here,
+  });
+  return Object.freeze({
+    read: async () => {
+      const account = (await session.mainAgent?.read()) ?? null;
+      return state(account, (await tagged(chosenAgent(scope))).here);
+    },
+    async set(pubkey: string) {
+      const { here, error } = await tagged(pubkey);
+      if (!here)
+        throw new Error(
+          error ??
+            "Only an agent your owner owns and can tag in this community can be their Bestie.",
+        );
+      const previous = chosenAgent(scope);
+      try {
+        await chooseDefaultAgent(session, scope, pubkey);
+      } catch (cause) {
+        // Keep the previous choice unless a newer one replaced this attempt.
+        if (chosenAgent(scope) === pubkey) cache(scope, previous ?? null);
+        throw cause;
+      }
+      return state(session.mainAgent ? pubkey : null, true);
+    },
+    async clear() {
+      await clearDefaultAgent(session, scope);
+      return state(null, false);
+    },
+  });
+}
+export type DefaultAgentControl = ReturnType<typeof defaultAgentControl>;
+
 /** Clears a deleted agent from the account only when it is still the saved
  * choice. Another agent chosen on the account is left alone. */
 export async function clearDeletedDefaultAgent(

@@ -17300,6 +17300,35 @@ describe("Buzz settings", () => {
   );
 });
 
+it("gives a run its owner's Bestie in its community, and a plugin's handle none", async () => {
+  const f = await setup();
+  const chosen = "a".repeat(64);
+  const write = vi.fn(async (_agent: string | null) => {});
+  Object.assign(f.session, {
+    mainAgent: { read: async () => undefined, write },
+  });
+  Object.assign(f.session.agentChoices, {
+    ensure: vi.fn(),
+    snapshot: () => ({ selectable: [{ pubkey: chosen }] }),
+  });
+  await f.service.create({ type: "example/echo", name: "Echo" });
+  await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+  await settle();
+  const run = runnerGate<AgentHandle>();
+  f.run.mockImplementationOnce(async ({ agent }) => {
+    run.resolve(agent);
+  });
+  f.plugin.agents.wake(bot, { channel, root: "e".repeat(64), text: "hi" });
+  const agent = await run.promise;
+  expect(await agent.bestie?.()?.set(chosen)).toEqual({
+    device: chosen,
+    account: chosen,
+    here: true,
+  });
+  expect(write).toHaveBeenCalledExactlyOnceWith(chosen);
+  expect(f.plugin.agents.handle(bot)).not.toHaveProperty("bestie");
+});
+
 describe("Retired owner-read tools", () => {
   it("are refused on a bundled harness's run before any owner read, while the agent's own reads work", async () => {
     // The retired build flag no longer enables anything.

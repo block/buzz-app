@@ -53,6 +53,9 @@ const settled = (state: LocalWorkState) =>
   state === "error" ||
   state === "superseded" ||
   state === "stopped";
+export const localWorkRoot = (
+  work: Pick<LocalWork, "syntheticMessage" | "thread" | "threadRootId">,
+) => (work.syntheticMessage && !work.thread ? undefined : work.threadRootId);
 export type LocalAgentSource = {
   work(): readonly LocalWork[];
   subscribeWork(listener: () => void): () => void;

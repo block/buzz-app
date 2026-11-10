@@ -1,4 +1,4 @@
-import { localActivity, localWorkLabel } from "./local-activity";
+import { localActivity, localWorkLabel, localWorkRoot } from "./local-activity";
 import type { RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
 import { activityTranscript, type ToolItem } from "./activity-transcript";
@@ -168,7 +168,7 @@ export function currentActivity(
               (!threadRootId || row.threadRootId === threadRootId) &&
               (row.state === "working" || row.state === "waiting"),
           )
-          .map((row) => row.threadRootId),
+          .map((row) => localWorkRoot(row) ?? null),
       ),
     ];
     agents.set(agent, {

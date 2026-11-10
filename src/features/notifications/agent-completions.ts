@@ -4,6 +4,7 @@ import type {
   LocalWorkState,
 } from "../agents/local-activity";
 import type { OpenTarget } from "../navigation/targets";
+import { localWorkRoot } from "../agents/local-activity";
 
 const running = (state: LocalWorkState | undefined) =>
   state === "waiting" || state === "working";
@@ -22,9 +23,7 @@ export function completionTarget(
 ): OpenTarget | undefined {
   if (!scope) return;
   const messageId = work.syntheticMessage
-    ? work.thread
-      ? work.threadRootId
-      : undefined
+    ? localWorkRoot(work)
     : work.messageId;
   return {
     version: 1,

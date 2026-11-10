@@ -25,7 +25,11 @@ import {
   currentActivity,
   type CurrentActivity,
 } from "../agents/current-activity";
-import { localWorkLabel, type LocalWork } from "../agents/local-activity";
+import {
+  localWorkLabel,
+  localWorkRoot,
+  type LocalWork,
+} from "../agents/local-activity";
 import { AgentResponsePreview } from "./AgentResponsePreview";
 import { RemoteAgentHint, RemoteWorkIcon } from "./RemoteAgentHint";
 import { remoteWorkDetail } from "../agents/execution-location";
@@ -389,7 +393,7 @@ export function TypingIndicator({
     );
     const conversationRoot =
       workRoot ??
-      work?.threadRootId ??
+      (work ? localWorkRoot(work) : undefined) ??
       threadRootId ??
       (knownRoots.length === 1 ? knownRoots[0] : undefined);
     const conversation = conversationRoot

@@ -178,6 +178,92 @@ function holdUpdate(f: ReturnType<typeof fixture>, afterCommit = false) {
   };
 }
 describe("durable read-state owner", () => {
+  it.each(
+    ["room", "thread:root", "msg:reply"].flatMap((key) =>
+      [false, true].map((intervening) => ({ key, intervening })),
+    ),
+  )(
+    "older queued saves preserve intervening intent: $key ($intervening)",
+    async ({ key, intervening }) => {
+      const f = fixture();
+      const owner = f.make();
+      const second = f.make();
+      await Promise.all([owner.ready, second.ready]);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const enqueue = async (save: () => ReturnType<typeof owner.read>) => {
+        await held;
+        return save();
+      };
+      const marks = [
+        owner.markLocalUnread(key, () => true, enqueue),
+        owner.markLocalUnread(key, () => true, enqueue),
+      ];
+      const fence = owner.captureLocalUnread([key]);
+      try {
+        if (intervening) await second.markLocalUnread(key, () => true);
+        release();
+        await Promise.all(marks);
+        const saved = f.journal();
+        const read = owner.read(
+          "room",
+          20,
+          () => true,
+          true,
+          [key],
+          undefined,
+          fence,
+        );
+        if (intervening) {
+          await expect(read).rejects.toThrow("Reading observation expired");
+          expect(f.journal()).toEqual(saved);
+        } else {
+          await expect(read).resolves.toMatchObject({ durability: "saved" });
+          expect(f.journal()?.localUnread[key]).toBeUndefined();
+          expect(f.journal()?.state.frontiers.room).toBe(20);
+        }
+      } finally {
+        release();
+        await Promise.allSettled(marks);
+      }
+    },
+  );
+
+  it("a failed older local mark cannot authorize a newer window's revision", async () => {
+    const f = fixture();
+    const owner = f.make();
+    const second = f.make();
+    await Promise.all([owner.ready, second.ready]);
+    const heldMark = holdUpdate(f);
+    const mark = expect(
+      owner.markLocalUnread("room", () => true),
+    ).rejects.toThrow("disk full");
+    await heldMark.started;
+    const fence = owner.captureLocalUnread(["room"]);
+    const heldRead = holdUpdate(f);
+    const read = expect(
+      owner.read("room", 20, () => true, true, ["room"], undefined, fence),
+    ).rejects.toThrow();
+    try {
+      // Exercise a failed callback that calculated a revision but never saved it.
+      heldMark.fail(true);
+      heldMark.release();
+      await mark;
+      await heldRead.started;
+      await second.markLocalUnread("room", () => true);
+      const saved = f.journal();
+      heldRead.release();
+      await read;
+      expect(f.journal()).toEqual(saved);
+      expect(f.journal()?.state.frontiers).toEqual({});
+    } finally {
+      heldMark.release();
+      heldRead.release();
+    }
+  });
+
   it("saves intent and exact signed event before publishing, then confirms the coordinate", async () => {
     const f = fixture();
     const owner = f.make();

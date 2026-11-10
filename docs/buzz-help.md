@@ -425,6 +425,9 @@ revokes all of them, and a pairing unused for 30 days expires.
   unread evidence is incomplete, or when
   read intent or the read evidence needed to locate the boundary changes
   elsewhere before it is established.
+- **Marking a channel read** keeps the cut from your click when retried. If a newer
+  manual unread choice was saved in another window while it waited, the read fails
+  rather than clearing that choice. Mark the channel read again to clear it.
 - **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
   dot and the thread dot. Switching away from Buzz pauses this: new messages
   can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked

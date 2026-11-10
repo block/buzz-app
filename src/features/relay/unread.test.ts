@@ -1,5 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import { createReadState } from "./read-state";
 import { deletionApplies, foldMessages } from "./fold";
 import {
   readJournal,
@@ -136,6 +137,7 @@ function setup(
     alice,
     host,
     query,
+    storage,
     emit,
     grant,
     target,
@@ -2122,7 +2124,11 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
   // A clock behind the evidence leaves each cut at its channel's newest message.
   clock(0);
   const unread = h.session.unread;
+  await unread.ensure();
+  const capture = vi.spyOn(h.storage, "capture");
   const results = await unread.markAllChannelsRead();
+  // The sweep has one storage-read budget, independent of selected channels.
+  expect(capture).toHaveBeenCalledTimes(1);
   expect(results).toHaveLength(2);
   expect(results.every((result) => result.durability === "saved")).toBe(true);
   // "quiet" had nothing to clear, so it earned neither a frontier nor a write.
@@ -2132,6 +2138,7 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
   const revision = h.journal()?.revision;
   expect(await unread.markAllChannelsRead()).toEqual([]);
   expect(h.journal()?.revision).toBe(revision);
+  expect(capture).toHaveBeenCalledTimes(1);
 
   h.emit([
     message(h.alice, "room", "three", 13),
@@ -2146,6 +2153,7 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
   assert(first && second);
   h.failSave();
   await expect(unread.markAllChannelsRead()).rejects.toThrow("disk full");
+  expect(capture).toHaveBeenCalledTimes(2);
   // The failing channel kept its old frontier while the sweep went on.
   expect(h.journal()?.state.frontiers).toEqual({
     room: 11,
@@ -2159,6 +2167,76 @@ it("mark all serialises channel reads over listed channels, skips read ones and 
     unread.snapshot({ kind: "channel", channelId: second }).observedCount,
   ).toBe(0);
 });
+
+it("mark all leaves every selected channel unread when its shared saved cut fails", async () => {
+  const h = setup();
+  for (const id of ["room", "other"]) {
+    h.grant(id);
+    h.emit([message(h.alice, id, id, 11)]);
+  }
+  await h.session.unread.ensure();
+  vi.spyOn(h.storage, "capture").mockRejectedValueOnce(
+    new Error("capture failed"),
+  );
+  await expect(h.session.unread.markAllChannelsRead()).rejects.toThrow(
+    "capture failed",
+  );
+  expect(h.journal()?.state.frontiers).toEqual({});
+  for (const channelId of ["room", "other"])
+    expect(
+      h.session.unread.snapshot({ kind: "channel", channelId }).observedCount,
+    ).toBe(1);
+});
+
+it.each([false, true])(
+  "mark all admits older queued marks without losing intervening saved intent (%s)",
+  async (intervening) => {
+    const h = setup();
+    for (const id of ["room", "other"]) {
+      h.grant(id);
+      h.emit([message(h.alice, id, id, 11)]);
+    }
+    const second = createReadState({
+      viewer: h.viewer.pubkey,
+      reader: { read: async () => [] },
+      host: undefined,
+      storage: h.storage,
+    });
+    await second.ready;
+    await h.session.unread.ensure();
+    const [first, last] = h.session.channels
+      .list()
+      .channels.map((row) => row.id);
+    assert(first && last);
+    clock(20);
+    const held = h.holdSaveStarted();
+    const marks = [first, last].map((channelId) =>
+      h.session.unread.markUnreadLocal({ kind: "channel", channelId }),
+    );
+    try {
+      await held.started;
+      const sweep = h.session.unread.markAllChannelsRead();
+      const result = intervening
+        ? expect(sweep).rejects.toThrow("Reading observation expired")
+        : expect(sweep).resolves.toHaveLength(2);
+      if (intervening) await second.markLocalUnread(last, () => true);
+      held.release();
+      await Promise.all([...marks, result]);
+      expect(h.journal()?.state.frontiers).toEqual({
+        [first]: 20,
+        ...(!intervening ? { [last]: 20 } : {}),
+      });
+      expect(h.journal()?.localUnread[first]).toBeUndefined();
+      expect(
+        h.session.unread.snapshot({ kind: "channel", channelId: last }).manual,
+      ).toBe(intervening ? "local-only" : "none");
+    } finally {
+      held.release();
+      await Promise.allSettled(marks);
+      second.dispose();
+    }
+  },
+);
 
 it.each(["revoke", "grant"] as const)(
   "mark all keeps untouched channels and click-time cuts across a mid-sweep %s",
@@ -2381,7 +2459,12 @@ it.each(["channel", "thread", "message"] as const)(
   },
 );
 
-it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
+it.each([
+  "markThrough",
+  "clearUnreadLocal",
+  "markChannelRead",
+  "prepareThreadRead",
+] as const)(
   "%s preserves a final explicit read after queued local unread",
   async (action) => {
     const h = setup();
@@ -2390,25 +2473,30 @@ it.each(["markThrough", "clearUnreadLocal", "markChannelRead"] as const)(
     h.emit([row]);
     const unread = h.session.unread;
     await unread.enterChannel("room");
+    const target =
+      action === "prepareThreadRead"
+        ? { kind: "thread" as const, channelId: "room", rootId: row.id }
+        : h.target;
     const held = h.holdSaveStarted();
     const messageRead = unread.markMessageRead("room", row.id);
     const pending = [messageRead];
     try {
       await held.started;
-      pending.push(unread.markUnreadLocal(h.target));
+      pending.push(unread.markUnreadLocal(target));
       pending.push(
         action === "markThrough"
           ? unread.markThrough(h.target, row.id)
           : action === "clearUnreadLocal"
             ? unread.clearUnreadLocal(h.target)
-            : unread.markChannelRead("room"),
+            : action === "markChannelRead"
+              ? unread.markChannelRead("room")
+              : unread.prepareThreadRead("room", row.id)(),
       );
     } finally {
       held.release();
     }
     await Promise.all(pending);
-    expect(h.journal()?.localUnread.room).toBeUndefined();
-    expect(h.snapshot().manual).toBe("none");
+    expect(unread.snapshot(target).manual).toBe("none");
   },
 );
 
@@ -4023,7 +4111,7 @@ it("a prepared channel read retries its captured cut, not later arrivals or the 
   expect(h.snapshot().observedCount).toBe(0);
 });
 
-it("prepared channel reads serialize each invocation with existing channel mutations", async () => {
+it("prepared channel retries preserve manual unread queued between invocations", async () => {
   const h = setup();
   h.grant("room");
   h.emit([message(h.alice, "room", "before click", 11)]);
@@ -4036,25 +4124,341 @@ it("prepared channel reads serialize each invocation with existing channel mutat
   try {
     await held.started;
     const mark = unread.markUnreadLocal(h.target);
-    const last = retry();
+    const last = expect(retry()).rejects.toThrow();
     held.release();
     await Promise.all([first, mark, last]);
     expect(h.journal()?.state.frontiers.room).toBe(20);
-    expect(h.snapshot()).toMatchObject({ observedCount: 0, manual: "none" });
+    expect(h.snapshot().manual).toBe("local-only");
   } finally {
     held.release();
   }
 });
 
-it.each(["clearCache", "dispose", "revoke-regrant"] as const)(
-  "a prepared channel read cannot retry past %s",
-  async (change) => {
+it.each(["channel", "thread", "message", "message-force"] as const)(
+  "a captured channel read preserves newer %s manual unread without saving a frontier",
+  async (kind) => {
     const h = setup();
     h.grant("room");
-    h.emit([message(h.alice, "room", "before click", 11)]);
+    const root = message(h.alice, "room", "root", 11);
+    h.emit([root]);
+    const unread = h.session.unread;
+    await unread.ensure();
+    clock(20);
+    const read = unread.prepareChannelRead("room");
+    if (kind === "message-force")
+      await unread.markMessageUnread("room", root.id);
+    else
+      await unread.markUnreadLocal(
+        kind === "channel"
+          ? h.target
+          : kind === "thread"
+            ? { kind, channelId: "room", rootId: root.id }
+            : { kind, channelId: "room", messageId: root.id },
+      );
+    const saved = h.journal();
+    await expect(read()).rejects.toThrow();
+    expect(h.journal()).toEqual(saved);
+    expect(unread.attention("room", root.id).unread).toBe(true);
+  },
+);
+
+it.each(["channel", "thread"] as const)(
+  "a captured %s read checks another window's save at the transaction boundary",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const reply = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, reply]);
+    const second = createReadState({
+      viewer: h.viewer.pubkey,
+      reader: { read: async () => [] },
+      host: undefined,
+      storage: h.storage,
+    });
+    try {
+      await second.ready;
+      await h.session.unread.ensure();
+      clock(20);
+      const read =
+        kind === "channel"
+          ? h.session.unread.prepareChannelRead("room")
+          : h.session.unread.prepareThreadRead("room", root.id);
+      const held = h.holdSaveStarted();
+      const pending = expect(read()).rejects.toThrow();
+      try {
+        await held.started;
+        await second.markLocalUnread(
+          kind === "channel" ? "room" : `msg:${reply.id}`,
+          () => true,
+        );
+        const saved = h.journal();
+        held.release();
+        await pending;
+        expect(h.journal()).toEqual(saved);
+        expect(h.journal()?.state.frontiers).toEqual({});
+      } finally {
+        held.release();
+      }
+    } finally {
+      second.dispose();
+    }
+  },
+);
+
+it("a prepared thread read retries only captured replies and preserves root and other scopes", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const otherRoot = message(h.alice, "room", "other root", 12);
+  const reply = message(h.alice, "room", "reply", 13, [
+    ["e", root.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const otherReply = message(h.alice, "room", "other reply", 14, [
+    ["e", otherRoot.id, "", "reply"],
+    ["p", h.viewer.pubkey],
+  ]);
+  const missingParent = keypair().pubkey;
+  const orphan = message(
+    h.alice,
+    "room",
+    "retained reply without its parent",
+    14,
+    [
+      ["e", root.id, "", "root"],
+      ["e", missingParent, "", "reply"],
+    ],
+  );
+  const foreign = message(h.alice, "room", "another canonical thread", 14, [
+    ["e", otherRoot.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, otherRoot, reply, otherReply, orphan, foreign]);
+  const unread = h.session.unread;
+  const thread = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  const otherThread = { ...thread, rootId: otherRoot.id };
+  const rootTarget = {
+    kind: "message" as const,
+    channelId: "room",
+    messageId: root.id,
+  };
+  await unread.markUnreadLocal(h.target);
+  await unread.markUnreadLocal(rootTarget);
+  await unread.markUnreadLocal(thread);
+  await unread.markUnreadLocal(otherThread);
+  await unread.markMessageUnread("room", root.id);
+  const before = h.journal()?.localUnread;
+  const retry = unread.prepareThreadRead("room", root.id);
+  h.failSave();
+  await expect(retry()).rejects.toThrow("disk full");
+  const later = message(
+    h.alice,
+    "room",
+    "loaded later with an older timestamp",
+    12,
+    [
+      ["e", root.id, "", "reply"],
+      ["p", h.viewer.pubkey],
+    ],
+  );
+  h.emit([later]);
+  await retry();
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${reply.id}`]: 13,
+    [`msg:${orphan.id}`]: 14,
+  });
+  expect(h.journal()?.localUnread).toEqual({
+    room: before?.room,
+    [`msg:${root.id}`]: before?.[`msg:${root.id}`],
+    [`thread:${otherRoot.id}`]: before?.[`thread:${otherRoot.id}`],
+    "message-force:room": before?.["message-force:room"],
+  });
+  expect(unread.attention("room", reply.id).unread).toBe(false);
+  expect(unread.attention("room", root.id).unread).toBe(true);
+  expect(unread.attention("room", otherReply.id).unread).toBe(true);
+  expect(unread.attention("room", later.id).unread).toBe(true);
+});
+
+it.each([
+  "left-root",
+  "second-window",
+  "second-window-with-overlay",
+  "consumed-reply",
+] as const)(
+  "a prepared thread read preserves the shared sidebar hint for %s",
+  async (origin) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const other = message(h.alice, "room", "independent root", 12);
+    const reply = message(h.alice, "room", "reply", 13, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, other, reply]);
+    const unread = h.session.unread;
+    await unread.ensure();
+    const second = createReadState({
+      viewer: h.viewer.pubkey,
+      reader: { read: async () => [] },
+      host: undefined,
+      storage: h.storage,
+    });
+    try {
+      await second.ready;
+      if (origin === "left-root") {
+        await unread.markMessageUnread("room", other.id);
+        unread.leaveChannel("room");
+      } else {
+        if (origin !== "second-window")
+          await unread.markMessageUnread("room", reply.id);
+        if (origin !== "consumed-reply")
+          await second.markLocalUnread("message-force:room", () => true);
+      }
+      const hint = h.journal()?.localUnread["message-force:room"];
+      assert(hint);
+      await unread.prepareThreadRead("room", root.id)();
+      expect(h.journal()?.localUnread["message-force:room"]).toBe(hint);
+      expect(unread.attention("room", reply.id).unread).toBe(false);
+      expect(unread.attention("room", reply.id).forced).toBe(false);
+      expect(h.journal()?.state.frontiers).toEqual({ [`msg:${reply.id}`]: 13 });
+      // Opening, not a narrow reply read, owns reconciliation of the shared hint.
+      await unread.enterChannel("room");
+      expect(h.journal()?.localUnread["message-force:room"]).toBeUndefined();
+    } finally {
+      second.dispose();
+    }
+  },
+);
+
+it.each(
+  (["root", "reply"] as const).flatMap((removed) =>
+    (["before-commit", "after-commit"] as const).map((phase) => ({
+      removed,
+      phase,
+    })),
+  ),
+)(
+  "a prepared thread read handles $removed deletion $phase without a sync error",
+  async ({ removed, phase }) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const reply = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, reply]);
+    const unread = h.session.unread;
+    await unread.ensure();
+    const read = unread.prepareThreadRead("room", root.id);
+    const before = h.journal();
+    const held =
+      phase === "before-commit" ? h.holdSaveStarted() : h.holdCommit();
+    const pending = read();
+    const result =
+      phase === "before-commit"
+        ? expect(pending).rejects.toThrow("Reading observation expired")
+        : expect(pending).resolves.toMatchObject({ durability: "saved" });
+    try {
+      await ("started" in held ? held.started : held.committed);
+      h.emit([
+        signed(h.alice, {
+          kind: 5,
+          content: "",
+          created_at: 20,
+          tags: [["e", removed === "root" ? root.id : reply.id]],
+        }),
+      ]);
+    } finally {
+      held.release();
+    }
+    await result;
+    if (phase === "before-commit") expect(h.journal()).toEqual(before);
+    else
+      expect(h.journal()?.state.frontiers).toEqual({ [`msg:${reply.id}`]: 12 });
+    expect(unread.sync().error).toBeUndefined();
+    expect(unread.sync().status).not.toBe("error");
+  },
+);
+
+it.each(["thread", "message", "message-force"] as const)(
+  "a prepared thread read rejects newer %s intent without changing its captured scope",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    const reply = message(h.alice, "room", "reply", 12, [
+      ["e", root.id, "", "reply"],
+    ]);
+    h.emit([root, reply]);
+    const unread = h.session.unread;
+    await unread.ensure();
+    const retry = unread.prepareThreadRead("room", root.id);
+    if (kind === "message-force")
+      await unread.markMessageUnread("room", reply.id);
+    else
+      await unread.markUnreadLocal(
+        kind === "thread"
+          ? { kind, channelId: "room", rootId: root.id }
+          : { kind, channelId: "room", messageId: reply.id },
+      );
+    const before = h.journal();
+    await expect(retry()).rejects.toThrow();
+    expect(h.journal()).toEqual(before);
+  },
+);
+
+it.each(["channel", "thread"] as const)(
+  "a %s read whose capture fails never recaptures at save time",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "root", 11);
+    h.emit([root]);
+    await h.session.unread.ensure();
+    const capture = vi
+      .spyOn(h.storage, "capture")
+      .mockRejectedValueOnce(new Error("Read-state storage not ready"));
+    const read =
+      kind === "channel"
+        ? h.session.unread.prepareChannelRead("room")
+        : h.session.unread.prepareThreadRead("room", root.id);
+    const before = h.journal();
+    await expect(read()).rejects.toThrow("Read-state storage not ready");
+    await expect(read()).rejects.toThrow("Read-state storage not ready");
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(h.journal()).toEqual(before);
+    const fresh =
+      kind === "channel"
+        ? h.session.unread.prepareChannelRead("room")
+        : h.session.unread.prepareThreadRead("room", root.id);
+    await fresh();
+  },
+);
+
+it.each(
+  (["clearCache", "dispose", "revoke-regrant"] as const).flatMap((change) =>
+    (["channel", "thread"] as const).map((kind) => ({ change, kind })),
+  ),
+)(
+  "a prepared $kind read cannot retry past $change",
+  async ({ change, kind }) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.alice, "room", "before click", 11);
+    h.emit([root]);
     await h.session.unread.markUnreadLocal(h.target);
     const before = h.journal();
-    const retry = h.session.unread.prepareChannelRead("room");
+    const retry =
+      kind === "channel"
+        ? h.session.unread.prepareChannelRead("room")
+        : h.session.unread.prepareThreadRead("room", root.id);
     if (change === "revoke-regrant") {
       h.emit([roster(h.relay, "room", [], 20)]);
       h.grant("room", 21);

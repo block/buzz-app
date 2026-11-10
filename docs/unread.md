@@ -472,6 +472,49 @@ root-tag matches is not seen, and a single deletion event that names several
 of the viewer's messages is visible only if all of them are retained. Replies
 still require retained evidence of their own.
 
+## Captured explicit reads
+
+`prepareChannelRead(channelId, rootId?)` captures the channel's existing
+prefix/time cut and owned local-mark keys once. Invoke its returned function to
+save or retry that same intent; a retry does not capture later arrivals or a
+new clock cut. The optional root still bounds a DM reader's channel cut; it is
+not a narrow thread operation.
+
+`prepareThreadRead(channelId, rootId)` instead captures the retained verified
+incoming replies below a retained canonical root. Each captured reply keeps its own
+message ID and timestamp. It reads no root, other thread, or subsequently loaded
+reply, even one with an older timestamp. It clears the selected thread's local
+mark and captured reply marks; independent channel, root-message and other-thread
+marks remain. The shared message-unread sidebar hint also remains until channel
+open reconciles it: that hint has no subtree ownership, even when this window
+has a forced-message overlay. Per-message receipts stay device-local, as with
+`markMessageRead`.
+Neither operation acquires or disposes a consumer's reading lease or discovers
+all historical messages/marks.
+
+Both operations reserve a saved-journal snapshot at preparation, before their
+channel queue can wait. Mark all shares one saved revision cut across its selected
+channels; the predicates retain only that revision, not copies of the full journal.
+The replacing storage transaction checks the *current*
+local manual-unread revisions before changing any frontier or local mark. A newer
+saved mark among the captured keys rejects the whole save, including marks saved
+by another local window. Prepare a new operation to explicitly read that newer
+intent. Earlier same-window manual actions already queued at preparation remain
+eligible to clear, but only if their saves succeed. A manual save queued behind
+the read remains unread when it later commits. An earlier queued save that
+overwrites a newer window's same-key mark does not authorize clearing that
+intervening intent. This is not a claim of atomicity
+between a pending call and its eventual return. Remote unread overrides keep
+the existing frontier semantics; this fence does not order identical remote
+marker tuples or change automatic observation.
+
+Capture requires initialized read-state storage (`await unread.ensure()` before
+preparation). A failed capture rejects every invocation of that operation rather
+than moving the snapshot to save time; prepare again after readiness/recovery.
+Storage failures retain the cut for retry. Access revoke/regrant, cache clear or
+session disposal invalidate captured intent. The thread operation additionally
+requires its captured message evidence to remain valid.
+
 ## Explicit clearing matrix
 
 | Intent | Durable frontier | Local manual-unread clears |

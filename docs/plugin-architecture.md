@@ -1809,6 +1809,20 @@ Names that resolve publicly but are reached only through a VPN (such as a
 company's internal hosts) are not visible to this check, so the plugin must
 refuse them by name on every hop. The site sees the user's IP address.
 
+Declare `host: { publicPages: true }` to let `readPage(url, { timeoutMs? })`
+read a link preview's fields from any public HTTPS page. It pins addresses and
+follows no redirect, exactly as `publicImages` does, and sends
+`Accept: text/html,application/xhtml+xml`. A redirect returns
+`{ status, location }`; a 2xx HTML page returns `{ status, preview }`; anything
+else returns `{ status }`. Native code reads at most the page's head (512 KiB,
+stopping at `</head>` or `<body>`) and returns only `title`, `description`,
+`siteName`, `image`, `imageAlt` and `icon`, preferring Open Graph over Twitter
+card tags over `<title>` and `<meta name="description">`, with entities decoded,
+whitespace collapsed and lengths capped. `image` and `icon` are absolute HTTPS
+URLs; read the image with `requestBytes` under `publicImages`. The page's HTML
+never reaches the plugin. The timeout defaults to 10000 ms and can be
+1–30000 ms. The same VPN caveat applies: refuse internal names on every hop.
+
 Only images come back, but the plugin chooses each URL, so the grant lets it
 send data it holds to any public site in the path, query or hostname. It lifts
 the bound `networkOrigins` otherwise puts on where a plugin's data can go; the

@@ -92,6 +92,10 @@ pub struct HostGrants {
     /// address, one hop at a time, with no cookies; never pages.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub public_images: bool,
+    /// `readPage` may read the preview fields of a web page on any public
+    /// HTTPS address, one hop at a time, with no cookies; never its HTML.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub public_pages: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -2270,6 +2274,21 @@ mod tests {
         );
         images["host"]["publicImages"] = serde_json::json!("true");
         assert!(serde_json::from_value::<Manifest>(images).is_err());
+        assert!(!old.host.as_ref().unwrap().public_pages);
+        let mut pages = manifest.clone();
+        pages["host"]["publicPages"] = serde_json::json!(false);
+        let parsed: Manifest = serde_json::from_value(pages.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), manifest);
+        pages["host"]["publicPages"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(pages.clone()).unwrap();
+        assert!(parsed.host.as_ref().unwrap().public_pages);
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), pages);
+        assert_ne!(
+            artifact_from_text(&manifest.to_string(), "export const x = 1".into()).unwrap(),
+            artifact_from_text(&pages.to_string(), "export const x = 1".into()).unwrap()
+        );
+        pages["host"]["publicPages"] = serde_json::json!("true");
+        assert!(serde_json::from_value::<Manifest>(pages).is_err());
         for limit in [1, 4096, MAX_HOST_COMMAND_OUTPUT_BYTES] {
             let mut valid = manifest.clone();
             valid["host"]["commands"][0]["maxOutputBytes"] = serde_json::json!(limit);

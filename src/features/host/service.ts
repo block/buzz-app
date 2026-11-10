@@ -62,6 +62,23 @@ export type HostByteResponse = Readonly<{
   headers: Readonly<Record<string, string>>;
   body: Uint8Array;
 }>;
+/** What a public page names in its head for a link preview. URLs are
+ * absolute HTTPS; read the image with `requestBytes` and `host.publicImages`. */
+export type HostPagePreview = Readonly<{
+  title?: string;
+  description?: string;
+  siteName?: string;
+  image?: string;
+  imageAlt?: string;
+  icon?: string;
+}>;
+/** A redirect's `location` to check before asking again, a page's `preview`,
+ * or for anything else its status alone. */
+export type HostPage = Readonly<{
+  status: number;
+  location?: string;
+  preview?: HostPagePreview;
+}>;
 export type HostSavedBytes = Readonly<{
   path: string;
   size: number;
@@ -221,6 +238,12 @@ export interface Host {
   ) => Promise<HostResponse>;
   /** No automatic replay protection or text/array fallback. */
   requestBytes?: (input: HostByteRequest) => Promise<HostByteResponse>;
+  /** One GET for a public HTTPS page, for a plugin whose manifest declares
+   * `host.publicPages`. No cookies and no redirects followed. Desktop only. */
+  readPage?: (
+    url: string,
+    options?: Readonly<{ timeoutMs?: number }>,
+  ) => Promise<HostPage>;
   /** Requires host.managedFiles, not host.files. Keep bytes immutable through
    * hashing/save. An ambiguous failure must not be automatically retried. */
   saveBytes?: (
@@ -700,6 +723,36 @@ export class HostService extends Service implements Host {
       }).catch(rethrow);
       lifetime.active();
       return decodeByteFrame(frame, input.maxBytes);
+    } finally {
+      lifetime.release();
+    }
+  }
+
+  async readPage(
+    url: string,
+    options?: Readonly<{ timeoutMs?: number }>,
+  ): Promise<HostPage> {
+    const ctx = this.ctx;
+    const owner = ctx.pluginOwner;
+    if (!owner || !isTauri())
+      throw new Error("Page reads require an installed desktop plugin");
+    const timeoutMs = options?.timeoutMs;
+    if (
+      typeof url !== "string" ||
+      (timeoutMs !== undefined &&
+        (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000))
+    )
+      throw new Error("Invalid page request");
+    const lifetime = byteLifetime(ctx);
+    try {
+      const page = await invoke<HostPage>("plugin_host_read_page", {
+        id: owner.id,
+        revision: owner.revision,
+        url,
+        timeoutMs,
+      }).catch(rethrow);
+      lifetime.active();
+      return page;
     } finally {
       lifetime.release();
     }

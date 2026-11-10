@@ -130,8 +130,8 @@ use host_process::{
     plugin_host_process_tool_credential, plugin_host_process_write, HostProcesses,
 };
 use host_request::{
-    plugin_host_call_context, plugin_host_request, plugin_host_request_bytes, plugin_host_upload,
-    plugin_host_upload_bytes_once, HostCalls,
+    plugin_host_call_context, plugin_host_read_page, plugin_host_request,
+    plugin_host_request_bytes, plugin_host_upload, plugin_host_upload_bytes_once, HostCalls,
 };
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
@@ -789,6 +789,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_call_context,
         plugin_host_request,
         plugin_host_request_bytes,
+        plugin_host_read_page,
         plugin_host_upload_bytes_once,
         plugin_host_save_bytes,
         plugin_host_delete_managed_file,

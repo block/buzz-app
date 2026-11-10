@@ -1003,6 +1003,34 @@ it("returns a non-text body view without a clone, accepts empty bodies and never
   }
 });
 
+it("reads a public page's preview through its own command and validates the timeout first", async () => {
+  const { fiber, host } = await oncePlugin();
+  const page = { status: 200, preview: { title: "Example" } };
+  vi.mocked(invoke).mockResolvedValueOnce(page);
+  try {
+    await expect(
+      host.readPage?.("https://example.test/", { timeoutMs: 5000 }),
+    ).resolves.toEqual(page);
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      [
+        "plugin_host_read_page",
+        {
+          id: "example.plugin",
+          revision: "abc",
+          url: "https://example.test/",
+          timeoutMs: 5000,
+        },
+      ],
+    ]);
+    for (const timeoutMs of [0, 1.5, 30001])
+      await expect(
+        host.readPage?.("https://example.test/", { timeoutMs }),
+      ).rejects.toThrow("Invalid page request");
+    expect(invoke).toHaveBeenCalledTimes(1);
+  } finally {
+    await fiber.dispose();
+  }
+});
 it("refuses fallback arrays and corrupted frames before returning any bytes", async () => {
   const { fiber, host } = await oncePlugin();
   const wrongLength = byteFrame();

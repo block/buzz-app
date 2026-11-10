@@ -41,6 +41,7 @@ export const manifest: PluginManifest = {
     networkOrigins: ["https://api.example.com"],
     managedFiles: true,
     publicImages: true,
+    publicPages: true,
   },
 };
 const ExampleSidebar = ({ target, children }: PageSidebarProps) => {

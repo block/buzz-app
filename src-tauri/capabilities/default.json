@@ -120,6 +120,7 @@
     "allow-plugin-host-call-context",
     "allow-plugin-host-request",
     "allow-plugin-host-request-bytes",
+    "allow-plugin-host-read-page",
     "allow-plugin-host-upload-bytes-once",
     "allow-plugin-host-save-bytes",
     "allow-plugin-host-delete-managed-file",

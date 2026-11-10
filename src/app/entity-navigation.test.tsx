@@ -735,7 +735,7 @@ it("keeps Messages on screen when only the linked message fails to open", async 
   expect(screen.getByRole("region", { name: "Channels" })).toBeVisible();
   expect(screen.queryByText(pageFailure)).toBeNull();
 });
-it("keeps a failed message read in place until its own Retry succeeds", async () => {
+it("fills in a failed message read by itself, with no Retry of its own", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -762,7 +762,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
     message(author, "alpha", "Back again", 1_700_000_100),
     bounds(author, "alpha", "head", { has_more: false, next_cursor: null }),
   ];
-  // Two failed history reads within one live connection, then recovery.
+  // Two failed history reads within one live connection, then success.
   let failures = 2;
   vi.stubGlobal(
     "fetch",
@@ -811,20 +811,18 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   );
   const generation = current.relay.snapshot().generation;
   expect(screen.queryByText(pageFailure)).toBeNull();
-  // The page keeps its visit's authority, so the timeline's own Retry works.
+  // The page keeps its visit's authority. A connectivity failure offers no
+  // Retry of its own: session recovery reads again and the window fills in.
   expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
-  const timeline = () =>
-    document.querySelector('[data-channel-timeline="alpha"]');
-  while (!timeline()) {
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Retry messages" }),
-    );
-    await waitFor(() =>
+  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
+  await waitFor(
+    () =>
       expect(
-        timeline() ?? screen.queryByRole("button", { name: "Retry messages" }),
-      ).not.toBeNull(),
-    );
-  }
+        current.relay.snapshot().session.channels.window("alpha").status,
+      ).toBe("ready"),
+    { timeout: 20_000 },
+  );
+  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
   // Rows need real layout to paint; the recovered window is the observable here.
   expect(
     current.relay
@@ -837,7 +835,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   expect(failures).toBe(0);
   expect(current.relay.snapshot().generation).toBe(generation);
   expect(screen.queryByText(pageFailure)).toBeNull();
-});
+}, 30_000);
 it("opens and closes a thread without rendering the sidebar", async () => {
   vi.stubGlobal(
     "ResizeObserver",

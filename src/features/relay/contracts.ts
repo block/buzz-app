@@ -251,6 +251,9 @@ export type ChannelWindow = Readonly<{
   hasMore: boolean;
   loadingOlder: boolean;
   error: string | undefined;
+  /** `error` is a connectivity failure (see isTransientFailure) of an older
+   * page or of a first read with no rows, which a retry can clear. */
+  transient?: true | undefined;
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;

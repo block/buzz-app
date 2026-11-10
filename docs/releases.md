@@ -232,6 +232,12 @@ including unbound signature versions.
 
 A repository admin sets these up once, before the first stable tag:
 
+- **Order.** Activate the tag ruleset before this workflow is on `main`, and
+  check then that no stable or beta tags (`vX.Y.Z`, `vX.Y.Z-beta.N`) exist yet.
+  The workflow checks only that the ruleset is active when it runs, so a tag
+  created before then would publish, or re-run, without the ruleset ever having
+  governed its creation.
+
 - **Tag ruleset.** Create a second tag ruleset, separate from the
   `desktop-v*` one below (whose tag workflow requires it to have no exclusions):
   - target tags, enforcement **Active**;
@@ -246,6 +252,7 @@ A repository admin sets these up once, before the first stable tag:
   not add GitHub Actions as a bypass actor instead: any workflow on any branch
   could then create a stable tag. With the exclusion, preview tags stay as
   unprotected as they are today; the stable workflow ignores them.
+
 - **Environment.** Create `desktop-stable-feed` with required reviewers and a
   custom deployment branch policy that allows only the `main` branch. It holds
   no secrets. Promotion checks both and refuses to run without them.

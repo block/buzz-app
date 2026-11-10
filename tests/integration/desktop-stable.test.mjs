@@ -325,3 +325,67 @@ exit 1
     assert.match(result.calls[1], new RegExp(`^release download v${version}$`));
   }
 });
+
+test("macOS builds run only from main for previews and from the version's own tag for releases", () => {
+  const step = workflow("desktop-build.yml").jobs.build.steps.find(
+    ({ name }) =>
+      name === "Require the release source and signing configuration",
+  );
+  const guard = (ref, version, secrets = {}) =>
+    spawnSync("bash", ["-e", "-c", step.run], {
+      cwd: root,
+      env: {
+        PATH: process.env.PATH,
+        SOURCE_REF: ref,
+        RELEASE_VERSION: version,
+        SIGNING_ROLE: "role",
+        SIGNING_BUCKET: "bucket",
+        UPDATER_KEY: "key",
+        UPDATER_PASSWORD: "password",
+        ...secrets,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+  assert.equal(step.env.SOURCE_REF, `\${{ github.ref }}`);
+  for (const [ref, version] of [
+    ["refs/heads/main", ""],
+    ["refs/tags/v1.0.0", "1.0.0"],
+    ["refs/tags/v1.2.3-beta.4", "1.2.3-beta.4"],
+  ]) {
+    const result = guard(ref, version);
+    assert.equal(result.status, 0, `${ref} ${version}: ${result.stdout}`);
+  }
+  for (const [ref, version, expected] of [
+    // A release version never builds from main, nor main's preview from a tag.
+    ["refs/heads/main", "1.0.0", "refs/tags/v1.0.0"],
+    ["refs/tags/v1.0.0", "", "refs/heads/main"],
+    // The tag must be the version's own.
+    ["refs/tags/v1.0.1", "1.0.0", "refs/tags/v1.0.0"],
+    ["refs/tags/v1.0.0-beta.1", "1.0.0", "refs/tags/v1.0.0"],
+    ["refs/tags/v1.0.0", "1.0.0-beta.1", "refs/tags/v1.0.0-beta.1"],
+    // Other branches and previews' own tags never build.
+    ["refs/heads/feature", "", "refs/heads/main"],
+    ["refs/tags/v1.0.0-preview.1.1", "", "refs/heads/main"],
+  ]) {
+    const result = guard(ref, version);
+    assert.notEqual(result.status, 0, `${ref} ${version}`);
+    assert.match(
+      result.stdout,
+      new RegExp(
+        `This release must run from ${expected.replace(/\./g, "\\.")}\\n`,
+      ),
+    );
+  }
+  // A valid source still needs every signing secret.
+  for (const missing of [
+    "SIGNING_ROLE",
+    "SIGNING_BUCKET",
+    "UPDATER_KEY",
+    "UPDATER_PASSWORD",
+  ]) {
+    const result = guard("refs/tags/v1.0.0", "1.0.0", { [missing]: "" });
+    assert.notEqual(result.status, 0, missing);
+    assert.match(result.stdout, /::error::Set /, missing);
+  }
+});

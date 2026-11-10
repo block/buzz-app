@@ -119,6 +119,12 @@ import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import { newer, type EventData, type RelayEvent } from "../relay/events";
 import { relayPartition } from "../relay/partition";
+import { canonicalChannel } from "../relay/thread-window";
+import {
+  validateWorkspace,
+  workspaceCanvas,
+  type Workspace,
+} from "../solo/workspace";
 import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
@@ -485,6 +491,10 @@ export type AgentHandle = Readonly<{
   /** Owner-reviewed name and instructions changes to one of those teams. */
   updateTeam?(
     input: TeamUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  /** An owner-reviewed new Solo workspace. */
+  createWorkspace?(
+    input: WorkspaceCreateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, as the agent may read and change them. */
   plugins?: AgentPlugins | undefined;
@@ -1160,6 +1170,26 @@ export type TeamUpdateRequest = Readonly<{
   name?: string;
   instructions?: string;
 }>;
+/** A Solo workspace an agent proposes; `chats` are Solo chat ids to file in it. */
+export type WorkspaceCreateInput = Readonly<{
+  name: string;
+  folders?: readonly string[];
+  worktree?: Readonly<{ location: string; baseBranch: string }>;
+  instructions?: string;
+  chats?: readonly string[];
+}>;
+/** An unsaved workspace proposal. Only the owner's New workspace review
+ * creates it, filing `chats` once it exists. */
+export type WorkspaceCreateRequest = Readonly<{
+  id: string;
+  requester: string;
+  requesterName: string;
+  owner: string;
+  community: string;
+  name: string;
+  workspace: Workspace;
+  chats: readonly string[];
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1392,6 +1422,9 @@ export type Agents = {
     id: string,
     input: Pick<Team, "name" | "instructions">,
   ): Promise<void>;
+  /** Local, unsaved workspace proposals; closing a review discards one. */
+  workspaceCreateRequests(): readonly WorkspaceCreateRequest[];
+  dismissWorkspaceCreate(id: string): void;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
@@ -1906,6 +1939,7 @@ export class AgentsService extends Service implements Agents {
   private requests: readonly AgentCreationRequest[] = [];
   private updates: readonly AgentUpdateRequest[] = [];
   private teamUpdates: readonly TeamUpdateRequest[] = [];
+  private workspaceCreates: readonly WorkspaceCreateRequest[] = [];
   private readonly approving = new Set<string>();
   /** Every saved membership, deleted ones included: native's list is the
    * agent list, and `records` only adds settings to it. */
@@ -2424,6 +2458,40 @@ export class AgentsService extends Service implements Agents {
         this.notify();
         return { requestId: next.id, saved: false };
       },
+      createWorkspace: async (agent, input) => {
+        const name = input.name.trim();
+        if (!name || name.length > 80)
+          throw new Error("Name the workspace in at most 80 characters");
+        const workspace = validateWorkspace({
+          folders: [...(input.folders ?? [])],
+          worktree: input.worktree,
+          canvas: input.instructions ?? "",
+        });
+        // Sizes the Canvas it saves, refusing what the review could not.
+        workspaceCanvas(workspace);
+        const chats = [...new Set(input.chats ?? [])];
+        // The Solo record holds few placements; each one is its own write.
+        if (
+          chats.length > 50 ||
+          !chats.every((chat) => canonicalChannel.test(chat))
+        )
+          throw new Error("File at most 50 chats, by channel id");
+        if (this.pendingRequests() >= 16)
+          throw new Error("Review the pending agent requests first");
+        const next: WorkspaceCreateRequest = {
+          id: crypto.randomUUID(),
+          requester: agent.pubkey,
+          requesterName: agent.name,
+          owner: agent.owner,
+          community: this.callerOrigin(agent),
+          name,
+          workspace,
+          chats,
+        };
+        this.workspaceCreates = [...this.workspaceCreates, next];
+        this.notify();
+        return { requestId: next.id, saved: false };
+      },
       plugins: (agent) =>
         this.ctx.pluginRequests?.forAgent({
           pubkey: agent.pubkey,
@@ -2573,14 +2641,19 @@ export class AgentsService extends Service implements Agents {
           const teamUpdates = this.teamUpdates.filter(
             (request) => request.owner === viewer,
           );
+          const workspaceCreates = this.workspaceCreates.filter(
+            (request) => request.owner === viewer,
+          );
           if (
             kept.length !== this.requests.length ||
             updates.length !== this.updates.length ||
-            teamUpdates.length !== this.teamUpdates.length
+            teamUpdates.length !== this.teamUpdates.length ||
+            workspaceCreates.length !== this.workspaceCreates.length
           ) {
             this.requests = kept;
             this.updates = updates;
             this.teamUpdates = teamUpdates;
+            this.workspaceCreates = workspaceCreates;
             this.notify();
           }
           this.watch();
@@ -3532,8 +3605,20 @@ export class AgentsService extends Service implements Agents {
       this.approving.delete(id);
     }
   }
+  workspaceCreateRequests = () => this.workspaceCreates;
+  dismissWorkspaceCreate = (id: string) => {
+    this.workspaceCreates = this.workspaceCreates.filter(
+      (request) => request.id !== id,
+    );
+    this.notify();
+  };
   private pendingRequests() {
-    return this.requests.length + this.updates.length + this.teamUpdates.length;
+    return (
+      this.requests.length +
+      this.updates.length +
+      this.teamUpdates.length +
+      this.workspaceCreates.length
+    );
   }
   /** The community `agent` asks from. */
   private callerOrigin(agent: Agent) {

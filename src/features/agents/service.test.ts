@@ -13153,6 +13153,53 @@ it("reads the owner's agents and teams, and saves only a reviewed team draft", a
   expect(service.teamUpdateRequests()).toEqual([]);
 });
 
+it("queues a validated workspace proposal for its owner to review", async () => {
+  const { service, plugin } = await setup();
+  await service.create({ type: "example/echo", name: "Parent" });
+  await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
+  const handle = plugin.agents.handle(bot);
+  if (!handle?.createWorkspace) throw new Error("Missing workspace handle");
+  const worktree = { location: "/work", baseBranch: "main" };
+  await expect(handle.createWorkspace({ name: " " })).rejects.toThrow(
+    "Name the workspace",
+  );
+  await expect(
+    handle.createWorkspace({ name: "Repo", folders: ["/a`b"] }),
+  ).rejects.toThrow("backticks");
+  await expect(
+    handle.createWorkspace({ name: "Repo", worktree }),
+  ).rejects.toThrow("workspace folder");
+  await expect(
+    handle.createWorkspace({ name: "Repo", chats: ["chat-1"] }),
+  ).rejects.toThrow("at most 50 chats");
+  expect(service.workspaceCreateRequests()).toEqual([]);
+  const chat = crypto.randomUUID();
+  const { requestId } = await handle.createWorkspace({
+    name: " Repo ",
+    folders: ["/repo", "/repo"],
+    worktree,
+    instructions: "Ship.",
+    chats: [chat, chat],
+  });
+  expect(service.workspaceCreateRequests()).toEqual([
+    expect.objectContaining({
+      id: requestId,
+      requester: bot,
+      requesterName: "Parent",
+      name: "Repo",
+      workspace: { folders: ["/repo"], worktree, canvas: "Ship." },
+      chats: [chat],
+    }),
+  ]);
+  service.dismissWorkspaceCreate(requestId);
+  expect(service.workspaceCreateRequests()).toEqual([]);
+  // Proposals share the owner's pending request budget.
+  for (let i = 0; i < 16; i++) await handle.createWorkspace({ name: `W${i}` });
+  await expect(handle.createWorkspace({ name: "More" })).rejects.toThrow(
+    "pending agent requests",
+  );
+});
+
 it("drafts a proposed picture for the owner to save, and refuses one that is not an HTTPS image", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

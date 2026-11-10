@@ -8,6 +8,7 @@ import type {
   AgentReadout,
   TeamReadout,
   TeamUpdateInput,
+  WorkspaceCreateInput,
 } from "../features/agents/service";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
@@ -117,6 +118,9 @@ export interface BuzzClient {
   readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
   updateTeam?(
     input: TeamUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  createWorkspace?(
+    input: WorkspaceCreateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, where the host has them: read directly, changed
    * by owner-confirmed request. */

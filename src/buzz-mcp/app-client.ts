@@ -234,6 +234,12 @@ export function appClient(
         throw new Error("Team changes are unavailable on this host");
       return agent.updateTeam(input);
     },
+    createWorkspace: async (input) => {
+      check();
+      if (!agent.createWorkspace)
+        throw new Error("Workspace creation is unavailable on this host");
+      return agent.createWorkspace(input);
+    },
     ...(plugins && {
       plugins: {
         list: () => {

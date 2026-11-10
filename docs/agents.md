@@ -73,6 +73,11 @@ or instructions, never its members. The owner reviews it in a dialog; saving
 writes the team as Save in its editor does and is refused once the team's
 name, instructions or revision changed since the draft. Team requests share the
 same local bound and lifetime.
+`workspace_create` submits an unsaved Solo workspace: name, folders, worktree
+location and base branch, instructions, and Solo chat ids to file in it. The
+owner reviews it in New workspace, prefilled, once that community is open;
+Create writes it as New workspace does, then files the chats. Workspace
+requests share the same local bound and lifetime.
 Keys stay in native custody. Hosted-provider provisioning and standalone tool
 servers do not support these operations.
 

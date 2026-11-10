@@ -173,6 +173,19 @@ export const TOOLS: readonly Tool[] = [
     ["team"],
   ),
   tool(
+    "workspace_create",
+    "Submit an unsaved draft of a new Solo workspace for your owner to review. folders are its project folders; worktree, with base_branch, makes each new chat work in a new worktree under that location; instructions start each new chat's Canvas; chats are ids of Solo chats to file in it. Nothing is created until they save it.",
+    {
+      name: str,
+      folders: strs,
+      worktree: str,
+      base_branch: str,
+      instructions: str,
+      chats: strs,
+    },
+    ["name"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -579,6 +592,26 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         team,
         ...(name && { name }),
         ...(typeof instructions === "string" && { instructions }),
+      }),
+    );
+  },
+  async workspace_create({ client }, args) {
+    if (!client.createWorkspace)
+      throw new Error("Workspace creation is unavailable on this host");
+    const name = text(args.name);
+    if (!name) throw new Error("name is required");
+    const location = text(args.worktree);
+    const baseBranch = text(args.base_branch);
+    if (!location !== !baseBranch)
+      throw new Error("worktree and base_branch go together.");
+    const instructions = text(args.instructions);
+    return JSON.stringify(
+      await client.createWorkspace({
+        name,
+        folders: list(args.folders),
+        ...(location && baseBranch && { worktree: { location, baseBranch } }),
+        ...(instructions && { instructions }),
+        chats: list(args.chats),
       }),
     );
   },

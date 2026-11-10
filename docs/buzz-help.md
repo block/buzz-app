@@ -981,6 +981,11 @@ available rather than silently discarding it.
   (`team_update`). A proposal opens a review: nothing changes until you save
   it, members never change this way, and Save is refused if the team changed
   since the proposal.
+- Your agents can also propose a new Solo workspace (`workspace_create`): its
+  name, folders, worktree settings, instructions and Solo chats to file in it.
+  It opens **New workspace** filled in with the proposal; nothing is created
+  until you choose **Create**, which also files the listed chats. It waits
+  until that community is open.
 - **Activity**, where the agent type provides it, shows sessions and their
   transcripts in the agent's profile. An open transcript updates by itself
   while the agent works; **Refresh transcript** stays at the top as you scroll.

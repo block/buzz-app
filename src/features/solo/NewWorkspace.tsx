@@ -28,16 +28,24 @@ export function NewWorkspace({
   close,
   onCreated,
   finalFocus,
+  initial,
+  description = "The chats you start in this workspace begin with its folders and instructions.",
 }: {
   finalFocus?: ComponentProps<typeof Dialog>["finalFocus"];
   session: RelaySession;
+  /** A proposal to review, starting the form instead of empty fields; its
+   * id survives remounts so a retry never creates a second workspace. */
+  initial?: Readonly<{ id: string; name: string; workspace: Workspace }>;
+  description?: string;
   create(project: { id: string; name: string }): Promise<unknown>;
   close(): void;
   onCreated(id: string): void;
 }) {
-  const [id] = useState(() => crypto.randomUUID());
-  const [name, setName] = useState("");
-  const [workspace, setWorkspace] = useState<Workspace>(emptyWorkspace);
+  const [id] = useState(() => initial?.id ?? crypto.randomUUID());
+  const [name, setName] = useState(initial?.name ?? "");
+  const [workspace, setWorkspace] = useState<Workspace>(
+    initial?.workspace ?? emptyWorkspace,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // Once publication starts, retries must use the same project and defaults.
@@ -134,7 +142,7 @@ export function NewWorkspace({
       // A partly created workspace keeps its retry state; never drop it on a stray click.
       dismissOnOutsideClick={false}
       title="New workspace"
-      description="The chats you start in this workspace begin with its folders and instructions."
+      description={description}
       initialFocus={input}
       finalFocus={finalFocus}
       actions={

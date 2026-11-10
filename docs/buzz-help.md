@@ -902,7 +902,8 @@ available rather than silently discarding it.
   If configuration is unavailable, edits stay in the open form, but saving
   (including Workspace changes) waits until configuration returns.
 - **Make my bestie** in an agent card's menu chooses the agent initially tagged
-  in new Solo chats for that community. It does not replace recipients in an
+  in new Solo chats for that community. A star and Bestie label in the top-left of its desktop
+  card mark the saved Bestie. It does not replace recipients in an
   existing chat or an edited draft. People can choose a different agent for a
   particular conversation. When the optional **Bestie** plugin is on, that saved
   choice also opens the agent's DM from the left Apps dock. The Messages

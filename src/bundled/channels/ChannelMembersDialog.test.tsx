@@ -3958,6 +3958,58 @@ it("keeps archived members last in a paged roster when archives load late and me
   expect(rows().slice(32).every(archived)).toBe(true);
 });
 
+it("moves focus to the page heading when late archives move its row off the page", async () => {
+  let release!: () => void;
+  const pendingArchives = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // Named in key order, so names and keys sort alike. The first 30 are
+  // archived, so page 2 (rows 51 to 61) holds only live members until the
+  // archives arrive and move all of them to page 1.
+  const people = Array.from({ length: 60 }, () => keypair())
+    .sort((a, b) =>
+      (formatPublicKey(a.pubkey) ?? "").localeCompare(
+        formatPublicKey(b.pubkey) ?? "",
+      ),
+    )
+    .map((key, i) =>
+      profile(key, { name: `Member ${String(i).padStart(2, "0")}` }),
+    );
+  const archived = new Set(people.slice(0, 30).map((event) => event.pubkey));
+  const t = await setup("stream", false, false, undefined, undefined, {
+    memberProfiles: people,
+    archivedMembers: [...archived],
+    pendingArchives,
+  });
+  const list = screen.getByRole("region", { name: "Member list" });
+  const pages = within(list).getByRole("navigation", {
+    name: "People member pages",
+  });
+  await t.user.click(within(pages).getByRole("button", { name: "Next" }));
+  const actions = () =>
+    within(list)
+      .getAllByRole("button", { name: /^Actions for / })
+      .map((button) => button.dataset.member ?? "");
+  expect(actions().some((key) => archived.has(key))).toBe(false);
+  const focused = within(list).getAllByRole("button", {
+    name: /^Actions for /,
+  })[0];
+  if (!focused) throw new Error("Missing member action");
+  focused.focus();
+  await act(async () => release());
+  await vi.waitFor(() =>
+    expect(actions().every((key) => archived.has(key))).toBe(true),
+  );
+  expect(focused).not.toBeInTheDocument();
+  const heading = within(list).getByRole("heading", { name: /^People ·/ });
+  expect(heading).toHaveFocus();
+  // The next Tab stays on the shown page.
+  await t.user.tab();
+  expect(document.activeElement?.closest("li")).toBe(
+    within(list).getAllByRole("listitem")[0],
+  );
+});
+
 it("keeps the visible member page and focus stable while names arrive", async () => {
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {

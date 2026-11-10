@@ -733,6 +733,23 @@ export function ChannelMembersDialog({
         ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
         ?.focus();
   });
+  // A late archive list moves archived members last, which can move a focused
+  // row off the shown page. Its control leaves without a blur, so focus falls
+  // to the dialog or the body. Hand off to its group's heading, as a page
+  // change does, or Search, unless focus has moved on to another control.
+  const listFocus = useRef<{ control: HTMLElement; group: string }>(undefined);
+  useLayoutEffect(() => {
+    const previous = listFocus.current;
+    const list = scrollport.current;
+    if (!previous || previous.control.isConnected) return;
+    listFocus.current = undefined;
+    const active = document.activeElement;
+    if (!list || (active && !active.contains(list))) return;
+    (
+      document.getElementById(`${presenceId}-${previous.group}-page`) ??
+      input.current
+    )?.focus({ preventScroll: true });
+  });
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
   const [selectedRole, setSelectedRole] = useState("All");
@@ -2192,7 +2209,20 @@ export function ChannelMembersDialog({
                       >
                         {group.name} · {text ? group.keys.length : group.count}
                       </h3>
-                      <ul aria-busy={refreshing}>
+                      <ul
+                        aria-busy={refreshing}
+                        onFocus={(event) => {
+                          // Portaled menus bubble here too; keep only rows.
+                          if (
+                            event.currentTarget.contains(event.target) &&
+                            event.target instanceof HTMLElement
+                          )
+                            listFocus.current = {
+                              control: event.target,
+                              group: group.name,
+                            };
+                        }}
+                      >
                         {group.keys
                           .slice(
                             page * MEMBER_PAGE_SIZE,

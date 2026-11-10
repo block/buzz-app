@@ -1411,6 +1411,7 @@ mod tests {
             include_str!("../capabilities/default.json"),
             include_str!("../capabilities/desktop-window.json"),
             include_str!("../capabilities/huddle.json"),
+            include_str!("../capabilities/popout.json"),
         ]
         .concat();
         let commands = handlers["generate_handler![".len()..]

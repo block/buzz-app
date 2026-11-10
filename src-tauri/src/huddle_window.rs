@@ -282,11 +282,12 @@ impl Appearance {
         }
     }
     /// The window's native background before its page paints: `--bg-app` of the
-    /// applied color mode (`neutral-quiet-hover`), so a dark window never flashes
-    /// white while its document loads. Keep aligned with the design-system tokens.
+    /// applied color mode (dark: `--neutral-2`; light: `--neutral-quiet-hover`),
+    /// so a dark window never flashes light while its document loads. Pinned to
+    /// the design-system tokens by a test in `popout_window.rs`.
     pub(crate) fn background(&self) -> tauri::window::Color {
         if self.color_mode == "dark" {
-            tauri::window::Color(0x2e, 0x2e, 0x2e, 0xff)
+            tauri::window::Color(0x10, 0x10, 0x10, 0xff)
         } else {
             tauri::window::Color(0xf1, 0xf1, 0xf2, 0xff)
         }

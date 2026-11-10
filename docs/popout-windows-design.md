@@ -734,8 +734,12 @@ re-created in the companion (named as a gap in help).
   background. Fix: `popout.html`/`huddle.html` load `appearance-init.js` +
   `startup.css` like `index.html` (saved mode paints first; main's projection
   then takes over), and the native builder sets `background_color` from the
-  opening view's appearance (`--bg-app`: `#2e2e2e` dark / `#f1f1f2` light,
-  test-pinned to the design tokens).
+  opening view's appearance (`--bg-app`: dark `--neutral-2` `#101010`, light
+  `--neutral-quiet-hover` `#f1f1f2`; a test resolves the alias chain per mode
+  from `tokens.css`). Reviewer caught the first cut using the dark hover
+  step. Also added `popout.json` to the command-capability test's inputs,
+  which had been failing on `popout_window_watch` since the capability file
+  was introduced.
 
 ### Non-goals (S2)
 

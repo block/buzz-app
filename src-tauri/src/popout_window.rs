@@ -806,18 +806,37 @@ mod tests {
         let appearance = |mode: &str| -> crate::huddle_window::Appearance {
             serde_json::from_value(serde_json::json!({ "colorMode": mode })).unwrap()
         };
-        let dark = hex(appearance("dark").background());
-        let light = hex(appearance("light").background());
-        assert_ne!(dark, light);
-        // `--bg-app` resolves to `--neutral-quiet-hover` in each palette.
-        assert!(
-            tokens.contains(&format!("--neutral-quiet-hover: {dark};")),
-            "{dark}"
-        );
-        assert!(
-            tokens.contains(&format!("--neutral-quiet-hover: {light};")),
-            "{light}"
-        );
+        // Resolve `--bg-app` as the stylesheet does for each mode. Mode-paired
+        // tokens are declared twice in `tokens.css`: the light (`:root`) value
+        // first, the dark (`[data-color-mode="dark"]`) value second; the role
+        // block may alias a palette step that differs per mode.
+        let declared = |mode: &str, name: &str| -> String {
+            let needle = format!("{name}: ");
+            let mut found = tokens.match_indices(&needle).map(|(at, _)| {
+                let value = &tokens[at + needle.len()..];
+                value[..value.find(';').unwrap()].trim().to_string()
+            });
+            let light = found
+                .next()
+                .unwrap_or_else(|| panic!("{name} not declared"));
+            if mode == "dark" {
+                found
+                    .next()
+                    .unwrap_or_else(|| panic!("{name} has no dark value"))
+            } else {
+                light
+            }
+        };
+        let resolve = |mode: &str| -> String {
+            let mut value = declared(mode, "--bg-app");
+            while let Some(alias) = value.strip_prefix("var(").and_then(|v| v.strip_suffix(')')) {
+                value = declared(mode, alias);
+            }
+            value
+        };
+        assert_eq!(hex(appearance("dark").background()), resolve("dark"));
+        assert_eq!(hex(appearance("light").background()), resolve("light"));
+        assert_ne!(resolve("dark"), resolve("light"));
     }
     #[test]
     fn link_labels_are_bounded_per_row() {

@@ -90,9 +90,10 @@ pub(crate) async fn clipboard_write_text<R: tauri::Runtime>(
         })
         .await;
     };
-    let copied = Zeroizing::new(text.clone());
+    let text = Zeroizing::new(text);
+    let copied = text.clone();
     let generation = write(&app, move |clipboard, secrets| {
-        copy_secret(clipboard, secrets, text).map_err(|_| "Could not copy text".to_owned())
+        copy_secret(clipboard, secrets, &text).map_err(|_| "Could not copy text".to_owned())
     })
     .await?;
     tauri::async_runtime::spawn(async move {
@@ -110,13 +111,13 @@ pub(crate) async fn clipboard_write_text<R: tauri::Runtime>(
 trait Board {
     /// Sets text marked as sensitive: macOS and Linux clipboard managers skip
     /// it, and Windows keeps it out of clipboard history and cloud sync.
-    fn set_secret(&mut self, text: String) -> Result<(), arboard::Error>;
+    fn set_secret(&mut self, text: &str) -> Result<(), arboard::Error>;
     fn text(&mut self) -> Result<String, arboard::Error>;
     fn clear(&mut self) -> Result<(), arboard::Error>;
 }
 
 impl Board for arboard::Clipboard {
-    fn set_secret(&mut self, text: String) -> Result<(), arboard::Error> {
+    fn set_secret(&mut self, text: &str) -> Result<(), arboard::Error> {
         let set = self.set();
         #[cfg(target_os = "macos")]
         let set = arboard::SetExtApple::exclude_from_history(set);
@@ -139,7 +140,7 @@ impl Board for arboard::Clipboard {
 fn copy_secret(
     board: &mut impl Board,
     secrets: &Secrets,
-    text: String,
+    text: &str,
 ) -> Result<u64, arboard::Error> {
     board.set_secret(text)?;
     Ok(secrets.0.fetch_add(1, Ordering::SeqCst) + 1)
@@ -171,11 +172,11 @@ mod tests {
         refuse: bool,
     }
     impl Board for Fake {
-        fn set_secret(&mut self, text: String) -> Result<(), arboard::Error> {
+        fn set_secret(&mut self, text: &str) -> Result<(), arboard::Error> {
             if self.refuse {
                 return Err(arboard::Error::ClipboardOccupied);
             }
-            self.text = Some(text);
+            self.text = Some(text.to_owned());
             Ok(())
         }
         fn text(&mut self) -> Result<String, arboard::Error> {
@@ -190,7 +191,7 @@ mod tests {
     #[test]
     fn a_secret_copy_is_cleared_once_its_wait_ends() {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
-        let first = copy_secret(&mut board, &secrets, "nsec1key".into()).unwrap();
+        let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         clear_secret(&mut board, &secrets, first, "nsec1key");
         assert_eq!(board.text, None);
     }
@@ -198,8 +199,8 @@ mod tests {
     #[test]
     fn copying_the_same_key_again_restarts_the_wait() {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
-        let first = copy_secret(&mut board, &secrets, "nsec1key".into()).unwrap();
-        let second = copy_secret(&mut board, &secrets, "nsec1key".into()).unwrap();
+        let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
+        let second = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         clear_secret(&mut board, &secrets, first, "nsec1key");
         assert_eq!(board.text.as_deref(), Some("nsec1key"));
         clear_secret(&mut board, &secrets, second, "nsec1key");
@@ -209,9 +210,9 @@ mod tests {
     #[test]
     fn a_failed_copy_leaves_the_earlier_copys_clear_in_place() {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
-        let first = copy_secret(&mut board, &secrets, "nsec1key".into()).unwrap();
+        let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         board.refuse = true;
-        assert!(copy_secret(&mut board, &secrets, "nsec1key".into()).is_err());
+        assert!(copy_secret(&mut board, &secrets, "nsec1key").is_err());
         clear_secret(&mut board, &secrets, first, "nsec1key");
         assert_eq!(board.text, None);
     }
@@ -219,7 +220,7 @@ mod tests {
     #[test]
     fn anything_else_on_the_clipboard_is_left_alone() {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
-        let first = copy_secret(&mut board, &secrets, "nsec1key".into()).unwrap();
+        let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         board.text = Some("something else".into());
         clear_secret(&mut board, &secrets, first, "nsec1key");
         assert_eq!(board.text.as_deref(), Some("something else"));

@@ -45,7 +45,7 @@ it("says an unreadable saved sign-in is not a permissions problem, and that sign
   );
   const alert = screen.getByRole("alert");
   expect(alert).toHaveTextContent(
-    "Buzz can’t read its saved sign-in for this server, so signing in again can’t replace it. Contact support.",
+    "Buzz can’t read its saved sign-in for this server, and signing in again may not replace it. If this keeps happening, contact support.",
   );
   expect(alert).not.toHaveTextContent("credential permissions");
   expect(alert).not.toHaveTextContent("storage-corrupt");

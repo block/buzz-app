@@ -18,7 +18,7 @@ export function recoveryMessage(code: string) {
   // sign-in can compare and replace it. Sign out of Buzz deletes a damaged
   // record without reading it, but not duplicates, so it isn't offered here.
   if (code === "storage-corrupt")
-    return "Buzz can’t read its saved sign-in for this server, so signing in again can’t replace it. Contact support.";
+    return "Buzz can’t read its saved sign-in for this server, and signing in again may not replace it. If this keeps happening, contact support.";
   if (code.startsWith("storage-"))
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
   if (code === "sign-in-canceled")

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { installerUrls } from "../../scripts/download-manifest.mjs";
 
 const script = fileURLToPath(
   new URL("../../scripts/prune-preview-releases.mjs", import.meta.url),
@@ -30,10 +29,6 @@ const feedArgs = [
   "--output",
   "-",
 ];
-const downloadsArgs = [
-  "api",
-  `repos/${repository}/contents/downloads.json?ref=download-feed`,
-];
 const tag = (run) => `v0.0.0-preview.${run}.1`;
 const deleteArgs = (name) => [
   "release",
@@ -44,16 +39,6 @@ const deleteArgs = (name) => [
   "--yes",
   "--cleanup-tag",
 ];
-
-function downloadsFor(version) {
-  return {
-    schemaVersion: 1,
-    channel: "preview",
-    version,
-    release: `v${version}`,
-    downloads: installerUrls(version),
-  };
-}
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), "prune-previews-"));
@@ -92,10 +77,7 @@ const assert = require("node:assert/strict");
 const data = JSON.parse(fs.readFileSync(process.env.FIXTURE_DATA, "utf8"));
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FIXTURE_CALLS, JSON.stringify(args) + "\\n");
-if (JSON.stringify(args) === JSON.stringify(${JSON.stringify(downloadsArgs)})) {
-  if (data.failDownloads) process.exit(1);
-  process.stdout.write(JSON.stringify({ content: Buffer.from(JSON.stringify(data.downloads)).toString("base64") }));
-} else if (args[0] === "api") {
+if (args[0] === "api") {
   assert.deepEqual(args, ${JSON.stringify(listArgs)});
   if (data.failList) process.exit(1);
   process.stdout.write(JSON.stringify(data.pages));
@@ -118,7 +100,6 @@ if (JSON.stringify(args) === JSON.stringify(${JSON.stringify(downloadsArgs)})) {
       data,
       JSON.stringify({
         manifest,
-        downloads: downloadsFor(manifest.version),
         // Two pages keep the pagination contract cheap to exercise.
         pages: pages ?? [releases.slice(0, 7), releases.slice(7)],
         ...overrides,
@@ -153,7 +134,7 @@ test("dry run reads all pages and preserves the newest ten plus the feed target"
   const { run } = fixture(t);
   const result = run();
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.calls, [feedArgs, downloadsArgs, listArgs]);
+  assert.deepEqual(result.calls, [feedArgs, listArgs]);
   assert.match(result.stdout, /Would delete v0\.0\.0-preview\.3\.1/);
   assert.match(result.stdout, /Would delete v0\.0\.0-preview\.2\.1/);
   assert.match(result.stdout, /Dry run: 2/);
@@ -181,7 +162,6 @@ test("apply deletes only eligible preview releases and their tags, leaving other
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.calls, [
     feedArgs,
-    downloadsArgs,
     listArgs,
     deleteArgs(tag(3)),
     deleteArgs(tag(2)),
@@ -203,12 +183,7 @@ test("seven-day retention is inclusive and independent of the newest-ten floor",
   });
   const result = run({ args: ["--apply"] });
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.calls, [
-    feedArgs,
-    downloadsArgs,
-    listArgs,
-    deleteArgs(tag(3)),
-  ]);
+  assert.deepEqual(result.calls, [feedArgs, listArgs, deleteArgs(tag(3))]);
 });
 
 test("unavailable or invalid feed/listing aborts before any deletion", (t) => {
@@ -216,8 +191,6 @@ test("unavailable or invalid feed/listing aborts before any deletion", (t) => {
   for (const overrides of [
     { failFeed: true },
     { failList: true },
-    { failDownloads: true },
-    { downloads: {} },
     { pages: [releases.slice(1)] },
     {
       manifest: {
@@ -266,25 +239,5 @@ test("deletion failure stops cleanup and fails the run", (t) => {
   const { run } = fixture(t);
   const failed = run({ args: ["--apply"], failDelete: tag(3) });
   assert.notEqual(failed.status, 0);
-  assert.deepEqual(failed.calls, [
-    feedArgs,
-    downloadsArgs,
-    listArgs,
-    deleteArgs(tag(3)),
-  ]);
-});
-
-test("retains the advertised website version when it differs from the updater", (t) => {
-  const { run } = fixture(t);
-  const result = run({
-    args: ["--apply"],
-    downloads: downloadsFor("0.0.0-preview.2.1"),
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.calls, [
-    feedArgs,
-    downloadsArgs,
-    listArgs,
-    deleteArgs(tag(3)),
-  ]);
+  assert.deepEqual(failed.calls, [feedArgs, listArgs, deleteArgs(tag(3))]);
 });

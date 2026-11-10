@@ -11,8 +11,8 @@ import {
   installerUrls,
 } from "../../scripts/download-manifest.mjs";
 
-const version = "0.7.0-preview.261.1";
-const previousVersion = "0.7.0-preview.260.1";
+const version = "1.0.1";
+const previousVersion = "1.0.0";
 const repository = "block/buzz-app";
 const script = fileURLToPath(
   new URL("../../scripts/publish-desktop-downloads.mjs", import.meta.url),
@@ -20,7 +20,7 @@ const script = fileURLToPath(
 const releaseFor = (value) => ({
   tag_name: `v${value}`,
   draft: false,
-  prerelease: true,
+  prerelease: false,
   assets: Object.values(installerUrls(value)).map((url) => ({
     name: url.split("/").at(-1),
     browser_download_url: url,
@@ -48,7 +48,7 @@ const save = () => fs.writeFileSync(process.env.TEST_STATE, JSON.stringify(state
 const fail = (message) => { save(); console.error(message); process.exit(1); };
 let output;
 if (args[0] === "release") {
-  assert.deepEqual(args, ["release", "download", "preview-feed", "--repo", "${repository}", "--pattern", "latest.json", "--output", "-"]);
+  assert.deepEqual(args, ["release", "download", "stable-feed", "--repo", "${repository}", "--pattern", "latest.json", "--output", "-"]);
   output = { version: state.feedVersion };
 } else if (path.startsWith("releases/tags/")) {
   output = state.release;
@@ -121,25 +121,32 @@ process.stdout.write(JSON.stringify(output));
   };
 }
 
-test("manifest publication follows promotion and gates cleanup in the same serialized job", () => {
-  const workflow = parse(
+const workflow = (name) =>
+  parse(
     readFileSync(
-      new URL("../../.github/workflows/release.yml", import.meta.url),
+      new URL(`../../.github/workflows/${name}`, import.meta.url),
       "utf8",
     ),
   );
-  const steps = workflow.jobs.promote_preview.steps;
-  const [promotion, publication, cleanup] = [
-    "promote-updater-feed.sh preview-feed",
+
+test("manifest publication follows stable feed promotion in the same approved job", () => {
+  const { jobs, concurrency } = workflow("desktop-stable-feed.yml");
+  const steps = jobs.promote.steps;
+  const [promotion, publication] = [
+    "promote-updater-feed.sh stable-feed",
     "publish-desktop-downloads.mjs",
-    "prune-preview-releases.mjs",
   ].map((command) => steps.findIndex((step) => step.run?.includes(command)));
-  assert.ok(promotion >= 0 && publication >= 0 && cleanup >= 0);
-  assert.ok(promotion < publication && publication < cleanup);
+  assert.ok(promotion >= 0 && publication > promotion);
   assert.equal(steps[publication].env.VERSION, steps[promotion].env.VERSION);
   assert.equal(steps[publication].if, undefined);
-  assert.equal(workflow.jobs.promote_preview.permissions.contents, "write");
-  assert.equal(workflow.concurrency["cancel-in-progress"], false);
+  assert.equal(jobs.promote.environment, "desktop-stable-feed");
+  assert.equal(jobs.promote.permissions.contents, "write");
+  assert.equal(concurrency["cancel-in-progress"], false);
+  // Previews never move the website catalog.
+  const previews = workflow("release.yml").jobs.promote_preview.steps;
+  assert.ok(
+    previews.every((step) => !step.run?.includes("publish-desktop-downloads")),
+  );
 });
 
 test("dry run produces all five installers without writes; apply creates an orphan data branch", (t) => {
@@ -168,7 +175,7 @@ test("updates use the existing file SHA; same-version recovery is read-only", (t
   assert.ok(repeated.state.calls.every((call) => call.body === null));
 });
 
-test("rejects incomplete, empty, duplicate, unsafe, draft or unpromoted release metadata before writes", (t) => {
+test("rejects incomplete, empty, duplicate, unsafe, draft, prerelease or unpromoted release metadata before writes", (t) => {
   const run = fixture(t);
   const release = releaseFor(version);
   const rejectedWithoutWrites = (overrides) => {
@@ -179,7 +186,7 @@ test("rejects incomplete, empty, duplicate, unsafe, draft or unpromoted release 
   rejectedWithoutWrites({ feedVersion: previousVersion });
   for (const overrides of [
     { draft: true },
-    { prerelease: false },
+    { prerelease: true },
     { assets: release.assets.slice(1) },
     { assets: [...release.assets, release.assets[0]] },
     { assets: release.assets.map((asset) => ({ ...asset, size: 0 })) },
@@ -197,8 +204,8 @@ test("rejects incomplete, empty, duplicate, unsafe, draft or unpromoted release 
 test("rollback, invalid current metadata, read failure and write conflicts preserve the current manifest", (t) => {
   const run = fixture(t);
   for (const overrides of [
-    { manifest: manifestFor("0.7.0-preview.262.1") },
-    { manifest: { ...manifestFor(version), channel: "stable" } },
+    { manifest: manifestFor("1.0.2") },
+    { manifest: { ...manifestFor(version), channel: "preview" } },
     { failRead: true },
     { failWrite: true },
   ]) {
@@ -215,7 +222,8 @@ test("wrong repository and invalid arguments fail before GitHub calls", (t) => {
   const run = fixture(t);
   for (const options of [
     { repo: "example-org/other" },
-    { args: ["1.0.0", "--apply"] },
+    { args: ["1.0.1-preview.2.1", "--apply"] },
+    { args: ["1.0.1-beta.1", "--apply"] },
     { args: [version, "--force"] },
   ]) {
     const result = run(options);

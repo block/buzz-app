@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   buildDownloadManifest,
-  comparePreviewVersions,
+  compareStableVersions,
   downloadBranch,
   downloadRepository,
-  previewVersionPattern,
+  stableVersionPattern,
   validateDownloadManifest,
 } from "./download-manifest.mjs";
 
@@ -20,7 +20,7 @@ assert.equal(
   downloadRepository,
   "Unexpected publication repository",
 );
-assert.match(version, previewVersionPattern);
+assert.match(version, stableVersionPattern);
 const gh = (...args) => execFileSync("gh", args, { encoding: "utf8" });
 const api = (path, body, method = "POST") =>
   JSON.parse(
@@ -43,12 +43,12 @@ const api = (path, body, method = "POST") =>
         ),
   );
 
-// Follow the successfully promoted feed, never an arbitrary published preview.
+// Follow the promoted stable feed, never an arbitrary published release.
 const feed = JSON.parse(
   gh(
     "release",
     "download",
-    "preview-feed",
+    "stable-feed",
     "--repo",
     downloadRepository,
     "--pattern",
@@ -60,7 +60,7 @@ const feed = JSON.parse(
 assert.equal(
   feed.version,
   version,
-  "Requested version is not the promoted preview",
+  "Requested version is not the promoted stable release",
 );
 const manifest = buildDownloadManifest(
   version,
@@ -85,7 +85,7 @@ if (existing.status === 0) {
     JSON.parse(Buffer.from(previous.content, "base64").toString("utf8")),
   );
   assert.ok(
-    comparePreviewVersions(version, current.version) >= 0,
+    compareStableVersions(version, current.version) >= 0,
     "Refusing download manifest rollback",
   );
   if (version === current.version) {

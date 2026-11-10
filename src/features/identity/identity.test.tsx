@@ -6005,7 +6005,7 @@ it("a backup status lookup that fails still offers the restore, whose page offer
   expect(backupStatus).toHaveBeenCalledTimes(1);
   expect(
     screen.getByText(
-      "Your account’s key isn’t on this device. Restore it from a backup to continue.",
+      "Your account’s key isn’t on this device. Try restoring it from a backup, or enter its private key.",
     ),
   ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();

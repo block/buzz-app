@@ -249,8 +249,8 @@ no other sign-in brings up the OS prompt for old Buzz's storage.
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
 line under the body. When the linked key isn't the one on this device, the page
-says so: *Your account’s key isn’t on this device*, then to restore it from a
-backup or, with no restore offered, to enter its private key. A linked key does not mean a
+says so: *Your account’s key isn’t on this device*, then to try a restore from a
+backup or enter its private key or, with no restore offered, to enter its private key. A linked key does not mean a
 backed-up one, so only when the lookup lists the linked key, or failed, does the page also
 offer **Restore from backup** (primary), with **Enter your private key** as a
 smaller choice; otherwise **Enter your private key** is primary. It opens the
@@ -1098,8 +1098,8 @@ screen's `builderlab-hosted.ts` list matched on the saved relay host alone (no
 relay is read for its `self`), saves automatic backup with no prompt, unless
 a choice was saved since it was read: the save checks under the choice lock.
 Otherwise **Back up your key?** asks; it says that a self-managed key needs a
-kept copy of its private key to use the account on another device or after a
-reinstall. **Back up key** and **I will manage my own
+kept copy of its private key to use the account on another device or after
+losing access to this one. **Back up key** and **I will manage my own
 key** save the answer, which a hosted
 membership arriving while it is saved does not override; closing it saves
 nothing, and it asks again on the next launch or Builderlab sign-in. A build

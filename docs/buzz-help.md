@@ -107,7 +107,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   opens **Settings → Plugins → Builderlab**, where **Connect Buzz identity**
   links this key, or **Switch to this device’s identity** replaces the account’s
   key (this permanently unlinks the old one). While the account holds a different
-  key, communities that use Builderlab sign-in refuse this device's key too. After signing in to the
+  key, this device's key may also be refused when you use that account to sign
+  in to a community. After signing in to the
   public Builderlab, **Connect to a community** also offers **Create a
   community** when that account is linked to this device’s key and may create one.
   Choose an available address, then **Create community** joins it right away,

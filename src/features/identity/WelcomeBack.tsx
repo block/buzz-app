@@ -44,7 +44,7 @@ export function WelcomeBack({
               ? "Continue with your Buzz profile."
               : "We found the key to your account."
             : onRestore
-              ? "Your account’s key isn’t on this device. Restore it from a backup to continue."
+              ? "Your account’s key isn’t on this device. Try restoring it from a backup, or enter its private key."
               : "Your account’s key isn’t on this device. Enter its private key to continue."}
         </p>
         {email && (

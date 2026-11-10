@@ -765,3 +765,58 @@ Projection generalization 100–150; frames/navigation in `window.ts` 150–250;
 companion UI (timeline layout, dividers, `<` back, header) 100–200; entry
 points 60–120; native title/DTO 20–40. **Total ≈ 450–750.** Same
 stop-and-show rule as §10.
+
+## 12. S3 scope checkpoint — completeness for a self-contained PR (2026-11-09)
+
+jaw, after his step-3 tryout passed: the PR ships as a complete feature, so
+three documented gaps close before it leaves draft.
+
+### Required behavior
+
+1. **Member count (header identity).** The pop-out header shows what main's
+   `ChannelHeaderIdentity` shows: the member avatar stack (up to 3, `+N`
+   overflow; agents for Solo, people otherwise; the Members/Agents glyph when
+   none) before the name. Choosing it opens the conversation in the main
+   window with its access dialog (`panel: "members"` for channels and DMs;
+   the conversation itself for Solo, which has no Members surface — main's
+   Solo identity opens Share access, which stays in main). Main projects
+   `members: { count, preview[≤3]: { id, name, picture, agent }, solo }`,
+   bounded in the native DTO; names resolve through `session.names` as main's
+   stack does; pictures through `avatarMedia`. New companion action
+   `openMembers` (native focuses main, forwards like `openInMain`).
+2. **Agent response previews and Stop.** While an agent works in the
+   frame's conversation, the pop-out shows the same incoming-message
+   placeholder main shows (`AgentResponsePreview`: name, picture, other
+   working agents as participants, the current step text and waiting/working
+   state) in the timeline position main gives it, with a **Stop** per
+   stoppable request. Main projects `working[≤8]: { agent, name, picture,
+   state, step?, stops[≤8]: { key, label } }` from the same sources
+   `TypingIndicator` reads (`agentActivity` + `conversationWorkStops`).
+   Stop is a new composer-bridge operation `stop { key }`: the owner
+   re-derives the frame's current stop controls at admission and runs the
+   matching `interrupt()`; an unknown or finished key is refused with a
+   message; the companion shows "Stopping…" until the next projection drops
+   the control or the request fails. The "Activity" link opens the agent's
+   activity in main via the existing View-activity handoff. The status line
+   from S2 stays for humans typing; agents move into the preview.
+3. **Plugin chat icons in the header (Solo).** The sidebar lets a plugin
+   replace a Solo chat's icon (`registerChatIcon`; GitHub shows the linked
+   pull request's state). Plugin components never run in the companion, so
+   the contribution needs a serializable form: **proposed FOUNDATION edit**
+   (`conversation/service.tsx`): `ChatIcon.describe?(session, channelId):
+   { icon: <design-system icon name>, tone?: string, label: string } |
+   undefined`, read by main's projection; the companion maps the name to the
+   same icon. GitHub's `SoloPullIcon` gains `describe`. Without jaw's
+   go-ahead on the contract edit, this slice is deferred and documented.
+
+### Non-goals (S3)
+
+Members dialog *inside* the pop-out (it stays main's); starting/stopping
+agents other than Stop on live work; plugin chat icons for non-Solo rows;
+restoring windows after restart; community name in header/title.
+
+### Diff budget (production, excluding tests/docs)
+
+Members 80–140; previews + Stop 200–320 (projection 80, owner op 40, native
+40, companion 120); chat icons 60–100. **Total ≈ 350–560.** Same
+stop-and-show rule as §10.

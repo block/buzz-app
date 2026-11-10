@@ -1176,8 +1176,23 @@ it("refuses an agent the owner doesn't own or can't tag here, or that doesn't ex
   await expect(bestie.set("b".repeat(64))).rejects.toThrow(
     "Agents couldn't be read.",
   );
+  await expect(bestie.read()).rejects.toThrow("Agents couldn't be read.");
   expect(account.write).not.toHaveBeenCalled();
   expect(readView("bestie-refused", "solo:default-agent", null)).toBe(
+    "a".repeat(64),
+  );
+});
+
+it("saves nothing when the agent's turn ends while its Bestie change reads the agents", async () => {
+  const { session, account } = ownerSession("a".repeat(64));
+  setDefaultAgent("bestie-ended", "a".repeat(64));
+  await expect(
+    defaultAgentControl(session, "bestie-ended").set("b".repeat(64), () => {
+      throw new Error("The turn has ended");
+    }),
+  ).rejects.toThrow("The turn has ended");
+  expect(account.write).not.toHaveBeenCalled();
+  expect(readView("bestie-ended", "solo:default-agent", null)).toBe(
     "a".repeat(64),
   );
 });

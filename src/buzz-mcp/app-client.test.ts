@@ -362,7 +362,7 @@ it("refuses plugin calls after the calling turn ends", async () => {
   ).toBeUndefined();
 });
 
-it("offers a run handle's Bestie, checking the turn and connection before each call", async () => {
+it("offers a run handle's Bestie, checking the turn and connection before each call and before a set saves", async () => {
   const bestie = {
     read: vi.fn(async () => ({ device: null, account: null, here: false })),
     set: vi.fn(),
@@ -400,6 +400,12 @@ it("offers a run handle's Bestie, checking the turn and connection before each c
   expect(() => client.bestie?.clear()).toThrow("ended");
   expect(bestie.set).not.toHaveBeenCalled();
   expect(bestie.clear).not.toHaveBeenCalled();
+  // A set checks the turn again once it has read the agents.
+  ended = false;
+  await client.bestie?.set("b".repeat(64));
+  const recheck = bestie.set.mock.calls[0]?.[1] as () => void;
+  ended = true;
+  expect(recheck).toThrow("ended");
 });
 
 it("offers the handle's settings, checking the turn before each call", () => {

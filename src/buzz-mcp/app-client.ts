@@ -310,7 +310,7 @@ export function appClient(
     ...(agent.bestie && {
       bestie: {
         read: () => bestie().read(),
-        set: (pubkey: string) => bestie().set(pubkey),
+        set: (pubkey: string) => bestie().set(pubkey, check),
         clear: () => bestie().clear(),
       },
     }),

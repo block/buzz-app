@@ -176,14 +176,14 @@ export async function clearDefaultAgent(session: RelaySession, scope: string) {
  * agent the viewer can tag here, by the choices Make my bestie offers. */
 export function defaultAgentControl(session: RelaySession, scope: string) {
   const tagged = async (pubkey: string | undefined) => {
-    if (!pubkey) return { here: false };
+    if (!pubkey) return false;
     session.agentChoices.ensure(false, true);
     await session.agentChoices.refresh();
     const choices = session.agentChoices.snapshot();
-    return {
-      here: choices.selectable.some((agent) => agent.pubkey === pubkey),
-      error: choices.error,
-    };
+    const here = choices.selectable.some((agent) => agent.pubkey === pubkey);
+    // An inventory that couldn't be read can't say an agent isn't here.
+    if (!here && choices.error) throw new Error(choices.error);
+    return here;
   };
   const state = (account: string | null, here: boolean) => ({
     device: chosenAgent(scope) ?? null,
@@ -193,14 +193,15 @@ export function defaultAgentControl(session: RelaySession, scope: string) {
   return Object.freeze({
     read: async () => {
       const account = (await session.mainAgent?.read()) ?? null;
-      return state(account, (await tagged(chosenAgent(scope))).here);
+      return state(account, await tagged(chosenAgent(scope)));
     },
-    async set(pubkey: string) {
-      const { here, error } = await tagged(pubkey);
+    /** `check` runs after the inventory read, before anything is saved. */
+    async set(pubkey: string, check?: () => void) {
+      const here = await tagged(pubkey);
+      check?.();
       if (!here)
         throw new Error(
-          error ??
-            "Only an agent your owner owns and can tag in this community can be their Bestie.",
+          "Only an agent your owner owns and can tag in this community can be their Bestie.",
         );
       const previous = chosenAgent(scope);
       try {

@@ -250,7 +250,9 @@ identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
 line under the body. When the linked key isn't the one on this device, the page
 says so: *Your account’s key isn’t on this device*, then to try a restore from a
-backup or enter its private key or, with no restore offered, to enter its private key. A linked key does not mean a
+backup or enter its private key or, with no restore offered, to enter its private key.
+With a restore offered, an **Enter your private key** row under the key row
+opens the import page without waiting on the restore. A linked key does not mean a
 backed-up one, so only when the lookup lists the linked key, or failed, does the page also
 offer **Restore from backup** (primary), with **Enter your private key** as a
 smaller choice; otherwise **Enter your private key** is primary. It opens the

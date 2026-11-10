@@ -83,6 +83,22 @@ export function WelcomeBack({
             <CaretRightIcon size={20} aria-hidden="true" />
           </span>
         </Button>
+        {onRestore && !onDevice && (
+          // A backup may not hold the key: entering it needn't wait on a restore.
+          <Button
+            shape="control"
+            size="row"
+            data-return-focus="import"
+            onClick={onImport}
+          >
+            <span className="flex w-full items-center gap-3 text-left">
+              <span className="min-w-0 flex-1 text-label">
+                Enter your private key
+              </span>
+              <CaretRightIcon size={20} aria-hidden="true" />
+            </span>
+          </Button>
+        )}
         <Button shape="control" size="row" onClick={onSwitchAccount}>
           <span className="flex w-full items-center gap-3 text-left">
             <span className="min-w-0 flex-1 text-label">

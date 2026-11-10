@@ -588,16 +588,48 @@ export function createPopoutThread(
       }),
     };
   }
+  /** The exact request an agent's work on a row answers to, as main's row
+   * scopes its Stop: a local request's own message, a turn's matching
+   * trigger, else the row itself; the thread it is in roots the scope. */
+  function requestScope(
+    row: ChannelMessage,
+    ids: readonly string[],
+    entry: {
+      agent: string;
+      lifecycle: boolean;
+      turns: readonly { triggeringEventIds?: readonly string[] | undefined }[];
+    },
+    activity: ReturnType<RelaySession["agentActivity"]["snapshot"]>,
+  ) {
+    const local = (activity.local ?? []).find(
+      (work) =>
+        work.agent === entry.agent &&
+        work.channelId === channelId &&
+        ids.includes(work.messageId),
+    );
+    const messageId =
+      (entry.lifecycle ? local?.messageId : undefined) ??
+      ids.find((id) =>
+        entry.turns.some((turn) => turn.triggeringEventIds?.includes(id)),
+      ) ??
+      row.id;
+    const threadRootId =
+      (local?.thread ? local.threadRootId : undefined) ??
+      (messageId === row.id ? (row.threadRootId ?? row.id) : row.id);
+    return { channelId, messageId, threadRootId };
+  }
   /** The live work a request row shows under itself, as main's row bubble
    * does (`requestWork` on that message): each agent working or waiting on
    * it, its step and status, and the Stop main offers for it. Only rows a
    * live turn or local request names are considered. */
   function liveFor(
     row: ChannelMessage,
+    ids: readonly string[],
     activity = session.agentActivity.snapshot(),
     profiles = session.profiles.snapshot(),
   ): CompanionWorkingAgent[] | undefined {
-    const work = requestWork(activity, channelId, row.id).filter(
+    if (!ids.length) return undefined;
+    const work = requestWork(activity, channelId, ids).filter(
       (entry) =>
         !isSettledWork(entry) &&
         (entry.working ||
@@ -650,11 +682,7 @@ export function createPopoutThread(
       const waiting = entry.state === "waiting";
       const control = workStop(
         entry,
-        {
-          channelId,
-          messageId: row.id,
-          threadRootId: row.threadRootId ?? row.id,
-        },
+        requestScope(row, ids, entry, activity),
         session.agentActivity,
         agents,
       );
@@ -689,20 +717,47 @@ export function createPopoutThread(
       };
     });
   }
-  /** Rows a live turn or local request names as its trigger: the only ones
-   * whose work a bubble can show. */
-  function liveRequestIds(activity = session.agentActivity.snapshot()) {
-    const ids = new Set<string>();
+  /** Live requests in this channel — each trigger a working/waiting local
+   * request or live turn names — with the thread root the request is in,
+   * when known. */
+  function liveRequests(activity = session.agentActivity.snapshot()) {
+    const requests = new Map<string, string | undefined>();
     for (const work of activity.local ?? [])
       if (
         work.channelId === channelId &&
         (work.state === "working" || work.state === "waiting")
       )
-        ids.add(work.messageId);
+        requests.set(
+          work.messageId,
+          work.thread ? work.threadRootId : undefined,
+        );
     if (activity.status === "listening")
       for (const turn of activity.turns)
-        if (turn.channelId === channelId && turn.state === "working")
-          for (const id of turn.triggeringEventIds ?? []) ids.add(id);
+        if (turn.channelId === channelId && turn.state === "working") {
+          for (const id of turn.triggeringEventIds ?? [])
+            if (!requests.has(id))
+              requests.set(
+                id,
+                turn.requests?.find((r) => r.messageId === id)?.threadRootId ??
+                  turn.threadRootId,
+              );
+          for (const r of turn.requests ?? [])
+            if (!requests.has(r.messageId))
+              requests.set(r.messageId, r.threadRootId);
+        }
+    return requests;
+  }
+  /** The requests a shown row shows the work of: its own, and — for a
+   * conversation frame's rows — requests inside the thread it roots, since
+   * main's channel view shows a thread's live work on its root row. */
+  function requestsFor(
+    row: ChannelMessage,
+    requests: ReadonlyMap<string, string | undefined>,
+  ) {
+    const ids: string[] = [];
+    for (const [id, root] of requests)
+      if (id === row.id || (!rootId && root === row.id && root !== id))
+        ids.push(id);
     return ids;
   }
   /** Run main's Stop for a control this frame offers now, or none: a key
@@ -721,23 +776,22 @@ export function createPopoutThread(
       for (const { control } of stopsFor(agent, activity))
         if (control.key === key) return answer(control);
     // A request row's own control, as main's row bubble offers it.
-    const ids = liveRequestIds(activity);
+    const requests = liveRequests(activity);
     const snap = thread?.snapshot();
-    for (const row of [snap?.root, ...(snap?.rows ?? [])])
-      if (row && ids.has(row.id))
-        for (const entry of requestWork(activity, channelId, row.id)) {
-          const control = workStop(
-            entry,
-            {
-              channelId,
-              messageId: row.id,
-              threadRootId: row.threadRootId ?? row.id,
-            },
-            session.agentActivity,
-            agents,
-          );
-          if (control?.key === key) return answer(control);
-        }
+    for (const row of [snap?.root, ...(snap?.rows ?? [])]) {
+      if (!row) continue;
+      const ids = requestsFor(row, requests);
+      if (!ids.length) continue;
+      for (const entry of requestWork(activity, channelId, ids)) {
+        const control = workStop(
+          entry,
+          requestScope(row, ids, entry, activity),
+          session.agentActivity,
+          agents,
+        );
+        if (control?.key === key) return answer(control);
+      }
+    }
     return undefined;
   }
   /** Actions main would offer for a row, by exact contribution instance,
@@ -1125,7 +1179,7 @@ export function createPopoutThread(
       // Rows whose request has live work show it under themselves, as
       // main's rows do; the footer then leaves those agents to the rows.
       const activityNow = session.agentActivity.snapshot();
-      const liveIds = liveRequestIds(activityNow);
+      const liveNow = liveRequests(activityNow);
       const presented = new Set<string>();
       const joined =
         !!c && !c.cached && (!c.readOnly || c.viewerRole === "guest");
@@ -1133,8 +1187,8 @@ export function createPopoutThread(
       const archived = !!c?.archived;
       const project = (row: ChannelMessage) => {
         const labels = linkLabels(row);
-        const live = liveIds.has(row.id)
-          ? liveFor(row, activityNow, profiles)
+        const live = liveNow.size
+          ? liveFor(row, requestsFor(row, liveNow), activityNow, profiles)
           : undefined;
         for (const agent of live ?? []) presented.add(agent.id);
         const projected = {

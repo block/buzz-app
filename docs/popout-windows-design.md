@@ -863,6 +863,16 @@ three documented gaps close before it leaves draft.
   footer excludes agents a row presents, as main's `presented` does;
   `stopWork(key)` admits row controls too. Native `DiscussionRow.live`.
 
+- jaw's tryout (channel pop-out, request made in a thread): no bubble/Stop
+  — the request reply is not a channel row. Main's channel view shows a
+  thread's live work on its **root row**; `requestsFor(row)` now maps live
+  requests (local work `threadRootId`, turn `requests`/`threadRootId`) to the
+  shown root in conversation frames, Stop scoped to the exact request
+  (`requestScope`). Also: the companion document could scroll past its
+  content (a transient overflow left the header off-screen); `html`, `body`
+  and `#root` are now pinned to the viewport with `overflow: hidden` in both
+  companion entries — only the message list scrolls.
+
 ### Non-goals (S3)
 
 Members dialog *inside* the pop-out (it stays main's); starting/stopping

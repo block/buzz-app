@@ -1738,3 +1738,81 @@ it("admits Stop for a hosted turn on the thread root, from the turn's retained t
     threadRootId: ROOT,
   });
 });
+
+it("shows a thread request's live work on its root row in a conversation frame, as main's channel view does", async () => {
+  const h = fixture();
+  const agent = "3".repeat(64);
+  const REPLY = "6".repeat(64);
+  const interrupt = vi.fn(async () => {});
+  const root = {
+    ...(h.snapshot.current.root as ChannelMessage),
+    replyCount: 1,
+  };
+  const activity = {
+    ...h.session.agentActivity.snapshot(),
+    local: [
+      {
+        scope: h.session.scope,
+        agent,
+        channelId: "channel",
+        messageId: REPLY,
+        threadRootId: ROOT,
+        thread: true as const,
+        state: "working" as const,
+        step: { tool: "Bash" },
+        stoppable: true,
+        startedAt: Date.now(),
+      },
+    ],
+  };
+  const session = {
+    ...h.session,
+    typing: { ...h.session.typing, snapshot: () => [] },
+    profiles: {
+      ...h.session.profiles,
+      snapshot: () => new Map([[agent, { name: "Echo", isAgent: true }]]),
+    },
+    channels: {
+      ...h.session.channels,
+      ensure() {},
+      refresh() {},
+      window: () => ({
+        channelId: "channel",
+        status: "ready" as const,
+        rows: [root],
+        loadingOlder: false,
+        hasMore: false,
+        error: undefined,
+      }),
+      subscribeWindow: () => () => {},
+    },
+    agentActivity: {
+      ...h.session.agentActivity,
+      snapshot: () => activity,
+      interrupt,
+    },
+  } as unknown as RelaySession;
+  const conversation = createPopoutThread(
+    session,
+    "channel",
+    undefined,
+    () => {},
+  );
+  clean.push(conversation.dispose);
+  // The reply that asked is not a channel row; its thread's root shows the
+  // work, and Stop is scoped to the exact request in that thread.
+  const rootRow = conversation
+    .snapshot()
+    .replies.find((row) => row.id === ROOT);
+  expect(rootRow?.live?.[0]).toMatchObject({
+    id: agent,
+    status: "Running a command",
+    stops: [expect.objectContaining({ lifecycle: true })],
+  });
+  expect(conversation.snapshot().typing).toBeUndefined();
+  const key = rootRow?.live?.[0]?.stops[0]?.key ?? "";
+  await expect(conversation.stopWork(key)).resolves.toEqual({
+    lifecycle: true,
+  });
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", REPLY);
+});

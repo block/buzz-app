@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { ReadError } from "./errors";
 import { createRelaySession } from "./session";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { flush, keypair, scriptedTransport } from "./testing";
@@ -277,6 +278,17 @@ it("explicit refresh retains the last good groups through loading/error and can 
     expect(preferences.snapshot().data).toBe(retained);
     await preferences.ensure();
     expect(wire.pending).toHaveLength(0); // No automatic retry storm on remount.
+    expect(preferences.snapshot()).not.toHaveProperty("transient");
+    // A connectivity failure stays transient so session recovery retries it.
+    const unavailable = preferences.refresh();
+    await flush();
+    wire.next().fail(new ReadError("unavailable", "Relay down", 503));
+    await unavailable;
+    expect(preferences.snapshot()).toMatchObject({
+      status: "error",
+      transient: true,
+      data: retained,
+    });
     const retry = preferences.refresh();
     expect(preferences.snapshot().error).toBeUndefined();
     await flush();

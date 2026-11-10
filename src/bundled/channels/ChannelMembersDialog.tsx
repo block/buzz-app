@@ -1078,16 +1078,10 @@ export function ChannelMembersDialog({
         known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
       return group === name;
     });
-    // Known-archived members follow the live ones, each part in name order.
-    const isArchived = (key: string) =>
-      archiveHides(session.archives, key, session.viewer);
     return {
       name,
       count: keys.length,
-      keys: [
-        ...keys.filter((key) => !isArchived(key)),
-        ...keys.filter(isArchived),
-      ],
+      keys,
     };
   });
   // Optional profile updates change labels, not the identities being browsed.
@@ -1133,9 +1127,17 @@ export function ChannelMembersDialog({
       initialLoading,
       groups: orderedGroups,
     });
+  // Known-archived members follow the live ones, each part keeping the order
+  // above, so archives that arrive late or members who join later still
+  // leave the archived members last.
+  const isArchived = (key: string) =>
+    archiveHides(session.archives, key, session.viewer);
   const groups = (largeRoster ? orderedGroups : currentGroups).map((group) => ({
     ...group,
-    keys: group.keys.filter((key) => matches(key, memberLabel(key))),
+    keys: [
+      ...group.keys.filter((key) => !isArchived(key)),
+      ...group.keys.filter(isArchived),
+    ].filter((key) => matches(key, memberLabel(key))),
   }));
   const presentGroups = groups.filter((group) => group.count > 0);
   const roleFilter =

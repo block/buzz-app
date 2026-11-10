@@ -3904,6 +3904,60 @@ it("lists known-archived members after live ones in each group, by name", async 
   );
 });
 
+it("keeps archived members last in a paged roster when archives load late and members join", async () => {
+  let release!: () => void;
+  const pendingArchives = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // 61 people page as 50 + 11. Even-numbered members are archived, so the
+  // paging order, frozen when the list first shows, interleaves them.
+  const people = Array.from({ length: 60 }, (_, i) =>
+    profile(keypair(), { name: `Member ${String(i).padStart(2, "0")}` }),
+  );
+  const t = await setup("stream", false, false, undefined, undefined, {
+    memberProfiles: people,
+    archivedMembers: people
+      .filter((_, i) => i % 2 === 0)
+      .map((event) => event.pubkey),
+    pendingArchives,
+  });
+  const list = screen.getByRole("region", { name: "Member list" });
+  const pages = () =>
+    within(list).getByRole("navigation", { name: "People member pages" });
+  const rows = () =>
+    within(list)
+      .getAllByRole("listitem")
+      .map((row) => row.textContent ?? "");
+  const archived = (row: string) =>
+    Number(/Member (\d\d)/.exec(row)?.[1] ?? 1) % 2 === 0;
+  const named = () => rows().every((row) => !row.includes("npub"));
+  await act(async () => release());
+  // Page 1: you, the 30 live members, then the first 19 archived ones.
+  await vi.waitFor(() => {
+    expect(named()).toBe(true);
+    expect(rows().map(archived)).toEqual([
+      ...Array(31).fill(false),
+      ...Array(19).fill(true),
+    ]);
+  });
+  await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
+  await vi.waitFor(() => {
+    expect(named()).toBe(true);
+    expect(rows().map(archived)).toEqual(Array(11).fill(true));
+  });
+  // A live member who joins later goes before the archived ones.
+  await act(async () =>
+    t.replaceRoster([
+      t.viewer.pubkey,
+      ...people.map((event) => event.pubkey),
+      (20000).toString(16).padStart(64, "0"),
+    ]),
+  );
+  await t.user.click(within(pages()).getByRole("button", { name: "Previous" }));
+  await vi.waitFor(() => expect(rows()[31]).toContain("npub"));
+  expect(rows().slice(32).every(archived)).toBe(true);
+});
+
 it("keeps the visible member page and focus stable while names arrive", async () => {
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {

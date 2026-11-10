@@ -1267,6 +1267,7 @@ function ChannelWorkspace({
       channel.channelType === "solo" && (
         <SoloToolbar
           chatMenus={chatMenus}
+          tabActions={extensions?.tabActions}
           key={channel.id}
           session={queries}
           scope={scope}

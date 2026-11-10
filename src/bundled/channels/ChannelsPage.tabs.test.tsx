@@ -903,11 +903,40 @@ it.each(["side", "main"] as const)(
 
 it("gives a Solo chat's side tab its own header actions, opening it in the main view", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const h = await page("stream", {
-    open,
-    snapshot: () => visitSnapshot,
-    subscribe: () => () => {},
-  } as unknown as Navigation);
+  // A contributed conversation action reaches the side header too.
+  const run = vi.fn();
+  const noTools: readonly Contribution<ComposerTool>[] = [];
+  const noInline: readonly Contribution<InlineRenderer>[] = [];
+  const tabActionEntries = [
+    {
+      id: "open-window",
+      key: "popout/open-window",
+      pluginId: "popout",
+      revision: "1",
+      title: "Open in new window",
+      matches: () => true,
+      run: (target: { channelId: string }) => run(target.channelId),
+    },
+  ];
+  const h = await page(
+    "stream",
+    {
+      open,
+      snapshot: () => visitSnapshot,
+      subscribe: () => () => {},
+    } as unknown as Navigation,
+    false,
+    undefined,
+    undefined,
+    {
+      tools: { snapshot: () => noTools, subscribe: () => () => {} },
+      inline: { snapshot: () => noInline, subscribe: () => () => {} },
+      tabActions: {
+        snapshot: () => tabActionEntries,
+        subscribe: () => () => {},
+      },
+    },
+  );
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>
     tabs.result.current.setTabs((items) => [
@@ -931,6 +960,10 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
   expect(
     menu.queryByRole("menuitem", { name: "Convert to channel" }),
   ).toBeNull();
+  const names = menu.getAllByRole("menuitem").map((item) => item.textContent);
+  expect(names.indexOf("Open in new window")).toBe(
+    names.indexOf("Copy link") + 1,
+  );
   await h.user.click(menu.getByRole("menuitem", { name: "Open in main view" }));
   await vi.waitFor(() =>
     expect(open).toHaveBeenLastCalledWith({

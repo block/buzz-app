@@ -37,6 +37,11 @@ import {
   setUnreadFirstPreference,
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
+import {
+  SHOW_ALL_PRESETS,
+  setShowAllSecondsPreference,
+  useShowAllSecondsPreference,
+} from "../features/channel-navigation/show-all-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
@@ -64,6 +69,11 @@ function useVerifiedCommunity(relay: Communities["relay"] | undefined) {
   );
 }
 
+const showAllLabel = (seconds: number) =>
+  seconds % 60 === 0
+    ? `${seconds / 60} ${seconds === 60 ? "minute" : "minutes"}`
+    : `${seconds} seconds`;
+
 export function AppearanceSettings({
   appearance,
   active = true,
@@ -79,6 +89,7 @@ export function AppearanceSettings({
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
+  const showAll = useShowAllSecondsPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
@@ -480,6 +491,31 @@ export function AppearanceSettings({
               checked={unreadFirst.enabled}
               onCheckedChange={setUnreadFirstPreference}
             />
+            <PreferenceRow
+              title="Show all conversations for"
+              subtitle="How long Show all conversations pauses the sidebar’s section filters."
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Show all conversations for"
+                  value={String(showAll.seconds)}
+                  groups={[
+                    {
+                      label: "Duration",
+                      options: [
+                        ...new Set([...SHOW_ALL_PRESETS, showAll.seconds]),
+                      ].map((seconds) => ({
+                        value: String(seconds),
+                        label: showAllLabel(seconds),
+                      })),
+                    },
+                  ]}
+                  onValueChange={(value) =>
+                    setShowAllSecondsPreference(Number(value))
+                  }
+                />
+              }
+            />
           </SettingsGroup>
         </div>
         {active && messageWidthError && (
@@ -549,6 +585,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && showAll.unsaved && (
+          <ToastNotice
+            title="Show all duration wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowAllSecondsPreference(showAll.seconds)}
+            >
+              Retry saving Show all duration
             </Button>
           </ToastNotice>
         )}

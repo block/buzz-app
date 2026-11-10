@@ -22,6 +22,10 @@ import {
   setThreadPlacementPreference,
   threadPlacementPreference,
 } from "../features/messages/thread-preferences";
+import {
+  setShowAllSecondsPreference,
+  showAllSecondsPreference,
+} from "../features/channel-navigation/show-all-preference";
 
 import {
   namePreference,
@@ -56,6 +60,7 @@ afterEach(() => {
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);
+  setShowAllSecondsPreference(120);
   setClockPreference({
     hourCycle: "system",
     seconds: false,
@@ -594,6 +599,50 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
+});
+
+it("chooses how long Show all conversations lasts from its presets, and retries an unsaved choice", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  const choice = () =>
+    screen.getByRole("combobox", { name: "Show all conversations for" });
+  expect(choice()).toHaveTextContent("2 minutes");
+  await user.click(choice());
+  expect(
+    (await screen.findAllByRole("option")).map(
+      ({ textContent }) => textContent,
+    ),
+  ).toEqual(["30 seconds", "1 minute", "2 minutes", "5 minutes"]);
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(screen.getByRole("option", { name: "30 seconds" }));
+  expect(showAllSecondsPreference()).toBe(30);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Show all duration wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving Show all duration" }),
+  );
+  expect(localStorage.getItem("buzz-show-all-duration.v1")).toBe("30");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  // A duration saved outside the presets is shown as it is.
+  act(() => {
+    localStorage.setItem("buzz-show-all-duration.v1", "5");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-show-all-duration.v1" }),
+    );
+  });
+  expect(choice()).toHaveTextContent("5 seconds");
 });
 
 it("leads search with unread until this device turns it off", async () => {

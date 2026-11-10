@@ -63,7 +63,12 @@ import { localAgentsFixture } from "../agents/local-testing";
 import { forgetDefaultAgent, setDefaultAgent } from "../solo/default-agent";
 import type { RegisteredPage } from "../pages/service";
 import type { Shortcut, ShortcutsService } from "../shortcuts/service";
-import { SHOW_ALL_DURATION } from "./ChannelInventory";
+import {
+  DEFAULT_SHOW_ALL_SECONDS,
+  setShowAllSecondsPreference,
+} from "./show-all-preference";
+
+const SHOW_ALL_DURATION = DEFAULT_SHOW_ALL_SECONDS * 1000;
 
 const { rowRender, menuRender } = vi.hoisted(() => ({
   rowRender: vi.fn(),
@@ -712,7 +717,7 @@ it("offers Show all conversations only while a section is filtered", async () =>
   preferences.dispose();
 });
 
-it("expires Show all conversations after two minutes, keeping the open conversation, and clears its timer on teardown", async () => {
+it("expires Show all conversations after the default two minutes, keeping the open conversation, and clears its timer on teardown", async () => {
   const { h, preferences, remove, shortcut } = filteredChannels();
   const mounted = render(h.view("alpha"));
   await screen.findByRole("button", { name: "alpha" });
@@ -768,6 +773,37 @@ it("expires Show all conversations after two minutes, keeping the open conversat
     mounted.unmount();
     expect(clearTimer).toHaveBeenCalledWith(showAllTimers()[3]);
     expect(remove).toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+    preferences.dispose();
+  }
+});
+
+it("restarts Show all conversations with a duration chosen while it is on", async () => {
+  const { h, preferences, shortcut } = filteredChannels();
+  render(h.view("alpha"));
+  await screen.findByRole("button", { name: "alpha" });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull(),
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    act(() => void shortcut().run());
+    act(() => vi.advanceTimersByTime(90_000));
+    // Thirty seconds are left of the default; choosing a minute starts it afresh.
+    act(() => setShowAllSecondsPreference(60));
+    act(() => vi.advanceTimersByTime(59_999));
+    expect(screen.getByRole("button", { name: "beta" })).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    expect(screen.getByRole("button", { name: "alpha" })).toBeInTheDocument();
+    // The next press uses the new duration from the start.
+    act(() => void shortcut().run());
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+    // Changing it while off starts nothing.
+    act(() => setShowAllSecondsPreference(300));
+    expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
   } finally {
     vi.useRealTimers();
     preferences.dispose();

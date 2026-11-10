@@ -32,6 +32,7 @@ import {
   type RegisteredSidebarRows,
 } from "./sidebar-rows-service";
 import type { ShortcutsService } from "../shortcuts/service";
+import { useShowAllSecondsPreference } from "./show-all-preference";
 import { useSidebarRowUnread } from "./useSidebarRowUnread";
 import type { SidebarSortMode } from "../relay/sidebar-sort";
 import type { SidebarFrame } from "./SidebarFrame";
@@ -131,8 +132,6 @@ type Inventory = {
 };
 
 const noSubscription = () => () => {};
-/** How long Show all conversations pauses the saved section filters. */
-export const SHOW_ALL_DURATION = 2 * 60_000;
 const emptyContributions: readonly RegisteredSidebarSection[] = [];
 const noSidebarSections = () => emptyContributions;
 const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
@@ -617,13 +616,18 @@ export function ChannelInventory({
     ]),
   );
   // Pausing every filter is brief and unsaved: the saved filters return after
-  // SHOW_ALL_DURATION, on reload or reconnect, or with a new filter choice.
+  // the chosen duration, on reload or reconnect, or with a new filter choice.
+  // Changing the duration while paused starts the new duration afresh.
   const [showAll, setShowAll] = useState(false);
+  const showAllSeconds = useShowAllSecondsPreference().seconds;
   useEffect(() => {
     if (!showAll) return;
-    const timer = window.setTimeout(() => setShowAll(false), SHOW_ALL_DURATION);
+    const timer = window.setTimeout(
+      () => setShowAll(false),
+      showAllSeconds * 1000,
+    );
     return () => window.clearTimeout(timer);
-  }, [showAll]);
+  }, [showAll, showAllSeconds]);
   const filtering = sortedSections.some(
     ({ key }) => (savedFilters[key] ?? "all") !== "all",
   );

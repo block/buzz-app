@@ -766,6 +766,14 @@ companion UI (timeline layout, dividers, `<` back, header) 100–200; entry
 points 60–120; native title/DTO 20–40. **Total ≈ 450–750.** Same
 stop-and-show rule as §10.
 
+## Screenshots (jaw's tryout, 2026-11-10)
+
+![A Solo chat open in its own window beside the main window: kind icon, title "Assess local execution feedback (Solo chat) — Buzz", the same messages and composer](images/popout/solo-window.png)
+
+![A message's ⋯ menu with "Open thread in new window" after Follow thread](images/popout/open-thread-menu.png)
+
+![An agent's live work on a request: "Starting" with a Stop control](images/popout/working-stop.png)
+
 ## 12. S3 scope checkpoint — completeness for a self-contained PR (2026-11-09)
 
 jaw, after his step-3 tryout passed: the PR ships as a complete feature, so

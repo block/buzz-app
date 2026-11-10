@@ -44,6 +44,7 @@ const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
   operations: [],
   following: false,
   isDm: false,
+  kind: "channel",
   thread: true,
   version: 1,
   root: row("1".repeat(64), "Root message"),
@@ -57,11 +58,58 @@ it("names what it shows, as Slack's pop-out does, and reports its guard", () => 
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "Thread #Design",
   );
+  expect(screen.getByRole("img", { name: "Thread" })).toBeTruthy();
   rerender(
-    <PopoutWindowView view={view({ isDm: true, title: "Ada" })} act={act} />,
+    <PopoutWindowView
+      view={view({ isDm: true, kind: "dm", title: "Ada" })}
+      act={act}
+    />,
   );
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "Thread Ada",
+  );
+  // A conversation frame shows the kind the tab strip would: the DM's
+  // person, the Solo bubble, a lock, or a hash — named for readers who can't
+  // see it. Only a hash conversation is written with `#`.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "dm",
+        title: "Ada",
+        picture: "http://buzz-media.localhost/ada",
+      })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Ada");
+  const dm = screen.getByRole("img", { name: "Direct message" });
+  expect(dm.querySelector("img")?.getAttribute("src")).toBe(
+    "http://buzz-media.localhost/ada",
+  );
+  rerender(
+    <PopoutWindowView
+      view={view({ thread: false, isDm: true, kind: "solo", title: "Plan" })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Solo chat" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Plan$/);
+  rerender(
+    <PopoutWindowView
+      view={view({ thread: false, kind: "private", title: "leads" })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Private channel" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    /^leads$/,
+  );
+  rerender(<PopoutWindowView view={view({ thread: false })} act={act} />);
+  expect(screen.getByRole("img", { name: "Public channel" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "#Design",
   );
   rerender(<PopoutWindowView view={view()} act={act} />);
   expect(screen.getByText("Root message")).toBeTruthy();

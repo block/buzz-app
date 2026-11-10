@@ -1271,3 +1271,58 @@ it("labels bare message links as main's byline does, through the shared author l
   thread.snapshot();
   expect(session.profiles.ensure).toHaveBeenCalledTimes(ensured + 1);
 });
+
+it("projects the conversation's kind, names a DM by its people and carries their picture, as the tab strip does", () => {
+  const h = fixture();
+  const ADA = "f".repeat(64);
+  const BOB = "e".repeat(64);
+  const profiles = new Map([
+    [ADA, { name: "Ada", picture: "https://relay.example/ada.png" }],
+    [BOB, { name: "Bob" }],
+  ]);
+  const session = {
+    ...h.session,
+    profiles: { ...h.session.profiles, snapshot: () => profiles },
+    media: (url: string) =>
+      `http://buzz-media.localhost/${encodeURIComponent(url)}`,
+  } as unknown as RelaySession;
+  const thread = createPopoutThread(session, "channel", ROOT, () => {});
+  clean.push(() => thread.dispose());
+  const shape = () => {
+    const { title, kind, picture, isDm } = thread.snapshot();
+    return { title, kind, picture, isDm };
+  };
+  expect(shape()).toEqual({
+    title: "Channel",
+    kind: "channel",
+    picture: null,
+    isDm: false,
+  });
+  h.channel.current = { ...h.channel.current, private: true };
+  expect(shape()).toMatchObject({ kind: "private", picture: null });
+  h.channel.current = {
+    id: "channel",
+    name: "Planning",
+    channelType: "solo",
+  };
+  expect(shape()).toEqual({
+    title: "Planning",
+    kind: "solo",
+    picture: null,
+    isDm: true,
+  });
+  // A DM is named by its people, not the relay's channel name, and shows
+  // the first person's picture through the authorized media source.
+  h.channel.current = {
+    id: "channel",
+    name: "dm-internal",
+    channelType: "dm",
+    participants: [ADA, BOB],
+  };
+  expect(shape()).toEqual({
+    title: "Ada, Bob",
+    kind: "dm",
+    picture: `http://buzz-media.localhost/${encodeURIComponent("https://relay.example/ada.png")}`,
+    isDm: true,
+  });
+});

@@ -741,6 +741,17 @@ re-created in the companion (named as a gap in help).
   which had been failing on `popout_window_watch` since the capability file
   was introduced.
 
+- jaw: a pop-out's kind (channel / private / DM / Solo / thread) wasn't
+  legible — DM and Solo both showed a bare name. Main projects `kind` and a
+  DM's first person's `picture`; the header shows the tab strip's icon
+  (`channelIcon` rules; `MessageReplyIcon` for thread frames) with an
+  accessible kind label, and names a DM by its people (`dmLabel`, as tabs and
+  Inbox do) instead of the relay channel name. Native title carries the kind
+  where no icon can: `#design`, `leads` (private), `Ada (DM)`, `Planning
+  (Solo chat)`, each as `Thread in …` for thread frames. Not done: plugin
+  chat icons for Solo (contribution not available in the companion) and the
+  community name.
+
 ### Non-goals (S2)
 
 Canvas/pages/Settings windows; restoring windows after restart; member

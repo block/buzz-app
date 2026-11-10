@@ -24,7 +24,11 @@ import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import {
   CaretLeftIcon,
   ChatCircleIcon,
+  HashIcon,
+  LockIcon,
+  MessageReplyIcon,
 } from "../../shared/design-system/icons";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import styles from "./Popout.module.css";
 
@@ -69,7 +73,14 @@ export function PopoutWindowView({
     () => (view.root ? [view.root, ...view.replies] : view.replies),
     [view.root, view.replies],
   );
-  const conversation = view.isDm ? view.title : `#${view.title}`;
+  // Named as the tab strip names it: `#` only where the icon is a hash.
+  const conversation = view.kind === "channel" ? `#${view.title}` : view.title;
+  const kindLabel = {
+    channel: "Public channel",
+    private: "Private channel",
+    dm: "Direct message",
+    solo: "Solo chat",
+  }[view.kind];
   // Main's own words for who is working and typing here.
   const typingText = view.typing
     ? [
@@ -299,6 +310,32 @@ export function PopoutWindowView({
               onClick={() => navigate({ action: "back" })}
             />
           )}
+          {/* The same icon the main window's tab shows for this conversation
+              (a thread frame shows the thread mark), so the kind is read at a
+              glance where the name alone does not say it (DM, Solo). */}
+          <span
+            className={styles.icon}
+            role="img"
+            aria-label={view.thread ? "Thread" : kindLabel}
+            data-kind={view.thread ? "thread" : view.kind}
+          >
+            {view.thread ? (
+              <MessageReplyIcon size="1rem" />
+            ) : view.kind === "dm" ? (
+              <Avatar
+                alt=""
+                fallback={view.title}
+                size="fill"
+                src={view.picture ?? undefined}
+              />
+            ) : view.kind === "private" ? (
+              <LockIcon size="1rem" />
+            ) : view.kind === "solo" ? (
+              <ChatCircleIcon size="1rem" />
+            ) : (
+              <HashIcon size="1rem" />
+            )}
+          </span>
           <h1 className={styles.title}>
             {view.thread ? (
               <>

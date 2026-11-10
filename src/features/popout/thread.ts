@@ -26,6 +26,8 @@ import {
 } from "../messages/markdown-preparation";
 import { scanMarkdown } from "../relay/message-content";
 import { parseBuzzLink } from "../navigation/buzz-links";
+import { dmLabel } from "../../bundled/inbox/dm-label";
+import { avatarMedia, avatarSource } from "../../shared/avatar-source";
 
 const bytes = (value: string) => new TextEncoder().encode(value).length;
 
@@ -59,11 +61,17 @@ export type PopoutThreadView = {
   following: boolean;
   /** A DM or Solo chat: no `#`, no thread following. */
   isDm: boolean;
+  /** What kind of conversation this window shows, for its icon and title:
+   * the same distinction the main window's tabs draw. */
+  kind: PopoutConversationKind;
+  /** A DM's other person, as the tab strip shows them (media source). */
+  picture?: string | null;
   /** This frame shows a thread (root + replies), not a conversation timeline. */
   thread: boolean;
   /** People typing and agents working in this frame's conversation. */
   typing?: CompanionTyping | undefined;
 };
+export type PopoutConversationKind = "channel" | "private" | "dm" | "solo";
 export type { MainOperation };
 const MAX_OPERATIONS = 64;
 const MAX_REPLIES = 500;
@@ -462,6 +470,39 @@ export function createPopoutThread(
   const channel = () =>
     session.channels.get?.(channelId) ??
     session.channels.list().channels.find((c) => c.id === channelId);
+  type Channel = NonNullable<ReturnType<typeof channel>>;
+  const kind = (c: Channel | undefined): PopoutConversationKind =>
+    c?.channelType === "dm"
+      ? "dm"
+      : c?.channelType === "solo"
+        ? "solo"
+        : c?.private
+          ? "private"
+          : "channel";
+  /** A DM is named by its people, as main's tabs and Inbox name it. */
+  const title = (c: Channel | undefined) => {
+    if (c?.channelType === "dm") {
+      const profiles = session.profiles.snapshot();
+      return dmLabel(
+        c.participants,
+        profiles,
+        (key, fallback, candidates) =>
+          session.names?.resolve(key, fallback, candidates) ?? fallback,
+        c.name,
+      ).slice(0, 1000);
+    }
+    return (c?.name ?? "Conversation").slice(0, 1000);
+  };
+  /** The DM's first other participant's picture, as the tab icon shows. */
+  const picture = (c: Channel | undefined) => {
+    const person = c?.channelType === "dm" ? c.participants?.[0] : undefined;
+    if (!person) return null;
+    const source = avatarMedia(
+      avatarSource(session.profiles.snapshot().get(person)?.picture),
+      session.media,
+    );
+    return source && bytes(source) <= 8192 ? source : null;
+  };
   /** Observe owner evidence for the agent authors shown now, within the
    * bound; authors that left the projection release their observation first. */
   function observeOwners(authors: ReadonlySet<string>) {
@@ -728,7 +769,7 @@ export function createPopoutThread(
         };
       };
       return {
-        title: (channel()?.name ?? "Conversation").slice(0, 1000),
+        title: title(c),
         scope: session.scope.slice(0, 4096),
         status:
           error || snap?.status === "error"
@@ -748,6 +789,8 @@ export function createPopoutThread(
         operations: this.operations().slice(0, MAX_OPERATIONS),
         following: rootId ? session.unread.following(channelId, rootId) : false,
         isDm: c?.channelType === "dm" || c?.channelType === "solo",
+        kind: kind(c),
+        picture: picture(c),
         thread: !!rootId,
         typing: available() ? typing() : undefined,
       };

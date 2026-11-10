@@ -1221,8 +1221,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   or thread in its own window. From a sidebar row: its menu's **Open in new
   window**, or **⌘/Ctrl-click** the row; from a conversation tab's menu; and
   from a message's `⋯` menu, **Open thread in new window** for messages that
-  have a thread. The title bar names the window ("#channel — Buzz", "Thread in
-  #channel — Buzz") and so does its header. A conversation window drills into
+  have a thread. The title bar names the window and its kind ("#channel —
+  Buzz", "Ada (DM) — Buzz", "Planning (Solo chat) — Buzz", "Thread in #channel
+  — Buzz"), and the header shows the same icon the conversation's tab has
+  (hash, lock for a private channel, the person for a DM, the chat bubble for
+  a Solo chat, the thread mark for a thread) before the name. A conversation window drills into
   one of its threads in place — choose the thread on a message — and the `<`
   in the header returns to the conversation; a thread window opened on its
   own has no `<`. Windows stay open while the main window moves elsewhere;

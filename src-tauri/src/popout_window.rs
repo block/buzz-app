@@ -93,6 +93,12 @@ pub(crate) struct View {
     /// A DM or Solo chat: no `#`, no thread following offered.
     #[serde(default)]
     is_dm: bool,
+    /// What kind of conversation: `channel`, `private`, `dm` or `solo`.
+    #[serde(default = "default_kind")]
+    kind: String,
+    /// A DM's other person's picture (authorized media source).
+    #[serde(default)]
+    picture: Option<String>,
     /// A thread (root + replies) rather than a conversation timeline.
     #[serde(default)]
     thread: bool,
@@ -226,17 +232,29 @@ fn require_popout<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Result<String
 impl View {
     /// The OS title bar names what the window is, as Slack does: "Thread in
     /// #channel" (a DM has no `#`).
+    /// Names the conversation and its kind where no icon can: "#design",
+    /// "Ada (DM)", "Planning (Solo chat)"; a thread frame says so first.
     fn window_title(&self) -> String {
-        let hash = if self.is_dm { "" } else { "#" };
+        let conversation = match self.kind.as_str() {
+            "dm" => format!("{} (DM)", self.title),
+            "solo" => format!("{} (Solo chat)", self.title),
+            "private" => self.title.clone(),
+            _ => format!("#{}", self.title),
+        };
         if self.thread {
-            format!("Thread in {hash}{} — Buzz", self.title)
+            format!("Thread in {conversation} — Buzz")
         } else {
-            format!("{hash}{} — Buzz", self.title)
+            format!("{conversation} — Buzz")
         }
     }
 }
+fn default_kind() -> String {
+    "channel".into()
+}
 fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
+        || !matches!(view.kind.as_str(), "channel" | "private" | "dm" | "solo")
+        || view.picture.as_ref().is_some_and(|p| p.len() > 8192)
         || view.scope.len() > 4096
         || view.appearance.as_ref().is_some_and(|a| !a.valid())
         || view.typing.as_ref().is_some_and(|t| !t.valid())
@@ -729,6 +747,8 @@ mod tests {
             operations: vec![],
             following: false,
             is_dm: false,
+            kind: "channel".into(),
+            picture: None,
             thread: true,
             can_go_back: false,
             typing: None,
@@ -896,13 +916,29 @@ mod tests {
         view.thread = true;
         assert_eq!(view.window_title(), "Thread in #design — Buzz");
         view.is_dm = true;
+        view.kind = "dm".into();
         view.title = "Ada".into();
-        assert_eq!(view.window_title(), "Thread in Ada — Buzz");
+        assert_eq!(view.window_title(), "Thread in Ada (DM) — Buzz");
         view.thread = false;
-        assert_eq!(view.window_title(), "Ada — Buzz");
+        assert_eq!(view.window_title(), "Ada (DM) — Buzz");
+        view.kind = "solo".into();
+        view.title = "Planning".into();
+        assert_eq!(view.window_title(), "Planning (Solo chat) — Buzz");
         view.is_dm = false;
+        view.kind = "private".into();
+        view.title = "leads".into();
+        assert_eq!(view.window_title(), "leads — Buzz");
+        view.kind = "channel".into();
         view.title = "design".into();
         assert_eq!(view.window_title(), "#design — Buzz");
+        // The kind is a closed set; a picture is bounded.
+        view.kind = "other".into();
+        assert!(validate(&view).is_err());
+        view.kind = "dm".into();
+        view.picture = Some("x".repeat(8193));
+        assert!(validate(&view).is_err());
+        view.picture = Some("http://buzz-media.localhost/avatar".into());
+        assert!(validate(&view).is_ok());
     }
     #[test]
     fn focus_main_is_a_companion_action_with_no_payload() {

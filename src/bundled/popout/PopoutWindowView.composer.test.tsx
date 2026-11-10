@@ -132,6 +132,7 @@ const view = (h: ReturnType<typeof harness>): PopoutView => ({
   operations: [],
   following: false,
   isDm: false,
+  kind: "channel",
   thread: true,
   version: 1,
   root: {

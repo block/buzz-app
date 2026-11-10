@@ -12,10 +12,11 @@ export function workflowAgentMentions(
   return info.workflow_agent_mentions === "owner" ? "owner" : "any";
 }
 
-export const OWNER_RUNS_WARNING =
-  "Agents you mention act only on runs you start (this relay uses owner-only agent mentions).";
-export const NEVER_WARNING =
-  "Agents you mention won't act on this workflow's messages.";
+const WHY =
+  "This community limits which workflows can use agents, so other people can't use yours.";
+export const OWNER_RUNS_WARNING = `Agents you mention respond only when you start this workflow, not when someone else does. ${WHY}`;
+export const WEBHOOK_WARNING = `Agents won't respond to workflows started by a webhook. ${WHY}`;
+export const STEPS_WARNING = `Agents won't respond to this workflow because it has steps other than Send Message and Delay. ${WHY}`;
 
 const PERSON_TRIGGERS = new Set([
   "message_posted",
@@ -121,13 +122,14 @@ export function getAgentMentionWarning(
   });
   if (!mentions) return null;
   const trigger = record(definition?.trigger)?.on;
+  // A webhook run never directs agents, whatever its steps.
+  if (trigger === "webhook") return WEBHOOK_WARNING;
   if (
-    trigger === "webhook" ||
     steps.some(
       (step) => step?.action !== "send_message" && step?.action !== "delay",
     )
   )
-    return NEVER_WARNING;
+    return STEPS_WARNING;
   return typeof trigger === "string" && PERSON_TRIGGERS.has(trigger)
     ? OWNER_RUNS_WARNING
     : null;

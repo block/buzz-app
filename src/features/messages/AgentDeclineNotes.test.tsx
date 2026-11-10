@@ -38,11 +38,11 @@ it("says which agent didn't act and why", () => {
     />,
   );
   expect(
-    screen.getByText("Builder acts only on messages from you."),
+    screen.getByText("Builder only responds to your messages."),
   ).toBeInTheDocument();
   expect(
     screen.getByText(
-      "Your agent didn't act: this workflow message doesn't authorize it. The workflow's run history shows why.",
+      "Your agent didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.",
     ),
   ).toBeInTheDocument();
 });

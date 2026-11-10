@@ -1771,21 +1771,27 @@ workflows that you or your agents own and that direct them. When one of your
 agents on this computer ignores a mention for one of those reasons, a short note
 under the message says so. Only you see it, on this device; nothing is posted.
 
-- **“‹Agent› acts only on messages from you.”** Someone else sent the message,
+- **“‹Agent› only responds to your messages.”** Someone else sent the message,
   or someone else’s workflow posted it.
-- **“‹Agent› didn’t act: this workflow message doesn’t authorize it. The
-  workflow’s run history shows why.”** Your own workflow posted it, but the
-  message doesn’t direct this agent.
+- **“‹Agent› didn’t respond to this workflow message. This community limits
+  which workflows can use agents, so other people can’t use yours. The
+  workflow’s Runs tab shows why it didn’t respond this time.”** Your own
+  workflow posted it, but the message doesn’t direct this agent.
 
 Buzz shows no note when it can’t yet tell who owns the workflow.
 
 On a relay that uses owner-only agent mentions, the desktop workflow editor
 warns when a message step mentions an agent in the channel:
 
-- **“Agents you mention act only on runs you start (this relay uses owner-only
-  agent mentions).”** The workflow starts on a message, reaction or diff.
-- **“Agents you mention won’t act on this workflow’s messages.”** It starts on a
-  webhook, or has a step other than a message or a delay.
+Each warning ends with “This community limits which workflows can use agents,
+so other people can’t use yours.”
+
+- **“Agents you mention respond only when you start this workflow, not when
+  someone else does.”** The workflow starts on a message, reaction or diff.
+- **“Agents won’t respond to workflows started by a webhook.”** It starts on a
+  webhook, whatever its steps.
+- **“Agents won’t respond to this workflow because it has steps other than Send
+  Message and Delay.”** It has a step other than a message or a delay.
 
 A schedule with only message and delay steps shows no warning.
 

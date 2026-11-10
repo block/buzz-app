@@ -2,8 +2,9 @@ import { expect, it } from "vitest";
 import {
   getAgentMentionWarning,
   resolveWorkflowMentions,
-  NEVER_WARNING,
   OWNER_RUNS_WARNING,
+  STEPS_WARNING,
+  WEBHOOK_WARNING,
   workflowAgentMentions,
 } from "./workflowAgentMentionWarning";
 
@@ -37,18 +38,30 @@ it.each(["message_posted", "reaction_added", "diff_posted"])(
   (trigger) => expect(warn(definition(trigger))).toBe(OWNER_RUNS_WARNING),
 );
 
-it("warns that agents never act on a webhook trigger", () => {
-  expect(warn(definition("webhook"))).toBe(NEVER_WARNING);
-});
-
-it("warns that agents never act with any step but a message or delay", () => {
-  const webhook = `  - id: fetch
+const fetchStep = `  - id: fetch
     action: call_webhook
     url: https://example.test
 `;
-  expect(warn(definition("schedule", undefined, webhook))).toBe(NEVER_WARNING);
-  expect(warn(definition("message_posted", undefined, webhook))).toBe(
-    NEVER_WARNING,
+
+it("warns that agents never respond on a webhook trigger", () => {
+  expect(warn(definition("webhook"))).toBe(WEBHOOK_WARNING);
+});
+
+it("prefers the webhook warning when a webhook trigger has other steps", () => {
+  expect(warn(definition("webhook", undefined, fetchStep))).toBe(
+    WEBHOOK_WARNING,
+  );
+});
+
+it("warns that agents never respond with any step but a message or delay", () => {
+  expect(warn(definition("schedule", undefined, fetchStep))).toBe(
+    STEPS_WARNING,
+  );
+});
+
+it("gives a message trigger with other steps the steps warning", () => {
+  expect(warn(definition("message_posted", undefined, fetchStep))).toBe(
+    STEPS_WARNING,
   );
 });
 

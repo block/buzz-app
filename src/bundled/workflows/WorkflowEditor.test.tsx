@@ -546,7 +546,9 @@ steps:
   );
   const { rerender } = render(editor("owner"));
   expect(
-    screen.getByText(/Agents you mention act only on runs you start/),
+    screen.getByText(
+      /Agents you mention respond only when you start this workflow/,
+    ),
   ).toBeInTheDocument();
   rerender(editor());
   expect(screen.queryByText(/Agents you mention/)).not.toBeInTheDocument();

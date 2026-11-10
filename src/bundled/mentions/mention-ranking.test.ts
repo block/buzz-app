@@ -216,9 +216,39 @@ it("a known longer name continues the query, except an identity's own beside its
       "mira",
     ),
   ).toBe(false);
+  // A literal name `Mira (agent)` is.
+  expect(
+    continuedMention([choice("5", "Mira (agent)", { agent: true })], "mira"),
+  ).toBe(true);
+});
+it("only another member's longer name keeps a member's exact name from selecting", () => {
+  const mira = choice("1", "Mira");
+  const outside = choice("2", "Mira-Example", { member: false });
+  const member = choice("3", "Mira Example");
+  const key = mira.recipient.pubkey;
+  const local = (c: MentionChoice) => c.member;
+  // Alone, the exact name selects, ignoring case.
+  expect(exactMention([mira], "mira")).toBe(key);
+  // A longer name outside the channel does not make it ambiguous, over the
+  // full choice set or only the local choices.
+  expect(continuedMention([mira, outside], "mira")).toBe(false);
+  expect(exactMention([mira, outside], "mira")).toBe(key);
+  expect(exactMention([mira, outside], "mira", local)).toBe(key);
+  // Another member's longer name still blocks it, beside an outside one too.
+  expect(continuedMention([mira, member], "mira")).toBe(true);
+  expect(exactMention([mira, member], "mira")).toBeUndefined();
+  expect(exactMention([mira, outside, member], "mira", local)).toBeUndefined();
+  // An outside exact name is still blocked by any longer name.
+  const outsideMira = choice("1", "Mira", { member: false });
+  expect(exactMention([outsideMira, outside], "mira")).toBeUndefined();
+  // The outside name still continues the query and selects when typed in full.
+  expect(continuingNames([mira, outside], "mira")).toEqual(["Mira-Example"]);
+  expect(exactMention([mira, outside], "mira-example")).toBe(
+    outside.recipient.pubkey,
+  );
 });
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(3);
+  expect(mentionConformance.version).toBe(4);
   expect(mentionConformance.matching.length).toBeGreaterThan(0);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);

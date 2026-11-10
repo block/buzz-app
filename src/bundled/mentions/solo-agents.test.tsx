@@ -3856,12 +3856,14 @@ it("Space selects someone outside the channel by a pasted npub once the director
   }
 });
 it.each([
-  { name: "Jose", namesake: false, space: true },
-  { name: "Jose", namesake: true, space: true },
-  { name: "Jose (agent)", namesake: false, space: false },
+  { name: "Jose", namesake: false },
+  { name: "Jose", namesake: true },
+  // A literal `Jose (agent)` is a longer name, but outside the channel it
+  // does not block a member's name.
+  { name: "Jose (agent)", namesake: false },
 ])(
   "Space distinguishes an agent qualifier from the real name (%j)",
-  async ({ name, namesake, space }) => {
+  async ({ name, namesake }) => {
     const h = spaceFixture("Jose");
     try {
       await waitFor(() =>
@@ -3882,33 +3884,34 @@ it.each([
           h.result()?.items.find((item) => item.id === outsideJose)?.label,
         ).toMatch(namesake ? /^Jose \(agent\) · / : /^Jose \(agent\)$/),
       );
-      expect(h.result()?.spaceId).toBe(space ? h.member : undefined);
-      expect(h.canSpace(h.member)).toBe(space);
+      expect(h.result()?.spaceId).toBe(h.member);
+      expect(h.canSpace(h.member)).toBe(true);
       expect(h.canSpace(outsideJose)).toBe(false);
     } finally {
       h.dispose();
     }
   },
 );
-it("Space leaves a member's name as prose once the directory finds a longer outside name", async () => {
+it("Space keeps a member's name when the directory finds a longer outside name", async () => {
   const h = spaceFixture("Jose");
   try {
     await waitFor(() =>
       expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
     );
-    // A longer outside name cannot block before the directory reports it.
     await waitFor(() => expect(h.result()?.spaceId).toBe(h.member));
     await h.finish({
-      people: [{ pubkey: outsideJose, name: "Jose Luis" }],
+      people: [{ pubkey: outsideJose, name: "Jose-Luis" }],
       hasMore: false,
     });
-    await waitFor(() =>
-      expect(h.result()?.items.some((item) => item.id === outsideJose)).toBe(
-        true,
-      ),
-    );
-    expect(h.result()?.spaceId).toBeUndefined();
-    expect(h.canSpace(h.member)).toBe(false);
+    const outside = () =>
+      h.result()?.items.find((item) => item.id === outsideJose);
+    await waitFor(() => expect(outside()?.detail).toBe("Not in channel"));
+    // Only another member's longer name could make the member's name ambiguous.
+    expect(h.result()?.spaceId).toBe(h.member);
+    expect(h.canSpace(h.member)).toBe(true);
+    // The outside row is still listed and can still be chosen explicitly.
+    expect(outside()?.canSelect?.("Enter")).toBe(true);
+    expect(h.canSpace(outsideJose)).toBe(false);
   } finally {
     h.dispose();
   }

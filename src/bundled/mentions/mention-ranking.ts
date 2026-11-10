@@ -211,13 +211,11 @@ export function rankMentions(
 }
 const choiceNames = (c: MentionChoice) => [...c.aliases, c.label];
 /**
- * The known names that continue the query (README section 5), each once,
- * so no exact name can be selected while any exists. A key qualifier or
- * generated `(agent)` suffix only tells namesakes apart, so it never
- * continues the name. Nor does a choice's own longer name when that same
- * choice also has the exact name: one identity is not its own namesake.
- * Choices only arrive, never leave, so once a name continues the query
- * nothing that loads later can lift it: Space is declined, not pending.
+ * The known names that continue the query (README section 5), each once.
+ * A key qualifier or generated `(agent)` suffix only tells namesakes apart,
+ * so it never continues the name. Nor does a choice's own longer name when
+ * that same choice also has the exact name: one identity is not its own
+ * namesake.
  */
 export function continuingNames(
   choices: readonly MentionChoice[],
@@ -248,14 +246,32 @@ export function continuingNames(
   }
   return [...names.values()];
 }
-export const continuedMention = (
+/**
+ * Whether a known longer name keeps the query's exact name from selecting
+ * (README section 5): Space is declined, not pending. Once a member has the
+ * exact name, only another member's longer name does; a choice outside the
+ * channel never makes a member's name ambiguous.
+ */
+export function continuedMention(
   choices: readonly MentionChoice[],
   query: string,
-) => continuingNames(choices, query).length > 0;
+) {
+  const needle = normalized(query);
+  const member = choices.some(
+    (c) =>
+      c.member &&
+      c.aliases.length > 0 &&
+      choiceNames(c).some((name) => normalized(name) === needle),
+  );
+  return (
+    continuingNames(member ? choices.filter((c) => c.member) : choices, query)
+      .length > 0
+  );
+}
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
- * Every choice can continue the name (`continuedMention`); only choices
- * `among` can equal it. An exact public key names only its owner.
+ * A longer name blocks it as `continuedMention` says; only choices `among`
+ * can equal it. An exact public key names only its owner.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],

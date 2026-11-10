@@ -493,7 +493,10 @@ it("waits for entry and unread evidence before selecting a verified entry bounda
   h.unreadIds.add(laterUnread.id);
   const rows = [own, agents, joined, firstUnread, laterUnread];
   const mounted = render(h.tree("c", rows));
-  expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+  expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith(
+    "c",
+    document.hasFocus(),
+  );
   expect(screen.queryByText("New messages", { exact: true })).toBeNull();
   await h.completeEntry();
   expect(screen.queryByText("New messages", { exact: true })).toBeNull();
@@ -1017,7 +1020,10 @@ it.each(
     const mounted = render(
       h.tree("c", rows, false, true, timing !== "delayed mount"),
     );
-    expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith("c");
+    expect(h.enterChannel).toHaveBeenCalledExactlyOnceWith(
+      "c",
+      document.hasFocus(),
+    );
     if (position === "before" || timing === "delayed mount")
       await h.completeEntry();
     try {
@@ -2841,6 +2847,42 @@ it("a relay rebind of the visit Back returned to leaves the reader where they ar
   expect(scroll.toIndex).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(document.body);
   expect(rebound.complete).toHaveBeenCalledTimes(1);
+});
+
+it("Forward to a link's visit past an inline reveal restores the link's place", async () => {
+  const h = linkVisits();
+  // Open in channel reveals a thread's root inline, with no page navigation.
+  const inline = () => ({
+    messageId: h.latest.id,
+    signal: new AbortController().signal,
+  });
+  h.show(undefined, h.window, inline());
+  await h.settle();
+  const link = h.visit("link", h.linked.id);
+  h.show(link);
+  await h.settle();
+  expect(link.complete).toHaveBeenCalledWith({ status: "opened" });
+  // The reader scrolls on until "Reading place" is the first whole row.
+  h.layout({ [h.linked.id]: -200, [h.place.id]: 42 });
+  h.history.scrollTop = 500;
+  fireEvent.scroll(h.history);
+  // Back to the Open in channel visit reveals the root again, inline.
+  h.show(undefined, h.window, inline());
+  expect(h.places.get("link:timeline")).toEqual(h.saved);
+  await h.settle();
+  expect(document.activeElement).toBe(h.row(h.latest.id));
+  scroll.toIndex.mockClear();
+  const forward = h.visit("link", h.linked.id, true);
+  h.show(forward);
+  await h.settle();
+  expect(scroll.toIndex).toHaveBeenLastCalledWith(1, {
+    align: "start",
+    offset: -42,
+  });
+  expect(forward.complete).toHaveBeenCalledTimes(1);
+  // Leaving again keeps the link's place, not the root's.
+  h.show(h.visit("next", h.latest.id));
+  expect(h.places.get("link:timeline")).toEqual(h.saved);
 });
 
 it("a link's place is where its reveal left the reader, even if nothing scrolled", async () => {

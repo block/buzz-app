@@ -4,6 +4,7 @@ import { open, wheel, virtuaIdle } from "./timeline.mjs";
 import { closeSettings } from "./navigation.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import { animationsSettled } from "./animations.mjs";
 test.use({
   productionBroker: true,
   // Navigation can publish read positions through the real broker.
@@ -562,11 +563,7 @@ test.describe("thread activity", () => {
     await expect(threadStatus).toBeEmpty();
     await expect(channelTrigger).toHaveCount(0);
     // Finish panel entrance before starting the eight-second working signal.
-    await page.locator("[data-panel-dock]").evaluate(async (element) => {
-      await Promise.all(
-        element.getAnimations().map((animation) => animation.finished),
-      );
-    });
+    await animationsSettled(page.locator("[data-panel-dock]"));
     const typing = sendTyping(root.id);
     await expect(threadTrigger).toHaveAccessibleName(onlyAgent);
     await expect(threadStatus).toHaveText(/ is working$/);
@@ -831,11 +828,7 @@ test.describe("thread activity", () => {
     await expect(humanTyping(thread)).not.toContainText("Worker");
     await expect(workingStatus).toHaveText(/ are working\. .+ is typing$/);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.locator("[data-panel-dock]").evaluate(async (element) => {
-      await Promise.all(
-        element.getAnimations().map((animation) => animation.finished),
-      );
-    });
+    await animationsSettled(page.locator("[data-panel-dock]"));
     for (const key of keys) publish(key, roots[0]);
     publish(human, roots[0]);
     await expect(threadTrigger).toHaveAccessibleName(

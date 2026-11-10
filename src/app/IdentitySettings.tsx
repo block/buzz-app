@@ -11,6 +11,7 @@ import type { BackupStatus } from "../features/identity/backup";
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { BackupPrompt } from "../features/identity/BackupConsent";
 import {
+  backedUpLinkedKey,
   backupOfferedFor,
   federatedBuilderlabAccount,
 } from "../features/identity/builderlab-account";
@@ -22,10 +23,11 @@ import {
 } from "../features/federated-identity/service";
 import type { Membership } from "../features/communities/service";
 import {
-  coveredCommunities,
+  useSignInCommunities,
   serverName,
 } from "../features/federated-identity/community-servers";
 import { recoveryMessage } from "../features/federated-identity/CommunitySignIn";
+import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 import { PrivateKey } from "../features/identity/PrivateKey";
 import { SignOutDialog } from "../features/identity/SignOut";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
@@ -41,7 +43,6 @@ import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { CopyIcon } from "../shared/design-system/icons";
 import styles from "./IdentitySettings.module.css";
 import { writeClipboardText } from "../shared/clipboard";
-import { ExternalIdentityAuthorization } from "./ExternalIdentityAuthorization";
 
 const WAITING = {
   no_consent: undefined,
@@ -87,15 +88,18 @@ function backupFeedback(status: BackupStatus) {
  * (signed in to Builderlab, backup off or not yet chosen), Sync with
  * Builderlab opens the backup prompt, so a declined prompt can be reversed;
  * the prompt closes if the wait settles otherwise. Synced shows only once an
- * upload is confirmed. Hidden wherever first run would not offer backup, by
- * the same rule.
+ * upload is confirmed. Where Builderlab's page holds the next step, linking
+ * this key or switching the account to it, the sentence links its name there.
+ * Hidden wherever first run would not offer backup, by the same rule.
  */
 function BackupRow({
   identity,
   viewer,
+  openBuilderlab,
 }: {
   identity: Identity;
   viewer: string;
+  openBuilderlab: (() => void) | undefined;
 }) {
   const { backup } = identity;
   const status = useSyncExternalStore(backup.subscribe, backup.snapshot);
@@ -117,6 +121,13 @@ function BackupRow({
   const settled =
     status.status !== "running" && status.status !== "idle" && !waiting;
   const feedback = backupFeedback(status);
+  // Builderlab's page connects this key, or switches the account to it.
+  const at =
+    openBuilderlab &&
+    ((status.status === "waiting" && status.reason === "not_linked") ||
+      (status.status === "failed" && status.kind === "other_key_linked"))
+      ? (feedback?.indexOf("Builderlab") ?? -1)
+      : -1;
   const indicator =
     status.status === "running" || status.status === "complete"
       ? INDICATOR[status.status]
@@ -131,7 +142,20 @@ function BackupRow({
             in more easily on another device.
             {/* Mounted empty so a later sentence is announced. */}
             <span role="status" className="block">
-              {feedback}
+              {feedback && at >= 0 ? (
+                <>
+                  {feedback.slice(0, at)}
+                  <SettingsSectionLink
+                    section="block.builderlab/login"
+                    open={openBuilderlab}
+                  >
+                    Builderlab
+                  </SettingsSectionLink>
+                  {feedback.slice(at + "Builderlab".length)}
+                </>
+              ) : (
+                feedback
+              )}
             </span>
           </span>
         }
@@ -232,14 +256,9 @@ function BackedUpKey({
       federated,
       identity,
     );
-    Promise.all([account.linkedKey(), account.backupStatus()]).then(
-      ([linked, backups]) => {
-        if (!current) return;
-        const key =
-          linked && backups !== "unavailable" && backups.includes(linked)
-            ? linked
-            : null;
-        setRead({ revision, key });
+    backedUpLinkedKey(account).then(
+      (key) => {
+        if (current) setRead({ revision, key });
       },
       (error: unknown) => {
         if (current)
@@ -330,6 +349,7 @@ export function IdentitySettings({
   servers = signInServers,
   builderlabIdentity,
   lastActive,
+  openBuilderlab,
 }: {
   viewer?: string | undefined;
   identity?: Identity | undefined;
@@ -345,6 +365,8 @@ export function IdentitySettings({
   builderlabIdentity?: FederatedIdentity | undefined;
   /** When `pubkey` was last active in a channel on the current community's relay. */
   lastActive?: ((pubkey: string) => Promise<number | undefined>) | undefined;
+  /** Opens Settings → Builderlab; without it, Identity sync names it as plain text. */
+  openBuilderlab?: (() => void) | undefined;
 }) {
   const [signingOut, setSigningOut] = useState(false);
   const [offered, setOffered] = useState(false);
@@ -423,7 +445,11 @@ export function IdentitySettings({
                 {!signingOut && <PrivateKey identity={identity} />}
               </SettingsGroup>
               <SettingsGroup>
-                <BackupRow identity={identity} viewer={viewer} />
+                <BackupRow
+                  identity={identity}
+                  viewer={viewer}
+                  openBuilderlab={openBuilderlab}
+                />
                 {offered && viewer && builderlabIdentity && (
                   <BackedUpKey
                     viewer={viewer}
@@ -447,9 +473,6 @@ export function IdentitySettings({
                   identity={identity}
                   onClose={() => setSigningOut(false)}
                 />
-              )}
-              {!signingOut && (
-                <ExternalIdentityAuthorization key={viewer} viewer={viewer} />
               )}
             </div>
           )}
@@ -644,12 +667,13 @@ function ServerSession({
     session.snapshot,
     session.snapshot,
   );
-  if (!state.authority) return null;
-  const host = new URL(state.authority.identityOrigin).host;
-  const usedBy = coveredCommunities(
-    state.authority.communityHosts,
+  const usedBy = useSignInCommunities(
+    session,
+    state.authority?.communityHosts ?? [],
     memberships,
   );
+  if (!state.authority) return null;
+  const host = new URL(state.authority.identityOrigin).host;
   const expires = state.expiresAt
     ? new Date(state.expiresAt).toLocaleString(undefined, {
         dateStyle: "medium",

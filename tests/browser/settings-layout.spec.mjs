@@ -433,13 +433,27 @@ fiBuild(
         for (const width of [1440, 800, 390]) {
           await page.setViewportSize({ width, height: 1000 });
           await selectSettingsSection(page, "Builderlab");
-          const card = page.locator(".buzz-empty-state").filter({
-            has: page.getByRole("heading", {
-              name: signedIn
-                ? "No hosted communities yet"
-                : "Sign in to manage hosted communities",
-            }),
-          });
+          await expect(
+            page.getByRole("region", { name: "Builderlab", exact: true }),
+          ).toBeVisible();
+          const back = page.getByRole("button", { name: "Back to Builderlab" });
+          if (await back.isVisible()) await back.click();
+          const open = page.getByRole("button", { name: "Open Communities" });
+          await open.click();
+          const card = signedIn
+            ? page.getByRole("region", { name: "Communities", exact: true })
+            : page.locator(".buzz-empty-state").filter({
+                has: page.getByRole("heading", {
+                  name: "Sign in to manage hosted communities",
+                }),
+              });
+          if (signedIn) {
+            const create = card.getByRole("button", {
+              name: "Create community",
+              exact: true,
+            });
+            await expect(create).toBeEnabled();
+          }
           await expect(card).toBeVisible();
           for (const scale of ["100%", "200%"]) {
             await page.evaluate((value) => {
@@ -452,6 +466,7 @@ fiBuild(
                     const box = root.getBoundingClientRect();
                     return (
                       [...root.querySelectorAll("*")].every((node) => {
+                        if (!node.getClientRects().length) return true;
                         const child = node.getBoundingClientRect();
                         return (
                           child.left >= box.left && child.right <= box.right

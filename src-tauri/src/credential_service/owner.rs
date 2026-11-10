@@ -6,6 +6,7 @@ use super::{full_budgets, spend, CredentialService, Failure, Unsigned};
 use crate::identity::EventTemplate;
 use buzz_agent_controller::{bounded, framed, CANVAS_MAX_EVENT_BYTES};
 use serde_json::json;
+use std::net::SocketAddr;
 
 const STARTING: &str = "Buzz is still starting; retry shortly";
 
@@ -34,14 +35,24 @@ impl CredentialService {
         }
     }
 
-    pub(super) async fn pair(&self, params: &[String]) -> Result<String, Failure> {
+    /// `connection` is the caller's address and this service's, which name
+    /// the process asking.
+    pub(super) async fn pair(
+        &self,
+        params: &[String],
+        connection: Option<(SocketAddr, SocketAddr)>,
+    ) -> Result<String, Failure> {
         let [client, relay] = params else {
             return Err(Failure::new("invalid_request", "Wrong parameters for pair"));
+        };
+        let process = || async move {
+            let (peer, service) = connection?;
+            super::peer::name(peer, service).await
         };
         let (token, approver) = self
             .0
             .pairings
-            .pair(client, relay, None, || self.human())
+            .pair(client, relay, process, || self.human())
             .await?;
         Ok(json!({
             "token": token,

@@ -1,6 +1,9 @@
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import messageStyles from "./Messages.module.css";
-import { useReplacedTypers } from "../conversation/typing-presentation";
+import {
+  usePresentedAgents,
+  useReplacedTypers,
+} from "../conversation/typing-presentation";
 import { useChannelIdentityNames } from "../identity-names/react";
 import {
   useCallback,
@@ -97,7 +100,7 @@ export function useLiveConversationAgents(
   threadRootId: string | undefined,
   includeThreads = true,
 ): readonly string[] {
-  const replaced = useReplacedTypers(session, channelId, threadRootId);
+  const presented = usePresentedAgents(session, channelId, threadRootId);
   const watchChannel = !threadRootId && !includeThreads;
   const subscribe = useCallback(
     (listener: () => void) => {
@@ -132,7 +135,7 @@ export function useLiveConversationAgents(
       threadRootsOf(channelRowsOf(session, channelId, watchChannel)),
     );
     return [...details.keys()]
-      .filter((key) => !replaced.has(key))
+      .filter((key) => !presented.has(key))
       .sort()
       .join(",");
   };
@@ -148,6 +151,7 @@ export function useConversationAgents(
   includeThreads = true,
 ) {
   const replaced = useReplacedTypers(session, channelId, threadRootId);
+  const presented = usePresentedAgents(session, channelId, threadRootId);
   const entries = useSyncExternalStore(
     session.typing.subscribe,
     session.typing.snapshot,
@@ -200,7 +204,11 @@ export function useConversationAgents(
     getDetails,
     getDetails,
   );
-  const agents = [...details.keys()].filter((key) => !replaced.has(key)).sort();
+  // A message's live bubble is the agent's working indicator. Recorded history
+  // may own only the step details; then the conversation keeps its busy cue.
+  const agents = [...details.keys()]
+    .filter((key) => !presented.has(key))
+    .sort();
   return {
     activity: (session.agentActivity?.snapshot ?? noActivity)(),
     details,
@@ -444,6 +452,7 @@ export function TypingIndicator({
     : "";
   const firstStep = firstAgent ? details.get(firstAgent)?.label : undefined;
   const previewText =
+    (firstAgent && replaced.has(firstAgent)) ||
     firstStep === "Working" ||
     firstStep === "Received · waiting to start" ||
     firstStep === "Starting"

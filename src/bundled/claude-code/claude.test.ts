@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { appClient } from "../../buzz-mcp/app-client";
+import { callSessionTool } from "../../buzz-mcp/session-tools";
+import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
   backgroundTasks,
@@ -332,8 +335,12 @@ const interrupts = (fake: { received: Record<string, unknown>[] }) =>
       message.type === "control_request" &&
       (message.request as { subtype?: string }).subtype === "interrupt",
   );
-/** Ends the open turn as Claude does one stopped in the middle of a tool. */
-const abortTools = (fake: { emit(message: Record<string, unknown>): void }) => {
+/** Ends the open turn as Claude does one stopped in the middle of a tool;
+ * an older `claude` reports no idle. */
+const abortTools = (
+  fake: { emit(message: Record<string, unknown>): void },
+  idle = true,
+) => {
   fake.emit({
     type: "result",
     subtype: "error_during_execution",
@@ -342,12 +349,13 @@ const abortTools = (fake: { emit(message: Record<string, unknown>): void }) => {
     result: "Tool use was interrupted",
     session_id: "s1",
   });
-  fake.emit({
-    type: "system",
-    subtype: "session_state_changed",
-    state: "idle",
-    session_id: "s1",
-  });
+  if (idle)
+    fake.emit({
+      type: "system",
+      subtype: "session_state_changed",
+      state: "idle",
+      session_id: "s1",
+    });
 };
 
 it("interrupts a running turn with a control request, and does nothing when idle", async () => {
@@ -388,6 +396,278 @@ it("settles a stopped turn that Claude ends as aborted tools as stopped, not fai
   abortTools(fake);
   await expect(sent).resolves.toEqual({ ok: true, stopped: true });
   expect(claude.busy).toBe(false);
+});
+
+/** A Claude whose Buzz tools run through the real app client: its first
+ * `mem_get` of `later` holds until `release`, and other reads answer at once.
+ * With `holdStops`, Claude answers a Stop only when the test does. */
+async function heldTurns(env?: Record<string, string>) {
+  const { spawn, processes } = fakeSpawn();
+  const stops: string[] = [];
+  let holdStops = false;
+  let release: (() => void) | undefined;
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let later = 0;
+  const memories = vi.fn(async (slug?: string) => {
+    if (slug === "mem/later" && ++later === 1) {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    return {
+      entries: [{ slug: slug ?? "core", body: `${slug} notes`, createdAt: 1 }],
+      partial: false,
+    };
+  });
+  const signals: AbortSignal[] = [];
+  const tools = vi.fn(
+    async (_conversation: unknown, message: unknown, signal: AbortSignal) => {
+      signals.push(signal);
+      const { id, params } = message as {
+        id: number;
+        params: { name: string; arguments: Record<string, unknown> };
+      };
+      const client = appClient(
+        { pubkey: "agent", key: "agent" } as unknown as AgentHandle,
+        { read: vi.fn(), memories, signal },
+      );
+      return callSessionTool(client, {}, params.name, params.arguments).then(
+        (text) => ({ jsonrpc: "2.0", id, result: { content: [{ text }] } }),
+        (error: Error) => ({
+          jsonrpc: "2.0",
+          id,
+          result: { isError: true, content: [{ text: error.message }] },
+        }),
+      );
+    },
+  );
+  const claude = await ClaudeProcess.start(
+    async (id, options) => {
+      const process = await spawn(id, env ? { ...options, env } : options);
+      return {
+        ...process,
+        write: async (data: string) => {
+          const stop = holdStops && data.includes('"subtype":"interrupt"');
+          if (!stop) return process.write(data);
+          stops.push(JSON.parse(data).request_id);
+        },
+      };
+    },
+    { ...launch, sessionId: "s1", tools },
+  );
+  claude.conversation = "chan/root";
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  const answer = async (requestId: string) => {
+    const of = (message: Record<string, unknown>) =>
+      (message.response as { request_id?: string } | undefined)?.request_id ===
+      requestId;
+    await vi.waitFor(() => expect(fake.received.some(of)).toBe(true));
+    return JSON.stringify(fake.received.find(of));
+  };
+  const ask = (requestId: string, slug = "later") =>
+    fake.emit({
+      type: "control_request",
+      request_id: requestId,
+      request: {
+        subtype: "mcp_message",
+        server_name: "buzz",
+        message: {
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "tools/call",
+          params: { name: "mem_get", arguments: { slug } },
+        },
+      },
+    });
+  const answerStop = (requestId: string | undefined) =>
+    fake.emit({
+      type: "control_response",
+      response: { subtype: "success", request_id: requestId },
+    });
+  return {
+    claude,
+    fake,
+    stops,
+    holdStops: () => {
+      holdStops = true;
+    },
+    answerStop,
+    memories,
+    signals,
+    reading,
+    ask,
+    answer,
+    release: () => release?.(),
+  };
+}
+
+it("withholds a read an unprotected Stop overtook, which later work cannot revive", async () => {
+  const t = await heldTurns();
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("check my notes");
+    await flush();
+    t.ask("r1");
+    await t.reading;
+    await t.claude.interrupt();
+    t.release();
+    const refused = await t.answer("r1");
+    expect(refused).toContain('"isError":true');
+    expect(refused).not.toContain("later notes");
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+
+    // The next message is new work; the stopped call stays stopped.
+    void t.claude.send("again");
+    await flush();
+    t.ask("r2");
+    expect(await t.answer("r2")).toContain("later notes");
+    expect(t.signals[0]?.aborted).toBe(true);
+    expect(t.signals[1]?.aborted).toBe(false);
+  } finally {
+    t.release();
+    t.fake.finish();
+  }
+});
+
+it("answers a turn of its own after a Stop, while a call held across the Stop stays refused", async () => {
+  const t = await heldTurns();
+  try {
+    t.fake.hold = true;
+    const stopped = t.claude.send("check my notes");
+    await flush();
+    t.ask("r1");
+    await t.reading;
+    await t.claude.interrupt();
+    abortTools(t.fake);
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+
+    // A finished background task starts a turn with no message from Buzz.
+    sessionState(t.fake, "running");
+    t.ask("r2", "core");
+    t.ask("r3");
+    const memory = await t.answer("r2");
+    expect(memory).not.toContain('"isError":true');
+    expect(memory).toContain("core notes");
+    expect(await t.answer("r3")).toContain("later notes");
+
+    t.release();
+    const refused = await t.answer("r1");
+    expect(refused).toContain('"isError":true');
+    expect(refused).not.toContain("later notes");
+    sessionState(t.fake, "idle");
+  } finally {
+    t.release();
+  }
+});
+
+it.each([
+  ["reports idle", undefined],
+  ["settles per result", {}],
+])(
+  "keeps a message sent while a Stop lands in the stopped turn, when Claude %s",
+  async (_, env) => {
+    const t = await heldTurns(env);
+    const idle = !env;
+    t.fake.hold = true;
+    const stopped = t.claude.send("check my notes");
+    await flush();
+    if (idle) sessionState(t.fake, "running");
+    await t.claude.interrupt();
+    const folded = t.claude.send("and the later ones");
+    await flush();
+    // A call the stopped turn makes late is still stopped.
+    t.ask("r1", "core");
+    t.ask("r2");
+    expect(await t.answer("r1")).toContain('"isError":true');
+    expect(await t.answer("r2")).toContain('"isError":true');
+    expect(t.memories).not.toHaveBeenCalled();
+    let settled = false;
+    void stopped.then(() => {
+      settled = true;
+    });
+    abortTools(t.fake, false);
+    await flush();
+    // Claude that reports idle settles there, not at the result.
+    expect(settled).toBe(!idle);
+    if (idle) sessionState(t.fake, "idle");
+    await expect(stopped).resolves.toEqual({ ok: true, stopped: true });
+    await expect(folded).resolves.toEqual({ ok: true, stopped: true });
+
+    // The next message is new work, whose calls answer.
+    const next = t.claude.send("next");
+    await flush();
+    t.ask("r3", "core");
+    t.ask("r4");
+    expect(await t.answer("r3")).toContain("core notes");
+    await t.reading;
+    t.release();
+    expect(await t.answer("r4")).toContain("later notes");
+    t.fake.finish();
+    await expect(next).resolves.toEqual({ ok: true });
+  },
+);
+
+it("stops a turn that starts while an earlier Stop awaits Claude's answer", async () => {
+  const t = await heldTurns();
+  t.holdStops();
+  t.fake.hold = true;
+  const sent = t.claude.send("check my notes");
+  await flush();
+  const first = t.claude.interrupt();
+  abortTools(t.fake);
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
+
+  // Claude starts a turn of its own before answering the first Stop.
+  sessionState(t.fake, "running");
+  const second = t.claude.interrupt();
+  expect(t.stops).toHaveLength(2);
+  t.ask("r1", "core");
+  expect(await t.answer("r1")).toContain('"isError":true');
+  t.answerStop(t.stops[0]);
+  t.answerStop(t.stops[1]);
+  await expect(first).resolves.toBeUndefined();
+  await expect(second).resolves.toBeUndefined();
+  sessionState(t.fake, "idle");
+});
+
+it("asks Claude once for Stops made together, which share its refusal", async () => {
+  const t = await heldTurns();
+  t.fake.hold = true;
+  t.fake.interruptError = "not now";
+  const sent = t.claude.send("check my notes");
+  await flush();
+  const first = t.claude.interrupt();
+  const second = t.claude.interrupt();
+  await expect(first).rejects.toThrow("Claude did not stop: not now");
+  await expect(second).rejects.toThrow("Claude did not stop: not now");
+  expect(interrupts(t.fake)).toHaveLength(1);
+  // Claude refused, so the turn and its calls go on.
+  t.ask("r1", "core");
+  expect(await t.answer("r1")).toContain("core notes");
+  t.fake.finish();
+  await expect(sent).resolves.toEqual({ ok: true });
+});
+
+it("keeps work stopped when Claude refuses a repeated Stop", async () => {
+  const t = await heldTurns();
+  t.fake.hold = true;
+  const sent = t.claude.send("check my notes");
+  await flush();
+  await t.claude.interrupt();
+  t.fake.interruptError = "already stopping";
+  await expect(t.claude.interrupt()).rejects.toThrow(
+    "Claude did not stop: already stopping",
+  );
+  t.ask("r1", "core");
+  expect(await t.answer("r1")).toContain('"isError":true');
+  abortTools(t.fake);
+  await expect(sent).resolves.toEqual({ ok: true, stopped: true });
 });
 
 it("still reports aborted tools as a failure when the owner did not stop the turn", async () => {

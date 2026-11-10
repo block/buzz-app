@@ -22,6 +22,7 @@ export const claudeRun = (
   | "timeoutMs"
   | "syncedSettings"
   | "resumes"
+  | "readFile"
 > => ({
   models: (agent) => runtime.models(agent.key, agent.config),
   sessionControls: {
@@ -38,6 +39,7 @@ export const claudeRun = (
     await ready?.(turn.signal, turn.delivery.agent);
     return runtime.runOnce(turn);
   },
+  readFile: (agent, path, signal) => runtime.workspaceFile(agent, path, signal),
   timeoutMs: HANDOVER_MS,
   syncedSettings: {
     schema: syncedSettingsSchema,

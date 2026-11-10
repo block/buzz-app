@@ -68,17 +68,21 @@ let answering = 0;
  * are offered or added, which the app starts once launch ends, so the prompt
  * never opens over that dialog and decides with the communities it adds.
  * Closing the prompt saves nothing and keeps it closed until Builderlab signs
- * out or the app next starts.
+ * out or the app next starts. While it is `paused` behind another prompt,
+ * nothing is decided or asked either.
  */
 export function BackupConsent({
   identity,
   communities,
   servers = signInServers,
+  paused = false,
 }: {
   identity: Identity;
   communities: Pick<CommunityReader, "snapshot" | "subscribe">;
   /** The build's sign-in servers, for which communities its Builderlab hosts. */
   servers?: () => Promise<readonly SessionSnapshot[]>;
+  /** Another prompt is open, which this one waits behind. */
+  paused?: boolean;
 }) {
   const status = useSyncExternalStore(
     identity.backup.subscribe,
@@ -89,7 +93,7 @@ export function BackupConsent({
     subscribeLegacyImport,
     legacyImportPending,
   );
-  const held = launching || importing;
+  const held = launching || importing || paused;
   const [asking, setAsking] = useState<string>();
   const dismissed = useRef(false);
   const waiting =
@@ -185,6 +189,7 @@ export function BackupPrompt({
 }) {
   const [saving, setSaving] = useState<boolean>();
   const [error, setError] = useState<string>();
+  const sync = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (ended && saving === undefined && error === undefined) onClose();
   }, [ended, saving, error, onClose]);
@@ -214,6 +219,7 @@ export function BackupPrompt({
       title="Sync your identity with Builderlab?"
       description="Buzz will save an encrypted copy of your identity key with your Builderlab account. That copy can restore your identity, including in other apps where you use the same key."
       onClose={onClose}
+      initialFocus={sync}
       finalFocus={finalFocus}
       pending={saving !== undefined}
       actions={
@@ -227,6 +233,7 @@ export function BackupPrompt({
             I will manage my own key
           </Button>
           <Button
+            ref={sync}
             type="button"
             variant="prominent"
             disabled={saving === false}

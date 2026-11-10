@@ -34,6 +34,7 @@ import type { GitPluginSource } from "../features/navigation/targets";
 const importOperations = new WeakMap<object, Promise<void>>();
 import type {
   PluginInstallOutcome,
+  GitPluginInstallRequest,
   PluginInstallRequest,
 } from "../plugins/installer";
 
@@ -110,7 +111,7 @@ export function PluginImport({
   onReviewHandled?: () => void;
   returnFocus?: () => HTMLElement | null;
   /** A source to review, prefilled; the user still finds, reviews and confirms it. */
-  request?: PluginInstallRequest | undefined;
+  request?: GitPluginInstallRequest | undefined;
   onRequestSettled?:
     | ((id: number, outcome: PluginInstallOutcome) => void)
     | undefined;
@@ -133,7 +134,10 @@ export function PluginImport({
   const currentPlugin = catalog.plugins.find(
     (item) => item.manifest.id === updateId,
   );
-  const savedSource = updateAction?.source ?? currentPlugin?.updateSource;
+  const recordedSource = updateAction?.source ?? currentPlugin?.updateSource;
+  // A URL install is pinned to one artifact; it updates through its recommendation.
+  const savedSource =
+    recordedSource && "url" in recordedSource ? undefined : recordedSource;
   const [repository, setRepository] = useState(
     initialGit?.repository ??
       (savedSource && "repository" in savedSource
@@ -162,8 +166,27 @@ export function PluginImport({
   const [loading, setLoading] = useState(false);
   const [abandonable, setAbandonable] = useState(false);
   const mounted = useRef(true);
-  const [bound, setBound] = useState<PluginInstallRequest>();
-  const requested = !!bound && !updateId;
+  const [bound, setBound] = useState<GitPluginInstallRequest>();
+  // A link pinned to a commit and folder names one immutable plugin, so like a plugin's
+  // request it may update an imported plugin from the same source instead of being a duplicate.
+  const pinnedLink =
+    !bound &&
+    !!initialGit?.commit &&
+    initialGit.path !== undefined &&
+    existing?.source === "external";
+  const requested = (!!bound || pinnedLink) && !updateId;
+  // Native saves the requested ref for later updates, so the review must show a change to it.
+  const trackedReference =
+    existing?.updateSource && "reference" in existing.updateSource
+      ? existing.updateSource.reference
+      : undefined;
+  const requestedReference = requested
+    ? (bound?.source.reference ?? initialGit?.reference)
+    : undefined;
+  const changesReference =
+    trackedReference !== undefined &&
+    requestedReference !== undefined &&
+    requestedReference !== trackedReference;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [checkedRevision, setCheckedRevision] = useState<string>();
   const [checking, setChecking] = useState(false);
@@ -255,7 +278,7 @@ export function PluginImport({
     if (!open || !holdReview) return;
     return holdReview();
   }, [open, holdReview]);
-  const claimRequest = useEffectEvent((next: PluginInstallRequest) => {
+  const claimRequest = useEffectEvent((next: GitPluginInstallRequest) => {
     // The store refuses a confirmed request first: its install, perhaps in a
     // replaced importer, still reports the outcome.
     if (onRequestClaimed && !onRequestClaimed(next.id)) return;
@@ -357,9 +380,11 @@ export function PluginImport({
       ? `${existing.manifest.name} is already installed from ${
           installedSource && "repository" in installedSource
             ? sourceLabel(installedSource.repository, installedSource.path)
-            : installedSource
-              ? sourceLabel(installedSource.root, installedSource.path)
-              : "an unknown source"
+            : installedSource && "url" in installedSource
+              ? installedSource.url
+              : installedSource
+                ? sourceLabel(installedSource.root, installedSource.path)
+                : "an unknown source"
         }; remove it first to install it from ${sourceLabel(preview.source, candidate.path)}.`
       : null;
   const constraint =
@@ -375,6 +400,11 @@ export function PluginImport({
       ? "This repository is not at the commit that was requested. Nothing was installed."
       : null;
   const duplicate = updating && !updateId && (!requested || !!conflict);
+  const updateTarget = updateId
+    ? currentPlugin
+    : requested && !conflict
+      ? existing
+      : undefined;
   const upToDate =
     !conflict &&
     !pinError &&
@@ -712,6 +742,27 @@ export function PluginImport({
       pinError
     )
       return;
+    if (requested && existing) {
+      const snapshot = plugins.snapshot();
+      const live =
+        snapshot.configuration.status === "ready"
+          ? snapshot.configuration.catalog.plugins.find(
+              (item) => item.manifest.id === existing.manifest.id,
+            )
+          : undefined;
+      if (
+        live?.revision !== existing.revision ||
+        live.enabled !== existing.enabled ||
+        JSON.stringify(live.updateSource) !==
+          JSON.stringify(existing.updateSource)
+      ) {
+        showError(
+          "The installed plugin changed. Close this review and check again.",
+          installButton.current,
+        );
+        return;
+      }
+    }
     if (updateAction && updateId) {
       const source = pluginUpdateSource(plugins, updateId);
       if (
@@ -1008,10 +1059,9 @@ export function PluginImport({
           !error &&
           !showUnchanged &&
           reviewing &&
-          updateId &&
           candidate &&
-          currentPlugin?.source === "external" &&
-          !currentPlugin.enabled ? (
+          updateTarget?.source === "external" &&
+          !updateTarget.enabled ? (
             <p className="m-0 text-body-sm text-muted">
               This plugin will stay disabled.
             </p>
@@ -1367,6 +1417,13 @@ export function PluginImport({
                       publisher: {existing.publisher ?? "Unsigned"}.
                     </p>
                   )}
+                {reviewing && candidate && updateTarget && changesReference && (
+                  <p className="m-0 break-all text-body-sm">
+                    Future updates will follow{" "}
+                    {requestedReference || "the repository default"} instead of{" "}
+                    {trackedReference || "the repository default"}.
+                  </p>
+                )}
                 {reviewing && updating && (
                   <section aria-label="Update source" className="text-body-sm">
                     <div className="flex items-center gap-2 mb-2">

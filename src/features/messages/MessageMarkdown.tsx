@@ -22,12 +22,9 @@ import {
   channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
+  MentionLabel,
 } from "./ReferenceText";
-import {
-  AtIcon,
-  CopyIcon,
-  RobotIcon,
-} from "../../shared/design-system/icons/index";
+import { CopyIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
@@ -54,6 +51,8 @@ import styles from "./Messages.module.css";
 import { profileMentionNames, profileMentionParts } from "./profile-mentions";
 import {
   isLiteralMarkdownContext,
+  isPlainProse,
+  plainProseTree,
   prepareMarkdown,
   type LiteralRange,
   type PreparedMarkdown,
@@ -307,7 +306,35 @@ type HtmlNode = {
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: HtmlNode[];
+  value?: string;
 };
+const blockTags = new Set([
+  ...["p", "ul", "ol", "li", "blockquote", "pre", "hr", "section"],
+  ...["table", "h1", "h2", "h3", "h4", "h5", "h6"],
+]);
+const isBlock = (node: HtmlNode | undefined) =>
+  node?.type === "root" || blockTags.has(node?.tagName ?? "");
+/** Bodies keep authored spaces (`white-space: pre-wrap`), so drop the newlines
+ * the renderer writes only as markup: between blocks and after a `<br>`. */
+function rehypeMarkupNewlines() {
+  return function visit(node: HtmlNode) {
+    const children = node.children;
+    if (!children) return;
+    node.children = children.flatMap((child, index) => {
+      if (child.type !== "text") {
+        visit(child);
+        return [child];
+      }
+      const before = index ? children[index - 1] : node;
+      const after = children[index + 1] ?? node;
+      let value = child.value ?? "";
+      if (before?.tagName === "br" || isBlock(before))
+        value = value.replace(/^\n/, "");
+      if (isBlock(after)) value = value.replace(/\n$/, "");
+      return value ? [{ ...child, value }] : [];
+    });
+  };
+}
 /** Lists and quotes the slot descends into, so their last line keeps it. */
 const editedSlotContainers = new Set(["ul", "ol", "li", "blockquote"]);
 /** Leave a slot after the body's last rendered line for the edited marker:
@@ -683,7 +710,6 @@ function PreparedMessageMarkdown({
       interactive && typeof target === "string" && !!canOpenLink?.(target);
     if (typeof text === "string" && typeof target === "string") {
       const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
-      const Icon = agent ? RobotIcon : AtIcon;
       const Mention = clickable ? "button" : "span";
       // Selection copy reads the identity and the whole label (selection-copy.ts).
       return (
@@ -704,34 +730,20 @@ function PreparedMessageMarkdown({
               : undefined
           }
         >
-          <Icon aria-hidden="true" className={referenceStyles.icon} />
-          {label}
+          <MentionLabel agent={!!agent} label={label} />
         </Mention>
       );
     }
     return undefined;
   };
   const components: MessageComponents = {
-    p: ({ node, ...props }) => {
-      const first = node?.children[0];
-      const element = first?.type === "element" ? first : undefined;
-      const href = element?.properties.href;
-      const leadingMention =
-        typeof element?.properties["data-profile-target"] === "string" ||
-        (element?.tagName === "a" &&
-          typeof href === "string" &&
-          !!profileKey(href) &&
-          interactive &&
-          !!canOpenLink?.(href));
-      return (
-        <p
-          {...props}
-          className={largeEmoji ? styles.text : undefined}
-          data-single-emoji={largeEmoji || undefined}
-          data-leading-mention={leadingMention || undefined}
-        />
-      );
-    },
+    p: ({ node: _node, ...props }) => (
+      <p
+        {...props}
+        className={largeEmoji ? styles.text : undefined}
+        data-single-emoji={largeEmoji || undefined}
+      />
+    ),
     a: ({ href: target, children }) => {
       const href =
         target &&
@@ -744,12 +756,6 @@ function PreparedMessageMarkdown({
           : safeLinkUrl(target));
       if (href && profileKey(href)) {
         const label = labelText(children);
-        if (!interactive || !canOpenLink?.(href))
-          return (
-            <span>
-              {children} ({href})
-            </span>
-          );
         return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
       }
       return href ? (
@@ -872,6 +878,11 @@ const parsedBodies = recentResults<ReactElement>(
   (key, body) => 2 + elementCount(body) + Math.ceil(key.length / 500),
 );
 
+/** Plain prose skips micromark: the same tree, then the same plugins. */
+function remarkPlainProse(this: { parser?: unknown }) {
+  this.parser = plainProseTree;
+}
+
 const MarkdownBody = memo(function MarkdownBody({
   protectedContent,
 }: {
@@ -887,6 +898,9 @@ const MarkdownBody = memo(function MarkdownBody({
     () =>
       Markdown({
         remarkPlugins: [
+          // Protection only inserts placeholders isPlainProse rejects, so this
+          // agrees with prepareMarkdown's check on the raw content.
+          ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
           remarkGfm,
           [remarkBareLinkEnd, protectedContent.content],
           remarkBreaks,
@@ -894,7 +908,7 @@ const MarkdownBody = memo(function MarkdownBody({
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,
         ],
-        rehypePlugins: [rehypeEditedSlot],
+        rehypePlugins: [rehypeMarkupNewlines, rehypeEditedSlot],
         components: markdownComponents,
         skipHtml: true,
         // The live anchor renderer validates URLs. Cached parsing cannot decide

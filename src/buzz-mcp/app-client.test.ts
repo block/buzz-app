@@ -374,3 +374,24 @@ it("offers the handle's settings, checking the turn before each call", () => {
   expect(settings.list).not.toHaveBeenCalled();
   expect(settings.get).not.toHaveBeenCalled();
 });
+
+it("never passes on an owner-read capability, even from a handle that carries one", () => {
+  const read = vi.fn();
+  const stale = Object.fromEntries(
+    [
+      "channels",
+      "channel",
+      "members",
+      "messages",
+      "canvas",
+      "canvasHistory",
+      "held",
+    ].map((name) => [name, read]),
+  );
+  const client = appClient(
+    { pubkey: "agent", ownerAccess: stale } as unknown as AgentHandle,
+    { read: vi.fn(), memories: async () => ({ entries: [], partial: false }) },
+  );
+  expect("ownerAccess" in client).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+});

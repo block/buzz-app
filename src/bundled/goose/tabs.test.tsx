@@ -470,6 +470,127 @@ it("saves a thinking level goose lists for the model, and marks one it does not"
   );
 });
 
+it("offers Create agent a Thinking row with goose's levels for the chosen model", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    thinking: {
+      "": { current: "medium", levels: ["low", "medium", "high"] },
+      "plain-model": { current: "off", levels: ["off"] },
+    },
+  });
+  const { CreateThinking } = createTabs({
+    setup: new GooseSetup(fake),
+    ...unused,
+  });
+  if (!CreateThinking) throw new Error("no Thinking field");
+  const changes: Config[] = [];
+  const { rerender } = render(
+    <CreateThinking
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      onChange={(next) => changes.push(next)}
+    />,
+  );
+  const user = userEvent.setup();
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  await waitFor(() => expect(thinking).toHaveTextContent("Medium · Default"));
+  await user.click(thinking);
+  await user.click(await screen.findByRole("option", { name: "High" }));
+  expect(changes.at(-1)).toEqual({ ...DEFAULT_CONFIG, effort: "high" });
+
+  // Another model reads its own levels.
+  rerender(
+    <CreateThinking
+      config={{ ...DEFAULT_CONFIG, model: "plain-model" }}
+      disabled={false}
+      onChange={(next) => changes.push(next)}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("Off · Default"),
+  );
+});
+
+it("says when Create agent's Thinking cannot read goose's levels, and tries again", async () => {
+  let fail = true;
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    thinking: { "": { current: "medium", levels: ["low", "medium"] } },
+  });
+  const setup = new GooseSetup(fake);
+  const efforts = setup.efforts.bind(setup);
+  vi.spyOn(setup, "efforts").mockImplementation((choice) =>
+    fail ? Promise.reject(new Error("goose is busy")) : efforts(choice),
+  );
+  const { CreateThinking } = createTabs({ setup, ...unused });
+  if (!CreateThinking) throw new Error("no Thinking field");
+  render(
+    <CreateThinking
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      onChange={() => undefined}
+    />,
+  );
+  const user = userEvent.setup();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not read goose's levels: goose is busy",
+  );
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("Medium · Default"),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Try again" }),
+  ).not.toBeInTheDocument();
+});
+
+it("reads Create agent's Thinking levels again when a setup check recovers", async () => {
+  let fail = true;
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks", modelId: "goose-claude" },
+    thinking: { "": { current: "medium", levels: ["low", "medium"] } },
+  });
+  const setup = new GooseSetup(fake);
+  const efforts = setup.efforts.bind(setup);
+  const reads = vi
+    .spyOn(setup, "efforts")
+    .mockImplementation((choice) =>
+      fail ? Promise.reject(new Error("goose is busy")) : efforts(choice),
+    );
+  const { CreateThinking } = createTabs({ setup, ...unused });
+  if (!CreateThinking) throw new Error("no Thinking field");
+  render(
+    <CreateThinking
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      onChange={() => undefined}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not read goose's levels: goose is busy",
+  );
+  const failedReads = reads.mock.calls.length;
+  fail = false;
+  // As the model field's Try again does.
+  await act(() => setup.check());
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("Medium · Default"),
+  );
+  expect(reads.mock.calls.length).toBeGreaterThan(failedReads);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 it("splits Settings as the profile does: choices under Identity, the rest apart", async () => {
   const fake = fakeSpawn({
     providers: PROVIDERS,
@@ -845,7 +966,9 @@ it("lists the agent's saved conversations and reads one's transcript by id, with
       name: "View transcript: chan · thread 11111111",
     }),
   );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
   expect(searches(fake)).toEqual([]);
 });
@@ -863,7 +986,9 @@ it("searches goose's history for a conversation with no saved session only when 
   expect(done).toHaveBeenCalledTimes(1);
   expect(searches(fake)).toEqual([]);
   await userEvent.setup().click(search);
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toHaveLength(1);
 });
 
@@ -917,7 +1042,9 @@ it("lists conversations by channel name, with running and standalone sessions, o
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "View transcript: timer/t" }));
-  expect(await screen.findByText("Hi from timer")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from timer", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(keyword(fake)).toEqual([]);
 });
 
@@ -955,9 +1082,13 @@ it("follows the open conversation's newest session on Refresh", async () => {
       name: "View transcript: chan · thread 11111111",
     }),
   );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   change({ saved: [{ key: `chan/${ROOT}`, at: 2, sessions: ["s2", "s1"] }] });
-  expect(await screen.findByText("Hi from s2")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from s2", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
 });
 
@@ -972,7 +1103,9 @@ it("finds a thread's conversation in its channel's saved session", async () => {
       initialTranscript: { opening: 1, done: vi.fn() },
     },
   );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
 });
 
@@ -991,7 +1124,9 @@ it("opens a channel-scoped agent's channel from a thread, following its first sa
     await screen.findByText(/Buzz saved no goose session/),
   ).toBeInTheDocument();
   change({ saved: [{ key: "chan", at: 1, sessions: ["s1"] }] });
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
   expect(searches(fake)).toEqual([]);
 });
 
@@ -1006,7 +1141,9 @@ it("searches a thread-scoped agent's thread past an empty saved channel record",
     .click(
       await screen.findByRole("button", { name: "Search older sessions" }),
     );
-  expect(await screen.findByText("Hi from goose")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Hi from goose", { selector: "summary span" }),
+  ).toBeInTheDocument();
 });
 
 it("keeps a standalone run listed past a full page of saved conversations", () => {

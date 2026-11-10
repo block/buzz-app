@@ -43,7 +43,10 @@ import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
-import { CommunitySignIn } from "../../features/federated-identity/CommunitySignIn";
+import {
+  CommunityRefusalNotice,
+  CommunitySignIn,
+} from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { Membership } from "../../features/communities/service";
 
@@ -161,6 +164,10 @@ function ScopedSidebar({
     preferences?.subscribe ?? noSubscription,
     () => preferences?.snapshot(),
   );
+  // The community refused this account: one notice on every page says what
+  // fixes it, so the sidebar keeps no notice or Try again of its own.
+  const refused =
+    connection.status === "error" && connection.denied && !connection.retrying;
   // A cached startup session has no Solo capabilities yet; its unavailable
   // placeholders still change height when the live inventories arrive.
   const soloReady =
@@ -277,7 +284,7 @@ function ScopedSidebar({
                 {...frame}
               >
                 {/* Relay outages for every inventory recover through one
-                    automatic owner; its notice is the single Retry. */}
+                    automatic owner; its one notice shows on every page. */}
                 {!connection.cached && (
                   <RecoveryNotice recovery={connection.session.recovery} />
                 )}
@@ -305,14 +312,7 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
-                      renderContents={(
-                        ordinary,
-                        ordinaryActions,
-                        header,
-                        creationTrigger,
-                        pendingClick,
-                        headerActions,
-                      ) => (
+                      renderContents={(ordinary, header, pendingClick) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
                           session={connection.session}
@@ -321,8 +321,6 @@ function ScopedSidebar({
                           target={props.target}
                           sidebar={sidebar}
                           ordinary={ordinary}
-                          ordinaryActions={ordinaryActions}
-                          creationTrigger={creationTrigger}
                           pendingClick={pendingClick}
                           groupDisclosure={
                             filter === "all"
@@ -337,7 +335,6 @@ function ScopedSidebar({
                               : undefined
                           }
                           hidePrimaryHeading={filter === "solo"}
-                          fallbackHeaderActions={headerActions}
                           fallback={
                             <>
                               {header}
@@ -386,32 +383,44 @@ function ScopedSidebar({
             <SidebarList>
               {/* A connection retrying by itself is still connecting; only a
                   settled failure asks for Try again, right beside its notice. */}
-              <div className={styles.connectionStatus}>
-                <p>
-                  {connection.status === "connecting" || connection.retrying
-                    ? "Connecting…"
-                    : connection.denied
-                      ? "You don’t have access to this community."
+              {refused ? (
+                <CommunityRefusalNotice
+                  // A refusal while connecting is the relay's about access.
+                  refusal={connection.refusal ?? "access"}
+                  identity={communityIdentity(
+                    props.federatedIdentity,
+                    connection.origin,
+                  )}
+                  retry={props.relay.retry}
+                  relay={connection.origin}
+                  memberships={props.memberships}
+                />
+              ) : (
+                <div className={styles.connectionStatus}>
+                  <p>
+                    {connection.status === "connecting" || connection.retrying
+                      ? "Connecting…"
                       : connection.status === "error"
                         ? "Couldn’t load channels."
                         : "Choose a community to see channels."}
-                </p>
-                {connection.status === "error" && !connection.retrying && (
-                  <>
-                    <CommunitySignIn
-                      identity={communityIdentity(
-                        props.federatedIdentity,
-                        connection.origin,
-                      )}
-                      error={connection.error}
-                      retry={props.relay.retry}
-                      relay={connection.origin}
-                      memberships={props.memberships}
-                    />
-                    <Button onClick={props.relay.retry}>Try again</Button>
-                  </>
-                )}
-              </div>
+                  </p>
+                  {connection.status === "error" && !connection.retrying && (
+                    <>
+                      <CommunitySignIn
+                        identity={communityIdentity(
+                          props.federatedIdentity,
+                          connection.origin,
+                        )}
+                        error={connection.error}
+                        retry={props.relay.retry}
+                        relay={connection.origin}
+                        memberships={props.memberships}
+                      />
+                      <Button onClick={props.relay.retry}>Try again</Button>
+                    </>
+                  )}
+                </div>
+              )}
             </SidebarList>
           </SidebarFrame>
         </div>

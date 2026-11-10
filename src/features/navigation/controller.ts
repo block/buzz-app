@@ -1,7 +1,9 @@
 import {
   coversWorkspace,
+  joinBeneath,
   parseOpenTarget,
   targetKey,
+  withoutJoin,
   type OpenTarget,
 } from "./targets";
 import type {
@@ -513,7 +515,27 @@ export function createNavigationController(
                 }
                 history.push(target);
               }
-            } else history.push(target);
+            } else {
+              // A join dialog keeps only the view beneath it. The visit it
+              // opens over drops one-shot data (a Settings card's route), so
+              // Close, Back and reload return to that view, never replay it.
+              const beneath = joinBeneath(current.target);
+              if (
+                target.join &&
+                !current.target.join &&
+                !history.snapshot().invalidAddress &&
+                targetKey(beneath) !== targetKey(current.target) &&
+                targetKey(beneath) === targetKey(withoutJoin(target))
+              ) {
+                resolving = active;
+                try {
+                  history.resolve(beneath);
+                } finally {
+                  resolving = undefined;
+                }
+              }
+              history.push(target);
+            }
           }
           return active.promise;
         } catch {

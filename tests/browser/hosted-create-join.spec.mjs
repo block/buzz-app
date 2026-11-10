@@ -150,6 +150,16 @@ test("creating a hosted community joins it and lists it in the picker", async ({
   ).toHaveValue("https://secondary.example");
   await expect(settings).toHaveCount(1);
   await expect(create).toHaveCount(0);
+  // Back from the restored join reaches Settings, not the spent Create form.
+  await page.goBack();
+  await expect(joining).toHaveCount(0);
+  await expect(settings).toBeVisible();
+  // The card shows its overview, listing the new community, not the form.
+  await expect(
+    settings.getByText("secondary", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(create).toHaveCount(0);
+  await page.goForward();
   await joining.getByRole("button", { name: "Continue", exact: true }).click();
   const name = setup.getByRole("textbox", {
     name: "Display name",

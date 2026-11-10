@@ -42,10 +42,11 @@ const STEPS: Readonly<Record<string, readonly string[]>> = {
   "rollout-stat": ["rollout-stat"],
   "read-window": ["read-window"],
   login: ["login"],
+  logout: ["logout"],
   review: ["review"],
 };
 /** Starts `codex`, `app-server`, `install`, `use`, `adopt`, `home`,
- * `rollout-stat`, `read-window`, `login` and `review` as steps of `codex.sh`, which the manifest grants as `bash -c`; other
+ * `rollout-stat`, `read-window`, `login`, `logout` and `review` as steps of `codex.sh`, which the manifest grants as `bash -c`; other
  * processes start as declared. */
 export const withScript =
   (spawn: Spawn): Spawn =>
@@ -219,7 +220,7 @@ async function testRelease(spawn: Spawn, version: string) {
 export type SetupState = Readonly<{
   status: CodexStatus | undefined;
   checking: boolean;
-  running: "install" | "login" | undefined;
+  running: "install" | "login" | "logout" | undefined;
   /** The running or last step's output. */
   output: string;
   /** Why the latest release is not the one in use, after it failed its test. */
@@ -356,6 +357,24 @@ export class CodexSetup {
     if (!this.spawn || this.state.running) return Promise.resolve();
     const work = this.perform(this.spawn, step, asked);
     return step === "install" ? this.hold(work) : work;
+  }
+  /** Signs out of Codex, then checks again. Buzz shares its sign-in with the
+   * Codex CLI on this computer, so that signs out too. Rejects with why it
+   * could not, leaving the sign-in as it was. */
+  async signOut() {
+    const spawn = this.spawn;
+    if (!spawn || this.state.running) return;
+    this.cancelled = false;
+    this.set({ running: "logout", output: "" });
+    try {
+      await this.step(spawn, "logout", [], "Sign-out").catch((error) => {
+        throw new Error(this.state.output.trim() || message(error));
+      });
+    } finally {
+      this.process = undefined;
+      this.set({ running: undefined });
+      await this.check();
+    }
   }
   private async perform(
     spawn: Spawn,

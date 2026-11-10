@@ -1952,6 +1952,33 @@ it("reopens the shared server after it exits", async () => {
   await f.runtime.run(f.delivery("again"));
   await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
 });
+it("replaces the shared server after a sign-out, once the running turn ends", async () => {
+  const f = fixture();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  f.runtime.restart();
+  // The running turn keeps its server, and a mention meanwhile joins it.
+  expect(servers(f)).toHaveLength(1);
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  // Once the turn's conversation lets go, the old server is dropped.
+  // biome-ignore lint/complexity/useLiteralKeys: reads the runtime's private server.
+  await vi.waitFor(() => expect(f.runtime["server"]).toBeUndefined());
+  await f.runtime.run(f.delivery("again"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+  f.runtime.dispose();
+});
+
+it("replaces the shared server at once after a sign-out when no turn is running", async () => {
+  const f = fixture();
+  f.runtime.warm();
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(1));
+  f.runtime.restart();
+  await f.runtime.run(f.delivery("work"));
+  await vi.waitFor(() => expect(servers(f)).toHaveLength(2));
+  f.runtime.dispose();
+});
+
 it("refuses a synced effort its model lacks, where a local one falls back", async () => {
   const f = fixture();
   const xhigh = (content: string) => {

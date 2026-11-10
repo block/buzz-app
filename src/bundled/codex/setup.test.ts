@@ -215,6 +215,52 @@ it("runs sign-in, shows its output, and checks again after", async () => {
   ]);
 });
 
+it("signs out, then checks again", async () => {
+  const { spawn, calls } = scripted({
+    "codex --version": { stdout: "codex-cli 0.162.1\n" },
+    "codex login status": { stderr: "Not logged in\n", code: 1 },
+  });
+  const setup = new CodexSetup(spawn);
+  const run = setup.signOut();
+  expect(setup.snapshot().running).toBe("logout");
+  await run;
+  expect(setup.snapshot()).toMatchObject({
+    running: undefined,
+    status: { state: "signed-out", version: "0.162.1" },
+  });
+  expect(calls.map((call) => `${call.id} ${call.args.join(" ")}`)).toEqual([
+    "logout ",
+    "codex --version",
+    "codex login status",
+    "app-server ",
+  ]);
+});
+
+it("rejects with why sign-out failed, and still checks again", async () => {
+  const { spawn } = scripted({
+    logout: { stderr: "no permission\n", code: 1 },
+    "codex --version": { stdout: "codex-cli 0.162.1\n" },
+  });
+  const setup = new CodexSetup(spawn);
+  await expect(setup.signOut()).rejects.toThrow("no permission");
+  expect(setup.snapshot()).toMatchObject({
+    running: undefined,
+    status: { state: "ready", version: "0.162.1" },
+  });
+});
+
+it("runs sign-out as the logout step of its script", async () => {
+  const spawned: { id: string; args: readonly string[] }[] = [];
+  const spawn = withScript(async (id, options) => {
+    spawned.push({ id, args: options?.args ?? [] });
+    return finished({ code: 0 }, options);
+  });
+  await (await spawn("logout")).exited;
+  expect(spawned).toEqual([
+    { id: "codex-sh", args: [script, "codex.sh", "logout"] },
+  ]);
+});
+
 it("explains that it needs the desktop app", async () => {
   const setup = new CodexSetup(undefined);
   await setup.check();

@@ -418,8 +418,10 @@ for 30 days expires.
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
   agent unless a namesake or a longer name that begins the same way could be
   meant; then pick from the list. A longer name of someone outside the channel
-  does not stop a channel member's name from selecting. Typing a name alone
-  does not guarantee a notification. Selecting someone outside the channel does
+  does not stop a channel member's name from selecting, so pick such a person
+  from the list: with a member named `Wes`, typing `@Wes Smith` mentions Wes,
+  not `Wes Smith` from outside the channel. Typing a name alone does not
+  guarantee a notification. Selecting someone outside the channel does
   not grant access; inviting them requires an explicit decision from someone
   with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.

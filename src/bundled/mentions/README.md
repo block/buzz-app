@@ -255,12 +255,18 @@ client keeps the character after the mention in place of the space, so
 `@Honey's` mentions Honey. Where Space would not select, the character is typed
 into the query instead. A longer known name that blocks Space blocks every one
 of these characters too, whichever character comes next in that name: `'`
-after `Pat O` while `Pat O'Brien` is known stays in the query, and so does `,`
-after `Wes` while `Wes Smith` is known. A saved team with the same or a longer
-name blocks them too. Where Space may hold a pending
-mention, so may this character, kept after the chip. A selected or pending
-mention ends at a name boundary: the next character that is not a letter, mark,
-digit or underscore.
+after `Pat O` while a member `Pat O'Brien` is known stays in the query, and so
+does `,` after `Wes` while a member `Wes Smith` is known. A saved team with
+the same or a longer name blocks them too. Since an outside choice's longer
+name never blocks a member's exact name, it cannot be typed out past one of
+these characters or Space: with a member `Wes`, `@Wes Smith` mentions Wes,
+followed by the text ` Smith`, even while `Wes Smith` outside the channel is
+listed, and a member `Pat O` takes `@Pat O'Brien` the same way. The user picks
+such a choice from the list instead. One that continues the member's name with
+another character, such as `Wes-Smith`, can still be typed in full. Where
+Space may hold a pending mention, so may this character, kept after the chip.
+A selected or pending mention ends at a name boundary: the next character that
+is not a letter, mark, digit or underscore.
 
 While the client cannot yet decide — the member list, member names or agent
 list is still loading, or a directory search for the query is waiting or
@@ -272,12 +278,14 @@ anything else, including a failed or truncated search or a bounded wait
 expiring (desktop: 8 s), returns the text to prose. A name the client has
 already declined is not pending: a trailing space or punctuation, a multi-word
 query that continues no name, a saved team with the same or a longer name, or
-a known choice whose name continues the query and so blocks it (a loaded
-member `Mira Example` for `mira`) keeps Space a normal space. Such a longer
-name blocks whatever else arrives, and the next word may complete it
-(`@mira Example ` selects the member), which a chip that ended the query could
-not. A pending name that,
-once the full choice set is known, only longer known names keep from selecting
+a known choice whose name continues the query and blocks it whatever else
+arrives (a loaded member `Mira Example` for `mira`) keeps Space a normal
+space. An outside choice's longer name declines Space only once every
+member's name is known or known to be absent: until then a member may still
+have the exact name, which an outside name does not block. The next word may
+complete the longer name (`@mira Example ` selects the member), which a chip
+that ended the query could not. A pending name that, once the full choice set
+is known, only longer known names keep from selecting
 (`Mira Example`, found by the directory search for `mira` after the chip was
 held) MAY instead extend over the words typed after the chip when they spell
 one of those names up to a name boundary (`@mira Example hi` becomes a pending

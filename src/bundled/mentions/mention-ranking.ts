@@ -248,9 +248,10 @@ export function continuingNames(
 }
 /**
  * Whether a known longer name keeps the query's exact name from selecting
- * (README section 5): Space is declined, not pending. Once a member has the
- * exact name, only another member's longer name does; a choice outside the
- * channel never makes a member's name ambiguous.
+ * (README section 5). Once a member has the exact name, only another
+ * member's longer name does; a choice outside the channel never makes a
+ * member's name ambiguous. So a member's name that loads later can lift an
+ * outside name's block.
  */
 export function continuedMention(
   choices: readonly MentionChoice[],

@@ -15120,6 +15120,42 @@ it.each([
   },
 );
 
+it.each([
+  ["Wes", "Wes Smith"],
+  ["Pat O", "Pat O'Brien"],
+])(
+  "mentions the member %j when the listed outside %j is typed out in full",
+  async (member, outside) => {
+    // An outside longer name never blocks a member's exact name, so the Space
+    // or punctuation inside it selects the member and the rest stays text.
+    // Only the list can choose the outside name (README section 5).
+    const h = mountDirectoryMention();
+    h.setProfiles(
+      new Map([
+        [first.pubkey, { name: member }],
+        [second.pubkey, { name: "Another Member" }],
+      ]),
+    );
+    await h.user.type(h.input(), `@${member}`);
+    await waitFor(() => expect(h.people).toHaveBeenCalled());
+    await h.release({
+      people: [{ pubkey: "f".repeat(64), name: outside }],
+      hasMore: false,
+    });
+    await screen.findByRole("option", { name: new RegExp(outside) });
+    await h.user.keyboard(`${outside.slice(member.length)} hi`);
+    expect(h.input()).toHaveValue(`@${outside} hi`);
+    expect(h.recipients()).toHaveLength(1);
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+      "channel",
+      `@${outside} hi`,
+      [first.pubkey],
+      [],
+    );
+  },
+);
+
 it("extends a pending chip to the one longer name the typed words complete when several continue it", async () => {
   const h = mountDirectoryMention();
   const examples = { pubkey: "d".repeat(64), name: "Mira Examples" };

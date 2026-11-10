@@ -3856,37 +3856,38 @@ it("Space selects someone outside the channel by a pasted npub once the director
   }
 });
 it.each([
-  { name: "Jose", namesake: false },
-  { name: "Jose", namesake: true },
-  // A literal `Jose (agent)` is a longer name, but outside the channel it
-  // does not block a member's name.
-  { name: "Jose (agent)", namesake: false },
+  { name: "Jose", namesake: false, member: false },
+  { name: "Jose", namesake: true, member: false },
+  // A literal `Jose (agent)` is a longer name. Only a member's longer name
+  // blocks a member's exact name, so this agent is in the channel.
+  { name: "Jose (agent)", namesake: false, member: true },
 ])(
   "Space distinguishes an agent qualifier from the real name (%j)",
-  async ({ name, namesake }) => {
-    const h = spaceFixture("Jose");
+  async ({ name, namesake, member }) => {
+    const agent = member ? otherMember : outsideJose;
+    const h = spaceFixture("Jose", member ? { [agent]: name } : {});
     try {
       await waitFor(() =>
         expect(h.people).toHaveBeenCalledWith("jose", 1, expect.anything()),
       );
-      expect(h.result()?.spaceId).toBe(h.member);
       await h.finish({
         people: [
-          { pubkey: outsideJose, name, isAgent: true },
+          { pubkey: agent, name, isAgent: true },
           ...(namesake
             ? [{ pubkey: "e".repeat(64), name, isAgent: true as const }]
             : []),
         ],
         hasMore: false,
       });
+      // Both show `Jose (agent)`; only the literal name continues `jose`.
       await waitFor(() =>
         expect(
-          h.result()?.items.find((item) => item.id === outsideJose)?.label,
+          h.result()?.items.find((item) => item.id === agent)?.label,
         ).toMatch(namesake ? /^Jose \(agent\) · / : /^Jose \(agent\)$/),
       );
-      expect(h.result()?.spaceId).toBe(h.member);
-      expect(h.canSpace(h.member)).toBe(true);
-      expect(h.canSpace(outsideJose)).toBe(false);
+      expect(h.result()?.spaceId).toBe(member ? undefined : h.member);
+      expect(h.canSpace(h.member)).toBe(!member);
+      expect(h.canSpace(agent)).toBe(false);
     } finally {
       h.dispose();
     }
@@ -4510,6 +4511,101 @@ it("Space keeps waiting after a member's profile read fails until a retry settle
     expect(h.canSpace(h.member)).toBe(true);
   } finally {
     h.dispose();
+  }
+});
+
+it("Space holds a member's name while its profile loads, even beside a longer outside name already listed", async () => {
+  // `@jos` found `Jose-Luis` outside the channel on a truncated page, which
+  // `@jose` keeps showing while its own search runs. The member's profile
+  // read is still in flight, so the member may yet be the exact `Jose`,
+  // which no outside name blocks: Space may hold the name, not decline it.
+  const h = setup();
+  const jose = keypair();
+  const reads: ((events: RelayEvent[]) => void)[] = [];
+  const directory = createProfileDirectory({
+    read: () => new Promise<RelayEvent[]>((resolve) => reads.push(resolve)),
+  });
+  const list = {
+    status: "ready" as const,
+    channels: [
+      { id: "parent", channelType: "stream" as const, members: [jose.pubkey] },
+    ],
+  };
+  const searches: ((page: DirectoryPage) => void)[] = [];
+  const people = vi.fn(
+    (_query: string) =>
+      new Promise<DirectoryPage>((resolve) => searches.push(resolve)),
+  );
+  const names = bindNames(
+    { profiles: directory.queries, agentLibrary: h.library.queries },
+    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+  );
+  const session = {
+    ...h.session,
+    profiles: directory.queries,
+    names,
+    channels: { ...h.session.channels, list: () => list },
+    directMessages: { ...h.session.directMessages, people },
+  } as unknown as RelaySession;
+  const publish = vi.fn();
+  const result = () =>
+    publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  // The host remounts the provider on each keystroke of one `@` token.
+  const typed = (query: string) => (
+    <MentionCompletion
+      key={query}
+      session={session}
+      scope="space-test"
+      channelId="parent"
+      observation={{
+        revision: query.length,
+        text: `@${query}`,
+        start: query.length + 1,
+        end: query.length + 1,
+      }}
+      query={{ start: 0, end: query.length + 1, query }}
+      publish={publish}
+    />
+  );
+  const view = render(typed("jos"));
+  try {
+    await waitFor(() => expect(reads).toHaveLength(1));
+    await waitFor(() =>
+      expect(people).toHaveBeenCalledWith("jos", 1, expect.anything()),
+    );
+    await act(async () =>
+      searches[0]?.({
+        people: [{ pubkey: outsideJose, name: "Jose-Luis" }],
+        hasMore: true,
+      }),
+    );
+    view.rerender(typed("jose"));
+    await waitFor(() =>
+      expect(people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+    );
+    await waitFor(() =>
+      expect(result()?.items.some((item) => item.id === outsideJose)).toBe(
+        true,
+      ),
+    );
+    expect(result()?.spaceId).toBeUndefined();
+    expect(result()?.spacePending?.name).toBe("jose");
+    const pending = result()?.spacePending?.resolve(
+      new AbortController().signal,
+    );
+    await act(async () => reads[0]?.([profile(jose, { name: "Jose" })]));
+    // Named now: the member's exact name selects beside the outside one.
+    await expect(pending).resolves.toEqual({
+      pubkey: jose.pubkey,
+      name: "Jose",
+    });
+    await waitFor(() => expect(result()?.spaceId).toBe(jose.pubkey));
+    expect(reads).toHaveLength(1);
+  } finally {
+    view.unmount();
+    names.dispose();
+    directory.dispose();
+    h.library.dispose();
   }
 });
 

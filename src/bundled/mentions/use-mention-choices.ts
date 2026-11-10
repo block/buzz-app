@@ -534,6 +534,7 @@ export function useMentionChoices(
       roster,
       candidates,
       pending,
+      missingNames,
       archives,
       spaceId: spaceMention(candidates, local, query, evidence),
       canSelect: (pubkey: string, space = false) => {

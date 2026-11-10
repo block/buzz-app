@@ -36,6 +36,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     { key: "conversations.autocorrect", value: false, saved: true },
     { key: "agents.remember_mentioned", value: true, saved: true },
     { key: "search.unread_first", value: true, saved: true },
+    { key: "sidebar.show_all_seconds", value: 120, saved: true },
   ]);
   appearance.dispose();
 });
@@ -117,6 +118,33 @@ it("changes nothing after the appearance it was made with is disposed", () => {
     "Buzz is closing",
   );
   expect(localStorage.length).toBe(0);
+});
+
+it("sets how long Show all conversations lasts, within Settings' range", () => {
+  const appearance = createAppearance(window);
+  const settings = deviceSettings(appearance);
+  const changed = vi.fn();
+  window.addEventListener("buzz-show-all-duration-changed", changed);
+  expect(set(settings, "sidebar.show_all_seconds", 60)).toMatchObject({
+    schema: { type: "integer", minimum: 30, maximum: 300, multipleOf: 30 },
+    value: 60,
+    saved: true,
+  });
+  expect(changed).toHaveBeenCalledOnce();
+  expect(localStorage.getItem("buzz-show-all-duration.v1")).toBe("60");
+  for (const value of [5, 600, 45, "60"])
+    expect(() => set(settings, "sidebar.show_all_seconds", value)).toThrow(
+      /sidebar.show_all_seconds takes/,
+    );
+  // A stored duration outside Settings' choices is still read as saved.
+  localStorage.setItem("buzz-show-all-duration.v1", "5");
+  expect(settings.get("sidebar.show_all_seconds").value).toBe(5);
+  for (const bogus of ["0", "-5", "1.5", "7200", "soon"]) {
+    localStorage.setItem("buzz-show-all-duration.v1", bogus);
+    expect(settings.get("sidebar.show_all_seconds").value).toBe(120);
+  }
+  window.removeEventListener("buzz-show-all-duration-changed", changed);
+  appearance.dispose();
 });
 
 it("moves new threads, saved and announced to open settings screens", () => {

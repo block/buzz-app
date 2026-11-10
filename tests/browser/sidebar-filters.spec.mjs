@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { closeSettings, openPage } from "./navigation.mjs";
+import { pauseClock } from "./clock.mjs";
 import { join } from "node:path";
 import { fixtureRelayUrl } from "../relay-config.ts";
 
@@ -494,13 +495,11 @@ test.describe("filter action focus", () => {
 
 test.describe("show all conversations", () => {
   // Browser-only: real key dispatch from a row and from the composer, a host
-  // rebind through Settings → Shortcuts, and the checkbox's real paint in both
-  // themes. Expiry stays in ChannelInventory.test.tsx: a page clock jump of two
-  // minutes moves Date past the broker's 60-second read-state signing window.
-  test("pauses every section filter for two minutes from the key or the menu", async ({
-    page,
-    app,
-  }, testInfo) => {
+  // rebind through Settings → Shortcuts, the checkbox's real paint in both
+  // themes, and expiry through the page's own timers. Expiry uses a 5-second
+  // duration saved the way Settings saves one, so the page clock stays well
+  // inside the broker's 60-second read-state signing window.
+  const open = async (page, app, { seconds } = {}) => {
     const now = Math.floor(Date.now() / 1000);
     for (const [id, age] of [
       ["alpha", 0],
@@ -518,12 +517,15 @@ test.describe("show all conversations", () => {
       ]);
     }
     await page.addInitScript(
-      ({ viewer, relay }) =>
+      ({ viewer, relay, seconds }) => {
         localStorage.setItem(
           `buzz-view.v1:${JSON.stringify([`${relay}:${viewer}`, "selected-channel"])}`,
           JSON.stringify("alpha"),
-        ),
-      { viewer: app.viewer, relay: fixtureRelayUrl },
+        );
+        if (seconds)
+          localStorage.setItem("buzz-show-all-duration.v1", String(seconds));
+      },
+      { viewer: app.viewer, relay: fixtureRelayUrl, seconds },
     );
     await page.goto(app.origin);
     await openPage(page, "Messages");
@@ -551,10 +553,22 @@ test.describe("show all conversations", () => {
         page.getByRole("menu", { name: `Filter ${title}`, exact: true }),
       ).toBeVisible();
     };
-    const showAllChoice = page.getByRole("menuitemcheckbox", {
-      name: "Show all conversations",
-      exact: true,
-    });
+    // The viewer wrote every message, so nothing is unread: Unreads empties
+    // Work, and the last 7 days in Channels leave out Archive.
+    const filter = async () => {
+      await expect(planning).toBeVisible();
+      await filterMenu(work, "Work");
+      await page
+        .getByRole("menuitemradio", { name: "Unreads", exact: true })
+        .click();
+      await filterMenu(channels, "Channels");
+      await page
+        .getByRole("menuitemradio", { name: /Active in the last/ })
+        .click();
+      await page.getByRole("radio", { name: "7 days", exact: true }).click();
+      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      await filtered();
+    };
     const filtered = async () => {
       await expect(design).toBeVisible();
       await expect(archive).toHaveCount(0);
@@ -565,6 +579,38 @@ test.describe("show all conversations", () => {
       await expect(planning).toBeVisible();
       await expect(design).toBeVisible();
     };
+    return {
+      composer,
+      modifier,
+      channels,
+      design,
+      archive,
+      planning,
+      filterMenu,
+      filter,
+      filtered,
+      everything,
+    };
+  };
+
+  test("pauses every section filter from the key or the menu", async ({
+    page,
+    app,
+  }, testInfo) => {
+    const {
+      composer,
+      modifier,
+      channels,
+      design,
+      filterMenu,
+      filter,
+      filtered,
+      everything,
+    } = await open(page, app);
+    const showAllChoice = page.getByRole("menuitemcheckbox", {
+      name: "Show all conversations",
+      exact: true,
+    });
 
     // Before any filter there is nothing to pause, so nothing is offered.
     await filterMenu(channels, "Channels");
@@ -575,20 +621,7 @@ test.describe("show all conversations", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
 
-    // The viewer wrote every message, so nothing is unread: Unreads empties
-    // Work, and the last 7 days in Channels leave out Archive.
-    await expect(planning).toBeVisible();
-    await filterMenu(work, "Work");
-    await page
-      .getByRole("menuitemradio", { name: "Unreads", exact: true })
-      .click();
-    await filterMenu(channels, "Channels");
-    await page
-      .getByRole("menuitemradio", { name: /Active in the last/ })
-      .click();
-    await page.getByRole("radio", { name: "7 days", exact: true }).click();
-    await page.getByRole("button", { name: "Apply", exact: true }).click();
-    await filtered();
+    await filter();
     const publications = app.report.sidebarPublications.length;
 
     // From a focused sidebar row: the first press shows all, the second ends it.
@@ -674,5 +707,44 @@ test.describe("show all conversations", () => {
     await page.keyboard.press(`${modifier}+Shift+f`);
     await page.keyboard.press(`${modifier}+Shift+j`);
     await everything();
+  });
+
+  test("brings the saved filters back when the chosen duration ends, keeping the open conversation", async ({
+    page,
+    app,
+  }) => {
+    await page.clock.install();
+    const { modifier, planning, filter, filtered, everything } = await open(
+      page,
+      app,
+      { seconds: 5 },
+    );
+    await filter();
+    await page.keyboard.press(`${modifier}+Shift+f`);
+    await everything();
+    // Planning is hidden by Work's Unreads filter once the pause ends.
+    await planning.click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Planning" }),
+    ).toBeVisible();
+    await pauseClock(page);
+    await page.clock.runFor(4_000);
+    await everything();
+    await page.clock.runFor(1_000);
+    await page.clock.resume();
+    await expect(
+      page.locator(
+        '[data-sidebar-section="channels"] [data-channel-id="delta"]',
+      ),
+    ).toHaveCount(0);
+    // The open conversation stays where it was; the rest are filtered again.
+    await expect(planning).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Planning" }),
+    ).toBeVisible();
+    await page
+      .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+      .click();
+    await filtered();
   });
 });

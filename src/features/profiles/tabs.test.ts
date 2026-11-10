@@ -19,7 +19,7 @@ it("lists a plugin's tab while the plugin is on", async () => {
     pluginOwner: { id: "example.profiles", revision: "one" },
   });
   const fiber = scope.plugin((plugin) => {
-    plugin.profileTabs.register({
+    plugin.reflect.get("profileTabs")?.register({
       id: "details",
       title: "Details",
       component: () => null,

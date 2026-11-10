@@ -35,7 +35,8 @@ export type ProfileTabs = {
 
 declare module "@deepseek-ai/cordis" {
   interface Context {
-    profileTabs: ProfileTabs;
+    /** Optional in API v1: read it with `ctx.reflect.get("profileTabs")`. */
+    profileTabs?: ProfileTabs;
   }
 }
 

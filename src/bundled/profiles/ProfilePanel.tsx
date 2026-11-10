@@ -34,10 +34,13 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
 } from "react";
 import {
   CheckCircleIcon,
@@ -100,6 +103,27 @@ import { writeClipboardText } from "../../shared/clipboard";
 const noSubscribe = () => () => {};
 const emptyAgentTypes = Object.freeze([]);
 const noProfileTabs: readonly RegisteredProfileTab[] = Object.freeze([]);
+/** Notes, as a plugin's tab goes away, whether it held keyboard focus. */
+function PluginTabFocus({
+  lostFocus,
+  children,
+}: {
+  lostFocus: RefObject<boolean>;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    return () => {
+      if (node?.contains(document.activeElement)) lostFocus.current = true;
+    };
+  }, [lostFocus]);
+  return (
+    <div ref={ref} className="contents">
+      {children}
+    </div>
+  );
+}
 /** This session's community, which targets opened from the panel stay in. */
 function panelCommunity(scope: string | undefined, viewer: string | undefined) {
   if (!scope || !viewer || !scope.endsWith(`:${viewer}`)) return undefined;
@@ -480,6 +504,15 @@ function ProfileDetails({
   useEffect(() => {
     if (!tabbed) region.current?.focus();
   }, [tabbed]);
+  // A plugin's tab can go while focused: its `when` declines or its plugin
+  // turns off. The panel shows Info then; keep focus in the profile.
+  const lostFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!lostFocus.current) return;
+    lostFocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) region.current?.focus();
+  });
   const profileGeneration = useProfileGeneration(session.profiles);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery; a purge generation rereads.
@@ -534,24 +567,28 @@ function ProfileDetails({
           value: `profile:${tab.key}` as const,
           label: tab.title,
           render: () => (
-            <ContributionBoundary
-              key={contributionKey(tab)}
-              fallback={
-                <p role="alert" className="m-0 text-body-sm text-danger">
-                  {tab.title} is unavailable.
-                </p>
-              }
-            >
-              <tab.component
-                pubkey={pubkey}
-                profile={profile}
-                open={(target) => !!context?.open(target)}
-                canOpen={(target) => !!context?.canOpen(target)}
-              />
-            </ContributionBoundary>
+            <PluginTabFocus key={tab.key} lostFocus={lostFocus}>
+              <ContributionBoundary
+                key={contributionKey(tab)}
+                fallback={
+                  <p role="alert" className="m-0 text-body-sm text-danger">
+                    {tab.title} is unavailable.
+                  </p>
+                }
+              >
+                <tab.component
+                  pubkey={pubkey}
+                  profile={profile}
+                  open={(target) => !!context?.open(target)}
+                  canOpen={(target) => !!context?.canOpen(target)}
+                />
+              </ContributionBoundary>
+            </PluginTabFocus>
           ),
         }));
   const personTab = personTabs.find((item) => item.value === requestedTab);
+  // A tab that went away doesn't take the selection back if it returns.
+  if (tab.startsWith("profile:") && !personTab) setTab("info");
   const selectedTab =
     (requestedTab.startsWith("agent:") && !section) ||
     (requestedTab.startsWith("profile:") && !personTab)

@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
@@ -142,4 +142,59 @@ it("contains a tab that throws while rendering", async () => {
   );
   await user.click(screen.getByRole("tab", { name: "Info" }));
   expect(screen.getByText("Public key")).toBeVisible();
+});
+
+it("keeps focus in the profile when the focused tab's plugin turns off", async () => {
+  let shown = true;
+  const listeners = new Set<() => void>();
+  const registered = profileTabs({
+    id: "details",
+    title: "Details",
+    component: () => <button type="button">Plugin details</button>,
+  }).snapshot();
+  const none: RegisteredProfileTab[] = [];
+  const tabs: ProfileTabs = {
+    register() {},
+    snapshot: () => (shown ? registered : none),
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const toggle = (next: boolean) =>
+    act(() => {
+      shown = next;
+      for (const listener of listeners) listener();
+    });
+  render(
+    <>
+      <button type="button">Elsewhere</button>
+      <ProfilePanel
+        relay={relay()}
+        target={profileTarget(person) ?? ""}
+        close={() => {}}
+        profileTabs={tabs}
+      />
+    </>,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("tab", { name: "Details" }));
+  await user.click(screen.getByRole("button", { name: "Plugin details" }));
+  toggle(false);
+  expect(screen.getByRole("tab", { name: "Info" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("region", { name: "Profile details" })).toHaveFocus();
+
+  // Shown again, it waits to be chosen; focus elsewhere stays put.
+  toggle(true);
+  expect(screen.getByRole("tab", { name: "Info" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Details" }));
+  screen.getByRole("button", { name: "Elsewhere" }).focus();
+  toggle(false);
+  expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
 });

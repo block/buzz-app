@@ -204,3 +204,87 @@ it("reopens once, only after credentials change since the request was sent", () 
   expect(retry).toHaveBeenCalledOnce();
   expect(listeners.size).toBe(0);
 });
+
+it("retries, shows the notice for and clears a registered source like a static one", () => {
+  const recovery = createRecovery([source()]);
+  const late = source();
+  const unregister = recovery.register(late);
+  late.set("failed");
+  expect(recovery.snapshot().recovering).toBe(true);
+  vi.advanceTimersByTime(RECOVERY_DELAYS_MS[0] ?? 0);
+  expect(late.retry).toHaveBeenCalledTimes(1);
+  late.set("failed");
+  vi.advanceTimersByTime(RECOVERY_NOTICE_DELAY_MS);
+  expect(recovery.snapshot().shown).toBe(true);
+  const retries = late.retry.mock.calls.length;
+  late.set("failed");
+  recovery.retryNow();
+  expect(late.retry).toHaveBeenCalledTimes(retries + 1);
+  late.set("settled");
+  expect(recovery.snapshot().recovering).toBe(false);
+  late.set("failed");
+  recovery.retryAll();
+  expect(late.retry).toHaveBeenCalledTimes(retries + 2);
+  unregister();
+  recovery.dispose();
+});
+
+it("registers a source that is already failed", () => {
+  const recovery = createRecovery([]);
+  const late = source("failed");
+  recovery.register(late);
+  expect(recovery.snapshot().recovering).toBe(true);
+  vi.advanceTimersByTime(RECOVERY_DELAYS_MS[0] ?? 0);
+  expect(late.retry).toHaveBeenCalledTimes(1);
+  recovery.dispose();
+});
+
+it("drops the notice when a failed registered source unregisters", () => {
+  const recovery = createRecovery([]);
+  const late = source("failed");
+  const unregister = recovery.register(late);
+  vi.advanceTimersByTime(RECOVERY_NOTICE_DELAY_MS);
+  expect(recovery.snapshot().shown).toBe(true);
+  unregister();
+  expect(recovery.snapshot()).toEqual({
+    recovering: false,
+    attempt: 0,
+    shown: false,
+    reauthorized: 0,
+  });
+  // An unregistered source is neither retried nor evaluated again.
+  const retries = late.retry.mock.calls.length;
+  late.set("failed");
+  recovery.retryNow();
+  vi.advanceTimersByTime(60_000);
+  expect(late.retry).toHaveBeenCalledTimes(retries);
+  unregister();
+  recovery.dispose();
+});
+
+it("keeps the notice while another source still fails after one unregisters", () => {
+  const stays = source("failed");
+  const recovery = createRecovery([stays]);
+  const unregister = recovery.register(source("failed"));
+  unregister();
+  expect(recovery.snapshot().recovering).toBe(true);
+  recovery.dispose();
+});
+
+it("registers one source once and is safe to dispose with registered sources", () => {
+  const recovery = createRecovery([]);
+  const late = source("failed");
+  const first = recovery.register(late);
+  const second = recovery.register(late);
+  recovery.retryNow();
+  expect(late.retry).toHaveBeenCalledTimes(1);
+  second();
+  // The first call returned the real unregister; the second a no-op.
+  expect(recovery.snapshot().recovering).toBe(true);
+  recovery.dispose();
+  first();
+  expect(recovery.register(source("failed"))).toBeTypeOf("function");
+  late.set("failed");
+  vi.advanceTimersByTime(60_000);
+  expect(late.retry).toHaveBeenCalledTimes(1);
+});

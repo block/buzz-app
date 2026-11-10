@@ -972,6 +972,18 @@ available rather than silently discarding it.
 - In the agent avatar picker, drag the avatar strip with a mouse or scroll it
   to browse more choices. Click an avatar to select it; keyboard users can Tab
   through the choices and press Enter or Space.
+- For agents running on this computer, **Identity** normally holds Harness,
+  Model, Thinking, and Instructions. **Settings** holds Workspace,
+  **Sessions** (called **Conversations** for Pi), configuration history, and
+  removal or deletion controls. **Memory** and **Activity** have their own tabs
+  when available; plugins can add tabs such as **Attention** or **Bestie**.
+  Hosted agents and agents on another device expose only the controls this
+  device and their provider support.
+- For supported local agents, **One session per thread** keeps each channel
+  thread's context separate. **One session per channel** lets threads in the
+  same channel share context. This setting changes what the agent remembers
+  together, not where its reply appears. A DM, huddle room, or Solo chat is one
+  continuing conversation under either choice.
 - A desktop plugin can run native Codex or Claude on another computer. The plugin manages the target, workspace, credentials, and expiry. A saved
   remote choice stays remote after an app restart. If the target cannot be
   restored, Buzz shows an error and requires a new session.
@@ -1493,7 +1505,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking
-  (**Instructions**). Attention is active for every agent while the Agent Attention plugin is on.
+  (**Instructions**). Attention is on by default. **Settings → Plugins →
+  Attention** controls it for every agent on this device; turning it off hides
+  local agents' Attention tabs and pauses their watches and timers, while
+  ordinary mentions can still wake them. Hosted agents have no Attention tab on
+  this device. To start following something, ask the agent in a conversation,
+  for example, “Watch this PR and tell me when CI finishes.”
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.
   Each interest has an Active/Paused menu. Pausing stops its triggers without changing
   individual watch settings. Running turns may finish; activating resumes enabled
@@ -1504,8 +1521,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   content, or expand “Watch details” for conditions and the execution destination. Select its status pill to
   resume, pause, or delete it (Delete asks first), or its source pill to inspect the watched channels or source. “Responds in” shows where the agent runs and replies; select that destination to open the conversation.
   “Runs in” names its execution conversation; its instructions can specify a
-  different place to report. A
-  mention can still wake an agent when Attention is off; turning the plugin on does not grant new access.
+  different place to report. Turning the plugin on does not grant new access.
   An event watch hears the channels its agent may read, including public channels
   the agent has not joined. A watch's delivery channel must be one the agent is
   a member of; the relay decides where the agent may post. On macOS and Linux,

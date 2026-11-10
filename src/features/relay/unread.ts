@@ -44,6 +44,12 @@ export type UnreadSnapshot = Readonly<{
    * reaches past the rows channel windows loaded, up to the repair's per-batch
    * limit. Later repairs keep it. */
   sampled?: true;
+  /** Channel targets without `sampled`: a repair that can set it is reading,
+   * is about to start again, or has not been asked for (`ensure` starts one).
+   * Absent once one ends without sampling and none is due (it failed, evidence
+   * overflowed, or a dropped connection or access change abandoned it) until
+   * another starts. */
+  sampling?: true;
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
@@ -75,6 +81,11 @@ export type MessageAttention = Readonly<{
   /** This row is explicitly forced unread during the current channel visit. */
   forced: boolean;
   viewing: boolean;
+  /** A channel-wide read reaches this row: the channel's read frontier, its
+   * catch-up mark (`activity:`) for an ordinary top-level message, or the
+   * retention floor. Each also reads every older ordinary top-level message,
+   * which the row's own `msg:` or `thread:` mark does not. */
+  prefixRead?: true;
 }>;
 export type ThreadActivityItem = Readonly<{
   channelId: string;
@@ -956,6 +967,15 @@ export function createUnread({
         view.channelId === channelId &&
         view.visible(messageId, view.ids.has(messageId)),
     );
+    const state = reads.state();
+    const prefixRead =
+      Math.max(
+        state.frontiers[channelId] ?? -1,
+        timeline(entry, dm)
+          ? (state.frontiers[`activity:${channelId}`] ?? -1)
+          : -1,
+        reads.floor(),
+      ) >= event.created_at;
     return Object.freeze({
       status: kind
         ? "eligible"
@@ -966,9 +986,10 @@ export function createUnread({
       ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
-      unread: isUnread(entry, reads.state(), dm),
+      unread: isUnread(entry, state, dm),
       forced: forcedMessages.get(channelId)?.has(messageId) ?? false,
       viewing,
+      ...(prefixRead ? { prefixRead: true as const } : {}),
     });
   }
   function compute(target: ReadTarget): UnreadSnapshot {
@@ -1058,6 +1079,14 @@ export function createUnread({
       ...(evidence && target.kind === "channel" && sampled
         ? { sampled: true as const }
         : {}),
+      // `repairAgain` spans a restart's gap: the settling repair publishes
+      // before the next one begins.
+      ...(evidence &&
+      target.kind === "channel" &&
+      !sampled &&
+      (!requested || refresh || repairAgain)
+        ? { sampling: true as const }
+        : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
       coverage: evidence ? "observed" : "unknown",
@@ -1079,6 +1108,7 @@ export function createUnread({
     a.latestMessage?.id === b.latestMessage?.id &&
     a.oldestUnreadId === b.oldestUnreadId &&
     a.sampled === b.sampled &&
+    a.sampling === b.sampling &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
     a.row?.observedCount === b.row?.observedCount &&

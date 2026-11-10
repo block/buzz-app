@@ -1138,6 +1138,79 @@ it("an evidence overflow is repaired on the next recovery tick", async () => {
   }
 });
 
+it("a channel snapshot is sampling only while a repair that can sample it is owed or reading", async () => {
+  const h = setup();
+  let fail = true;
+  let gate: Promise<void> | undefined;
+  h.query.mockImplementation(async (filters) => {
+    if (filters[0]?.kinds?.includes(39002))
+      return [
+        roster(h.relay, "other", [h.viewer.pubkey], 10),
+        metadata(h.relay, "other", "other", 10),
+      ];
+    if (!filters[0]?.kinds?.includes(9)) return [];
+    await gate;
+    if (fail) throw new Error("Transient evidence failure");
+    return [h.row];
+  });
+  // Live evidence before anything asked: `ensure` would start the repair.
+  h.receive([message(h.peer, "other", "before any repair", 12)]);
+  expect(h.snapshot()).toMatchObject({
+    coverage: "observed",
+    sampling: true,
+  });
+
+  // The first repair fails. Live traffic marks the evidence observed again
+  // but samples nothing, and no repair is reading until the recovery tick.
+  await h.session.unread.ensure();
+  expect(h.snapshot()).toMatchObject({
+    freshness: "stale",
+    error: "Transient evidence failure",
+  });
+  expect(h.snapshot().sampling).toBeUndefined();
+  h.receive([message(h.peer, "other", "after the failure", 13)]);
+  expect(h.snapshot()).toMatchObject({
+    freshness: "observed",
+    error: "Transient evidence failure",
+  });
+  expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBeUndefined();
+
+  // A retry is sampling while it reads, and sampled once it returns.
+  fail = false;
+  const retry = deferred();
+  gate = retry.promise;
+  const reads = h.query.mock.calls.length;
+  const repair = h.session.unread.refresh();
+  await vi.waitFor(() =>
+    expect(
+      h.query.mock.calls
+        .slice(reads)
+        .some(([filters]) => filters[0]?.include_aux),
+    ).toBe(true),
+  );
+  expect(h.snapshot().sampling).toBe(true);
+  retry.release();
+  await repair;
+  expect(h.snapshot()).toMatchObject({ sampled: true, freshness: "observed" });
+  expect(h.snapshot().sampling).toBeUndefined();
+  gate = undefined;
+
+  // An overflow empties the sample; until the next tick nothing reads.
+  h.receive(
+    Array.from({ length: 19 }, (_, i) =>
+      message(h.peer, "other", "x".repeat(450000), i + 20),
+    ),
+  );
+  h.receive([message(h.peer, "other", "after the overflow", 40)]);
+  expect(h.snapshot()).toMatchObject({
+    freshness: "observed",
+    error: "Unread observation capacity reached; refresh available",
+  });
+  expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBeUndefined();
+});
+
 it("a covered reconnect pays the drop's debt: the next recovery tick reads nothing", async () => {
   vi.useFakeTimers({ toFake: ["Date"], now: 1_700_000_000_000 });
   try {

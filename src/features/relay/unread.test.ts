@@ -8,7 +8,11 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { eventDto, type RelayEvent } from "./events";
-import type { ThreadActivitySnapshot, UnreadCapability } from "./unread";
+import type {
+  ThreadActivitySnapshot,
+  UnreadCapability,
+  UnreadSnapshot,
+} from "./unread";
 import type { SavedHead } from "./persistence";
 import type { ReadStateSigning } from "./read-state-host";
 import { retainReadState } from "./read-state-retention";
@@ -506,7 +510,7 @@ it("the channel snapshot names the oldest unread message its timeline shows", as
   expect(h.snapshot().oldestUnreadId).toBeUndefined();
 });
 
-it("the channel snapshot says sampled once a repair finishes, keeps it through later repairs and regains it after a cache clear", async () => {
+it("the channel snapshot says sampled once a repair finishes, keeps it through later repairs and regains it after a cache clear; sampling until then", async () => {
   const h = setup();
   const rows = Array.from({ length: 30 }, (_, i) =>
     message(h.alice, "room", `history ${i}`, i + 11),
@@ -558,6 +562,8 @@ it("the channel snapshot says sampled once a repair finishes, keeps it through l
     freshness: "observed",
     observedCount: 20,
     oldestUnreadId: cursor.id,
+    // Nothing asked for a repair yet; `ensure` would start one.
+    sampling: true,
   });
   expect(h.snapshot().sampled).toBeUndefined();
 
@@ -565,6 +571,7 @@ it("the channel snapshot says sampled once a repair finishes, keeps it through l
   let repair = h.session.unread.ensure();
   await flush();
   expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBe(true);
   release();
   await repair;
   expect(h.snapshot()).toMatchObject({
@@ -572,6 +579,7 @@ it("the channel snapshot says sampled once a repair finishes, keeps it through l
     oldestUnreadId: rows[0]?.id,
     sampled: true,
   });
+  expect(h.snapshot().sampling).toBeUndefined();
 
   // A later repair only adds evidence: the sample stands while it runs, and
   // subscribers see no change.
@@ -603,6 +611,7 @@ it("the channel snapshot says sampled once a repair finishes, keeps it through l
   );
   expect(repairs).toBe(started + 1);
   expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBe(true);
   release();
   await vi.waitFor(() =>
     expect(h.snapshot()).toMatchObject({
@@ -634,7 +643,12 @@ it("the channel snapshot says sampled once a repair finishes, keeps it through l
 
   // Access gained while a repair is out: subscribers see the reset at once,
   // and the sample returns only when the repair restarted after it finishes.
-  const stopRoom = h.session.unread.subscribe(h.target, () => {});
+  // None of them sees a snapshot that no repair can sample, the restart's gap
+  // included.
+  const seen: UnreadSnapshot[] = [];
+  const stopRoom = h.session.unread.subscribe(h.target, () =>
+    seen.push(h.snapshot()),
+  );
   release = repairing();
   started = repairs;
   void h.session.unread.refresh();
@@ -642,13 +656,57 @@ it("the channel snapshot says sampled once a repair finishes, keeps it through l
   expect(h.snapshot().sampled).toBe(true);
   h.grant("third");
   expect(h.snapshot().sampled).toBeUndefined();
+  expect(h.snapshot().sampling).toBe(true);
   release();
   release = repairing();
   await vi.waitFor(() => expect(repairs).toBe(started + 2));
   expect(h.snapshot().sampled).toBeUndefined();
   release();
   await vi.waitFor(() => expect(h.snapshot().sampled).toBe(true));
+  expect(seen.length).toBeGreaterThan(1);
+  expect(seen.filter((seen) => !seen.sampled && !seen.sampling)).toEqual([]);
   stopRoom();
+});
+
+it("attention says a row is prefix-read only when a channel-wide read reaches it", async () => {
+  const h = setup();
+  h.grant("room");
+  // Catch-up needs the channel's type: a DM's is its channel read.
+  h.emit([metadata(h.relay, "room", "room", 11, [["t", "stream"]])]);
+  const first = message(h.alice, "room", "first", 11);
+  const second = message(h.alice, "room", "second", 12);
+  const mention = message(h.alice, "room", "mention", 13, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const third = message(h.alice, "room", "third", 14);
+  h.emit([first, second, mention, third]);
+  const attention = (event: RelayEvent) =>
+    h.session.unread.attention("room", event.id);
+
+  // A row's own receipt reads it alone, not the ordinary row above it.
+  await h.session.unread.markMessageRead("room", second.id);
+  expect(attention(second)).toMatchObject({ unread: false });
+  expect(attention(second).prefixRead).toBeUndefined();
+  expect(attention(first)).toMatchObject({ unread: true });
+
+  // Catch-up's mark reads ordinary rows through a timestamp; the mention it
+  // reads by its own receipt.
+  await h.session.unread.markTimelineRead("room", [
+    first.id,
+    second.id,
+    mention.id,
+  ]);
+  expect(attention(first)).toMatchObject({ unread: false, prefixRead: true });
+  expect(attention(second)).toMatchObject({ unread: false, prefixRead: true });
+  expect(attention(mention)).toMatchObject({ unread: false });
+  expect(attention(mention).prefixRead).toBeUndefined();
+  expect(attention(third)).toMatchObject({ unread: true });
+  expect(attention(third).prefixRead).toBeUndefined();
+
+  // The channel's own frontier reads every message through it.
+  await h.session.unread.markThrough(h.target, mention.id);
+  expect(attention(mention)).toMatchObject({ unread: false, prefixRead: true });
+  expect(attention(third).prefixRead).toBeUndefined();
 });
 
 it("counts replies only in the viewer's conversations and threads; others stay quiet until joined or mentioned", async () => {

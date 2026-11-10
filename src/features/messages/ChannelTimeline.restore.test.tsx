@@ -271,6 +271,8 @@ function boundaryFixture({ reading = false } = {}) {
     unknownIds = new Set<string>(),
     pendingIds = new Set<string>(),
     ineligibleIds = new Set<string>(),
+    // Read only by their own receipt, not by a channel-wide read.
+    receiptIds = new Set<string>(),
     listeners = new Set<() => void>();
   const syncListeners = new Set<() => void>();
   let readRevision = owner.session.unread.revision();
@@ -313,6 +315,8 @@ function boundaryFixture({ reading = false } = {}) {
   const built: ChannelMessage[] = [];
   // The store's repair has finished, so that evidence reaches past the window.
   let sampled = true;
+  // Unsampled: a repair that can still sample is running.
+  let repairing = true;
   let freshness: "observed" | "stale" = "observed";
   let error: string | undefined;
   const snapshot = (channelId: string) => {
@@ -330,7 +334,11 @@ function boundaryFixture({ reading = false } = {}) {
     return {
       target: { kind: "channel" as const, channelId },
       ...(oldest ? { oldestUnreadId: oldest.id } : {}),
-      ...(sampled ? { sampled: true as const } : {}),
+      ...(sampled
+        ? { sampled: true as const }
+        : repairing
+          ? { sampling: true as const }
+          : {}),
       observedCount: unreadIds.size,
       attentionCount: 0,
       coverage: "observed" as const,
@@ -383,6 +391,9 @@ function boundaryFixture({ reading = false } = {}) {
         unread: unreadIds.has(id),
         forced: forcedIds.has(id),
         viewing: false,
+        ...(!unreadIds.has(id) && !receiptIds.has(id)
+          ? { prefixRead: true as const }
+          : {}),
       };
     },
     revision: () => readRevision,
@@ -488,6 +499,7 @@ function boundaryFixture({ reading = false } = {}) {
     unknownIds,
     pendingIds,
     ineligibleIds,
+    receiptIds,
     enterChannel,
     subscribers: () => ({ unread: listeners.size, sync: syncListeners.size }),
     completeReadStateSnapshot,
@@ -519,6 +531,10 @@ function boundaryFixture({ reading = false } = {}) {
     },
     setSampled(value: boolean) {
       sampled = value;
+    },
+    /** Whether an unsampled store still has a repair that can sample. */
+    setRepairing(value: boolean) {
+      repairing = value;
     },
     setFreshness(value: "observed" | "stale", cause?: string) {
       freshness = value;
@@ -710,11 +726,11 @@ it.each([{ olderUnread: false }, { olderUnread: true }])(
   "waits for the unread repair before placing a boundary inside incomplete history: %j",
   async ({ olderUnread }) => {
     // Before the repair returns, the store knows only the loaded rows: its
-    // oldest unread message sits in the window below a row read by its own
-    // receipt, whatever lies above the window.
+    // oldest unread message sits in the window below a row catch-up read,
+    // whatever lies above the window.
     const h = boundaryFixture();
     h.setSampled(false);
-    const read = h.row(message(h.peer, "c", "Read by its own receipt", 2));
+    const read = h.row(message(h.peer, "c", "Read by catch-up", 2));
     const first = h.row(message(h.peer, "c", "First loaded unread", 3));
     const later = h.row(message(h.peer, "c", "Later loaded unread", 4));
     h.unreadIds.add(first.id);
@@ -740,26 +756,33 @@ it.each([{ olderUnread: false }, { olderUnread: true }])(
         screen.queryByRole("separator", { name: "New messages" }),
       ).toBeNull();
     } else {
-      // The store cannot tell this from a sample that stopped short of older
-      // unread rows; docs/unread.md records that residual.
+      // Catch-up read every ordinary row above the read one, but a sample
+      // that stopped short could still miss an unread mention, broadcast or
+      // marked message there; docs/unread.md records that residual.
       expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
         true,
       );
-      expect(
-        precedes(screen.getByText("Read by its own receipt"), divider()),
-      ).toBe(true);
+      expect(precedes(screen.getByText("Read by catch-up"), divider())).toBe(
+        true,
+      );
     }
     mounted.unmount();
   },
 );
 
-/** Rows above the window, the store's repair unfinished: the oldest unread
- * row it knows sits below a receipt-read row, and the reader is at the bottom. */
-async function heldReader() {
+/** Rows above the window, the store unsampled: the oldest unread row it knows
+ * sits below a row catch-up read, and the reader is at the bottom. Without
+ * `failed` its repair is still running; with it, a repair already ended
+ * without sampling and live evidence has since made the store observed. */
+async function heldReader({ failed }: { failed?: string } = {}) {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const h = boundaryFixture({ reading: true });
   h.setSampled(false);
-  const read = h.row(message(h.peer, "c", "Read by its own receipt", 2));
+  if (failed) {
+    h.setRepairing(false);
+    h.setFreshness("observed", failed);
+  }
+  const read = h.row(message(h.peer, "c", "Read by catch-up", 2));
   const first = h.row(message(h.peer, "c", "First loaded unread", 3));
   const later = h.row(message(h.peer, "c", "Later loaded unread", 4));
   h.unreadIds.add(first.id);
@@ -790,9 +813,9 @@ it("holds this list's reading while the boundary waits for the unread repair, th
     expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
       true,
     );
-    expect(
-      precedes(screen.getByText("Read by its own receipt"), divider()),
-    ).toBe(true);
+    expect(precedes(screen.getByText("Read by catch-up"), divider())).toBe(
+      true,
+    );
     expect(h.catchUp).not.toHaveBeenCalled();
 
     // The hold lifting starts dwell on its own.
@@ -808,22 +831,82 @@ it("holds this list's reading while the boundary waits for the unread repair, th
   }
 });
 
-it("resumes this list's reading with no boundary when the unread repair fails", async () => {
-  const { h, mounted, later } = await heldReader();
-  try {
-    expect(h.catchUp).not.toHaveBeenCalled();
-    h.setFreshness("stale", "Unread observation failed");
+it.each([{ observedAgain: false }, { observedAgain: true }])(
+  "resumes this list's reading with no boundary when the unread repair fails: %j",
+  async ({ observedAgain }) => {
+    const { h, mounted, later } = await heldReader();
+    try {
+      expect(h.catchUp).not.toHaveBeenCalled();
+      h.setRepairing(false);
+      h.setFreshness("stale", "Unread observation failed");
+      h.publish();
+      // A window read or live message marks the evidence observed again
+      // before any dwell, with the error kept and nothing sampled. Dwelling
+      // while stale would instead settle the visit through its own read.
+      if (observedAgain) {
+        h.setFreshness("observed", "Unread observation failed");
+        h.publish();
+      }
+      await h.dwell();
+      expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([
+  "Unread observation failed",
+  "Unread observation capacity reached; refresh available",
+])(
+  "reads at once with no boundary when entered after a repair ended without sampling: %s",
+  async (failed) => {
+    const { h, mounted, later } = await heldReader({ failed });
+    try {
+      // No repair is coming, so waiting would hold reading until a retry.
+      expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+      expect(h.ensure).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each([{ receipt: false }, { receipt: true }])(
+  "places a boundary inside incomplete history only below a row a channel-wide read reaches: %j",
+  async ({ receipt }) => {
+    // A row read only by its own receipt says nothing about the ordinary rows
+    // above it, which a sample that stopped short may not have seen.
+    const h = boundaryFixture();
+    const read = h.row(message(h.peer, "c", "Read in loaded window", 2));
+    const first = h.row(message(h.peer, "c", "First loaded unread", 3));
+    const later = h.row(message(h.peer, "c", "Later loaded unread", 4));
+    if (receipt) h.receiptIds.add(read.id);
+    h.unreadIds.add(first.id);
+    h.unreadIds.add(later.id);
+    h.completeReadStateSnapshot();
     h.publish();
-    await h.dwell();
-    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
-    expect(
-      screen.queryByRole("separator", { name: "New messages" }),
-    ).toBeNull();
-  } finally {
+    const mounted = render(h.tree("c", [read, first, later], true));
+    await h.completeEntry();
+    if (receipt)
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+    else
+      expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
+        true,
+      );
     mounted.unmount();
-    vi.useRealTimers();
-  }
-});
+  },
+);
 
 it("a read-intent change from elsewhere during the held wait still settles with no boundary and releases reading", async () => {
   const { h, mounted, later } = await heldReader();

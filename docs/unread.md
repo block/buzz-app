@@ -142,21 +142,28 @@ viewport):
   a channel entered that scope: evidence then reaches past what windows loaded,
   up to each batch's 500-row limit. A cache clear or newly accessible channel
   starts that repair at once; an overflow waits for the next recovery tick.
-  Later repairs, refreshes included, leave `sampled` set. When entry did not
-  capture a verified, idle window with all of its history (rows sit above it, or
-  it was cached, refreshing or still paging), the **New messages** divider waits
-  for `sampled`, then appears only at `oldestUnreadId` among the rows loaded on
-  entry and only below a read one. While it waits, the timeline holds its own
-  reading (dwell and bottom catch-up), which would otherwise read the loaded
-  rows and erase the evidence it waits for; the hold ends when the repair
-  finishes or fails, and reading then starts at once. A batch that filled its
-  limit can still stop short of the true oldest unread message, and the
-  read-row condition covers only ordinary rows: catch-up's `activity:` mark
-  reads all of them up to a timestamp, but never mentions, broadcasts,
-  broadcast replies or messages marked unread, which only their own `msg:` or
-  `thread:` marks read. A short sample can hide an unread one of those above
-  the window, and the divider then lands below it. A row above read only by
-  its own mark says nothing about older rows either.
+  Later repairs, refreshes included, leave `sampled` set. Until it is set,
+  `sampling` says a repair that can set it is reading, about to restart, or not
+  yet asked for; one that fails, overflows or is abandoned (a dropped
+  connection, an access change) without a restart clears it until the next
+  starts. When entry did not capture a verified, idle window with all of its
+  history (rows sit above it, or it was cached, refreshing or still paging), the
+  **New messages** divider waits for `sampled`, then appears only at
+  `oldestUnreadId` among the rows loaded on entry and only below one that a
+  channel-wide read reaches (`attention()` reports `prefixRead`: the channel
+  frontier, its `activity:` catch-up mark or the retention floor), because each
+  of those also reads every older ordinary row. While it waits with `sampling`
+  set, the timeline holds its own reading (dwell and bottom catch-up), which
+  would otherwise read the loaded rows and erase the evidence it waits for. Once
+  `sampled` is set the divider is placed and reading starts at once; if
+  `sampling` clears first, the visit settles with no divider and reading resumes
+  without waiting for a retry. A batch that filled its limit can still stop
+  short of the true oldest unread message. `prefixRead` rules that out for
+  ordinary rows, but not for mentions, broadcasts, broadcast replies or messages
+  marked unread, which catch-up's `activity:` mark never reads: a short sample
+  can hide an unread one of those above the window, and the divider then lands
+  below it. Rows above read only by their own `msg:` or `thread:` marks, as
+  dwell short of the bottom leaves them, place no divider.
 - Both keys use verified event timestamps, never wall time. Neither enters generic
   channel/thread inheritance or remote override baselines. Channel catch-up ends
   a local manual unread on the channel itself; message and thread manual-unread

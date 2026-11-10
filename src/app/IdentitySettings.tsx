@@ -588,6 +588,7 @@ function OrganizationSignIns({
             identity={identity}
             accountRows={accountRows}
             memberships={memberships}
+            holds={holds}
           />
         ) : (
           accountDetails && (

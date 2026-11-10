@@ -19,7 +19,10 @@ import {
 import { BACKUP_FAILURES } from "../features/identity/backup-failure";
 import { backupOfferedFor } from "../features/identity/builderlab-account";
 import type { Identity } from "../features/identity/service";
-import type { FederatedIdentity } from "../features/federated-identity/service";
+import type {
+  FederatedIdentity,
+  SessionSnapshot,
+} from "../features/federated-identity/service";
 import { IdentitySettings } from "./IdentitySettings";
 import { federatedFixture } from "../features/federated-identity/testing";
 
@@ -1267,4 +1270,30 @@ it("drops a pending organization sign-out decision when that server's session is
   );
   expect(pub.service.signOut).toHaveBeenCalledTimes(1);
   expect(block.service.signOut).not.toHaveBeenCalled();
+});
+
+it("names held work in the fallback account's sign-out too, while server discovery is pending or failed", async () => {
+  const h = federatedFixture();
+  h.publish({ status: "signed-in", email: "a@example.com" });
+  // Discovery never answers: only the root account's own row is shown.
+  const servers = () => new Promise<readonly SessionSnapshot[]>(() => {});
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={bound(h.service)}
+      servers={servers}
+      exitHolds={["The pop-out window for “Design” has an unsent reply."]}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Sign out of organization" }),
+  );
+  const dialog = await screen.findByRole("alertdialog");
+  expect(dialog).toHaveTextContent("has an unsent reply");
+  expect(h.service.signOut).not.toHaveBeenCalled();
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Sign out anyway" }),
+  );
+  expect(h.service.signOut).toHaveBeenCalledTimes(1);
 });

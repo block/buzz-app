@@ -33,7 +33,7 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarHeader, SidebarHeaderContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -183,6 +183,18 @@ export function apply(ctx: Context) {
   sidebar?.register(section);
   // @ts-expect-error Sidebar contribution versions are explicit.
   sidebar?.register({ ...section, version: 2 });
+  sidebar?.register({ ...section, id: "with-footer", footer: { label: "Add item", icon: createElement("span"), onSelect: () => {} } });
+  // @ts-expect-error A section footer needs an action.
+  sidebar?.register({ ...section, id: "bad-footer", footer: { label: "Add item" } });
+  const header: SidebarHeaderContribution = { version: 1, id: "workspace", title: "Example", onTitle: () => {}, rows: section.rows, select: section.select };
+  const hostHeader: SidebarHeader | undefined = ctx.reflect.get("sidebarHeader");
+  hostHeader?.register(header);
+  // @ts-expect-error A sidebar header needs a title action.
+  hostHeader?.register({ version: 1, id: "bad-header", title: "Example" });
+  ctx.sidebarScope.restrict({ id: "quiet", scope: "solo", banner: () => null });
+  ctx.sidebarScope.restrict({ id: "bare", scope: "all" });
+  // @ts-expect-error A solo restriction replaces the tabs with a banner.
+  ctx.sidebarScope.restrict({ id: "bad-quiet", scope: "solo" });
   // @ts-expect-error Row counts are numeric, not display text.
   const badCount: SidebarSectionContribution = { ...section, rows: { snapshot: () => [{ id: "bad", label: "Bad", count: "two" }], subscribe: () => () => {} } };
   void badCount;

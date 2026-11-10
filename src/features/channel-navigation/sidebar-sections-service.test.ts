@@ -91,3 +91,33 @@ it("lets a plugin use an older host that does not provide sidebar sections", asy
   );
   await root.fiber.dispose();
 });
+
+it("accepts an optional footer row and rejects an incomplete one", async () => {
+  const root = rootContext();
+  const registry = new SidebarSectionsService(root);
+  const scope = root.extend({
+    pluginOwner: { id: "example.plugin", revision: "one" },
+  });
+  const footer = { label: "Add item", onSelect: () => {} };
+  await scope
+    .plugin((ctx) => ctx.sidebarSections?.register({ ...section, footer }))
+    .await();
+  expect(registry.snapshot()).toMatchObject([{ footer }]);
+
+  for (const bad of [
+    { label: " ", onSelect: () => {} },
+    { label: "Add item" },
+    null,
+  ]) {
+    const fiber = root
+      .extend({ pluginOwner: { id: "example.other", revision: "one" } })
+      .plugin((ctx) =>
+        ctx.sidebarSections?.register({
+          ...section,
+          footer: bad as never,
+        }),
+      );
+    await expect(fiber.await()).rejects.toThrow(/sidebar section/);
+  }
+  await root.fiber.dispose();
+});

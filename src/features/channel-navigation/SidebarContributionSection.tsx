@@ -14,6 +14,7 @@ import type { Navigation } from "../navigation/controller";
 import { targetKey, type OpenTarget } from "../navigation/targets";
 import type {
   RegisteredSidebarSection,
+  SidebarSectionRow,
   SidebarSections,
 } from "./sidebar-sections-service";
 import { DroppableSidebarSection } from "./ChannelSidebarDnd";
@@ -170,25 +171,21 @@ function SectionContents({
     onRowsCommitted?.();
   });
   const [actionError, setActionError] = useState(false);
-  if (!Array.isArray(rows)) throw new Error("Sidebar rows must be an array");
-  const ids = new Set<string>();
-  for (const row of rows) {
-    if (
-      !row ||
-      typeof row.id !== "string" ||
-      !row.id ||
-      ids.has(row.id) ||
-      typeof row.label !== "string" ||
-      !row.label.trim()
-    )
-      throw new Error("Sidebar rows need unique ids and non-empty labels");
-    ids.add(row.id);
-  }
   const select = (destination: OpenTarget) => {
     if (!active()) return;
     setActionError(false);
     try {
       void navigator.open(destination).catch(() => setActionError(true));
+    } catch {
+      setActionError(true);
+    }
+  };
+  const footer = entry.footer;
+  const run = (onSelect: () => void | Promise<void>) => {
+    if (!active()) return;
+    setActionError(false);
+    try {
+      void Promise.resolve(onSelect()).catch(() => setActionError(true));
     } catch {
       setActionError(true);
     }
@@ -200,17 +197,7 @@ function SectionContents({
       aria-label={action.label}
       title={action.label}
       icon={action.icon}
-      onClick={() => {
-        if (!active()) return;
-        setActionError(false);
-        try {
-          void Promise.resolve(action.onSelect()).catch(() =>
-            setActionError(true),
-          );
-        } catch {
-          setActionError(true);
-        }
-      }}
+      onClick={() => run(action.onSelect)}
     />
   ));
   return (
@@ -235,35 +222,76 @@ function SectionContents({
         )
       }
     >
-      {rows.map((row) => {
-        const trailing = [
-          row.badge,
-          typeof row.count === "number" && Number.isFinite(row.count)
-            ? new Intl.NumberFormat().format(row.count)
-            : undefined,
-          row.status,
-        ]
-          .filter((value) => typeof value === "string" && value.trim())
-          .join(" · ");
-        const destination = entry.select(row);
-        return (
-          <div key={row.id} className={styles.contributionNavigationItem}>
-            <NavigationItem
-              label={row.label}
-              icon={row.icon}
-              trailing={
-                trailing ? (
-                  <span className={styles.contributionMetadata}>
-                    {trailing}
-                  </span>
-                ) : undefined
-              }
-              selected={isSelectedDestination(destination, target)}
-              onClick={() => select(destination)}
-            />
-          </div>
-        );
-      })}
+      <SidebarContributionRows
+        rows={rows}
+        select={entry.select}
+        target={target}
+        onSelect={select}
+      />
+      {footer && (
+        <div className={styles.contributionNavigationItem}>
+          <NavigationItem
+            label={footer.label}
+            icon={footer.icon}
+            onClick={() => run(footer.onSelect)}
+          />
+        </div>
+      )}
     </DroppableSidebarSection>
   );
+}
+
+/** Validates and renders contributed rows; shared by sections and the header. */
+export function SidebarContributionRows({
+  rows,
+  select,
+  target,
+  onSelect,
+}: {
+  rows: readonly SidebarSectionRow[];
+  select: (row: SidebarSectionRow) => OpenTarget;
+  target: OpenTarget;
+  onSelect: (destination: OpenTarget) => void;
+}) {
+  if (!Array.isArray(rows)) throw new Error("Sidebar rows must be an array");
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (
+      !row ||
+      typeof row.id !== "string" ||
+      !row.id ||
+      ids.has(row.id) ||
+      typeof row.label !== "string" ||
+      !row.label.trim()
+    )
+      throw new Error("Sidebar rows need unique ids and non-empty labels");
+    ids.add(row.id);
+  }
+  return rows.map((row) => {
+    const trailing = [
+      row.badge,
+      typeof row.count === "number" && Number.isFinite(row.count)
+        ? new Intl.NumberFormat().format(row.count)
+        : undefined,
+      row.status,
+    ]
+      .filter((value) => typeof value === "string" && value.trim())
+      .join(" · ");
+    const destination = select(row);
+    return (
+      <div key={row.id} className={styles.contributionNavigationItem}>
+        <NavigationItem
+          label={row.label}
+          icon={row.icon}
+          trailing={
+            trailing ? (
+              <span className={styles.contributionMetadata}>{trailing}</span>
+            ) : undefined
+          }
+          selected={isSelectedDestination(destination, target)}
+          onClick={() => onSelect(destination)}
+        />
+      </div>
+    );
+  });
 }

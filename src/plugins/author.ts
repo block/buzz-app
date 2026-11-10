@@ -40,8 +40,13 @@ export type {
   SidebarSectionAction,
   SidebarSectionContribution,
   SidebarSectionRow,
+  SidebarSectionFooter,
   SidebarSections,
 } from "../features/channel-navigation/sidebar-sections-service";
+export type {
+  SidebarHeader,
+  SidebarHeaderContribution,
+} from "../features/channel-navigation/sidebar-header-service";
 export type {
   PluginInstallOutcome,
   PluginInstallSource,

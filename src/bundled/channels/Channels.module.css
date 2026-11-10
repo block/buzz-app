@@ -440,6 +440,13 @@ body:has([data-create-section-drop][data-drop-target]) .channelDragOverlay {
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
 }
+/* A plugin's title and rows above the sidebar controls, spaced like destinations. */
+.contributionHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  margin-block-end: var(--space-3);
+}
 .sectionLabel [data-sidebar-group-icon] {
   width: var(--space-5);
   margin-inline-end: var(--space-1);

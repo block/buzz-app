@@ -455,9 +455,10 @@ subscription: return a stable immutable array until the data changes, then notif
 listeners. `select` is a pure row-to-`OpenTarget` function used for both active
 selection and opening the row. Optional
 header actions are compact buttons; each has a stable id, accessible label,
-icon, and callback. A render failure, including invalid rows, replaces only that
+icon, and callback. An optional `footer` (`{ label, icon?, onSelect }`) adds one
+row after the section's rows, such as "Add item". A render failure, including invalid rows, replaces only that
 section with its unavailable state. Its Retry renders the current rows again.
-Rejected row/header actions stay local to that section.
+Rejected row/header/footer actions stay local to that section.
 
 ```tsx
 import { createElement } from "react";
@@ -487,10 +488,51 @@ ctx.reflect.get("sidebarSections")?.register({
     icon: createElement("span", { "aria-hidden": true }, "+"),
     onSelect: createItem,
   }],
+  footer: { label: "Add item", onSelect: createItem },
 });
 ```
 
-### Solo-only sidebar
+### Sidebar header
+
+A plugin that restyles the whole sidebar can put its own title row, and a few
+rows, above the conversation sidebar's scope tabs and sections. Read the optional
+version-1 capability with `ctx.reflect.get("sidebarHeader")` instead of adding it
+to `inject`; it returns `undefined` on an older host.
+
+```ts
+ctx.reflect.get("sidebarHeader")?.register({
+  version: 1,
+  id: "workspace",
+  title: "Example workspace",
+  onTitle: openWorkspaceMenu,
+  rows: { snapshot: () => rows, subscribe },
+  select: () => ({ version: 1, kind: "home" }),
+});
+```
+
+The host renders the title row and rows with the same navigation rows as
+sidebar sections and owns their presentation; the plugin supplies data and
+callbacks. `onTitle` runs when the title row is selected. `rows` and `select`
+are optional together and follow the [sidebar sections](#conversation-sidebar-sections)
+row contract: a stable immutable snapshot, a subscription, and a pure `select`
+that gives each row's open target, used both to open the row and to mark it
+selected. The header appears in every sidebar state, including while connecting.
+Only one header shows: the first active registration in plugin-id/contribution-id
+order. A header that throws, or has invalid rows, renders nothing and leaves the
+sidebar usable; a rejected `onTitle` or row action shows a local notice. The
+registration belongs to the plugin's Cordis scope and is removed on disable,
+replacement or teardown, and without one the sidebar is unchanged.
+
+### Solo-only sidebar and hidden scope tabs
+
+`sidebarScope.restrict({ id, scope: "all", banner? })` hides the All/Solo/Team
+tabs and pins the sidebar to the combined All inventory, keeping its page
+destinations. The optional `banner` component takes the tabs' place. It is the
+counterpart of the Solo restriction below, for a plugin that supplies its own
+navigation. When a `solo` and an `all` restriction are both active, the `solo`
+one applies. Like the Solo restriction it returns a remover, is removed when its
+plugin is disabled, replaced or torn down, and the person's saved tab returns
+when none remains.
 
 `sidebarScope.restrict({ id, scope: "solo", banner })` shows only the Solo
 inventory while it is registered. The All/Solo/Team tabs and page destinations

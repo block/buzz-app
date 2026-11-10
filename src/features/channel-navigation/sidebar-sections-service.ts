@@ -22,6 +22,13 @@ export type SidebarSectionAction = Readonly<{
   onSelect: () => void | Promise<void>;
 }>;
 
+/** A row after the section's rows, such as "Add item". */
+export type SidebarSectionFooter = Readonly<{
+  label: string;
+  icon?: ReactElement;
+  onSelect: () => void | Promise<void>;
+}>;
+
 export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
@@ -33,6 +40,7 @@ export type SidebarSectionContribution = Readonly<{
   }>;
   select: (row: SidebarSectionRow) => OpenTarget;
   actions?: readonly SidebarSectionAction[];
+  footer?: SidebarSectionFooter;
 }>;
 
 export type RegisteredSidebarSection = Contribution<SidebarSectionContribution>;
@@ -90,7 +98,12 @@ export class SidebarSectionsService extends Service implements SidebarSections {
               !action.label.trim() ||
               action.icon == null ||
               typeof action.onSelect !== "function",
-          )))
+          ))) ||
+      (section.footer !== undefined &&
+        (!section.footer ||
+          typeof section.footer.label !== "string" ||
+          !section.footer.label.trim() ||
+          typeof section.footer.onSelect !== "function"))
     )
       throw new Error(
         "A sidebar section needs an id, title, rows, and select action",

@@ -134,7 +134,9 @@ function relay(
   };
 }
 
-function broker(routes: Record<string, (body: unknown) => Response>) {
+function broker(
+  routes: Record<string, (body: unknown) => Response | Promise<Response>>,
+) {
   const calls: { route: string; body: unknown }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -620,4 +622,88 @@ it("clears an unsubmitted confirmation when history leaves Members", async () =>
   );
   expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(calls.some((call) => call.route === "member")).toBe(false);
+});
+
+it("creates a fresh invite with unchanged limits after leaving the tab", async () => {
+  const user = userEvent.setup();
+  let minted = 0;
+  const calls = broker({
+    invite: (body) =>
+      Response.json({
+        code: String(++minted),
+        url: `https://primary.example/invite/${minted}`,
+        expires_at: 1700003600,
+        max_uses: (body as { max_uses: number | null }).max_uses,
+        uses_remaining: (body as { max_uses: number | null }).max_uses,
+      }),
+  });
+  const { relay: data } = relay(owner);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  await screen.findByDisplayValue("https://primary.example/invite/1");
+  await user.click(
+    screen.getByRole("button", { name: "Choose maximum invite uses" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "1 use", exact: true }),
+  );
+  await screen.findByDisplayValue("https://primary.example/invite/2");
+  await user.click(screen.getByRole("tab", { name: "Members" }));
+  await user.click(screen.getByRole("tab", { name: "Invite" }));
+  expect(
+    await screen.findByDisplayValue("https://primary.example/invite/3"),
+  ).toBeVisible();
+  expect(
+    calls
+      .filter((call) => call.route === "invite")
+      .slice(-2)
+      .map((call) => call.body),
+  ).toEqual([
+    { ttl_secs: 3 * 24 * 60 * 60, max_uses: 1 },
+    { ttl_secs: 3 * 24 * 60 * 60, max_uses: 1 },
+  ]);
+});
+
+it("ignores a late mint from a previous Invite visit", async () => {
+  let finish!: (response: Response) => void;
+  const held = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  let count = 0;
+  const response = (code: string) =>
+    Response.json({
+      code,
+      url: `https://primary.example/invite/${code}`,
+      expires_at: 1700003600,
+      max_uses: null,
+      uses_remaining: null,
+    });
+  const calls = broker({
+    invite: () => (++count === 1 ? held : response("new")),
+  });
+  const { relay: data } = relay(owner);
+  const active = () => true;
+  const view = render(
+    <CommunityAdmin relay={data} active={active} selectedMethod="invite" />,
+  );
+  await waitFor(() =>
+    expect(calls.filter((call) => call.route === "invite")).toHaveLength(1),
+  );
+  view.rerender(
+    <CommunityAdmin relay={data} active={active} selectedMethod="members" />,
+  );
+  view.rerender(
+    <CommunityAdmin relay={data} active={active} selectedMethod="invite" />,
+  );
+  await screen.findByDisplayValue("https://primary.example/invite/new");
+  await act(async () => {
+    finish(response("old"));
+    await held;
+  });
+  expect(
+    screen.getByDisplayValue("https://primary.example/invite/new"),
+  ).toBeVisible();
+  expect(
+    screen.queryByDisplayValue("https://primary.example/invite/old"),
+  ).toBeNull();
 });

@@ -579,6 +579,16 @@ function MembershipContent({
   const current = link?.settings === settings ? link : null;
   const locked = stale || refreshing;
   useEffect(() => {
+    if (open) return;
+    // A new visit needs a fresh link: the previous one may be exhausted.
+    ++minting.current;
+    requested.current = "";
+    setLink(null);
+    setQr(null);
+    setCopied(false);
+    setError("");
+  }, [open]);
+  useEffect(() => {
     // Visiting a sharing tab, or changing its settings, creates the link to share.
     if (!open || locked || current || requested.current === settings) return;
     if (!active()) return;

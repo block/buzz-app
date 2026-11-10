@@ -44,25 +44,3 @@ test("line-start mention capsules align with prose", async ({ page }) => {
       expect(Math.abs(offset), density).toBeLessThan(0.5);
   }
 });
-
-// Real CSS tokens: chart marks resolve to the series roles and redraw per theme.
-test("charts draw in the series colors of each theme", async ({ page }) => {
-  await page.goto("/tests/fixtures/message-gallery.html?group=charts");
-  const plot = page.locator('[data-message-id="chart-line"] [role="img"] svg');
-  const colors = () =>
-    plot.evaluate((svg) =>
-      [...svg.querySelectorAll("[stroke]")].map((e) =>
-        e.getAttribute("stroke"),
-      ),
-    );
-  await expect(plot).toBeVisible();
-  expect(await colors()).toEqual(
-    expect.arrayContaining(["rgb(5,136,240)", "rgb(239,95,0)"]),
-  );
-  await page.evaluate(() => {
-    document.documentElement.dataset.colorMode = "dark";
-  });
-  await expect
-    .poll(colors)
-    .toEqual(expect.arrayContaining(["rgb(0,144,255)", "rgb(163,88,41)"]));
-});

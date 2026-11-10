@@ -89,7 +89,7 @@ const messages: readonly Contribution<MessageRenderer>[] = [
     component: DiffMessage,
   },
 ];
-const codeBlocks: readonly Contribution<CodeBlockRenderer>[] = [
+const allCodeBlocks: readonly Contribution<CodeBlockRenderer>[] = [
   {
     id: "mermaid",
     key: "gallery/mermaid",
@@ -111,6 +111,10 @@ const codeBlocks: readonly Contribution<CodeBlockRenderer>[] = [
     action: ChartExpand,
   },
 ];
+const codeBlocks =
+  new URLSearchParams(location.search).get("charts") === "off"
+    ? allCodeBlocks.filter((block) => block.id !== "buzz-chart")
+    : allCodeBlocks;
 const emptyTools: ReturnType<ConversationExtensions["tools"]["snapshot"]> = [];
 const subscribe = () => () => {};
 const extensions: ConversationExtensions = {

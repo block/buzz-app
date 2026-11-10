@@ -1,3 +1,4 @@
+import { describeSoloPullIcon } from "./SoloPull";
 import { ResolvePull } from "./ResolvePull";
 import type { PullChecklist as Checklist } from "./pull";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -151,13 +152,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
       channelId={channelId}
     />
   ));
-  ctx.conversation.registerChatIcon(({ session, channelId, fallback }) => (
-    <SoloPullIcon
-      pulls={pullsFor(session)}
-      channelId={channelId}
-      fallback={fallback}
-    />
-  ));
+  ctx.conversation.registerChatIcon(
+    ({ session, channelId, fallback }) => (
+      <SoloPullIcon
+        pulls={pullsFor(session)}
+        channelId={channelId}
+        fallback={fallback}
+      />
+    ),
+    // The same icon in data, for a pop-out window's header.
+    {
+      describe: (session, channelId) =>
+        describeSoloPullIcon(pullsFor(session).get(channelId)),
+      watch: (session, channelId, listener) =>
+        pullsFor(session).watch(channelId, listener),
+    },
+  );
   ctx.agents.addTool({
     name: "github_link_pr",
     description:

@@ -11,6 +11,7 @@ import type {
   ContributionReader,
   MessageAction,
 } from "../conversation/contracts";
+import type { ChatIcon, ChatIconDescription } from "../conversation/service";
 import type { MainOperation } from "../companion/operations";
 import { lastEditableMessage } from "../messages/useMessageEdit";
 import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
@@ -79,6 +80,8 @@ export type PopoutThreadView = {
    * the whole count, and up to three to picture (agents for a Solo chat,
    * people otherwise; those with pictures first). */
   members?: PopoutMembers | undefined;
+  /** A plugin's icon for this Solo chat, in data (the sidebar's first). */
+  icon?: ChatIconDescription | undefined;
   /** This frame shows a thread (root + replies), not a conversation timeline. */
   thread: boolean;
   /** People typing and agents working in this frame's conversation. */
@@ -213,6 +216,9 @@ export function createPopoutThread(
   excludedActions: ReadonlySet<string> = new Set(["open-thread-window"]),
   /** Hosted agents, for Stop on work without a lifecycle record. */
   agents?: WorkStopAgents,
+  /** Plugin chat icons: a Solo chat's header shows the first one that
+   * describes itself in data, as the sidebar shows the first component. */
+  chatIcons?: ContributionReader<ChatIcon>,
 ) {
   let disposed = false;
   let version = 0;
@@ -279,6 +285,7 @@ export function createPopoutThread(
     session.typing.subscribe(notify),
     session.agentActivity.subscribe(notify),
     session.agentChoices.subscribe(notify),
+    chatIcons?.subscribe(notify),
     linkAuthors.subscribe(notify),
     session.names?.subscribe(notify),
   ];
@@ -694,6 +701,53 @@ export function createPopoutThread(
       }),
     };
   };
+  /** A Solo chat's plugin icon, from the first describing contribution, as
+   * the sidebar shows the first component. Each describer is watched for
+   * this chat while the frame lives. */
+  const iconWatches = new Map<string, () => void>();
+  function pluginIcon(c: Channel | undefined): ChatIconDescription | undefined {
+    if (disposed || c?.channelType !== "solo") return undefined;
+    const entries = chatIcons?.snapshot() ?? [];
+    const live = new Set<string>();
+    let found: ChatIconDescription | undefined;
+    for (const entry of entries) {
+      const describer = entry.describer;
+      if (!describer) continue;
+      live.add(entry.key);
+      if (!iconWatches.has(entry.key))
+        try {
+          iconWatches.set(
+            entry.key,
+            describer.watch(session, channelId, notify),
+          );
+        } catch {
+          iconWatches.set(entry.key, () => {});
+        }
+      if (found) continue;
+      try {
+        const description = describer.describe(session, channelId);
+        if (
+          description &&
+          typeof description.icon === "string" &&
+          description.icon.length <= 64 &&
+          typeof description.label === "string"
+        )
+          found = {
+            icon: description.icon,
+            ...(description.tone ? { tone: description.tone } : {}),
+            label: description.label.slice(0, 1000),
+          };
+      } catch {
+        /* A failing contribution shows nothing, not an error. */
+      }
+    }
+    for (const [key, stop] of iconWatches)
+      if (!live.has(key)) {
+        stop();
+        iconWatches.delete(key);
+      }
+    return found;
+  }
   /** The DM's first other participant's picture, as the tab icon shows. */
   const picture = (c: Channel | undefined) => {
     const person = c?.channelType === "dm" ? c.participants?.[0] : undefined;
@@ -921,6 +975,7 @@ export function createPopoutThread(
       );
       observeLinks(shownRows as ChannelMessage[]);
       const c = channel();
+      const icon = pluginIcon(c);
       const joined =
         !!c && !c.cached && (!c.readOnly || c.viewerRole === "guest");
       const channelWritable = !!c && !c.readOnly && !c.cached;
@@ -996,6 +1051,7 @@ export function createPopoutThread(
         kind: kind(c),
         picture: picture(c),
         members: members(c),
+        ...(icon ? { icon } : {}),
         thread: !!rootId,
         typing: available() ? typing() : undefined,
       };
@@ -1035,6 +1091,8 @@ export function createPopoutThread(
       evidence.clear();
       for (const release of linksWanted.values()) release();
       linksWanted.clear();
+      for (const stop of iconWatches.values()) stop();
+      iconWatches.clear();
       thread?.dispose();
     },
   };

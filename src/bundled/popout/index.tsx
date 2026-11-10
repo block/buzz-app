@@ -78,6 +78,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     openLink,
     agents: ctx.agents,
     actions: ctx.conversation.actions,
+    chatIcons: ctx.conversation.chatIcons,
     // Handoff: main shows the message, then that row opens the exact action
     // instance (a dialog action opens; a menu action's menu opens with it).
     // The companion never runs a plugin action itself.

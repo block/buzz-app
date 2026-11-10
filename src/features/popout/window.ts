@@ -125,6 +125,10 @@ export function createPopoutWindows(
     /** Open the conversation's members/access in main (`solo`: no Members
      * surface exists; the conversation itself opens). */
     openMembers?: (channelId: string, solo: boolean) => void;
+    /** Plugin chat icons, for a Solo window's header. */
+    chatIcons?: import("../conversation/contracts").ContributionReader<
+      import("../conversation/service").ChatIcon
+    >;
   } = {},
 ) {
   const bridge = options.bridge ?? nativePopoutWindow;
@@ -309,6 +313,7 @@ export function createPopoutWindows(
         options.actions,
         undefined,
         options.agents,
+        options.chatIcons,
       ),
       composer: undefined as unknown as Frame["composer"],
       reading: undefined as unknown as Frame["reading"],

@@ -11,6 +11,7 @@ import { createReadingProxy } from "../../features/popout/reading-bridge";
 import { isBuzzLink } from "../../features/navigation/buzz-links";
 import { CompanionRows } from "../../features/companion/CompanionRows";
 import { CompanionWorking } from "../../features/companion/CompanionWorking";
+import { chatIconFor } from "../../features/conversation/chat-icon-catalog";
 import { createCompanionOperations } from "../../features/companion/operations";
 import { toMessage } from "../../features/companion/CompanionManagementItems";
 import type { CompanionRow } from "../../features/companion/row";
@@ -41,6 +42,12 @@ const noSubscription = () => () => {};
 const zero = () => 0;
 const none: readonly import("../../features/relay/outbox").OutgoingEvent[] = [];
 const noOperations = () => none;
+
+/** The design-system artwork a plugin named for a Solo chat. */
+function PluginChatIcon({ name }: { name: string }) {
+  const Icon = chatIconFor(name);
+  return <Icon size="1rem" />;
+}
 
 export function PopoutWindowView({
   view,
@@ -334,11 +341,21 @@ export function PopoutWindowView({
           <span
             className={styles.icon}
             role="img"
-            aria-label={view.thread ? "Thread" : kindLabel}
+            aria-label={
+              view.thread
+                ? "Thread"
+                : view.kind === "solo" && view.icon
+                  ? `${kindLabel}: ${view.icon.label}`
+                  : kindLabel
+            }
             data-kind={view.thread ? "thread" : view.kind}
+            data-tone={!view.thread ? view.icon?.tone : undefined}
           >
             {view.thread ? (
               <MessageReplyIcon size="1rem" />
+            ) : view.kind === "solo" && view.icon ? (
+              // A plugin's icon for this chat, drawn from its description.
+              <PluginChatIcon name={view.icon.icon} />
             ) : view.kind === "dm" ? (
               <Avatar
                 alt=""

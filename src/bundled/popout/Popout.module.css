@@ -41,6 +41,17 @@
 .members:active {
   background: var(--affordance-subtle-pressed);
 }
+/* Plugin chat icon tones, as the sidebar colours them: open is success,
+   failing checks or conflicts danger, pending warning; the rest quiet. */
+.icon[data-tone="open"] {
+  color: var(--icon-success);
+}
+.icon[data-tone="failure"] {
+  color: var(--text-danger);
+}
+.icon[data-tone="pending"] {
+  color: var(--text-warning);
+}
 .title {
   flex: 1;
   min-width: 0;

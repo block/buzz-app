@@ -452,6 +452,32 @@ it("retires plugin chat menu contributions when their plugin is disabled", async
   );
 });
 
+it("keeps a chat icon's describer with its contribution and validates its shape", async () => {
+  const describer = {
+    describe: () => ({ icon: "chat" as const, label: "Chat" }),
+    watch: () => () => {},
+  };
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerChatIcon(Component, describer);
+      expect(() =>
+        ctx.conversation.registerChatIcon(Component, {
+          describe: () => undefined,
+        } as never),
+      ).toThrow("A chat icon describer needs describe and watch");
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.chatIcons.snapshot()[0]?.describer).toBe(describer),
+  );
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.chatIcons.snapshot()).toHaveLength(0),
+  );
+});
+
 it("owns tab actions through disable and validates their shape", async () => {
   const h = harness({
     inject: ["conversation"],

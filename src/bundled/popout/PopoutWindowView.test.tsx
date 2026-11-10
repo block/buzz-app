@@ -104,6 +104,28 @@ it("names what it shows, as Slack's pop-out does, and reports its guard", () => 
   );
   expect(screen.getByRole("img", { name: "Solo chat" })).toBeTruthy();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Plan$/);
+  // A plugin's icon for the chat, drawn from its description with its tone.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "solo",
+        title: "Plan",
+        icon: {
+          icon: "git-pull-request",
+          tone: "failure",
+          label: "Pull request, open, checks failing",
+        },
+      })}
+      act={act}
+    />,
+  );
+  const pluginIcon = screen.getByRole("img", {
+    name: "Solo chat: Pull request, open, checks failing",
+  });
+  expect(pluginIcon.getAttribute("data-tone")).toBe("failure");
+  expect(pluginIcon.querySelector("svg")).toBeTruthy();
   rerender(
     <PopoutWindowView
       view={view({ thread: false, kind: "private", title: "leads" })}

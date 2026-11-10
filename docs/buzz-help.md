@@ -1225,7 +1225,8 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   Buzz", "Ada (DM) — Buzz", "Planning (Solo chat) — Buzz", "Thread in #channel
   — Buzz"), and the header shows the same icon the conversation's tab has
   (hash, lock for a private channel, the person for a DM, the chat bubble for
-  a Solo chat, the thread mark for a thread) before the name, and the member
+  a Solo chat — or a plugin's icon for it, such as a linked pull request's
+  state — the thread mark for a thread) before the name, and the member
   avatars main's header shows (agents, for a Solo chat); choosing them opens
   the conversation's members in the main window. A conversation window drills into
   one of its threads in place — choose the thread on a message — and the `<`

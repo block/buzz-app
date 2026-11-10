@@ -102,6 +102,9 @@ pub(crate) struct View {
     /// The conversation's members as main's header previews them.
     #[serde(default)]
     members: Option<Members>,
+    /// A plugin's icon for a Solo chat, in data.
+    #[serde(default)]
+    icon: Option<ChatIcon>,
     /// A thread (root + replies) rather than a conversation timeline.
     #[serde(default)]
     thread: bool,
@@ -308,6 +311,22 @@ fn default_kind() -> String {
 }
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct ChatIcon {
+    icon: String,
+    #[serde(default)]
+    tone: Option<String>,
+    label: String,
+}
+impl ChatIcon {
+    fn valid(&self) -> bool {
+        let token = |s: &String| {
+            !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+        };
+        token(&self.icon) && self.tone.as_ref().is_none_or(token) && self.label.len() <= 4096
+    }
+}
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Members {
     count: u64,
     solo: bool,
@@ -336,6 +355,7 @@ fn validate(view: &View) -> Result<()> {
         || !matches!(view.kind.as_str(), "channel" | "private" | "dm" | "solo")
         || view.picture.as_ref().is_some_and(|p| p.len() > 8192)
         || view.members.as_ref().is_some_and(|m| !m.valid())
+        || view.icon.as_ref().is_some_and(|i| !i.valid())
         || view.scope.len() > 4096
         || view.appearance.as_ref().is_some_and(|a| !a.valid())
         || view.typing.as_ref().is_some_and(|t| !t.valid())
@@ -831,6 +851,7 @@ mod tests {
             kind: "channel".into(),
             picture: None,
             members: None,
+            icon: None,
             thread: true,
             can_go_back: false,
             typing: None,
@@ -1060,6 +1081,20 @@ mod tests {
             .unwrap()
         };
         view.members = None;
+        // A plugin chat icon is a bounded token with a label.
+        view.icon = Some(ChatIcon {
+            icon: "git-pull-request".into(),
+            tone: Some("open".into()),
+            label: "Pull request, open".into(),
+        });
+        assert!(validate(&view).is_ok());
+        view.icon = Some(ChatIcon {
+            icon: "<svg>".into(),
+            tone: None,
+            label: "x".into(),
+        });
+        assert!(validate(&view).is_err());
+        view.icon = None;
         view.typing = Some(working(8, "working"));
         assert!(validate(&view).is_ok());
         view.typing = Some(working(9, "working"));

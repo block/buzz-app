@@ -830,6 +830,18 @@ three documented gaps close before it leaves draft.
   the companion drives main's own `useWorkStops` (toasts, 30 s retry window,
   "nothing running"), controls carrying `lifecycle`.
 
+- Plugin chat icons: jaw approved the FOUNDATION edit. `ChatIcon.describer?:
+  { describe(session, channelId) → { icon: ChatIconName, tone?, label } |
+  undefined; watch(session, channelId, listener) }`, registered as
+  `registerChatIcon(component, describer?)` (validated); `ChatIconName` is a
+  closed set drawn by `conversation/chat-icon-catalog.tsx`. GitHub's icon
+  describes itself from `SoloPulls`. The projection shows a Solo chat's first
+  describing contribution (the sidebar shows the first component), watches
+  each describer for the chat while the frame lives, and drops watches for
+  contributions that leave. Native `View.icon {icon ≤64 token, tone?, label}`.
+  The companion draws the catalog artwork with the sidebar's tone colours and
+  names it "Solo chat: ‹label›".
+
 ### Non-goals (S3)
 
 Members dialog *inside* the pop-out (it stays main's); starting/stopping

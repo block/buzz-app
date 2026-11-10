@@ -1486,3 +1486,77 @@ it("projects members as main's header previews them: people (or agents, for Solo
     preview: [{ id: AGENT, name: "Echo", picture: null }],
   });
 });
+
+it("shows a Solo chat's plugin icon from the first describing contribution, watched while the frame lives", () => {
+  const h = fixture();
+  const stop = vi.fn();
+  let state: "open" | "merged" = "open";
+  const describer = {
+    describe: vi.fn((_session: unknown, channelId: string) =>
+      channelId === "channel"
+        ? {
+            icon:
+              state === "open"
+                ? ("git-pull-request" as const)
+                : ("git-merge" as const),
+            tone: state,
+            label: `Pull request, ${state}`,
+          }
+        : undefined,
+    ),
+    watch: vi.fn(
+      (_session: unknown, _channelId: string, _listener: () => void) => stop,
+    ),
+  };
+  const entries = [
+    {
+      id: "chat-icon",
+      key: "plain/chat-icon",
+      pluginId: "plain",
+      revision: "1",
+      component: () => null,
+    },
+    {
+      id: "chat-icon",
+      key: "github/chat-icon",
+      pluginId: "github",
+      revision: "1",
+      component: () => null,
+      describer,
+    },
+  ];
+  const chatIcons = { snapshot: () => entries, subscribe: () => () => {} };
+  const changed = vi.fn();
+  const thread = createPopoutThread(
+    h.session,
+    "channel",
+    ROOT,
+    changed,
+    undefined,
+    undefined,
+    undefined,
+    chatIcons,
+  );
+  clean.push(thread.dispose);
+  // A channel shows no plugin chat icon, and watches nothing.
+  expect(thread.snapshot().icon).toBeUndefined();
+  expect(describer.watch).not.toHaveBeenCalled();
+  h.channel.current = { id: "channel", name: "Planning", channelType: "solo" };
+  expect(thread.snapshot().icon).toEqual({
+    icon: "git-pull-request",
+    tone: "open",
+    label: "Pull request, open",
+  });
+  expect(describer.watch).toHaveBeenCalledExactlyOnceWith(
+    h.session,
+    "channel",
+    expect.any(Function),
+  );
+  // The describer's change notifies this frame and the next projection shows it.
+  state = "merged";
+  describer.watch.mock.calls[0]?.[2]();
+  expect(changed).toHaveBeenCalled();
+  expect(thread.snapshot().icon).toMatchObject({ icon: "git-merge" });
+  thread.dispose();
+  expect(stop).toHaveBeenCalledOnce();
+});

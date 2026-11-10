@@ -532,6 +532,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("plugin development manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
             .expect("focus manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/changesets/manifest.json"
+        ))
+        .expect("changesets manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.

@@ -738,6 +738,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   attached files without opening the conversation. A thread draft also shows
   where you left it: **Draft** on a message's reply line, or **Draft reply** when
   no one has replied yet (hidden while that thread is open).
+- **Changesets** is an optional desktop plugin, off by default. When a local
+  agent finishes a turn in a chat with project folders, a card under its last
+  message lists the files it changed, with added and removed lines. Only you
+  see it. Choose a file to open its diff beside the chat. It skips agents on
+  other computers and remote agents, and keeps the latest 300 turns on this
+  device.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the Messages sidebar to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;

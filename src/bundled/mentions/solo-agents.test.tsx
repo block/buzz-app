@@ -4514,100 +4514,144 @@ it("Space keeps waiting after a member's profile read fails until a retry settle
   }
 });
 
-it("Space holds a member's name while its profile loads, even beside a longer outside name already listed", async () => {
-  // `@jos` found `Jose-Luis` outside the channel on a truncated page, which
-  // `@jose` keeps showing while its own search runs. The member's profile
-  // read is still in flight, so the member may yet be the exact `Jose`,
-  // which no outside name blocks: Space may hold the name, not decline it.
-  const h = setup();
-  const jose = keypair();
-  const reads: ((events: RelayEvent[]) => void)[] = [];
-  const directory = createProfileDirectory({
-    read: () => new Promise<RelayEvent[]>((resolve) => reads.push(resolve)),
-  });
-  const list = {
-    status: "ready" as const,
-    channels: [
-      { id: "parent", channelType: "stream" as const, members: [jose.pubkey] },
-    ],
-  };
-  const searches: ((page: DirectoryPage) => void)[] = [];
-  const people = vi.fn(
-    (_query: string) =>
-      new Promise<DirectoryPage>((resolve) => searches.push(resolve)),
-  );
-  const names = bindNames(
-    { profiles: directory.queries, agentLibrary: h.library.queries },
-    { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
-  );
-  const session = {
-    ...h.session,
-    profiles: directory.queries,
-    names,
-    channels: { ...h.session.channels, list: () => list },
-    directMessages: { ...h.session.directMessages, people },
-  } as unknown as RelaySession;
-  const publish = vi.fn();
-  const result = () =>
-    publish.mock.lastCall?.[0] as CompletionResult | undefined;
-  // The host remounts the provider on each keystroke of one `@` token.
-  const typed = (query: string) => (
-    <MentionCompletion
-      key={query}
-      session={session}
-      scope="space-test"
-      channelId="parent"
-      observation={{
-        revision: query.length,
-        text: `@${query}`,
-        start: query.length + 1,
-        end: query.length + 1,
-      }}
-      query={{ start: 0, end: query.length + 1, query }}
-      publish={publish}
-    />
-  );
-  const view = render(typed("jos"));
-  try {
-    await waitFor(() => expect(reads).toHaveLength(1));
-    await waitFor(() =>
-      expect(people).toHaveBeenCalledWith("jos", 1, expect.anything()),
-    );
-    await act(async () =>
-      searches[0]?.({
-        people: [{ pubkey: outsideJose, name: "Jose-Luis" }],
-        hasMore: true,
-      }),
-    );
-    view.rerender(typed("jose"));
-    await waitFor(() =>
-      expect(people).toHaveBeenCalledWith("jose", 1, expect.anything()),
-    );
-    await waitFor(() =>
-      expect(result()?.items.some((item) => item.id === outsideJose)).toBe(
-        true,
-      ),
-    );
-    expect(result()?.spaceId).toBeUndefined();
-    expect(result()?.spacePending?.name).toBe("jose");
-    const pending = result()?.spacePending?.resolve(
-      new AbortController().signal,
-    );
-    await act(async () => reads[0]?.([profile(jose, { name: "Jose" })]));
-    // Named now: the member's exact name selects beside the outside one.
-    await expect(pending).resolves.toEqual({
-      pubkey: jose.pubkey,
-      name: "Jose",
+it.each([
+  // The member's profile read is still in flight.
+  { loading: "member's profile", search: "running" },
+  // The `jose` search then lists the member by name before the profile read
+  // settles: over that complete page the member's exact name selects.
+  { loading: "member's profile", search: "settled" },
+  // The member list itself is still loading, so nobody is a member yet.
+  { loading: "channel's member list", search: "running" },
+] as const)(
+  "Space holds a member's name while the $loading loads, even beside a longer outside name already listed (search $search)",
+  async ({ loading, search }) => {
+    // `@jos` found `Jose-Luis` outside the channel on a truncated page, which
+    // `@jose` keeps showing while its own search runs. Until the member and
+    // their name are known, the member may yet be the exact `Jose`, which no
+    // outside name blocks: Space may hold the name, not decline it.
+    const h = setup();
+    const jose = keypair();
+    const reads: ((events: RelayEvent[]) => void)[] = [];
+    const directory = createProfileDirectory({
+      read: () => new Promise<RelayEvent[]>((resolve) => reads.push(resolve)),
     });
-    await waitFor(() => expect(result()?.spaceId).toBe(jose.pubkey));
-    expect(reads).toHaveLength(1);
-  } finally {
-    view.unmount();
-    names.dispose();
-    directory.dispose();
-    h.library.dispose();
-  }
-});
+    const channel = { id: "parent", channelType: "stream" as const };
+    const ready = {
+      status: "ready",
+      channels: [{ ...channel, members: [jose.pubkey] }],
+    };
+    const membersLoading = loading === "channel's member list";
+    let list = membersLoading
+      ? { status: "loading", channels: [channel] }
+      : ready;
+    const listeners = new Set<() => void>();
+    const searches: ((page: DirectoryPage) => void)[] = [];
+    const people = vi.fn(
+      (_query: string) =>
+        new Promise<DirectoryPage>((resolve) => searches.push(resolve)),
+    );
+    const names = bindNames(
+      { profiles: directory.queries, agentLibrary: h.library.queries },
+      { snapshot: () => [createAgentDirectory()], subscribe: () => () => {} },
+    );
+    const session = {
+      ...h.session,
+      profiles: directory.queries,
+      names,
+      channels: {
+        ...h.session.channels,
+        list: () => list,
+        subscribeList(listener: () => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+      directMessages: { ...h.session.directMessages, people },
+    } as unknown as RelaySession;
+    const publish = vi.fn();
+    const result = () =>
+      publish.mock.lastCall?.[0] as CompletionResult | undefined;
+    // The host remounts the provider on each keystroke of one `@` token.
+    const typed = (query: string) => (
+      <MentionCompletion
+        key={query}
+        session={session}
+        scope="space-test"
+        channelId="parent"
+        observation={{
+          revision: query.length,
+          text: `@${query}`,
+          start: query.length + 1,
+          end: query.length + 1,
+        }}
+        query={{ start: 0, end: query.length + 1, query }}
+        publish={publish}
+      />
+    );
+    const view = render(typed("jos"));
+    try {
+      if (!membersLoading) await waitFor(() => expect(reads).toHaveLength(1));
+      await waitFor(() =>
+        expect(people).toHaveBeenCalledWith("jos", 1, expect.anything()),
+      );
+      await act(async () =>
+        searches[0]?.({
+          people: [{ pubkey: outsideJose, name: "Jose-Luis" }],
+          hasMore: true,
+        }),
+      );
+      view.rerender(typed("jose"));
+      await waitFor(() =>
+        expect(people).toHaveBeenCalledWith("jose", 1, expect.anything()),
+      );
+      // Rows wait for the member list; the kept page is a candidate already.
+      if (!membersLoading)
+        await waitFor(() =>
+          expect(result()?.items.some((item) => item.id === outsideJose)).toBe(
+            true,
+          ),
+        );
+      expect(result()?.spaceId).toBeUndefined();
+      expect(result()?.spacePending?.name).toBe("jose");
+      const pending = result()?.spacePending?.resolve(
+        new AbortController().signal,
+      );
+      if (search === "settled") {
+        await act(async () =>
+          searches[1]?.({
+            people: [
+              { pubkey: jose.pubkey, name: "Jose" },
+              { pubkey: outsideJose, name: "Jose-Luis" },
+            ],
+            hasMore: false,
+          }),
+        );
+        // The page names the member while the profile read is still held.
+        await waitFor(() => expect(result()?.spaceId).toBe(jose.pubkey));
+      }
+      if (membersLoading) {
+        act(() => {
+          list = ready;
+          for (const listener of listeners) listener();
+        });
+        await waitFor(() => expect(reads).toHaveLength(1));
+      }
+      await act(async () => reads[0]?.([profile(jose, { name: "Jose" })]));
+      // Named now: the member's exact name selects beside the outside one.
+      await expect(pending).resolves.toEqual({
+        pubkey: jose.pubkey,
+        name: "Jose",
+      });
+      await waitFor(() => expect(result()?.spaceId).toBe(jose.pubkey));
+      expect(reads).toHaveLength(1);
+    } finally {
+      view.unmount();
+      names.dispose();
+      directory.dispose();
+      h.library.dispose();
+    }
+  },
+);
 
 function rosterFixture(
   members: readonly string[],

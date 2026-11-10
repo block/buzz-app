@@ -328,9 +328,9 @@ export function MentionCompletion({
       pendingMentionQuery(query.query) &&
       !continuedMention(
         // A continuing name starts with the query: only indexed matches can
-        // have one. A member still unnamed may have the exact name, which no
-        // outside name blocks, so until every member is named only members'
-        // names decline.
+        // have one. A member still unknown or unnamed may have the exact
+        // name, which no outside name blocks, so until every member is known
+        // and named only members' names decline.
         matchingMentions(model.candidates, query.query).filter(
           (c) => c.member || !model.missingNames,
         ),

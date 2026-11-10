@@ -456,9 +456,13 @@ export function useMentionChoices(
       ? rank(matches.filter((c) => !local.has(c.recipient.pubkey)))
       : []);
   // A member a completed read found no profile for has no name to be a namesake.
+  // While the member list loads, no member's name is known.
   const missingNames =
     open &&
-    channel?.members?.some((key) => !profiles.has(key) && !unnamed?.has(key));
+    (membersPending ||
+      channel?.members?.some(
+        (key) => !profiles.has(key) && !unnamed?.has(key),
+      ));
   if (open && !rows && !membersPending) {
     const ranked = rank(matches.filter((c) => local.has(c.recipient.pubkey)));
     if (

@@ -45,6 +45,16 @@ const deleteArgs = (name) => [
   "--cleanup-tag",
 ];
 
+function downloadsFor(version) {
+  return {
+    schemaVersion: 1,
+    channel: "preview",
+    version,
+    release: `v${version}`,
+    downloads: installerUrls(version),
+  };
+}
+
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), "prune-previews-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -108,13 +118,7 @@ if (JSON.stringify(args) === JSON.stringify(${JSON.stringify(downloadsArgs)})) {
       data,
       JSON.stringify({
         manifest,
-        downloads: {
-          schemaVersion: 1,
-          channel: "preview",
-          version: manifest.version,
-          release: `v${manifest.version}`,
-          downloads: installerUrls(manifest.version),
-        },
+        downloads: downloadsFor(manifest.version),
         // Two pages keep the pagination contract cheap to exercise.
         pages: pages ?? [releases.slice(0, 7), releases.slice(7)],
         ...overrides,
@@ -272,16 +276,9 @@ test("deletion failure stops cleanup and fails the run", (t) => {
 
 test("retains the advertised website version when it differs from the updater", (t) => {
   const { run } = fixture(t);
-  const version = "0.0.0-preview.2.1";
   const result = run({
     args: ["--apply"],
-    downloads: {
-      schemaVersion: 1,
-      channel: "preview",
-      version,
-      release: `v${version}`,
-      downloads: installerUrls(version),
-    },
+    downloads: downloadsFor("0.0.0-preview.2.1"),
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.calls, [

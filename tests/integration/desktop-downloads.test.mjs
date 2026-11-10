@@ -178,31 +178,26 @@ test("updates use the existing file SHA; same-version recovery is read-only", (t
 test("rejects incomplete, empty, duplicate, unsafe, draft or unpromoted release metadata before writes", (t) => {
   const run = fixture(t);
   const release = releaseFor(version);
-  for (const overrides of [
-    { feedVersion: previousVersion },
-    { release: { ...release, draft: true } },
-    { release: { ...release, prerelease: false } },
-    { release: { ...release, assets: release.assets.slice(1) } },
-    { release: { ...release, assets: [...release.assets, release.assets[0]] } },
-    {
-      release: {
-        ...release,
-        assets: release.assets.map((asset) => ({ ...asset, size: 0 })),
-      },
-    },
-    {
-      release: {
-        ...release,
-        assets: release.assets.map((asset) => ({
-          ...asset,
-          browser_download_url: "https://example.org/installer",
-        })),
-      },
-    },
-  ]) {
+  const rejectedWithoutWrites = (overrides) => {
     const result = run(overrides);
     assert.notEqual(result.status, 0);
     assert.ok(result.state.calls.every((call) => call.body === null));
+  };
+  rejectedWithoutWrites({ feedVersion: previousVersion });
+  for (const overrides of [
+    { draft: true },
+    { prerelease: false },
+    { assets: release.assets.slice(1) },
+    { assets: [...release.assets, release.assets[0]] },
+    { assets: release.assets.map((asset) => ({ ...asset, size: 0 })) },
+    {
+      assets: release.assets.map((asset) => ({
+        ...asset,
+        browser_download_url: "https://example.org/installer",
+      })),
+    },
+  ]) {
+    rejectedWithoutWrites({ release: { ...release, ...overrides } });
   }
 });
 

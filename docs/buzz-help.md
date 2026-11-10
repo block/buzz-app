@@ -152,8 +152,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   the **Private key** heading above Copy and Reveal. A confirmed backup stays
   **Backed up** when a later attempt or account lookup fails, including offline
   or signed out. Unconfirmed failures show **Check backup**. **Retry backup**
-  isn't offered where another attempt gets the same answer. With no sign-in, or
-  an ended one, sign in on this page instead, which starts a backup on its own;
+  isn't offered where another attempt gets the same answer. With no sign-in,
+  sign in on this page instead, which starts a backup on its own;
   a refused or unverifiable backup service has no fix in Buzz. A spinner appears only while a backup attempt is running.
   **Retry backup** uses that same space above **Remove from device** on the
   back and shows a disabled loading button during an attempt. A confirmed, settled backup

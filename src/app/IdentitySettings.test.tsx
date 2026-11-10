@@ -557,8 +557,8 @@ it("renders native status transitions and ignores a stale completion", async () 
       expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
     } else if (
       // A sign-in on this page starts the next pass itself.
-      (progress.status === "waiting" && progress.reason === "no_session") ||
-      (progress.status === "failed" && progress.kind === "signed_out")
+      progress.status === "waiting" &&
+      progress.reason === "no_session"
     ) {
       expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
     } else {
@@ -633,17 +633,11 @@ it.each([
     { status: "waiting", reason: "no_session" },
     "Sign in to Builderlab to back up your key",
   ],
-  ...(["signed_out", "not_offered", "invalid_service", "refused"] as const).map(
+  ...(["not_offered", "invalid_service", "refused"] as const).map(
     (kind) =>
       [
         { status: "failed", kind },
-        (() => {
-          const failure = BACKUP_FAILURES[kind];
-          return ("cause" in failure ? failure.cause : failure.message).replace(
-            /\.$/,
-            "",
-          );
-        })(),
+        BACKUP_FAILURES[kind].message.replace(/\.$/, ""),
       ] as const,
   ),
 ] as const)("offers no Retry backup for %o", async (progress, copy) => {

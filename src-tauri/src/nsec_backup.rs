@@ -469,6 +469,16 @@ impl NsecBackupHost {
         {
             return Err("Invalid backup session".into());
         }
+        // Read the receipt outside the lock; it applies only if the key is
+        // still the one it was read for.
+        let shown = self
+            .state
+            .lock()
+            .map_err(|_| "Backup unavailable")?
+            .management
+            .as_ref()
+            .map(|management| management.pubkey.clone());
+        let receipt = shown.as_deref().is_some_and(|pubkey| self.receipt(pubkey));
         let mut state = self.state.lock().map_err(|_| "Backup unavailable")?;
         if state.closed || state.generation.is_some_and(|seen| generation <= seen) {
             return Ok(None);
@@ -486,7 +496,8 @@ impl NsecBackupHost {
         // presentation.
         if state.session.is_some() {
             if let Some(management) = &mut state.management {
-                management.initial_backup_confirmed = self.receipt(&management.pubkey);
+                management.initial_backup_confirmed =
+                    receipt && shown.as_deref() == Some(management.pubkey.as_str());
             }
         }
         drop(state);
@@ -600,7 +611,10 @@ impl NsecBackupHost {
                     }
                     Ok(Outcome::Waiting(reason)) => {
                         // The signed-in account has no key linked, so it holds
-                        // no backup of this one, whatever a receipt says.
+                        // no backup of this one, whatever a receipt says. This
+                        // is in memory only: the receipt still proves a backup
+                        // exists on some account, so the next launch or
+                        // handoff shows it again until a pass answers.
                         if reason == Waiting::NotLinked {
                             if let Some(management) = &mut state.management {
                                 management.initial_backup_confirmed = false;

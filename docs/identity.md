@@ -818,8 +818,9 @@ full **Retry backup** CTA directly above **Remove from device**. The CTA stays
 disabled with a loading spinner while an attempt runs. Failure hints use centered
 caption text and omit redundant retry instructions; the inline backup retry row
 is removed. **Retry backup** appears only where another attempt can change the
-answer. A missing or ended sign-in has none: signing in on this page hands
-native a session, which starts its own attempt. Nor does a refusal
+answer. A missing sign-in has none: signing in on this page hands native a
+session, which starts its own attempt. An ended sign-in keeps it, since its
+session can still be live with no sign-in control on the page. Nor does a refusal
 (`not_offered`, `refused`, `invalid_service`). After the fix on Builderlab's page
 (key not linked, another key linked) it stays.
 The **Backed up** pill appears only on the front.

@@ -1088,13 +1088,15 @@ function BackupRecovery({
       ? (feedback?.indexOf("Builderlab") ?? -1)
       : -1;
   // Retry backup is offered only where another attempt can change the answer:
-  // after the fix on Builderlab's page, or for a failure that may clear. A
-  // sign-in on this page hands native a session, which starts its own pass,
-  // and a refusal answers the same way again.
+  // after the fix on Builderlab's page, or for a failure that may clear. With
+  // no session, a sign-in on this page hands native one, which starts its own
+  // pass; a refusal answers the same way again. An ended sign-in keeps Retry:
+  // its session can still be live here, with no sign-in control to offer.
   const retryable =
     statusError ||
     accountProblem ||
     onBuilderlab ||
+    (status?.status === "failed" && status.kind === "signed_out") ||
     !(
       (status?.status === "waiting" && status.reason === "no_session") ||
       (status?.status === "failed" && !BACKUP_FAILURES[status.kind].retryable)

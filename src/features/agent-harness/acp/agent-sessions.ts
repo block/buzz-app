@@ -135,7 +135,7 @@ export type SessionsOptions = Readonly<{
   /** The servers its sessions hold: the shared pool unless given. */
   pool?: ServerPool;
   /** The agent's current settings, for a new session. */
-  launch(): Promise<Launch>;
+  launch(instructions?: string): Promise<Launch>;
   /** The agent's provider, model and thinking level now, which each new
    * turn runs on. */
   choice(): Choice;
@@ -160,6 +160,7 @@ type Live = {
   session: AcpSession;
   process: AcpProcess;
   fingerprint: string;
+  instructions?: string | undefined;
   slot: Slot;
   /** When it last took in a message or ended a turn. */
   at: number;
@@ -175,12 +176,17 @@ export class AgentSessions {
   private onceCount = 0;
   /** Sessions opening, which `shutdown` waits for. */
   private readonly opens = new Set<Promise<Live>>();
-  /** Sessions closed or closing, until a close of each is acknowledged. */
+  /** Prior sessions retained during admission, or awaiting acknowledged close. */
   private readonly closing = new Set<Live>();
   /** Conversations whose session is opening, and the turn it opened for. */
   private readonly opening = new Map<
     string,
-    Promise<{ settled?: Promise<Settled> }>
+    {
+      ready: Promise<{ settled?: Promise<Settled> }>;
+      cancel?(): void;
+      queued?(): number;
+      cancelled?(): number;
+    }
   >();
   /** created_at of the newest event each conversation's session was shown. */
   private readonly shown = new Map<string, number>();
@@ -256,18 +262,7 @@ export class AgentSessions {
     key: string,
     text: string,
     seen: number,
-    {
-      steer = text,
-      current,
-      fresh,
-      title,
-      named,
-      signal,
-      model,
-      effort,
-      kept,
-      ...activity
-    }: Readonly<{
+    options: Readonly<{
       steer?: string;
       current?: () => boolean;
       fresh?: () => Promise<string>;
@@ -277,35 +272,94 @@ export class AgentSessions {
       model?: string;
       effort?: string;
       kept?: string;
+      instructions?: string;
     }> &
       ActivityReceipt = {},
+    handover?: { queued(): number; cancel(): void },
   ): Promise<Settled> {
+    const { signal, ...captured } = options;
+    const {
+      steer = text,
+      current,
+      fresh,
+      title,
+      named,
+      model,
+      effort,
+      kept,
+      instructions,
+      ...activity
+    } = captured;
+
+    let prior: Live | undefined;
+    let ordinary = false;
     for (;;) {
       if (current && !current()) return { ok: true, undelivered: true };
       if (this.disposed) return { ...this.stopped, undelivered: true };
       // A message that arrives while its conversation's session opens uses it.
       const opening = this.opening.get(key);
       if (opening) {
+        // Only Stops since this message joined cancel it.
+        const cancellation = opening.queued?.() ?? opening.cancelled?.();
+        ordinary ||= !!opening.queued;
         // The session stays shared; only this message gives up on it.
         try {
           await abortable(
-            opening.catch(() => undefined),
-            signal,
+            opening.ready.catch(() => undefined),
+            ordinary ? undefined : signal,
           );
         } catch {
           return this.late;
         }
+        if (cancellation !== (opening.queued?.() ?? opening.cancelled?.()))
+          return { ok: true, undelivered: true };
         continue;
       }
       const live = this.live.get(key);
       if (!live) break;
       if (
         !live.session.open ||
-        (!live.session.busy && (this.stale(live) || this.leveled(live, effort)))
+        (!live.session.busy &&
+          (this.stale(live) ||
+            (instructions !== undefined &&
+              instructions !== live.instructions) ||
+            this.leveled(live, effort)))
       ) {
-        this.drop(key, live);
+        if (live.session.open) prior = live;
+        else this.drop(key, live);
         break;
       }
+      const queued = (waitingOnly = false) => {
+        const before = this.opening.get(key);
+        if (before?.queued) return this.deliver(key, text, seen, captured);
+        if (
+          !ordinary &&
+          !before?.queued &&
+          (waitingOnly ||
+            instructions === undefined ||
+            instructions === live.instructions)
+        )
+          return;
+        let cancelled = 0;
+        const ready = live.session.idle().then(() => ({}));
+        const waiting = {
+          ready,
+          queued: () => cancelled,
+          cancel: () => {
+            cancelled++;
+            before?.cancel?.();
+          },
+        };
+        this.opening.set(key, waiting);
+        return ready.then(() => {
+          if (this.opening.get(key) === waiting) this.opening.delete(key);
+          return cancelled
+            ? ({ ok: true, undelivered: true } as const)
+            : this.deliver(key, text, seen, captured, waiting);
+        });
+      };
+      const waiting = ordinary && live.session.busy ? queued() : undefined;
+      if (waiting) return waiting;
       return this.answer(
         key,
         live,
@@ -315,11 +369,21 @@ export class AgentSessions {
         model,
         effort,
         kept,
+        live.session.busy ? queued : undefined,
       );
     }
     // Reserved before anything is awaited, so a message that comes meanwhile
     // waits for this session instead of opening another.
-    const starting = (async () => {
+    let candidate: Live | undefined;
+    let cancelled = false;
+    let cancellations = 0;
+    let submitted = false;
+    const shown = this.shown.get(key);
+    let release!: () => void;
+    const admission = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const starting: Promise<{ settled?: Promise<Settled> }> = (async () => {
       const first = !this.had.has(key);
       // Perhaps built for a session closed since, which had been shown the rest.
       if (!first && fresh) text = await fresh();
@@ -328,56 +392,131 @@ export class AgentSessions {
       const live = await this.open(
         key,
         title,
-        (live) => this.disposed || this.adopt(key, live),
+        (live) => {
+          candidate = live;
+          if (cancelled) void this.close(live);
+          else if (!prior && !this.disposed) this.adopt(key, live);
+        },
         naming,
+        instructions,
+        prior ? () => starting : undefined,
       );
       if (this.disposed) throw new Error(`${this.options.label} was stopped`);
       if (signal?.aborted) return {};
-      if (current && !current())
+      if (cancelled || (current && !current()))
         return {
           settled: Promise.resolve({ ok: true, undelivered: true } as Settled),
         };
       const refresh = activity.refresh;
-      return {
-        settled: this.answer(
-          key,
-          live,
-          seen,
-          text,
-          {
-            ...activity,
-            ...(current ? { current } : {}),
-            ...(refresh
-              ? {
-                  refresh: () => refresh(!first),
-                }
-              : {}),
+      const settled = this.answer(
+        key,
+        live,
+        seen,
+        text,
+        {
+          ...activity,
+          delivered: () => {
+            submitted = true;
+            if (prior) {
+              this.closing.add(prior);
+              this.adopt(key, live);
+            } else release();
+            activity.delivered?.();
           },
-          model,
-          effort,
-          kept,
-        ),
+          ...(prior
+            ? {
+                admission: (committed: boolean) => {
+                  if (committed || this.disposed) {
+                    this.drop(key, prior);
+                    if (this.live.get(key) === live) {
+                      this.shown.delete(key);
+                      this.touch(key, live, seen);
+                    }
+                  } else {
+                    this.closing.delete(prior);
+                    this.drop(key, live);
+                    this.adopt(key, prior);
+                    if (shown === undefined) this.shown.delete(key);
+                    else this.shown.set(key, shown);
+                  }
+                  release();
+                },
+                current: () => !signal?.aborted && (!current || current()),
+              }
+            : current
+              ? { current }
+              : {}),
+          ...(refresh
+            ? {
+                refresh: () => refresh(!first),
+              }
+            : {}),
+        },
+        model,
+        effort,
+        kept,
+      );
+      if (prior) {
+        void settled.then(release, release);
+        await admission;
+      }
+      return {
+        settled: cancelled
+          ? Promise.resolve<Settled>({ ok: true, undelivered: true })
+          : settled,
       };
-    })();
-    this.opening.set(key, starting);
+    })().finally(() => {
+      release();
+      if (prior && candidate && this.live.get(key) !== candidate)
+        void this.close(candidate);
+    });
+    const reservation = {
+      ready: starting,
+      cancelled: handover?.queued ?? (() => cancellations),
+      ...(prior
+        ? {
+            cancel: () => {
+              cancellations++;
+              handover?.cancel();
+              if (candidate && this.live.get(key) === candidate) {
+                candidate.session.admit();
+                return;
+              }
+              cancelled = true;
+              if (candidate) void this.close(candidate);
+              release();
+            },
+          }
+        : {}),
+    };
+    this.opening.set(key, reservation);
     const opened = () => {
-      if (this.opening.get(key) === starting) this.opening.delete(key);
+      if (this.opening.get(key) === reservation) this.opening.delete(key);
     };
     starting.then(opened, opened);
-    // Every failure here comes before a turn takes the message in.
+    // The handover deadline owns startup only, never a submitted turn.
     let started: Awaited<typeof starting>;
     try {
-      started = await abortable(starting, signal);
+      try {
+        started = await abortable(starting, signal);
+      } catch (error) {
+        if (!submitted) throw error;
+        started = await starting;
+      }
     } catch (error) {
-      if (this.disposed) return { ...this.stopped, undelivered: true };
-      if (signal?.aborted) return this.late;
+      if (this.disposed && !submitted)
+        return { ...this.stopped, undelivered: true };
+      if (cancelled) return { ok: true, undelivered: true };
+      if (signal?.aborted && !submitted) return this.late;
       console.warn(`${this.options.label} could not start`, error);
       const code = codeOf(error);
       return {
         ok: false,
-        error: `${this.options.label} could not start: ${message(error)}`,
+        error: submitted
+          ? message(error)
+          : `${this.options.label} could not start: ${message(error)}`,
         ...(code === undefined ? {} : { code }),
-        undelivered: true,
+        ...(!submitted && { undelivered: true as const }),
       };
     }
     return started.settled ?? this.late;
@@ -386,12 +525,18 @@ export class AgentSessions {
   /** Stops the turn running in conversation `key`, if any, once a session
    * opening for it has taken its message. */
   async interrupt(key: string) {
-    await this.opening.get(key)?.catch(() => undefined);
-    this.live.get(key)?.session.interrupt();
+    let opening = this.opening.get(key);
+    if (!opening || opening.queued) {
+      this.live.get(key)?.session.interrupt();
+      opening = this.opening.get(key);
+    }
+    opening?.cancel?.();
+    await opening?.ready.catch(() => undefined);
+    if (opening) this.live.get(key)?.session.interrupt();
   }
   /** Includes the model call after a final send has answered the turn. */
   async idle(key: string) {
-    await this.opening.get(key)?.catch(() => undefined);
+    await this.opening.get(key)?.ready.catch(() => undefined);
     await this.live.get(key)?.session.idle();
   }
   /** Waits for the conversation's session to finish its work, then compacts
@@ -436,7 +581,9 @@ export class AgentSessions {
       title,
       current,
       kept,
+      instructions,
     }: Readonly<{
+      instructions?: string;
       signal?: AbortSignal;
       current?: () => boolean;
       title?: string;
@@ -451,6 +598,8 @@ export class AgentSessions {
       key,
       title,
       (live) => this.once.has(key) && this.once.set(key, live),
+      undefined,
+      instructions,
     );
     let live: Live | undefined;
     try {
@@ -491,7 +640,8 @@ export class AgentSessions {
    * next fall idle. */
   reconfigure() {
     for (const [key, live] of this.live)
-      if (!live.session.busy && this.stale(live)) this.drop(key, live);
+      if (!this.opening.has(key) && !live.session.busy && this.stale(live))
+        this.drop(key, live);
   }
 
   /** Like `dispose()`, then resolves once every session it opened, or was
@@ -512,6 +662,12 @@ export class AgentSessions {
     this.disposed = true;
     for (const [key, live] of this.live) this.drop(key, live);
     for (const live of this.once.values()) if (live) void this.close(live);
+    for (const live of this.closing) void this.close(live);
+    for (const opening of this.opens)
+      void opening.then(
+        (live) => this.close(live),
+        () => undefined,
+      );
   }
 
   private get pool() {
@@ -539,10 +695,16 @@ export class AgentSessions {
     title: string | undefined,
     use: (live: Live) => unknown,
     named?: (title: string) => void,
+    instructions?: string,
+    hold?: () => Promise<unknown>,
   ) {
-    const opening = this.start(key, title, use, named);
+    const opening = this.start(key, title, use, named, instructions);
     this.opens.add(opening);
-    const done = () => this.opens.delete(opening);
+    const remove = () => this.opens.delete(opening);
+    const done = () => {
+      if (hold) void hold().then(remove, remove);
+      else remove();
+    };
     opening.then(done, done);
     return opening;
   }
@@ -551,12 +713,13 @@ export class AgentSessions {
     title: string | undefined,
     use: (live: Live) => unknown,
     named?: (title: string) => void,
+    instructions?: string,
   ): Promise<Live> {
     const { resolveDirectory } = this.options;
     const { pool } = this;
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint();
-    const launch = await this.options.launch();
+    const launch = await this.options.launch(instructions);
     // Removed meanwhile: a process started now would outlive it.
     if (this.disposed) throw new Error(`${this.options.label} was stopped`);
     const [process, cwd] = await Promise.all([
@@ -612,11 +775,18 @@ export class AgentSessions {
     const released = () => pool.release(slot);
     void (session.server?.closed ?? Promise.resolve()).then(released, released);
     session.conversation = key;
-    const live = { session, process, fingerprint, slot, at: Date.now() };
+    const live = {
+      session,
+      process,
+      fingerprint,
+      instructions,
+      slot,
+      at: Date.now(),
+    };
     if (fingerprint !== this.options.fingerprint() && !this.disposed) {
       // Settings saved while it opened: it would work with the old ones.
       void this.close(live);
-      return this.open(key, title, use, named);
+      return this.open(key, title, use, named, instructions);
     }
     this.options.started?.(
       session.id,
@@ -655,6 +825,7 @@ export class AgentSessions {
     model: string | undefined,
     effort?: string,
     kept?: string,
+    queued?: (waitingOnly?: boolean) => Promise<Settled> | undefined,
   ) {
     const sent = live.session.send(
       text,
@@ -668,6 +839,7 @@ export class AgentSessions {
       model,
       effort,
       kept,
+      queued,
     );
     // A final Buzz send can answer before the harness finishes its model work.
     void live.session.idle().then(() => {
@@ -708,7 +880,7 @@ export class AgentSessions {
     this.pool.touch(live.slot);
     clearTimeout(live.timer);
     live.timer = setTimeout(() => {
-      if (live.session.busy) this.countdown(key, live);
+      if (live.session.busy || this.opening.has(key)) this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
   }

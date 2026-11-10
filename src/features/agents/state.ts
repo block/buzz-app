@@ -14,6 +14,7 @@ import { CONFIG_STORAGE_KEY } from "./agent-config";
 import { CATCH_UP_KEY, CATCH_UP_PREFIX } from "./catch-up";
 import { INTERRUPTED_PREFIX } from "./interrupted";
 import { PROMPTS_PREFIX } from "./session-prompts";
+import { SHARED_INSTRUCTIONS_PREFIX } from "./shared-instructions";
 import { SYNCED_TEAMS_KEY } from "./team-config";
 import { TEAM_MOVES_KEY } from "./team-migration";
 import {
@@ -45,6 +46,7 @@ export function isAgentKey(key: string) {
     key.startsWith("buzz.codex.sessions.") ||
     // What each session started with, for its activity.
     key.startsWith(PROMPTS_PREFIX) ||
+    key.startsWith(SHARED_INSTRUCTIONS_PREFIX) ||
     // The relay-synced copies of agent settings that starts use.
     key === CONFIG_STORAGE_KEY ||
     // The synced team rosters that starts use.

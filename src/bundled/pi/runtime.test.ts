@@ -195,14 +195,15 @@ function setup(
     }>;
   const runOnce = (
     key: string,
-    text: string | undefined,
+    text: string | undefined | (() => Promise<string | undefined>),
     signal = new AbortController().signal,
+    config = DEFAULT_CONFIG,
   ) =>
     runtime.runOnce({
-      delivery: { agent, config: DEFAULT_CONFIG },
+      delivery: { agent, config },
       key,
       signal,
-      prompt: async () => text,
+      prompt: async () => (typeof text === "function" ? text() : text),
     } as unknown as StandaloneTurn);
   return {
     runtime,
@@ -967,14 +968,26 @@ it("compacts or starts a new session only while idle, and hands a mention over o
   await expect(runtime.session(agent, thread, "new")).rejects.toThrow(
     "Wait for the active turn",
   );
-  const later = deliver({ type: "mention", event: reply("3", "@Pi again") });
+  const later = deliver(
+    { type: "mention", event: reply("3", "@Pi again") },
+    { config: { ...DEFAULT_CONFIG, instructions: "Admitted ordinary rule." } },
+  );
   // Released at once, and handed over after compaction.
   await later.run;
   expect(host.requests("deliver")).toHaveLength(1);
+  const other = deliver(
+    { type: "mention", event: message("4", "Other conversation") },
+    { config: { ...DEFAULT_CONFIG, instructions: "Other delivery rule." } },
+  );
+  await other.run;
+  await settled(other);
   compacted.resolve();
   await compacting;
   await settled(later);
-  expect(host.requests("deliver")).toHaveLength(2);
+  expect(host.requests("deliver")).toHaveLength(3);
+  expect(host.requests("deliver")[2]?.params.instructions).toContain(
+    "Admitted ordinary rule.",
+  );
   await vi.waitFor(() =>
     expect(runtime.sessionState(agent, thread)).toBe("idle"),
   );
@@ -1860,13 +1873,28 @@ it("leaves a removed agent's turn in Pi's storage without a report", async () =>
 });
 
 it("runs a standalone turn in a one-off conversation", async () => {
-  const { host, runOnce, published } = setup({
+  const { host, runOnce, published, runtime, agent } = setup({
     wait: () => ({ status: "done", answer: 5, text: "Nothing to report." }),
   });
-  await expect(runOnce("timer/t1", "Run t1")).resolves.toEqual({ ok: true });
-  const [once] = host.requests("once");
+  const waiting = deferred<string>();
+  const prompt = vi.fn(() => waiting.promise);
+  const turn = runOnce("timer/t1", prompt, undefined, {
+    ...DEFAULT_CONFIG,
+    instructions: "Admitted standalone rule.",
+  });
+  try {
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce());
+    const other = { ...DEFAULT_CONFIG, instructions: "Other standalone rule." };
+    runtime.sync([{ ...agent, config: other } as unknown as Agent]);
+    await runOnce("timer/other", "Other", undefined, other);
+  } finally {
+    waiting.resolve("Run t1");
+  }
+  await expect(turn).resolves.toEqual({ ok: true });
+  const once = host.requests("once").at(-1);
   expect(String(once?.params.request)).toMatch(/^timer\/t1\//);
   expect(once?.params.text).toBe("Run t1");
+  expect(once?.params.instructions).toContain("Admitted standalone rule.");
   expect(host.requests("deliver")).toEqual([]);
   // A wake's answer is for Pi alone; it acts with its tools.
   expect(published).toEqual([]);

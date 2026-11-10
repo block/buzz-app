@@ -555,7 +555,8 @@ export class PiRuntime {
     )
       return ignored?.();
     signal.throwIfAborted();
-    const entry = this.entry(agent, config(raw));
+    const settings = config(raw);
+    const entry = this.entry(agent, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     const event =
@@ -649,7 +650,13 @@ export class PiRuntime {
         ...(acknowledged ? { acknowledged } : {}),
         ...(superseded ? { superseded } : {}),
       });
-      const picked = await this.turnOf(entry, agent.key, model, effort);
+      const picked = await this.turnOf(
+        entry,
+        agent.key,
+        settings.instructions,
+        model,
+        effort,
+      );
       const text = await prompt();
       this.live(entry, agent.key);
       if (interrupted || (wake && current && !current())) return;
@@ -759,7 +766,8 @@ export class PiRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
-    const entry = this.entry(agent, config(delivery.config));
+    const settings = config(delivery.config);
+    const entry = this.entry(agent, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     let stop: (() => void) | undefined;
@@ -773,6 +781,7 @@ export class PiRuntime {
       const turn = await this.turnOf(
         entry,
         agent.key,
+        settings.instructions,
         delivery.model,
         delivery.effort,
       );
@@ -1188,10 +1197,11 @@ export class PiRuntime {
   private async turnOf(
     entry: Entry,
     agent: AgentKey,
+    instructions: string,
     model?: string,
     effort?: string,
   ) {
-    const { workspace, instructions, scope } = entry.config;
+    const { workspace, scope } = entry.config;
     const memory = await this.core(agent);
     return {
       provider: entry.config.provider,

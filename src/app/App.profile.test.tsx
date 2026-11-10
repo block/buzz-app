@@ -850,6 +850,7 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
       version: 1,
       kind: "settings",
       section: "profile",
+      scope: { viewer, communityOrigin: origin },
     });
   });
   const settings = await screen.findByRole("dialog", { name: "Settings" });
@@ -857,6 +858,24 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
     name: "Display name",
   });
   await waitFor(() => expect(name).toHaveValue("Community name"));
+  await user.click(
+    within(settings).getByRole("button", { name: "Agent setup" }),
+  );
+  const shared = await within(settings).findByRole("textbox", {
+    name: "Instructions for your local agents",
+  });
+  await waitFor(() => expect(shared).toBeEnabled());
+  await user.type(shared, "Shared draft");
+  await user.keyboard("{Escape}");
+  const warning = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  await user.click(
+    within(warning).getByRole("button", { name: "Keep editing" }),
+  );
+  expect(shared).toHaveValue("Shared draft");
+  await user.click(within(settings).getByRole("button", { name: "Clear" }));
+  await user.click(within(settings).getByRole("button", { name: "Profile" }));
   await user.clear(name);
   await user.type(name, "Unsaved name");
   const confirmation = () =>

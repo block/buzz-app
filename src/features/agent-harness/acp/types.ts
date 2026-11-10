@@ -45,6 +45,8 @@ export type ActivityReceipt = Readonly<{
   /** The prompt was handed to the harness, after cancellation and provider
    * checks. */
   delivered?: () => void;
+  /** First prompt committed (including unknown outcome), or explicitly rejected. */
+  admission?: (committed: boolean) => void;
   /** Steps show on the latest acknowledged message of each scope. */
   activityScope?: string;
   step?: (tool: string, target?: string) => void;
@@ -140,4 +142,6 @@ export type AcpHooks = Readonly<{
   /** Whether `session/close` is sent: always, or only when
    * `sessionCapabilities.close` is advertised (the default). */
   closeSession?: "always" | "advertised";
+  /** A source-proven rejection before prompt execution; never a generic failure. */
+  rejectedPrompt?(error: unknown): boolean;
 }>;

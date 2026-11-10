@@ -2,6 +2,10 @@
 
 ## Scope
 
+Owner-wide [shared instructions](buzz-help.md#choosing-and-customizing-agents) are device-local and composed
+at the existing launch boundary, leaving saved agent configurations unchanged.
+The help guide describes supported agents and when sessions pick up edits.
+
 Agents (`src/bundled/agents`, `src/features/agents`) is the app's only agent
 system: it creates, runs and deletes the viewer's agents. This document covers
 what the rest of the app knows about agents: shared selection, mentions, archive

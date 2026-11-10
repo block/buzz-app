@@ -1,3 +1,7 @@
+import {
+  sharedInstructionsKey,
+  withSharedInstructions,
+} from "./shared-instructions";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
 import {
@@ -2207,10 +2211,29 @@ export class AgentsService extends Service implements Agents {
       progress: (key, ran) => this.progress(key, ran),
       start: async (agent) => {
         await this.checkExecution(agent.key, agent.type);
-        return this.resolve(
+        const start = this.resolve(
           agent,
           (this.records[agent.pubkey] ?? agent).config,
         );
+        const kind = this.types().find((type) => type.key === agent.type);
+        if (!start.ok || kind?.remote || !kind?.carry || !kind.adopt)
+          return start;
+        const shared = await this.storage.read(
+          sharedInstructionsKey(agent.owner),
+        );
+        if (!shared?.trim()) return start;
+        return {
+          ...start,
+          config: kind.adopt(
+            {
+              instructions: withSharedInstructions(
+                shared,
+                kind.carry(start.config).instructions ?? "",
+              ),
+            },
+            start.config,
+          ),
+        };
       },
       team: (key) => {
         const member = this.liveMember(key);

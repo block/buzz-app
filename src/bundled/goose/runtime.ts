@@ -517,9 +517,10 @@ export class GooseRuntime {
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, shown, {
+            instructions: settings.instructions,
+            current: () => !interrupted && (!current || current()),
             ...(wake
               ? {
-                  current,
                   refresh: async (fresh = false) => {
                     const text = this.review(
                       entry,
@@ -607,7 +608,8 @@ export class GooseRuntime {
     prompt,
   }: StandaloneTurn): Promise<TurnResult> {
     const { agent, team } = delivery;
-    const entry = this.entry(agent.key, config(delivery.config));
+    const settings = config(delivery.config);
+    const entry = this.entry(agent.key, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     const done = entry.sessions.runOnce(
@@ -621,6 +623,7 @@ export class GooseRuntime {
       {
         signal,
         title: sessionTitle(entry.name, key),
+        instructions: settings.instructions,
         current: delivery.current,
         ...(delivery.synced?.effort ? { kept: delivery.synced.effort } : {}),
       },
@@ -923,14 +926,13 @@ export class GooseRuntime {
         JSON.stringify([
           entry.config.provider.trim() ? 0 : this.defaultsRevision,
           entry.config.workspace,
-          entry.config.instructions,
           entry.config.scope,
           entry.team,
           entry.name,
           addedKey(this.added()),
         ]),
-      launch: async () => {
-        const { workspace, instructions, scope } = entry.config;
+      launch: async (instructions = entry.config.instructions) => {
+        const { workspace, scope } = entry.config;
         const memory = await this.core(agent);
         return {
           workspace,

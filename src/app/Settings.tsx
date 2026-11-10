@@ -716,6 +716,14 @@ export function Settings({
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
 }) {
+  const [profileUnsaved, setProfileUnsaved] = useState(false);
+  const [instructionsUnsaved, setInstructionsUnsaved] = useState(false);
+  const unsaved = profileUnsaved || instructionsUnsaved;
+  useEffect(() => {
+    if (!unsaved) return;
+    onUnsavedChange?.(true);
+    return () => onUnsavedChange?.(false);
+  }, [unsaved, onUnsavedChange]);
   useEffect(() => cards.retainVisibility(), [cards]);
   useEffect(() => adminAccess?.ensure(), [adminAccess]);
   const installRequest = useSyncExternalStore(
@@ -1409,6 +1417,8 @@ export function Settings({
         <div hidden={selected !== "agents"}>
           <AgentSettings
             agents={agents}
+            owner={client.viewer}
+            onUnsavedChange={setInstructionsUnsaved}
             active={selected === "agents"}
             navigation={navigation}
             onProvider={onProvider}
@@ -1470,7 +1480,7 @@ export function Settings({
             key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
             communities={communities}
             community={selectedCommunity}
-            onUnsavedChange={onUnsavedChange}
+            onUnsavedChange={setProfileUnsaved}
           />
         </div>
         {selectedCommunity && (

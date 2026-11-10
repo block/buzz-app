@@ -2367,15 +2367,22 @@ it("keeps the in-flight run and the queue across edits; each job reads the agent
 });
 
 it("starts each run from the start resolver, local with no synced revisions", async () => {
-  const { service, run, emit } = await setup();
+  const { service, run, emit, storage } = await setup();
+  const key = `buzz.owner-instructions.v1:${viewer}`;
+  await storage.set(key, "Owner baseline.");
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { config: { reply: "local" } });
   emit({ events: [event("1", { tags: [["p", bot]] })] });
   await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   expect(run.mock.calls[0]?.[0]).toMatchObject({
-    config: { reply: "local" },
+    config: {
+      reply: expect.stringContaining(
+        "<owner-instructions>\nOwner baseline.\n</owner-instructions>\n\nlocal",
+      ),
+    },
     revisions: [],
   });
+  expect(service.find(bot)?.config).toEqual({ reply: "local" });
 });
 
 describe("voice launch and transcripts", () => {
@@ -2397,6 +2404,7 @@ describe("voice launch and transcripts", () => {
       binding: () =>
         synced ? { instructions: { mode: "synced", subject } } : {},
     });
+    const key = `buzz.owner-instructions.v1:${viewer}`;
     try {
       await f.service.create({ type: "example/echo", name: "Echo" });
       await f.service.save(bot, {
@@ -2438,6 +2446,25 @@ describe("voice launch and transcripts", () => {
         config: { reply: "local", instructions: "synced instructions" },
       });
       expect(voice.mock.calls[0]?.[0].revisions).toEqual([head.id]);
+      const reading = runnerGate<string | null>();
+      const read = vi
+        .spyOn(f.storage, "read")
+        .mockImplementation(async (saved) =>
+          saved === key ? reading.promise : f.storage.get(saved),
+        );
+      const canceled = new AbortController();
+      const opening = open({ ...pipe, signal: canceled.signal });
+      const rejected = expect(opening).rejects.toThrow("Canceled opening");
+      try {
+        await vi.waitFor(() => expect(read).toHaveBeenCalledWith(key));
+        canceled.abort(new Error("Canceled opening"));
+        await rejected;
+      } finally {
+        reading.resolve("Late baseline.");
+        await opening.catch(() => {});
+      }
+      expect(voice).toHaveBeenCalledOnce();
+      read.mockRestore();
     } finally {
       await f.ctx.fiber.dispose();
     }
@@ -2487,6 +2514,10 @@ describe("voice launch and transcripts", () => {
       close: vi.fn(),
     }));
     const f = await setup({ voice });
+    await f.storage.set(
+      `buzz.owner-instructions.v1:${viewer}`,
+      "Voice baseline.",
+    );
     try {
       await f.service.create({ type: "example/echo", name: "Echo" });
       await f.service.save(bot, {
@@ -2509,6 +2540,7 @@ describe("voice launch and transcripts", () => {
       });
       const seat = voice.mock.calls[0]?.[0];
       if (!seat) throw new Error("Missing opened seat");
+      expect(seat.config.reply).toContain("Voice baseline.");
       await seat.transcript("agent", "Spoken answer");
       const lines = await published(f.native, 9);
       expect(lines).toHaveLength(1);
@@ -3420,7 +3452,9 @@ it("isolates thread notes and restores them to the same conversation", async () 
 });
 
 it("hands out an agent's handle only to its new type's plugin once a change of type ends", async () => {
-  const { service, plugin, ctx, native } = await setup();
+  const { service, plugin, ctx, native, emit, storage } = await setup();
+  const read = vi.spyOn(storage, "read");
+  const run = vi.fn();
   await service.create({ type: "example/echo", name: "Echo" });
   const relay = ctx.extend({
     pluginOwner: Object.freeze({ id: "other", revision: "one" }),
@@ -3429,7 +3463,7 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
     id: "relay",
     title: "Relay",
     defaults: () => ({ config: {} }),
-    run: vi.fn(),
+    run,
   });
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   const kept = plugin.agents.handle(bot);
@@ -3451,6 +3485,10 @@ it("hands out an agent's handle only to its new type's plugin once a change of t
   await changing;
   await vi.waitFor(() => expect(relay.agents.handle(bot)).toBeDefined());
   expect(plugin.agents.handle(bot)).toBeUndefined();
+  read.mockClear();
+  emit({ events: [event("plain-type", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  expect(read).not.toHaveBeenCalledWith(`buzz.owner-instructions.v1:${viewer}`);
   await expect(
     kept?.publish({ kind: 9, content: "after", tags: [] }),
   ).rejects.toThrow("ask for its handle again");
@@ -11823,10 +11861,20 @@ it("wakes nothing for an event heard during startup when it ends without Attenti
 
 it("turns every agent's attention off while no plugin shows it, and resumes it", async () => {
   vi.useFakeTimers({ now: 1_000_000 });
-  const { service, run, emit, watching, ctx } = await setup();
+  const { service, run, emit, watching, ctx, storage } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
   await service.save(bot, { attentionEnabled: true });
+  const key = `buzz.owner-instructions.v1:${viewer}`;
+  const reading = runnerGate<string | null>();
+  const read = vi
+    .spyOn(storage, "read")
+    .mockImplementation(async (saved) =>
+      saved === key ? reading.promise : storage.get(saved),
+    );
+  emit({ events: [deploy("held")] });
+  await vi.waitFor(() => expect(read).toHaveBeenCalledWith(key));
   await watching?.dispose();
+  reading.resolve("Late baseline.");
   expect(service.find(bot)?.attentionEnabled).toBe(false);
   emit({ events: [deploy("w")] });
   await vi.advanceTimersByTimeAsync(5_000);

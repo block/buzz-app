@@ -477,6 +477,7 @@ export class AcpProcess {
         call?.reject(
           Object.assign(new Error(errorMessage(message.error)), {
             code: message.error.code,
+            data: message.error.data,
           }),
         );
       else call?.resolve(message.result);
@@ -501,9 +502,10 @@ export class AcpProcess {
     params: Record<string, unknown>,
   ) {
     let reply: Wire;
-    if (method === "session/request_permission")
+    if (method === "session/request_permission") {
+      this.sessions.get(String(params.sessionId))?.admit();
       reply = { jsonrpc: "2.0", id, result: { outcome: allow(params) } };
-    else
+    } else
       reply = {
         jsonrpc: "2.0",
         id,
@@ -521,6 +523,7 @@ export class AcpProcess {
   ): Promise<Wire | undefined> {
     const { id, method = "", params } = (message ?? {}) as Wire;
     if (id === undefined || id === null) return undefined;
+    if (method === "tools/call") session?.admit();
     const response = (await tools(session?.conversation, {
       id,
       method,

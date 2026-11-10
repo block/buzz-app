@@ -262,7 +262,7 @@ export class ClaudeRuntime {
       this.targetKey
         ? `buzz.claude-code.sessions.remote.v1:${this.targetKey}`
         : undefined,
-      !!this.target,
+      true,
     );
   }
   private record(text: string) {
@@ -998,7 +998,7 @@ export class ClaudeRuntime {
             return;
           }
           const { text: prepared, contextRoot } = await prompt(false);
-          if (interrupted) {
+          if (interrupted || (current && !current())) {
             delivered = Promise.resolve({ ok: true });
             return;
           }
@@ -1021,6 +1021,7 @@ export class ClaudeRuntime {
                 : { channel, root: threadReference(event)?.rootId ?? event.id },
           );
           delivered = entry.sessions.deliver(key, text, event.created_at, {
+            instructions: settings.instructions,
             current: () => !interrupted && (!current || current()),
             ...(wake
               ? {
@@ -1168,12 +1169,18 @@ export class ClaudeRuntime {
         await this.storage.set(record, null);
       }
     }
-    const entry = this.entry(agent, this.resolveConfig(delivery.config));
+    const settings = this.resolveConfig(delivery.config);
+    const entry = this.entry(agent, settings);
     entry.handle = agent;
     entry.team = team ?? "";
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
-    const done = entry.sessions.runOnce(key, prompt, signal);
+    const done = entry.sessions.runOnce(
+      key,
+      prompt,
+      signal,
+      settings.instructions,
+    );
     this.notify();
     return done.finally(() => this.notify());
   }
@@ -1447,15 +1454,14 @@ export class ClaudeRuntime {
           entry.config.model,
           entry.config.effort,
           entry.config.workspace,
-          entry.config.instructions,
           entry.config.scope,
           entry.team,
           entry.name,
           addedKey(this.added()),
           this.credentials,
         ]),
-      launch: async (key) => {
-        const { workspace, instructions, scope } = entry.config;
+      launch: async (key, instructions = entry.config.instructions) => {
+        const { workspace, scope } = entry.config;
         const gate = entry.handle?.protection;
         if (entry.protected && !gate)
           throw new Error("The protected agent has no live policy binding");

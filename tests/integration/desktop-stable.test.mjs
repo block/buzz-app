@@ -82,6 +82,7 @@ test("stable tags build from main history with the tag's version, never preview 
     rules: ["deletion", "non_fast_forward", "creation", "update"].map(
       (type) => ({ type }),
     ),
+    current_user_can_bypass: "never",
   };
   const stableRuleset = {
     ...desktopRuleset,
@@ -95,13 +96,21 @@ test("stable tags build from main history with the tag's version, never preview 
   };
   const source = (
     tag,
-    { tagged = sha, base = sha, ruleset = stableRuleset } = {},
+    {
+      tagged = sha,
+      base = sha,
+      ruleset = stableRuleset,
+      actor = "admin-user",
+      permission = "admin",
+    } = {},
   ) => {
     const dir = temp(t);
     fakeGh(
       dir,
       `args="$*"; echo "\${args//$'\\n'/ }" >> "$DIR/calls"
 case "$2" in
+  */collaborators/admin-user/permission) ${jq({ permission })} ;;
+  */collaborators/*/permission) exit 1 ;;
   */rulesets) ${jq([desktopRuleset, ruleset])} ;;
   */rulesets/6) ${jq(desktopRuleset)} ;;
   */rulesets/7) ${jq(ruleset)} ;;
@@ -116,6 +125,7 @@ esac
     writeFileSync(output, "");
     const result = run(dir, `set -e\n${check}`, {
       TAG: tag,
+      ACTOR: actor,
       SOURCE_SHA: sha,
       TAGGED: tagged,
       BASE: base,
@@ -130,20 +140,24 @@ esac
     const result = source(tag);
     assert.equal(result.status, 0, result.stderr + result.stdout);
     assert.equal(result.output, `version=${version}\n`);
-    assert.equal(result.calls.length, 6);
-    assert.match(
+    assert.equal(result.calls.length, 7);
+    assert.equal(
       result.calls[0],
-      /^api repos\/block\/buzz-app\/rulesets --jq /,
+      "api repos/block/buzz-app/collaborators/admin-user/permission --jq .permission",
     );
     assert.match(
       result.calls[1],
-      /^api repos\/block\/buzz-app\/rulesets\/6 --jq /,
+      /^api repos\/block\/buzz-app\/rulesets --jq /,
     );
     assert.match(
       result.calls[2],
+      /^api repos\/block\/buzz-app\/rulesets\/6 --jq /,
+    );
+    assert.match(
+      result.calls[3],
       /^api repos\/block\/buzz-app\/rulesets\/7 --jq /,
     );
-    assert.deepEqual(result.calls.slice(3), [
+    assert.deepEqual(result.calls.slice(4), [
       `api repos/block/buzz-app/commits/refs/tags/${tag} --jq .sha`,
       "api repos/block/buzz-app/git/ref/heads/main --jq .object.sha",
       `api repos/block/buzz-app/compare/${sha}...${"b".repeat(40)} --jq .merge_base_commit.sha`,
@@ -162,10 +176,29 @@ esac
     assert.deepEqual(result.calls, [], tag);
     assert.equal(result.output, "", tag);
   }
+  // Only an admin's tag publishes. The token cannot see bypass actors, so a
+  // write role or App granted a bypass is caught by who pushed the tag.
+  for (const permission of ["write", "maintain", "read", "none"]) {
+    const result = source("v1.0.0", { permission });
+    assert.match(
+      result.stdout,
+      /was pushed by admin-user, who is not a repository admin/,
+    );
+    assert.equal(result.calls.length, 1, permission);
+    assert.equal(result.output, "", permission);
+  }
+  // An unreadable permission (an App's bot, an API error) fails closed.
+  const bot = source("v1.0.0", { actor: "release-app[bot]" });
+  assert.match(bot.stdout, /Could not read release-app\[bot\]'s permission/);
+  assert.equal(bot.calls.length, 1);
+  assert.equal(bot.output, "");
   // Unprotected v* tags never publish: anyone with write access can push one.
   const condition = (ref_name) => ({ ...stableRuleset.conditions, ref_name });
   for (const ruleset of [
     { ...stableRuleset, enforcement: "evaluate" },
+    // Workflows could create the tag: GitHub Actions is a bypass actor.
+    { ...stableRuleset, current_user_can_bypass: "always" },
+    { ...stableRuleset, current_user_can_bypass: "pull_requests_only" },
     { ...stableRuleset, rules: stableRuleset.rules.slice(1) },
     {
       ...stableRuleset,

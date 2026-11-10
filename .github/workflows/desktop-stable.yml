@@ -34,19 +34,30 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           SOURCE_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.[1-9][0-9]*)?)$ ]] ||
             { echo "::error::$TAG is not a release tag (vX.Y.Z or vX.Y.Z-beta.N)"; exit 1; }
           version="${BASH_REMATCH[1]}"
+          # Only admins may cut a release. GitHub hides a ruleset's bypass list from
+          # this token, so a bypass granted to anyone else (a write role, an App)
+          # would go unseen; require that the pusher is an admin instead. A re-run
+          # keeps the original pusher.
+          permission=$(gh api "repos/$GH_REPO/collaborators/$ACTOR/permission" --jq .permission) ||
+            { echo "::error::Could not read $ACTOR's permission"; exit 1; }
+          [[ "$permission" == admin ]] ||
+            { echo "::error::$TAG was pushed by $ACTOR, who is not a repository admin"; exit 1; }
           # Anyone with write access can push an unprotected tag, so publish only
-          # while an active ruleset restricts v* tags (previews' own excepted).
+          # while an active ruleset restricts v* tags (previews' own excepted),
+          # and workflows themselves cannot bypass it.
           protected=''
           for id in $(gh api "repos/$GH_REPO/rulesets" --jq '.[] | select(.target == "tag" and .enforcement == "active") | .id'); do
             protected+=$(gh api "repos/$GH_REPO/rulesets/$id" --jq '
               select((.conditions.ref_name.include | index("refs/tags/v*")) != null
                 and (.conditions.ref_name.exclude - ["refs/tags/v*-preview.*"]) == []
-                and ([.rules[].type] | sort) == ["creation", "deletion", "non_fast_forward", "update"]) | .id')
+                and ([.rules[].type] | sort) == ["creation", "deletion", "non_fast_forward", "update"]
+                and (.current_user_can_bypass // "never") == "never") | .id')
           done
           [[ -n "$protected" ]] || { echo '::error::No active tag ruleset restricts creation, update and deletion of refs/tags/v*'; exit 1; }
           # The tag must point at the commit this run builds.

@@ -181,11 +181,7 @@ or move one. Previews' own tags (`v…-preview.N.M`) and the internal
 The workflow first refuses, before building, unless:
 
 - the tag is exactly `vX.Y.Z` or `vX.Y.Z-beta.N` (no leading zeros, `N` ≥ 1);
-- the tag was pushed by a repository admin. The workflow's token cannot see a
-  ruleset's bypass list, so this is what stops a write role or App that was
-  given a bypass from cutting a release. A re-run keeps the original pusher;
-- an active tag ruleset restricts `refs/tags/v*`, and the workflow's own token
-  cannot bypass it (see [setup](#stable-release-setup));
+- an active tag ruleset restricts `refs/tags/v*` (see [setup](#stable-release-setup));
 - the tag points at the run's commit, and that commit is in `main` history.
 
 To release, an admin tags a commit in `main` history and pushes the tag with
@@ -241,9 +237,7 @@ A repository admin sets these up once, before the first stable tag:
   - target tags, enforcement **Active**;
   - include `refs/tags/v*` and exclude `refs/tags/v*-preview.*`;
   - restrict creations, updates and deletions, and block force pushes;
-  - bypass: the repository admin role, in `always` mode, and nothing else.
-    The workflow publishes only tags an admin pushed, so any other bypass
-    actor's tags fail.
+  - bypass: the repository admin role, in `always` mode.
 
   The exclusion matters. The previews workflow creates each `v…-preview` tag
   through `gh release create` with `GITHUB_TOKEN`, and preview cleanup deletes
@@ -252,7 +246,6 @@ A repository admin sets these up once, before the first stable tag:
   not add GitHub Actions as a bypass actor instead: any workflow on any branch
   could then create a stable tag. With the exclusion, preview tags stay as
   unprotected as they are today; the stable workflow ignores them.
-
 - **Environment.** Create `desktop-stable-feed` with required reviewers and a
   custom deployment branch policy that allows only the `main` branch. It holds
   no secrets. Promotion checks both and refuses to run without them.

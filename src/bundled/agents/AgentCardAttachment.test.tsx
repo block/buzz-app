@@ -220,7 +220,7 @@ it("links Manage plugins from a card while no agent type plugin is on", async ()
     />,
   );
   const button = await screen.findByRole("button", {
-    name: "Ada, shared agent",
+    name: "Add agent: Ada",
   });
   await vi.waitFor(() => expect(button).toBeEnabled());
   await user.click(button);

@@ -579,7 +579,18 @@ function OwnedCompletion({
               ref={list}
               className={styles.list}
             >
-              {items.map((item, i) => (
+              {items.flatMap((item, i) => [
+                item.group && item.group !== items[i - 1]?.group && (
+                  // Read as the description of each row it heads.
+                  <div
+                    key={`group:${item.id}`}
+                    id={`${id}-group-${i}`}
+                    aria-hidden="true"
+                    className={styles.group}
+                  >
+                    {item.group}
+                  </div>
+                ),
                 // The textarea owns keyboard focus/selection via aria-activedescendant.
                 // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
                 <div
@@ -597,6 +608,10 @@ function OwnedCompletion({
                   // which its label no longer spells out.
                   data-completion-id={item.id}
                   key={item.id}
+                  aria-describedby={
+                    item.group &&
+                    `${id}-group-${items.findIndex((row) => row.group === item.group)}`
+                  }
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
@@ -660,8 +675,8 @@ function OwnedCompletion({
                       Enter
                     </span>
                   )}
-                </div>
-              ))}
+                </div>,
+              ])}
               {result?.retry && (
                 // biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard acceptance belongs to the focused textarea.
                 <div

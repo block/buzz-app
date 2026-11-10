@@ -26,6 +26,8 @@ export type ChannelFacts = Readonly<{
   members: readonly string[];
   /** The owner's device is still creating it, so it has nothing to read yet. */
   starting?: true;
+  /** Presence only; signed metadata and authorized ancestry still require readback. */
+  forkClaim?: true;
 }>;
 
 export type AgentReads = Readonly<{
@@ -104,6 +106,7 @@ export function ownerReads(
             dm: summary.channelType === "dm",
             members: summary.members ?? [],
             ...(summary.pending ? { starting: true as const } : {}),
+            ...(summary.forkClaim ? { forkClaim: true as const } : {}),
           }
         : undefined;
     },

@@ -1,3 +1,5 @@
+import { readSoloSeed } from "../../features/relay/solo-fork-history";
+import { forkFailures } from "../../features/solo/fork-failure";
 import { protectionTranscript } from "./protection-transcript";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
@@ -1283,8 +1285,33 @@ export class ClaudeRuntime {
         )
       : Promise.resolve(undefined);
     let earlier: readonly EventData[] = [];
+    let forkContext: Awaited<ReturnType<typeof readSoloSeed>>;
+    if (reads && summary?.forkClaim && !seen) {
+      try {
+        const signingAuthority = reads.workflowAuthority();
+        forkContext = await readSoloSeed(
+          {
+            read: reads.read.bind(reads),
+            relayAuthor: () => reads.relayAuthor?.(),
+          },
+          channelId,
+          AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+          { before: event, ...(signingAuthority ? { signingAuthority } : {}) },
+        );
+        if (!forkContext)
+          throw new Error("The fork’s signed ancestry could not be confirmed.");
+      } catch (error) {
+        forkFailures.report(reads.connection, channelId, error);
+        throw error;
+      }
+    }
     // A chat its owner is still creating has nothing earlier to read.
-    if (reads && !summary?.starting && (thread || dm || topLevel))
+    if (
+      reads &&
+      !forkContext &&
+      !summary?.starting &&
+      (thread || dm || topLevel)
+    )
       try {
         const events = await reads.read(
           thread && !topLevel
@@ -1339,6 +1366,7 @@ export class ClaudeRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      ...(forkContext ? { forkContext } : {}),
       contextRoot,
       total: earlier.length + 1,
       names,

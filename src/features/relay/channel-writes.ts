@@ -590,8 +590,69 @@ export function createChannelWrites(
       throw new ChatNotStarted("The relay has no record of it.");
     }
   }
+  const forkRecoveryKey = (id: string) => `solo-fork:${id}`;
+  async function confirmFork(
+    create: string,
+    id: string,
+    fork: SoloFork,
+    active?: () => boolean,
+  ) {
+    const confirmed = await readSoloFork(
+      {
+        read: (filters, caller) =>
+          discovery.read(filters, { signal: caller, fresh: true }),
+        relayAuthor: () => relayAuthor,
+      },
+      id,
+      signal,
+    );
+    if (
+      confirmed?.channelId !== fork.channelId ||
+      confirmed?.messageId !== fork.messageId
+    )
+      throw new Error(
+        "The fork's signed source could not be confirmed. Retry this operation, not a new chat.",
+      );
+    if (active?.() === false)
+      throw new DOMException("Fork recovery cancelled", "AbortError");
+    const source = writer();
+    const item = source.snapshot().find((item) => item.event.id === create);
+    // Hydration restores an accepted receipt as unknown. Obtain a delivery
+    // receipt for the exact saved event before retiring its recovery record.
+    if (item && item.delivery !== "accepted" && item.delivery !== "seen") {
+      source.retry(create, active);
+      await delivered(create, active);
+    }
+    await source.acknowledge(create);
+  }
   const api = Object.freeze({
     available,
+    /** Reopening only checks readback. Explicit Retry also repairs missing
+     * derived metadata by publishing the retained signed create, never a new intent. */
+    async resumeFork(id: string, retry = false, active?: () => boolean) {
+      identifier(id);
+      const saved = await outbox?.recovery(forkRecoveryKey(id));
+      if (!saved) return;
+      const source = writer();
+      const fork = soloFork(saved.event);
+      if (
+        saved.event.kind !== 9007 ||
+        !saved.event.tags.some(
+          ([name, value]) => name === "h" && value === id,
+        ) ||
+        !fork ||
+        !saved.recovery
+      )
+        throw new Error("The saved fork creation is invalid.");
+      await source.recover(saved.event.id, saved.recovery);
+      if (active?.() === false)
+        throw new DOMException("Fork recovery cancelled", "AbortError");
+      if (retry) {
+        source.retry(saved.event.id, active);
+        await delivered(saved.event.id, active);
+      }
+      await confirmFork(saved.event.id, id, fork, active);
+    },
     addAgents,
     refreshMembership,
     memberChannels,
@@ -696,7 +757,7 @@ export function createChannelWrites(
             ...[...new Set(members)].map((key) => ["p", key]),
           ],
         },
-        undefined,
+        forkedFrom ? { key: forkRecoveryKey(id), value: "" } : undefined,
         active,
       );
     },
@@ -745,23 +806,8 @@ export function createChannelWrites(
       // The relay adds the members in the create, so the chat takes events
       // once the create is OK.
       const ready = created(create).then(async () => {
-        if (!options?.forkedFrom) return;
-        const confirmed = await readSoloFork(
-          {
-            read: (filters, caller) =>
-              discovery.read(filters, { signal: caller, fresh: true }),
-            relayAuthor: () => relayAuthor,
-          },
-          id,
-          signal,
-        );
-        if (
-          confirmed?.channelId !== options.forkedFrom.channelId ||
-          confirmed?.messageId !== options.forkedFrom.messageId
-        )
-          throw new Error(
-            "The fork's signed source could not be confirmed. Retry this operation, not a new chat.",
-          );
+        if (options?.forkedFrom)
+          await confirmFork(create, id, options.forkedFrom, options.active);
       });
       starts.set(id, ready);
       canvases.set(id, setup?.canvas ?? "");

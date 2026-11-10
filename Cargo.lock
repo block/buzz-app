@@ -1123,6 +1123,7 @@ dependencies = [
  "mesh-llm-sdk",
  "mesh-llm-system",
  "nostr 0.45.5",
+ "objc2-app-kit 0.3.2",
  "reqwest",
  "serde",
  "serde_json",

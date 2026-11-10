@@ -1748,22 +1748,21 @@ it("shows a thread request's live work on its root row in a conversation frame, 
     ...(h.snapshot.current.root as ChannelMessage),
     replyCount: 1,
   };
+  const working = {
+    scope: h.session.scope,
+    agent,
+    channelId: "channel",
+    messageId: REPLY,
+    threadRootId: ROOT,
+    thread: true as const,
+    state: "working" as "working" | "waiting",
+    step: { tool: "Bash" } as { tool: string } | undefined,
+    stoppable: true,
+    startedAt: Date.now(),
+  };
   const activity = {
     ...h.session.agentActivity.snapshot(),
-    local: [
-      {
-        scope: h.session.scope,
-        agent,
-        channelId: "channel",
-        messageId: REPLY,
-        threadRootId: ROOT,
-        thread: true as const,
-        state: "working" as const,
-        step: { tool: "Bash" },
-        stoppable: true,
-        startedAt: Date.now(),
-      },
-    ],
+    local: [working],
   };
   const session = {
     ...h.session,
@@ -1814,5 +1813,18 @@ it("shows a thread request's live work on its root row in a conversation frame, 
   await expect(conversation.stopWork(key)).resolves.toEqual({
     lifecycle: true,
   });
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", REPLY);
+  // Two requests in the thread: the bubble shows the working one, and its
+  // Stop targets that same request, not the waiting one listed first.
+  const WAITING = "7".repeat(64);
+  interrupt.mockClear();
+  activity.local = [
+    { ...working, messageId: WAITING, state: "waiting", step: undefined },
+    working,
+  ];
+  const again = conversation.snapshot().replies.find((row) => row.id === ROOT);
+  expect(again?.live?.[0]?.status).toBe("Running a command");
+  const chosen = again?.live?.[0]?.stops[0]?.key ?? "";
+  await conversation.stopWork(chosen);
   expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", REPLY);
 });

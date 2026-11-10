@@ -601,12 +601,19 @@ export function createPopoutThread(
     },
     activity: ReturnType<RelaySession["agentActivity"]["snapshot"]>,
   ) {
-    const local = (activity.local ?? []).find(
+    // The same request `requestWork` chose for this agent: a working one
+    // ahead of a waiting one, then a failed one, then the first.
+    const candidates = (activity.local ?? []).filter(
       (work) =>
         work.agent === entry.agent &&
         work.channelId === channelId &&
         ids.includes(work.messageId),
     );
+    const local =
+      candidates.find((work) => work.state === "working") ??
+      candidates.find((work) => work.state === "waiting") ??
+      candidates.find((work) => work.state === "error") ??
+      candidates[0];
     const messageId =
       (entry.lifecycle ? local?.messageId : undefined) ??
       ids.find((id) =>

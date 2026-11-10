@@ -236,6 +236,8 @@ export type ChannelList = Readonly<{
   rosterAsOf?: number;
   /** Initial Recent ordering observation, independent of roster/access readiness. */
   activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
+  /** The activity read failed on a connectivity failure; session recovery retries it. */
+  activityTransient?: true;
   channels: readonly ChannelSummary[];
   error?: string;
 }>;

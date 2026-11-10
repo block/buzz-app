@@ -1913,20 +1913,22 @@ export function ChannelInventory({
             </Button>
           </ToastNotice>
         ))}
-        {!cached && dmVisibility.status === "error" && (
-          <div role="alert">
-            Hidden conversations could not be refreshed.{" "}
-            <Button
-              onClick={() =>
-                void lifecycle.refreshVisibility(
-                  visibilityRequest.current?.signal,
-                )
-              }
-            >
-              Retry hidden conversations
-            </Button>
-          </div>
-        )}
+        {!cached &&
+          dmVisibility.status === "error" &&
+          !dmVisibility.transient && (
+            <div role="alert">
+              Hidden conversations could not be refreshed.{" "}
+              <Button
+                onClick={() =>
+                  void lifecycle.refreshVisibility(
+                    visibilityRequest.current?.signal,
+                  )
+                }
+              >
+                Retry hidden conversations
+              </Button>
+            </div>
+          )}
       </>
     ),
     team: (children) => (
@@ -2619,22 +2621,24 @@ export function ChannelInventory({
             Saved groups and stars aren’t supported by this host yet.
           </p>
         ) : null}
-        {list.activityStatus === "error" && !activityErrorDismissed && (
-          <ToastNotice
-            title="Couldn’t refresh recent activity"
-            description="Activity filters and Recent sorting may be out of date."
-            tone="warning"
-            onDismiss={() => setActivityErrorDismissed(true)}
-          >
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => queries.channels.refreshList?.()}
+        {list.activityStatus === "error" &&
+          !list.activityTransient &&
+          !activityErrorDismissed && (
+            <ToastNotice
+              title="Couldn’t refresh recent activity"
+              description="Activity filters and Recent sorting may be out of date."
+              tone="warning"
+              onDismiss={() => setActivityErrorDismissed(true)}
             >
-              Retry
-            </Button>
-          </ToastNotice>
-        )}
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => queries.channels.refreshList?.()}
+              >
+                Retry
+              </Button>
+            </ToastNotice>
+          )}
       </>
     ),
     dialogs: (

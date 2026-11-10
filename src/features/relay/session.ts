@@ -1319,6 +1319,9 @@ export function createRelaySession(
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
     activityStatus: channelActivity.status(),
+    ...(channelActivity.transient()
+      ? { activityTransient: true as const }
+      : {}),
   });
   let channelActivityRevision = channelActivity.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
@@ -1367,6 +1370,9 @@ export function createRelaySession(
       activityChannelList = Object.freeze({
         ...snapshot,
         activityStatus: channelActivity.status(),
+        ...(channelActivity.transient()
+          ? { activityTransient: true as const }
+          : {}),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -2803,12 +2809,29 @@ export function createRelaySession(
             for (const thread of threads) thread.retry(timed);
           },
         ),
-        // Visibility owns its quiet retries and exhausts without `transient`,
-        // so this source only reports `busy`; its retry is not reached.
+        // Visibility retries quietly first, then exhausts with `transient`
+        // for a connectivity failure; this source then owns the retries.
         recoverable(
           lifecycle.capability.subscribe,
           () => loadState(lifecycle.capability.snapshot()),
           () => void lifecycle.capability.refreshVisibility(),
+        ),
+        // Recent ordering and the active filter read channel activity. A
+        // connectivity failure retries here instead of waiting for the next
+        // roster change.
+        recoverable(
+          channelActivity.subscribe,
+          () =>
+            loadState({
+              status: channelActivity.status(),
+              ...(channelActivity.transient()
+                ? { transient: true as const }
+                : {}),
+            }),
+          () => {
+            activityRosterKey = undefined;
+            refreshChannelActivity();
+          },
         ),
       ])
     : undefined;

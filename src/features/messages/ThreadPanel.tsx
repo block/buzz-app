@@ -56,6 +56,7 @@ import {
   type ThreadView,
 } from "../relay/threads";
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
+import { useRecoverableRead } from "../relay/RecoveryNotice";
 import { diffPreview, rowProfileIds } from "../relay/membership";
 import { plainText } from "../notifications/content";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
@@ -259,6 +260,8 @@ function ThreadHeader({
 }
 type SelectionFailure = {
   unavailable: boolean;
+  /** A connectivity failure: recovery retries it and reports it. */
+  transient?: boolean;
   pending: boolean;
   retry(): void;
 };
@@ -283,7 +286,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   const [error, setError] = useState<string>();
   // A failure with its retry is all a quick-opening sheet will show.
   useSheetReady(!!error && !opening);
-  const [failure, setFailure] = useState<{ unavailable: boolean }>();
+  const [failure, setFailure] = useState<{
+    unavailable: boolean;
+    transient?: boolean;
+  }>();
   // Retry keeps its control mounted and focused until the new attempt settles.
   const [pending, setPending] = useState(false);
   const retrying = useRef(false);
@@ -327,7 +333,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
       setError(undefined);
       setFailure(undefined);
     }
-    const settle = (next?: { unavailable: boolean }, message?: string) => {
+    const settle = (
+      next?: { unavailable: boolean; transient?: boolean },
+      message?: string,
+    ) => {
       retrying.current = false;
       setPending(false);
       setFailure(next);
@@ -380,7 +389,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           return;
         }
         if (result !== "different") {
-          settle({ unavailable: result === "unavailable" });
+          settle({
+            unavailable: result === "unavailable",
+            // A connectivity failure is recovery's to retry and report.
+            ...(result === "offline" && { transient: true }),
+          });
           navigation?.complete({
             status: "failed",
             reason: result === "unavailable" ? "not-found" : "unavailable",
@@ -2339,8 +2352,24 @@ function ThreadMessages({
     captureOlderAnchor(element);
     void view.loadMore();
   };
+  // Opening a thread selects its message by itself. While the relay is
+  // unreachable that failure joins session recovery, whose notice is the one
+  // report, so neither its message nor its Try again shows.
+  const selection = useRecoverableRead(
+    session.recovery,
+    selectionFailure?.transient
+      ? {
+          status: selectionFailure.pending ? "loading" : "error",
+          error: "offline",
+          transient: true,
+        }
+      : {},
+    () => selectionFailure?.retry(),
+  );
   const selectionNotice =
-    selectionFailure && !snapshot.error ? selectionFailure : undefined;
+    selectionFailure && !snapshot.error && !selection.quiet
+      ? selectionFailure
+      : undefined;
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&

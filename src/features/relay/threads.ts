@@ -95,6 +95,9 @@ export type ThreadRetarget =
   | "different"
   | "unavailable"
   | "error"
+  /** The selected message's read failed with a connectivity failure
+   * (`isRetryableRead`), unlike `error`, which is not retried by recovery. */
+  | "offline"
   | "cancelled";
 export type ThreadView = {
   snapshot(): ThreadSnapshot;
@@ -798,10 +801,12 @@ export function createThreadView({
           : { status: "ready", error: undefined, readKind: undefined },
       );
       return snapshot.targetStatus === "ready" ? "selected" : "unavailable";
-    } catch {
+    } catch (error) {
       return disposed || owned.signal.aborted || selectionController !== owned
         ? "cancelled"
-        : "error";
+        : isRetryableRead(error)
+          ? "offline"
+          : "error";
     } finally {
       // Stops a read started alongside another that this ended without.
       owned.abort();

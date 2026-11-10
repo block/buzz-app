@@ -591,6 +591,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
   async send(tools, args) {
     const { context } = tools;
+    args = ignoreBlankFields(args, ["channel", "reply"]);
     const reply =
       text(args.reply) ??
       (args.channel === undefined ? context.root : undefined);
@@ -722,6 +723,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
 
   async read(tools, args) {
     const { client, context } = tools;
+    args = ignoreBlankFields(args, [
+      "channel",
+      "thread",
+      "message_url",
+      "author",
+      "before_id",
+    ]);
     if (args.message_url !== undefined) {
       if (args.channel !== undefined || args.thread !== undefined)
         throw new Error(
@@ -2739,7 +2747,8 @@ function joinRoleArg(args: Args) {
 /** A `since` or `before` argument: a Unix time in seconds, inclusive. */
 function unixTime(args: Args, key: string) {
   const value = args[key];
-  if (value === undefined) return undefined;
+  // 0 is left out too: no message is from before 1970.
+  if (value === undefined || value === 0) return undefined;
   // In milliseconds, a time from this century is past the year 5000.
   if (
     !Number.isSafeInteger(value) ||
@@ -2765,6 +2774,15 @@ function checkDetails(name?: string, about?: string, ttl?: number) {
 }
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+const isBlank = (value: unknown) => typeof value === "string" && !value.trim();
+/** Some models fill in every optional field, sending "" for each one they
+ * mean to leave out. Reads a blank one of `fields` as left out. */
+function ignoreBlankFields(args: Args, fields: readonly string[]): Args {
+  const checked = { ...args };
+  for (const field of fields)
+    if (isBlank(checked[field])) delete checked[field];
+  return checked;
+}
 const list = (value: unknown) =>
   Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")

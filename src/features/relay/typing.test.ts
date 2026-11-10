@@ -220,6 +220,17 @@ describe("activity capacity", () => {
     expect(snapshot()).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
+  it("a thread reply with no room for its own scope still ends channel-level typing", () => {
+    const { owner, snapshot } = setup();
+    owner.accept([pulse(), ...pulses.slice(0, 1023)], true);
+    expect(snapshot()).toHaveLength(1024);
+    owner.accept([
+      message(agent, "a", "reply", epoch, [["e", "f".repeat(64), "", "reply"]]),
+    ]);
+    expect(snapshot()).toHaveLength(1023);
+    expect(snapshot().some((e) => !e.threadRootId)).toBe(false);
+    owner.dispose();
+  });
 });
 
 for (const kind of [9]) {

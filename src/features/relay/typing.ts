@@ -123,9 +123,11 @@ export function createTyping(
       return;
     const threadRootId = threadReference(event)?.rootId;
     const record = recordFor(channelId, threadRootId, event.pubkey);
-    if (!record) return;
-    if (typing) return receiveActivity(record, at, now);
-    recordCompletion(record, at, now);
+    if (typing) {
+      if (record) receiveActivity(record, at, now);
+      return;
+    }
+    if (record) recordCompletion(record, at, now);
     // A reply in a thread also ends the author's channel-level typing: its
     // pulses and replies can be filed apart for the same turn. Other threads
     // keep theirs.

@@ -97,9 +97,11 @@ function ChangesetCard({
       {error && (
         <div role="alert" className={styles.note}>
           <p>Couldn't read this changeset. {error}</p>
-          <Button size="sm" variant="ghost" onClick={retry}>
-            Try again
-          </Button>
+          {retry && (
+            <Button size="sm" variant="ghost" onClick={retry}>
+              Try again
+            </Button>
+          )}
         </div>
       )}
       {shown && (

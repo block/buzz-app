@@ -16,10 +16,7 @@ import { parseTarget } from "./target";
 import type { Turns } from "./turns";
 import { Counts, plural, totals } from "./Counts";
 import styles from "./Changesets.module.css";
-
-type Patch = { text: string } | { error: string } | undefined;
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
+import { useLoaded } from "./useLoaded";
 
 /** A recorded turn's checkout: its files, one diff at a time. */
 export function ChangesetPanel({
@@ -28,55 +25,33 @@ export function ChangesetPanel({
 }: Pick<PanelProps, "target"> & { turns: Turns }) {
   const link = useMemo(() => parseTarget(target), [target]);
   const found = link && turns.find(link.turn, link.checkout);
-  const [listed, setListed] = useState<{
-    files?: ChangedFile[];
-    error?: string;
-  }>({});
   const [chosen, setChosen] = useState(link?.file);
-  const [attempt, setAttempt] = useState(0);
   useEffect(() => setChosen(link?.file), [link?.file]);
-  useEffect(() => {
-    if (!link) return;
-    let live = true;
-    setListed({});
-    turns.summary(link.turn, link.checkout).then(
-      (files) => live && setListed({ files }),
-      (error) => live && setListed({ error: message(error) }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [turns, link]);
-  const files = listed.files;
+  const listed = useLoaded(
+    link ? () => turns.summary(link.turn, link.checkout) : undefined,
+    [turns, link],
+  );
+  const files = listed.value;
   const index = files
     ? Math.max(
         0,
-        files.findIndex((file) => file.path === chosen),
+        files.findIndex((each) => each.path === chosen),
       )
     : 0;
   const file = files?.[index];
-  const [patch, setPatch] = useState<Patch>();
-  useEffect(() => {
-    setPatch(undefined);
-    if (!link || !file || file.binary) return;
-    let live = true;
-    // Retried by changing `attempt`.
-    void attempt;
-    turns.patch(link.turn, link.checkout, file).then(
-      (text) => live && setPatch({ text }),
-      (error) => live && setPatch({ error: message(error) }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [turns, link, file, attempt]);
+  const patch = useLoaded(
+    link && file && !file.binary
+      ? () => turns.patch(link.turn, link.checkout, file)
+      : undefined,
+    [turns, link, file],
+  );
   const parsed = useMemo(
-    () => (patch && "text" in patch ? parsePatch(patch.text) : undefined),
-    [patch],
+    () => (patch.value === undefined ? undefined : parsePatch(patch.value)),
+    [patch.value],
   );
   if (!link || !found)
     return <p role="alert">This changeset was recorded in another Buzz.</p>;
-  const pending = !listed.error && !files;
+  const pending = listed.error === undefined && !files;
   const step = (by: number) => files && setChosen(files[index + by]?.path);
   return (
     <div className={styles.panel}>
@@ -95,9 +70,17 @@ export function ChangesetPanel({
       <LoadingRegion
         pending={pending}
         label="Reading the changes…"
+        statusVisibility="screen-reader"
         feedback={
-          listed.error ? (
-            <p role="alert">Couldn't read this changeset. {listed.error}</p>
+          listed.error !== undefined ? (
+            <div role="alert">
+              <p>Couldn't read this changeset. {listed.error}</p>
+              {listed.retry && (
+                <Button size="sm" variant="ghost" onClick={listed.retry}>
+                  Try again
+                </Button>
+              )}
+            </div>
           ) : undefined
         }
       >
@@ -134,12 +117,7 @@ export function ChangesetPanel({
                 />
               </div>
             )}
-            <FileDiff
-              file={file}
-              patch={patch}
-              parsed={parsed}
-              retry={() => setAttempt(attempt + 1)}
-            />
+            <FileDiff file={file} patch={patch} parsed={parsed} />
           </>
         )}
       </LoadingRegion>
@@ -151,26 +129,31 @@ function FileDiff({
   file,
   patch,
   parsed,
-  retry,
 }: {
   file: ChangedFile;
-  patch: Patch;
+  patch: {
+    value?: string | undefined;
+    error?: string | undefined;
+    retry?: (() => void) | undefined;
+  };
   parsed: ReturnType<typeof parsePatch>;
-  retry(): void;
 }) {
   if (file.binary)
     return <p className="text-body-sm">Binary file: no text diff to show.</p>;
-  if (!patch) return <p className="text-body-sm">Reading {file.path}…</p>;
-  if ("error" in patch)
+  if (patch.error !== undefined)
     return (
       <div role="alert">
         <p className="text-body-sm">{patch.error}</p>
-        <Button size="sm" variant="ghost" onClick={retry}>
-          Try again
-        </Button>
+        {patch.retry && (
+          <Button size="sm" variant="ghost" onClick={patch.retry}>
+            Try again
+          </Button>
+        )}
       </div>
     );
+  if (patch.value === undefined)
+    return <p className="text-body-sm">Reading {file.path}…</p>;
   return (
-    <DiffViewer content={patch.text} files={parsed} filePath={file.path} />
+    <DiffViewer content={patch.value} files={parsed} filePath={file.path} />
   );
 }

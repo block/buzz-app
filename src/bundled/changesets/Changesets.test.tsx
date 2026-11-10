@@ -10,7 +10,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { TurnCards } from "./Card";
-import type { ChangedFile } from "./git";
+import { type ChangedFile, Unreadable } from "./git";
 import { ChangesetPanel } from "./Panel";
 import { targetFor } from "./target";
 import type { Turn, Turns } from "./turns";
@@ -166,10 +166,27 @@ it("steps to a binary file and says there is no text diff", async () => {
   expect(turns.patch).toHaveBeenCalledTimes(1);
 });
 
-it("says a patch is too big and offers to try again", async () => {
+it("says a patch is too big and does not offer to try again", async () => {
+  render(
+    <ChangesetPanel
+      target={targetFor("t1", 0, "a.txt")}
+      turns={fakeTurns({
+        patch: async () => {
+          throw new Unreadable("This is too big to show here.");
+        },
+      })}
+    />,
+  );
+  expect(
+    await screen.findByText("This is too big to show here."),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it("offers to try again after a failure that may pass", async () => {
   const patch = vi
     .fn()
-    .mockRejectedValueOnce(new Error("This is too big to show here."))
+    .mockRejectedValueOnce(new Error("git took too long."))
     .mockResolvedValue(PATCH);
   render(
     <ChangesetPanel
@@ -177,11 +194,35 @@ it("says a patch is too big and offers to try again", async () => {
       turns={fakeTurns({ patch })}
     />,
   );
-  expect(
-    await screen.findByText("This is too big to show here."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("git took too long.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("two")).toBeInTheDocument();
+});
+
+it("does not offer to try again on a binary file or a snapshot git cleaned up", async () => {
+  const turns = fakeTurns({
+    summary: async () => [file("b.bin", { binary: true })],
+  });
+  const view = render(
+    <ChangesetPanel target={targetFor("t1", 0, "b.bin")} turns={turns} />,
+  );
+  expect(await screen.findByText(/Binary file/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  view.unmount();
+  render(
+    <TurnCards
+      {...props()}
+      turns={fakeTurns({
+        summary: async () => {
+          throw new Unreadable(
+            "git has cleaned up this changeset's snapshots.",
+          );
+        },
+      })}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("cleaned up");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 });
 
 it("says so for a changeset another Buzz recorded", () => {

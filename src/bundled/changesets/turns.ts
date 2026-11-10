@@ -5,6 +5,7 @@ import {
   type ChangedFile,
   type Checkout,
   type Git,
+  Unreadable,
   changedFiles,
   checkoutsOf,
   filePatch,
@@ -130,7 +131,8 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
   };
   const recorded = (id: string, index: number) => {
     const found = find(id, index);
-    if (!found) throw new Error("This changeset was recorded in another Buzz.");
+    if (!found)
+      throw new Unreadable("This changeset was recorded in another Buzz.");
     return found;
   };
   const remember = (key: string, files: Promise<ChangedFile[]>) => {

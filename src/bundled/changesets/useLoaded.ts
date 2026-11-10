@@ -1,9 +1,10 @@
 import { useEffect, useReducer, useState } from "react";
+import { Unreadable } from "./git";
 
-type Loaded<T> = { value?: T; error?: string };
+type Loaded<T> = { value?: T; error?: string; final?: true };
 
-/** Runs `load` again whenever `deps` change, and on `retry`. Without a `load`
- * there is nothing to read. */
+/** Runs `load` again whenever `deps` change, and on `retry`, which a failure
+ * trying again cannot fix leaves out. Without a `load` there is nothing to read. */
 export function useLoaded<T>(
   load: (() => Promise<T>) | undefined,
   deps: readonly unknown[],
@@ -21,11 +22,16 @@ export function useLoaded<T>(
         live &&
         setState({
           error: error instanceof Error ? error.message : String(error),
+          ...(error instanceof Unreadable ? { final: true as const } : {}),
         }),
     );
     return () => {
       live = false;
     };
   }, [...deps, attempt]);
-  return { ...state, retry };
+  return {
+    value: state.value,
+    error: state.error,
+    retry: state.final ? undefined : retry,
+  };
 }

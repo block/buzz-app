@@ -34,6 +34,9 @@ export type Git = (
   options?: GitOptions,
 ) => Promise<string>;
 
+/** A failure trying again cannot fix. */
+export class Unreadable extends Error {}
+
 /** Runs the manifest's `git` and returns its stdout. A run past its time or
  * output limit is killed, so one stuck repository stalls nothing else. */
 export function createGit(spawn: Spawn): Git {
@@ -71,7 +74,8 @@ export function createGit(spawn: Spawn): Git {
     const timer = setTimeout(() => stop("slow"), timeout);
     await child.end(input).catch(() => {});
     const code = await child.exited.finally(() => clearTimeout(timer));
-    if (stopped === "big") throw new Error("This is too big to show here.");
+    if (stopped === "big")
+      throw new Unreadable("This is too big to show here.");
     if (stopped === "slow") throw new Error("git took too long.");
     if (code !== 0)
       throw new Error(
@@ -269,9 +273,9 @@ const compare = (before: string, after: string) => {
 const gone = (error: unknown): never => {
   const text = String(error);
   if (/bad object|unable to read tree|not a tree/i.test(text))
-    throw new Error("git has cleaned up this changeset's snapshots.");
+    throw new Unreadable("git has cleaned up this changeset's snapshots.");
   if (/cannot change to|No such file|not a git repository/i.test(text))
-    throw new Error("Its repository has moved or gone.");
+    throw new Unreadable("Its repository has moved or gone.");
   throw error;
 };
 

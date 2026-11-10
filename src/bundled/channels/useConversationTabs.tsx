@@ -786,6 +786,10 @@ export function useConversationTabs({
     return text || (name ? `Thread · ${name}` : "Thread");
   }
   function openInChannel(tab: Tab, target: ChannelSummary | undefined) {
+    // A verified root stays usable even if the selected reply was deleted.
+    // An unresolved tab's id can contain a hint, so fall back to its message.
+    const messageId =
+      tab.kind === "thread" ? (tab.rootId ?? tab.messageId) : tab.messageId;
     return target && navigation && viewer
       ? () => {
           if (!currentVisit()) return;
@@ -797,8 +801,8 @@ export function useConversationTabs({
               communityOrigin: scope.slice(0, -(viewer.length + 1)),
             },
             channelId: tab.channelId,
-            ...(tab.messageId && {
-              messageId: tab.messageId,
+            ...(messageId && {
+              messageId,
               context: "timeline",
             }),
           });

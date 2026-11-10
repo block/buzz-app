@@ -2181,7 +2181,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   expect(rowRenders).toContain(`${roots.r1}:reply`);
 });
 
-it("revokes a deferred source menu action when its tab host unmounts", () => {
+it("uses verified sources after reply deletion and revokes deferred source actions", () => {
   const channels = [
     { id: "alpha", name: "Alpha" },
     { id: "beta", name: "Beta" },
@@ -2219,10 +2219,43 @@ it("revokes a deferred source menu action when its tab host unmounts", () => {
     });
     return { state, workspace };
   });
-  act(() => h.result.current.state.openThreadTab("beta", "root", "root"));
-  const item = h.result.current.workspace.items[0];
-  const action = item && "actions" in item ? item.actions?.[0] : undefined;
+  act(() =>
+    h.result.current.state.openThreadTab(
+      "beta",
+      "deleted-reply",
+      "provisional-hint",
+    ),
+  );
+  const sourceAction = () => {
+    const item = h.result.current.workspace.items[0];
+    return item && "actions" in item ? item.actions?.[0] : undefined;
+  };
+  // Unresolved ancestry must use the selected message, never a link's hint.
+  act(() => sourceAction()?.run());
+  expect(open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      messageId: "deleted-reply",
+      context: "timeline",
+    }),
+  );
+  // The reader verified this root before the selected reply disappeared.
+  // A deleted selection does not make its retained original unavailable.
+  act(() =>
+    h.result.current.state.resolveThreadRoot(
+      "thread:beta:provisional-hint",
+      "verified-root",
+    ),
+  );
+  const action = sourceAction();
   expect(action).toBeDefined();
+  act(() => action?.run());
+  expect(open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      messageId: "verified-root",
+      context: "timeline",
+    }),
+  );
+  open.mockClear();
   h.unmount();
   action?.run();
   expect(open).not.toHaveBeenCalled();

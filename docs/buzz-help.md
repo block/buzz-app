@@ -980,7 +980,25 @@ available rather than silently discarding it.
   Remote Claude uses the Claude sign-in on the target. It keeps each saved
   conversation in that target's workspace. Stop ends its active turn.
   Remote Claude usage totals and transcripts are unavailable.
-- When creating a Builderlab agent, sign in, choose a model from its family menu,
+
+### Builderlab accounts and remote agents
+
+- Builderlab uses one account and sign-in for the communities and agents it
+  hosts. **Create account** or **Sign in** during Buzz setup can link and back up
+  this device's Buzz key, but a Builderlab account, a Buzz identity, community
+  membership, and an agent are still separate things. Signing in alone does not
+  join a community or create an agent. **Settings → Plugins → Builderlab** shows
+  the connected account and its hosted communities and agents; **Manage account**
+  opens **Settings → Buzz → Identity**, where **Community sign-ins** manages the
+  shared Builderlab session.
+- For the quickest first-agent path, open the pinned **Create an agent**
+  destination, choose **Create an agent**, then select **Builderlab** under
+  **Remote** in the Harness menu. Sign in, add a name, choose Model and Thinking,
+  and create the agent. After its introduction, Buzz asks you to confirm it as
+  your remote Bestie, then opens your pinned DM. Creating one from **Agents → New
+  agent** uses the same form without choosing a Bestie; use **Make my bestie**
+  afterward if you want it pinned.
+- When creating a Builderlab agent, choose a model from its family menu,
   then choose a supported **Thinking** level. If Builderlab recommends a model
   and thinking level, both start selected; change either to choose your own. Both
   choices are required; changing the model clears the thinking choice.
@@ -994,6 +1012,14 @@ available rather than silently discarding it.
   that Builderlab server's site, where the account's usage and billing are.
   The **Remote agent** hint in a signed-in Builderlab agent's **Identity** tab
   also links to **See usage and billing** on that site.
+- Builderlab sign-in is needed to create or delete a hosted agent and to edit its
+  model or instructions. Sign in to the same Builderlab account that created the
+  agent; another account cannot manage it. Chat, Memory, and Activity use the
+  Buzz community connection instead, so messaging can still work while
+  Builderlab is signed out. On a phone, sign in with the same Builderlab account;
+  when that account holds this Buzz identity's backup, Buzz restores it instead
+  of asking for QR pairing. The remote agent can answer while the desktop is off,
+  but it cannot open files on that desktop.
 - Desktop's **Harness** menu groups agent types under **Remote** and **Local**.
   Creating a remote agent on desktop opens an introduction with its chosen name
   and avatar, explaining its online workspace and file access (Builderlab

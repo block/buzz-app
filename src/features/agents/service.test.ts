@@ -1,6 +1,7 @@
 import { federatedFixture } from "../federated-identity/testing";
 import { workingAgentDetails } from "../../bundled/channels/working-agents";
 import { completionTarget } from "../notifications/agent-completions";
+import { parseOpenTarget } from "../navigation/targets";
 import { createNativeSession } from "../../bundled/builderlab/session";
 import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { followUpQueue } from "../messages/follow-up-queue";
@@ -1696,8 +1697,9 @@ describe("a plugin's wake", () => {
           kind: "conversation",
           scope: { viewer, communityOrigin: "https://buzz.example" },
           channelId: channel,
-          ...(channelType ? {} : { threadRootId: root }),
+          ...(channelType ? {} : { threadRootId: root, messageId: root }),
         });
+        expect(parseOpenTarget(target)).toEqual(target);
         expect(
           workingAgentDetails(
             {

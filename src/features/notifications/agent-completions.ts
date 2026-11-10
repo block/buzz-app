@@ -21,13 +21,18 @@ export function completionTarget(
   scope: { viewer: string; communityOrigin: string } | undefined,
 ): OpenTarget | undefined {
   if (!scope) return;
+  const messageId = work.syntheticMessage
+    ? work.thread
+      ? work.threadRootId
+      : undefined
+    : work.messageId;
   return {
     version: 1,
     kind: "conversation",
     scope,
     channelId: work.channelId,
     ...(work.thread ? { threadRootId: work.threadRootId } : {}),
-    ...(!work.syntheticMessage ? { messageId: work.messageId } : {}),
+    ...(messageId ? { messageId } : {}),
   };
 }
 

@@ -106,6 +106,8 @@ async function setup(
   agents?: Agents,
   options: {
     archivedAgent?: boolean;
+    archivedMembers?: string[];
+    pendingArchives?: Promise<void>;
     extraMembers?: number;
     memberProfiles?: RelayEvent[];
     pendingMemberNames?: Promise<void>;
@@ -182,7 +184,13 @@ async function setup(
     signed(relay, {
       kind: 13535,
       content: "",
-      tags: [["-"], ...(options.archivedAgent ? [["p", agent.pubkey]] : [])],
+      tags: [
+        ["-"],
+        ...[
+          ...(options.archivedAgent ? [agent.pubkey] : []),
+          ...(options.archivedMembers ?? []),
+        ].map((key) => ["p", key]),
+      ],
     }),
     ...(options.memberProfiles ?? []),
     profile(viewer, { name: "Carl" }),
@@ -208,6 +216,8 @@ async function setup(
       await nameRetry;
       throw new Error("Names unavailable");
     }
+    if (filters.some((filter) => filter.kinds?.includes(13535)))
+      await options.pendingArchives;
     if (filters.some((filter) => filter.kinds?.includes(0)))
       await options.pendingMemberNames;
     if (filters.some((filter) => filter.kinds?.includes(39002)))
@@ -3849,6 +3859,49 @@ it("loads another member page after a previous page fails", async () => {
   expect(
     screen.queryByText(/Some names could not load/),
   ).not.toBeInTheDocument();
+});
+
+it("lists known-archived members after live ones in each group, by name", async () => {
+  let release!: () => void;
+  const pendingArchives = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const [alice, zed, ann, zoe] = [
+    profile(keypair(), { name: "Alice" }),
+    profile(keypair(), { name: "Zed" }),
+    profile(keypair(), { name: "Ann Bot", is_agent: true }),
+    profile(keypair(), { name: "Zoe Bot", is_agent: true }),
+  ] as [RelayEvent, RelayEvent, RelayEvent, RelayEvent];
+  await setup("stream", false, false, undefined, undefined, {
+    memberProfiles: [alice, zed, ann, zoe],
+    archivedMembers: [alice.pubkey, ann.pubkey],
+    pendingArchives,
+  });
+  const names = () =>
+    within(memberData())
+      .getAllByRole("listitem")
+      // Each row starts with its avatar's one-letter fallback.
+      .map((row) => row.textContent?.slice(1));
+  // Archive state unknown: nobody counts as archived, so pure name order.
+  await vi.waitFor(() =>
+    expect(names()).toEqual([
+      "Alice",
+      "Carl (you)",
+      "Zed",
+      "Ann Bot",
+      "Zoe Bot",
+    ]),
+  );
+  await act(async () => release());
+  await vi.waitFor(() =>
+    expect(names()).toEqual([
+      "Carl (you)",
+      "Zed",
+      "Alice",
+      "Zoe Bot",
+      "Ann Bot",
+    ]),
+  );
 });
 
 it("keeps the visible member page and focus stable while names arrive", async () => {

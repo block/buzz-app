@@ -1078,10 +1078,16 @@ export function ChannelMembersDialog({
         known.has(key) || profiles.get(key)?.isAgent ? "Agents" : "People";
       return group === name;
     });
+    // Known-archived members follow the live ones, each part in name order.
+    const isArchived = (key: string) =>
+      archiveHides(session.archives, key, session.viewer);
     return {
       name,
       count: keys.length,
-      keys,
+      keys: [
+        ...keys.filter((key) => !isArchived(key)),
+        ...keys.filter(isArchived),
+      ],
     };
   });
   // Optional profile updates change labels, not the identities being browsed.

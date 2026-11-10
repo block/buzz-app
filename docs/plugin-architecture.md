@@ -1388,8 +1388,10 @@ costs nothing when no plugin reads it, and ships with every build.
 
 `timeline` and `composer` occur in `main` and may occur in `side-pane`, so a
 selector that targets one place scopes it, for example
-`[data-shell-region="side-pane"] [data-shell-region="timeline"]`. Every other
-value is a single region on screen. `sidebar-header` sits inside `sidebar` and
+`[data-shell-region="side-pane"] [data-shell-region="timeline"]`. A Solo chat and
+its new-chat draft are the exception: they draw their own header and have no
+`main` or `main-header`, so their `timeline` and `composer` sit outside both.
+Every other value is a single region on screen. `sidebar-header` sits inside `sidebar` and
 `main-header` inside `main`. A region the page does not render has no element,
 and a collapsed or closed one can still be present with `hidden` or `inert`.
 

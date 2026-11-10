@@ -793,6 +793,11 @@ it("a Solo chat's own header carries no channel identity hooks", async () => {
   await page("solo");
   expect(document.querySelector("[data-channel-type]")).toBeNull();
   expect(document.querySelector("[data-channel-name]")).toBeNull();
+  // It has no `main` or `main-header` either, as docs/plugin-architecture.md#shell-regions says.
+  expect(document.querySelector('[data-shell-region="main"]')).toBeNull();
+  expect(
+    document.querySelector('[data-shell-region="main-header"]'),
+  ).toBeNull();
 });
 
 it("an empty tab menu returns keyboard focus to the conversation identity", async () => {

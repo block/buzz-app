@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { messageActionRequests } from "../../features/messages/action-requests";
+import { soloAccessRequests } from "../../features/solo/access-requests";
 import { apply } from "./index";
 
 const h = vi.hoisted(() => ({
@@ -8,6 +9,7 @@ const h = vi.hoisted(() => ({
     | {
         handoff(target: unknown, messageId: string, action: unknown): void;
         openActivity(activityTarget: string, target: unknown): void;
+        openMembers(channelId: string, solo: boolean): void;
       },
 }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
@@ -22,7 +24,10 @@ vi.mock("../../features/popout/window", () => ({
     };
   },
 }));
-afterEach(() => messageActionRequests.clear());
+afterEach(() => {
+  messageActionRequests.clear();
+  soloAccessRequests.clear();
+});
 
 const target = { channelId: "channel", threadRootId: "b".repeat(64) };
 const activity = `buzz:profile?agent=${"c".repeat(64)}&tab=activity`;
@@ -135,4 +140,48 @@ it("requests the handed-off action for the row only after main opened the messag
   settle({ status: "opened" });
   await Promise.resolve();
   expect(messageActionRequests.snapshot()).toBeUndefined();
+});
+
+it("opens members as main's header does: the Members panel for a channel, and a Solo chat's Share access through its header after main shows the chat", async () => {
+  let x = setup();
+  x.open.mockResolvedValue({ status: "opened" });
+  h.options?.openMembers("channel", false);
+  expect(x.open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "conversation",
+      channelId: "channel",
+      panel: "members",
+    }),
+  );
+  expect(soloAccessRequests.snapshot()).toBeUndefined();
+
+  x = setup();
+  x.open.mockResolvedValue({ status: "opened" });
+  h.options?.openMembers("solo", true);
+  expect(x.open).toHaveBeenCalledWith(
+    expect.not.objectContaining({ panel: "members" }),
+  );
+  await Promise.resolve();
+  expect(soloAccessRequests.snapshot()).toEqual({
+    session: expect.anything(),
+    scope: "https://relay.test:viewer",
+    channelId: "solo",
+  });
+  soloAccessRequests.clear();
+
+  // A navigation that did not open, or one whose session was replaced
+  // meanwhile, hands nothing to the header.
+  x = setup();
+  x.open.mockResolvedValue({ status: "cancelled" });
+  h.options?.openMembers("solo", true);
+  await Promise.resolve();
+  expect(soloAccessRequests.snapshot()).toBeUndefined();
+  x = setup();
+  let settle!: (value: unknown) => void;
+  x.open.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  h.options?.openMembers("solo", true);
+  x.replaceSession();
+  settle({ status: "opened" });
+  await Promise.resolve();
+  expect(soloAccessRequests.snapshot()).toBeUndefined();
 });

@@ -1228,7 +1228,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   a Solo chat — or a plugin's icon for it, such as a linked pull request's
   state — the thread mark for a thread) before the name, and the member
   avatars main's header shows (agents, for a Solo chat); choosing them opens
-  the conversation's members in the main window. A conversation window drills into
+  the conversation's members — a Solo chat's Share access — in the main window. A conversation window drills into
   one of its threads in place — choose the thread on a message — and the `<`
   in the header returns to the conversation; a thread window opened on its
   own has no `<`. Windows stay open while the main window moves elsewhere;

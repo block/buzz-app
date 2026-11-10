@@ -16,6 +16,7 @@ import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { soloAccessRequests } from "../../features/solo/access-requests";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -50,6 +51,7 @@ composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
+  soloAccessRequests.clear();
   tabActionEntries = [];
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
@@ -1694,4 +1696,33 @@ it("leaves Escape to a text field outside the composer", async () => {
   field.focus();
   expect(f.read.current?.available()).toBe(false);
   field.remove();
+});
+
+it("opens Share access when a pop-out window hands it to this chat's header, in this session only", async () => {
+  const f = fixture();
+  f.mount();
+  await screen.findByRole("button", { name: "Share access to Planning" });
+  const session = f.session as unknown as RelaySession;
+  // Another chat's request, or another session's, is not this header's.
+  act(() =>
+    soloAccessRequests.request({ session, scope: f.scope, channelId: "other" }),
+  );
+  expect(screen.queryByRole("dialog", { name: /Share access/ })).toBeNull();
+  act(() =>
+    soloAccessRequests.request({
+      session: {} as RelaySession,
+      scope: f.scope,
+      channelId: id,
+    }),
+  );
+  expect(screen.queryByRole("dialog", { name: /Share access/ })).toBeNull();
+  soloAccessRequests.clear();
+  act(() =>
+    soloAccessRequests.request({ session, scope: f.scope, channelId: id }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: /Share access/ }),
+  ).toBeInTheDocument();
+  // Taken: a later header for the same chat does not reopen it.
+  expect(soloAccessRequests.snapshot()).toBeUndefined();
 });

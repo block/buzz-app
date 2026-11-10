@@ -778,8 +778,9 @@ three documented gaps close before it leaves draft.
    overflow; agents for Solo, people otherwise; the Members/Agents glyph when
    none) before the name. Choosing it opens the conversation in the main
    window with its access dialog (`panel: "members"` for channels and DMs;
-   the conversation itself for Solo, which has no Members surface — main's
-   Solo identity opens Share access, which stays in main). Main projects
+   Solo: main shows the chat and its header opens **Share access** through a
+   session-fenced request, `soloAccessRequests`, the way message actions are
+   handed off — jaw's tryout found the first cut only opened the chat). Main projects
    `members: { count, preview[≤3]: { id, name, picture, agent }, solo }`,
    bounded in the native DTO; names resolve through `session.names` as main's
    stack does; pictures through `avatarMedia`. New companion action

@@ -9,6 +9,7 @@ import {
 } from "../../features/popout/window";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { messageActionRequests } from "../../features/messages/action-requests";
+import { soloAccessRequests } from "../../features/solo/access-requests";
 import { ArrowSquareOutIcon } from "../../shared/design-system/icons";
 import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -102,21 +103,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
         });
       });
     },
-    // Members open as main's header opens them: the conversation with its
-    // access dialog; a Solo chat has none, so the conversation alone.
+    // Members open as main's header opens them: a channel or DM with its
+    // Members panel (a route); a Solo chat's Share access dialog lives in its
+    // header, so main shows the chat, then that header takes the request —
+    // only from the same session the handoff was made in.
     openMembers: (channelId, solo) => {
-      const { scope } = ctx.relay.snapshot();
+      const { scope, session } = ctx.relay.snapshot();
       if (!scope) return;
+      let target: ReturnType<typeof conversationTarget>;
       try {
-        const target = conversationTarget(scope, channelId);
-        void ctx.navigation.open(
-          solo || target.kind !== "conversation"
-            ? target
-            : { ...target, panel: "members" },
-        );
+        target = conversationTarget(scope, channelId);
       } catch {
-        /* An invalid scope opens nothing. */
+        return; // An invalid scope opens nothing.
       }
+      if (!solo) {
+        void ctx.navigation.open(
+          target.kind === "conversation"
+            ? { ...target, panel: "members" }
+            : target,
+        );
+        return;
+      }
+      void ctx.navigation.open(target).then((result) => {
+        if (result.status !== "opened") return;
+        const now = ctx.relay.snapshot();
+        if (now.scope !== scope || now.session !== session) return;
+        soloAccessRequests.request({ session, scope, channelId });
+      });
     },
     // The agent's activity view opens beside the conversation once main
     // shows it, through the existing panel opener with this channel context.

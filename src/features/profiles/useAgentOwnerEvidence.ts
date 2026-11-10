@@ -23,6 +23,11 @@ export function useAgentOwnerEvidence(
   status: "loading" | "ready" | "error" | "unavailable";
   owner: string | undefined;
   failed: boolean;
+  /** The view's failure and its kind: a connectivity failure is retried by
+   * session recovery through `refresh`, so a surface hides its own copy. */
+  error: string | undefined;
+  transient: boolean | undefined;
+  refresh(): void;
   settled: boolean;
 } {
   // A session-owned view: live events, reconnect refresh and purge, no polling.
@@ -128,6 +133,9 @@ export function useAgentOwnerEvidence(
     status,
     owner,
     failed: !!pubkey && (view === null || events.status === "error"),
+    error: events.error,
+    transient: events.transient,
+    refresh: () => void view?.refresh(),
     // An absent event is conclusive only after its read completed. Failure or
     // exhausted capacity must not unlock unverified legacy fallback.
     settled:

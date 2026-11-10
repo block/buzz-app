@@ -26,6 +26,7 @@ import { StatusDisplay } from "../../features/user-status/StatusDisplay";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import {
   ProfileCopyField,
   ProfilePublicMetadata,
@@ -446,6 +447,7 @@ function ProfileDetails({
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
+  const [failure, setFailure] = useState<unknown>();
   const [attempt, retry] = useState(0);
   // Retry stays mounted and focusable while its own read is pending.
   const [retrying, setRetrying] = useState(false);
@@ -526,14 +528,16 @@ function ProfileDetails({
     // let success hand its focus to the stable region as an explicit retry does.
     if (document.activeElement === retryButton.current) setRetrying(true);
     setStatus("loading");
+    setFailure(undefined);
     void session.profiles.ensure([pubkey]).then(
       () => {
         if (!active) return;
         setStatus("ready");
         setRetrying(false);
       },
-      () => {
+      (error: unknown) => {
         if (!active) return;
+        setFailure(error);
         setStatus("error");
         setRetrying(false);
       },
@@ -552,25 +556,43 @@ function ProfileDetails({
     knownAgent ? pubkey : undefined,
     attempt,
   );
+  // Opening the panel starts these reads by itself. While the relay is
+  // unreachable the recovery notice is the one report: recovery retries each
+  // read, so the panel shows neither its error nor Retry profile.
+  const profileRead = useRecoverableRead(
+    session.recovery,
+    { status, error: failure },
+    () => retry((value) => value + 1),
+  );
+  const ownerRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: ownership.status,
+      error: ownership.error,
+      transient: ownership.transient,
+    },
+    ownership.refresh,
+  );
+  const shown = status === "error" && profileRead.quiet ? "loading" : status;
   const verifiedOwner = ownership.owner;
   // A read that finds no profile is an answer, not a failure: it shows no
   // notice and no retry. A failed read is reported unless kind-0 metadata is
   // already shown; a verified overlay can exist while its kind-0 read failed.
   const reportsFailure = !profile || !!profile.verified;
-  const readFailed = status === "error" && reportsFailure;
-  const readPending = status === "loading" && reportsFailure;
+  const readFailed = shown === "error" && reportsFailure;
+  const readPending = shown === "loading" && reportsFailure;
   // The owner check reads the agent's signed profile on its own, so it can
   // fail beside a profile that loaded or was never set. Its alert and Retry
   // wait for a profile read whose failure would be reported, so only one of
   // the two alerts is ever announced, and never beside "Loading profile…".
   // A pending retry states no reason.
   const ownerUnconfirmed =
-    ownership.failed && !readPending && !readFailed && !retrying;
+    ownership.failed && !ownerRead.quiet && !readPending && !readFailed && !retrying;
   // The owner check rereads on its own, as after a reconnect, and an explicit
   // retry rereads it too. A focused Retry stays mounted and busy until that
   // read settles, so the reread cannot take its focus away.
   const ownerRechecking =
-    retryFocused && !readFailed && ownership.status === "loading";
+    retryFocused && !readFailed && !ownerRead.quiet && ownership.status === "loading";
   const offerRetry =
     readFailed || retrying || ownerUnconfirmed || ownerRechecking;
   // Retry unmounts once nothing is left to retry; hand its focus to the
@@ -843,7 +865,7 @@ function ProfileDetails({
                       />
                     )}
                     <ProfilePublicMetadata nip05={profile?.nip05} />
-                    {status === "loading"
+                    {shown === "loading"
                       ? (!profile || (profile.verified && retrying)) && (
                           <p role="status">Loading profile…</p>
                         )

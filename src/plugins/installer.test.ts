@@ -9,6 +9,7 @@ import {
   type PluginInstallOrigin,
 } from "./installer";
 import type { ConfigurationState, PluginInfo } from "./types";
+import { createPluginUpdates } from "./updates";
 
 const commit = "0123456789abcdef0123456789abcdef01234567";
 const base = {
@@ -268,7 +269,7 @@ function setup({
   const managerListeners = new Set<() => void>();
   const manager = {
     imports: imports ?? undefined,
-    snapshot: () => ({ configuration }),
+    snapshot: () => ({ configuration, activation: {} }),
     subscribe(listener: () => void) {
       managerListeners.add(listener);
       return () => managerListeners.delete(listener);
@@ -332,6 +333,159 @@ it("checks installed ids even when disabled, source-backed, or contribution-free
     "installed",
   );
   expect(installer.getInstallationStatus("example.missing")).toBe("absent");
+});
+
+it("exposes update discovery as an optional capability with unavailable state until registered", async () => {
+  const { as } = setup();
+  const installer = await as("example.market");
+
+  expect(installer.updates?.getSnapshot().status).toBe("unavailable");
+  expect(installer.updates?.queueUpdates([])).toBeUndefined();
+});
+
+async function setupUpdates() {
+  const target = info("example.notes");
+  target.manifest = { ...target.manifest, updates: { defaultEnabled: true } };
+  target.updateSource = { ...base, path: "." };
+  const checkGit = vi.fn(async () => ({
+    token: "preview",
+    source: base.repository,
+    candidates: [{ path: ".", manifest: target.manifest, revision: "r2" }],
+    warnings: [],
+  }));
+  const f = setup({
+    plugins: [target, info("example.market"), info("example.other")],
+    imports: { checkGit },
+  });
+  const updates = createPluginUpdates(f.manager as never, async () => null);
+  const unregister = f.requests.registerUpdates(updates);
+  await updates.check();
+  const token = updates.capability.getSnapshot().candidates[0]?.token;
+  if (!token) throw new Error("Expected an update candidate");
+  return { ...f, updates, token, unregister, checkGit };
+}
+
+it("isolates request identities by plugin and replays after that caller remounts", async () => {
+  const f = await setupUpdates();
+  try {
+    const first = (await f.as("example.market")).updates;
+    const second = (await f.as("example.other")).updates;
+    if (!first || !second) throw new Error("Expected update capabilities");
+    const ownerId = first.ownerId;
+    if (!ownerId) throw new Error("Expected a provider identity");
+    const identity = { ownerId, requestId: "update-all" };
+    const request = { ...identity, tokens: [f.token] };
+    const one = first.queueUpdates(request.tokens, identity);
+    const two = second.queueUpdates(request.tokens, identity);
+    expect(one).toBeDefined();
+    expect(two).toBeDefined();
+    expect(two?.id).not.toBe(one?.id);
+    expect(first.getQueueRequest(request)).toEqual({
+      status: "admitted",
+      queue: one,
+    });
+    expect(second.getQueueRequest(request)).toEqual({
+      status: "admitted",
+      queue: two,
+    });
+    expect(first.getQueueRequest({ ...request, tokens: [] }).status).toBe(
+      "conflict",
+    );
+
+    await f.fibers[0]?.dispose();
+    const remounted = (await f.as("example.market")).updates;
+    if (!remounted) throw new Error("Expected remounted capability");
+    expect(remounted.getQueueRequest(request)).toEqual({
+      status: "admitted",
+      queue: one,
+    });
+    expect(remounted.queueUpdates(request.tokens, identity)).toBe(one);
+    f.unregister();
+    expect(remounted.getQueueRequest(request).status).toBe("unknown");
+    const replacement = createPluginUpdates(
+      f.manager as never,
+      async () => null,
+    );
+    const stopReplacement = f.requests.registerUpdates(replacement);
+    try {
+      expect(remounted.getQueueRequest(request).status).toBe("unknown");
+      expect(remounted.queueUpdates(request.tokens, identity)).toBeUndefined();
+    } finally {
+      stopReplacement();
+      replacement.dispose();
+    }
+  } finally {
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+  }
+});
+
+it("bounds sequential plugin refreshes without throttling host-forced checks", async () => {
+  vi.useFakeTimers();
+  const f = await setupUpdates();
+  try {
+    const first = (await f.as("example.market")).updates;
+    const second = (await f.as("example.other")).updates;
+    if (!first || !second) throw new Error("Expected update capabilities");
+    await first.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(2);
+    await second.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(2);
+    await f.updates.check(true);
+    expect(f.checkGit).toHaveBeenCalledTimes(3);
+    vi.advanceTimersByTime(59_999);
+    await first.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(3);
+    vi.advanceTimersByTime(1);
+    await second.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(4);
+  } finally {
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+    vi.useRealTimers();
+  }
+});
+
+it("owns both update subscriptions with the calling plugin lifetime", async () => {
+  const f = await setupUpdates();
+  try {
+    const first = (await f.as("example.market")).updates;
+    const second = (await f.as("example.other")).updates;
+    if (!first || !second) throw new Error("Expected update capabilities");
+    const one = first.queueUpdates([f.token]);
+    const two = second.queueUpdates([f.token]);
+    if (!one || !two) throw new Error("Expected admitted queues");
+    const goneSnapshot = vi.fn();
+    const goneQueue = vi.fn();
+    const liveSnapshot = vi.fn();
+    const liveQueue = vi.fn();
+    const stops = [
+      first.subscribe(goneSnapshot),
+      first.subscribeQueue(one.id, goneQueue),
+      second.subscribe(liveSnapshot),
+      second.subscribeQueue(two.id, liveQueue),
+    ];
+    await f.fibers[0]?.dispose();
+    await f.updates.check(true);
+    first.cancelQueue(one.id);
+    second.cancelQueue(two.id);
+    expect(goneSnapshot).not.toHaveBeenCalled();
+    expect(goneQueue).not.toHaveBeenCalled();
+    expect(liveSnapshot).toHaveBeenCalled();
+    expect(liveQueue).toHaveBeenCalledOnce();
+    for (const stop of stops) stop();
+    liveSnapshot.mockClear();
+    liveQueue.mockClear();
+    f.unregister();
+    expect(liveSnapshot).not.toHaveBeenCalled();
+    expect(liveQueue).not.toHaveBeenCalled();
+  } finally {
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+  }
 });
 
 it("keeps unavailable configuration distinct from absence and emits presence changes", async () => {

@@ -397,13 +397,154 @@ type PluginInstaller = {
     id: string,
     listener: (status: "installed" | "absent" | "unavailable") => void,
   ): () => void;
+  updates?: PluginUpdateCapability;
 };
 ```
 
-These status methods may be missing on an older host even when the optional
-service is available. Feature-check each method before calling it; see the
-[plugin authoring guide](plugin-authoring-guide.md#extension-points) for
+These installation-status methods may be missing on an older host even when the
+optional service is available. Feature-check each method before calling it; see
+the [plugin authoring guide](plugin-authoring-guide.md#extension-points) for
 status semantics and subscription-lifetime guidance.
+
+```ts
+type Updates = NonNullable<PluginInstaller["updates"]>;
+type PluginUpdateToken = ReturnType<Updates["getSnapshot"]>["candidates"][number]["token"];
+type PluginUpdateOwnerId = NonNullable<Updates["ownerId"]>;
+// Branded strings: retain tokens and owner IDs returned by the host; never construct them.
+type PluginUpdateSnapshot = {
+  status: "disabled" | "unavailable" | "checking" | "fresh" | "stale" | "error";
+  checkedAt: number | null; // epoch milliseconds for the last completed check
+  candidates: readonly {
+    token: PluginUpdateToken;
+    id: string;
+    name: string;
+    installedRevision: string;
+    candidateRevision: string;
+  }[];
+  errors: readonly { id: string; message: string }[];
+};
+type PluginUpdateQueueSnapshot = {
+  id: string;
+  status: "queued" | "reviewing" | "completed" | "cancelled" | "failed" | "partial";
+  items: readonly {
+    token: PluginUpdateToken;
+    id: string;
+    status: "queued" | "reviewing" | "installed" | "partial" | "cancelled" | "failed";
+    error?: string;
+  }[];
+};
+type PluginUpdateQueueRequest = {
+  ownerId: PluginUpdateOwnerId;
+  requestId: string;
+  tokens: readonly PluginUpdateToken[];
+};
+type PluginUpdateQueueRequestIdentity = {
+  ownerId: PluginUpdateOwnerId;
+  requestId: string;
+};
+type PluginUpdateQueueRequestResult =
+  | { status: "admitted"; queue: PluginUpdateQueueSnapshot }
+  | { status: "not-admitted" }
+  | { status: "unknown" }
+  | { status: "conflict" };
+type PluginUpdateCapability = {
+  ownerId: PluginUpdateOwnerId | undefined;
+  getSnapshot(): PluginUpdateSnapshot;
+  subscribe(listener: () => void): () => void;
+  refresh(): Promise<PluginUpdateSnapshot>;
+  queueUpdates(
+    tokens: readonly PluginUpdateToken[],
+    request?: PluginUpdateQueueRequestIdentity,
+  ): PluginUpdateQueueSnapshot | undefined;
+  getQueueRequest(
+    request: PluginUpdateQueueRequest,
+  ): PluginUpdateQueueRequestResult;
+  getQueue(id: string): PluginUpdateQueueSnapshot | undefined;
+  subscribeQueue(id: string, listener: () => void): () => void;
+  cancelQueue(id: string): boolean;
+};
+```
+
+Plugin authors can name the nested update contract through the existing public
+`PluginInstaller` type as `NonNullable<PluginInstaller["updates"]>`; its method
+argument and result types are available through that member.
+
+`updates` is optional in the public type for compatibility with older hosts. In
+the current host, a present `pluginInstaller` service always exposes the bridge;
+its snapshot is `unavailable` until the retained checker registers and if it
+later unregisters. An absent service or `updates` member is unknown, not an empty
+or up-to-date result. In a host that exposes the bridge, `unavailable` means the
+retained checker or its catalog/import source is not available; `disabled` means
+no installed plugin currently has update checks enabled with a checkable source;
+`checking` is an in-progress refresh; `stale`
+means no recent completed check or installed source/state changed since the last
+check; `error` means one or more checks failed; `fresh` describes a completed
+aggregate check of currently eligible sources. It is not a per-plugin "up to date" result.
+The snapshot contains known update candidates and known check errors, but does not expose a
+per-plugin checked-current or eligibility result. A plugin absent from both
+arrays is unknown: it may be current, opted out, unsupported, or lack a
+checkable saved source. Consumers must not infer per-plugin status from a fresh
+snapshot miss; only listed candidates are known updates and listed errors are
+known check failures.
+
+Candidate tokens are opaque and bound to the checker’s current source, installed
+revision and publisher, candidate revision and publisher, enabled state, and
+saved update-check choice. `refresh()` invokes the host's existing retained
+checker; it does not create a second poller or install anything. Plugin-triggered
+refreshes share a one-minute minimum interval; calls within that interval return
+the current snapshot, while a running refresh is shared. Host-forced checks are
+not throttled by this limit.
+`queueUpdates(tokens, request?)` accepts only tokens from a completed check within the
+freshness window when each token still names a current candidate for its
+installed plugin. It can accept a known candidate even when the aggregate status
+is `error`, or `stale` because another plugin's source changed after that check,
+if that token remains current. A source change during a check invalidates tokens
+from that run. It returns `undefined` while checking, after expiry, or when a
+requested token is no longer current, or when 50 queues are already pending or
+reviewing. Accepted queues share one host-retained serialized review path across
+callers. The host retains at most 50 queue snapshots, evicting the oldest
+terminal snapshot when needed; terminal queues no longer occupy the review
+scheduler. Every item opens the existing explicit review, identifies the requesting
+plugin when applicable, and waits for the owner to confirm; no item is installed silently. An item is `partial` when its update
+was installed but the enabled plugin failed to activate at that revision.
+`cancelQueue()` cancels pending or unopened reviews, but does not undo an
+operation the owner already confirmed. Queue state is retained by the host
+provider, not across a host restart. Subscribe before reading `getSnapshot()` or
+`getQueue()` so an update cannot be missed, and release subscriptions with the
+plugin effect. The host also releases both update subscriptions when the calling
+plugin is disposed. A non-fresh status is not evidence that no updates exist.
+
+When a caller may retry after losing the submission result, it must create and
+retain one stable, non-empty `requestId` (at most 128 characters) for that
+logical attempt and pair it with the captured `ownerId`. Pass the same identity
+and ordered token list on every retry, including after the consumer unmounts or
+remounts. A submission identity from another provider lifetime is rejected;
+`getQueueRequest()` for its captured identity reports `unknown`. IDs must be
+unique across different submissions by the same plugin to this provider; a random ID is
+appropriate. The host deduplicates repeated tokens in first-seen order. A repeated ID and
+identical normalized token list returns the same queue snapshot while that
+snapshot is retained; a changed payload is refused. If the queue's terminal
+snapshot was evicted, replay returns `undefined` and does not create another
+queue, so an ambiguous result stays unknown rather than becoming a duplicate
+review. Capture `ownerId`, `requestId`, and the exact ordered token list before
+submitting; `getQueueRequest(request)` does not enqueue or retry. For the same
+provider lifetime, it reports `admitted` with the retained queue for an exact
+recorded request, `conflict` when that ID is bound to a different normalized
+token list, or `not-admitted` when no admission record exists. It reports
+`unknown` if the owner ID no longer matches, the provider is unavailable or has
+been disposed, or the recorded queue was evicted. A missing `ownerId` is not
+evidence of non-admission. Only `admitted` is proof of admission; only
+`not-admitted` from the same live provider is proof this request was not
+admitted. After `unknown`, do not submit under a new request ID or infer that no
+review was queued. Request IDs and their retention limit are namespaced by the
+calling plugin ID, so different plugins can use the same ID independently and a
+remounted plugin can reconcile its prior request. The provider retains at most
+1,024 request identities per plugin for its lifetime; after that, it refuses new identified submissions instead of
+evicting identities. Queue/request state is not persisted across a provider
+replacement or host restart, so old identities then resolve as `unknown` and
+this contract does not provide cross-restart idempotency. An absent capability
+or an `unavailable` snapshot is not evidence that a prior ambiguous submission
+was rejected. A refresh does not resolve an earlier ambiguous submission.
 
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the

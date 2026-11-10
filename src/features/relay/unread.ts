@@ -34,6 +34,16 @@ export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
   /** Latest verified content evidence, including read and self-authored messages. */
   latestMessage?: Readonly<{ id: string; createdAt: number }>;
+  /** Channel targets: the id of the oldest unread message the channel's
+   * timeline shows (a top-level post or broadcast reply), in rendered order.
+   * Bounded like `observedCount`: missing history can leave a later message
+   * the oldest one known. Absent when none is unread. */
+  oldestUnreadId?: string;
+  /** Channel targets: a repair has read every channel in unread scope since
+   * evidence was last emptied or a channel entered that scope, so evidence
+   * reaches past the rows channel windows loaded, up to the repair's per-batch
+   * limit. Later repairs keep it. */
+  sampled?: true;
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
@@ -312,6 +322,11 @@ export function createUnread({
   // Snapshot listeners last saw: a direct inbox() read must not hide the change.
   let inboxBase: InboxSnapshot | undefined;
   let inboxLoading = false;
+  /** A repair read every batch since evidence was last emptied (cache clear,
+   * overflow) or a channel entered repair scope. Until then, evidence can hold
+   * only what channel windows and live traffic delivered. A later repair only
+   * adds evidence, so this stays set while it runs. */
+  let sampled = false;
   const handles = new Set<() => void>();
   const views = new Map<
     () => void,
@@ -990,7 +1005,7 @@ export function createUnread({
     const rowThreads = new Set<string>();
     const dm = isDm(target.channelId);
     indexEvidence();
-    let latest: RelayEvent | undefined;
+    let latest: RelayEvent | undefined, oldest: RelayEvent | undefined;
     for (const entry of byChannel.get(target.channelId) ?? []) {
       const event = entry.event;
       if (
@@ -1005,6 +1020,12 @@ export function createUnread({
       if (!isUnread(entry, state, dm)) continue;
       count++;
       if (priority(entry, dm)) attention++;
+      if (
+        target.kind === "channel" &&
+        (!entry.parentId || entry.broadcast) &&
+        (!oldest || order(event, oldest) < 0)
+      )
+        oldest = event;
       if (
         target.kind !== "channel" ||
         !isUnread(entry, state, dm, rowCut(entry, state, dm))
@@ -1033,6 +1054,10 @@ export function createUnread({
       ...(latest
         ? { latestMessage: { id: latest.id, createdAt: latest.created_at } }
         : {}),
+      ...(evidence && oldest ? { oldestUnreadId: oldest.id } : {}),
+      ...(evidence && target.kind === "channel" && sampled
+        ? { sampled: true as const }
+        : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
       coverage: evidence ? "observed" : "unknown",
@@ -1052,6 +1077,8 @@ export function createUnread({
   }
   const equal = (a: UnreadSnapshot, b: UnreadSnapshot) =>
     a.latestMessage?.id === b.latestMessage?.id &&
+    a.oldestUnreadId === b.oldestUnreadId &&
+    a.sampled === b.sampled &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
     a.row?.observedCount === b.row?.observedCount &&
@@ -1651,12 +1678,16 @@ export function createUnread({
       if (changed.size || archiveChanged) publish(changed);
     } else {
       accessKey = next;
-      purge();
       // An initial observation made against a display-only roster still owes
       // evidence when membership becomes fresh, including during an active repair.
       // A newly accessible channel has no evidence yet, and the epoch bump
       // abandons any in-flight observation, so both also observe again.
-      if (requested && (confirmed || gained || refresh)) {
+      // Until that repair finishes, the channels it adds hold only what their
+      // windows and live traffic delivered; purge() publishes that.
+      const observe = requested && (confirmed || gained || !!refresh);
+      if (observe) sampled = false;
+      purge();
+      if (observe) {
         repairAgain = true;
         if (!refresh) void repair();
       }
@@ -1975,6 +2006,7 @@ export function createUnread({
         freshness = "observed";
         owing = false;
         error = undefined;
+        sampled = true;
         return;
       }
       try {
@@ -2005,8 +2037,9 @@ export function createUnread({
             ],
             { signal, priority },
           );
-          // An overflow or refresh while this read was out discarded what the
-          // mark stands for: an overflow waits for refresh, a refresh reads again.
+          // An overflow, refresh or cache clear while this read was out
+          // discarded what the mark stands for: an overflow waits for refresh,
+          // a refresh or cache clear reads again.
           if (!current()) return;
           // Accepting notifies subscribers (the Inbox after its window), and one
           // may refresh from there.
@@ -2030,6 +2063,7 @@ export function createUnread({
         freshness = "observed";
         owing = false;
         error = undefined;
+        sampled = true;
         publish();
         void findHomes(generation);
       } catch (cause) {
@@ -2180,6 +2214,7 @@ export function createUnread({
         indexed = false;
         forget();
         known.clear();
+        sampled = false;
         bytes = 0;
         error = "Unread observation capacity reached; refresh available";
         freshness = "stale";
@@ -2670,6 +2705,15 @@ export function createUnread({
               event.created_at,
               (journal) =>
                 valid(journal) && requireMessage(target, id) === event,
+              false,
+              undefined,
+              (state) =>
+                effectiveFrontier(
+                  state,
+                  targetKey(target),
+                  channelId,
+                  threadReference(event) ? root(event) : undefined,
+                ),
             );
             observed.add(id);
           }
@@ -3043,11 +3087,15 @@ export function createUnread({
       epoch++;
       channelReadGenerations.clear();
       resetLookups();
-      repairAgain = false;
+      // Every channel loses its evidence, so a session that observes unread
+      // observes again, as for a newly accessible channel: now, or once the
+      // repair the epoch bump abandons settles.
+      repairAgain = requested;
       indexed = false;
       events.clear();
       forget();
       known.clear();
+      sampled = false;
       forcedMessages.clear();
       entered.clear();
       openChannels.clear();
@@ -3056,6 +3104,7 @@ export function createUnread({
       freshness = "unknown";
       error = undefined;
       publish();
+      if (requested && !refresh) void repair();
     },
     dispose() {
       closed = true;

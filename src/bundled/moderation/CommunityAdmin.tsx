@@ -51,7 +51,12 @@ import {
 import { avatarMedia } from "../../shared/avatar-source";
 import { writeClipboardText } from "../../shared/clipboard";
 import { nativeIdentityEnabled } from "../../features/identity/service";
-import { QrCode, renderQrCode } from "../../shared/QrCode";
+import {
+  QrCode,
+  type QrVariant,
+  renderQrCode,
+  useQrVariant,
+} from "../../shared/QrCode";
 
 const DAY = 24 * 60 * 60;
 const EXPIRY = [1, 3, 7, 30].map((days) => ({
@@ -521,7 +526,11 @@ function InviteDialog({
   const [copied, setCopied] = useState(false);
   // The QR code drawn for one link, or no svg when it failed; it never shows
   // for another link.
-  const [qr, setQr] = useState<{ url: string; svg?: string } | null>(null);
+  const [qr, setQr] = useState<{
+    url: string;
+    variant: QrVariant;
+    svg?: string;
+  } | null>(null);
   // One minted link per settings; a missing entry for these settings mints.
   const settings = `${ttl}:${uses}`;
   const [link, setLink] = useState<{
@@ -564,24 +573,25 @@ function InviteDialog({
   // New settings have no link until the effect mints one; count them as
   // pending so the code's place never collapses, which scrolled the dialog.
   const pending = current ? !url && !current.failed : !locked;
-  const drawn = url && qr?.url === url ? qr : null;
+  const variant = useQrVariant();
+  const drawn = url && qr?.url === url && qr.variant === variant ? qr : null;
   const showQr =
     nativeIdentityEnabled() && (pending || !!url) && !(drawn && !drawn.svg);
   useEffect(() => {
     if (!url || !nativeIdentityEnabled()) return;
     let live = true;
-    renderQrCode(url, "dark").then(
-      (svg) => live && setQr({ url, svg }),
+    renderQrCode(url, variant).then(
+      (svg) => live && setQr({ url, variant, svg }),
       (reason) => {
         if (!live) return;
-        setQr({ url });
+        setQr({ url, variant });
         setError(message(reason));
       },
     );
     return () => {
       live = false;
     };
-  }, [url]);
+  }, [url, variant]);
   let directKey: string | null = null;
   let identityError = "";
   if (identity.trim()) {

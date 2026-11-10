@@ -82,6 +82,7 @@ function setup(count = 1, snapshot = false) {
     {
       readStateFloor: () => 0,
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           journal = readJournal(change(journal), viewer.pubkey);
           return journal;
@@ -843,7 +844,7 @@ it.each(["clear", "dispose", "revoke", "join"])(
     else h.receive([roster(h.relay, "other", [], 20)]);
     held.release();
     await repair;
-    if (boundary === "clear" || boundary === "dispose") {
+    if (boundary === "dispose") {
       expect(batches).toHaveLength(1);
       expect(h.snapshot().observedCount).toBeNull();
       return;
@@ -851,11 +852,17 @@ it.each(["clear", "dispose", "revoke", "join"])(
     // The abandoned read starts over against the current membership.
     await vi.waitFor(() => expect(batches).toHaveLength(2));
     expect(h.snapshot().observedCount).toBeNull();
+    // A cleared cache keeps membership, so the restart reads the first batch
+    // again rather than the abandoned read's later chunk.
+    if (boundary === "clear") expect(batches[1]).toEqual(batches[0]);
     fresh.release();
     await h.session.unread.ensure();
     const reread = batches.slice(1).flat();
     if (boundary === "join") {
       expect(reread).toContain("new-room");
+      expect(h.snapshot().observedCount).toBe(1);
+    } else if (boundary === "clear") {
+      expect(reread).toEqual([...h.ids].sort());
       expect(h.snapshot().observedCount).toBe(1);
     } else {
       expect(reread).toHaveLength(128);
@@ -1109,6 +1116,7 @@ it("an evidence overflow is repaired on the next recovery tick", async () => {
     await vi.waitFor(() =>
       expect(tickReads(h)).toEqual({ evidence: 2, snapshots: 2 }),
     );
+    await vi.waitFor(() => expect(h.snapshot().sampled).toBe(true));
     h.receive(
       Array.from({ length: 19 }, (_, i) =>
         message(h.peer, "other", "x".repeat(450000), i + 20),
@@ -1117,6 +1125,10 @@ it("an evidence overflow is repaired on the next recovery tick", async () => {
     expect(h.snapshot()).toMatchObject({
       error: "Unread observation capacity reached; refresh available",
     });
+    // The overflow emptied the sample; live evidence after it is not one.
+    h.receive([message(h.peer, "other", "after the overflow", 40)]);
+    expect(h.snapshot()).toMatchObject({ observedCount: 1 });
+    expect(h.snapshot().sampled).toBeUndefined();
     const before = tickReads(h).evidence;
     vi.setSystemTime(Date.now() + 60_000);
     h.recover();
@@ -1235,15 +1247,22 @@ it.each(["clear", "dispose", "revoke"])(
     else h.receive([roster(h.relay, "other", [], 20)]);
     release();
     await repair;
-    if (boundary !== "revoke") {
+    if (boundary === "dispose") {
       expect(h.trace.map(({ kind }) => kind)).toEqual([30078]);
       return;
     }
-    // Only a fresh observation without the revoked channel is dispatched.
+    // Only a fresh observation is dispatched: after a clear it reads every
+    // channel once, after a revoke it leaves the revoked channel out.
     await h.session.unread.ensure();
     const evidence = h.query.mock.calls
       .map(([filters]) => filters[0])
       .filter((filter) => filter?.kinds?.includes(9));
+    if (boundary === "clear") {
+      expect(evidence.flatMap((filter) => filter?.["#h"] ?? [])).toEqual(
+        [...h.ids].sort(),
+      );
+      return;
+    }
     expect(evidence).toHaveLength(1);
     expect(evidence[0]?.["#h"]).not.toContain("other");
   },
@@ -1253,12 +1272,19 @@ it("a subscriber clearing cache during progressive publication stops later chunk
   const h = setup(129);
   let cleared: Promise<void> | undefined;
   h.session.unread.subscribe({ kind: "channel", channelId: "other" }, () => {
-    if (h.snapshot().observedCount === 1) cleared = h.clearCache();
+    if (!cleared && h.snapshot().observedCount === 1) cleared = h.clearCache();
   });
   await h.session.unread.ensure();
   await cleared;
-  expect(h.trace.map(({ kind }) => kind)).toEqual([30078, 9]);
-  expect(h.snapshot().observedCount).toBeNull();
+  // The abandoned observation never dispatches its later chunk; the clear
+  // starts a fresh one from the first batch.
+  await h.session.unread.ensure();
+  const batches = h.query.mock.calls
+    .map(([filters]) => filters[0])
+    .filter((filter) => filter?.kinds?.includes(9))
+    .map((filter) => filter?.["#h"]?.length);
+  expect(batches).toEqual([128, 128, 1]);
+  expect(h.snapshot().observedCount).toBe(1);
 });
 
 it("explicit refresh bypasses optional profiles for both markers and evidence", async () => {

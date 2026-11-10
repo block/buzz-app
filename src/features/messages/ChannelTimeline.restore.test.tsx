@@ -257,7 +257,8 @@ function mount(bottom = false, revealOnMount = false, anchorLoaded = true) {
   };
 }
 
-function boundaryFixture() {
+/** `reading`: this list's own dwell can mark rows read, as the real store would. */
+function boundaryFixture({ reading = false } = {}) {
   const viewer = keypair(),
     peer = keypair(),
     relay = keypair();
@@ -273,7 +274,9 @@ function boundaryFixture() {
     listeners = new Set<() => void>();
   const syncListeners = new Set<() => void>();
   let readRevision = owner.session.unread.revision();
-  let syncSnapshot = owner.session.unread.sync();
+  let syncSnapshot = reading
+    ? { ...owner.session.unread.sync(), capability: "frontier-sync" as const }
+    : owner.session.unread.sync();
   const entries: {
     promise: Promise<void>;
     resolve: () => void;
@@ -306,16 +309,50 @@ function boundaryFixture() {
     list: () => channelList,
     subscribeList: () => () => {},
   };
+  // Every row built so far, loaded or not: the store's evidence, not the window.
+  const built: ChannelMessage[] = [];
+  // The store's repair has finished, so that evidence reaches past the window.
+  let sampled = true;
+  let freshness: "observed" | "stale" = "observed";
+  let error: string | undefined;
   const snapshot = (channelId: string) => {
+    const oldest = built
+      .filter(
+        (row) =>
+          row.channelId === channelId &&
+          !row.membership &&
+          !row.huddle &&
+          row.audience !== "agents" &&
+          row.authorId !== viewer.pubkey &&
+          (unreadIds.has(row.id) || forcedIds.has(row.id)),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))[0];
     return {
       target: { kind: "channel" as const, channelId },
+      ...(oldest ? { oldestUnreadId: oldest.id } : {}),
+      ...(sampled ? { sampled: true as const } : {}),
       observedCount: unreadIds.size,
       attentionCount: 0,
       coverage: "observed" as const,
-      freshness: "observed" as const,
+      freshness,
       manual: "none" as const,
+      ...(error ? { error } : {}),
     };
   };
+  // A repair the timeline asks for; the real one reads the relay.
+  const ensure = vi.fn(() => Promise.resolve());
+  // Catch-up reads every loaded row, which advances read intent and leaves
+  // nothing unread in the channel; observe reads the rows it is given.
+  const catchUp = vi.fn(async () => {
+    unreadIds.clear();
+    readRevision++;
+    publish();
+  });
+  const observe = vi.fn(async (ids: readonly string[]) => {
+    for (const id of ids) unreadIds.delete(id);
+    readRevision++;
+    publish();
+  });
   const snapshots = new Map([
     ["c", snapshot("c")],
     ["other", snapshot("other")],
@@ -349,6 +386,17 @@ function boundaryFixture() {
       };
     },
     revision: () => readRevision,
+    ensure,
+    ...(reading
+      ? {
+          reading: () => ({
+            view: () => {},
+            dispose: () => {},
+            observe,
+            catchUp,
+          }),
+        }
+      : {}),
   };
   const session = { ...owner.session, channels, unread };
   function row(
@@ -356,8 +404,7 @@ function boundaryFixture() {
     channelId = "c",
     extra: Partial<ChannelMessage> = {},
   ): ChannelMessage {
-    snapshots.set(channelId, snapshot(channelId));
-    return {
+    const result: ChannelMessage = {
       id: event.id,
       channelId,
       authorId: event.pubkey,
@@ -370,6 +417,9 @@ function boundaryFixture() {
       replyCount: 0,
       ...extra,
     };
+    built.push(result);
+    snapshots.set(channelId, snapshot(channelId));
+    return result;
   }
   function tree(
     channelId: string,
@@ -467,6 +517,44 @@ function boundaryFixture() {
     advanceReadRevision() {
       readRevision++;
     },
+    setSampled(value: boolean) {
+      sampled = value;
+    },
+    setFreshness(value: "observed" | "stale", cause?: string) {
+      freshness = value;
+      error = cause;
+    },
+    ensure,
+    catchUp,
+    observe,
+    /** A focused reader at the bottom, with the dwell clock under test control. */
+    async focusReader() {
+      vi.spyOn(document, "hasFocus").mockReturnValue(true);
+      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(
+        600,
+      );
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(0, 0, 800, 500),
+      );
+      vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+        new DOMRect(0, 0, 800, 500),
+      ] as unknown as DOMRectList);
+      await frame();
+      await frame();
+      const history = screen.getByRole("region", {
+        name: "Channel message history",
+      });
+      await act(async () => {
+        history.focus();
+        await Promise.resolve();
+      });
+    },
+    async dwell() {
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+    },
     publish,
   };
 }
@@ -539,13 +627,226 @@ it("waits for entry and unread evidence before selecting a verified entry bounda
   expect(screen.queryByText("Own message", { exact: true })).not.toBeNull();
 });
 
-it.each([
-  { remoteRead: false, presented: true },
-  { remoteRead: true, presented: true },
-  { remoteRead: true, presented: false },
-])(
-  "does not infer an entry boundary after incomplete history: %j",
-  async ({ remoteRead, presented }) => {
+const divider = () => screen.getByRole("separator", { name: "New messages" });
+const precedes = (earlier: Node, later: Node) =>
+  !!(earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+it.each([{ presented: true }, { presented: false }])(
+  "places the entry boundary inside incomplete history when the oldest unread message is loaded: %j",
+  async ({ presented }) => {
+    const h = boundaryFixture();
+    const older = h.row(message(h.peer, "c", "Read above the entry window", 1));
+    const read = h.row(message(h.peer, "c", "Read in loaded window", 2));
+    const first = h.row(message(h.peer, "c", "First unread in window", 3));
+    const later = h.row(message(h.peer, "c", "Later unread in window", 4));
+    h.unreadIds.add(first.id);
+    h.unreadIds.add(later.id);
+    h.completeReadStateSnapshot();
+    h.publish();
+    const entryRows = [read, first, later];
+    const mounted = render(h.tree("c", entryRows, true, true, presented));
+    await h.completeEntry();
+    if (!presented) mounted.rerender(h.tree("c", entryRows, true));
+
+    const placed = divider();
+    expect(precedes(screen.getByText("Read in loaded window"), placed)).toBe(
+      true,
+    );
+    expect(precedes(placed, screen.getByText("First unread in window"))).toBe(
+      true,
+    );
+
+    // Paging older history in neither moves nor removes the line.
+    mounted.rerender(h.tree("c", [older, ...entryRows]));
+    h.publish();
+    expect(divider()).toBe(placed);
+    expect(
+      screen.getAllByRole("separator", { name: "New messages" }),
+    ).toHaveLength(1);
+    expect(
+      precedes(screen.getByText("Read above the entry window"), placed),
+    ).toBe(true);
+    expect(precedes(placed, screen.getByText("First unread in window"))).toBe(
+      true,
+    );
+    mounted.unmount();
+  },
+);
+
+it.each([{ ownFirst: false }, { ownFirst: true }])(
+  "does not infer an entry boundary at the first unread loaded row without a read one before it: %j",
+  async ({ ownFirst }) => {
+    // The repair's sample stopped inside the window, so the first loaded row
+    // is the oldest unread message the store knows.
+    const h = boundaryFixture();
+    const own = h.row(message(h.viewer, "c", "Own message in window", 1));
+    const first = h.row(message(h.peer, "c", "First loaded unread", 2));
+    const later = h.row(message(h.peer, "c", "Later loaded unread", 3));
+    h.unreadIds.add(first.id);
+    h.unreadIds.add(later.id);
+    h.completeReadStateSnapshot();
+    h.publish();
+    const entryRows = ownFirst ? [own, first, later] : [first, later];
+    const mounted = render(h.tree("c", entryRows, true));
+    await h.completeEntry();
+    expect(
+      h.unread.snapshot({ kind: "channel", channelId: "c" }).oldestUnreadId,
+    ).toBe(first.id);
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+
+    const older = h.row(message(h.peer, "c", "Read above the entry window", 0));
+    mounted.rerender(h.tree("c", [older, ...entryRows]));
+    h.publish();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+    mounted.unmount();
+  },
+);
+
+it.each([{ olderUnread: false }, { olderUnread: true }])(
+  "waits for the unread repair before placing a boundary inside incomplete history: %j",
+  async ({ olderUnread }) => {
+    // Before the repair returns, the store knows only the loaded rows: its
+    // oldest unread message sits in the window below a row read by its own
+    // receipt, whatever lies above the window.
+    const h = boundaryFixture();
+    h.setSampled(false);
+    const read = h.row(message(h.peer, "c", "Read by its own receipt", 2));
+    const first = h.row(message(h.peer, "c", "First loaded unread", 3));
+    const later = h.row(message(h.peer, "c", "Later loaded unread", 4));
+    h.unreadIds.add(first.id);
+    h.unreadIds.add(later.id);
+    h.completeReadStateSnapshot();
+    h.publish();
+    const mounted = render(h.tree("c", [read, first, later], true));
+    await h.completeEntry();
+    const target = { kind: "channel" as const, channelId: "c" };
+    expect(h.unread.snapshot(target).oldestUnreadId).toBe(first.id);
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+
+    // The repair returns a row above the window.
+    const above = h.row(message(h.peer, "c", "Above the entry window", 1));
+    if (olderUnread) h.unreadIds.add(above.id);
+    h.setSampled(true);
+    h.publish();
+    if (olderUnread) {
+      expect(h.unread.snapshot(target).oldestUnreadId).toBe(above.id);
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+    } else {
+      // The store cannot tell this from a sample that stopped short of older
+      // unread rows; docs/unread.md records that residual.
+      expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
+        true,
+      );
+      expect(
+        precedes(screen.getByText("Read by its own receipt"), divider()),
+      ).toBe(true);
+    }
+    mounted.unmount();
+  },
+);
+
+/** Rows above the window, the store's repair unfinished: the oldest unread
+ * row it knows sits below a receipt-read row, and the reader is at the bottom. */
+async function heldReader() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const h = boundaryFixture({ reading: true });
+  h.setSampled(false);
+  const read = h.row(message(h.peer, "c", "Read by its own receipt", 2));
+  const first = h.row(message(h.peer, "c", "First loaded unread", 3));
+  const later = h.row(message(h.peer, "c", "Later loaded unread", 4));
+  h.unreadIds.add(first.id);
+  h.unreadIds.add(later.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", [read, first, later], true));
+  await h.completeEntry();
+  await h.focusReader();
+  await h.dwell();
+  return { h, mounted, read, first, later };
+}
+
+it("holds this list's reading while the boundary waits for the unread repair, then reads once it is placed", async () => {
+  const { h, mounted, later } = await heldReader();
+  try {
+    // Without the hold, catch-up's read would advance read intent and erase
+    // the oldest unread row before the repair could vouch for it: no line.
+    expect(h.catchUp).not.toHaveBeenCalled();
+    expect(h.observe).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+    expect(h.ensure).toHaveBeenCalledTimes(1);
+
+    h.setSampled(true);
+    h.publish();
+    expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
+      true,
+    );
+    expect(
+      precedes(screen.getByText("Read by its own receipt"), divider()),
+    ).toBe(true);
+    expect(h.catchUp).not.toHaveBeenCalled();
+
+    // The hold lifting starts dwell on its own.
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+    expect(h.ensure).toHaveBeenCalledTimes(1);
+    expect(precedes(divider(), screen.getByText("First loaded unread"))).toBe(
+      true,
+    );
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("resumes this list's reading with no boundary when the unread repair fails", async () => {
+  const { h, mounted, later } = await heldReader();
+  try {
+    expect(h.catchUp).not.toHaveBeenCalled();
+    h.setFreshness("stale", "Unread observation failed");
+    h.publish();
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("a read-intent change from elsewhere during the held wait still settles with no boundary and releases reading", async () => {
+  const { h, mounted, later } = await heldReader();
+  try {
+    expect(h.catchUp).not.toHaveBeenCalled();
+    h.advanceReadRevision();
+    h.publish("other");
+    h.setSampled(true);
+    h.publish();
+    expect(
+      screen.queryByRole("separator", { name: "New messages" }),
+    ).toBeNull();
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([{ remoteRead: false }, { remoteRead: true }])(
+  "does not infer an entry boundary when the oldest unread message is outside the entry window: %j",
+  async ({ remoteRead }) => {
     const h = boundaryFixture();
     const older = h.row(
       message(h.peer, "c", "Older unread outside the entry window", 1),
@@ -557,7 +858,7 @@ it.each([
     h.completeReadStateSnapshot();
     h.publish();
     const revision = h.unread.revision();
-    const mounted = render(h.tree("c", [read, unread], true, true, presented));
+    const mounted = render(h.tree("c", [read, unread], true));
     await h.completeEntry();
     expect(
       screen.queryByRole("separator", { name: "New messages" }),
@@ -576,6 +877,36 @@ it.each([
     mounted.unmount();
   },
 );
+
+it("places the boundary at a loaded row when a remote read leaves it the oldest unread before the timeline mounts", async () => {
+  const h = boundaryFixture();
+  const older = h.row(
+    message(h.peer, "c", "Older unread outside the entry window", 1),
+  );
+  const read = h.row(message(h.peer, "c", "Read in loaded window", 2));
+  const unread = h.row(message(h.peer, "c", "Unread in loaded window", 3));
+  h.unreadIds.add(older.id);
+  h.unreadIds.add(unread.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const mounted = render(h.tree("c", [read, unread], true, true, false));
+  await h.completeEntry();
+
+  // Another device reads the older row before this timeline mounts.
+  h.unreadIds.delete(older.id);
+  h.publish();
+  mounted.rerender(h.tree("c", [older, read, unread]));
+  h.publish();
+
+  const placed = divider();
+  expect(precedes(screen.getByText("Read in loaded window"), placed)).toBe(
+    true,
+  );
+  expect(precedes(placed, screen.getByText("Unread in loaded window"))).toBe(
+    true,
+  );
+  mounted.unmount();
+});
 
 it("does not select a stale unread row after reading advances while unread evidence is pending", async () => {
   const h = boundaryFixture();

@@ -20,6 +20,8 @@ export type LocalWork = Readonly<{
   agent: string;
   channelId: string;
   messageId: string;
+  /** The request ID has no published message to open. */
+  syntheticMessage?: true;
   threadRootId: string;
   /** The request is in this thread; absent means channel-level work. */
   thread?: true;

@@ -27,7 +27,7 @@ export function completionTarget(
     scope,
     channelId: work.channelId,
     ...(work.thread ? { threadRootId: work.threadRootId } : {}),
-    messageId: work.messageId,
+    ...(!work.syntheticMessage ? { messageId: work.messageId } : {}),
   };
 }
 

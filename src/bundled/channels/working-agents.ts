@@ -52,9 +52,14 @@ export function workingAgentDetails(
         row.agent === agent &&
         (row.state === "waiting" || row.state === "working"),
     );
+    const messageId = work.syntheticMessage
+      ? work.thread
+        ? work.threadRootId
+        : undefined
+      : work.messageId;
     return {
       startedAt: Math.min(...active.map((row) => row.startedAt)),
-      ...(active.length === 1 ? { messageId: work.messageId } : {}),
+      ...(active.length === 1 && messageId ? { messageId } : {}),
       label: localWorkLabel(work),
     };
   }

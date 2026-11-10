@@ -838,6 +838,8 @@ available rather than silently discarding it.
   note. Opened from a conversation, it shows that conversation's turns;
   **Show all conversations** lists the agent's other turns too. It shows only
   turns captured while Buzz has been open.
+- Plugin requests show local work status even when they have no message.
+  A failed request offers Retry. View opens its thread or conversation.
 - **Online badge on Builderlab agents**: a Builderlab-hosted agent's avatar
   shows the green Online badge to everyone in the community while its owner
   has set it up on a remote runtime and has not deleted it. The badge means the

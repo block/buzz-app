@@ -1,4 +1,6 @@
 import { federatedFixture } from "../federated-identity/testing";
+import { workingAgentDetails } from "../../bundled/channels/working-agents";
+import { completionTarget } from "../notifications/agent-completions";
 import { createNativeSession } from "../../bundled/builderlab/session";
 import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
 import { followUpQueue } from "../messages/follow-up-queue";
@@ -1684,6 +1686,32 @@ describe("a plugin's wake", () => {
         expect(f.activity.reader.work()[0]?.thread).toBe(
           channelType ? undefined : true,
         );
+        const work = f.activity.reader.work()[0] as LocalWork;
+        const target = completionTarget(work, {
+          viewer,
+          communityOrigin: "https://buzz.example",
+        });
+        expect(target).toEqual({
+          version: 1,
+          kind: "conversation",
+          scope: { viewer, communityOrigin: "https://buzz.example" },
+          channelId: channel,
+          ...(channelType ? {} : { threadRootId: root }),
+        });
+        expect(
+          workingAgentDetails(
+            {
+              status: "listening",
+              records: [],
+              turns: [],
+              typing: [],
+              trimmed: 0,
+              local: f.activity.reader.work(),
+            },
+            channel,
+            bot,
+          )?.messageId,
+        ).toBe(channelType ? undefined : root);
         finish({ ok: false, error: "Provider unavailable" });
         await vi.waitFor(() =>
           expect(f.activity.reader.work()[0]?.state).toBe("error"),

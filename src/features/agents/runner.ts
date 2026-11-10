@@ -2505,6 +2505,7 @@ export class AgentRunners {
         agent: runner.member.pubkey,
         channelId,
         messageId: event.id,
+        ...(trigger.type === "plugin" ? { syntheticMessage: true } : {}),
         threadRootId: threadRootId ?? event.id,
         ...(thread ? { thread: true } : {}),
         ...(soloChat ? { soloChat: true } : {}),

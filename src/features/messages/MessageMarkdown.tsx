@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
-import type { ComposerSession } from "./composer-session";
+import { fullSession, type ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts } from "./message-link-parts";
@@ -23,6 +23,7 @@ import {
   emptyReferenceDirectory,
   MentionLabel,
 } from "./ReferenceText";
+import { ProfilePeek } from "../profiles/ProfilePeek";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
@@ -674,8 +675,11 @@ function PreparedMessageMarkdown({
       const shown = text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");
       const label = key ? resolveName(key, shown) : shown;
       const Mention = clickable ? "button" : "span";
+      // A previewed mention takes its click from ProfilePeek, which opens the
+      // same profile.
+      const previewed = clickable && !!key;
       // Selection copy reads the identity and the whole label (selection-copy.ts).
-      return (
+      const mention = (
         <Mention
           type={clickable ? "button" : undefined}
           className={referenceStyles.link}
@@ -685,7 +689,7 @@ function PreparedMessageMarkdown({
           data-mention-name={label}
           aria-label={clickable ? `View ${label} profile` : undefined}
           onClick={
-            clickable
+            clickable && !previewed
               ? (event) => {
                   event.currentTarget.focus();
                   onOpenLink(target);
@@ -695,6 +699,25 @@ function PreparedMessageMarkdown({
         >
           <MentionLabel agent={!!agent} label={label} />
         </Mention>
+      );
+      if (!previewed) return mention;
+      const host = fullSession(session);
+      return (
+        <ProfilePeek
+          inline
+          trigger={mention}
+          name={label}
+          picture={
+            (participantProfiles ?? directory.profiles).get(key)?.picture
+          }
+          pubkey={key}
+          agent={!!agent}
+          session={host}
+          channelId={row.channelId}
+          viewer={host?.viewer}
+          target={target}
+          onOpen={onOpenLink}
+        />
       );
     }
     return undefined;

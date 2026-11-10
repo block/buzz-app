@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import {
   closeSettings,
@@ -802,6 +803,42 @@ test.describe("links to channels the reader hasn't joined", () => {
     const actions = row.getByRole("group", { name: "Message actions" });
     await expect(actions).toBeVisible();
     // A trial click fails while the preview covers the action.
+    for (const control of await actions.getByRole("button").all())
+      await control.click({ trial: true });
+  });
+
+  test("mention profile previews open above the message's hover actions", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    // A mention below the first line puts its preview's default place over
+    // the actions above the message.
+    const message = app.append(
+      "primary",
+      "alpha",
+      `Release notes:\nask [@Reader](nostr:${npubEncode(app.viewer)})`,
+    );
+    const row = page.locator(
+      `[data-channel-timeline] [data-message-id="${message.id}"]`,
+    );
+    const mention = row.locator("button[data-profile-target]");
+    await expect(mention).toBeVisible();
+    await virtuaIdle(page);
+    await mention.hover();
+    const card = page.getByRole("dialog", { name: /profile preview$/ });
+    await expect(
+      card.getByRole("button", { name: "View profile" }),
+    ).toBeVisible();
+    const actions = row.getByRole("group", { name: "Message actions" });
+    await expect(actions).toBeVisible();
+    // The actions paint above a later preview, so overlap hides the card's
+    // content rather than failing a click: compare their edges.
+    const [cardBox, actionsBox] = [
+      await card.boundingBox(),
+      await actions.boundingBox(),
+    ];
+    expect(cardBox.y + cardBox.height).toBeLessThanOrEqual(actionsBox.y);
     for (const control of await actions.getByRole("button").all())
       await control.click({ trial: true });
   });

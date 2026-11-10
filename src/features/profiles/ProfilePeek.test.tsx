@@ -256,3 +256,49 @@ it("opens on hover over revealed message actions only in compact density", async
     vi.useRealTimers();
   }
 });
+
+it.each([
+  ["holds an avatar's preview back", false],
+  ["opens an inline mention's preview", true],
+])("%s on hover while the message's actions show", async (_, inline) => {
+  vi.useFakeTimers();
+  const owner = createRelaySession(null);
+  // The row's hover actions are showing, as when the pointer is over its text.
+  const row = document.body.appendChild(document.createElement("div"));
+  row.setAttribute("data-actions-revealed", "");
+  const view = render(
+    <ProfilePeek
+      inline={inline}
+      trigger={<button type="button">Mention</button>}
+      name="Morgan"
+      picture={undefined}
+      pubkey={person}
+      agent={false}
+      session={owner.session}
+      viewer={viewer}
+      channelId="source"
+      target="profile"
+      onOpen={() => true}
+    />,
+    { container: row },
+  );
+  const trigger = screen.getByRole("button", { name: "Mention" });
+  vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(100, 100, 40, 20),
+  );
+  try {
+    fireEvent.mouseEnter(trigger);
+    fireEvent.mouseMove(trigger);
+    await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+    const preview = screen.queryByRole("dialog", {
+      name: "Morgan profile preview",
+    });
+    if (inline) expect(preview).toBeInTheDocument();
+    else expect(preview).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    row.remove();
+    owner.dispose();
+    vi.useRealTimers();
+  }
+});

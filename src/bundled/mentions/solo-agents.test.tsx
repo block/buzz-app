@@ -38,6 +38,7 @@ import { createMessages } from "../../features/relay/messages";
 import type { Outbox } from "../../features/relay/outbox";
 import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
 import { profileTarget } from "../../features/profiles/target";
+import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { npubEncode } from "nostr-tools/nip19";
 import { fetchMentionDirectoryPage } from "./useMentionDirectory";
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
@@ -57,6 +58,8 @@ import {
   profile,
   unsignedProfiles,
 } from "../../features/relay/testing";
+// A sent mention composes the profile preview, whose avatar needs these.
+stubAvatarBrowserApis();
 // jsdom lacks scrollIntoView; the search highlight keeps its row in view.
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

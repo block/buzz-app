@@ -386,6 +386,9 @@ and are asked to sign in again in Buzz.
   **Reply** added; Shift+F10 or the Menu key opens it from a focused control in
   the message. Links keep their own menu; images, media and text you already
   selected keep the system menu. Touch long-press keeps text selection.
+- Hover over or focus a sender's avatar or an @mention of a person or agent to
+  preview their profile: name, presence and status, with Profile and, when
+  available, Message. Select the avatar or mention to open the full profile.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.

@@ -1,6 +1,8 @@
 import { test, expect } from "./fixture.mjs";
 import {
+  activityRow,
   closeSettings,
+  openPage,
   settlePanelMotion,
   settleShellToggle,
 } from "./navigation.mjs";
@@ -626,10 +628,7 @@ test.extend({
   async ({ page, app }) => {
     await page.setViewportSize({ width: 1100, height: 900 });
     await open(page, app);
-    await page
-      .getByRole("navigation", { name: "Apps dock", exact: true })
-      .getByRole("tab", { name: "Activity", exact: true })
-      .click();
+    await activityRow(page).click();
     const inbox = page.getByRole("region", { name: "Activity", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
     const row = inbox
@@ -665,6 +664,9 @@ test.extend({
         ),
       ).toBe(false);
     }
+    // Close from the pane being removed. Surviving navigation controls keep
+    // their focus, and Shift+Tab can reach different ones in each engine.
+    await tab.focus();
     const handled = await page.evaluate(() => {
       const event = new Event("buzz:close-all-tabs", { cancelable: true });
       window.dispatchEvent(event);
@@ -802,10 +804,9 @@ test("escaping a restored side panel over the conversation returns focus to the 
     .click();
   const todos = page.getByRole("region", { name: "Todos panel", exact: true });
   await expect(todos).toBeVisible();
-  const dock = page.getByRole("navigation", { name: "Apps dock", exact: true });
-  await dock.getByRole("tab", { name: "Activity", exact: true }).click();
+  await activityRow(page).click();
   await expect(todos).toHaveCount(0);
-  await dock.getByRole("tab", { name: "Messages", exact: true }).click();
+  await openPage(page, "Messages");
   await expect(todos).toBeVisible();
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })

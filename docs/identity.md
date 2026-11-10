@@ -56,6 +56,43 @@ installation's grant, so this works whether or not the plugin has started.
 Welcome back offers a restore where the portal accepts the session there. The
 session outlives first run: sign-in at launch finds it signed in.
 
+A launch with a key on the device opens the app and never signs in again for
+it, however the device was set up. The welcome screen leads with **Sign in**
+rather than **Create account** when the Builderlab session is signed in or
+needs reauthentication; while the saved session is still restoring, both are
+disabled, so a returning user's click never starts a sign-up. With the app open, once that session is signed in
+(restored at launch, or signed in later), `LinkedKeyCheck` reads the account's
+linked key with the same call Settings → Identity makes, one read per session
+revision. A matching key, an account with no key, a refused or absent session
+and a failed read change nothing. Another key opens **Your account uses a
+different key** over the app, after a second read of the account's backup
+status (`backupStatus`). When Builderlab holds a backup of the account's key,
+it says that **Replace** removes this computer's key, and either that this
+device confirmed a backup of it (as **A different account is saved on this
+computer** does) or to copy its private key from Settings → Identity first.
+**Replace** runs that dialog's Replace: it signs this key out without erase
+and restarts, and the sign-in after the restart takes the lane for a device
+with no key, where Welcome back restores the account's key. The restart's note
+(`buzz.sign-in-after-restart.v1`) names that key in the same stored item, so a
+storage failure can't save the note without it, and an **Open Buzz** that
+resumes that sign-in keeps it: when the browser signs in to an
+account linked to another key, or to none, setup fails before it
+creates, links or restores any key, offering only **Use a different account**,
+which drops the expectation, as **Create account** does: a new account can't
+be the one Replace restarted for. With no backup of
+the account's key, or no backups on this build or account (`unavailable`),
+Replace is not offered, since Welcome back could not restore it: the dialog says the account's
+key lives on another device and offers only **OK**. A backup status read that
+fails asks nothing, since whether a backup exists is unknown; the next session
+revision reads again. **Not now**, **OK** and
+Close keep the key and are remembered for that pair of keys (the account's and
+this device's) and whether Replace was offered (`buzz.linked-key-dismissed.v1`),
+so it asks again only when either key changes or the account's key gets a
+backup. The prompt waits while the launch screen shows or old Buzz's
+communities are being offered or added. The backup consent prompt stays
+mounted but waits while it shows, so a consent prompt closed earlier stays
+closed after it.
+
 A URL given on the welcome screen is looked up first, before sign-in and before
 any key exists: **Continue** opens the same **Finding community** page described
 below, which sends only the two unauthenticated GETs, so a typo, an unreachable
@@ -159,8 +196,8 @@ discards the draft. A successful account-backed import links the key and automat
 unless that key already has a backup. An import without Builderlab
 sign-in skips linking and backup. Importing without a Builderlab account never uploads the key.
 
-**Another account's key on this device** (a relaunch sign-in as someone else)
-is never replaced without asking: **A different account is saved on this
+**Another account's key on this device** (a sign-in as someone else with a key
+already here) is never replaced without asking: **A different account is saved on this
 computer** asks first. **Replace** signs it out, as **Sign out of Buzz** does
 without erase; Buzz restarts and signs in again by itself (a one-time note
 honoured for two minutes), now on the lane for a device with no key. **Cancel**
@@ -275,14 +312,14 @@ account, **Continue without backup** skips only that backup step and runs the
 remaining community setup. It retains the saved linked key and does not persist
 a backup opt-out. Transient backup failures remain retry-only; linking cannot
 be bypassed.
-After a Builderlab sign-in, including the one a relaunch waits on, the page
-offers **Use a different account** in place of Back: it signs out of the
-account and returns to the welcome screen, keeping any key here, as a relaunch
-shows it. Back alone would sign in to the same account again from the
-browser's session. That screen's **Sign in** asks for credentials and checks
-the key with the next account, and **Continue without signing in** opens the
-app with a key already here, as on any relaunch; the account is checked at the
-next launch. A link kgoose refuses because the key or the account is already
+After a Builderlab sign-in, the page offers **Use a different account** in
+place of Back: it signs out of the account and returns to the welcome screen,
+keeping any key here. Back alone would sign in to the same account again from
+the browser's session. With a key here, that screen offers **Sign in**, which
+asks for credentials and checks the key with the next account, and **Continue
+without signing in**, which opens the app with that key. This is the only way a
+key on the device reaches the welcome screen, and nothing about it is saved:
+the next launch opens the app. A link kgoose refuses because the key or the account is already
 bound elsewhere (`pubkey_already_bound`, `identity_already_bound`) is not
 offered Try again, which would get the same answer; Use a different account is
 the only way on. Failures before any sign-in keep **Back**.

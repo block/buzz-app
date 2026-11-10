@@ -1,5 +1,11 @@
 # Source attribution
 
+The agent-card foil texture in `src/features/agents/assets/card-foil.webp`,
+portrait palette sampling, and reveal/hover treatment are adapted from
+[Block Buzz PR #5790](https://github.com/block/buzz/pull/5790), revision
+`0c7cea1f91a681f3751af1ac25a7e15d0e99d36b`. The texture is the first embedded
+image in `desktop/src/features/agents/assets/buzz-trading-card-template.svg`.
+
 The relay read model in `src/features/relay` and development read broker in
 `browser-host` are adapted from the supplied Astra example. The channel layout
 and virtualizer behavior are adapted from that example's Channels view.

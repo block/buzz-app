@@ -609,6 +609,35 @@ it("lists each signed-in server and signs out of one without touching the other"
   expect(screen.getByText("Acme (acme.builderlab.xyz)")).toBeVisible();
 });
 
+// A covered community that doesn't require NIP-FI is reached with the key
+// alone, whatever this session does.
+it("names as using a server only the communities that require its sign-in", async () => {
+  const { block, pub, root, servers } = twoServers();
+  pub.publish({ status: "signed-in", email: "will@example.com" });
+  const communityRequiresSignIn = vi.fn(
+    async (relay: string) => relay === "https://kalvin.communities.buzz.xyz",
+  );
+  const publicSession = { ...pub.service, communityRequiresSignIn };
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={{
+        ...root,
+        forServer: (id) => (id === "bb-acme" ? block.service : publicSession),
+      }}
+      memberships={memberships}
+      servers={servers}
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(await screen.findByText(/Used by: kalvin$/)).toBeVisible();
+  expect(communityRequiresSignIn.mock.calls.map(([relay]) => relay)).toEqual([
+    "https://will.communities.buzz.xyz",
+    "https://kalvin.communities.buzz.xyz",
+  ]);
+  expect(screen.queryByText(/will, kalvin/)).not.toBeInTheDocument();
+});
+
 it("keeps the first server's sign-in row when no server is signed in", async () => {
   const { root, servers } = twoServers();
   render(

@@ -53,7 +53,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   with the same **Reload**, **Restart Buzz** and **Details**.
 - Buzz uses a key-based identity. On first launch, the welcome screen offers
   **Create account** and **Sign in**, which open the Builderlab account page;
-  once this computer was set up through Builderlab, **Sign in** comes first.
+  when this computer already has a Builderlab sign-in saved, **Sign in** comes first.
   **Other options** reveals a **Community URL** field
   for an address or invite link; desktop does not offer QR scanning.
   With no communities yet, **Join** advances through full-page access and profile
@@ -70,9 +70,17 @@ mention anyone. Explicit agent watches on that room can still receive them.
   or hide it.
   After Builderlab sign-in, an account with no linked key is set up
   automatically: Buzz creates a key (or uses the one already on this device)
-  and links it to the signed-in account. A device set up through Builderlab asks
-  you to sign in again on relaunch; **Continue without signing in** opens Buzz
-  without it. An existing private key can be entered from **Welcome back**.
+  and links it to the signed-in account. Once a key is on this computer, Buzz
+  opens straight to the app and reuses the saved Builderlab sign-in. If that
+  account turns out to be linked to a different key, Buzz says so over the open
+  app. When Builderlab has a backup of the account's key, **Replace** removes
+  this computer's key and restarts Buzz to restore the account's; copy this
+  key from Settings → Identity first if it isn't backed up; if the browser
+  then signs in to a different account, Buzz stops and offers **Use a different
+  account**. Without such a backup, Buzz only says where the account's key is,
+  with **OK**. **Not now** or **OK** keeps this key, and Buzz doesn't ask again
+  about the same two keys, unless the account's key later gets a backup, when
+  it asks again with **Replace**. An existing private key can be entered from **Welcome back**.
   Its **Use a different account** signs Buzz out of that account; the next
   sign-in asks the browser to sign in again rather than reuse the account it
   remembers. Signing in to a different account than the one saved on this
@@ -174,7 +182,7 @@ mention anyone. Explicit agent watches on that room can still receive them.
   explains why and offers **Sign in with** the organization’s name or server
   address. Complete sign-in to reconnect; in the join dialog, choose **Continue**.
 - Signed in to more than one organization server? **Organization sign-in**
-  lists each one you're signed in to, with the communities it's used by, and
+  lists each one you're signed in to, with the communities that require it, and
   each **Sign out** ends only that server's sign-in. Your organization's own
   server stays listed with **Sign in** until you sign in to it. **Sign out of
   Buzz** still ends them all.
@@ -188,9 +196,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - If a community doesn't accept the account you signed in with, its prompt
   names the server and offers **Switch account**: Buzz signs out of that server
   only and opens its sign-in again, so other servers stay signed in. It also
-  lists the other communities that use the same server. If you cancel the
-  sign-in during a switch, you stay signed out of that server and the prompt
-  offers **Sign in**. **Not now** closes the prompt and changes nothing.
+  names the other communities that require that server's sign-in, whose access
+  may change with the account; ones that don't require it are unaffected. If
+  you cancel the sign-in during a switch, you stay signed out of that server and
+  the prompt offers **Sign in**. **Not now** closes the prompt and changes nothing.
 - A community invite or address connects someone to a community; creating an
   identity alone does not grant membership. The same identity can be used in
   more than one community. To add another, choose **Join a community** in the
@@ -202,6 +211,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
   in the community picker's right-click menu). The dialog creates an invite
   link with an expiry and use limit to copy, or adds someone directly by npub.
   The desktop app also shows that link as a QR code to scan with a phone.
+- To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
+  in builds without Builderlab). When you're signed in with Builderlab and your
+  account holds this identity's backup, it says to install the app (with store
+  links and QR codes where the build provides them) and sign in with Builderlab
+  there. Otherwise it pairs the phone with this identity by QR code and a
+  verification code.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
@@ -316,7 +331,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   level rather than requiring a new thread for each reply. Where available, use
   **Model and effort** in the composer before sending; Solo keeps those choices
   for that chat until you reset them in the same control, even if its available
-  models change. Wait for saved choices to load before sending; an unreadable
+  models change. If a loaded catalog no longer offers a saved choice, the
+  control explains what Send will use or which overrides it omits without
+  clearing the saved selection. If no supported model is listed, Send omits
+  model and effort overrides and uses the agent's defaults.
+  Wait for saved choices to load before sending; an unreadable
   store never silently falls back to defaults. If choices cannot be read, use
   **Retry saved choices** before sending. If their agent catalog cannot be loaded, retry
   or reset them in the model control. If New chat cannot clear
@@ -828,6 +847,8 @@ available rather than silently discarding it.
   minutes. Agents that run on someone's computer, and people, keep their badge
   from recent Buzz activity, so a local agent goes grey when its owner's Buzz
   is closed.
+- A shared agent image in a desktop conversation shows **Add agent** beneath
+  its name. Choose it to review and import the agent; the preview omits the model.
 - An agent card link, `buzz://agent/new?card=<id>` (a Builderlab card's
   **Add to Buzz**), opens **Create agent** filled in with the card's name,
   picture and instructions, on desktop and mobile. Nothing is created until you

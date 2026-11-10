@@ -557,7 +557,7 @@ confirmedPresence(
       for (const name of [
         "Local settings",
         "Custom emoji",
-        "Pair mobile",
+        "Mobile app",
         "Leave or remove",
         "Identity",
         "Appearance",
@@ -629,7 +629,7 @@ confirmedPresence(
       for (const name of [
         "Local settings",
         "Custom emoji",
-        "Pair mobile",
+        "Mobile app",
         "Leave or remove",
         "Identity",
         "Appearance",

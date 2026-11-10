@@ -264,6 +264,23 @@ export function withoutJoin(target: OpenTarget): OpenTarget {
   return Object.freeze(rest) as OpenTarget;
 }
 
+/**
+ * The view a join dialog opened over `target` keeps beneath it. Settings keeps
+ * its section, scope and provider but not a card's route, a plugin import or
+ * plugin details: restoring the dialog must not replay what they open.
+ */
+export function joinBeneath(target: OpenTarget): OpenTarget {
+  const view = withoutJoin(target);
+  if (view.kind !== "settings") return view;
+  const {
+    route: _route,
+    pluginImport: _pluginImport,
+    pluginId: _pluginId,
+    ...rest
+  } = view;
+  return Object.freeze(rest);
+}
+
 function stringParams(input: unknown): Readonly<Record<string, string>> {
   const value = record(input);
   const keys = Object.keys(value).sort();

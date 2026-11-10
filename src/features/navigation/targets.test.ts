@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   coversWorkspace,
+  joinBeneath,
   parseGitPluginSource,
   parseOpenTarget,
   targetKey,
@@ -374,6 +375,40 @@ it("bounds a join presentation to its viewer and community address, never a code
     "relay.example",
   ])
     expect(() => parseOpenTarget({ ...page, join })).toThrow();
+});
+
+it("keeps Settings' view beneath a join, never a card's one-shot route or plugin data", () => {
+  const view = {
+    version: 1,
+    kind: "settings",
+    section: "block.builderlab/login",
+    scope: null,
+  } as const;
+  const join = { viewer, visit: "v-1" };
+  const routed = parseOpenTarget({
+    ...view,
+    route: { version: 1, params: "create-community" },
+    join,
+  });
+  expect(joinBeneath(routed)).toEqual(view);
+  expect(Object.isFrozen(joinBeneath(routed))).toBe(true);
+  // A plain Settings visit loses the same fields, so both match one view.
+  expect(
+    targetKey(
+      joinBeneath({
+        ...view,
+        route: { version: 1, params: "create-community" },
+      }),
+    ),
+  ).toBe(targetKey(joinBeneath(routed)));
+  // Other kinds keep everything but the join.
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+  } as const;
+  expect(joinBeneath({ ...page, join })).toEqual(page);
 });
 
 it("addresses one installed plugin only within Plugins settings", () => {

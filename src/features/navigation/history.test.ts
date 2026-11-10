@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createMemoryHistory } from "./history";
-import { withoutJoin, type OpenTarget } from "./targets";
+import { joinBeneath, withoutJoin, type OpenTarget } from "./targets";
 
 const viewer = "a".repeat(64);
 const page: OpenTarget = {
@@ -26,6 +26,22 @@ it("closing a view also retires the join dialogs presented over it", () => {
   history.back();
   // Settings Close names Settings visits only.
   history.dismiss((target) => target.kind === "settings", page);
+  expect(history.snapshot().current.target).toEqual(page);
+  expect(history.snapshot().canGoForward).toBe(false);
+});
+
+it("closing a Settings card's routed visit retires a join opened from it", () => {
+  const routed: OpenTarget = {
+    ...settings,
+    route: { version: 1, params: "create-community" },
+  };
+  const history = createMemoryHistory(page);
+  history.push(routed);
+  const shown = history.snapshot().current.id;
+  // The join opened from the card keeps Settings without the card's route.
+  history.push(joinOver(joinBeneath(routed), "v1"));
+  history.back();
+  history.dismiss([shown], page);
   expect(history.snapshot().current.target).toEqual(page);
   expect(history.snapshot().canGoForward).toBe(false);
 });

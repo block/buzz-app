@@ -35,8 +35,7 @@ dependencies = [
  "image",
  "libc",
  "nix 0.31.3",
- "nostr 0.44.8",
- "nostr 0.45.5",
+ "nostr",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -341,7 +340,7 @@ dependencies = [
  "base64ct",
  "blake2",
  "cpufeatures 0.3.1",
- "password-hash 0.6.1",
+ "password-hash",
 ]
 
 [[package]]
@@ -832,7 +831,6 @@ checksum = "bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2"
 dependencies = [
  "bitcoin-io",
  "hex-conservative 0.2.3",
- "serde",
 ]
 
 [[package]]
@@ -1048,7 +1046,7 @@ dependencies = [
  "hmac 0.12.1",
  "libc",
  "nix 0.31.3",
- "nostr 0.45.5",
+ "nostr",
  "regex",
  "secp256k1 0.31.1",
  "security-framework",
@@ -1102,7 +1100,7 @@ name = "buzz-ifc"
 version = "0.1.0"
 dependencies = [
  "ifc-core",
- "nostr 0.45.5",
+ "nostr",
  "thiserror 2.0.20",
  "uuid",
 ]
@@ -1122,7 +1120,7 @@ dependencies = [
  "mesh-llm-host-runtime",
  "mesh-llm-sdk",
  "mesh-llm-system",
- "nostr 0.45.5",
+ "nostr",
  "reqwest",
  "serde",
  "serde_json",
@@ -1154,11 +1152,14 @@ name = "buzz-pairing"
 version = "0.0.0"
 dependencies = [
  "hex",
- "nostr 0.44.8",
+ "hkdf 0.12.4",
+ "nostr",
  "percent-encoding",
  "rand 0.10.2",
+ "secp256k1 0.30.0",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "thiserror 2.0.20",
  "url",
@@ -1179,7 +1180,7 @@ dependencies = [
  "flate2",
  "image",
  "libc",
- "nostr 0.45.5",
+ "nostr",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4033,18 +4034,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "instant"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
-dependencies = [
- "cfg-if",
- "js-sys",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "io-extras"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6003,30 +5992,6 @@ dependencies = [
 
 [[package]]
 name = "nostr"
-version = "0.44.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40ff7b77ef428b40aa2834a6acbae38a0e104c98b306208ca4b87a420d579a4b"
-dependencies = [
- "base64 0.22.1",
- "bech32 0.11.1",
- "bip39",
- "bitcoin_hashes 0.14.101",
- "cbc 0.1.2",
- "chacha20 0.9.1",
- "chacha20poly1305 0.10.1",
- "getrandom 0.2.17",
- "hex",
- "instant",
- "scrypt",
- "secp256k1 0.29.1",
- "serde",
- "serde_json",
- "unicode-normalization",
- "url",
-]
-
-[[package]]
-name = "nostr"
 version = "0.45.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38ca5c25a6df8d4d78fdf39b42792438f6ce22b4809ccbfdb27582ed9ca45407"
@@ -6056,7 +6021,7 @@ version = "0.45.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "309950383c9854ca413d195705400e78b1376aedc48f3256754a86c609c047e8"
 dependencies = [
- "nostr 0.45.5",
+ "nostr",
  "opaquerr",
 ]
 
@@ -6066,7 +6031,7 @@ version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ea822fd48ff6b84b81ddf84169e6edf1dc0bc9b312c8e41685b2278debaac3d"
 dependencies = [
- "nostr 0.45.5",
+ "nostr",
  "opaquerr",
 ]
 
@@ -6082,7 +6047,7 @@ dependencies = [
  "futures",
  "lru",
  "negentropy",
- "nostr 0.45.5",
+ "nostr",
  "nostr-database",
  "nostr-gossip",
  "opaquerr",
@@ -7106,17 +7071,6 @@ dependencies = [
 
 [[package]]
 name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
-name = "password-hash"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aab41826031698d6ffcd9cff78ef56ef998e39dc7e5067cdfebe373842d4723b"
@@ -7142,16 +7096,6 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
-
-[[package]]
-name = "pbkdf2"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
-dependencies = [
- "digest 0.10.7",
- "hmac 0.12.1",
-]
 
 [[package]]
 name = "pem"
@@ -8780,29 +8724,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "scrypt"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0516a385866c09368f0b5bcd1caff3366aace790fcd46e2bb032697bb172fd1f"
-dependencies = [
- "password-hash 0.5.0",
- "pbkdf2",
- "salsa20",
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "secp256k1"
-version = "0.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
-dependencies = [
- "rand 0.8.8",
- "secp256k1-sys 0.10.1",
- "serde",
-]
 
 [[package]]
 name = "secp256k1"

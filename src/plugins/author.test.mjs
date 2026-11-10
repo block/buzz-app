@@ -235,6 +235,7 @@ export function apply(ctx: Context) {
     questions: { bad: { type: "freeform", instructions: "x" } },
   });
   void ctx.decisions.backend();
+  ctx.decisions.retireProvider("retired");
   // @ts-expect-error Only Settings chooses the backend.
   ctx.decisions.setBackend("typesafe");
 }

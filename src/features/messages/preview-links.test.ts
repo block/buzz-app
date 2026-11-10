@@ -27,6 +27,38 @@ describe("previewLinks", () => {
     ).toEqual(["https://kept.example.com/"]);
   });
 
+  it("keeps spoiler links hidden and shows the ones around them", () => {
+    expect(
+      previewLinks(
+        [
+          "||[twist](https://plot.example.com/twist)|| and https://after.example.com",
+          "before ||https://bare.example.com/hidden|| https://shown.example.com",
+          "*||https://emphasis.example.com||* https://also.example.com",
+          "|| unclosed https://open.example.com",
+        ].join("\n\n"),
+      ),
+    ).toEqual([
+      "https://after.example.com/",
+      "https://shown.example.com/",
+      "https://also.example.com/",
+      "https://open.example.com/",
+    ]);
+  });
+
+  it("resolves reference links through their definitions", () => {
+    expect(
+      previewLinks(
+        "[docs][guide], [Guide] and [missing][nope]\n\n[guide]: https://example.org/docs",
+      ),
+    ).toEqual(["https://example.org/docs"]);
+  });
+
+  it("reads the HTTPS scheme in any case", () => {
+    expect(previewLinks("HTTPS://example.org/docs")).toEqual([
+      "https://example.org/docs",
+    ]);
+  });
+
   it("finds nothing in prose without links", () => {
     expect(previewLinks("hello there")).toEqual([]);
   });

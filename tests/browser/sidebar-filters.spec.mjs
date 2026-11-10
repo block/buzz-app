@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { closeSettings, openPage } from "./navigation.mjs";
 import { join } from "node:path";
 import { fixtureRelayUrl } from "../relay-config.ts";
 
@@ -489,5 +489,190 @@ test.describe("filter action focus", () => {
     await expect(row).toHaveCount(0);
     await expect(work.locator('[data-channel-id="delta"]')).toHaveCount(0);
     await expect(work.locator("details > summary")).toBeFocused();
+  });
+});
+
+test.describe("show all conversations", () => {
+  // Browser-only: real key dispatch from a row and from the composer, a host
+  // rebind through Settings → Shortcuts, and the checkbox's real paint in both
+  // themes. Expiry stays in ChannelInventory.test.tsx: a page clock jump of two
+  // minutes moves Date past the broker's 60-second read-state signing window.
+  test("pauses every section filter for two minutes from the key or the menu", async ({
+    page,
+    app,
+  }, testInfo) => {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [id, age] of [
+      ["alpha", 0],
+      ["beta", 0],
+      ["gamma", 0],
+      ["delta", 45],
+    ]) {
+      app.histories.set(`primary/${id}`, [
+        app.sign({
+          kind: 9,
+          tags: [["h", id]],
+          content: "Project update",
+          created_at: now - age * 86400,
+        }),
+      ]);
+    }
+    await page.addInitScript(
+      ({ viewer, relay }) =>
+        localStorage.setItem(
+          `buzz-view.v1:${JSON.stringify([`${relay}:${viewer}`, "selected-channel"])}`,
+          JSON.stringify("alpha"),
+        ),
+      { viewer: app.viewer, relay: fixtureRelayUrl },
+    );
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page
+      .locator('[data-sidebar-section] [data-channel-id="alpha"]')
+      .click();
+    const composer = page.getByRole("textbox", { name: "Message #General" });
+    await expect(composer).toBeVisible();
+    const modifier = (await page.evaluate(() =>
+      /Mac|iPhone|iPad/.test(navigator.platform),
+    ))
+      ? "Meta"
+      : "Control";
+    const channels = page.locator('[data-sidebar-section="channels"]');
+    const work = page.locator('[data-sidebar-section="group:work"]');
+    const design = channels.locator('[data-channel-id="gamma"]');
+    const archive = channels.locator('[data-channel-id="delta"]');
+    const planning = work.locator('[data-channel-id="beta"]');
+    const filterMenu = async (section, title) => {
+      await section
+        .getByRole("button", { name: `More actions for ${title}`, exact: true })
+        .click();
+      await page.getByRole("menuitem", { name: "Filter", exact: true }).hover();
+      await expect(
+        page.getByRole("menu", { name: `Filter ${title}`, exact: true }),
+      ).toBeVisible();
+    };
+    const showAllChoice = page.getByRole("menuitemcheckbox", {
+      name: "Show all conversations",
+      exact: true,
+    });
+    const filtered = async () => {
+      await expect(design).toBeVisible();
+      await expect(archive).toHaveCount(0);
+      await expect(planning).toHaveCount(0);
+    };
+    const everything = async () => {
+      await expect(archive).toBeVisible();
+      await expect(planning).toBeVisible();
+      await expect(design).toBeVisible();
+    };
+
+    // Before any filter there is nothing to pause, so nothing is offered.
+    await filterMenu(channels, "Channels");
+    await expect(
+      page.getByRole("menuitemradio", { name: "All", exact: true }),
+    ).toBeVisible();
+    await expect(showAllChoice).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+
+    // The viewer wrote every message, so nothing is unread: Unreads empties
+    // Work, and the last 7 days in Channels leave out Archive.
+    await expect(planning).toBeVisible();
+    await filterMenu(work, "Work");
+    await page
+      .getByRole("menuitemradio", { name: "Unreads", exact: true })
+      .click();
+    await filterMenu(channels, "Channels");
+    await page
+      .getByRole("menuitemradio", { name: /Active in the last/ })
+      .click();
+    await page.getByRole("radio", { name: "7 days", exact: true }).click();
+    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await filtered();
+    const publications = app.report.sidebarPublications.length;
+
+    // From a focused sidebar row: the first press shows all, the second ends it.
+    await design.focus();
+    await page.keyboard.press(`${modifier}+Shift+f`);
+    await everything();
+    await page.keyboard.press(`${modifier}+Shift+f`);
+    await filtered();
+
+    // From the composer, without touching its draft.
+    await composer.fill("Keep my draft");
+    await page.keyboard.press(`${modifier}+Shift+f`);
+    await everything();
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveJSProperty("value", "Keep my draft");
+    await page.keyboard.press(`${modifier}+Shift+f`);
+    await filtered();
+    await expect(composer).toHaveJSProperty("value", "Keep my draft");
+    await expect(
+      page.locator('[data-sidebar-section] [data-channel-id="alpha"]'),
+    ).toBeVisible();
+
+    // The menu checkbox toggles the same pause and shows its state, in both themes.
+    await filterMenu(channels, "Channels");
+    await expect(showAllChoice).toHaveAttribute("aria-checked", "false");
+    await showAllChoice.click();
+    await everything();
+    for (const theme of ["light", "dark"]) {
+      await page.emulateMedia({ colorScheme: theme });
+      await filterMenu(channels, "Channels");
+      await expect(showAllChoice).toBeVisible();
+      await expect(showAllChoice).toHaveAttribute("aria-checked", "true");
+      await expect(
+        showAllChoice.locator(".buzz-menu-item-indicator"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("menuitemradio", { name: /Active in the last/ }),
+      ).toHaveAttribute("aria-checked", "true");
+      if (
+        process.env.BUZZ_FILTER_CAPTURE_DIR &&
+        testInfo.project.name === "chromium"
+      )
+        await page.screenshot({
+          path: join(
+            process.env.BUZZ_FILTER_CAPTURE_DIR,
+            `16-show-all-${theme}.png`,
+          ),
+        });
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
+    }
+    await page.emulateMedia({ colorScheme: "light" });
+    await filterMenu(channels, "Channels");
+    await showAllChoice.click();
+    await filtered();
+    // Pausing never saves: the only publications are the two filter choices.
+    expect(app.report.sidebarPublications).toHaveLength(publications);
+
+    // A rebound chord replaces ⌘⇧F (Ctrl+Shift+F elsewhere).
+    await page.keyboard.press(`${modifier}+,`);
+    await page.getByRole("button", { name: "Shortcuts", exact: true }).click();
+    const region = page.getByRole("region", { name: "Shortcuts", exact: true });
+    const row = region.getByRole("article", {
+      name: "Show all conversations",
+      exact: true,
+    });
+    await row
+      .getByRole("button", {
+        name: "Change shortcut for Show all conversations",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("textbox", {
+        name: "New shortcut for Show all conversations",
+      }),
+    ).toBeFocused();
+    await page.keyboard.press(`${modifier}+Shift+j`);
+    await expect(row.getByText("Modified")).toBeVisible();
+    await closeSettings(page);
+    await filtered();
+    // If the old chord still toggled, the new one would toggle it back off.
+    await page.keyboard.press(`${modifier}+Shift+f`);
+    await page.keyboard.press(`${modifier}+Shift+j`);
+    await everything();
   });
 });

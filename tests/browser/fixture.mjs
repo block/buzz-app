@@ -2533,7 +2533,7 @@ export const test = base.extend({
             status: String(response.status()),
           });
         if (
-          response.url().endsWith("/stream-observer") &&
+          /\/stream-(observer|priority)$/.test(response.url()) &&
           response.status() === 404
         ) {
           const { streamId } = response.request().postDataJSON();
@@ -2961,7 +2961,7 @@ export const test = base.extend({
         },
       });
       expect(report.unexpected).toEqual([]);
-      // Aborted startup streams can race an already-dispatched observer control.
+      // Retired streams can race already-dispatched observer or priority controls.
       // Permit only 404s whose exact stream was already closed by the real host;
       // a current/unknown stream failure still fails, and all errors stay recorded.
       report.retiredObserverControls = [...observerFailures];

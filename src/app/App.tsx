@@ -374,10 +374,15 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     startup === "recovery" ||
     route.state.status === "failed" ||
     (!route.state.ingress && !!route.failure);
+  // An unreachable broker is the connection notice's to report: the shell
+  // opens now, connecting, rather than holding the launch surface.
+  const brokerUnreachable =
+    client.status === "unavailable" && !!client.retrying;
   const launchReady =
     settings ||
     terminal ||
     firstRun ||
+    brokerUnreachable ||
     (!restoring && startup !== "loading" && !route.waiting);
   useEffect(
     () => setLaunchReady(launchReady, terminal),

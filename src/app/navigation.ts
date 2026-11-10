@@ -170,6 +170,10 @@ export function useAppNavigation(
     waiting ||= client.status === "loading" || client.selected !== null;
   } else if (scope) {
     if (client.status === "loading") waiting = true;
+    // The broker is unreachable, so no one has been identified yet: that is
+    // the connection's problem, which retries, not a denial.
+    else if (client.status === "unavailable" && client.retrying)
+      waiting = true;
     else if (client.viewer !== scope.viewer) failure = "denied";
     else if (!membership && !finishingDeparture) failure = "denied";
     else if (membership && client.selected !== membership.id) waiting = true;

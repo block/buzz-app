@@ -645,7 +645,7 @@ it("creates a fresh invite with unchanged limits after leaving the tab", async (
     screen.getByRole("button", { name: "Choose maximum invite uses" }),
   );
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "1 use", exact: true }),
+    await screen.findByRole("menuitemradio", { name: /^1 use$/ }),
   );
   await screen.findByDisplayValue("https://primary.example/invite/2");
   await user.click(screen.getByRole("tab", { name: "Members" }));

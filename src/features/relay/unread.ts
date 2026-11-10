@@ -21,6 +21,7 @@ import { type ReadJournal, UNRESOLVED_ROOT } from "./read-state-storage";
 import { markMessage } from "./read-state-retention";
 import { LIVE_RESUME_LAG } from "./live";
 import type { Priority, RelayReader } from "./reader";
+import { isRetryableRead } from "./read-retry";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { threadReference } from "./thread-reference";
@@ -449,6 +450,8 @@ export function createUnread({
    * but does not pay this. */
   let owing = false;
   let error: string | undefined;
+  /** Whether `error` is a connectivity failure; meaningful only with `error`. */
+  let errorTransient = false;
   let refresh: Promise<void> | undefined;
   const lifetime = new AbortController();
   const events = new Map<string, RelayEvent>();
@@ -1900,6 +1903,7 @@ export function createUnread({
       items: Object.freeze(items),
       freshness,
       ...(error ? { error } : {}),
+      ...(error && errorTransient ? { transient: true as const } : {}),
     });
     // Keep React's snapshot stable for irrelevant evidence and duplicate deliveries.
     if (
@@ -2656,6 +2660,7 @@ export function createUnread({
         owing = true;
         error =
           cause instanceof Error ? cause.message : "Unread observation failed";
+        errorTransient = isRetryableRead(cause);
         publish();
       }
     })().finally(() => {
@@ -2856,6 +2861,7 @@ export function createUnread({
         sampled = false;
         bytes = 0;
         error = "Unread observation capacity reached; refresh available";
+        errorTransient = false;
         freshness = "stale";
         owing = true;
         publish();

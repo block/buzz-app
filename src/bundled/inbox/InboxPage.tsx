@@ -69,6 +69,7 @@ import {
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import styles from "./Inbox.module.css";
 import listRowStyles from "../../features/messages/MessageListRow.module.css";
+import { useInboxRecovery } from "./useInboxRecovery";
 import {
   readView,
   subscribeView,
@@ -327,6 +328,12 @@ function InboxList({
     session.unread.sync,
     session.unread.sync,
   );
+  const recovered = useInboxRecovery(session, {
+    list,
+    inbox,
+    feed,
+    reactions: reactionFeed,
+  });
   const viewScope = session.scope;
   const [filters, setFilters] = useState(() => readFilters(viewScope));
   const { activity, sender: senderFilter } = filters;
@@ -976,13 +983,15 @@ function InboxList({
     list.status === "idle" ||
     list.status === "loading" ||
     inbox.status === "loading" ||
-    feed.status === "loading";
+    feed.status === "loading" ||
+    // A connectivity failure recovery is retrying is not an empty or retained list.
+    recovered.held;
   const failure =
-    reactionFeed.error ??
+    recovered.reactions ??
     error ??
-    list.error ??
-    inbox.error ??
-    feed.error ??
+    recovered.list ??
+    recovered.inbox ??
+    recovered.feed ??
     sync.error;
   useLayoutEffect(() => {
     if (!retryFocus.current) return;
@@ -1058,24 +1067,27 @@ function InboxList({
               });
             }}
           >
-            {inbox.freshness === "stale" && !failure && (
-              <div className={styles.notice} role="status">
-                <span className="text-body text-subtle">
-                  Showing retained activity.
-                </span>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={pending}
-                  onClick={() => refresh()}
-                >
-                  Refresh
-                </Button>
-              </div>
-            )}
+            {inbox.freshness === "stale" &&
+              !failure &&
+              !recovered.recovering && (
+                <div className={styles.notice} role="status">
+                  <span className="text-body text-subtle">
+                    Showing retained activity.
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={pending}
+                    onClick={() => refresh()}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              )}
             {(inbox.status === "idle" || feed.status === "idle") &&
               !loading &&
-              !failure && (
+              !failure &&
+              !recovered.recovering && (
                 <div className={styles.notice} role="status">
                   <span className="text-body text-subtle">
                     Check recent activity.

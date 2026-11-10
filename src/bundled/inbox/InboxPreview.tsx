@@ -91,20 +91,22 @@ export function InboxPreview({
   return (
     <Card navigator={navigator} close={close}>
       <p className={`text-body text-subtle ${styles.notice}`} role="status">
-        {connection.status === "connecting"
+        {connection.status === "connecting" || connection.retrying
           ? "Connecting to your activity…"
           : connection.denied
             ? // Its notice, on every page, offers what fixes it.
               communityRefusalTitle(connection.refusal)
             : (connection.error ?? "Choose a community to see your activity.")}
       </p>
-      {connection.status === "error" && !connection.denied && (
-        <div className={styles.notice}>
-          <Button size="sm" onClick={relay.tryAgain}>
-            Retry connection
-          </Button>
-        </div>
-      )}
+      {connection.status === "error" &&
+        !connection.denied &&
+        !connection.retrying && (
+          <div className={styles.notice}>
+            <Button size="sm" onClick={relay.tryAgain}>
+              Retry connection
+            </Button>
+          </div>
+        )}
     </Card>
   );
 }

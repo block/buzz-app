@@ -257,10 +257,11 @@ export function SearchResults({
   usageScope,
   sidebarScope,
   views,
-  offline,
+  offline: offlineNotice,
   openAsk,
   decisions,
   community,
+  savedOnly: savedConversationsOnly = false,
 }: {
   session: RelaySession;
   /** Reranks message hits by how well each answers the query. */
@@ -296,7 +297,11 @@ export function SearchResults({
   /** Why only saved conversations are searched. The relay's message, people
    * and open-channel lookups wait for the connection instead of failing. */
   offline?: ReactNode;
+  /** Only saved conversations are searched, with nothing to say about it: the
+   * app's connection notice is the one report of the disconnect. */
+  savedOnly?: boolean | undefined;
 } & SearchInputProps) {
+  const offline = !!offlineNotice || savedConversationsOnly;
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
   // Chosen filters render as chips ahead of the typed text: the query holds
@@ -2635,7 +2640,7 @@ export function SearchResults({
             ? conversationBinding
             : undefined
         }
-        footer={offline}
+        footer={offlineNotice}
         peek={{
           // A filter or a conversation's own search asks for messages
           // only, so they aren't ranked with other results, but each still

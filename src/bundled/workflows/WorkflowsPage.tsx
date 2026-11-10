@@ -51,11 +51,13 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
       <WorkflowPageHeader />
       <div className="workflow-page-state">
         <p>
-          {connection.status === "connecting"
+          {connection.status === "connecting" || connection.retrying
             ? "Connecting to your community…"
             : "Connect to a community to browse workflows."}
         </p>
-        {connection.status === "error" && (
+        {/* A connection retrying by itself is reported once, by the app's
+            connection notice: no raw error and no Retry here. */}
+        {connection.status === "error" && !connection.retrying && (
           <>
             <p role="alert">{connection.error}</p>
             <Button onClick={() => relay.tryAgain()}>Retry connection</Button>

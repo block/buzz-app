@@ -223,6 +223,7 @@ async function page(
         },
         resolve: () => true,
         complete: () => true,
+        passThrough: () => () => {},
       }
     : undefined;
   render(
@@ -267,6 +268,7 @@ it.each(["side", "main"] as const)(
       {
         open,
         snapshot: () => threadVisitSnapshot,
+        subscribe: () => () => {},
       } as unknown as Navigation,
       true,
     );
@@ -384,6 +386,7 @@ function workspace(
           signal: new AbortController().signal,
           position: () => undefined,
           savePosition() {},
+          passThrough: () => () => {},
           forSession() {
             return this;
           },
@@ -566,7 +569,9 @@ it("moving the last side app adopts its guest before the dock exit finishes", as
     available: true,
     attach: attached,
     detach: detached,
+    openExternal: vi.fn(async () => {}),
     setBounds: async () => {},
+    setMediaSuspended: async () => {},
     navigate: async (id, url) => {
       pages.set(id, url);
     },
@@ -892,6 +897,7 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
   const h = await page("stream", {
     open,
     snapshot: () => visitSnapshot,
+    subscribe: () => () => {},
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>
@@ -967,6 +973,7 @@ it("keeps a side tab's failed move recoverable after switching tabs", async () =
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
       snapshot: () => visitSnapshot,
+      subscribe: () => () => {},
     } as unknown as Navigation,
     false,
     undefined,
@@ -1062,6 +1069,7 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
     {
       open: vi.fn(async () => ({ status: "opened" as const })),
       snapshot: () => visitSnapshot,
+      subscribe: () => () => {},
     } as unknown as Navigation,
     false,
     undefined,
@@ -1117,6 +1125,7 @@ it("opens another conversation's tab in its channel, but not the current channel
   const h = await page("stream", {
     open,
     snapshot: () => visitSnapshot,
+    subscribe: () => () => {},
   } as unknown as Navigation);
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   const root = "d".repeat(64);
@@ -1181,6 +1190,7 @@ it("opens another conversation's tab in its channel, but not the current channel
       channelId: "beta",
       messageId: other,
       threadRootId: other,
+      context: "channel",
     }),
   );
 });

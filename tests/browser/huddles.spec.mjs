@@ -4,6 +4,7 @@ import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { animationsSettled } from "./animations.mjs";
 
 let server, origin;
 test.beforeAll(async () => {
@@ -416,12 +417,17 @@ test("capsule and companion presentation share mute and leave", async ({
       keys.slice(0, count),
     );
     await expect(roster.locator("[data-participant]")).toHaveCount(count - 1);
+    // Motion cancels an animation it replaces, which rejects its finished
+    // promise; wait until none is still running.
     await roster.evaluate(async (el) => {
-      await Promise.all(
+      const running = () =>
         el
           .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
+          .filter((animation) => animation.playState === "running");
+      while (running().length)
+        await Promise.allSettled(
+          running().map((animation) => animation.finished),
+        );
     });
     // A spring can briefly cross its final size before overshooting, and
     // Motion can put a sub-pixel transform back on a settled avatar for a
@@ -692,13 +698,7 @@ test("live participant avatars enter on top and reflow without growing the shell
   const avatars = updated.locator("[data-participant]");
   await expect(avatars).toHaveCount(3);
   // Wait for the actual transition lifecycle, not an arbitrary sleep.
-  await updated.evaluate((el) =>
-    Promise.all(
-      el
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    ),
-  );
+  await animationsSettled(updated, { subtree: true });
   const positions = await avatars.evaluateAll((elements) =>
     elements.map((el) => ({
       left: el.getBoundingClientRect().left,
@@ -2012,14 +2012,10 @@ test("portraits can be tossed within the stage and return home, with reduced mot
       );
     })
     .toBe("none");
-  await portrait.evaluate(async (element) => {
-    await Promise.all(
-      element
-        .closest("[data-self]")
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(
+    portrait.locator("xpath=ancestor-or-self::*[@data-self][1]"),
+    { subtree: true },
+  );
   const home = await portrait.boundingBox();
   const area = await stage.boundingBox();
   const start = { x: home.x + home.width / 2, y: home.y + home.height / 2 };

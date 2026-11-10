@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 #[path = "../build_env.rs"]
 mod build_env;
 
+#[path = "src/access/schema.rs"]
+#[allow(dead_code)]
+mod repository_access;
+
 #[path = "../../src-tauri/src/federated_identity/config.rs"]
 #[allow(dead_code)]
 mod federated_identity_config;
@@ -10,6 +14,49 @@ mod federated_identity_config;
 const BUILDERLAB_URL_KEY: &str = "BUZZ_BUILDERLAB_URL";
 const BUILDERLAB_APPS_DOMAIN_KEY: &str = "BUZZ_BUILDERLAB_APPS_DOMAIN";
 const BUILDERLAB_API_BASE_PATH_KEY: &str = "BUZZ_BUILDERLAB_API_BASE_PATH";
+const BUILDERLAB_APPS_CONTROL_PLANE_KEY: &str = "BUZZ_BUILDERLAB_APPS_CONTROL_PLANE";
+const REPOSITORY_ACCESS_KEY: &str = "BUZZ_BUILD_REPOSITORY_ACCESS";
+
+/// Default repository access rules, in `repository-access.json`'s schema. Every rule
+/// must be usable, so a typo fails the build instead of dropping a rule. Cargo reads
+/// `rustc-env` one line at a time, so the value is emitted as compact JSON.
+fn repository_access(raw: Option<String>) -> Result<String, String> {
+    let Some(raw) = raw.filter(|raw| !raw.is_empty()) else {
+        return Ok(String::new());
+    };
+    let file = repository_access::parse(&raw)?;
+    match file.problems.first() {
+        Some(problem) => Err(problem.clone()),
+        None if file.rules.is_empty() => Err("rules must not be empty".into()),
+        None => Ok(serde_json::from_str::<serde_json::Value>(&raw)
+            .map_err(|error| error.to_string())?
+            .to_string()),
+    }
+}
+
+/// The Apps control plane for the build's own Builderlab origin, overriding the public
+/// table in `apps_control_plane`.
+fn builderlab_apps_control_plane(
+    local: &Path,
+    origin: &str,
+    process: Option<String>,
+) -> Result<String, &'static str> {
+    let values = build_env::load(local, &[BUILDERLAB_APPS_CONTROL_PLANE_KEY], |_| {
+        process.clone()
+    })?;
+    let Some(raw) = values
+        .get(BUILDERLAB_APPS_CONTROL_PLANE_KEY)
+        .filter(|raw| !raw.is_empty())
+        .cloned()
+    else {
+        return Ok(String::new());
+    };
+    let url = url::Url::parse(&raw).map_err(|_| "Invalid Builderlab Apps control plane")?;
+    if origin.is_empty() || url.scheme() != "https" || url.origin().ascii_serialization() != raw {
+        return Err("Builderlab Apps control plane must be an HTTPS origin with a login origin");
+    }
+    Ok(raw)
+}
 
 fn builderlab_target(
     local: &Path,
@@ -119,6 +166,13 @@ fn main() {
     println!("cargo:rerun-if-changed={}", local.display());
     println!("cargo:rerun-if-env-changed={BUILDERLAB_URL_KEY}");
     println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_DOMAIN_KEY}");
+    println!("cargo:rerun-if-env-changed={BUILDERLAB_APPS_CONTROL_PLANE_KEY}");
+    println!("cargo:rerun-if-env-changed={REPOSITORY_ACCESS_KEY}");
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("crates/plugin-manager/src/access/schema.rs")
+            .display()
+    );
     println!(
         "cargo:rerun-if-changed={}",
         root.join("crates/build_env.rs").display()
@@ -148,6 +202,13 @@ fn main() {
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_ORIGIN={origin}");
     println!("cargo:rustc-env={BUILDERLAB_API_BASE_PATH_KEY}={api_base_path}");
     println!("cargo:rustc-env=BUZZ_BUILDERLAB_APPS_DOMAIN={apps_domain}");
+    let control_plane =
+        builderlab_apps_control_plane(&local, &origin, process(BUILDERLAB_APPS_CONTROL_PLANE_KEY))
+            .expect("Invalid Builderlab Apps control plane build configuration");
+    println!("cargo:rustc-env={BUILDERLAB_APPS_CONTROL_PLANE_KEY}={control_plane}");
+    let access = repository_access(process(REPOSITORY_ACCESS_KEY))
+        .unwrap_or_else(|reason| panic!("Invalid {REPOSITORY_ACCESS_KEY}: {reason}"));
+    println!("cargo:rustc-env={REPOSITORY_ACCESS_KEY}={access}");
 }
 
 #[cfg(test)]
@@ -367,5 +428,80 @@ mod tests {
                 ("https://app.builderlab.xyz".into(), "/api/goose/".into())
             );
         }
+    }
+
+    #[test]
+    fn repository_access_build_input_must_be_fully_usable() {
+        assert_eq!(repository_access(None).unwrap(), "");
+        assert_eq!(repository_access(Some(String::new())).unwrap(), "");
+        let rule = r#"{"version": 1, "rules": [{"host": "git.example.com", "pathPrefix": "/team/", "sshUser": "git"}]}"#;
+        let compact = r#"{"rules":[{"host":"git.example.com","pathPrefix":"/team/","sshUser":"git"}],"version":1}"#;
+        assert_eq!(repository_access(Some(rule.into())).unwrap(), compact);
+        // Pretty-printed input reaches `env!` whole: one line, the same rules.
+        let pretty = "{\n  \"version\": 1,\n  \"rules\": [\n    {\"host\": \"git.example.com\", \"pathPrefix\": \"/team/\", \"sshUser\": \"git\"}\n  ]\n}\n";
+        let emitted = repository_access(Some(pretty.into())).unwrap();
+        assert_eq!(emitted, compact);
+        assert!(!emitted.contains(['\n', '\r']));
+        let parsed = repository_access::parse(&emitted).unwrap();
+        assert_eq!(parsed.rules.len(), 1);
+        assert!(parsed.problems.is_empty());
+        for raw in [
+            "{",
+            r#"{"version": 2}"#,
+            r#"{"version": 1, "rules": []}"#,
+            r#"{"version": 1, "rules": [{"host": "git.example.com", "pathPrefix": "/team/"}]}"#,
+        ] {
+            assert!(repository_access(Some(raw.into())).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn apps_control_plane_build_input_is_an_https_origin() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join(".env.local");
+        let login = "https://login.example";
+        let plane =
+            |raw: &str, origin| builderlab_apps_control_plane(&local, origin, Some(raw.into()));
+        assert_eq!(
+            builderlab_apps_control_plane(&local, login, None).unwrap(),
+            ""
+        );
+        assert_eq!(
+            plane("https://ctrl.example", login).unwrap(),
+            "https://ctrl.example"
+        );
+        // Like the frontend: .env.local applies, process overrides it, and Vite
+        // mode files are never read.
+        std::fs::write(
+            directory.path().join(".env.production"),
+            "BUZZ_BUILDERLAB_APPS_CONTROL_PLANE=https://mode.example\n",
+        )
+        .unwrap();
+        assert_eq!(
+            builderlab_apps_control_plane(&local, login, None).unwrap(),
+            ""
+        );
+        std::fs::write(
+            &local,
+            "BUZZ_BUILDERLAB_APPS_CONTROL_PLANE=https://local.example\n",
+        )
+        .unwrap();
+        assert_eq!(
+            builderlab_apps_control_plane(&local, login, None).unwrap(),
+            "https://local.example"
+        );
+        assert_eq!(
+            plane("https://ctrl.example", login).unwrap(),
+            "https://ctrl.example"
+        );
+        for raw in [
+            "http://ctrl.example",
+            "https://ctrl.example/",
+            "https://ctrl.example/path",
+            "ctrl.example",
+        ] {
+            assert!(plane(raw, login).is_err(), "{raw}");
+        }
+        assert!(plane("https://ctrl.example", "").is_err());
     }
 }

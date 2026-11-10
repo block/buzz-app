@@ -1,5 +1,5 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { nativeIdentityEnabled } from "../identity/service";
 import type { HostResponse } from "../host/service";
@@ -34,6 +34,13 @@ export type SessionSnapshot = Readonly<{
   /** A retired session's record is still stored because removing it
    * failed (`unavailable`); signing out again retries the removal. */
   cleanup: boolean;
+}>;
+/** First run's sign-in choices (`FirstRunIdentity`); plugins see `signIn()`. */
+export type SignInOptions = Readonly<{
+  /** Open the identity provider's sign-up screen: Create account's alone. */
+  signup?: boolean;
+  /** Ask for credentials over the browser's session: after Use a different account. */
+  forceLogin?: boolean;
 }>;
 export type AuthenticatedRequest = Readonly<{
   path: string;
@@ -71,6 +78,11 @@ export interface FederatedIdentity {
   forCommunity?(relay: string): FederatedIdentity;
   /** The session of the sign-in server with this id, for Settings. */
   forServer?(id: string): FederatedIdentity;
+  /** Whether a community (`wss://` or `https://` origin) requires NIP-FI,
+   * from the `/info` discovery native shares with admission. One that does
+   * not is reached with the key alone, whatever any session does. Rejects
+   * when discovery fails. */
+  communityRequiresSignIn?(relay: string): Promise<boolean>;
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -167,7 +179,7 @@ export class FederatedIdentityService
       this.shared.listeners.delete(listener);
     };
   };
-  private async operation(command: string, args?: { revision?: string }) {
+  private async operation(command: string, args?: InvokeArgs) {
     if (!nativeIdentityEnabled() || this.shared.closed)
       throw new Error("Federated identity requires Buzz desktop");
     const epoch = this.shared.epoch;
@@ -183,8 +195,11 @@ export class FederatedIdentityService
       throw typeof error === "string" ? new Error(error) : error;
     }
   }
-  signIn() {
-    return this.operation("federated_identity_sign_in");
+  signIn(options?: SignInOptions) {
+    return this.operation("federated_identity_sign_in", {
+      signup: options?.signup === true,
+      forceLogin: options?.forceLogin === true,
+    });
   }
   signOut(options?: { revision?: string }) {
     return this.operation("federated_identity_sign_out", options);
@@ -195,6 +210,7 @@ export class FederatedIdentityService
     await invoke("federated_identity_cancel_sign_in");
     await this.operation("federated_identity_snapshot");
   }
+  communityRequiresSignIn = communityRequiresSignIn;
   forCommunity = (relay: string): FederatedIdentity => {
     let session = this.shared.communities.get(relay);
     if (!session) {
@@ -296,6 +312,16 @@ export async function signInServers(): Promise<readonly SessionSnapshot[]> {
   return invoke<SessionSnapshot[]>("federated_identity_servers");
 }
 
+async function communityRequiresSignIn(relay: string) {
+  if (!nativeIdentityEnabled())
+    throw new Error("Federated identity requires Buzz desktop");
+  try {
+    return await invoke<boolean>("federated_identity_requires", { relay });
+  } catch (error) {
+    throw typeof error === "string" ? new Error(error) : error;
+  }
+}
+
 /** Which server a session command is for: a community's, or one by id. */
 type Target = Readonly<{ relay: string } | { server: string }>;
 
@@ -344,6 +370,7 @@ class CommunitySession implements FederatedIdentity {
       );
     void this.operation("federated_identity_snapshot").catch(() => {});
   }
+  communityRequiresSignIn = communityRequiresSignIn;
   snapshot = () => this.state;
   subscribe = (listener: () => void) => {
     this.start();

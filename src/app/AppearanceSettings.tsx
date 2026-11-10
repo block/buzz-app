@@ -43,21 +43,45 @@ import {
   setClockPreference,
   useClockPreference,
 } from "../shared/clock-preference";
+import {
+  setNamePreference,
+  useNamePreference,
+} from "../features/profiles/name-preference";
+import type { Communities } from "../features/communities/service";
+
+const noRelay = () => () => {};
+/** Whether the connected community verifies people's names, so there is a
+ * username and a full name to choose between. */
+function useVerifiedCommunity(relay: Communities["relay"] | undefined) {
+  const connection = useSyncExternalStore(relay?.subscribe ?? noRelay, () =>
+    relay?.snapshot(),
+  );
+  const profiles =
+    connection?.status === "ready" ? connection.session.profiles : undefined;
+  return useSyncExternalStore(
+    profiles?.subscribe ?? noRelay,
+    () => !!profiles?.verifiedAuthority?.(),
+  );
+}
 
 export function AppearanceSettings({
   appearance,
   active = true,
   autocorrectAvailable = macWebKit(),
+  communities,
 }: {
   appearance: Appearance;
   active?: boolean;
   /** Only Mac WebKit applies the composer's autocorrect attribute. */
   autocorrectAvailable?: boolean;
+  communities?: Pick<Communities, "relay"> | undefined;
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
+  const names = useNamePreference();
+  const verifiedCommunity = useVerifiedCommunity(communities?.relay);
   const { placement, unsaved } = useThreadPlacementPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
@@ -92,7 +116,6 @@ export function AppearanceSettings({
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
-      <AppearancePreview messageWidth={messageWidth} />
       <div>
         <InlineHeader title="Interface" />
         <SettingsGroup>
@@ -169,29 +192,6 @@ export function AppearanceSettings({
                   />
                 )}
               </fieldset>
-            }
-          />
-          <PreferenceRow
-            title="Message width"
-            trailing={
-              <Select
-                variant="compact"
-                label="Message width"
-                value={messageWidth}
-                groups={[
-                  {
-                    label: "Width",
-                    options: [
-                      { value: "narrow", label: "Narrow" },
-                      { value: "wide", label: "Wide" },
-                    ],
-                  },
-                ]}
-                onValueChange={(value) => {
-                  if (value === "narrow" || value === "wide")
-                    appearance.setMessageWidth(value);
-                }}
-              />
             }
           />
           <PreferenceRow
@@ -329,99 +329,159 @@ export function AppearanceSettings({
               />
             }
           />
-          <PreferenceRow
-            title="Follow-up behavior"
-            subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
-            trailing={
-              <Select
-                variant="compact"
-                label="Follow-up behavior"
-                value={followUp.behavior}
-                groups={[
-                  {
-                    label: "Behavior",
-                    options: [
-                      { value: "immediate", label: "Send immediately" },
-                      { value: "queue", label: "Queue" },
-                    ],
-                  },
-                ]}
-                onValueChange={(value) => {
-                  if (value === "immediate" || value === "queue")
-                    setFollowUpBehaviorPreference(value);
-                }}
-              />
-            }
-          />
-
-          <PreferenceRow
-            title="Open threads in"
-            subtitle="New threads open here. Already-open threads stay where you placed them."
-            trailing={
-              <Select
-                variant="compact"
-                label="Open threads in"
-                value={placement}
-                groups={[
-                  {
-                    label: "Pane",
-                    options: [
-                      { value: "side", label: "Side pane" },
-                      { value: "main", label: "Main pane" },
-                    ],
-                  },
-                ]}
-                onValueChange={(value) => {
-                  if (value === "main" || value === "side")
-                    setThreadPlacementPreference(value);
-                }}
-              />
-            }
-          />
-          <PreferenceRow
-            title="Message timestamps"
-            subtitle="Hidden times stay available to screen readers."
-            trailing={
-              <Select
-                variant="compact"
-                label="Message timestamps"
-                value={clock.messageTimestamps}
-                groups={[
-                  {
-                    label: "Timestamps",
-                    options: [
-                      { value: "show", label: "Show" },
-                      { value: "hide-solo", label: "Hide in Solo chats" },
-                      { value: "hide", label: "Hide" },
-                    ],
-                  },
-                ]}
-                onValueChange={(value) => {
-                  if (
-                    value === "show" ||
-                    value === "hide-solo" ||
-                    value === "hide"
-                  )
-                    setClockPreference({ messageTimestamps: value });
-                }}
-              />
-            }
-          />
-          {autocorrectAvailable && (
-            <SwitchPreferenceRow
-              label="Allow automatic spelling correction"
-              description="Lets macOS correct misspelled words in messages. Turn correction on or off from the message box’s Spelling and Grammar menu."
-              checked={autocorrect.enabled}
-              onCheckedChange={setMessageAutocorrectPreference}
+          {density === "default" && (
+            <PreferenceRow
+              title="Message width"
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Message width"
+                  value={messageWidth}
+                  groups={[
+                    {
+                      label: "Width",
+                      options: [
+                        { value: "narrow", label: "Narrow" },
+                        { value: "wide", label: "Wide" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (value === "narrow" || value === "wide")
+                      appearance.setMessageWidth(value);
+                  }}
+                />
+              }
             />
           )}
-          <SwitchPreferenceRow
-            label="Show unread first in search"
-            description="With nothing typed, search leads with unread channels and DMs and selects the newest."
-            checked={unreadFirst.enabled}
-            onCheckedChange={setUnreadFirstPreference}
+          <AppearancePreview
+            messageWidth={messageWidth}
+            density={density}
+            embedded
           />
         </SettingsGroup>
+        <div className="mt-4">
+          <SettingsGroup>
+            <PreferenceRow
+              title="Message timestamps"
+              subtitle="Hidden times stay available to screen readers."
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Message timestamps"
+                  value={clock.messageTimestamps}
+                  groups={[
+                    {
+                      label: "Timestamps",
+                      options: [
+                        { value: "show", label: "Show" },
+                        { value: "hide-solo", label: "Hide in Solo chats" },
+                        { value: "hide", label: "Hide" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (
+                      value === "show" ||
+                      value === "hide-solo" ||
+                      value === "hide"
+                    )
+                      setClockPreference({ messageTimestamps: value });
+                  }}
+                />
+              }
+            />
+            {verifiedCommunity && (
+              <PreferenceRow
+                title="Show people by"
+                subtitle="How people with verified names appear to you. Search, profiles, and previews show both."
+                trailing={
+                  <Select
+                    variant="compact"
+                    label="Show people by"
+                    value={names}
+                    groups={[
+                      {
+                        label: "Name",
+                        options: [
+                          { value: "username", label: "Username" },
+                          { value: "full-name", label: "Full name" },
+                        ],
+                      },
+                    ]}
+                    onValueChange={(value) => {
+                      if (value === "username" || value === "full-name")
+                        setNamePreference(value);
+                    }}
+                  />
+                }
+              />
+            )}
+            <PreferenceRow
+              title="Follow-up behavior"
+              subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Follow-up behavior"
+                  value={followUp.behavior}
+                  groups={[
+                    {
+                      label: "Behavior",
+                      options: [
+                        { value: "immediate", label: "Send immediately" },
+                        { value: "queue", label: "Queue" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (value === "immediate" || value === "queue")
+                      setFollowUpBehaviorPreference(value);
+                  }}
+                />
+              }
+            />
+
+            <PreferenceRow
+              title="Open threads in"
+              subtitle="New threads open here. Already-open threads stay where you placed them."
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Open threads in"
+                  value={placement}
+                  groups={[
+                    {
+                      label: "Pane",
+                      options: [
+                        { value: "side", label: "Side pane" },
+                        { value: "main", label: "Main pane" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (value === "main" || value === "side")
+                      setThreadPlacementPreference(value);
+                  }}
+                />
+              }
+            />
+            {autocorrectAvailable && (
+              <SwitchPreferenceRow
+                label="Allow automatic spelling correction"
+                description="Lets macOS correct misspelled words in messages. Turn correction on or off from the message box’s Spelling and Grammar menu."
+                checked={autocorrect.enabled}
+                onCheckedChange={setMessageAutocorrectPreference}
+              />
+            )}
+            <SwitchPreferenceRow
+              label="Show unread first in search"
+              description="With nothing typed, search leads with unread channels and DMs and selects the newest."
+              checked={unreadFirst.enabled}
+              onCheckedChange={setUnreadFirstPreference}
+            />
+          </SettingsGroup>
+        </div>
         {active && messageWidthError && (
           <ToastNotice
             title="Message width wasn’t saved"

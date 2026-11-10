@@ -46,16 +46,22 @@
     background: none;
     box-shadow: none;
   }
+  /* Top-anchored popups share the steps' top edge: centering them in the
+     crossfade's taller grid snaps the remaining step when the other unmounts.
+     A centered compact popup keeps centered steps, which stay put. */
   .buzz-dialog-step {
     grid-area: 1 / 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    align-self: center;
+    align-self: start;
     min-width: 0;
     max-height: inherit;
     overflow: auto;
     overscroll-behavior: none;
+  }
+  .buzz-dialog[data-size="compact"] > .buzz-dialog-step {
+    align-self: center;
   }
   .buzz-dialog-step[inert] {
     pointer-events: none;
@@ -579,6 +585,15 @@
 .buzz-toast-viewport[data-sonner-toaster][data-x-position="right"] {
   left: auto;
   right: max(var(--space-4), env(safe-area-inset-right));
+}
+/* Above any docked composer (useToastClearance), never over its controls. */
+.buzz-toast-viewport[data-sonner-toaster][data-y-position="bottom"] {
+  bottom: max(var(--offset-bottom), var(--buzz-toast-clearance, 0px));
+}
+@media (max-width: 600px) {
+  .buzz-toast-viewport[data-sonner-toaster][data-y-position="bottom"] {
+    bottom: max(var(--mobile-offset-bottom), var(--buzz-toast-clearance, 0px));
+  }
 }
 .buzz-toast-viewport[data-sonner-toaster] [data-sonner-toast] {
   position: relative;

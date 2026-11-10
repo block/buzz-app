@@ -24,6 +24,10 @@ import {
 } from "../features/messages/thread-preferences";
 
 import {
+  namePreference,
+  setNamePreference,
+} from "../features/profiles/name-preference";
+import {
   followUpBehaviorPreference,
   setFollowUpBehaviorPreference,
 } from "../features/messages/follow-up-preference";
@@ -484,9 +488,23 @@ it("switches message density, restores it, and retries a failed save", async () 
   );
   const user = userEvent.setup();
   const density = screen.getByRole("combobox", { name: "Message density" });
+  const preview = screen.getByRole("figure", { name: "Appearance preview" });
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "default",
+  );
   expect(density).toHaveTextContent("Default");
   await user.click(density);
   await user.click(await screen.findByRole("option", { name: "Compact" }));
+  expect(preview.querySelector("[data-message-density]")).toHaveAttribute(
+    "data-message-density",
+    "compact",
+  );
+  expect(preview.querySelector("[data-message-width]")).toHaveAttribute(
+    "data-message-width",
+    "wide",
+  );
+  expect(screen.queryByRole("combobox", { name: "Message width" })).toBeNull();
   expect(document.documentElement.dataset.messageDensity).toBe("compact");
   expect(localStorage.getItem("buzz-message-density.v1")).toBe("compact");
   const restored = createAppearance();
@@ -728,4 +746,41 @@ it("retries an unsaved message width when returning to Appearance", async () => 
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
+});
+
+it("offers a choice between usernames and full names only where the community verifies names", async () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  let authority: object | undefined;
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const connection = {
+    status: "ready",
+    session: {
+      profiles: { subscribe, verifiedAuthority: () => authority },
+    },
+  };
+  const communities = {
+    relay: { subscribe, snapshot: () => connection },
+  } as unknown as Parameters<typeof AppearanceSettings>[0]["communities"];
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} communities={communities} />
+    </ToastProvider>,
+  );
+  expect(screen.queryByText("Show people by")).toBeNull();
+  act(() => {
+    authority = { pubkey: "relay", multipleIssuers: false };
+    for (const listener of listeners) listener();
+  });
+  const choice = screen.getByRole("combobox", { name: "Show people by" });
+  expect(choice).toHaveTextContent("Username");
+  const user = userEvent.setup();
+  await user.click(choice);
+  await user.click(await screen.findByRole("option", { name: "Full name" }));
+  expect(namePreference()).toBe("full-name");
+  setNamePreference("username");
 });

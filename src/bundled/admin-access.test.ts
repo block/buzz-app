@@ -50,7 +50,7 @@ function setup(available = true) {
     generation: 1,
     scope: `${origin}:${viewer}`,
     viewer,
-    session: { relayAuthor: authority, read },
+    session: { relayAuthor: authority, read, subscribeLive: () => () => {} },
   } as unknown as RelaySnapshot;
   let client = { status: "ready", selected: origin, viewer } as ClientSnapshot;
   const relayListeners = new Set<() => void>();

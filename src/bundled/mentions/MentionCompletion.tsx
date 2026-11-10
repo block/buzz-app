@@ -22,6 +22,7 @@ import { continuedMention, matchingMentions } from "./mention-ranking";
 import { resolveSpaceMention } from "./resolve-space-mention";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import { mentionTerminator } from "../../features/messages/mention-draft";
 import { AgentsContext } from "../../features/agents/react";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -217,15 +218,15 @@ export function MentionCompletion({
           label,
           elsewhere,
           disabled,
-          fullName,
+          otherName,
           agent,
           execution,
         }) => {
           const detail =
             disabled ??
-            // A verified full name sits beside the detail.
+            // The other verified name sits beside the detail.
             ([
-              fullName !== label ? fullName : undefined,
+              otherName,
               remoteMentionDetail(execution),
               model.managedBy.get(recipient.pubkey),
               memberKeys.has(recipient.pubkey)
@@ -241,9 +242,10 @@ export function MentionCompletion({
               undefined);
           return {
             disabled,
+            // Every key that ends a typed name selects only the exact name.
             canSelect: (key: string) =>
-              (key !== " " || !teams.blocksSpace) &&
-              model.canSelect(recipient.pubkey, key === " "),
+              (!mentionTerminator(key) || !teams.blocksSpace) &&
+              model.canSelect(recipient.pubkey, mentionTerminator(key)),
             id: recipient.pubkey,
             label,
             agent,

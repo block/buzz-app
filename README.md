@@ -65,7 +65,7 @@ from block/buzz.
 
 ### 4. Add your first agent
 
-Open **Agents** in the top bar and choose **Create your first agent** (or
+Open **Agents** in the app dock and choose **Create your first agent** (or
 **New agent → Create a new agent**). Agents belong to a community, so add yours
 first. Give the agent a name, pick a **Harness**, and optionally choose a model
 and write instructions. Then click **Create agent**.
@@ -74,8 +74,8 @@ and write instructions. Then click **Create agent**.
 
 | Harness | Platforms | What you need |
 | --- | --- | --- |
-| Claude | macOS, Linux | A Claude account. Click **Install Claude** to download Buzz's own copy (about 250 MB), then **Sign in** in your browser. It shares settings with the `claude` in your terminal but doesn't change it. |
-| Codex | macOS, Linux | A ChatGPT or OpenAI account. Click **Install Codex** (about 130 MB), then **Sign in** in your browser. |
+| Claude | macOS, Linux | A Claude account. Click **Install integration** to download Buzz's own copy (about 250 MB), then **Sign in** in your browser. It shares settings with the `claude` in your terminal but doesn't change it. |
+| Codex | macOS, Linux | A ChatGPT or OpenAI account. Click **Install integration** (about 130 MB), then **Sign in** in your browser. |
 | Goose | macOS, Linux, Windows | Included with Buzz. Choose a model provider and enter its key in **Settings → Agent setup → Harness defaults → Goose**. Providers that sign in through goose instead need `goose configure` from the separate goose CLI. |
 | Pi | macOS, Linux, Windows | Node.js 22.19 or later. Turn on **Pi** in **Settings → Plugins** first. Click the model, choose a provider, paste its **API key**, and click **Save to Pi**. Providers that sign in another way need `pi`, then `/login`, in your terminal. |
 
@@ -86,8 +86,9 @@ edit files there.
 
 ### 5. Talk to it
 
-- **New chat:** click **+** in the top bar, left of **Messages**, and choose
-  **New chat**. Your default agent is tagged for you; type a message and send.
+- **New chat:** click **+** at the top of the Messages sidebar, beside
+  **All / Solo / Team**, and choose **New chat**. Your default agent is tagged
+  for you; type a message and send.
 - **Direct message:** open the agent's profile and click **Message**.
 - **In a channel:** @mention the agent. If it isn't in the channel yet, Buzz
   asks whether to **Invite** it.
@@ -106,6 +107,7 @@ ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
 ## Preview limitations
 
 - Builds come straight from `main`; there's no stable release channel yet.
+- Updates can break plugins (see [Plugins](#plugins)).
 - The Windows installer is unsigned, and Intel macOS, Windows and Linux get
   less testing than Apple Silicon macOS.
 - Claude and Codex agents need macOS or Linux. Goose and Pi work everywhere.
@@ -114,6 +116,22 @@ ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
   (rejoin them in step 3) or your agents. On the Agents page, bring agents
   with **Import them now** or **New agent → Import an agent**, and teams with
   **New team → Import a team**.
+
+## Plugins
+
+Much of Buzz is built from plugins, and you can add your own in
+**Settings → Plugins**. The plugin API is a preview: Buzz changes fast, and an
+update can break a plugin.
+
+Some parts change less than others:
+
+- **Steady:** the manifest, commands, network requests and file reads, agent
+  tools, shortcuts, notifications, settings cards, and plugin pages and panels
+  (though where they appear may move).
+- **Likely to break:** reading relay data, anything added to conversations or
+  the sidebar, agent hooks, and UI added to pages Buzz owns.
+
+See [plugin architecture](docs/plugin-architecture.md) to build one.
 
 ## Build from source
 

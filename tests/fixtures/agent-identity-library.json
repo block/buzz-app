@@ -113,7 +113,7 @@
           "name": "Ada",
           "picture": "https://images.example/ada.png",
           "protection": {
-            "provider": "com.squareup.buzz-security",
+            "provider": "com.example.buzz-security",
             "policy": {
               "version": 2,
               "privateReviewPolicy": "must not appear in public library"
@@ -130,7 +130,7 @@
           "name": "Ada",
           "home": "wss://relay.example",
           "protection": {
-            "provider": "com.squareup.buzz-security",
+            "provider": "com.example.buzz-security",
             "policy": {
               "version": 2,
               "privateReviewPolicy": "must not appear in public library"
@@ -148,7 +148,7 @@
           "home": "wss://third-home.example",
           "joining": true,
           "protection": {
-            "provider": "com.squareup.buzz-security",
+            "provider": "com.example.buzz-security",
             "policy": {
               "version": 2,
               "privateReviewPolicy": "must not appear in public library"
@@ -272,7 +272,7 @@
           "name": "Ada",
           "picture": "https://images.example/ada.png",
           "protection": {
-            "provider": "com.squareup.buzz-security",
+            "provider": "com.example.buzz-security",
             "policy": {
               "version": 2,
               "privateReviewPolicy": "must not appear in public library"
@@ -289,7 +289,7 @@
           "name": "Ada",
           "home": "wss://relay.example",
           "protection": {
-            "provider": "com.squareup.buzz-security",
+            "provider": "com.example.buzz-security",
             "policy": {
               "version": 2,
               "privateReviewPolicy": "must not appear in public library"
@@ -307,7 +307,7 @@
           "home": "wss://third-home.example",
           "joining": true,
           "protection": {
-            "provider": "com.squareup.buzz-security",
+            "provider": "com.example.buzz-security",
             "policy": {
               "version": 2,
               "privateReviewPolicy": "must not appear in public library"
@@ -325,6 +325,59 @@
           "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "name": "Ada",
           "avatar": "https://images.example/ada.png"
+        }
+      ]
+    }
+  },
+  {
+    "name": "scope filters owner and community before deduplicating identities",
+    "rows": [
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://other.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Other community"
+      },
+      {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "relay": "wss://relay.example",
+        "owner": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Other account"
+      },
+      {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "relay": "wss://relay.example",
+        "owner": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "auth": "private attestation",
+        "type": "plugin/agent",
+        "name": "Current community",
+        "picture": "https://images.example/current.png"
+      }
+    ],
+    "expected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Other community"
+        },
+        {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "name": "Other account"
+        }
+      ]
+    },
+    "scopedExpected": {
+      "definitions": [],
+      "identities": [
+        {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "Current community",
+          "avatar": "https://images.example/current.png"
         }
       ]
     }

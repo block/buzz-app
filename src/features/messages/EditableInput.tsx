@@ -747,16 +747,19 @@ export function EditableInput({
       text: string,
       recipient?: MentionRecipient | readonly MentionRecipient[],
       range?: { start: number; end: number },
-      terminator?: ":",
+      terminator?: string,
       focus = true,
       onTooLong?: () => void,
     ) => {
       if (!editable() || composing.current || editor.composing) return false;
+      // The key that ended a name follows its mention in place of the space;
+      // only text records its terminator before converting.
+      const after = (recipient && terminator) || " ";
+      if (recipient) terminator = undefined;
       if (terminator) {
         const source = projection();
         if (
           !range ||
-          recipient ||
           !editor.state.selection.empty ||
           source.source(editor.state.selection.from) !== range.end
         )
@@ -811,7 +814,7 @@ export function EditableInput({
                     null,
                     marks,
                   ),
-              composerSchema.text(" ", marks),
+              composerSchema.text(after, marks),
             ]),
           ),
         );
@@ -985,10 +988,12 @@ export function EditableInput({
       return editor.state !== before;
     };
     /** The typed `@name` becomes one atom the host resolves later: one undo
-     * step, like a selected mention, and the caret moves past its space. */
+     * step, like a selected mention, and the caret moves past the key that
+     * ended it. */
     const insertPendingMention = (
       name: string,
       range: { start: number; end: number },
+      terminator = " ",
     ): string | false => {
       if (!editable() || composing.current || editor.composing) return false;
       const source = projection();
@@ -1015,7 +1020,7 @@ export function EditableInput({
             null,
             marks,
           ),
-          composerSchema.text(" ", marks),
+          composerSchema.text(terminator, marks),
         ]),
       );
       tr.setSelection(
@@ -1630,7 +1635,9 @@ export function EditableInput({
     /** Runs an Apple paragraph command in document terms, since native ones
      * stop at a token's uneditable edge. Control-A and Control-E move to the
      * paragraph's edge, and Option-Up and Option-Down first step off an edge
-     * they start at, as natively. Paragraphs are lines of the draft text, as
+     * they start at, as natively. An empty draft leaves Option-Up and
+     * Option-Down to the conversation shortcuts, as in Slack. Paragraphs are
+     * lines of the draft text, as
      * for triple click. Control-K deletes to the paragraph's end across a
      * token. Elsewhere it stays native, which keeps Control-Y working there. */
     const paragraphKey = (event: globalThis.KeyboardEvent, named: string) => {
@@ -1654,6 +1661,7 @@ export function EditableInput({
       const side = backward ? "start" : "end";
       const source = projection(),
         text = source.draft.text;
+      if (command === "step" && !text) return false;
       const at = event.shiftKey
         ? selection.head
         : backward

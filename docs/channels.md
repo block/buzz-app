@@ -364,7 +364,7 @@ The existing `MessageComposer` owns the draft and ordinary input behavior. Its p
 afterward. Disabled mention and emoji icons stay unfilled. When the recipients
 plus the viewer are exactly an existing DM's participants, in any order, that
 DM's history loads inline above the draft. This includes a DM removed with
-Remove from Team or Hide conversation. A subset or superset of a group's
+Close conversation or Hide conversation. A subset or superset of a group's
 participants shows the recipients' avatars instead. Each recipient change
 replaces the preview with the newly matched DM's timeline, or with the avatars.
 Previewing does not open, restore or mark the DM read, and it remains when
@@ -1183,8 +1183,16 @@ member neither deletes their identity nor stops their agents.
 
 Role change and removal use deliberate confirmation steps in the same dialog,
 initially focused on Cancel. Removal shows only the avatar/name and actions;
-Cancel returns to the list. Errors appear below Search, outside the scrolling
-list; pending and success banners are omitted.
+Cancel returns to the list. Leaving either step keeps the list's scroll position
+and returns focus to that member's actions, including while a confirmed change
+is pending. When a confirmed removal takes the row away, focus moves to the
+actions of the member now in its place, the one before it, or Search when none
+is left, unless focus has moved elsewhere; a failed or uncertain removal leaves
+focus on the member. An addition's confirmation returns to Search. Errors appear
+below Search, outside the scrolling list. Only a confirmed change's own error
+scrolls the list, to keep that member's actions in view, and only while focus
+and the list are where the change left them. Pending and success banners are
+omitted.
 The service checks fresh actor/target state before signing and again
 before publication, rejects altered signer payloads, and confirms the requested
 role or roster absence with a fresh read. Relay acceptance alone is not success.
@@ -1695,17 +1703,19 @@ and OS notifications are not enabled by this feature.
 
 The Channels plugin registers Slack-style shortcuts through the shared dispatcher, so
 each is listed in Settings → Shortcuts and can be rebound. All run while typing in the
-message editor and are ignored behind a dialog. None run in a terminal, which keeps
-Escape and Option+Arrow for the shell.
+message editor, except as noted below, and are ignored behind a dialog. None run in a
+terminal, which keeps Escape and Option+Arrow for the shell.
 
 - **Previous/next conversation** (Option+Up/Down) and **previous/next unread
   conversation** (Option+Shift+Up/Down) step through the sidebar's rendered order,
-  Solo chats and team rows alike. `conversation-rows.ts` scans the sidebar's
-  `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
+  Solo chats and team rows alike. As in Slack, plain Option+Up/Down steps from the
+  composer only while its draft is empty; with text it moves the caret by paragraph
+  instead. `conversation-rows.ts` scans the sidebar's `Subscribed channels` list, so sorting, sections, filters and the All/Solo/Team pane
   are already applied; rows in a collapsed section or the inactive pane are skipped. A
   row is unread when it shows the unread or thread-activity marker that
   `SidebarUnread` also reads. The open conversation is the row marked `aria-current`.
-  Stepping does not wrap, and at either end it does nothing. When the open
+  Plain stepping does not wrap, and at either end it does nothing; unread stepping
+  wraps around to the nearest unread row from the other end. When the open
   conversation is not among the rows, next starts from the top and previous from the
   bottom. A conversation listed in two sections is stepped over once. The shortcuts
   are unavailable, leaving the key alone, while the sidebar renders no rows (for
@@ -1794,6 +1804,13 @@ message opens as the root in the existing thread panel; a reply opens there with
 its actual root and bounded surrounding replies. No around-message channel query
 or separate detail screen is added. The presentation choice stays fixed for that
 navigation attempt; exact reads do not insert isolated old rows into channel history.
+Only **Open in channel** from a thread tab also shows the thread's root in the
+timeline: the list waits while older pages are read to find it, within the same
+bound as conversation tabs, then reveals and marks the root without taking the
+thread's focus. A root it cannot find leaves the timeline at its usual place.
+Back or Forward to that visit, or closing Members, seeks the root again; a list
+already shown stays in place while it does. Cached rows cannot place the root,
+so a cached session shows them as usual and seeks once it connects.
 
 Navigation completes only after the exact folded target is visible and focused.
 Reclick/Back reveals again; live/profile updates do not steal focus. The shared

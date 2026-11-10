@@ -351,7 +351,10 @@ function ReactionEmoji({
     );
   };
   return (
-    <span className={`${styles.reactionItem} buzz-compact-controls`}>
+    <span
+      className={`${styles.reactionItem} buzz-compact-controls`}
+      data-mine={mine || undefined}
+    >
       <PreviewCard
         side="top"
         align="center"

@@ -20,6 +20,7 @@ const test = base.extend({
   companionFixture: [false, { scope: "worker" }],
   pairingFixture: [false, { scope: "worker" }],
   localAgentActivity: [false, { scope: "worker" }],
+  startupFailureFixture: [false, { scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   directorySize: [35, { option: true }],
   app: async ({ compiledApp, page, context, directorySize }, use) => {
@@ -833,7 +834,7 @@ test("profile Message opens a fresh DM and restores a hidden one", async ({
   await sidebarDm.click({ button: "right" });
   await page
     .getByRole("menu", { name: "Actions for Avery Chen" })
-    .getByRole("menuitem", { name: "Remove from Team", exact: true })
+    .getByRole("menuitem", { name: "Close conversation", exact: true })
     .click();
   await expect(sidebarDm).toHaveCount(0);
   await page.reload();

@@ -156,6 +156,9 @@ export class GooseRuntime {
     AgentKey,
     ReturnType<AgentSessions["snapshot"]>
   >();
+  /** A failed turn's error as its report says it, such as where to fix
+   * goose's provider key. */
+  explain: (error: string) => string = (error) => error;
 
   constructor(
     private readonly host: Host,
@@ -176,6 +179,11 @@ export class GooseRuntime {
   /** What each of the agent's sessions started with. */
   prompts(agent: AgentKey) {
     return sessionPrompts(this.agentStore, "goose", agent);
+  }
+
+  /** A file as the agent's sessions read one: in its saved workspace. */
+  workspaceFile(agent: Agent, path: string) {
+    return this.desktop.readFile(path, { cwd: config(agent.config).workspace });
   }
 
   /** The desktop host's methods goose agents run with. */
@@ -396,6 +404,7 @@ export class GooseRuntime {
       if (
         !(await fromOwner(trigger.event, agent.owner, {
           agent: agent.pubkey,
+          community: snapshot?.origin,
           authority:
             snapshot?.status === "ready"
               ? snapshot.session.workflowAuthority
@@ -640,7 +649,7 @@ export class GooseRuntime {
       agent,
       channel,
       event,
-      `⚠️ I couldn't finish that: ${error.slice(0, 500)}`,
+      `⚠️ I couldn't finish that: ${this.explain(error.slice(0, 500))}`,
       topLevel,
       [["p", agent.owner]],
     );
@@ -816,10 +825,17 @@ export class GooseRuntime {
     // handle and the conversation's place as they are when called.
     const tools: ToolServer = async (conversation, message) => {
       const handle = entry.handle;
+      // A call in a conversation answers only while its turn runs unstopped.
+      const current = conversation && entry.sessions.current(conversation);
       const client =
         handle &&
         appClient(handle, {
           signal: entry.lifetime.signal,
+          ...(current && {
+            check: () => {
+              if (!current()) throw new Error("The Goose turn has ended");
+            },
+          }),
           // Its pre-tool check reviews every call, Buzz's extension included.
           nativeToolGate: true,
           // Read from the process hosting the session, which it never starts.

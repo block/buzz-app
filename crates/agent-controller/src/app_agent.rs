@@ -169,7 +169,7 @@ impl AppAgent {
         let valid = match parts.as_slice() {
             [hash] => crate::config::canonical_key(hash),
             [hash, part] => crate::config::canonical_key(hash) && ext(part),
-            [hash, "thumb", "jpg"] => crate::config::canonical_key(hash),
+            [hash, "thumb", "jpg" | "webp"] => crate::config::canonical_key(hash),
             _ => false,
         };
         if !valid {
@@ -186,8 +186,8 @@ impl AppAgent {
             .next()
             .and_then(|name| name.get(..64))
             .ok_or("Invalid media hash")?;
-        if canonical.ends_with(".thumb.jpg") {
-            // Thumbnails are derived JPEGs, but keep the source blob's name.
+        if canonical.ends_with(".thumb.jpg") || canonical.ends_with(".thumb.webp") {
+            // Thumbnails are derived images, but keep the source blob's name.
             return Ok(());
         }
         if sha256 != expected {
@@ -332,6 +332,22 @@ impl AppAgent {
             ],
         )?;
         Ok((url, key.signed(27235, String::new(), tags)?))
+    }
+    /// NIP-42 authentication (22242) of a Huddle audio socket in its own
+    /// community: it answers only the relay's `challenge`, with the owner
+    /// attestation the relay links the agent to its owner by.
+    pub fn audio_auth(&self, key: &Secret, challenge: &str) -> Result<serde_json::Value> {
+        if challenge.is_empty() || challenge.len() > 4096 {
+            return Err("Invalid Huddle challenge".into());
+        }
+        let tags = self.attested(
+            key,
+            vec![
+                vec!["relay".into(), self.relay.clone()],
+                vec!["challenge".into(), challenge.into()],
+            ],
+        )?;
+        key.signed(22242, String::new(), tags)
     }
     /// Blossom authorization (24242) to upload the blob with this SHA-256 to
     /// its community, valid for a minute.

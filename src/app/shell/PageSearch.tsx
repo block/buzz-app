@@ -1,5 +1,6 @@
 import { useSearchSettings } from "./SearchSettings";
 import { usePagePresentation } from "./BestieNavigation";
+import { isBestiePage, useBestieConversation } from "./bestie-context";
 import {
   useCallback,
   useEffect,
@@ -106,6 +107,18 @@ export function PageSearch({
     services?.navigation?.subscribe ?? noSubscribe,
     () => services?.navigation?.snapshot().entry.target ?? null,
   );
+  const relaySession = useSyncExternalStore(
+    services?.communities?.relay.subscribe ?? noSubscribe,
+    () => services?.communities?.relay.snapshot().session,
+  );
+  const bestieChannelId = useBestieConversation(relaySession);
+  // The Bestie page presents its promoted DM, so it searches like that DM.
+  const currentChannelId =
+    currentTarget?.kind === "conversation"
+      ? currentTarget.channelId
+      : isBestiePage(currentTarget)
+        ? bestieChannelId
+        : undefined;
   const input = useRef<HTMLElement>(null);
   const returnFocus = useRef<HTMLElement>(null);
   const composerChannel = useRef<string | undefined>(undefined);
@@ -163,7 +176,7 @@ export function PageSearch({
     return () => document.removeEventListener("focusin", focused);
   }, [open]);
   const beginScoped = useCallback(() => {
-    if (currentTarget?.kind !== "conversation") return;
+    if (!currentChannelId) return;
     composerChannel.current = undefined;
     returnFocus.current =
       document.activeElement instanceof HTMLElement
@@ -172,9 +185,9 @@ export function PageSearch({
     setQuery("");
     setTab("all");
     place.current = { top: 0, key: "" };
-    setScopedChannelId(currentTarget.channelId);
+    setScopedChannelId(currentChannelId);
     setSearchOpen(true);
-  }, [currentTarget, setSearchOpen]);
+  }, [currentChannelId, setSearchOpen]);
   useEffect(
     () =>
       services?.shortcuts.registerHost({
@@ -195,10 +208,10 @@ export function PageSearch({
         binding: CONVERSATION_SEARCH_BINDING,
         order: HOST_SHORTCUT_ORDER.search + 1,
         allowInEditable: true,
-        when: () => currentTarget?.kind === "conversation",
+        when: () => !!currentChannelId,
         run: beginScoped,
       }),
-    [services, currentTarget, beginScoped],
+    [services, currentChannelId, beginScoped],
   );
   // The hint follows the person's rebind, derived from the same binding object.
   const { overrides } = useSyncExternalStore(
@@ -210,13 +223,20 @@ export function PageSearch({
   // Every search surface reads pages from here, so rank and underline them
   // here too: the disconnected and personal-space views show this list as is.
   const needle = query.trim().toLowerCase();
-  const destinations: SearchDestination[] = [
-    ...orderPages(pages).map((page) => ({
-      key: page.key,
-      ...pagePresentation(page),
-    })),
-    { key: "settings", ...shellPresentation.settings },
-  ]
+  const searchPages: (Omit<SearchDestination, "run"> & { open: () => void })[] =
+    [
+      ...orderPages(pages).map((page) => ({
+        key: page.key,
+        ...pagePresentation(page),
+        open: () => onSelect(page.key),
+      })),
+      {
+        key: "settings",
+        ...shellPresentation.settings,
+        open: () => onSelect("settings"),
+      },
+    ];
+  const destinations: SearchDestination[] = searchPages
     .flatMap((page) => {
       if (!needle) return [{ page, rank: 0 }];
       const labelMatch = matchName(page.label, needle);
@@ -244,7 +264,7 @@ export function PageSearch({
       ...page,
       run: () => {
         returnFocus.current = document.getElementById("main-content");
-        onSelect(page.key);
+        page.open();
         setSearchOpen(false);
       },
     }));
@@ -327,11 +347,7 @@ export function PageSearch({
                 (page) => page.key === "buzz.channels/channels",
               )}
               scopedChannelId={scopedChannelId}
-              currentChannelId={
-                currentTarget?.kind === "conversation"
-                  ? currentTarget.channelId
-                  : undefined
-              }
+              currentChannelId={currentChannelId}
               onScopeChange={(channelId) => {
                 setScopedChannelId(channelId);
                 input.current?.focus();
@@ -467,11 +483,44 @@ function CommunitySearch({
       )
       ?.focus();
   }, [view]);
+  // Saved conversations stay searchable while the community connects or is
+  // unreachable; message, people and open-channel search wait for the relay.
+  const saved = !!connection.cached && !scopedChannelId;
+  const connecting = connection.status === "connecting";
+  const notice =
+    !enabled || !client.selected || connection.status === "ready"
+      ? undefined
+      : saved
+        ? `Only saved conversations are searched ${connecting ? "until this community connects" : "while this community is disconnected"}.`
+        : !connecting
+          ? "Message search is unavailable while this community is disconnected."
+          : query.trim() && !scopedChannelId
+            ? "Connecting to this community…"
+            : undefined;
+  const offline = notice && (
+    <div className="px-3 text-body-sm text-subtle" aria-live="polite">
+      <p>{notice}</p>
+      {!connecting && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            // Retrying removes this focused button; the field owns keyboard
+            // navigation, so focus returns there before the retry starts.
+            input.current?.focus();
+            services.communities.relay.retry();
+          }}
+        >
+          Retry connection
+        </Button>
+      )}
+    </div>
+  );
   if (
     !enabled ||
     !client.selected ||
     !client.viewer ||
-    connection.status !== "ready"
+    (connection.status !== "ready" && !saved)
   ) {
     return (
       <SearchChoices
@@ -514,25 +563,8 @@ function CommunitySearch({
                   },
                 ]
         }
-      >
-        {enabled &&
-          client.selected &&
-          ["error", "disconnected"].includes(connection.status) && (
-            <div className="px-3 text-body-sm text-subtle" aria-live="polite">
-              <p>
-                Message search is unavailable while this community is
-                disconnected.
-              </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => services.communities.relay.retry()}
-              >
-                Retry connection
-              </Button>
-            </div>
-          )}
-      </SearchChoices>
+        footer={offline}
+      />
     );
   }
   const scope = {
@@ -548,7 +580,11 @@ function CommunitySearch({
       services.communities.relay.snapshot().session === connection.session
     );
   };
-  const openConversation = (channelId: string, messageId?: string) => {
+  const openConversation = (
+    channelId: string,
+    messageId?: string,
+    threadRootId?: string,
+  ) => {
     if (!current() || !connection.session.channels.get?.(channelId)) return;
     close(messageId ? undefined : channelId);
     void services.navigation.open({
@@ -557,10 +593,11 @@ function CommunitySearch({
       scope,
       channelId,
       ...(messageId ? { messageId } : {}),
+      ...(threadRootId ? { threadRootId } : {}),
     });
   };
   const views =
-    !scopedChannelId && connection.session.channels.readDirectory
+    !scopedChannelId && !saved && connection.session.channels.readDirectory
       ? {
           resultsLabel: view === "channels" ? "Channels" : "Search results",
           panelId: `search-view-${view}`,
@@ -611,6 +648,7 @@ function CommunitySearch({
         usageScope={usageScope(scope)}
         sidebarScope={connection.scope}
         views={views}
+        offline={saved ? offline : undefined}
         openConversation={openConversation}
         openAgentSession={(pubkey) => {
           const current = services.communities.snapshot();

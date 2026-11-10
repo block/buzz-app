@@ -5,6 +5,7 @@ import { bytesToHex } from "nostr-tools/utils";
 import { createRelaySession } from "../relay/session";
 import { eventDto, type RelayEvent } from "../relay/events";
 import type { LiveCallbacks } from "../relay/live";
+import { PublishRejected } from "../relay/outbox";
 import {
   flush,
   keypair,
@@ -568,6 +569,139 @@ it("session fresh definition read resolves a lost save, while ordinary echo does
   expect(workflows.operations.snapshot()[0]?.outcome).toBe("succeeded");
   expect(sign).toHaveBeenCalledTimes(1);
   expect(publish).toHaveBeenCalledTimes(1);
+});
+
+it.each(["accepted", "rejected", "missing", "revoked", "echoed"])(
+  "address-based deletion preserves local status and recovery (%s)",
+  async (result) => {
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let traffic!: LiveCallbacks;
+    let settle!: (message: string) => void;
+    let reject!: (error: Error) => void;
+    const publish = vi.fn(
+      (_event: RelayEvent) =>
+        new Promise<string>((resolve, fail) => {
+          settle = resolve;
+          reject = fail;
+        }),
+    );
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        writer: {
+          kinds: [5],
+          sign: async (template) => signed(viewer, template),
+          publish,
+        },
+        workflows: { runs: async () => ({ runs: [], next: null }) },
+        subscribe(callbacks) {
+          traffic = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { outboxStorage: { load: () => [], save() {} } },
+    );
+    owners.push(owner);
+    traffic.receive([roster(relay, channelId, [viewer.pubkey], 1)]);
+    const workflows = owner.session.workflows;
+    const operation = workflows.delete({
+      ...reference,
+      yaml: definition.content,
+      revision: definition.id,
+      createdAt: definition.created_at,
+    });
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    try {
+      expect(workflows.operations.snapshot()).toMatchObject([
+        { eventId: operation, action: "delete", outcome: "pending" },
+      ]);
+      if (result === "echoed") {
+        const published = publish.mock.calls[0]?.[0];
+        if (!published) throw new Error("Missing signed publication");
+        const live = vi.fn();
+        owner.session.subscribeLive(live);
+        traffic.receive([published], { phase: "live", channelId });
+        expect(workflows.operations.snapshot()[0]?.delivery).toBe("seen");
+        expect(live).not.toHaveBeenCalled();
+      }
+      if (result === "revoked")
+        traffic.receive([roster(relay, channelId, [], 2)]);
+      if (result === "rejected") reject(new PublishRejected("Delete refused"));
+      else if (result === "missing") reject(new Error("Receipt unavailable"));
+      else settle("");
+      await flush();
+      if (result === "revoked") {
+        expect(workflows.operations.snapshot()).toEqual([]);
+        return;
+      }
+      const outcome = result === "rejected" ? "rejected" : "unknown";
+      expect(workflows.operations.snapshot()).toMatchObject([
+        { eventId: operation, outcome, error: expect.any(String) },
+      ]);
+      if (result !== "rejected") {
+        // The outbox's exact-event read is separate from workflow recovery.
+        await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+        const confirmation = wire.next();
+        expect(confirmation.filters).toEqual([{ ids: [operation], limit: 1 }]);
+        confirmation.respond([]);
+        await flush();
+      }
+      const view = workflows.definitions(channelId);
+      const loading = view.refresh();
+      await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+      const request = wire.next();
+      expect(request.filters).toEqual([
+        { kinds: [30620], "#h": [channelId], limit: 100 },
+      ]);
+      request.respond([]);
+      await loading;
+      expect(workflows.operations.snapshot()).toMatchObject([
+        {
+          eventId: operation,
+          outcome:
+            result === "accepted" || result === "echoed"
+              ? "succeeded"
+              : outcome,
+        },
+      ]);
+      expect(publish).toHaveBeenCalledTimes(1);
+      await workflows.operations.dismiss(operation);
+      expect(workflows.operations.snapshot()).toEqual([]);
+    } finally {
+      settle("");
+    }
+  },
+);
+
+it("address-only workflow deletions do not enter the verified channel watch stream", () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let traffic!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      traffic = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  owners.push(owner);
+  traffic.receive([roster(relay, channelId, [viewer.pubkey], 1)]);
+  const received: RelayEvent[] = [];
+  owner.session.subscribeLive(({ events }) => received.push(...events));
+  const message = signed(viewer, {
+    kind: 9,
+    content: "Hello",
+    tags: [["h", channelId]],
+  });
+  const deletion = signed(viewer, {
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", channelId],
+      ["a", `30620:${viewer.pubkey}:${id}`],
+    ],
+  });
+  traffic.receive([message, deletion], { phase: "live", channelId });
+  expect(received.map((event) => event.id)).toEqual([message.id]);
 });
 
 it("transient reconnect cancels reads without purging authorized snapshots", async () => {

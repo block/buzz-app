@@ -16,7 +16,13 @@ import type { MainOperation } from "../companion/operations";
 import { lastEditableMessage } from "../messages/useMessageEdit";
 import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
 import { knownAgentsOf } from "../messages/TypingIndicator";
-import { currentActivity } from "../agents/current-activity";
+import { currentActivity, toolLabel } from "../agents/current-activity";
+import { isSettledWork, requestWork } from "../agents/request-work";
+import {
+  activityTranscript,
+  type ToolItem,
+} from "../agents/activity-transcript";
+import { workStop } from "../agents/work-stop";
 import {
   conversationWorkStops,
   type WorkStopAgents,
@@ -479,7 +485,9 @@ export function createPopoutThread(
       agents,
     );
   }
-  function typing(): CompanionTyping | undefined {
+  function typing(
+    presented: ReadonlySet<string> = new Set(),
+  ): CompanionTyping | undefined {
     const { profiles, entries, known, rows, activity, details } =
       liveActivity();
     const here = entries.filter(
@@ -502,7 +510,12 @@ export function createPopoutThread(
           entry.pubkey !== session.viewer,
       )
       .map((entry) => entry.pubkey);
-    const working = [...details.keys()].sort().slice(0, MAX_WORKING);
+    // As main: an agent whose request row shows its live bubble is not
+    // repeated in the footer.
+    const working = [...details.keys()]
+      .filter((agent) => !presented.has(agent))
+      .sort()
+      .slice(0, MAX_WORKING);
     if (!humans.length && !working.length) return undefined;
     const choices = session.agentChoices.snapshot();
     // A conversation frame names the thread(s) an agent works in, as main's
@@ -575,6 +588,123 @@ export function createPopoutThread(
       }),
     };
   }
+  /** The live work a request row shows under itself, as main's row bubble
+   * does (`requestWork` on that message): each agent working or waiting on
+   * it, its step and status, and the Stop main offers for it. Only rows a
+   * live turn or local request names are considered. */
+  function liveFor(
+    row: ChannelMessage,
+    activity = session.agentActivity.snapshot(),
+    profiles = session.profiles.snapshot(),
+  ): CompanionWorkingAgent[] | undefined {
+    const work = requestWork(activity, channelId, row.id).filter(
+      (entry) =>
+        !isSettledWork(entry) &&
+        (entry.working ||
+          entry.state === "waiting" ||
+          entry.state === "working"),
+    );
+    if (!work.length) return undefined;
+    const choices = session.agentChoices.snapshot();
+    const name = (pubkey: string) =>
+      (
+        session.names?.resolve(pubkey, "", channel()?.members ?? []) ||
+        profiles.get(pubkey)?.name ||
+        choices.identities.find((c) => c.pubkey === pubkey)?.name ||
+        formatPublicKey(pubkey) ||
+        "Agent"
+      ).slice(0, 200);
+    return work.slice(0, MAX_WORKING).map((entry) => {
+      const choice = choices.identities.find((c) => c.pubkey === entry.agent);
+      // A local request's step; else the in-progress tools of its live turns.
+      let status =
+        entry.lifecycle && entry.state !== "ended" && entry.state !== "unknown"
+          ? localWorkLabel({
+              state: entry.state,
+              ...(entry.reason ? { error: entry.reason } : {}),
+              ...(entry.step ? { step: entry.step } : {}),
+            })
+          : "Working";
+      if (!entry.lifecycle) {
+        const turns = activityTranscript(activity.records, {
+          agent: entry.agent,
+          channelId,
+        }).turns.filter((turn) => entry.selected.turnIds.has(turn.turnId));
+        const tools = turns.flatMap((turn) =>
+          turn.items.filter(
+            (item): item is ToolItem =>
+              item.type === "tool" &&
+              !!(item.title || item.kind) &&
+              (item.status === "in_progress" || item.status === "pending"),
+          ),
+        );
+        const first = tools[0];
+        if (first)
+          status =
+            tools.length > 1
+              ? `Running ${tools.length} tools`
+              : toolLabel(first);
+        else if (entry.state === "waiting")
+          status = "Received · waiting to start";
+      }
+      const waiting = entry.state === "waiting";
+      const control = workStop(
+        entry,
+        {
+          channelId,
+          messageId: row.id,
+          threadRootId: row.threadRootId ?? row.id,
+        },
+        session.agentActivity,
+        agents,
+      );
+      const picture = avatarMedia(
+        avatarSource(profiles.get(entry.agent)?.picture ?? choice?.avatar),
+        session.media,
+      );
+      return {
+        id: entry.agent,
+        name: name(entry.agent),
+        picture: picture && bytes(picture) <= 8192 ? picture : null,
+        state: waiting ? "waiting" : "working",
+        step: activityStepLabel(
+          status === "Working" || waiting || status === "Starting"
+            ? undefined
+            : status,
+        ),
+        status: status.slice(0, 1000),
+        ...(profileActivityViewTarget(entry.agent)
+          ? { activity: profileActivityViewTarget(entry.agent) }
+          : {}),
+        stops: control
+          ? [
+              {
+                key: control.key.slice(0, 512),
+                label: `Stop ${name(entry.agent)}`.slice(0, 1000),
+                lifecycle: control.lifecycle,
+                status: status.slice(0, 1000),
+              },
+            ]
+          : [],
+      };
+    });
+  }
+  /** Rows a live turn or local request names as its trigger: the only ones
+   * whose work a bubble can show. */
+  function liveRequestIds(activity = session.agentActivity.snapshot()) {
+    const ids = new Set<string>();
+    for (const work of activity.local ?? [])
+      if (
+        work.channelId === channelId &&
+        (work.state === "working" || work.state === "waiting")
+      )
+        ids.add(work.messageId);
+    if (activity.status === "listening")
+      for (const turn of activity.turns)
+        if (turn.channelId === channelId && turn.state === "working")
+          for (const id of turn.triggeringEventIds ?? []) ids.add(id);
+    return ids;
+  }
   /** Run main's Stop for a control this frame offers now, or none: a key
    * from an earlier projection whose work has ended is refused. Answers as
    * `useWorkStops` reads an interrupt: a lifecycle stop is done; hosted work
@@ -582,13 +712,31 @@ export function createPopoutThread(
   function stopWork(key: string): Promise<StopOutcome> | undefined {
     if (disposed) return undefined;
     const { details, activity } = liveActivity();
+    const answer = (control: { lifecycle: boolean; interrupt(): unknown }) =>
+      Promise.resolve(control.interrupt()).then((running) => ({
+        lifecycle: control.lifecycle,
+        ...(typeof running === "boolean" ? { running } : {}),
+      }));
     for (const agent of details.keys())
       for (const { control } of stopsFor(agent, activity))
-        if (control.key === key)
-          return Promise.resolve(control.interrupt()).then((running) => ({
-            lifecycle: control.lifecycle,
-            ...(typeof running === "boolean" ? { running } : {}),
-          }));
+        if (control.key === key) return answer(control);
+    // A request row's own control, as main's row bubble offers it.
+    const ids = liveRequestIds(activity);
+    for (const row of thread?.snapshot().rows ?? [])
+      if (ids.has(row.id))
+        for (const entry of requestWork(activity, channelId, row.id)) {
+          const control = workStop(
+            entry,
+            {
+              channelId,
+              messageId: row.id,
+              threadRootId: row.threadRootId ?? row.id,
+            },
+            session.agentActivity,
+            agents,
+          );
+          if (control?.key === key) return answer(control);
+        }
     return undefined;
   }
   /** Actions main would offer for a row, by exact contribution instance,
@@ -973,15 +1121,25 @@ export function createPopoutThread(
       observeLinks(shownRows as ChannelMessage[]);
       const c = channel();
       const icon = pluginIcon(c);
+      // Rows whose request has live work show it under themselves, as
+      // main's rows do; the footer then leaves those agents to the rows.
+      const activityNow = session.agentActivity.snapshot();
+      const liveIds = liveRequestIds(activityNow);
+      const presented = new Set<string>();
       const joined =
         !!c && !c.cached && (!c.readOnly || c.viewerRole === "guest");
       const channelWritable = !!c && !c.readOnly && !c.cached;
       const archived = !!c?.archived;
       const project = (row: ChannelMessage) => {
         const labels = linkLabels(row);
+        const live = liveIds.has(row.id)
+          ? liveFor(row, activityNow, profiles)
+          : undefined;
+        for (const agent of live ?? []) presented.add(agent.id);
         const projected = {
           ...projectCompanionRow(session, profiles, row, channelId),
           ...(labels ? { linkLabels: labels } : {}),
+          ...(live ? { live } : {}),
         };
         const delivered =
           !row.delivery || ["accepted", "seen"].includes(row.delivery);
@@ -1050,7 +1208,7 @@ export function createPopoutThread(
         members: members(c),
         ...(icon ? { icon } : {}),
         thread: !!rootId,
-        typing: available() ? typing() : undefined,
+        typing: available() ? typing(presented) : undefined,
       };
     },
     retry() {

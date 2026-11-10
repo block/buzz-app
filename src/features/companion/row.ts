@@ -61,6 +61,9 @@ export type CompanionRow = {
   /** Plugin message actions main would offer for this row, for a labelled
    * handoff to the main window; bound to the contribution instance. */
   actions?: CompanionAction[] | undefined;
+  /** Agents at work on this request, as main's row shows them in its live
+   * bubble under the message (step, status, Stop). */
+  live?: import("../popout/thread").CompanionWorkingAgent[] | undefined;
 };
 export type CompanionAction = {
   /** Contribution key and revision: the exact registered instance. */

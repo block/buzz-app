@@ -489,6 +489,7 @@ export function PopoutWindowView({
                 focusConversation();
               },
               management,
+              stopWork,
               // A conversation drills into one of its threads here, in this
               // window; main re-points the projection and keeps the way back.
               onOpenThread: view.thread

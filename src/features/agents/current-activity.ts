@@ -15,7 +15,7 @@ const verbs: Record<string, string> = {
   think: "Working",
 };
 
-function toolLabel(tool: ToolItem): string {
+export function toolLabel(tool: ToolItem): string {
   if (tool.permission && !tool.permission.outcome)
     return "Waiting for permission";
   if (tool.status === "pending") return "Preparing a tool";

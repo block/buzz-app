@@ -165,7 +165,7 @@ pub(crate) struct WorkStop {
     status: Option<String>,
 }
 impl WorkingAgent {
-    fn valid(&self) -> bool {
+    pub(crate) fn valid(&self) -> bool {
         let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
         hex(&self.id)
             && self.name.len() <= 1024

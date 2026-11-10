@@ -112,6 +112,9 @@ pub(crate) struct DiscussionRow {
     /// Plugin actions main would offer, for a labelled main-window handoff.
     #[serde(default)]
     actions: Vec<HandoffAction>,
+    /// Agents at work on this request, shown under the row (pop-outs).
+    #[serde(default)]
+    live: Vec<crate::popout_window::WorkingAgent>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -235,6 +238,8 @@ impl DiscussionRow {
                 .link_labels
                 .iter()
                 .all(|(url, label)| url.len() <= 8192 && label.len() <= 1000)
+            && self.live.len() <= 8
+            && self.live.iter().all(|w| w.valid())
             && self.actions.len() <= 32
             && self
                 .actions
@@ -818,6 +823,7 @@ mod tests {
                 reply_count: 0,
                 membership: None,
                 actions: vec![],
+                live: vec![],
             }],
         });
         let encoded = serde_json::to_value(&presentation).unwrap();

@@ -1058,32 +1058,33 @@ it("classifies typing as main's channel indicator does: a conversation frame sho
   );
   const thread = createPopoutThread(session, "channel", ROOT, () => {});
   clean.push(conversation.dispose, thread.dispose);
-  expect(thread.snapshot().typing).toMatchObject({
-    humans: [],
-    more: 0,
-    agents: ["Echo"],
-  });
+  // The work names the root as its request: the root row shows it as its
+  // live bubble (as main's row does) and the footer leaves it to the row.
+  expect(thread.snapshot().root?.live?.[0]).toMatchObject({ id: agent });
+  expect(thread.snapshot().typing).toBeUndefined();
   // The conversation frame shows the thread's work too — main's channel
-  // indicator includes threads, and only rows with a live bubble of their
-  // own take it over, which companion rows never have. Named by thread.
-  expect(conversation.snapshot().typing).toMatchObject({
-    humans: [],
-    agents: ["Echo"],
-    working: [{ id: agent, scope: "Thread · Root" }],
-  });
-  expect(thread.snapshot().typing?.working?.[0]?.scope).toBeUndefined();
+  // indicator includes threads — on the same root row.
+  expect(conversation.snapshot().root).toBeUndefined();
+  expect(
+    conversation.snapshot().replies.find((row) => row.id === ROOT)?.live?.[0],
+  ).toMatchObject({ id: agent });
+  // Echo's typing never counts as a human.
+  expect(conversation.snapshot().typing?.humans ?? []).toEqual([]);
 });
 
 it("projects the agents at work as main's response preview shows them, with Stop controls main admits at stop time", async () => {
   const h = fixture();
   const agent = "3".repeat(64);
   const interrupt = vi.fn(async () => {});
+  // A request this window does not show (an older reply beyond the page):
+  // its work belongs to the footer preview, as in main.
+  const REQUEST = "5".repeat(64);
   let local = [
     {
       scope: h.session.scope,
       agent,
       channelId: "channel",
-      messageId: ROOT,
+      messageId: REQUEST,
       threadRootId: ROOT,
       state: "working" as const,
       step: { tool: "Read", target: "src/app.ts" },
@@ -1157,7 +1158,7 @@ it("projects the agents at work as main's response preview shows them, with Stop
   await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
   // A lifecycle stop answers complete, as `useWorkStops` expects.
   await expect(client.stop({ key })).resolves.toEqual({ lifecycle: true });
-  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", ROOT);
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", REQUEST);
   local = [];
   expect(thread.stopWork(key)).toBeUndefined();
   await expect(client.stop({ key })).rejects.toThrow(
@@ -1618,4 +1619,59 @@ it("shows only the sidebar's winner: a first chat icon that describes nothing le
   // Once it is first, the describing plugin shows.
   entries = [github, quiet];
   expect(thread.snapshot().icon).toMatchObject({ icon: "git-merge" });
+});
+
+it("shows a request row's live work under it, as main's row bubble does, and keeps that agent out of the footer", async () => {
+  const h = fixture();
+  const agent = "3".repeat(64);
+  const interrupt = vi.fn(async () => {});
+  let local = [
+    {
+      scope: h.session.scope,
+      agent,
+      channelId: "channel",
+      messageId: ROOT,
+      threadRootId: ROOT,
+      state: "working" as const,
+      step: { tool: "Bash" },
+      stoppable: true,
+      startedAt: Date.now(),
+    },
+  ];
+  const session = {
+    ...h.session,
+    typing: { ...h.session.typing, snapshot: () => [] },
+    profiles: {
+      ...h.session.profiles,
+      snapshot: () => new Map([[agent, { name: "Echo", isAgent: true }]]),
+    },
+    agentActivity: {
+      ...h.session.agentActivity,
+      snapshot: () => ({ ...h.session.agentActivity.snapshot(), local }),
+      interrupt,
+    },
+  } as unknown as RelaySession;
+  const thread = createPopoutThread(session, "channel", ROOT, () => {});
+  clean.push(thread.dispose);
+  const view = thread.snapshot();
+  // The root is the request: its live bubble names the agent, step and Stop.
+  expect(view.root?.live).toEqual([
+    expect.objectContaining({
+      id: agent,
+      name: "Echo",
+      state: "working",
+      step: "Running a command",
+      status: "Running a command",
+      stops: [expect.objectContaining({ label: "Stop Echo", lifecycle: true })],
+    }),
+  ]);
+  // The footer no longer repeats the agent the row presents.
+  expect(view.typing).toBeUndefined();
+  // Its Stop is admitted like any other.
+  const key = view.root?.live?.[0]?.stops[0]?.key ?? "";
+  await expect(thread.stopWork(key)).resolves.toEqual({ lifecycle: true });
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", ROOT);
+  local = [];
+  expect(thread.snapshot().root?.live).toBeUndefined();
+  expect(thread.stopWork(key)).toBeUndefined();
 });

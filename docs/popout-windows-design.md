@@ -853,6 +853,16 @@ three documented gaps close before it leaves draft.
   `ConversationActionItems` after Copy link; `SoloInventory` uses the same
   component, so every Solo menu lists the action identically.
 
+- jaw's tryout (hosted agent): main showed "Running cat, head, git… · Stop"
+  in the **request row's live bubble** while its footer indicator for the
+  same agent only knew typing; the pop-out projected only the footer. Fix:
+  rows a live turn or local request names as trigger get `live[≤8]`
+  (`requestWork` on that message → agent, step/status from the local step or
+  the live turns' in-progress tools, Stop via `workStop` with the row as
+  scope); `CompanionRows` renders `CompanionWorking` under that row; the
+  footer excludes agents a row presents, as main's `presented` does;
+  `stopWork(key)` admits row controls too. Native `DiscussionRow.live`.
+
 ### Non-goals (S3)
 
 Members dialog *inside* the pop-out (it stays main's); starting/stopping

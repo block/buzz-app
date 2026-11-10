@@ -23,6 +23,8 @@ import {
   type CompanionManagementActions,
   toMessage,
 } from "./CompanionManagementItems";
+import { CompanionWorking } from "./CompanionWorking";
+import type { StopOutcome } from "../popout/thread";
 
 /** Interactive capabilities a companion may add to its rows; without them the
  * rows show reactions read-only and offer only copy actions. */
@@ -45,6 +47,8 @@ export type CompanionRowCapabilities = {
   management?: CompanionManagementActions | undefined;
   /** Conversation timelines: a row's thread opens in this window. */
   onOpenThread?: ((rootId: string) => void) | undefined;
+  /** Stop an agent's live work on a shown request, admitted in main. */
+  stopWork?: ((key: string) => Promise<StopOutcome>) | undefined;
 };
 
 /** Projected rows in a companion window: the shared message renderer over
@@ -235,6 +239,16 @@ export function CompanionRows({
               }
               startsThreads={layout === "timeline" && !!openThread && writable}
             />
+            {row.live && row.live.length > 0 && capabilities?.stopWork && (
+              // Main's live bubble under a request: its agents' current step,
+              // status and Stop, as the row shows them there.
+              <CompanionWorking
+                working={row.live}
+                layout={layout === "timeline" ? "timeline" : "thread"}
+                stop={capabilities.stopWork}
+                openActivity={openLink}
+              />
+            )}
             {["failed", "unknown"].includes(row.delivery) && (
               <p role="status" className="text-secondary">
                 {row.delivery === "unknown"

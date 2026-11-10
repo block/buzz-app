@@ -534,3 +534,48 @@ it("keeps a hosted Stop pending only for main's retry window, then offers it aga
     vi.useRealTimers();
   }
 });
+
+it("shows a request row's live work under that row with Stop, as main's row bubble does", async () => {
+  const act = vi.fn();
+  const live = [
+    {
+      id: "3".repeat(64),
+      name: "Echo",
+      picture: null,
+      state: "working" as const,
+      step: "Running a command",
+      status: "Running a command",
+      stops: [{ key: "row-stop", label: "Stop Echo", lifecycle: true }],
+    },
+  ];
+  render(
+    <ToastProvider>
+      <PopoutWindowView
+        view={view({
+          root: { ...row("1".repeat(64), "Please run it"), live },
+          replies: [row("2".repeat(64), "A reply")],
+          typing: undefined,
+        })}
+        act={act}
+      />
+    </ToastProvider>,
+  );
+  const request = screen.getByText("Please run it");
+  const bubble = screen.getByRole("img", { name: "Echo" });
+  // The bubble follows its request and precedes the next message.
+  expect(
+    request.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    bubble.compareDocumentPosition(screen.getByText("A reply")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(screen.getAllByText("Running a command").length).toBeGreaterThan(0);
+  // Stop without a connected owner reports its refusal, like the footer's.
+  fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
+  expect(
+    await screen.findByText(
+      "Couldn’t stop Echo. This window is no longer connected.",
+    ),
+  ).toBeTruthy();
+});

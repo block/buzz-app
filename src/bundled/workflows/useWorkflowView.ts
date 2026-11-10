@@ -40,10 +40,12 @@ export function useWorkflowView<T>(
     snapshot ?? {},
     () => void store.refresh(),
   );
-  let shown = snapshot;
-  if (snapshot && quiet && snapshot.status === "error") {
-    const { error: _error, ...rest } = snapshot;
-    shown = { ...rest, status: "loading" };
-  }
+  const shown =
+    snapshot && quiet && snapshot.status === "error"
+      ? (({ error: _failure, ...rest }) => ({
+          ...rest,
+          status: "loading" as const,
+        }))(snapshot)
+      : snapshot;
   return { snapshot: shown, refresh: store.refresh };
 }

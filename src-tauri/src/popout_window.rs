@@ -314,11 +314,7 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
         .appearance
         .as_ref()
         .map(crate::huddle_window::Appearance::background)
-        .unwrap_or(if view.dark {
-            tauri::window::Color(0x2e, 0x2e, 0x2e, 0xff)
-        } else {
-            tauri::window::Color(0xf1, 0xf1, 0xf2, 0xff)
-        });
+        .unwrap_or_else(|| crate::huddle_window::Appearance::mode(view.dark).background());
     let app = window.app_handle();
     let label = {
         let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;

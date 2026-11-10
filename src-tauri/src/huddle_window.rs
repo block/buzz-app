@@ -274,8 +274,13 @@ pub(crate) struct Appearance {
 }
 impl Appearance {
     fn light() -> Self {
+        Self::mode(false)
+    }
+    /// A bare appearance for a view that reports only `dark`; the one source
+    /// of the native background colours.
+    pub(crate) fn mode(dark: bool) -> Self {
         Self {
-            color_mode: "light".into(),
+            color_mode: if dark { "dark" } else { "light" }.into(),
             accent: None,
             color_level: None,
             font_scale: None,

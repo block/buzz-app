@@ -50,6 +50,7 @@ composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
+  tabActionEntries = [];
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
   vi.unstubAllGlobals();
@@ -58,7 +59,16 @@ const id = "11111111-1111-4111-8111-111111111111";
 const agent = "a".repeat(64);
 const empty: readonly never[] = [];
 const contribution = { snapshot: () => empty, subscribe: () => () => {} };
-const extensions = { tools: contribution, inline: contribution };
+// Contributed conversation actions a test may register; one stable array per
+// test, as an external-store snapshot must be.
+let tabActionEntries: readonly import("../../plugins/contributions").Contribution<
+  import("../../features/conversation/contracts").TabAction
+>[] = [];
+const extensions = {
+  tools: contribution,
+  inline: contribution,
+  tabActions: { snapshot: () => tabActionEntries, subscribe: () => () => {} },
+};
 function fixture({
   placed = true,
   type = "solo",
@@ -1314,6 +1324,39 @@ it("offers the header's chat actions from the sidebar row, plus inline Rename", 
     "Delete chat",
   ]);
   expect(await items("Actions for Planning")).toEqual(["Rename", ...header]);
+});
+
+it("offers a contributed conversation action in the header's Chat actions, right after Copy link", async () => {
+  const run = vi.fn();
+  tabActionEntries = [
+    {
+      id: "open-window",
+      key: "popout/open-window",
+      pluginId: "popout",
+      revision: "1",
+      title: "Open in new window",
+      icon: () => <svg data-testid="window-icon" aria-hidden="true" />,
+      matches: () => true,
+      run: (target) => run(target.channelId),
+    },
+  ];
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
+  const menu = await screen.findByRole("menu", { name: "Chat actions" });
+  const item = await within(menu).findByRole("menuitem", {
+    name: "Open in new window",
+  });
+  expect(item).toContainElement(within(menu).getByTestId("window-icon"));
+  const names = within(menu)
+    .getAllByRole("menuitem")
+    .map((entry) => entry.textContent);
+  expect(names.indexOf("Open in new window")).toBe(
+    names.indexOf("Copy link") + 1,
+  );
+  await user.click(item);
+  expect(run).toHaveBeenCalledExactlyOnceWith(id);
 });
 
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {

@@ -48,9 +48,9 @@ import {
   MenuTrigger,
   MenuPopup,
   MenuItem,
-  MenuIcon,
 } from "../../shared/design-system/ui/Menu";
 import creationStyles from "./SoloInventory.module.css";
+import { ConversationActionItems } from "./ConversationActionItems";
 import {
   DotsThreeIcon,
   ChatCircleIcon,
@@ -296,25 +296,13 @@ export function SoloInventory({
   // row's menu puts them, so the same action is found in the same place.
   const renderConversationActions = useCallback(
     (channelId: string) => (
-      <>
-        {conversationActions
-          .filter((action) => offered(channelId, action))
-          .map((action) => (
-            <MenuItem
-              key={`action:${action.key}`}
-              onClick={() => action.run({ channelId }, session)}
-            >
-              {action.icon && (
-                <MenuIcon>
-                  <action.icon />
-                </MenuIcon>
-              )}
-              {action.title}
-            </MenuItem>
-          ))}
-      </>
+      <ConversationActionItems
+        tabActions={tabActions}
+        session={session}
+        channelId={channelId}
+      />
     ),
-    [session, conversationActions, offered],
+    [session, tabActions],
   );
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.

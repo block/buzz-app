@@ -38,6 +38,7 @@ import {
   ChannelMembersDialog,
 } from "./ChannelMembersDialog";
 import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
+import { ConversationActionItems } from "../../features/channel-navigation/ConversationActionItems";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useSoloOwner } from "./ChatSharedMark";
 
@@ -46,6 +47,8 @@ const noSubscription = () => () => {};
 type SoloToolbarProps = {
   session: RelaySession;
   chatMenus?: Conversation["chatMenus"] | undefined;
+  /** Conversation actions (Open in new window), after Copy link as in the sidebar. */
+  tabActions?: Conversation["tabActions"] | undefined;
   scope: string;
   channel: ChannelSummary;
   navigator?: Navigation | undefined;
@@ -93,6 +96,7 @@ export function SoloHeading(props: SoloToolbarProps) {
 export function SoloToolbar({
   session,
   chatMenus,
+  tabActions,
   scope,
   channel,
   navigator,
@@ -202,6 +206,15 @@ export function SoloToolbar({
                 onLifecycle(action, actionsTrigger.current ?? undefined)
               }
               onReadResult={setReadError}
+              conversationActions={
+                tabActions && (
+                  <ConversationActionItems
+                    tabActions={tabActions}
+                    session={session}
+                    channelId={channel.id}
+                  />
+                )
+              }
             >
               {menus
                 ?.slice()

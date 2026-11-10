@@ -846,6 +846,12 @@ three documented gaps close before it leaves draft.
   only the first contribution counts, watches reconcile on every projection,
   own-property lookup; merged tone purple as in the sidebar.
 
+- jaw: the Solo conversation header's `⋯` (Chat actions) lacked "Open in new
+  window" (the channel header's menu already shared the sidebar's builder).
+  `SoloHeading` takes `tabActions` and renders the shared
+  `ConversationActionItems` after Copy link; `SoloInventory` uses the same
+  component, so every Solo menu lists the action identically.
+
 ### Non-goals (S3)
 
 Members dialog *inside* the pop-out (it stays main's); starting/stopping

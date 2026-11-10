@@ -4,6 +4,7 @@ import { PencilSimpleIcon } from "../../shared/design-system/icons/index";
 import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 
 const SHOWN_PARTICIPANTS = 3;
 
@@ -22,7 +23,13 @@ export function ReplySummary({
   hideEmptyLabel = false,
   draft = false,
   replied = count > 0,
+  lastReplyAt,
+  now,
 }: {
+  /** Unix seconds of the newest reply, revealed on hover beside the count. */
+  lastReplyAt?: number | undefined;
+  /** Unix seconds the recency is measured from. */
+  now?: number;
   workingParticipants?: readonly string[];
   activity?: ReactNode;
   /** Activity-only triggers already have an accessible thread action label. */
@@ -87,6 +94,16 @@ export function ReplySummary({
           {replied && <span aria-hidden="true">·</span>}
           <PencilSimpleIcon size={14} aria-hidden="true" />
           {replied ? "Draft" : "Draft reply"}
+        </span>
+      )}
+      {lastReplyAt !== undefined && count > 0 && (
+        <span
+          className={styles.threadRecency}
+          data-thread-recency=""
+          aria-hidden="true"
+        >
+          <span>·</span>
+          <span>last reply {relativeTimestamp(lastReplyAt, now)}</span>
         </span>
       )}
     </>

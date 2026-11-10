@@ -194,6 +194,9 @@ export type ChannelMessage = Readonly<{
    * before the relay's summary arrives), followed by the other pubkeys the relay
    * reports as thread participants (may be empty even with replies). */
   participants: readonly string[];
+  /** Unix seconds of the thread's newest reply: the relay summary's
+   * `last_reply_at`, or a newer own reply send it has not counted yet. */
+  lastReplyAt?: number | undefined;
 }>;
 export type ListStatus = "unavailable" | "idle" | "loading" | "ready" | "error";
 export type ChannelList = Readonly<{

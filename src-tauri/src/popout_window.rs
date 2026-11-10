@@ -157,6 +157,8 @@ pub(crate) struct WorkStop {
     key: String,
     label: String,
     #[serde(default)]
+    lifecycle: bool,
+    #[serde(default)]
     status: Option<String>,
 }
 impl WorkingAgent {

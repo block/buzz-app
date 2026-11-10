@@ -121,10 +121,14 @@ export type CompanionWorkingAgent = {
   scope?: string | undefined;
   /** The agent's activity view, opened in main. */
   activity?: string | undefined;
-  /** Stoppable requests; `key` is admitted by main at stop time. */
-  stops: { key: string; label: string }[];
+  /** Stoppable requests; `key` is admitted by main at stop time. A
+   * lifecycle stop completes on its own; hosted work ends through evidence. */
+  stops: { key: string; label: string; lifecycle: boolean; status?: string }[];
 };
 const MAX_WORKING = 8;
+/** What a Stop answered: a lifecycle stop is complete; hosted work says
+ * whether anything was running and ends through live evidence. */
+export type StopOutcome = { lifecycle: boolean; running?: boolean };
 
 /** What a frame reads: one thread (`session.thread`) or a conversation's
  * top-level timeline (`session.channels.window`). Loading, access and delivery
@@ -437,8 +441,10 @@ export function createPopoutThread(
       entries,
       profiles,
     );
-    // As main's indicator: a conversation frame hands work at a shown root
-    // with replies to that thread, and an agent live activity identifies is
+    // As main's channel indicator (`includeThreads`): a conversation frame
+    // shows work in its threads too, named by thread. Main subtracts agents
+    // whose row shows a live bubble; companion rows never do, so every
+    // working agent is in the preview. An agent live activity identifies is
     // never a typing human, whatever its profile says so far.
     const rows = thread?.snapshot().rows ?? [];
     const activity = session.agentActivity.snapshot();
@@ -448,12 +454,7 @@ export function createPopoutThread(
       known,
       channelId,
       rootId,
-      false,
-      rootId
-        ? undefined
-        : new Set(
-            rows.filter((row) => row.replyCount > 0).map((row) => row.id),
-          ),
+      !rootId,
     );
     return { profiles, entries, known, rows, activity, details };
   }
@@ -545,6 +546,7 @@ export function createPopoutThread(
           .slice(0, 8)
           .map(({ control, work, threadRootId: root }) => ({
             key: control.key.slice(0, 512),
+            lifecycle: control.lifecycle,
             label: `Stop ${name(agent)}${
               root && !rootId ? ` in ${scopeLabel([root])}` : ""
             }`.slice(0, 1000),
@@ -567,13 +569,19 @@ export function createPopoutThread(
     };
   }
   /** Run main's Stop for a control this frame offers now, or none: a key
-   * from an earlier projection whose work has ended is refused. */
-  function stopWork(key: string) {
+   * from an earlier projection whose work has ended is refused. Answers as
+   * `useWorkStops` reads an interrupt: a lifecycle stop is done; hosted work
+   * reports whether anything was running, and its end arrives as evidence. */
+  function stopWork(key: string): Promise<StopOutcome> | undefined {
     if (disposed) return undefined;
     const { details, activity } = liveActivity();
     for (const agent of details.keys())
       for (const { control } of stopsFor(agent, activity))
-        if (control.key === key) return Promise.resolve(control.interrupt());
+        if (control.key === key)
+          return Promise.resolve(control.interrupt()).then((running) => ({
+            lifecycle: control.lifecycle,
+            ...(typeof running === "boolean" ? { running } : {}),
+          }));
     return undefined;
   }
   /** Actions main would offer for a row, by exact contribution instance,

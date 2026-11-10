@@ -57,7 +57,9 @@ export function createHuddleComposerOwner(
     /** Hand a still-registered, still-matching action to the main window. */
     handoff(messageId: string, key: string, revision: string): boolean;
     /** Stop an agent's work this window shows as live; none once it ended. */
-    stopWork?(key: string): Promise<unknown> | undefined;
+    stopWork?(
+      key: string,
+    ): Promise<import("../popout/thread").StopOutcome> | undefined;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -546,8 +548,7 @@ export function createHuddleComposerOwner(
           throw new Error("This work can’t be stopped from here.");
         const run = shown.stopWork(key);
         if (!run) throw new Error("This work has already finished.");
-        await run;
-        return;
+        return await run;
       }
       case "acknowledgeOperations": {
         const ids = request.args.ids;

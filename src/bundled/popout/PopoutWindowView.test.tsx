@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { CompanionWorking } from "../../features/companion/CompanionWorking";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import type { PopoutView } from "../../features/popout/window";
 import { PopoutWindowView } from "./PopoutWindowView";
@@ -384,7 +392,7 @@ it("shows the agents at work as main's response preview does, with Stop, and nam
       step: "Reading src/app.ts",
       status: "Reading src/app.ts",
       activity: `buzz://profile/${"3".repeat(64)}/activity`,
-      stops: [{ key: "k1", label: "Stop Echo" }],
+      stops: [{ key: "k1", label: "Stop Echo", lifecycle: true }],
     },
     {
       id: "4".repeat(64),
@@ -397,18 +405,20 @@ it("shows the agents at work as main's response preview does, with Stop, and nam
     },
   ];
   render(
-    <PopoutWindowView
-      view={view({
-        thread: false,
-        typing: {
-          humans: ["Ada"],
-          more: 0,
-          agents: ["Echo", "Foxtrot"],
-          working,
-        },
-      })}
-      act={act}
-    />,
+    <ToastProvider>
+      <PopoutWindowView
+        view={view({
+          thread: false,
+          typing: {
+            humans: ["Ada"],
+            more: 0,
+            agents: ["Echo", "Foxtrot"],
+            working,
+          },
+        })}
+        act={act}
+      />
+    </ToastProvider>,
   );
   // The preview groups every working agent; the status line keeps only the
   // humans visibly and the whole sentence for assistive technology.
@@ -425,9 +435,61 @@ it("shows the agents at work as main's response preview does, with Stop, and nam
     "openLink",
     `buzz://profile/${"3".repeat(64)}/activity`,
   );
+  // Stop is main's own state owner (`useWorkStops`): a refusal ends the
+  // attempt and is reported as a notice.
   fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
   expect(
-    await screen.findByText("This window is no longer connected."),
+    await screen.findByText(
+      "Couldn’t stop Echo. This window is no longer connected.",
+    ),
   ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
+    "Stop",
+  );
   expect(screen.queryByRole("button", { name: /Stop Foxtrot/ })).toBeNull();
+});
+
+it("keeps a hosted Stop pending only for main's retry window, then offers it again", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const stop = vi.fn(async () => ({ lifecycle: false, running: true }));
+    const working = [
+      {
+        id: "3".repeat(64),
+        name: "Echo",
+        picture: null,
+        state: "working" as const,
+        step: "",
+        status: "Working",
+        stops: [{ key: "hosted", label: "Stop Echo", lifecycle: false }],
+      },
+    ];
+    render(
+      <ToastProvider>
+        <CompanionWorking
+          working={working}
+          layout="timeline"
+          stop={stop}
+          openActivity={undefined}
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
+    expect(await screen.findByText("Stopping Echo")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
+      "Stopping…",
+    );
+    expect(stop).toHaveBeenCalledExactlyOnceWith("hosted");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_001);
+    });
+    expect(
+      await screen.findByText("Echo hasn’t stopped yet. Try again."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
+      /^Stop$/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -822,7 +822,13 @@ three documented gaps close before it leaves draft.
   key whose work ended. Companion `CompanionWorking` renders
   `AgentResponsePreview` + `ActivityStepPreview` + one `AgentActivityRow` per
   agent with Stop; humans keep the status line, the full sentence stays for
-  assistive technology.
+  assistive technology. `fc2f479` → two P2: conversation frames excluded
+  thread work (main's channel indicator includes it; only rows with their
+  own live bubble take it over, which companion rows never have), and a
+  hosted Stop could pend forever. Fixed: `includeThreads` for conversation
+  frames, no root subtraction; the bridge answers `{lifecycle, running}` and
+  the companion drives main's own `useWorkStops` (toasts, 30 s retry window,
+  "nothing running"), controls carrying `lifecycle`.
 
 ### Non-goals (S3)
 

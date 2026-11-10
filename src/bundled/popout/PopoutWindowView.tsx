@@ -228,6 +228,13 @@ export function PopoutWindowView({
       ),
     );
   }, []);
+  const stopWork = useCallback(
+    (key: string) =>
+      client
+        ? client.stop({ key })
+        : Promise.reject(new Error("This window is no longer connected.")),
+    [client],
+  );
   const management = useMemo(() => {
     if (!client || !reactions) return undefined;
     const session = reactions.session;
@@ -488,13 +495,7 @@ export function PopoutWindowView({
               working={working}
               layout={view.thread ? "thread" : "timeline"}
               previousAuthor={rows.at(-1)?.authorId}
-              stop={(key) =>
-                client
-                  ? client.stop({ key })
-                  : Promise.reject(
-                      new Error("This window is no longer connected."),
-                    )
-              }
+              stop={stopWork}
               openActivity={(target) => {
                 if (!isBuzzLink(target)) return false;
                 act("openLink", target);

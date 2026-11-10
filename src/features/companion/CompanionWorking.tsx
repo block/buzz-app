@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import type { CompanionWorkingAgent } from "../popout/thread";
+import { useMemo } from "react";
+import type { CompanionWorkingAgent, StopOutcome } from "../popout/thread";
+import { useWorkStops } from "../agents/use-work-stops";
+import type { WorkStop } from "../agents/work-stop";
 import { AgentResponsePreview } from "../messages/AgentResponsePreview";
 import { ActivityStepPreview } from "../messages/ActivityStepPreview";
 import { AgentActivityRow } from "../agents/AgentActivityRow";
@@ -11,9 +13,9 @@ import styles from "./CompanionWorking.module.css";
  * response preview shows them: one incoming-message placeholder for the
  * first agent (every working agent in its avatar group), the current step,
  * and a row per agent with the Stop controls main would offer. Stopping is
- * admitted in main (`stop`), which refuses work that has already ended; the
- * control shows "Stopping…" until the next projection drops it or the
- * request fails. Activity opens in the main window. */
+ * admitted in main (`stop`), which refuses work that has already ended, and
+ * tracked here by main's own `useWorkStops`: toasts, the bounded wait for
+ * hosted work to end, and retry. Activity opens in the main window. */
 export function CompanionWorking({
   working,
   layout,
@@ -25,47 +27,30 @@ export function CompanionWorking({
   layout: "timeline" | "thread";
   /** The author of the last shown row: the preview stacks under its own. */
   previousAuthor?: string | undefined;
-  stop(key: string): Promise<unknown>;
+  /** Main's Stop for a control, answering as its interrupt does. */
+  stop(key: string): Promise<StopOutcome>;
   openActivity?: ((target: string) => boolean) | undefined;
 }) {
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
-  const [failed, setFailed] = useState<string>();
-  const mounted = useRef(true);
-  useEffect(
-    () => () => {
-      mounted.current = false;
-    },
-    [],
+  // Main's own Stop state owner: pending until a lifecycle stop answers or
+  // hosted work reports nothing running; otherwise a bounded wait for its
+  // end, then "hasn't stopped yet". Controls are keyed as main keys them.
+  const controls = useMemo<WorkStop[]>(
+    () =>
+      working.flatMap((agent) =>
+        agent.stops.map((control) => ({
+          key: control.key,
+          lifecycle: control.lifecycle,
+          // `useWorkStops` reads `false` as "nothing was running"; a
+          // lifecycle stop and an unknown answer both resolve as done.
+          interrupt: (): Promise<boolean> =>
+            stop(control.key).then((outcome) => outcome.running !== false),
+        })),
+      ),
+    [working, stop],
   );
-  // A control that left the projection is no longer pending here.
-  const live = working.flatMap((agent) => agent.stops.map((s) => s.key));
-  const liveKey = live.join("\n");
-  useEffect(() => {
-    const keys = new Set(liveKey.split("\n"));
-    setPending((prior) => {
-      const next = new Set([...prior].filter((key) => keys.has(key)));
-      return next.size === prior.size ? prior : next;
-    });
-  }, [liveKey]);
+  const { pending, stop: request } = useWorkStops(controls);
   const first = working[0];
   if (!first) return null;
-  const request = (key: string, name: string) => {
-    setFailed(undefined);
-    setPending((prior) => new Set(prior).add(key));
-    void stop(key).catch((cause: unknown) => {
-      if (!mounted.current) return;
-      setPending((prior) => {
-        const next = new Set(prior);
-        next.delete(key);
-        return next;
-      });
-      setFailed(
-        cause instanceof Error && cause.message
-          ? cause.message
-          : `Couldn’t stop ${name}.`,
-      );
-    });
-  };
   return (
     <div className={styles.working} data-conversation-activity="">
       <AgentResponsePreview
@@ -95,32 +80,32 @@ export function CompanionWorking({
                     : undefined
                 }
               />
-              {agent.stops.map((control) => (
-                <span key={control.key} className={styles.stop}>
-                  <Button
-                    size="sm"
-                    variant="plain"
-                    aria-label={control.label}
-                    loading={pending.has(control.key)}
-                    onClick={() => request(control.key, agent.name)}
-                  >
-                    <OctagonIcon
-                      className={styles.stopIcon}
-                      aria-hidden="true"
-                    />
-                    {pending.has(control.key) ? "Stopping…" : "Stop"}
-                  </Button>
-                </span>
-              ))}
+              {agent.stops.map((control) => {
+                const live = controls.find((c) => c.key === control.key);
+                return (
+                  <span key={control.key} className={styles.stop}>
+                    <Button
+                      size="sm"
+                      variant="plain"
+                      aria-label={control.label}
+                      loading={pending.has(control.key)}
+                      onClick={() => {
+                        if (live) void request(live, agent.name);
+                      }}
+                    >
+                      <OctagonIcon
+                        className={styles.stopIcon}
+                        aria-hidden="true"
+                      />
+                      {pending.has(control.key) ? "Stopping…" : "Stop"}
+                    </Button>
+                  </span>
+                );
+              })}
             </div>
           ))}
         </div>
       </AgentResponsePreview>
-      {failed && (
-        <p role="alert" className="text-caption">
-          {failed}
-        </p>
-      )}
     </div>
   );
 }

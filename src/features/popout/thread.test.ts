@@ -1001,7 +1001,7 @@ it("a conversation frame's owner admits sends and message actions against its sh
   );
 });
 
-it("classifies typing as main's indicator does: thread work at a shown root is the thread's, and an agent live activity identifies is never a human typer", () => {
+it("classifies typing as main's channel indicator does: a conversation frame shows work in its threads too, named by thread, and an agent live activity identifies is never a human typer", () => {
   const h = fixture();
   const agent = "3".repeat(64);
   const root = {
@@ -1063,9 +1063,15 @@ it("classifies typing as main's indicator does: thread work at a shown root is t
     more: 0,
     agents: ["Echo"],
   });
-  // The conversation frame shows that root with replies: the work belongs to
-  // its thread, not the channel's status line.
-  expect(conversation.snapshot().typing).toBeUndefined();
+  // The conversation frame shows the thread's work too — main's channel
+  // indicator includes threads, and only rows with a live bubble of their
+  // own take it over, which companion rows never have. Named by thread.
+  expect(conversation.snapshot().typing).toMatchObject({
+    humans: [],
+    agents: ["Echo"],
+    working: [{ id: agent, scope: "Thread · Root" }],
+  });
+  expect(thread.snapshot().typing?.working?.[0]?.scope).toBeUndefined();
 });
 
 it("projects the agents at work as main's response preview shows them, with Stop controls main admits at stop time", async () => {
@@ -1127,6 +1133,7 @@ it("projects the agents at work as main's response preview shows them, with Stop
     {
       key: expect.any(String),
       label: "Stop Echo",
+      lifecycle: true,
       status: expect.stringMatching(/src\/app\.ts/),
     },
   ]);
@@ -1148,7 +1155,8 @@ it("projects the agents at work as main's response preview shows them, with Stop
   const client = createHuddleComposerClient(owner.token);
   clean.push(client.dispose);
   await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
-  await client.stop({ key });
+  // A lifecycle stop answers complete, as `useWorkStops` expects.
+  await expect(client.stop({ key })).resolves.toEqual({ lifecycle: true });
   expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", ROOT);
   local = [];
   expect(thread.stopWork(key)).toBeUndefined();

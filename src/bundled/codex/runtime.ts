@@ -553,8 +553,8 @@ export class CodexRuntime {
     }
   >();
   private disposed = false;
-  /** The shared server started before Codex's sign-in changed. */
-  private stale = false;
+  /** Servers started before Codex's sign-in changed. */
+  private readonly stale = new Set<Server>();
   private opening = new Map<
     string,
     {
@@ -1459,19 +1459,39 @@ export class CodexRuntime {
     this.stopping.clear();
     this.close();
   }
-  /** Codex's sign-in changed, and the shared server holds the old one: it
-   * stops once no turn is running, and the next turn starts a new one. */
+  /** Codex's sign-in changed, and the running servers hold the old one: the
+   * shared server stops once no turn is running, a protected agent's once
+   * that agent has none, and the next turn starts a new one. */
   restart() {
-    this.stale = true;
+    if (this.server) this.stale.add(this.server);
+    for (const server of this.protectedServers.values()) this.stale.add(server);
     this.renew();
   }
+  private idle(agent: AgentKey) {
+    const entry = this.entries.get(agent);
+    return !entry || (!entry.lanes.size && !entry.onces.size);
+  }
   private renew() {
-    if (!this.stale) return;
-    for (const entry of this.entries.values())
-      if (entry.lanes.size || entry.onces.size) return;
-    this.stale = false;
-    void this.server?.rpc.close();
-    this.server = undefined;
+    if (!this.stale.size) return;
+    for (const [agent, server] of this.protectedServers)
+      if (this.stale.has(server) && this.idle(agent)) {
+        this.stale.delete(server);
+        void this.shutdown(agent, server).catch(() => undefined);
+      }
+    const shared = this.server;
+    if (
+      shared &&
+      this.stale.has(shared) &&
+      [...this.entries.keys()].every((agent) => this.idle(agent))
+    ) {
+      this.stale.delete(shared);
+      void shared.rpc.close();
+      this.server = undefined;
+    }
+    // A server that closed on its own is not replaced again.
+    const live = new Set([this.server, ...this.protectedServers.values()]);
+    for (const server of this.stale)
+      if (!live.has(server)) this.stale.delete(server);
   }
   /** Starts the shared server ahead of the first mention. */
   warm() {

@@ -608,6 +608,46 @@ it("keeps a key and says why when removing it fails", async () => {
   expect(screen.queryByLabelText("API key")).toBeNull();
 });
 
+it("does not save a replacement key while removing the saved one", async () => {
+  const pi = fakePi();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const request = vi.fn(
+    async (
+      method: string,
+      params: Record<string, string> = {},
+    ): Promise<unknown> => {
+      if (method === "logout") await held;
+      return pi.calls(method, params);
+    },
+  );
+  const { SettingsTab } = createTabs({
+    setup: new PiSetup({
+      request: request as unknown as typeof pi.request,
+    }),
+    runtime: fakeRuntime(),
+  });
+  render(<SettingsTab agent={AGENT} save={vi.fn()} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Change" }));
+  const input = await screen.findByLabelText("API key");
+  await user.type(input, "sk-new");
+  await user.click(screen.getByRole("button", { name: "Remove key" }));
+  // Enter in the key field must not save while the removal is pending.
+  await waitFor(() => expect(input).toBeDisabled());
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(screen.getByRole("button", { name: "Save to Pi" })).toBeDisabled();
+  release();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull(),
+  );
+  expect(screen.getByLabelText("API key")).toBeEnabled();
+  expect(request).toHaveBeenCalledWith("logout", { provider: "anthropic" });
+  expect(request).not.toHaveBeenCalledWith("login", expect.anything());
+});
+
 it("settles a transcript request without opening it once Pi's late listing arrives", async () => {
   const runtime = fakeRuntime();
   const { ActivityTab } = createTabs({ setup: new PiSetup(fakePi()), runtime });

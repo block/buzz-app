@@ -2937,6 +2937,18 @@ describe("saved threads and protection state", () => {
   });
 });
 
+it("stops an idle protected worker after a sign-out, so its next turn signs in again", async () => {
+  const f = protectedPreview();
+  try {
+    await f.runtime.preview(f.agent);
+    expect(f.worker.process.end).not.toHaveBeenCalled();
+    f.runtime.restart();
+    await vi.waitFor(() => expect(f.worker.process.end).toHaveBeenCalledOnce());
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it("stops a protected worker that served only a preview once its agent goes", async () => {
   const f = protectedPreview();
   await f.runtime.preview(f.agent);

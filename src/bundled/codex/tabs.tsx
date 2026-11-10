@@ -1182,7 +1182,8 @@ export function createTabs(
             </p>
           )}
         </form>
-        {state.readiness === "ready" && (
+        {/* Signed in, even when the models could not be listed. */}
+        {installing.status?.state === "ready" && error !== SIGN_IN_ERROR && (
           <div className="grid justify-items-start gap-2">
             <Button
               variant="outline"

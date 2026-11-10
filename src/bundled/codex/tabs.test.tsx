@@ -135,7 +135,7 @@ function fixture({
   const processes: { end: ReturnType<typeof vi.fn> }[] = [];
   const items = new Map<string, unknown[]>();
   // Buzz's copy, as its launcher answers: its `login` step runs until it ends.
-  const disk = { signedIn, installed, logoutFailure: "" };
+  const disk = { signedIn, installed, logoutFailure: "", modelListFailure: "" };
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
     const exit = deferred<number | null>();
@@ -255,6 +255,15 @@ function fixture({
               ...(voices ? { v3: voices } : {}),
             },
           };
+        }
+        if (wire.method === "model/list" && disk.modelListFailure) {
+          options?.onStdout?.(
+            `${JSON.stringify({
+              id: wire.id,
+              error: { code: -32603, message: disk.modelListFailure },
+            })}\n`,
+          );
+          return;
         }
         if (wire.method === "model/list")
           result = {
@@ -1113,6 +1122,20 @@ it("stays signed in and shows why when signing out fails", async () => {
   expect(f.provider.snapshot().readiness).toBe("ready");
   expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+});
+
+it("offers sign-out while signed in even when the models can't be listed", async () => {
+  const f = fixture();
+  f.disk.modelListFailure = "model catalog unavailable";
+  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "model catalog unavailable",
+  );
+  expect(f.provider.snapshot().readiness).toBe("attention");
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(f.disk.signedIn).toBe(false);
 });
 
 it("offers no sign-out while Codex is signed out", async () => {

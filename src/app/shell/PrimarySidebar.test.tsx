@@ -25,8 +25,13 @@ import { createSoloRegionFixture } from "../../features/channel-navigation/solo-
 import { PrimarySidebar } from "./PrimarySidebar";
 import type {
   RegisteredSidebarRestriction,
+  SidebarRestriction,
   SidebarScope,
 } from "../../features/channel-navigation/sidebar-scope-service";
+import type {
+  RegisteredSidebarHeader,
+  SidebarHeader,
+} from "../../features/channel-navigation/sidebar-header-service";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SOLO_LABEL } from "../../features/solo/labels";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
@@ -244,6 +249,115 @@ it("shows only Solo under a plugin restriction and restores the saved filter aft
     "true",
   );
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
+});
+function restrictionFixture() {
+  let restrictions: readonly RegisteredSidebarRestriction[] = [];
+  const listeners = new Set<() => void>();
+  const sidebarScope: SidebarScope = {
+    snapshot: () => restrictions,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    restrict: () => () => {},
+  };
+  const publish = (...next: SidebarRestriction[]) => {
+    restrictions = next.map((entry) => ({
+      ...entry,
+      key: `test.plugin/${entry.id}`,
+      pluginId: "test.plugin",
+      revision: "bundled",
+    }));
+    for (const listener of listeners) listener();
+  };
+  return { sidebarScope, publish };
+}
+it("hides the scope tabs under an all restriction, keeps the combined inventory and restores the saved filter after", async () => {
+  const user = userEvent.setup();
+  const { sidebarScope, publish } = restrictionFixture();
+  fixture(true, false, undefined, undefined, 0, undefined, undefined, {
+    sidebarScope,
+  });
+  await user.click(screen.getByRole("tab", { name: "Team" }));
+  act(() => publish({ id: "bare", scope: "all" }));
+  expect(screen.queryByRole("tab")).toBeNull();
+  expect(screen.queryByRole("tabpanel")).toBeNull();
+  // Both inventories and page destinations stay, unlike a Solo restriction.
+  expect(screen.getByRole("region", { name: "Solo" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
+  act(() =>
+    publish({ id: "bare", scope: "all", banner: () => <span>Pinned</span> }),
+  );
+  expect(screen.getByText("Pinned")).toBeVisible();
+  act(() => publish());
+  expect(screen.getByRole("tab", { name: "Team" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+it("lets a Solo restriction win over an all restriction", async () => {
+  const { sidebarScope, publish } = restrictionFixture();
+  fixture(true, false, undefined, undefined, 0, undefined, undefined, {
+    sidebarScope,
+  });
+  act(() =>
+    publish(
+      { id: "bare", scope: "all" },
+      { id: "focus", scope: "solo", banner: () => <span>Focusing</span> },
+    ),
+  );
+  expect(screen.getByText("Focusing")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Inbox" })).toBeNull();
+});
+it("shows a plugin header above the scope tabs and removes it when its registration ends", async () => {
+  const user = userEvent.setup();
+  const onTitle = vi.fn();
+  let headers: readonly RegisteredSidebarHeader[] = [];
+  const listeners = new Set<() => void>();
+  const sidebarHeader: SidebarHeader = {
+    version: 1,
+    snapshot: () => headers,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    register: () => {},
+  };
+  fixture(true, false, undefined, undefined, 0, undefined, undefined, {
+    sidebarHeader,
+  });
+  expect(
+    screen.queryByRole("button", { name: "Example workspace" }),
+  ).toBeNull();
+  act(() => {
+    headers = [
+      {
+        version: 1,
+        id: "header",
+        title: "Example workspace",
+        onTitle,
+        key: "test.plugin/header",
+        pluginId: "test.plugin",
+        revision: "bundled",
+      },
+    ];
+    for (const listener of listeners) listener();
+  });
+  const title = screen.getByRole("button", { name: "Example workspace" });
+  expect(
+    title.compareDocumentPosition(screen.getByRole("tab", { name: "All" })) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  await user.click(title);
+  expect(onTitle).toHaveBeenCalledOnce();
+  act(() => {
+    headers = [];
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.queryByRole("button", { name: "Example workspace" }),
+  ).toBeNull();
+  expect(screen.getByRole("tab", { name: "All" })).toBeVisible();
 });
 it("filters the combined sidebar without navigating or resetting Solo sections", async () => {
   const user = userEvent.setup();

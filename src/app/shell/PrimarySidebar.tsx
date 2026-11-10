@@ -17,6 +17,7 @@ import {
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
+import { SidebarHeader } from "../../features/channel-navigation/SidebarHeader";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
@@ -42,6 +43,7 @@ import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
+import type { SidebarHeader as SidebarHeaderRegistry } from "../../features/channel-navigation/sidebar-header-service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import {
   CommunityRefusalNotice,
@@ -69,7 +71,9 @@ type Props = {
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarSections?: SidebarSections | undefined;
-  /** A plugin restriction shows only Solo; the saved filter returns after. */
+  /** A plugin's title row and rows above the controls. */
+  sidebarHeader?: SidebarHeaderRegistry | undefined;
+  /** A plugin restriction replaces the tabs; the saved filter returns after. */
   sidebarScope?: SidebarScope | undefined;
   sidebarRows?: SidebarRows | undefined;
   target: OpenTarget;
@@ -127,7 +131,7 @@ function ScopedSidebar({
       soloNavigationFor(connection.session)?.subscribeReveal(
         (_id, explicit) =>
           explicit &&
-          // A restriction already shows Solo; keep the saved filter for after.
+          // A restriction fixes the inventory; keep the saved filter for after.
           !sidebarScope?.snapshot().length &&
           setView((current) =>
             current.filter === "team"
@@ -189,7 +193,10 @@ function ScopedSidebar({
     : undefined;
   const restriction = useSyncExternalStore(
     props.sidebarScope?.subscribe ?? noSubscription,
-    () => props.sidebarScope?.snapshot()[0],
+    () => {
+      const all = props.sidebarScope?.snapshot();
+      return all?.find((entry) => entry.scope === "solo") ?? all?.[0];
+    },
   );
   // A deliberate filter change leaves the pane alone; only a new destination reveals its inventory.
   if (attempt !== observedAttempt) setObservedAttempt(attempt);
@@ -207,19 +214,28 @@ function ScopedSidebar({
   useEffect(() => {
     writeView(scope, "navigation-scope", view);
   }, [scope, view]);
-  const filter = restriction ? "solo" : view.filter;
+  const filter = restriction ? restriction.scope : view.filter;
   const setFilter = (filter: Filter) => setView({ filter, location });
   // Without the tabs there is no tab to label the panel.
   const panelId = restriction ? undefined : `sidebar-${filter}`;
   const header = (
     <>
+      {props.sidebarHeader && (
+        <SidebarHeader
+          registry={props.sidebarHeader}
+          navigator={props.navigator}
+          target={props.target}
+        />
+      )}
       <div className={styles.sidebarControls}>
         <div className={styles.sidebarScope}>
           {restriction && props.sidebarScope ? (
-            <RestrictionBanner
-              entry={restriction}
-              registry={props.sidebarScope}
-            />
+            restriction.banner && (
+              <RestrictionBanner
+                entry={restriction}
+                registry={props.sidebarScope}
+              />
+            )
           ) : (
             <Tabs
               label="Navigation scope"
@@ -241,7 +257,7 @@ function ScopedSidebar({
         </div>
         {props.creationAction}
       </div>
-      {props.children && !restriction && (
+      {props.children && restriction?.scope !== "solo" && (
         <div className={styles.destinations}>{props.children}</div>
       )}
     </>
@@ -531,7 +547,7 @@ function RestrictionBanner({
 }) {
   return (
     <OwnedContribution entry={entry} registry={registry} fallback={null}>
-      {({ banner: Banner }) => <Banner />}
+      {({ banner: Banner }) => Banner && <Banner />}
     </OwnedContribution>
   );
 }

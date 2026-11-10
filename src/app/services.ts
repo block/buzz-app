@@ -53,6 +53,7 @@ import { PagesService } from "../features/pages/service";
 import { SoloNavigationService } from "../features/channel-navigation/solo-navigation";
 import { SidebarRowsService } from "../features/channel-navigation/sidebar-rows-service";
 import { SidebarSectionsService } from "../features/channel-navigation/sidebar-sections-service";
+import { SidebarHeaderService } from "../features/channel-navigation/sidebar-header-service";
 import { SidebarScopeService } from "../features/channel-navigation/sidebar-scope-service";
 import { bundledPlugins } from "../bundled";
 import { bundledFederatedIdentity } from "../bundled/builderlab/oauth/first-run";
@@ -105,6 +106,7 @@ export function createServices() {
       navigation.open({ version: 1, kind: "settings", section: "plugins" }),
   });
   createPluginInstallerService(ctx, { core: pluginInstallCore });
+  const sidebarHeader = new SidebarHeaderService(ctx);
   const sidebarScope = new SidebarScopeService(ctx);
   const sidebarRows = new SidebarRowsService(ctx);
   const panels = new PanelsService(ctx);
@@ -304,6 +306,7 @@ export function createServices() {
     adminAccess,
     pages,
     sidebarSections,
+    sidebarHeader,
     pluginInstallRequests,
     sidebarScope,
     sidebarRows,

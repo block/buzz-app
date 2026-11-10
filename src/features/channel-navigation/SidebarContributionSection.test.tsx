@@ -423,3 +423,53 @@ it("preserves the receiver for an external row store", () => {
   });
   expect(screen.getByRole("button", { name: "Later item" })).toBeVisible();
 });
+
+const stableRows = [row];
+
+it("runs a section footer row after its rows and reports a rejected action locally", async () => {
+  const footer = vi.fn().mockRejectedValue(new Error("fixture footer failed"));
+  const entry: RegisteredSidebarSection = {
+    ...makeEntry("good", {
+      snapshot: () => stableRows,
+      subscribe: () => () => {},
+    }),
+    footer: { label: "Add item", onSelect: footer },
+  };
+  const registry: SidebarSections = {
+    version: 1,
+    snapshot: () => [entry],
+    subscribe: () => () => {},
+    register: () => {},
+  };
+  render(
+    <ChannelSidebarDnd
+      writable={false}
+      onMove={() => {}}
+      onReorder={() => {}}
+      overlay={() => null}
+    >
+      <SidebarContributionSection
+        entry={entry}
+        registry={registry}
+        navigator={{ open: vi.fn() } as unknown as Navigation}
+        target={target}
+        open
+        onToggle={() => {}}
+        groupIndex={0}
+        reorderable={false}
+        move={{}}
+      />
+    </ChannelSidebarDnd>,
+  );
+
+  const add = screen.getByRole("button", { name: "Add item" });
+  const rowButton = screen.getByRole("button", { name: /Useful item/ });
+  expect(
+    rowButton.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  await userEvent.setup().click(add);
+  expect(footer).toHaveBeenCalledOnce();
+  expect(
+    await screen.findByText("This sidebar action couldn’t finish."),
+  ).toBeInTheDocument();
+});

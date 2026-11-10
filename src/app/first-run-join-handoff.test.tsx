@@ -569,6 +569,30 @@ it("a join address arriving as navigation shows only to its viewer and never con
   expect(relayBRequests()).toBe(sent);
 });
 
+it("a join restored with the Settings beneath it opens above Settings", async () => {
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  const current = await onRestoredCommunity(user);
+  // As reload restores it: Settings and its join arrive together.
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+      join: { viewer: member.pubkey, visit: "restored-1", community: relayB },
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+  });
+  // The join is the reachable modal; Settings is open but hidden beneath it.
+  const restored = await screen.findByRole("dialog", {
+    name: "Join a community",
+  });
+  expect(within(restored).getByLabelText("Community URL")).toHaveValue(relayB);
+  expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+  expect(
+    screen.getByRole("dialog", { name: "Settings", hidden: true }),
+  ).toBeInTheDocument();
+});
+
 it("Back cannot leave a join while it publishes, as its Close cannot", async () => {
   const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   const current = await onRestoredCommunity(user);

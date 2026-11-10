@@ -234,7 +234,14 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   const joinState = useSyncExternalStore(services.invites.subscribe, () =>
     services.invites.state(joinVisit, client.viewer),
   );
-  const joinShown = !!join && join.viewer === client.viewer;
+  // Over Settings, the join waits for Settings to take focus: Settings opens
+  // only after launch, and a modal hides every surface already open when it
+  // takes the top layer, including a join restored with it.
+  const [settingsFocused, setSettingsFocused] = useState(false);
+  const joinShown =
+    !!join &&
+    join.viewer === client.viewer &&
+    (route.target.kind !== "settings" || settingsFocused);
   // The opening's form as last edited (address, code, profile) survives Back
   // and Forward; an emptied address still shows the dialog.
   const joinForm = joinShown
@@ -273,6 +280,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  // Settings must take focus again each time it opens.
+  if (settingsFocused && (!settings || launching)) setSettingsFocused(false);
   // Someone without a community starts by joining one. Having had one this
   // run keeps the shell; Personal space with memberships is unchanged.
   const [hadCommunity, setHadCommunity] = useState(false);
@@ -871,6 +880,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             else route.leaveSettings();
           }}
           initialFocus={() => {
+            // Settings has hidden the page beneath it; a join may now open.
+            setSettingsFocused(true);
             // A destination that already focused a setting keeps it.
             const active = document.activeElement;
             return active instanceof HTMLElement &&

@@ -116,7 +116,10 @@ import type { MemberRole } from "../../features/channel-members/administration-p
 import { useMemberSearch } from "./useMemberSearch";
 import { useMemberOwners } from "./useMemberOwners";
 import { useSoloShare } from "./useSoloShare";
-import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
+import {
+  useReauthorizedRetry,
+  useRecoverableRead,
+} from "../../features/relay/RecoveryNotice";
 import { ChannelGeneralAccess } from "./ChannelGeneralAccess";
 import { avatarMedia } from "../../shared/avatar-source";
 import { channelIcon, channelText } from "../../features/channels/channel-icon";
@@ -842,7 +845,13 @@ export function ChannelMembersDialog({
   const [copyStatus, setCopyStatus] = useState("");
   const copyFailure = copyStatus && copyStatus !== "Link copied";
   const [rosterReadError, setRosterReadError] = useState("");
+  // The raw failure of a roster or names read, beside its message: recovery
+  // owns a connectivity failure, so the dialog shows its message and Retry
+  // only for the failures recovery does not retry.
+  const [rosterFailure, setRosterFailure] = useState<unknown>();
   const [nameError, setNameError] = useState("");
+  const [nameFailure, setNameFailure] = useState<unknown>();
+  const [nameAttempt, setNameAttempt] = useState(0);
   const [rosterReading, setRosterReading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [namesSettledFor, setNamesSettledFor] = useState<{
@@ -1000,6 +1009,7 @@ export function ChannelMembersDialog({
     let current = true;
     setRosterReading(true);
     setRosterReadError("");
+    setRosterFailure(undefined);
     const failed = reauthorized.begin();
     void session
       .read([{ kinds: [39002], "#d": [channelId], limit: 1 }], { fresh: true })
@@ -1022,6 +1032,7 @@ export function ChannelMembersDialog({
         (error) => {
           if (!current) return;
           setRosterReadError("The member list could not load. Try again.");
+          setRosterFailure(error);
           failed(error);
         },
       )
@@ -1087,6 +1098,42 @@ export function ChannelMembersDialog({
       setRevealedFor(session);
   }, [session, channelId, rosterBusy, namesBusy, largeRoster, rolesSettled]);
   const initialLoading = revealedFor !== session;
+  // Opening the dialog starts these reads by itself. Each failure that is a
+  // connectivity failure joins session recovery, which retries it and fills
+  // the dialog in; the recovery notice is the one report, so the dialog
+  // hides that failure's message and the shared Retry.
+  const rosterRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: rosterReading
+        ? "loading"
+        : rosterFailure === undefined
+          ? "ready"
+          : "error",
+      error: rosterFailure,
+    },
+    () => setRefresh((value) => value + 1),
+  );
+  const namesRead = useRecoverableRead(
+    session.recovery,
+    {
+      status:
+        nameFailure !== undefined ? "error" : namesBusy ? "loading" : "ready",
+      error: nameFailure,
+    },
+    () => setNameAttempt((value) => value + 1),
+  );
+  const adminRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: administration.status,
+      error: administration.error,
+      transient: administration.transient,
+    },
+    () => void session.memberAdministration.refresh(channelId).catch(() => {}),
+  );
+  const rosterShown = rosterError && !(rosterRead.quiet && !soloSharing);
+  const namesShown = nameError && !namesRead.quiet;
   const known = useMemo(
     () =>
       new Map(agentChoices.identities.map((agent) => [agent.pubkey, agent])),
@@ -1411,17 +1458,19 @@ export function ChannelMembersDialog({
   useEffect(() => {
     let current = true;
     setNameError("");
+    setNameFailure(undefined);
     setNamesSettledFor(undefined);
     void session.profiles
       .ensure(
         profileKey ? profileKey.split(":") : [],
         largeRoster ? "background" : "foreground",
       )
-      .catch(() => {
-        if (current)
-          setNameError(
-            "Some names could not load. Public keys still identify members. Try again.",
-          );
+      .catch((error: unknown) => {
+        if (!current) return;
+        setNameFailure(error);
+        setNameError(
+          "Some names could not load. Public keys still identify members. Try again.",
+        );
       })
       .finally(() => {
         if (current) setNamesSettledFor({ session, memberKey });
@@ -1429,7 +1478,15 @@ export function ChannelMembersDialog({
     return () => {
       current = false;
     };
-  }, [session, memberKey, profileKey, refresh, largeRoster, profileGeneration]);
+  }, [
+    session,
+    memberKey,
+    profileKey,
+    refresh,
+    nameAttempt,
+    largeRoster,
+    profileGeneration,
+  ]);
   const relayKeys = new Set(searchPeople.map((person) => person.pubkey));
   const candidates = new Map(
     searchPeople.map((person) => [person.pubkey, person]),
@@ -1589,6 +1646,10 @@ export function ChannelMembersDialog({
     .sort()
     .join(":");
   const ownership = useMemberOwners(session, agentKeys, refresh);
+  const ownersRead = useRecoverableRead(session.recovery, ownership.read, () =>
+    setRefresh((value) => value + 1),
+  );
+  const ownersFailed = ownership.failed && !ownersRead.quiet;
   let changePermitted = false;
   if (
     selection &&
@@ -1632,7 +1693,7 @@ export function ChannelMembersDialog({
   const administrationError =
     administration.status !== "loading" &&
     administration.operation?.status !== "pending" &&
-    (administration.error ||
+    ((administration.error && !adminRead.quiet) ||
       (changeError?.session === session &&
         changeError.channelId === channelId &&
         changeError.message));
@@ -2444,9 +2505,9 @@ export function ChannelMembersDialog({
         <div className={styles.layout}>
           <div className={styles.searchControls}>{searchField}</div>
           {(administrationError ||
-            rosterError ||
-            nameError ||
-            ownership.failed ||
+            rosterShown ||
+            namesShown ||
+            ownersFailed ||
             agentChoices.error ||
             archives.status === "error" ||
             search.error) && (
@@ -2545,7 +2606,7 @@ export function ChannelMembersDialog({
                             : "Join this channel to add people and agents."}
                 </p>
               )}
-            {rosterError && (
+            {rosterShown && (
               <p
                 role="alert"
                 className="px-control-inset text-body-sm text-danger"
@@ -2554,7 +2615,7 @@ export function ChannelMembersDialog({
               </p>
             )}
             {initialLoading ? (
-              !rosterError && (
+              !rosterShown && (
                 <div
                   className={styles.loadingMembers}
                   role="status"
@@ -2855,12 +2916,12 @@ export function ChannelMembersDialog({
                 </ul>
               </section>
             )}
-            {nameError && (
+            {namesShown && (
               <p role="status" className="text-body-sm text-subtle">
                 {nameError}
               </p>
             )}
-            {ownership.failed && (
+            {ownersFailed && (
               <p role="status" className="text-body-sm text-subtle">
                 Some agent managers or their names could not load. Try again.
               </p>

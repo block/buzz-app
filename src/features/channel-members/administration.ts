@@ -1,6 +1,6 @@
 import { getEventHash } from "nostr-tools";
 import type { RelayReader } from "../relay/reader";
-import { retryRead } from "../relay/read-retry";
+import { isRetryableRead, retryRead } from "../relay/read-retry";
 import type { ReadTransport } from "../relay/transport";
 import { newer, type RelayEvent } from "../relay/events";
 import { attestedOwner } from "../agents/owner-attestation";
@@ -30,6 +30,10 @@ export type MemberAdministrationState = Readonly<{
     status: "pending" | "uncertain" | "confirmed" | "failed";
   }>;
   error?: string | undefined;
+  /** The roles read failed with a connectivity failure (`isRetryableRead`):
+   * a reader hides its own copy and joins session recovery. Only the roles
+   * read sets it; a failed change never does. */
+  transient?: boolean | undefined;
 }>;
 const empty: MemberAdministrationState = Object.freeze({
   status: "idle",
@@ -168,6 +172,7 @@ export function createMemberAdministration({
               ...previous,
               status: "error",
               error: error instanceof Error ? error.message : String(error),
+              transient: isRetryableRead(error),
             });
         }
       }).catch((error: unknown) => {
@@ -178,6 +183,7 @@ export function createMemberAdministration({
             ...snapshot(id),
             status: "error",
             error: error instanceof Error ? error.message : String(error),
+            transient: isRetryableRead(error),
           });
       });
     },
@@ -203,6 +209,7 @@ export function createMemberAdministration({
           ...previous,
           operation: { change, status: "pending" },
           error: undefined,
+          transient: undefined,
         });
         try {
           let owner: string | undefined;
@@ -345,6 +352,7 @@ export function createMemberAdministration({
                   : error instanceof Error
                     ? error.message
                     : String(error),
+              transient: undefined,
             });
         } finally {
           if (current()) publishing.delete(id);

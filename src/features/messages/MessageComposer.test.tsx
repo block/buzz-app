@@ -7283,6 +7283,34 @@ it("leads the placeholder's channel name with its sidebar icon", () => {
   expect(lead()).toBeNull();
 });
 
+it.each([
+  ["a direct message", "dm", ["a".repeat(64), "b".repeat(64)]],
+  ["a group direct message", "dm", ["a", "b", "c"].map((c) => c.repeat(64))],
+  ["a solo chat", "solo", undefined],
+] as const)("labels %s without the channel hash", (_, channelType, members) => {
+  const h = mount();
+  const channel = {
+    id: "channel",
+    name: "General",
+    channelType,
+    ...(members ? { members: [...members] } : {}),
+  } as ChannelSummary;
+  h.retarget({
+    session: {
+      ...h.session,
+      channels: {
+        ...h.session.channels,
+        get: () => channel,
+        list: () => ({ status: "ready" as const, channels: [channel] }),
+      },
+    },
+  });
+  expect(screen.getByRole("textbox", { name: "Message General" })).toBe(
+    h.input(),
+  );
+  expect(screen.queryByLabelText("Message #General")).not.toBeInTheDocument();
+});
+
 it("labels simultaneous composers independently and prevents disabled or unsupported writes", async () => {
   const channel = mount();
   const thread = mount({ threadRootId: "root" });

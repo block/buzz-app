@@ -284,6 +284,11 @@ export class ClaudeSetup {
   private cataloging: Promise<SetupState["models"]> | undefined;
   /** When the last discovery ended; undefined until one has. */
   private modelsLoadedAt: number | undefined;
+  /** The running check, which callers during it wait for. */
+  private checkWork: Promise<void> | undefined;
+  /** Counts saved and removed keys, so a check that overlaps one asks
+   * again rather than showing the old answer. */
+  private credentialChanges = 0;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
   /** Releases that failed their test, not downloaded again until restart. */
@@ -300,8 +305,12 @@ export class ClaudeSetup {
     readonly auth = new ClaudeAuth(spawn),
   ) {
     this.spawn = spawn && auth.authorize(spawn);
-    // A saved or cleared key, or a changed own setup, changes it at once.
-    auth.subscribe(() => this.set({ protectedReady: auth.protectedEligible }));
+    // A saved or cleared key, or a changed own setup, changes it at once,
+    // and a check under way asks again.
+    auth.subscribe(() => {
+      this.credentialChanges += 1;
+      this.set({ protectedReady: auth.protectedEligible });
+    });
   }
 
   snapshot = () => this.state;
@@ -356,11 +365,15 @@ export class ClaudeSetup {
     this.checkWork = this.runCheck(this.spawn, refreshModels);
     return this.checkWork;
   }
-  private checkWork?: Promise<void>;
   private async runCheck(spawn: Spawn, refreshModels: boolean) {
     const previous = this.state.status;
     this.set({ checking: true });
-    const status = await checkClaude(spawn, this.auth);
+    let status: Awaited<ReturnType<typeof checkClaude>>;
+    let changes: number;
+    do {
+      changes = this.credentialChanges;
+      status = await checkClaude(spawn, this.auth);
+    } while (changes !== this.credentialChanges);
     const invalidate =
       refreshModels || JSON.stringify(previous) !== JSON.stringify(status);
     if (invalidate) {

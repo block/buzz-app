@@ -60,7 +60,8 @@ pub(crate) struct ClaudeKey {
     store: Arc<dyn KeyStore>,
     /// The key last read or saved. Only a key is kept: with none, every ask
     /// reads the store again, because another Buzz on this computer, or a
-    /// development copy sharing its item, may save one.
+    /// development copy sharing its item, may save one. A key another Buzz
+    /// removes stays kept here until `configured` reads the store again.
     key: Mutex<Option<Zeroizing<String>>>,
 }
 

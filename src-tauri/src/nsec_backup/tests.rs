@@ -521,6 +521,17 @@ fn recovery_validates_scalars_and_metadata_and_deduplicates_public_choices() {
 }
 
 async fn recover_with(service: &Service, host: &NsecBackupHost) -> Result<RestoreResult> {
+    let result = recover_returning(host, "code=synthetic-code").await;
+    // Keep the service borrowed through completion; no OS credential store is involved.
+    assert_eq!(
+        service.state.lock().unwrap().requests.get("/v1/auth/me"),
+        Some(&1)
+    );
+    result
+}
+
+/// A restore whose browser step returns `query` (after `state`).
+async fn recover_returning(host: &NsecBackupHost, query: &str) -> Result<RestoreResult> {
     let callback = OAuthCallbackHost::default();
     let authorization = Arc::new(Mutex::new(String::new()));
     let capture = authorization.clone();
@@ -577,14 +588,51 @@ async fn recover_with(service: &Service, host: &NsecBackupHost) -> Result<Restor
     let callback_url = url::Url::parse(&oauth.callback_url).unwrap();
     let authority = format!("127.0.0.1:{}", callback_url.port().unwrap());
     let mut stream = TcpStream::connect(&authority).await.unwrap();
-    stream.write_all(format!("GET /synthetic?state={state}&code=synthetic-code HTTP/1.1\r\nHost: {authority}\r\n\r\n").as_bytes()).await.unwrap();
-    let result = task.await.unwrap();
-    // Keep the service borrowed through completion; no OS credential store is involved.
+    stream
+        .write_all(
+            format!("GET /synthetic?state={state}&{query} HTTP/1.1\r\nHost: {authority}\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    task.await.unwrap()
+}
+
+#[tokio::test]
+async fn a_declined_browser_sign_in_reads_as_canceled_and_other_errors_as_retry() {
+    for (query, expected) in [
+        ("error=access_denied", CANCELED),
+        ("error=server_error", RETRY),
+    ] {
+        let service = Service::new().await;
+        let directory = tempfile::tempdir().unwrap();
+        let host = service.host(directory.path());
+        let result = recover_returning(&host, query).await;
+        assert_eq!(result.err().as_deref(), Some(expected), "{query}");
+        assert!(service.state.lock().unwrap().requests.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_builderlab_reads_as_offline_not_retry() {
+    let closed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let root = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let mut host = service.host(directory.path());
+    host.config = Arc::new(Some(Config {
+        service_url: root,
+        namespace: "backup/staging".into(),
+    }));
+    let result = recover_returning(&host, "code=synthetic-code").await;
+    assert_eq!(result.err().as_deref(), Some(OFFLINE));
+    // A backup pass still reports it as unreachable, as before.
+    assert_eq!(String::from(ReadError::Unreachable), OFFLINE);
     assert_eq!(
-        service.state.lock().unwrap().requests.get("/v1/auth/me"),
-        Some(&1)
+        Stop::from(ReadError::Unreachable),
+        Stop::Failed(Failure::Unreachable)
     );
-    result
 }
 
 #[tokio::test]

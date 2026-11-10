@@ -27,6 +27,8 @@ use zeroize::Zeroizing;
 
 const RETRY: &str = "Could not restore your identity. Try again.";
 const CANCELED: &str = "Restore was canceled. Try again.";
+/// Builderlab didn't answer: a network or connection failure, not a refusal.
+const OFFLINE: &str = "Couldn't reach Builderlab. Check your connection and try again.";
 // The renderer matches these two to offer manual key entry instead of a retry
 // (`recoveryOff` in `src/features/identity/service.ts`).
 const UNAVAILABLE: &str = "Backup recovery is unavailable.";
@@ -177,6 +179,8 @@ enum ReadError {
     /// Buzz user capability or the account its USER role (kgoose's
     /// `unauthorized`), which no retry or new sign-in changes.
     NotOffered,
+    /// The request never got an answer (network, DNS, TLS).
+    Unreachable,
     Other,
 }
 impl From<&str> for ReadError {
@@ -193,6 +197,7 @@ impl From<ReadError> for String {
     fn from(error: ReadError) -> Self {
         match error {
             ReadError::NotOffered => REFUSED,
+            ReadError::Unreachable => OFFLINE,
             // A new sign-in may clear a rejected session.
             ReadError::SignedOut | ReadError::Other => RETRY,
         }
@@ -204,7 +209,7 @@ impl From<ReadError> for Stop {
         Self::Failed(match error {
             ReadError::SignedOut => Failure::SignedOut,
             ReadError::NotOffered => Failure::NotOffered,
-            ReadError::Other => Failure::Unreachable,
+            ReadError::Unreachable | ReadError::Other => Failure::Unreachable,
         })
     }
 }
@@ -827,14 +832,26 @@ impl NsecBackupHost {
         redirect: String,
         verifier: Zeroizing<String>,
     ) -> Result<RestoreResult> {
-        let parameters = callback.wait(&oauth_id).await.map_err(|_| RETRY)?;
+        let parameters = callback.wait(&oauth_id).await.map_err(|error| {
+            if error == crate::oauth_callback::TIMED_OUT {
+                crate::oauth_callback::TIMED_OUT
+            } else {
+                RETRY
+            }
+        })?;
         self.valid_restore(epoch)?;
-        if parameters
+        if let Some((_, error)) = parameters
             .parameters
             .iter()
-            .any(|(name, _)| name == "error")
+            .find(|(name, _)| name == "error")
         {
-            return Err(RETRY.into());
+            // RFC 6749 4.1.2.1: the user declined or closed the sign-in page.
+            return Err(if error == "access_denied" {
+                CANCELED
+            } else {
+                RETRY
+            }
+            .into());
         }
         let mut codes = parameters
             .parameters
@@ -855,6 +872,7 @@ impl NsecBackupHost {
             buzz_nsec_backup::Error::HttpStatus(404) => UNAVAILABLE.to_owned(),
             // Not a private org, or no Buzz user role: no retry changes it.
             buzz_nsec_backup::Error::HttpStatus(403) => REFUSED.to_owned(),
+            buzz_nsec_backup::Error::Transport => OFFLINE.to_owned(),
             _ => RETRY.to_owned(),
         })?;
         let (candidates, failed_count) = candidates(recovered);
@@ -1159,7 +1177,7 @@ impl Api {
             .body(bytes::Bytes::from_owner(body))
             .send()
             .await
-            .map_err(|_| RETRY)?;
+            .map_err(|_| OFFLINE)?;
         let value: Exchange =
             serde_json::from_slice(&Self::body(response).await?).map_err(|_| RETRY)?;
         Ok(value.session_credential)
@@ -1182,7 +1200,7 @@ impl Api {
             .header(&self.header, &self.credential)
             .send()
             .await
-            .map_err(|_| RETRY)?;
+            .map_err(|_| ReadError::Unreachable)?;
         match response.status() {
             reqwest::StatusCode::UNAUTHORIZED => return Err(ReadError::SignedOut),
             reqwest::StatusCode::FORBIDDEN => return Err(ReadError::NotOffered),

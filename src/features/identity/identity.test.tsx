@@ -7430,8 +7430,9 @@ it("copies without revealing and cancels a pending export on blur before clipboa
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
-  // The macOS app copies through the host clipboard.
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  // On every platform the app copies a key through the host clipboard,
+  // which clears it after a minute if it still holds the key.
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
   const writes = () =>
     vi
       .mocked(invoke)
@@ -7439,7 +7440,9 @@ it("copies without revealing and cancels a pending export on blur before clipboa
   vi.mocked(invoke).mockResolvedValueOnce(key);
   render(<PrivateKey identity={identity} />);
   await user.click(screen.getByRole("button", { name: "Copy private key" }));
-  expect(writes()).toEqual([["clipboard_write_text", { text: key }]]);
+  expect(writes()).toEqual([
+    ["clipboard_write_text", { text: key, clearAfterSecs: 60 }],
+  ]);
   expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
     "••••••••••••••••",
   );

@@ -97,7 +97,7 @@ function saved(identity: Identity) {
 function vacant(identity: Identity) {
   if (identity.snapshot().status === "ready")
     throw new Error(
-      "This Mac already has a different Buzz key. Sign out of Buzz on this Mac first, or use a different account.",
+      "This computer already has a different Buzz key. Sign out of Buzz on this computer first, or use a different account.",
     );
 }
 

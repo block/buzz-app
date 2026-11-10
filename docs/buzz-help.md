@@ -163,6 +163,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   saved elsewhere stay. Other local data stays unless erasing is also selected.
 - **Settings → Buzz → Identity → Copy private key** lets someone make their own
   backup, for example in a password manager. They should handle it privately.
+  Buzz clears the copied key from the clipboard after a minute if nothing else
+  was copied since, so paste it right away.
   When Builderlab backup is on, the same page shows the account's linked key
   when it is backed up and differs from this device’s key.
   Account lookup failures use the card’s **Backup status unknown** caption and

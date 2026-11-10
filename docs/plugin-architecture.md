@@ -504,8 +504,9 @@ Focus is the first caller and registers its restriction only while Focus is on.
 ### Decorating host sidebar rows and adding sort modes
 
 `ctx.reflect.get("sidebarRows")` is an optional version-1 capability for host
-Team channel and direct-message rows, including rows moved into custom groups.
-Solo conversations are not supported yet. Use the reflective lookup rather than
+Team channel, direct-message and ordinary Solo rows, including rows moved into
+custom Team groups or Solo workspaces. Plugin-owned Solo regions render their
+own rows and are not decorated here. Use the reflective lookup rather than
 required `inject` so the plugin still activates on older hosts.
 
 ```tsx
@@ -520,11 +521,13 @@ ctx.reflect.get("sidebarRows")?.register({
 });
 ```
 
-`row` contains `id`, `kind` (`team` or `dm`), `label`, `sectionKey`, the current
+`row` contains `id`, `kind` (`team`, `dm` or `solo`), `label`, `sectionKey`, the current
 `channel` summary (including available labels, visibility and activity data), and
 its current `unread` snapshot. Unknown unread counts remain `null`; activity
 fields retain their existing units and unknown values. This is the host's
 currently authorized roster, not a channel discovery API.
+For Solo, `sectionKey` is the workspace id, or `""` for unfiled chats. Only
+`render` applies to Solo; contributed sort modes remain Team-only.
 
 `Default` is a React element, not a component constructor: return it, wrap it,
 or return a replacement element. Returning `null` intentionally hides the row;
@@ -543,12 +546,18 @@ throws, invalid return values, and descendant render failures restore the
 original host element for that row only, not a partially decorated result.
 Repeated callback and invalid-result fallbacks retain the host row across live
 updates. Switching between a decoration and fallback, or recovering from a
-descendant error, can remount it and reset an open menu. If the host button had
+descendant error, can remount it and reset an open menu or active drag. If the host button had
 focus, the host restores it to the same channel's replacement button anywhere in
 the sidebar, including after a section move, only when the update leaves focus
 on the document body; it never overrides focus moved elsewhere.
 If the row is hidden instead, focus moves to a surviving neighbor in the same
 section, or its heading when no row remains.
+For Solo rows, the opaque host element includes its shared mark, overflow menu
+and drag surface, so returning `null` removes those controls too. Hidden Solo
+rows are skipped when choosing the next chat after leaving or deleting one,
+including rows hidden while that action is pending. Solo hiding does not change
+workspace caps, Show more counts or empty-workspace affordances. A Solo entry
+without an available channel summary keeps the native row until the roster loads.
 Disabling, replacing or disposing a plugin removes its contributions through its
 Cordis scope. With no active render contribution, the existing host row renders
 without an extra DOM wrapper.

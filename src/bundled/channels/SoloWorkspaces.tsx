@@ -25,11 +25,13 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ComponentProps,
   type ReactNode,
+  type ReactElement,
   type RefObject,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -55,6 +57,13 @@ import type { Navigation } from "../../features/navigation/controller";
 import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
 import styles from "./SoloWorkspaces.module.css";
 import channelStyles from "./Channels.module.css";
+import {
+  sidebarRow,
+  type RegisteredSidebarRows,
+} from "../../features/channel-navigation/sidebar-rows-service";
+import { SidebarRowRenderer } from "../../features/channel-navigation/SidebarRowRenderer";
+
+const emptyRows: readonly RegisteredSidebarRows[] = [];
 
 /** Presentation only. The caller supplies authorized, saved chats. */
 export type ChatListItem = Readonly<{
@@ -80,6 +89,7 @@ export function SoloWorkspaces({
   onConverted,
   visit,
   draft,
+  sidebarRows = emptyRows,
 }: {
   draft?: { projectId?: string | undefined; content: ReactNode } | undefined;
   onConverted?: ((id: string) => void) | undefined;
@@ -88,6 +98,7 @@ export function SoloWorkspaces({
   navigator?: Navigation | undefined;
   scope: string;
   chats: readonly ChatListItem[];
+  sidebarRows?: readonly RegisteredSidebarRows[] | undefined;
   renderChatMenu?: ((channelId: string) => ReactNode) | undefined;
   /** A stable function lets a chat's row skip renders when nothing it shows changed. */
   renderChat: (
@@ -99,6 +110,16 @@ export function SoloWorkspaces({
 }) {
   useChatConversions(session);
   const handoff = useChannelNavigation();
+  const pluginHiddenRows = useRef(new Map<string, object>());
+  const setRowHidden = useCallback((id: string, hidden: boolean) => {
+    const registration = {};
+    if (hidden) pluginHiddenRows.current.set(id, registration);
+    else pluginHiddenRows.current.delete(id);
+    return () => {
+      if (pluginHiddenRows.current.get(id) === registration)
+        pluginHiddenRows.current.delete(id);
+    };
+  }, []);
   const preferences = session.soloPreferences;
   const collapsedKey = "solo:collapsed-projects";
   const expandedKey = "solo:expanded-projects";
@@ -281,12 +302,13 @@ export function SoloWorkspaces({
           if (trigger?.isConnected) trigger.focus({ preventScroll: true });
         },
         completed() {
+          const shown = new Set(handoff?.soloNeighbors.current?.(channel.id));
           if (leavesOpenChat && !current.attempt.signal.aborted)
             void navigationController?.open(
               soloSuccessor(
                 scope,
                 session.channels.list().channels,
-                neighbors,
+                neighbors.filter((id) => shown.has(id)),
                 channel.id,
               ),
             );
@@ -362,7 +384,10 @@ export function SoloWorkspaces({
         ? []
         : project.listed.map((item) => item.id),
     }));
-    const neighbors = (id: string) => soloNeighbors(shown, id);
+    const neighbors = (id: string) =>
+      soloNeighbors(shown, id).filter(
+        (neighbor) => !pluginHiddenRows.current.has(neighbor),
+      );
     soloNeighborsRef.current = neighbors;
     return () => {
       if (soloNeighborsRef.current === neighbors)
@@ -596,6 +621,7 @@ export function SoloWorkspaces({
                     title={item.title}
                     pinned={item.pinned}
                     projectKey={DROP + project.id}
+                    sectionKey={project.id}
                     channel={channel}
                     renameable={canRename(project.id, channel)}
                     lifecycle={!!handoff}
@@ -603,6 +629,8 @@ export function SoloWorkspaces({
                     actions={entryActions}
                     renderChat={renderChat}
                     renderChatMenu={renderChatMenu}
+                    sidebarRows={sidebarRows}
+                    onHiddenChange={setRowHidden}
                   />
                 );
               })}
@@ -801,6 +829,7 @@ const SoloChatEntry = memo(function SoloChatEntry({
   title,
   pinned,
   projectKey,
+  sectionKey,
   channel,
   renameable,
   lifecycle,
@@ -808,11 +837,14 @@ const SoloChatEntry = memo(function SoloChatEntry({
   actions,
   renderChat,
   renderChatMenu,
+  sidebarRows,
+  onHiddenChange,
 }: {
   id: string;
   title: string;
   pinned: boolean | undefined;
   projectKey: string;
+  sectionKey: string;
   channel: ChannelSummary | undefined;
   renameable: boolean;
   lifecycle: boolean;
@@ -820,9 +852,11 @@ const SoloChatEntry = memo(function SoloChatEntry({
   actions: RefObject<ChatEntryActions>;
   renderChat: ComponentProps<typeof SoloWorkspaces>["renderChat"];
   renderChatMenu: ((channelId: string) => ReactNode) | undefined;
+  sidebarRows: readonly RegisteredSidebarRows[];
+  onHiddenChange: (id: string, hidden: boolean) => () => void;
 }) {
   const rename = renameable ? () => actions.current.rename(id) : undefined;
-  return (
+  const Default = (
     <ChatActionsMenu
       id={id}
       title={title}
@@ -867,7 +901,63 @@ const SoloChatEntry = memo(function SoloChatEntry({
       </DraggableChannel>
     </ChatActionsMenu>
   );
+  return channel && sidebarRows.some((entry) => entry.render) ? (
+    <ContributedSoloRow
+      session={session}
+      channel={channel}
+      sectionKey={sectionKey}
+      entries={sidebarRows}
+      onHiddenChange={onHiddenChange}
+    >
+      {Default}
+    </ContributedSoloRow>
+  ) : (
+    Default
+  );
 });
+
+function ContributedSoloRow({
+  session,
+  channel,
+  sectionKey,
+  entries,
+  children,
+  onHiddenChange,
+}: {
+  session: RelaySession;
+  channel: ChannelSummary;
+  sectionKey: string;
+  entries: readonly RegisteredSidebarRows[];
+  children: ReactElement;
+  onHiddenChange: (id: string, hidden: boolean) => () => void;
+}) {
+  const target = useMemo(
+    () => ({ kind: "channel" as const, channelId: channel.id }),
+    [channel.id],
+  );
+  const subscribe = useCallback(
+    (listener: () => void) => session.unread.subscribe(target, listener),
+    [session, target],
+  );
+  const snapshot = useCallback(
+    () => session.unread.snapshot(target),
+    [session, target],
+  );
+  const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const row = useMemo(
+    () => sidebarRow(channel, sectionKey, unread),
+    [channel, sectionKey, unread],
+  );
+  return (
+    <SidebarRowRenderer
+      row={row}
+      entries={entries}
+      onHiddenChange={onHiddenChange}
+    >
+      {children}
+    </SidebarRowRenderer>
+  );
+}
 
 /** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({

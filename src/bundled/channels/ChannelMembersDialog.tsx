@@ -1132,6 +1132,31 @@ export function ChannelMembersDialog({
     },
     () => void session.memberAdministration.refresh(channelId).catch(() => {}),
   );
+  // The agent inventory and the archive list also load when the dialog opens.
+  const agentsRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: agentChoices.error
+        ? agentChoices.pending
+          ? "loading"
+          : "error"
+        : agentChoices.status,
+      error: agentChoices.error,
+      transient: agentChoices.transient,
+    },
+    () => void session.agentChoices.refresh(),
+  );
+  const archivesRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: archives.status,
+      error: archives.error,
+      transient: archives.transient,
+    },
+    () => void session.archives.refresh(),
+  );
+  const agentsFailed = Boolean(agentChoices.error) && !agentsRead.quiet;
+  const archivesFailed = archives.status === "error" && !archivesRead.quiet;
   const rosterShown = rosterError && !(rosterRead.quiet && !soloSharing);
   const namesShown = nameError && !namesRead.quiet;
   const known = useMemo(
@@ -2508,8 +2533,8 @@ export function ChannelMembersDialog({
             rosterShown ||
             namesShown ||
             ownersFailed ||
-            agentChoices.error ||
-            archives.status === "error" ||
+            agentsFailed ||
+            archivesFailed ||
             search.error) && (
             <div className="shrink-0">
               <Button
@@ -2926,12 +2951,12 @@ export function ChannelMembersDialog({
                 Some agent managers or their names could not load. Try again.
               </p>
             )}
-            {agentChoices.error && (
+            {agentsFailed && (
               <p role="alert" className="text-body-sm text-danger">
                 Some agents could not load.
               </p>
             )}
-            {archives.status === "error" && (
+            {archivesFailed && (
               <p role="alert" className="text-body-sm text-danger">
                 Archived identities could not be checked.
               </p>

@@ -42,7 +42,7 @@ it("says which agent didn't act and why", () => {
   ).toBeInTheDocument();
   expect(
     screen.getByText(
-      "Your agent didn't act: workflow messages direct agents only when you or a timer start the run.",
+      "Your agent didn't act: this workflow message doesn't authorize it. The workflow's run history shows why.",
     ),
   ).toBeInTheDocument();
 });

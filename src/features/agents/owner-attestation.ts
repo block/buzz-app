@@ -156,8 +156,8 @@ export async function mentionAuthority(
 }
 
 /** The workflow's creator is the owner or a profile-verified sibling:
- * `true`, `"sender"` when it is neither, `undefined` when unreadable.
- * Without `read`, only an already-read profile counts. */
+ * `true`, `"sender"` when it is neither, `undefined` when unknown.
+ * Without `read`, only an already-read profile counts; none is unknown. */
 async function ownedCreator(
   creator: string,
   owner: string,
@@ -169,8 +169,9 @@ async function ownedCreator(
   try {
     if (read) await profiles.ensure([creator]);
     const profile = profiles.event(creator);
-    return profile &&
-      hasEventProof(profile) &&
+    // Unread, ownership is unknown: deny with no reason rather than guess.
+    if (!profile) return read ? "sender" : undefined;
+    return hasEventProof(profile) &&
       profile.kind === 0 &&
       profile.pubkey === creator &&
       (await attestedOwner(profile)) === owner &&

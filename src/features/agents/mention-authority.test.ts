@@ -76,11 +76,7 @@ it("accepts the owner's workflow only when it names this agent", async () => {
 
 it("refuses someone else's workflow for who owns it", async () => {
   expect(
-    await mentionAuthority(
-      workflow(stranger.pubkey, false),
-      owner.pubkey,
-      check(),
-    ),
+    await mentionAuthority(workflow(stranger.pubkey), owner.pubkey, check()),
   ).toBe("sender");
 });
 
@@ -91,6 +87,19 @@ it("gives no reason while the creator's profile can't be read", async () => {
   expect(
     await mentionAuthority(workflow(sibling.pubkey), owner.pubkey, check(read)),
   ).toBeUndefined();
+});
+
+it("gives no reason for a workflow whose creator's profile isn't read yet", async () => {
+  const read = vi.fn(async () => [] as never[]);
+  for (const creator of [sibling.pubkey, stranger.pubkey])
+    expect(
+      await mentionAuthority(
+        workflow(creator, false),
+        owner.pubkey,
+        check(read),
+      ),
+    ).toBeUndefined();
+  expect(read).not.toHaveBeenCalled();
 });
 
 it("names a sibling's workflow from its already-read profile", async () => {

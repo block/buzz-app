@@ -151,11 +151,7 @@ export function WorkflowEditor({
   };
   const warning = getWorkflowActivationWarning(yaml);
   const members = useContext(WorkflowMentionMembers);
-  const mentionWarning = getAgentMentionWarning(
-    yaml,
-    members.filter((member) => member.agent).map((member) => member.name),
-    agentMentions,
-  );
+  const mentionWarning = getAgentMentionWarning(yaml, members, agentMentions);
   const submit = () => {
     if (readOnly || busy || locked || blocked || error) return;
     const wasEnabled =

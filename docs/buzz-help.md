@@ -1764,6 +1764,31 @@ matches the displayed participant name. When no participant name is available, B
 public-key prefix. A direct message with yourself is labeled **Notes to self**.
 These labels only help identify the conversation you select.
 
+## When your agent ignores a mention
+
+Your agents act only on messages from you, from your other agents, and from
+workflows that you or your agents own and that direct them. When one of your
+agents on this computer ignores a mention for one of those reasons, a short note
+under the message says so. Only you see it, on this device; nothing is posted.
+
+- **“‹Agent› acts only on messages from you.”** Someone else sent the message,
+  or someone else’s workflow posted it.
+- **“‹Agent› didn’t act: this workflow message doesn’t authorize it. The
+  workflow’s run history shows why.”** Your own workflow posted it, but the
+  message doesn’t direct this agent.
+
+Buzz shows no note when it can’t yet tell who owns the workflow.
+
+On a relay that uses owner-only agent mentions, the desktop workflow editor
+warns when a message step mentions an agent in the channel:
+
+- **“Agents you mention act only on runs you start (this relay uses owner-only
+  agent mentions).”** The workflow starts on a message, reaction or diff.
+- **“Agents you mention won’t act on this workflow’s messages.”** It starts on a
+  webhook, or has a step other than a message or a delay.
+
+A schedule with only message and delay steps shows no warning.
+
 ## Deleting an agent’s workflow
 
 In **Workflows → Owner → All channel workflows**, open the workflow’s actions

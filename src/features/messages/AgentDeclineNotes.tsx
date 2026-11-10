@@ -8,7 +8,7 @@ const noSubscribe = () => () => {};
 export function agentDeclineText(name: string, refusal: MentionRefusal) {
   return refusal === "sender"
     ? `${name} acts only on messages from you.`
-    : `${name} didn't act: workflow messages direct agents only when you or a timer start the run.`;
+    : `${name} didn't act: this workflow message doesn't authorize it. The workflow's run history shows why.`;
 }
 
 /** Why this device's agents didn't act on this message. Local and owner-only:

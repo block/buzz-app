@@ -1,7 +1,11 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { ComposerSession } from "./composer-session";
+import type { IdentityArchiveSnapshot } from "../relay/identity-archives";
 const noop = () => () => {};
-const unavailable = { status: "unavailable", archived: [] } as const;
+const unavailable: IdentityArchiveSnapshot = {
+  status: "unavailable",
+  archived: [],
+};
 const empty = () => unavailable;
 /** Observe archive evidence; a demanding surface also reloads it after reconnect. */
 export function useMentionArchives(

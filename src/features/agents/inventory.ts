@@ -1,6 +1,6 @@
 import type { AgentLibrary, AgentLibraryReader } from "./library";
 import { definitionSlug } from "./relay-library";
-import { retryRead } from "../relay/read-retry";
+import { isRetryableRead, retryRead } from "../relay/read-retry";
 
 /** Preserve local names/artwork; add relay-only keys. Names never join identities. */
 export function combineInventory(
@@ -78,7 +78,13 @@ export function inventoryReader(
       if (result.status === "rejected")
         console.warn(`${source} read failed`, result.reason);
     if (remote.status === "rejected" && (!local || saved.status === "rejected"))
-      throw new Error("Agent inventory sources unavailable");
+      // The cause tells a connectivity failure (recovery retries) from a bad one.
+      throw new Error("Agent inventory sources unavailable", {
+        cause:
+          saved.status === "rejected" && !isRetryableRead(saved.reason)
+            ? saved.reason
+            : remote.reason,
+      });
     const error =
       saved.status === "rejected"
         ? "Local library unavailable; showing relay inventory. Refresh agents to include local identities."
@@ -91,6 +97,12 @@ export function inventoryReader(
         remote.status === "fulfilled" ? remote.value : empty,
       ),
       ...(error ? { error } : {}),
+      // A partial result is current again once the relay answers.
+      ...(error &&
+      remote.status === "rejected" &&
+      isRetryableRead(remote.reason)
+        ? { transient: true as const }
+        : {}),
     };
   };
 }

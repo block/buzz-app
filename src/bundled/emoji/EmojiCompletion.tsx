@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import { CustomEmoji } from "./CustomEmoji";
 import {
   exactEmoji,
@@ -116,6 +117,17 @@ export function EmojiCompletion({
     session.emoji.snapshot,
   );
   const [attempt, retry] = useState(0);
+  // A catalog that cannot load for want of a connection is the recovery
+  // notice's to report; it fills in on its own when the relay answers.
+  const { quiet } = useRecoverableRead(
+    session.recovery,
+    {
+      status: catalog.error ? "error" : catalog.status,
+      error: catalog.error,
+      transient: catalog.transient,
+    },
+    () => void session.emoji.refresh(),
+  );
   useEffect(() => {
     void session.emoji.ensure("foreground");
   }, [session]);
@@ -165,7 +177,7 @@ export function EmojiCompletion({
           ...(catalog.status === "ready"
             ? { spaceId: exactEmoji(query.query, matches) }
             : {}),
-          ...(catalog.status === "error"
+          ...(catalog.status === "error" && !quiet
             ? {
                 status: "Community emoji unavailable; Unicode results shown.",
                 retry: retrySearch,
@@ -191,6 +203,6 @@ export function EmojiCompletion({
       unsubscribe();
       if (withdraw) withdraw();
     };
-  }, [session, scope, query.query, publish, catalog, attempt]);
+  }, [session, scope, query.query, publish, catalog, attempt, quiet]);
   return null;
 }

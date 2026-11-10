@@ -52,6 +52,9 @@
 .icon[data-tone="pending"] {
   color: var(--text-warning);
 }
+.icon[data-tone="merged"] {
+  color: var(--icon-categorical-purple);
+}
 .title {
   flex: 1;
   min-width: 0;

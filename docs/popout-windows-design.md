@@ -840,7 +840,11 @@ three documented gaps close before it leaves draft.
   each describer for the chat while the frame lives, and drops watches for
   contributions that leave. Native `View.icon {icon ≤64 token, tone?, label}`.
   The companion draws the catalog artwork with the sidebar's tone colours and
-  names it "Solo chat: ‹label›".
+  names it "Solo chat: ‹label›". `c95e657` → three P2 (a later describing
+  plugin could win over the sidebar's first; a Solo→channel conversion kept
+  its watch; `chatIconFor("constructor")` hit the catalog prototype). Fixed:
+  only the first contribution counts, watches reconcile on every projection,
+  own-property lookup; merged tone purple as in the sidebar.
 
 ### Non-goals (S3)
 

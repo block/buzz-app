@@ -706,47 +706,44 @@ export function createPopoutThread(
    * this chat while the frame lives. */
   const iconWatches = new Map<string, () => void>();
   function pluginIcon(c: Channel | undefined): ChatIconDescription | undefined {
-    if (disposed || c?.channelType !== "solo") return undefined;
-    const entries = chatIcons?.snapshot() ?? [];
-    const live = new Set<string>();
-    let found: ChatIconDescription | undefined;
-    for (const entry of entries) {
-      const describer = entry.describer;
-      if (!describer) continue;
-      live.add(entry.key);
-      if (!iconWatches.has(entry.key))
-        try {
-          iconWatches.set(
-            entry.key,
-            describer.watch(session, channelId, notify),
-          );
-        } catch {
-          iconWatches.set(entry.key, () => {});
-        }
-      if (found) continue;
-      try {
-        const description = describer.describe(session, channelId);
-        if (
-          description &&
-          typeof description.icon === "string" &&
-          description.icon.length <= 64 &&
-          typeof description.label === "string"
-        )
-          found = {
-            icon: description.icon,
-            ...(description.tone ? { tone: description.tone } : {}),
-            label: description.label.slice(0, 1000),
-          };
-      } catch {
-        /* A failing contribution shows nothing, not an error. */
-      }
-    }
+    // The sidebar shows only the first contribution; so does this header. A
+    // first one that cannot describe itself, or describes nothing, leaves the
+    // chat's default icon rather than letting a later plugin take over.
+    const first =
+      !disposed && c?.channelType === "solo"
+        ? chatIcons?.snapshot()[0]
+        : undefined;
+    const describer = first?.describer;
+    const liveKey = describer ? first.key : undefined;
+    // Watches for anything else — a Solo chat converted to a channel, a
+    // contribution that left, or one no longer first — are released first.
     for (const [key, stop] of iconWatches)
-      if (!live.has(key)) {
+      if (key !== liveKey) {
         stop();
         iconWatches.delete(key);
       }
-    return found;
+    if (!first || !describer || !liveKey) return undefined;
+    if (!iconWatches.has(liveKey))
+      try {
+        iconWatches.set(liveKey, describer.watch(session, channelId, notify));
+      } catch {
+        iconWatches.set(liveKey, () => {});
+      }
+    try {
+      const description = describer.describe(session, channelId);
+      return description &&
+        typeof description.icon === "string" &&
+        description.icon.length <= 64 &&
+        typeof description.label === "string"
+        ? {
+            icon: description.icon,
+            ...(description.tone ? { tone: description.tone } : {}),
+            label: description.label.slice(0, 1000),
+          }
+        : undefined;
+    } catch {
+      return undefined; // A failing contribution shows nothing, not an error.
+    }
   }
   /** The DM's first other participant's picture, as the tab icon shows. */
   const picture = (c: Channel | undefined) => {

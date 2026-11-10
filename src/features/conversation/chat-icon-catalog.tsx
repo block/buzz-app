@@ -25,14 +25,10 @@ export const chatIconCatalog: Record<
   issue: GitHubIssueIcon,
 };
 
-/** The icon for a name, or the chat default for one this host doesn't know. */
+/** The icon for a name, or the chat default for one this host doesn't know.
+ * An own-property lookup: a projected token is data, never a prototype key. */
 export function chatIconFor(name: string) {
-  return (
-    (
-      chatIconCatalog as Record<
-        string,
-        ComponentType<{ size?: string | number }>
-      >
-    )[name] ?? ChatCircleIcon
-  );
+  return Object.hasOwn(chatIconCatalog, name)
+    ? chatIconCatalog[name as ChatIconName]
+    : ChatCircleIcon;
 }

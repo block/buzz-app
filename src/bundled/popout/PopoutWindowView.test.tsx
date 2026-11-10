@@ -126,6 +126,25 @@ it("names what it shows, as Slack's pop-out does, and reports its guard", () => 
   });
   expect(pluginIcon.getAttribute("data-tone")).toBe("failure");
   expect(pluginIcon.querySelector("svg")).toBeTruthy();
+  // An icon name this host doesn't know — even a prototype key — draws the
+  // chat default rather than failing the window.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "solo",
+        title: "Plan",
+        icon: { icon: "constructor" as never, label: "Unknown" },
+      })}
+      act={act}
+    />,
+  );
+  expect(
+    screen
+      .getByRole("img", { name: "Solo chat: Unknown" })
+      .querySelector("svg"),
+  ).toBeTruthy();
   rerender(
     <PopoutWindowView
       view={view({ thread: false, kind: "private", title: "leads" })}

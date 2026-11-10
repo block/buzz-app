@@ -1487,7 +1487,7 @@ it("projects members as main's header previews them: people (or agents, for Solo
   });
 });
 
-it("shows a Solo chat's plugin icon from the first describing contribution, watched while the frame lives", () => {
+it("shows a Solo chat's plugin icon from the first contribution, watched while it is shown", () => {
   const h = fixture();
   const stop = vi.fn();
   let state: "open" | "merged" = "open";
@@ -1511,18 +1511,18 @@ it("shows a Solo chat's plugin icon from the first describing contribution, watc
   const entries = [
     {
       id: "chat-icon",
-      key: "plain/chat-icon",
-      pluginId: "plain",
-      revision: "1",
-      component: () => null,
-    },
-    {
-      id: "chat-icon",
       key: "github/chat-icon",
       pluginId: "github",
       revision: "1",
       component: () => null,
       describer,
+    },
+    {
+      id: "chat-icon",
+      key: "plain/chat-icon",
+      pluginId: "plain",
+      revision: "1",
+      component: () => null,
     },
   ];
   const chatIcons = { snapshot: () => entries, subscribe: () => () => {} };
@@ -1557,6 +1557,65 @@ it("shows a Solo chat's plugin icon from the first describing contribution, watc
   describer.watch.mock.calls[0]?.[2]();
   expect(changed).toHaveBeenCalled();
   expect(thread.snapshot().icon).toMatchObject({ icon: "git-merge" });
-  thread.dispose();
+  // Converted to a channel: its watch is released at once, not on disposal.
+  h.channel.current = {
+    id: "channel",
+    name: "Planning",
+    channelType: "stream",
+  };
+  expect(thread.snapshot().icon).toBeUndefined();
   expect(stop).toHaveBeenCalledOnce();
+  h.channel.current = { id: "channel", name: "Planning", channelType: "solo" };
+  expect(thread.snapshot().icon).toMatchObject({ icon: "git-merge" });
+  expect(describer.watch).toHaveBeenCalledTimes(2);
+  thread.dispose();
+  expect(stop).toHaveBeenCalledTimes(2);
+});
+
+it("shows only the sidebar's winner: a first chat icon that describes nothing leaves the default, whatever a later plugin says", () => {
+  const h = fixture();
+  h.channel.current = { id: "channel", name: "Planning", channelType: "solo" };
+  const later = {
+    describe: vi.fn(() => ({ icon: "git-merge" as const, label: "Merged" })),
+    watch: vi.fn(() => () => {}),
+  };
+  const plain = {
+    id: "chat-icon",
+    key: "plain/chat-icon",
+    pluginId: "plain",
+    revision: "1",
+    component: () => null,
+  };
+  const github = {
+    ...plain,
+    key: "github/chat-icon",
+    pluginId: "github",
+    describer: later,
+  };
+  let entries = [plain, github];
+  const chatIcons = { snapshot: () => entries, subscribe: () => () => {} };
+  const thread = createPopoutThread(
+    h.session,
+    "channel",
+    ROOT,
+    () => {},
+    undefined,
+    undefined,
+    undefined,
+    chatIcons,
+  );
+  clean.push(thread.dispose);
+  expect(thread.snapshot().icon).toBeUndefined();
+  expect(later.watch).not.toHaveBeenCalled();
+  // A first contribution that describes nothing for this chat is the same.
+  const quiet = {
+    ...plain,
+    describer: { describe: () => undefined, watch: () => () => {} },
+  };
+  entries = [quiet, github];
+  expect(thread.snapshot().icon).toBeUndefined();
+  expect(later.watch).not.toHaveBeenCalled();
+  // Once it is first, the describing plugin shows.
+  entries = [github, quiet];
+  expect(thread.snapshot().icon).toMatchObject({ icon: "git-merge" });
 });

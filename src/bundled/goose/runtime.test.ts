@@ -1057,6 +1057,11 @@ describe("GooseRuntime", () => {
     await flush(100);
     expect(team.goose()?.opened[0]?._meta).toMatchObject({
       sessionTitle: "Buzz agent · #general · 11111111",
+      // goose finds the conversation's sessions by these.
+      tags: {
+        "buzz.agent": self,
+        "buzz.conversation": `${channel}/${"1".repeat(64)}`,
+      },
     });
   });
 
@@ -1068,6 +1073,10 @@ describe("GooseRuntime", () => {
     expect(goose()?.turns.map((turn) => turn.text)).toEqual([
       standalonePrompt(self, "Post the daily summary."),
     ]);
+    // Tagged as the agent's alone: it belongs to no conversation.
+    expect(goose()?.opened[0]?._meta).toMatchObject({
+      tags: { "buzz.agent": self },
+    });
   });
 
   it("switches a saved provider in the live session without restarting goose", async () => {

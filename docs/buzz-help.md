@@ -1041,11 +1041,10 @@ available rather than silently discarding it.
   In Codex DMs, an accepted follow-up takes over the live indicator; separate
   threads keep their own.
 - A Goose agent's Activity lists the sessions Buzz recorded on this device for
-  each conversation. A conversation with no recorded session, such as one from
-  an earlier version of Buzz or another computer, offers **Search older
-  sessions**, which searches goose's local history and can take a while. Watch
-  and timer turns from before this version aren't listed, and **Search older
-  sessions** doesn't find them, because it only matches channel conversations.
+  each conversation. When a conversation has none recorded, Activity finds its
+  sessions in goose's local history by the conversation they were tagged with.
+  Sessions from before Buzz tagged them aren't found, and watch and timer
+  turns from before Buzz recorded where they started aren't listed.
 - Confirmed failures keep **Couldn’t finish** visible after the working indicator
   stops, even when the agent sends no reply. Cancelled requests show **Stopped**.
   There is no viewing timer. Outcomes supplied only by live activity may be lost

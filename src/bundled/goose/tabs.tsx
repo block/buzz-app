@@ -829,8 +829,6 @@ export function createTabs({
     working?: string | undefined;
   }) {
     const workspace = readConfig(agent.config).workspace;
-    // Searching goose's history takes seconds, so only on request.
-    const [search, setSearch] = useState(false);
     // Read again when the conversation saves or opens another session.
     const ids = [row.sessionId, ...(row.sessions ?? [])].join(" ");
     /** With `reuse`, sessions that aren't working keep their last export. */
@@ -841,7 +839,7 @@ export function createTabs({
           workspace,
           ...(row.sessionId ? { sessionId: row.sessionId } : {}),
           ...(row.sessions ? { sessions: row.sessions } : {}),
-          ...(row.channelId ? { place: placeOf(row.key), search } : {}),
+          ...(row.channelId ? { place: placeOf(row.key) } : {}),
           ...(working ? { working } : {}),
         },
         signal,
@@ -863,37 +861,15 @@ export function createTabs({
         // or ending export every session.
         readLatest={async (signal) => (await read(signal, true))?.turns}
         readKey={`${row.key}\u0000${workspace}`}
-        readAgain={`${ids}\u0000${search}`}
+        readAgain={ids}
         working={Boolean(working)}
         reading="Reading the goose session…"
         failed="Could not read the goose session"
         missing={
-          row.channelId && !search ? (
-            <div className="grid gap-2">
-              <p className="m-0 text-body-sm text-subtle">
-                {row.sessions?.length
-                  ? "goose no longer has the sessions Buzz saved for this conversation."
-                  : "Buzz saved no goose session for this conversation."}{" "}
-                One from an earlier version of Buzz can be found by searching
-                goose's history, which can take a while.
-              </p>
-              <div>
-                <Button
-                  type="button"
-                  variant="subtle"
-                  size="sm"
-                  onClick={() => setSearch(true)}
-                >
-                  Search older sessions
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <p className="m-0 text-body-sm text-subtle">
-              goose has no session for this conversation on this computer. It
-              may have been deleted, or it ran in a different workspace.
-            </p>
-          )
+          <p className="m-0 text-body-sm text-subtle">
+            goose has no session for this conversation on this computer. It may
+            have been deleted, or it ran in a different workspace.
+          </p>
         }
         notes={(transcript) =>
           transcript.more && (
@@ -943,8 +919,8 @@ export function createTabs({
     );
     // The opened conversation's session: a thread's saved or live one, else
     // its channel's, read again each render so a first save is picked up.
-    // With neither, its transcript offers to search goose's history, in the
-    // place the agent keeps its sessions.
+    // With neither, its transcript finds the place's sessions by their goose
+    // tags, in the place the agent keeps its sessions.
     const match = (channelId: string, root?: string) =>
       conversations.find(
         (row) =>

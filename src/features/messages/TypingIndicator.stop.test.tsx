@@ -216,7 +216,11 @@ it("identifies each hosted thread and stops only the selected work", async () =>
       />
     </AgentsContext.Provider>,
   );
-  await user.click(screen.getByRole("button", { name: "Running 2 tools" }));
+  const activity = screen.getByRole("button", {
+    name: "Activity: Agent working",
+  });
+  expect(activity).not.toHaveTextContent("Running 2 tools");
+  await user.click(activity);
   const rows = screen.getAllByRole("button", { name: "Open thread for Agent" });
   for (const [index, task] of tasks.entries()) {
     expect(rows[index]).toHaveTextContent("Thread · " + task.title);

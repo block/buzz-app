@@ -2898,6 +2898,29 @@ describe("saved threads and protection state", () => {
     }
   });
 
+  it("stops a busy protected worker after a sign-out once its turn ends", async () => {
+    const f = protectedPreview();
+    try {
+      if (!f.handle) throw new Error("Missing handle");
+      await f.runtime.run({
+        ...f.delivery("busy"),
+        agent: f.handle,
+        config: { workspace: "/tmp/codex-test" },
+      });
+      await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+      f.runtime.restart();
+      // The running turn keeps its server until it ends.
+      expect(f.worker.process.end).not.toHaveBeenCalled();
+      await f.worker.complete(0, "ok");
+      await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(f.worker.process.end).toHaveBeenCalledOnce(),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
   it("retires an idle protected agent without cleaning through its closing connection", async () => {
     const f = protectedPreview();
     try {

@@ -15,7 +15,6 @@ import {
   type ReactNode,
 } from "react";
 import { sidebarTarget } from "../../features/channel-navigation/routes";
-import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "./ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
@@ -202,6 +201,7 @@ function ScopedSidebar({
           }
           preserveSidebar={preserveSidebar}
           connectionError={connection.error}
+          connectionRetrying={!!connection.retrying}
           render={({
             sidebar,
             workspaceComposition,
@@ -275,12 +275,7 @@ function ScopedSidebar({
                         }
                       >
                         {/* Relay outages for every inventory recover through one
-                    automatic owner; its one notice shows on every page. */}
-                        {!connection.cached && (
-                          <RecoveryNotice
-                            recovery={connection.session.recovery}
-                          />
-                        )}
+                    automatic owner; the app mounts its one notice. */}
                         <LiveSignIn
                           session={connection.session}
                           identity={communityIdentity(

@@ -612,21 +612,16 @@ it("reopens a visit that timed out while connecting once the connection is live"
   try {
     const { current, online } = offlineMessagesFixture();
     await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
-    // The visit deadline ends the wait with an honest, recoverable card.
+    // The visit deadline ends the wait; the connection keeps retrying.
     await act(() => vi.advanceTimersByTimeAsync(15_000));
     expect(current.navigation.snapshot()).toMatchObject({
       status: "failed",
       reason: "timeout",
     });
-    expect(
-      await screen.findByRole("heading", { name: "Can’t connect" }),
-    ).toBeVisible();
-    // Messages is what failed, so the way out leads elsewhere.
-    expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Try again" }).dataset.variant,
-    ).toBe("prominent");
+    // The connection retries by itself and the app's one notice reports it,
+    // so the page keeps loading instead of showing its own "Can’t connect".
+    expect(screen.queryByText(pageFailure)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     online();
     await act(() => vi.advanceTimersByTimeAsync(31_000));
     await waitFor(() =>
@@ -643,7 +638,7 @@ it("does not reopen a failed visit after the user has left it", async () => {
     const { current, online } = offlineMessagesFixture();
     await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
     await act(() => vi.advanceTimersByTimeAsync(15_000));
-    await screen.findByRole("heading", { name: "Can’t connect" });
+    expect(screen.queryByText(pageFailure)).toBeNull();
     const failed = current.navigation.snapshot().entry.id;
     act(() => {
       void current.navigation.open({

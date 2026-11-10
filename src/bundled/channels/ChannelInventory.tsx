@@ -212,6 +212,7 @@ export function ChannelInventory({
   slotsReady,
   preserveSidebar = false,
   connectionError,
+  connectionRetrying,
   scope,
   viewer,
   sidebarSections: contributedSections,
@@ -232,6 +233,8 @@ export function ChannelInventory({
   slotsReady?: ((ids: readonly string[]) => boolean) | undefined;
   preserveSidebar?: boolean;
   connectionError?: string | undefined;
+  /** The connection retries by itself; the app's one notice reports it. */
+  connectionRetrying?: boolean | undefined;
   scope: string;
   viewer?: string | undefined;
   sidebarSections?: SidebarSections | undefined;
@@ -2440,7 +2443,7 @@ export function ChannelInventory({
     ),
     after: (
       <>
-        {cached && connectionError && (
+        {cached && connectionError && !connectionRetrying && (
           <p className={styles.preferenceNotice} role="status">
             Offline · Showing saved conversations.
             <Button onClick={relay.tryAgain}>Retry connection</Button>

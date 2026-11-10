@@ -390,6 +390,7 @@ export function PanelWorkspace({
       {...(main
         ? { "data-main-workspace": "" }
         : { "data-panel-workspace": "" })}
+      data-shell-region={main ? "main" : "side-pane"}
       data-active-tab-closable={!!active?.close || undefined}
       data-overlay-boundary=""
       className={styles.workspace}
@@ -436,6 +437,7 @@ export function PanelWorkspace({
       }}
     >
       <PanelHeader
+        region={main ? "main-header" : undefined}
         navigation={!identityOnly ? heading : undefined}
         actions={
           active && "toolbar" in active && active.toolbar ? (

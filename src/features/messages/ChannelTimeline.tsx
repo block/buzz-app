@@ -1801,6 +1801,7 @@ function Timeline({
     <section
       ref={scroller}
       data-message-scroller
+      data-shell-region="timeline"
       data-chat-presentation={chatPresentation || undefined}
       className={styles.feed}
       data-channel-timeline={channelId}

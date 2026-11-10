@@ -195,6 +195,20 @@ function activityFixture() {
   return { owner, updates, content };
 }
 
+it("marks the timeline region for plugins that restyle the shell", () => {
+  const { owner, content } = activityFixture();
+  try {
+    const { container } = render(content([]));
+    const timeline = container.querySelectorAll(
+      '[data-shell-region="timeline"]',
+    );
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toHaveAttribute("data-channel-timeline", "alpha");
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("shows one latest-agent preview, retains expanded history through appends, and folds back", () => {
   const { owner, updates, content } = activityFixture();
   try {

@@ -196,3 +196,15 @@ it("ignores the agent flag from providers outside the bundled people providers",
     await screen.findByRole("option", { name: /^Honey\s*Managed by Wes$/ }),
   ).not.toBeNull();
 });
+it("marks the accept key on the selected channel completion only", async () => {
+  mountPeople("buzz.channels");
+  const selected = await screen.findByRole("option", { selected: true });
+  const accept = selected.querySelector("[data-completion-accept]");
+  expect(accept?.textContent).toBe("Enter");
+  expect(document.querySelectorAll("[data-completion-accept]")).toHaveLength(1);
+});
+it("shows no accept key outside the channel completion list", async () => {
+  mountPeople("buzz.mentions");
+  await screen.findByRole("option", { selected: true });
+  expect(document.querySelector("[data-completion-accept]")).toBeNull();
+});

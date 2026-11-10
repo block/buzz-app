@@ -28,7 +28,14 @@ export function SidebarFrame({
     >
       <div className={styles.sidebar}>
         <SidebarNavigation>
-          {header && <div className={styles.sidebarFilter}>{header}</div>}
+          {header && (
+            <div
+              className={styles.sidebarFilter}
+              data-shell-region="sidebar-header"
+            >
+              {header}
+            </div>
+          )}
           <div
             className={styles.sidebarBody}
             id={panelId}

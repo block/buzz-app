@@ -545,6 +545,39 @@ it("shows what the row has not seen, while the channel stays unread", () => {
   expect(row()).not.toHaveAttribute("data-ordinary");
 });
 
+it("counts mentions on a channel's attention dot and unread messages on a DM's, for plugins that restyle the shell", () => {
+  const dot = () => document.querySelector("[data-channel-priority]");
+  const channel = owner();
+  const view = render(
+    <ChannelSidebarItem
+      {...itemProps(channel.session, false)}
+      sectionKey="group:work"
+    />,
+  );
+  // Ordinary backlog has no attention dot, so nothing to count.
+  act(() => channel.unread(5, 0));
+  expect(dot()).toBeNull();
+  act(() => channel.unread(5, 2));
+  expect(dot()).toHaveAttribute("data-channel-count", "2");
+  view.unmount();
+
+  const dm = owner();
+  render(
+    <ChannelSidebarItem
+      {...itemProps(dm.session, false, {
+        id: "alpha",
+        name: "Sam",
+        channelType: "dm",
+      })}
+      sectionKey="group:dms"
+    />,
+  );
+  act(() => dm.unread(4, 0));
+  expect(dot()).toHaveAttribute("data-channel-count", "4");
+  act(() => dm.unread(0, 0));
+  expect(dot()).toBeNull();
+});
+
 it("marks a temporary channel with its lifetime and yields the slot to working agents", () => {
   const state = owner();
   const temporary: ChannelSummary = {

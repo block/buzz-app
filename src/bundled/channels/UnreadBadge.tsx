@@ -126,6 +126,8 @@ export function UnreadBadge({
   const hideUnreadDots = muted && labelUnread === "ordinary" && !preserveUnread;
   if (!unread && !threadCount && label === undefined) return null;
   const priority = dm || (attentionCount ?? 0) > 0;
+  // The count the priority dot stands for: mentions, or a DM's unread messages.
+  const priorityCount = (attentionCount ?? 0) || (dm ? (count ?? 0) : 0);
   const showUnreadDot =
     !hideUnreadDots &&
     priority &&
@@ -165,6 +167,7 @@ export function UnreadBadge({
         <span
           className={styles.priorityDot}
           data-channel-priority=""
+          data-channel-count={priorityCount > 0 ? priorityCount : undefined}
           data-indicator-layer="unread"
           aria-hidden="true"
         />

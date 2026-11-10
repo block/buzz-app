@@ -1780,6 +1780,7 @@ function ThreadMessages({
       <section
         ref={scroller}
         data-message-scroller
+        data-shell-region="timeline"
         className={styles.threadHistory}
         style={
           {

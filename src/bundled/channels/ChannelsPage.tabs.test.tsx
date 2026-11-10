@@ -779,6 +779,22 @@ it.each(["stream", "solo"] as const)(
   },
 );
 
+it("names its channel type and name on the main header's identity for plugins that restyle the shell", async () => {
+  await page();
+  const identity = screen.getByRole("button", {
+    name: "Manage members of Alpha",
+  });
+  expect(identity).toHaveAttribute("data-channel-type", "stream");
+  expect(identity).toHaveAttribute("data-channel-name", "Alpha");
+  expect(identity.closest('[data-shell-region="main-header"]')).not.toBeNull();
+});
+
+it("a Solo chat's own header carries no channel identity hooks", async () => {
+  await page("solo");
+  expect(document.querySelector("[data-channel-type]")).toBeNull();
+  expect(document.querySelector("[data-channel-name]")).toBeNull();
+});
+
 it("an empty tab menu returns keyboard focus to the conversation identity", async () => {
   const h = await page();
   const channel = screen.getByRole("button", {

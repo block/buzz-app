@@ -3861,7 +3861,7 @@ it("loads another member page after a previous page fails", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("lists known-archived members after live ones in each group, by name", async () => {
+it("lists known-archived members in a marked Archived group after the others", async () => {
   let release!: () => void;
   const pendingArchives = new Promise<void>((resolve) => {
     release = resolve;
@@ -3877,40 +3877,43 @@ it("lists known-archived members after live ones in each group, by name", async 
     archivedMembers: [alice.pubkey, ann.pubkey],
     pendingArchives,
   });
-  const names = () =>
+  const sections = () =>
     within(memberData())
-      .getAllByRole("listitem")
-      // Each row starts with its avatar's one-letter fallback.
-      .map((row) => row.textContent?.slice(1));
-  // Archive state unknown: nobody counts as archived, so pure name order.
+      .getAllByRole("region")
+      .map((section) => [
+        section.getAttribute("aria-label"),
+        within(section)
+          .getAllByRole("listitem")
+          // Each row starts with its avatar's one-letter fallback.
+          .map((row) => row.textContent?.slice(1)),
+      ]);
+  // Archive state unknown: nobody counts as archived.
   await vi.waitFor(() =>
-    expect(names()).toEqual([
-      "Alice",
-      "Carl (you)",
-      "Zed",
-      "Ann Bot",
-      "Zoe Bot",
+    expect(sections()).toEqual([
+      ["People", ["Alice", "Carl (you)", "Zed"]],
+      ["Agents", ["Ann Bot", "Zoe Bot"]],
     ]),
   );
   await act(async () => release());
   await vi.waitFor(() =>
-    expect(names()).toEqual([
-      "Carl (you)",
-      "Zed",
-      "Alice",
-      "Zoe Bot",
-      "Ann Bot",
+    expect(sections()).toEqual([
+      ["People", ["Carl (you)", "Zed"]],
+      ["Agents", ["Zoe Bot"]],
+      ["Archived", ["AliceArchived", "Ann BotArchived"]],
     ]),
   );
+  expect(
+    within(memberData()).getByRole("heading", { name: "Archived · 2" }),
+  ).toBeVisible();
 });
 
-it("keeps archived members last in a paged roster when archives load late and members join", async () => {
+it("keeps archived members in their group in a paged roster when archives load late and members join", async () => {
   let release!: () => void;
   const pendingArchives = new Promise<void>((resolve) => {
     release = resolve;
   });
-  // 61 people page as 50 + 11. Even-numbered members are archived, so the
-  // paging order, frozen when the list first shows, interleaves them.
+  // 61 people page. Even-numbered members are archived, so the paging order,
+  // frozen when the list first shows, interleaves them.
   const people = Array.from({ length: 60 }, (_, i) =>
     profile(keypair(), { name: `Member ${String(i).padStart(2, "0")}` }),
   );
@@ -3922,30 +3925,24 @@ it("keeps archived members last in a paged roster when archives load late and me
     pendingArchives,
   });
   const list = screen.getByRole("region", { name: "Member list" });
-  const pages = () =>
-    within(list).getByRole("navigation", { name: "People member pages" });
-  const rows = () =>
-    within(list)
+  const rows = (group: string) =>
+    within(within(list).getByRole("region", { name: group }))
       .getAllByRole("listitem")
       .map((row) => row.textContent ?? "");
   const archived = (row: string) =>
     Number(/Member (\d\d)/.exec(row)?.[1] ?? 1) % 2 === 0;
-  const named = () => rows().every((row) => !row.includes("npub"));
+  const named = () =>
+    [...rows("People"), ...rows("Archived")].every(
+      (row) => !row.includes("npub"),
+    );
   await act(async () => release());
-  // Page 1: you, the 30 live members, then the first 19 archived ones.
+  // People: you and the 30 live members. Archived: the other 30.
   await vi.waitFor(() => {
     expect(named()).toBe(true);
-    expect(rows().map(archived)).toEqual([
-      ...Array(31).fill(false),
-      ...Array(19).fill(true),
-    ]);
+    expect(rows("People").map(archived)).toEqual(Array(31).fill(false));
+    expect(rows("Archived").map(archived)).toEqual(Array(30).fill(true));
   });
-  await t.user.click(within(pages()).getByRole("button", { name: "Next" }));
-  await vi.waitFor(() => {
-    expect(named()).toBe(true);
-    expect(rows().map(archived)).toEqual(Array(11).fill(true));
-  });
-  // A live member who joins later goes before the archived ones.
+  // A live member who joins later goes in People, not Archived.
   await act(async () =>
     t.replaceRoster([
       t.viewer.pubkey,
@@ -3953,57 +3950,39 @@ it("keeps archived members last in a paged roster when archives load late and me
       (20000).toString(16).padStart(64, "0"),
     ]),
   );
-  await t.user.click(within(pages()).getByRole("button", { name: "Previous" }));
-  await vi.waitFor(() => expect(rows()[31]).toContain("npub"));
-  expect(rows().slice(32).every(archived)).toBe(true);
+  await vi.waitFor(() => expect(rows("People")[31]).toContain("npub"));
+  expect(rows("Archived")).toHaveLength(30);
 });
 
-it("moves focus to the page heading when late archives move its row off the page", async () => {
+it("moves focus to the group heading when late archives move its row to Archived", async () => {
   let release!: () => void;
   const pendingArchives = new Promise<void>((resolve) => {
     release = resolve;
   });
-  // Named in key order, so names and keys sort alike. The first 30 are
-  // archived, so page 2 (rows 51 to 61) holds only live members until the
-  // archives arrive and move all of them to page 1.
-  const people = Array.from({ length: 60 }, () => keypair())
-    .sort((a, b) =>
-      (formatPublicKey(a.pubkey) ?? "").localeCompare(
-        formatPublicKey(b.pubkey) ?? "",
-      ),
-    )
-    .map((key, i) =>
-      profile(key, { name: `Member ${String(i).padStart(2, "0")}` }),
-    );
-  const archived = new Set(people.slice(0, 30).map((event) => event.pubkey));
+  const alice = profile(keypair(), { name: "Alice" });
   const t = await setup("stream", false, false, undefined, undefined, {
-    memberProfiles: people,
-    archivedMembers: [...archived],
+    memberProfiles: [alice],
+    archivedMembers: [alice.pubkey],
     pendingArchives,
   });
   const list = screen.getByRole("region", { name: "Member list" });
-  const pages = within(list).getByRole("navigation", {
-    name: "People member pages",
-  });
-  await t.user.click(within(pages).getByRole("button", { name: "Next" }));
-  const actions = () =>
-    within(list)
-      .getAllByRole("button", { name: /^Actions for / })
-      .map((button) => button.dataset.member ?? "");
-  expect(actions().some((key) => archived.has(key))).toBe(false);
-  const focused = within(list).getAllByRole("button", {
-    name: /^Actions for /,
-  })[0];
-  if (!focused) throw new Error("Missing member action");
+  const action = () =>
+    within(list).getByRole("button", { name: /^Actions for Alice/ });
+  const focused = await vi.waitFor(action);
   focused.focus();
   await act(async () => release());
   await vi.waitFor(() =>
-    expect(actions().every((key) => archived.has(key))).toBe(true),
+    expect(
+      within(within(list).getByRole("region", { name: "Archived" })).getByRole(
+        "button",
+        { name: /^Actions for Alice/ },
+      ),
+    ).toBeInTheDocument(),
   );
   expect(focused).not.toBeInTheDocument();
   const heading = within(list).getByRole("heading", { name: /^People ·/ });
   expect(heading).toHaveFocus();
-  // The next Tab stays on the shown page.
+  // The next Tab stays in the list.
   await t.user.tab();
   expect(document.activeElement?.closest("li")).toBe(
     within(list).getAllByRole("listitem")[0],

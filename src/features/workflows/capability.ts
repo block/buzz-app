@@ -266,7 +266,6 @@ export function createWorkflows({
           data: snapshot.data,
           error:
             "Connection interrupted. Refresh to check current workflow data; your draft is retained.",
-          transient: true,
         });
       },
       emit,

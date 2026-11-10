@@ -60,7 +60,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.promote_version || needs.build.outputs.version }}
+          VERSION: ${{ inputs.promote_version || needs.desktop.outputs.version }}
         run: node scripts/publish-desktop-downloads.mjs "$VERSION" --apply
 
       - name: Prune old preview releases and tags

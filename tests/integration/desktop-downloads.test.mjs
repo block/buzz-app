@@ -129,21 +129,14 @@ test("manifest publication follows promotion and gates cleanup in the same seria
     ),
   );
   const steps = workflow.jobs.promote_preview.steps;
-  const publication = steps.findIndex((step) =>
-    step.run?.includes("publish-desktop-downloads.mjs"),
-  );
-  assert.ok(
-    publication >
-      steps.findIndex((step) =>
-        step.run?.includes('cmp "$RUNNER_TEMP/candidate/latest.json"'),
-      ),
-  );
-  assert.ok(
-    publication <
-      steps.findIndex((step) =>
-        step.run?.includes("prune-preview-releases.mjs"),
-      ),
-  );
+  const [promotion, publication, cleanup] = [
+    "promote-updater-feed.sh preview-feed",
+    "publish-desktop-downloads.mjs",
+    "prune-preview-releases.mjs",
+  ].map((command) => steps.findIndex((step) => step.run?.includes(command)));
+  assert.ok(promotion >= 0 && publication >= 0 && cleanup >= 0);
+  assert.ok(promotion < publication && publication < cleanup);
+  assert.equal(steps[publication].env.VERSION, steps[promotion].env.VERSION);
   assert.equal(steps[publication].if, undefined);
   assert.equal(workflow.jobs.promote_preview.permissions.contents, "write");
   assert.equal(workflow.concurrency["cancel-in-progress"], false);

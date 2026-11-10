@@ -178,6 +178,8 @@
     "allow-dock-permission",
     "allow-unread-indicator-set",
     "allow-keep-awake-set",
+    "allow-render-rate-preference",
+    "allow-render-rate-set",
     "allow-deep-link-take",
     "allow-deep-link-watch",
     "allow-terminal-create-owner",

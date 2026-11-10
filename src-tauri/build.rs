@@ -231,6 +231,8 @@ fn main() {
             "dock_permission",
             "unread_indicator_set",
             "keep_awake_set",
+            "render_rate_preference",
+            "render_rate_set",
             "deep_link_take",
             "deep_link_watch",
             "terminal_create_owner",

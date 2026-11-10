@@ -215,6 +215,10 @@ fn native_command_permissions_isolate_webviews() {
         "dock_permission",
         "unread_indicator_set",
         "keep_awake_set",
+        #[cfg(target_os = "macos")]
+        "render_rate_preference",
+        #[cfg(target_os = "macos")]
+        "render_rate_set",
         "deep_link_take",
         "deep_link_watch",
         "terminal_create_owner",

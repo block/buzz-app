@@ -347,7 +347,8 @@ whose ending frame kept the same offset. A stall on the scrolling thread alone, 
 frames keep running, shows only in the video. `summary.md` in the results directory gives each metric's median and range per arm against the
 targets, with 1ms of timestamp tolerance; per-run JSON and videos sit beside it. It needs a
 logged-in session, Screen Recording and Accessibility permission for the terminal,
-an idle machine and the main display at 60 Hz. The app is a development build
+an idle machine and the main display at 60 Hz. Its app identifier also keeps **Match display
+refresh rate** at its default, off, so WebKit holds rendering near 60 fps. The app is a development build
 serving a production frontend. Synthetic momentum approximates a trackpad;
 compare arms within one run, not across machines or sessions.
 

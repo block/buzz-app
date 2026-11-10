@@ -70,6 +70,8 @@ mod microphone;
 #[cfg(target_os = "macos")]
 mod mouse_nav;
 #[cfg(target_os = "macos")]
+mod render_rate;
+#[cfg(target_os = "macos")]
 mod reshow;
 
 mod notifications;
@@ -854,6 +856,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         notifications::macos::notification_permission_state,
         #[cfg(target_os = "macos")]
         notifications::macos::request_notification_access,
+        #[cfg(target_os = "macos")]
+        render_rate::render_rate_preference,
+        #[cfg(target_os = "macos")]
+        render_rate::render_rate_set,
         deep_link_take,
         deep_link_watch,
         dock_permission,
@@ -990,6 +996,18 @@ pub fn run() {
             mouse_nav::install(app.handle());
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main") {
+                let enabled = app
+                    .path()
+                    .app_config_dir()
+                    .is_ok_and(|config| render_rate::saved(&config));
+                if let Err(error) =
+                    main.with_webview(move |webview| render_rate::install(&webview, enabled))
+                {
+                    eprintln!("Could not set the rendering rate: {error}");
+                }
+            }
             #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {

@@ -16,7 +16,7 @@ const noSubscribe = () => () => {};
 type Read =
   | { status: "loading" }
   | { status: "ready"; partial: boolean }
-  | { status: "error" };
+  | { status: "error"; cause?: unknown };
 
 /** The community's open channels, read while `active`, for browsing without
  * a query. Entries are display-only directory names: opening one reaches its
@@ -72,8 +72,8 @@ export function useChannelDirectory(
       ({ partial }) => {
         if (!controller.signal.aborted) setRead({ status: "ready", partial });
       },
-      () => {
-        if (!controller.signal.aborted) setRead({ status: "error" });
+      (cause: unknown) => {
+        if (!controller.signal.aborted) setRead({ status: "error", cause });
       },
     );
     return () => controller.abort();
@@ -96,6 +96,8 @@ export function useChannelDirectory(
       (active && read.status === "loading" && !channels.directoryComplete?.()),
     partial: !stale && read.status === "ready" && read.partial,
     error: read.status === "error",
+    /** What the failed read rejected with, for the recovery classification. */
+    cause: read.status === "error" ? read.cause : undefined,
     retry,
   };
 }

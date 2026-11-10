@@ -30,6 +30,7 @@ export type {
   Pages,
 } from "../features/pages/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
+export type { PluginAppearance } from "../features/appearance/service";
 export type {
   SidebarRow,
   SidebarRowSortMode,

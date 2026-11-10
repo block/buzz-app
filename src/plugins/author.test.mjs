@@ -33,7 +33,7 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops, PluginAppearance } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -179,6 +179,12 @@ export function apply(ctx: Context) {
   backdrops?.register({ id: "glow", component: () => null });
   // @ts-expect-error A backdrop must be a React component.
   backdrops?.register({ id: "bad-glow", component: "div" });
+  const appearance: PluginAppearance | undefined = ctx.reflect.get("appearance");
+  const undoTheme: (() => void) | undefined = appearance?.setRootAttribute("data-plugin-theme", "example");
+  undoTheme?.();
+  appearance?.overrideMessageDensity("compact");
+  // @ts-expect-error Density is a known choice.
+  appearance?.overrideMessageDensity("loose");
   const sidebar: SidebarSections | undefined = ctx.reflect.get("sidebarSections");
   sidebar?.register(section);
   // @ts-expect-error Sidebar contribution versions are explicit.

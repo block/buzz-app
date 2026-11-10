@@ -1367,10 +1367,10 @@ recorded history presents the request's work, that history is its indicator:
 dots in the collapsed summary, or on the active update when expanded, beside the
 shimmering text. The conversation indicator adds no second one, but it stays
 visible for any request of that agent here that nothing mounted presents, and
-returns when that history unmounts or is closed. History that is mounted but
-scrolled out of view still counts, as the live bubble does. A bubble showing
-only a settled outcome, such as an error, does not count. Reduced motion
-leaves the dots static.
+returns when that history unmounts or is closed, or once a newer message follows
+it. History that is mounted but scrolled out of view still counts, as the live
+bubble does. A bubble showing only a settled outcome, such as an error, does not
+count. Reduced motion leaves the dots static.
 When local work or a remote turn's triggering IDs identify the request, old
 activity does not inherit the working/thinking state of a different request in
 the same thread. Only work with no known request falls back to the thread.

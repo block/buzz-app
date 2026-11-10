@@ -1705,7 +1705,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   );
   const active = live || (activity?.active ?? false);
   // Its dots are then its request's working cue, so the conversation shows
-  // no second one for that request.
+  // no second one for that request until a newer message follows its run.
   useActivityTypingReplacement(
     session && activity?.requestId
       ? {
@@ -1717,7 +1717,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
           presence: true,
         }
       : undefined,
-    active && !!activity?.requestId,
+    active && !!activity?.requestId && !activity.followed,
   );
   const keepMounted = props.keepMounted;
   useEffect(() => {

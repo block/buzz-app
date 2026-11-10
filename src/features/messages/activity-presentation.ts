@@ -37,6 +37,8 @@ export type ActivityRowPresentation = {
   requestId: string | undefined;
   active: boolean;
   ownsLive: boolean;
+  /** A newer message follows this row's run, so the conversation keeps its cue. */
+  followed?: boolean;
   /** Keep a failure's author visible in history shared with other agents. */
   showAuthor?: boolean;
   container: "history" | "bubble" | "standalone";
@@ -363,6 +365,7 @@ export function activityPresentation(
           liveParticipants.includes(row.authorId) &&
           !retired &&
           (working.has(row.authorId) || !group.followingMessage),
+        followed: !!group.followingMessage,
         container: row.id === first.id && standalone ? "standalone" : "bubble",
         showAuthor:
           participants.length > 1 && row.notice === "execution-failure",
@@ -442,6 +445,7 @@ export function useStableRowActivity() {
           prior.requestId === next.requestId &&
           prior.active === next.active &&
           prior.ownsLive === next.ownsLive &&
+          prior.followed === next.followed &&
           prior.showAuthor === next.showAuthor &&
           prior.container === container
         )

@@ -1083,11 +1083,11 @@ it.each([undefined, root])(
       replyCount: 0,
     };
     const { audience: _audience, ...reply } = row;
-    const rows = [row, { ...reply, id: "reply", content: "Still checking" }];
+    const replied = [row, { ...reply, id: "reply", content: "Still checking" }];
     const agents = new Set([agent]);
-    function History() {
+    function History({ followed }: { followed: boolean }) {
       const group = useActivityPresentation(
-        rows,
+        followed ? replied : [row],
         f.session.agentActivity,
         agents,
       ).groups[0];
@@ -1103,9 +1103,9 @@ it.each([undefined, root])(
         />
       );
     }
-    const preview = (mounted: boolean) => (
+    const preview = (mounted: boolean, followed = false) => (
       <ActivityIndicatorPresentation>
-        {mounted && <History />}
+        {mounted && <History followed={followed} />}
         <TypingIndicator
           session={f.session}
           channelId="channel"
@@ -1136,6 +1136,12 @@ it.each([undefined, root])(
     expect(cue()).toBeNull();
     // Without mounted history, the conversation shows the work again.
     view.rerender(preview(false));
+    expect(cue()).toBeVisible();
+    view.rerender(preview(true));
+    expect(cue()).toBeNull();
+    // A newer message below the history leaves its dots out of view of the
+    // conversation's end, so the conversation shows the work there too.
+    view.rerender(preview(true, true));
     expect(cue()).toBeVisible();
     view.rerender(preview(true));
     expect(cue()).toBeNull();

@@ -2492,9 +2492,9 @@ it.each(["grouped", "standalone"])(
         "data-active",
         "true",
       );
-      expect(workingDots()).toHaveLength(1);
       expect(dotsOn(old.id)).toHaveLength(1);
-      expect(workingCue()).toBeNull();
+      // The follow-up below that update keeps the conversation's cue too.
+      expect(workingCue()).toBeVisible();
       f.send(A, "t0", 2, "turn_completed");
       expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
         "data-active",

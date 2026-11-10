@@ -886,7 +886,8 @@ available rather than silently discarding it.
   its speaker. Thread work appears inside its thread; the channel’s reply summary
   still shows when an agent is working there. While the activity under your
   message shows an agent working, it is that agent's only working indicator.
-  Once its recorded updates show that work, they carry the dots instead.
+  Once its recorded updates show that work, they carry the dots instead, until
+  a newer message arrives below them.
   Otherwise dots remain at the end of the conversation while agents work,
   alongside current step details when available. With Reduce Motion enabled,
   the dots stay still. Open the live indicator or expand recorded work to view

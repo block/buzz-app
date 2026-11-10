@@ -26,6 +26,7 @@ import type {
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
+import { useRecovery } from "../features/relay/RecoveryNotice";
 
 const channelsKey = "buzz.channels/channels";
 /** Presentation-only lease for an already-confirmed Settings departure. */
@@ -172,8 +173,7 @@ export function useAppNavigation(
     if (client.status === "loading") waiting = true;
     // The broker is unreachable, so no one has been identified yet: that is
     // the connection's problem, which retries, not a denial.
-    else if (client.status === "unavailable" && client.retrying)
-      waiting = true;
+    else if (client.status === "unavailable" && client.retrying) waiting = true;
     else if (client.viewer !== scope.viewer) failure = "denied";
     else if (!membership && !finishingDeparture) failure = "denied";
     else if (membership && client.selected !== membership.id) waiting = true;
@@ -474,6 +474,11 @@ export function useAppNavigation(
   // error; a page presenting its failure in place owns that Retry.
   const offline =
     relay.status === "connecting" || relay.status === "error" || !!relay.cached;
+  // A live session whose reads are failing is in trouble too: session recovery
+  // retries them and the one notice reports it. The visit's own timeout is one
+  // of those failures, so it waits for recovery to settle instead of showing a
+  // card that nothing would ever clear.
+  const { recovering } = useRecovery(relay.session?.recovery);
   const failedOffline = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (
@@ -484,7 +489,7 @@ export function useAppNavigation(
       (state.reason !== "timeout" && state.reason !== "unavailable")
     )
       return;
-    if (offline) failedOffline.current = state.attempt.id;
+    if (offline || recovering) failedOffline.current = state.attempt.id;
     else if (
       relay.status === "ready" &&
       failedOffline.current === state.attempt.id
@@ -492,7 +497,7 @@ export function useAppNavigation(
       failedOffline.current = undefined;
       void navigation.retry();
     }
-  }, [navigation, state, failure, offline, relay.status]);
+  }, [navigation, state, failure, offline, recovering, relay.status]);
   // Stable, so the shell's page navigation renders only when pages change.
   const select = useCallback(
     (
@@ -566,10 +571,12 @@ export function useAppNavigation(
     selected: pageKey ?? target.kind,
     /** The connection is down, including a settled refusal. */
     offline: !failure && offline,
-    /** The connection is still being made or retried, and the visit reopens
-     * once it is live; not a refused or misconfigured connection. */
+    /** The connection is still being made or retried, or session recovery is
+     * retrying failed reads on a live one, and the visit reopens once it is
+     * live and settled; not a refused or misconfigured connection. */
     reconnecting:
-      !failure && (relay.status === "connecting" || !!relay.retrying),
+      !failure &&
+      (relay.status === "connecting" || !!relay.retrying || recovering),
     workspace: {
       page: workspacePage || undefined,
       target: workspaceTarget,

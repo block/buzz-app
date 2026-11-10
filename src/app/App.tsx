@@ -642,7 +642,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           ? "offline"
           : "unavailable";
   // Only a timed-out or unavailable visit reopens by itself, and only while
-  // the connection is still being retried.
+  // the connection is still being retried or recovery is retrying its reads.
   const keepTrying =
     route.reconnecting &&
     !route.state.ingress &&
@@ -895,10 +895,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&
             ((!route.state.ingress && route.failure) || failedPage) ? (
-            // A visit that failed only because the connection is down reopens
-            // by itself; the one connection notice reports it, so the page
-            // keeps its loading state instead of a second "Can’t connect".
-            failureKind === "offline" && keepTrying ? (
+            // A visit that failed only because the connection is down, or
+            // because session recovery is retrying a live one, reopens by
+            // itself; the one connection notice reports it, so the page keeps
+            // its loading state instead of a second "Can’t connect".
+            keepTrying &&
+            (failureKind === "offline" || failureKind === "unavailable") ? (
               opening
             ) : (
               destinationFailure

@@ -1,4 +1,5 @@
 import {
+  joinBeneath,
   parseOpenTarget,
   targetKey,
   withoutJoin,
@@ -30,12 +31,12 @@ export function dismissalOf(
   const closedViews = new Set(
     entries
       .filter((entry) => !entry.target.join && named(entry))
-      .map((entry) => targetKey(entry.target)),
+      .map((entry) => targetKey(joinBeneath(entry.target))),
   );
   return (entry: NavigationEntry) =>
     named(entry) ||
     (!!entry.target.join &&
-      closedViews.has(targetKey(withoutJoin(entry.target))));
+      closedViews.has(targetKey(joinBeneath(entry.target))));
 }
 export type HistorySnapshot = Readonly<{
   current: NavigationEntry;

@@ -864,7 +864,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             ),
           }}
           onOpenChange={(open) => {
-            if (open) return;
+            // A join dialog over Settings holds it while the join writes,
+            // as it holds Back and its own Close.
+            if (open || joinWrites.current) return;
             if (settingsUnsaved) setConfirmSettingsDiscard(true);
             else route.leaveSettings();
           }}

@@ -275,6 +275,7 @@ const BOUNDARY_ROLES = [
   "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
+  "--status-unread",
   // Chart marks need 3:1 against the surfaces a chart sits on.
   "--chart-series-1",
   "--chart-series-2",
@@ -470,7 +471,9 @@ function audit(mode, map, baseline) {
   }
   for (const role of BOUNDARY_ROLES) {
     const surfaces =
-      role.startsWith("--status-avatar-") || role === "--status-away"
+      role.startsWith("--status-avatar-") ||
+      role === "--status-away" ||
+      role === "--status-unread"
         ? [
             ...BOUNDARY_SURFACES,
             "--affordance-selected",

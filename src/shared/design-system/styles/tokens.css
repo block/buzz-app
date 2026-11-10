@@ -1161,6 +1161,7 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-8);
+  --status-unread: var(--magenta-9);
   /* Chart series marks, in this order; validated as a set for colour-vision
    * separation and 3:1 against the panel. Text never uses them. */
   --chart-series-1: var(--blue-10);
@@ -1314,6 +1315,7 @@
   --status-avatar-online-border: var(--green-11);
   --status-away: var(--amber-10);
   --status-offline: var(--neutral-10);
+  --status-unread: var(--magenta-11);
   /* Dark steps stay in the band where no series outshines the others. */
   --chart-series-1: var(--blue-9);
   --chart-series-2: var(--orange-8);

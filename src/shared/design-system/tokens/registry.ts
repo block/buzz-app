@@ -813,6 +813,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         use: "Offline presence dot.",
         status: "core",
       },
+      {
+        token: "status-unread",
+        variable: "--status-unread",
+        pointsAt: "magenta-9 light / magenta-11 dark",
+        use: "Unread Activity conversation dot on panel, hover and selected row surfaces; independent of the chosen accent.",
+        status: "core",
+      },
     ],
   },
   {

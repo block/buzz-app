@@ -372,12 +372,13 @@ impl NsecBackupHost {
     async fn initialize_management(&self, identity: &IdentityHost) -> Result<()> {
         let epoch = self.state.lock().map_err(|_| RETRY)?.epoch;
         let pubkey = identity.saved_viewer().await?;
+        let receipt = pubkey.as_deref().is_some_and(|pubkey| self.receipt(pubkey));
         let mut state = self.state.lock().map_err(|_| RETRY)?;
         if state.closed || state.epoch != epoch {
             return Err(CANCELED.into());
         }
         if let Some(pubkey) = pubkey {
-            self.management_for(&mut state, &pubkey);
+            self.management_for(&mut state, &pubkey, receipt);
         } else {
             state.management = None;
         }
@@ -385,7 +386,18 @@ impl NsecBackupHost {
         self.publish(&mut state, progress);
         Ok(())
     }
-    fn management_for(&self, state: &mut State, pubkey: &str) {
+    /// Whether this device holds a confirmed backup receipt for `pubkey`, under
+    /// any account. It needs no network, so a launch offline or signed out
+    /// still shows a backed-up key as backed up.
+    fn receipt(&self, pubkey: &str) -> bool {
+        match (self.config.as_ref(), self.root.as_ref()) {
+            (Some(config), Some(root)) => persistence::confirmed(root, config, pubkey),
+            _ => false,
+        }
+    }
+    /// Starts `pubkey`'s presentation from `receipt`, the device's durable
+    /// evidence; a pass for the signed-in account then confirms or clears it.
+    fn management_for(&self, state: &mut State, pubkey: &str, receipt: bool) {
         if state
             .management
             .as_ref()
@@ -400,7 +412,7 @@ impl NsecBackupHost {
             } else {
                 "self-managed"
             },
-            initial_backup_confirmed: false,
+            initial_backup_confirmed: receipt,
         });
     }
     fn snapshot(&self, state: &State) -> BackupStatus {
@@ -468,11 +480,13 @@ impl NsecBackupHost {
         }
         state.retire();
         state.session = federated;
-        // A new account must prove its own scoped receipt. Signing out
-        // keeps the already-confirmed presentation.
+        // A new account starts again from the device's receipts: what an
+        // earlier account's pass cleared or confirmed no longer applies, and
+        // its own pass confirms or clears the key. Signing out keeps the
+        // presentation.
         if state.session.is_some() {
             if let Some(management) = &mut state.management {
-                management.initial_backup_confirmed = false;
+                management.initial_backup_confirmed = self.receipt(&management.pubkey);
             }
         }
         drop(state);
@@ -584,8 +598,27 @@ impl NsecBackupHost {
                         }
                         Progress::Complete
                     }
-                    Ok(Outcome::Waiting(reason)) => Progress::Waiting { reason },
-                    Err(Stop::Failed(kind)) => Progress::Failed { kind },
+                    Ok(Outcome::Waiting(reason)) => {
+                        // The signed-in account has no key linked, so it holds
+                        // no backup of this one, whatever a receipt says.
+                        if reason == Waiting::NotLinked {
+                            if let Some(management) = &mut state.management {
+                                management.initial_backup_confirmed = false;
+                            }
+                        }
+                        Progress::Waiting { reason }
+                    }
+                    Err(Stop::Failed(kind)) => {
+                        // Another key is linked: this one is not backed up
+                        // with this account. Any other failure is a re-check
+                        // that did not finish, not a missing backup.
+                        if kind == Failure::OtherKeyLinked {
+                            if let Some(management) = &mut state.management {
+                                management.initial_backup_confirmed = false;
+                            }
+                        }
+                        Progress::Failed { kind }
+                    }
                     Ok(Outcome::Idle) | Err(Stop::Canceled) => Progress::Idle,
                 };
                 host.publish(&mut state, progress);
@@ -616,12 +649,13 @@ impl NsecBackupHost {
             // A denied, busy or locked store is not an absent key.
             Err(_) => return Err(Stop::Failed(Failure::Storage)),
         };
+        let receipt = self.receipt(&pubkey);
         {
             let mut state = self.state.lock().map_err(|_| RETRY)?;
             if state.closed || state.epoch != epoch {
                 return Err(Stop::Canceled);
             }
-            self.management_for(&mut state, &pubkey);
+            self.management_for(&mut state, &pubkey, receipt);
         }
         // Hold consent's shared lease until this pass ends, including persisted retries.
         let Some(_consent) = crate::nsec_backup_choice::admit(
@@ -1266,10 +1300,7 @@ pub(crate) fn nsec_backup_confirmed(
     host: tauri::State<'_, NsecBackupHost>,
     pubkey: String,
 ) -> bool {
-    match (host.config.as_ref(), host.root.as_ref()) {
-        (Some(config), Some(root)) => persistence::confirmed(root, config, &pubkey),
-        _ => false,
-    }
+    host.receipt(&pubkey)
 }
 /// The ticket of the pass this handoff starts, if any.
 #[tauri::command]

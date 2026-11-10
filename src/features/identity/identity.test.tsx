@@ -2757,6 +2757,50 @@ it("a link that fails after the key is created blocks setup with Try again, whic
   identity.dispose();
 });
 
+it("a link whose Builderlab sign-in ended offers no Try again, which would send the same credential", async () => {
+  vi.mocked(invoke).mockImplementation((command) => {
+    if (command === "nsec_backup_choice")
+      return Promise.resolve({
+        available: false,
+        pubkey: viewer,
+        automatic: null,
+      });
+    if (command === "identity_restore") return Promise.resolve(null);
+    if (command === "identity_legacy_available") return Promise.resolve(false);
+    if (command === "identity_create") return Promise.resolve(viewer);
+    throw new Error(`Unexpected command ${command}`);
+  });
+  // What the account client throws for kgoose's 401.
+  const bind = vi.fn((_pubkey: string) =>
+    Promise.reject(
+      Object.assign(new Error("Your Builderlab sign-in ended."), {
+        retryable: false,
+      }),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Welcome
+      identity={createIdentity()}
+      communities={noJoin}
+      invites={invites}
+      account={unlinkedWith(bind)}
+      connect={vi.fn().mockResolvedValue(credential)}
+    >
+      <p>Signed in</p>
+    </Welcome>,
+  );
+  await user.click(await screen.findByRole("button", { name: SIGN_IN }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Your Builderlab sign-in ended.",
+  );
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Use a different account" }),
+  ).toBeVisible();
+  expect(bind).toHaveBeenCalledTimes(1);
+});
+
 it("a link refused for good after the key is created offers only Use a different account, which keeps the key and returns to a landing that asks the next sign-in to check it", async () => {
   vi.mocked(invoke).mockImplementation((command) => {
     if (command === "nsec_backup_choice")

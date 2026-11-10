@@ -43,7 +43,9 @@ export type SetupSnapshot = Readonly<
   | {
       status: "failed";
       error: string;
-      /** The error says Try again can help, as a retryable `BackupError` does. */
+      /** Try again can help: false when the error says another attempt gets
+       * the same answer (`retryable: false`), as an ended sign-in, a refusal
+       * or a non-retryable `BackupError` does. */
       retryable: boolean;
       /** Continuing past the failure skips the link, so the key stays unlinked. */
       skipsLink: boolean;
@@ -457,10 +459,11 @@ export function createSetup() {
           status: "failed",
           error:
             error instanceof Error ? error.message : "Setup failed. Try again.",
-          retryable:
+          retryable: !(
             error instanceof Error &&
             "retryable" in error &&
-            error.retryable === true,
+            error.retryable === false
+          ),
           skipsLink: left.some((step) => step.links === true),
           bound: boundElsewhere(error),
           ...(step.backup &&

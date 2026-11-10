@@ -2096,12 +2096,12 @@ async fn management_requires_a_scoped_confirmed_receipt_and_survives_session_los
     host.trigger(identity.clone());
     finish_background(&host).await;
     assert!(host.status().management.unwrap().initial_backup_confirmed);
-    // A fresh process starts conservatively, then verifies the same scoped
-    // durable receipt without uploading another copy.
+    // A fresh process starts from the durable receipt, then verifies it
+    // without uploading another copy.
     let restored = service.host(directory.path());
     restored.initialize_management(&identity).await.unwrap();
     assert!(
-        !restored
+        restored
             .status()
             .management
             .unwrap()
@@ -2132,6 +2132,75 @@ async fn management_requires_a_scoped_confirmed_receipt_and_survives_session_los
             .unwrap()
             .initial_backup_confirmed
     );
+}
+
+fn confirmed(host: &NsecBackupHost) -> bool {
+    host.status().management.unwrap().initial_backup_confirmed
+}
+
+#[tokio::test]
+async fn a_saved_receipt_shows_the_backup_until_the_signed_in_account_contradicts_it() {
+    let service = Service::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let identity = IdentityHost::fixture();
+    let first = service.host(directory.path());
+    service.enable(&first).await;
+    first.state.lock().unwrap().session = Some(service.session());
+    first.trigger(identity.clone());
+    finish_background(&first).await;
+    assert!(confirmed(&first));
+    // Launched again with Builderlab unreachable: the receipt answers with no
+    // request, and the launch's own session handoff keeps it.
+    service.state.lock().unwrap().me_status = 500;
+    let host = service.host(directory.path());
+    host.initialize_management(&identity).await.unwrap();
+    assert!(confirmed(&host));
+    host.handoff(1, Some(service.session()), identity.clone())
+        .unwrap()
+        .unwrap();
+    finish_background(&host).await;
+    assert_eq!(
+        serde_json::to_value(host.status()).unwrap()["kind"],
+        "unreachable"
+    );
+    assert!(confirmed(&host));
+    // A signed-out re-check is not a missing backup either.
+    service.state.lock().unwrap().me_status = 401;
+    host.trigger(identity.clone());
+    finish_background(&host).await;
+    assert_eq!(
+        serde_json::to_value(host.status()).unwrap()["kind"],
+        "signed_out"
+    );
+    assert!(confirmed(&host));
+    // An account that links another key, or none, holds no backup of this one.
+    service.state.lock().unwrap().me_status = 200;
+    for (mapping, outcome) in [
+        (Some(pubkey([2; 32])), "other_key_linked"),
+        (None, "not_linked"),
+    ] {
+        service.state.lock().unwrap().mapping = mapping;
+        let host = service.host(directory.path());
+        host.initialize_management(&identity).await.unwrap();
+        assert!(confirmed(&host));
+        host.state.lock().unwrap().session = Some(service.session());
+        host.trigger(identity.clone());
+        finish_background(&host).await;
+        let status = serde_json::to_value(host.status()).unwrap();
+        assert!(
+            status["kind"] == outcome || status["reason"] == outcome,
+            "{status}"
+        );
+        assert!(!confirmed(&host), "{outcome}");
+        // The next account handoff starts again from the receipt; that
+        // account's re-check does not finish.
+        service.state.lock().unwrap().me_status = 500;
+        host.handoff(1, Some(service.session()), identity.clone())
+            .unwrap();
+        finish_background(&host).await;
+        assert!(confirmed(&host), "{outcome}");
+        service.state.lock().unwrap().me_status = 200;
+    }
 }
 
 #[tokio::test]

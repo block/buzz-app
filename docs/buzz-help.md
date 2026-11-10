@@ -142,18 +142,18 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - The back of your Identity badge shows known backup and recovery details below
   the private-key strip and scrolls when its details run long. Buzz starts checking
   when the Identity page opens. The back always explains that the key is stored
-  securely on this device. It names the backup account when a configured service
-  confirms a backup and the account lookup has not failed. A failed lookup hides
-  that account sentence until recovery. Initial status loading stays quiet; a
+  securely on this device. It names the backup account when this device has
+  confirmed a backup of the key. Initial status loading stays quiet; a
   failed check shows **Backup status unknown** with **Retry backup** in the
   bottom action space on the back. This rereads local status and then starts a
   backup attempt for the current key
   when the read succeeds. It stays disabled and shows a spinner through both steps.
   The private-key menu contains
-  the **Private key** heading above Copy and Reveal. If a confirmed backup’s
-  latest backup attempt fails, **Check backup** flips the card while the back
-  keeps the confirmed-backup explanation. Unconfirmed failures also show
-  **Check backup**. A spinner appears only while a backup attempt is running.
+  the **Private key** heading above Copy and Reveal. A confirmed backup stays
+  **Backed up** when a later attempt or account lookup fails, including offline
+  or signed out. Unconfirmed failures show **Check backup**. **Retry backup**
+  isn't offered where another attempt gets the same answer: sign in on this
+  page instead, which starts a backup on its own. A spinner appears only while a backup attempt is running.
   **Retry backup** uses that same space above **Remove from device** on the
   back and shows a disabled loading button during an attempt. A confirmed, settled backup
   shows **Backed up** with a destination tooltip. Only one recovery button
@@ -165,8 +165,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   backup, for example in a password manager. They should handle it privately.
   When Builderlab backup is on, the same page shows the account's linked key
   when it is backed up and differs from this device’s key.
-  Account lookup failures use the card’s **Backup status unknown** caption and
-  **Retry backup** action. Backups of other keys are not shown, and the row is read-only.
+  For a key without a confirmed backup, account lookup failures use the card’s
+  **Backup status unknown** caption and **Retry backup** action. Backups of other keys are not shown, and the row is read-only.
   Backup and restore options depend on the build and account; do not promise
   recovery or assume automatic backup is on. Losing every copy of the private
   key can mean losing the identity.

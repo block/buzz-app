@@ -836,7 +836,7 @@ describe("bind", () => {
         .catch((error: unknown) => error);
       expect(failed).toBeInstanceOf(Error);
       expect((failed as Error).message).toBe(signedOut);
-      expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
+      expect((failed as { retryable?: unknown }).retryable).toBe(false);
     },
   );
 
@@ -894,7 +894,7 @@ describe("bind", () => {
     expect((failed as Error).message).toBe(
       "Builderlab account link failed (HTTP 200: challenge for another origin).",
     );
-    expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
+    expect((failed as { retryable?: unknown }).retryable).toBe(false);
     expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
       "current",
       "challenge",

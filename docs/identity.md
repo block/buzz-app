@@ -308,7 +308,10 @@ the device, the page also says what is undone: *Your key is saved on this
 device, but it isn’t linked to your account or backed up yet.* when
 the unlink or link failed (a key that isn't linked can't be backed up),
 otherwise *Your key is saved on this device.* **Try again** repeats the failed step and the rest of the
-lane without creating another key. An expired backup session prompts sign-in
+lane without creating another key. It is offered only where another attempt
+can help: an error that says it cannot (`retryable: false`), such as an ended
+Builderlab sign-in or a refused link, or a backup failure the failure table
+marks not retryable, leaves only the way out. An expired backup session prompts sign-in
 again and verifies the original account subject before uploading. Canceled or
 wrong-account sign-in leaves setup and the key intact. When backup is explicitly unavailable in the build or not offered by the
 account, **Continue without backup** skips only that backup step and runs the
@@ -344,8 +347,9 @@ card reports what the uploader's last pass found. Below it, a **Backed-up key ·
 row appears only when the account's linked key differs from this device's and
 `nsec-backups/status` (read with the bundled Builderlab session as first run reads
 it) lists it. The same-key summary and community activity lookup are omitted.
-Account lookup failures share the card's **Backup status unknown** caption and
-**Retry backup** action; retry refreshes the account lookup as well as starting
+For a key without a confirmed backup, account lookup failures share the card's
+**Backup status unknown** caption and **Retry backup** action; a confirmed key
+stays **Backed up**. Retry refreshes the account lookup as well as starting
 the native backup attempt. Backups of other keys are left out and the row is
 read-only: making another key the account's would unlink the current one, and
 kgoose never links a key again once it is unlinked.
@@ -793,24 +797,31 @@ command permission is not proof of a human gesture.
 
 The Identity page checks key management when it opens. Builds with a backup
 service show a front pill once the key's state is known: **Backed up**, with a
-destination tooltip, **Check backup** for a failed attempt (including a confirmed
-backup's latest attempt), or a spinner only while an attempt runs.
+destination tooltip, **Check backup** for an unconfirmed key's failed attempt, or a
+spinner only while an attempt runs. Native seeds confirmation from this device's
+persisted backup receipt for the key, so a launch offline or signed out shows a
+backed-up key as **Backed up**. A later attempt that can't reach Builderlab, an
+ended sign-in, or a failed account lookup does not unconfirm it; only the
+signed-in account answering that it links no key, or another key, clears it, and
+the next account handoff starts again from the receipt.
 **Check backup** flips to the explanation and retry.
 The pill sits inside the artwork, so loading cannot move the card or its controls.
 Builds without a service reserve no pill space. The back uses the same concise
 storage and recovery explanation for self-managed and organization-managed keys.
 The local-storage explanation appears immediately and consistently calls local
-secure storage **this device**. When a backup is confirmed and the current account
-lookup has not failed, the same paragraph names the configured account destination,
-matching the front tooltip. A failed account lookup hides that sentence until the
-lookup recovers; the device-storage explanation stays visible. Native confirmation
+secure storage **this device**. When a backup is confirmed, the same paragraph
+names the configured account destination, matching the front tooltip. Native confirmation
 metadata is retained, so a failed later upload alone does not erase a known backup.
 The private-key menu’s save-a-copy guidance follows it.
 Backup attention and retry feedback sit in the bottom action stack, with the
 full **Retry backup** CTA directly above **Remove from device**. The CTA stays
 disabled with a loading spinner while an attempt runs. Failure hints use centered
 caption text and omit redundant retry instructions; the inline backup retry row
-is removed.
+is removed. **Retry backup** appears only where another attempt can change the
+answer. A missing or ended sign-in has none: signing in on this page hands
+native a session, which starts its own attempt. Nor does a refusal
+(`not_offered`, `refused`, `invalid_service`). After the fix on Builderlab's page
+(key not linked, another key linked) it stays.
 The **Backed up** pill appears only on the front.
 Unknown backup state shows no backup claim; a failed check offers a quiet
 **Backup status unknown** caption and **Retry backup** in that same bottom action

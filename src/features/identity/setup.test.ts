@@ -75,7 +75,7 @@ it.each(["pubkey_already_bound", "identity_already_bound"])(
   },
 );
 
-it("reports only an error that says so as retryable", async () => {
+it("reports an error as not retryable only when it says so", async () => {
   const setup = createSetup();
   await setup.start([flaky("Backing up", false).step]);
   expect(setup.snapshot()).toEqual({
@@ -85,10 +85,18 @@ it("reports only an error that says so as retryable", async () => {
     skipsLink: false,
     bound: false,
   });
+  // An error that does not say keeps Try again, which may help.
+  await setup.start([
+    {
+      label: "Plain",
+      run: () => Promise.reject<void>(new Error("Plain failed")),
+    },
+  ]);
+  expect(setup.snapshot()).toMatchObject({ retryable: true });
   await setup.start([
     { label: "Odd", run: () => Promise.reject<void>("text") },
   ]);
-  expect(setup.snapshot()).toMatchObject({ retryable: false });
+  expect(setup.snapshot()).toMatchObject({ retryable: true });
 });
 
 it.each([

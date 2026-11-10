@@ -757,8 +757,11 @@ export function Welcome({
         try {
           await currentAccount.backUp(pubkey);
         } catch (error) {
-          if (error instanceof BackupError && error.kind === "signed_out")
+          if (error instanceof BackupError && error.kind === "signed_out") {
             expired = true;
+            // Try again signs in first, so it can help here.
+            throw new BackupError("signed_out", true);
+          }
           throw error;
         }
       },
@@ -1485,6 +1488,7 @@ export function Welcome({
           onBack={reads.current ? undefined : backToLanding}
           onSwitchAccount={reads.current ? leaveFailedSetup : undefined}
           onRetry={
+            !progress.retryable ||
             progress.unsupportedBackup ||
             progress.bound ||
             progress.error === WRONG_ACCOUNT
@@ -1593,8 +1597,8 @@ function npubOf(state: ReturnType<Identity["snapshot"]>) {
 /**
  * What a failed link or unlink leaves undone: the key is not the account's
  * (and, after an unlink, the old key stays bound), and with it the backup,
- * which needs a linked key. The page has no way past it but Try again, or
- * leaving through Use a different account.
+ * which needs a linked key. The page has no way past it but Try again, where
+ * another attempt can help, or leaving through Use a different account.
  */
 const UNLINKED_NOTE =
   "Your key is saved on this device, but it isn’t linked to your account or backed up yet.";

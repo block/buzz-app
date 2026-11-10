@@ -31,6 +31,7 @@ function setup() {
   let journal: ReadJournal | undefined = newReadJournal();
   let hold: { started(): void; wait: Promise<void> } | undefined;
   const storage: ReadStateStorage = {
+    capture: async () => journal && readJournal(journal, viewer.pubkey),
     async update(change) {
       if (hold) {
         const { started, wait } = hold;

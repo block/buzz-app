@@ -722,8 +722,9 @@ export function createPopoutThread(
         if (control.key === key) return answer(control);
     // A request row's own control, as main's row bubble offers it.
     const ids = liveRequestIds(activity);
-    for (const row of thread?.snapshot().rows ?? [])
-      if (ids.has(row.id))
+    const snap = thread?.snapshot();
+    for (const row of [snap?.root, ...(snap?.rows ?? [])])
+      if (row && ids.has(row.id))
         for (const entry of requestWork(activity, channelId, row.id)) {
           const control = workStop(
             entry,

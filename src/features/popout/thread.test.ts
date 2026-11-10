@@ -1675,3 +1675,66 @@ it("shows a request row's live work under it, as main's row bubble does, and kee
   expect(thread.snapshot().root?.live).toBeUndefined();
   expect(thread.stopWork(key)).toBeUndefined();
 });
+
+it("admits Stop for a hosted turn on the thread root, from the turn's retained trigger even without its raw records", async () => {
+  const h = fixture();
+  const agent = "3".repeat(64);
+  const interrupt = vi.fn(async () => true);
+  // The turn names the root as its trigger; the raw records that said so
+  // were trimmed, so only the retained association remains.
+  const activity = {
+    ...h.session.agentActivity.snapshot(),
+    status: "listening" as const,
+    records: [],
+    turnsTrimmed: false,
+    turns: [
+      {
+        agent,
+        turnId: "t1",
+        channelId: "channel",
+        timestamp: 1,
+        state: "working" as const,
+        triggeringEventIds: [ROOT],
+        threadRootId: ROOT,
+      },
+    ],
+    local: [],
+  };
+  const session = {
+    ...h.session,
+    typing: { ...h.session.typing, snapshot: () => [] },
+    profiles: {
+      ...h.session.profiles,
+      snapshot: () => new Map([[agent, { name: "Echo", isAgent: true }]]),
+    },
+    agentActivity: { ...h.session.agentActivity, snapshot: () => activity },
+  } as unknown as RelaySession;
+  const agents = { interruptible: () => true, interrupt };
+  const thread = createPopoutThread(
+    session,
+    "channel",
+    ROOT,
+    () => {},
+    undefined,
+    undefined,
+    agents,
+  );
+  clean.push(thread.dispose);
+  const live = thread.snapshot().root?.live;
+  const stop = live?.[0]?.stops[0];
+  if (!stop) throw new Error("expected a hosted Stop on the root");
+  expect(stop.lifecycle).toBe(false);
+  expect(live?.[0]).toMatchObject({
+    id: agent,
+    name: "Echo",
+    state: "working",
+  });
+  await expect(thread.stopWork(stop.key)).resolves.toEqual({
+    lifecycle: false,
+    running: true,
+  });
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, {
+    channelId: "channel",
+    threadRootId: ROOT,
+  });
+});

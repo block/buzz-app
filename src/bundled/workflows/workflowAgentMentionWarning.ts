@@ -30,7 +30,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 const extendsName = (c: string | undefined) =>
-  c !== undefined && /[\p{L}\p{N}_]/u.test(c);
+  c !== undefined && /[\p{Alphabetic}\p{N}_]/u.test(c);
 // Rust's `char::to_lowercase`, which folds each code point on its own.
 const fold = (c: string) => [...c.toLowerCase()];
 
@@ -43,7 +43,8 @@ export function resolveWorkflowMentions<
 >(text: string, members: readonly M[]): M[] {
   const byName = new Map<string, M | null>();
   for (const member of members) {
-    if (!member.name.trim()) continue;
+    if (!member.name.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, ""))
+      continue;
     const key = member.name.toLowerCase();
     const known = byName.get(key);
     byName.set(
@@ -70,11 +71,13 @@ export function resolveWorkflowMentions<
     return at - start;
   };
   for (const { name } of names) {
-    const folded = [...name].flatMap(fold);
+    const folded = [...name.toLowerCase()];
     if (!folded.length) continue;
     for (let at = 0; at < chars.length; ) {
       const left =
-        at === 0 || /\s/u.test(chars[at - 1] ?? "") || chars[at - 1] === "(";
+        at === 0 ||
+        /\p{White_Space}/u.test(chars[at - 1] ?? "") ||
+        chars[at - 1] === "(";
       const length =
         chars[at] === "@" && left && !consumed[at]
           ? matchLength(at + 1, folded)

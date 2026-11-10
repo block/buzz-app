@@ -117,3 +117,19 @@ it("folds case per code point, so later mentions keep their place", () => {
     builder,
   ]);
 });
+
+it("folds names and text as the relay does, Unicode included", () => {
+  const sigma = member("s", "ΟΣ");
+  expect(resolveWorkflowMentions("@ος", [sigma])).toEqual([sigma]);
+  expect(resolveWorkflowMentions("@ΟΣ", [sigma])).toEqual([]);
+  for (const mark of ["\u0345", "\u05B0"])
+    expect(resolveWorkflowMentions(`@Builder${mark}`, [builder])).toEqual([]);
+  expect(resolveWorkflowMentions("\u0085@Builder", [builder])).toEqual([
+    builder,
+  ]);
+  expect(resolveWorkflowMentions("\uFEFF@Builder", [builder])).toEqual([]);
+  const blank = member("w", "\u0085");
+  expect(resolveWorkflowMentions("@\u0085 @Builder", [blank, builder])).toEqual(
+    [builder],
+  );
+});

@@ -1,5 +1,6 @@
 import { WORKFLOW_CHANNEL_BATCH, WORKFLOW_DEFINITION_LIMIT } from "./queries";
 import type { EventData } from "../relay/events";
+import { isRetryableRead } from "../relay/read-retry";
 import type { RelayReader } from "../relay/reader";
 import type { ProfileQueries } from "../relay/profile-directory";
 import type { Outbox, LocalEvents } from "../relay/outbox";
@@ -265,6 +266,7 @@ export function createWorkflows({
           data: snapshot.data,
           error:
             "Connection interrupted. Refresh to check current workflow data; your draft is retained.",
+          transient: true,
         });
       },
       emit,
@@ -330,7 +332,7 @@ export function createWorkflows({
             accept?.(data);
             emit();
           })
-          .catch(() => {
+          .catch((error: unknown) => {
             if (
               closed ||
               disposed ||
@@ -342,6 +344,7 @@ export function createWorkflows({
               status: "error",
               data: empty,
               error: "Couldn't read workflow data. Try again.",
+              ...(isRetryableRead(error) ? { transient: true } : {}),
             });
             emit();
           })

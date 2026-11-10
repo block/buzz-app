@@ -240,6 +240,8 @@ export type ChannelList = Readonly<{
   activityTransient?: true;
   channels: readonly ChannelSummary[];
   error?: string;
+  /** The roster read failed on a connectivity failure, not a denial or a bad reply. */
+  transient?: true;
 }>;
 export type WindowStatus = "idle" | "loading" | "ready" | "error";
 /** One bounded, chronologically ordered history window. Not the whole channel. */

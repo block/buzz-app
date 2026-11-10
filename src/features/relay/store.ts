@@ -2891,7 +2891,13 @@ export function createChannelStore(
       } else {
         // Failed names do not discard successful membership authority.
         if (!readingRoster) applyDiscovery([]);
-        setList({ ...list, status: "error", error: describe(error) });
+        const { transient: _previous, ...kept } = list;
+        setList({
+          ...kept,
+          status: "error",
+          error: describe(error),
+          ...(isTransientFailure(error) ? { transient: true as const } : {}),
+        });
       }
     } finally {
       // Failure or interruption has not fulfilled the writer requirement, even

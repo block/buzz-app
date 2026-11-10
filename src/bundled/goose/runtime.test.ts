@@ -259,6 +259,9 @@ it("reads a protected Goose file under containment and reviews the captured text
     key: "policy",
     stateKey: "revision",
     assertAvailable() {},
+    checkEvidence: async () => {
+      throw new Error("Unexpected streamed check in this fixture");
+    },
     check,
     processProtection: {
       readOnlyPaths: ["/controls"],
@@ -311,6 +314,9 @@ it("leaves a protected Buzz tool call to Goose's own tool review", async () => {
     key: "policy",
     stateKey: "revision",
     assertAvailable() {},
+    checkEvidence: async () => {
+      throw new Error("Unexpected streamed check in this fixture");
+    },
     check,
     processProtection: { readOnlyPaths: [], hiddenPaths: [] },
     spawn: (options) => f.fake.spawn("goose", options),
@@ -341,6 +347,9 @@ const protection = (key: string, f: () => ReturnType<typeof setup>) =>
     stateKey: "revision",
     processProtection: { readOnlyPaths: [], hiddenPaths: [] },
     assertAvailable: () => {},
+    checkEvidence: async () => {
+      throw new Error("Unexpected streamed check in this fixture");
+    },
     check: async () => {},
     spawn: (options) => f().fake.spawn("goose", options),
   }) satisfies AgentProtection;
@@ -638,6 +647,9 @@ it("stops a protected tool's native session read that Goose does not answer in t
   const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
   const protectedAgent: AgentProtection = {
     ...protection("policy-1", () => f),
+    checkEvidence: async () => {
+      throw new Error("Unexpected streamed check in this fixture");
+    },
     check,
     spawn: (options) => held.wrap(f.fake.spawn)("goose", options),
   };
@@ -692,6 +704,9 @@ it.each(["retire", "dispose"] as const)(
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
       assertAvailable: () => {},
       spawn: (options) => f.fake.spawn("goose", options),
+      checkEvidence: async () => {
+        throw new Error("Unexpected streamed check in this fixture");
+      },
       check: async (action, signal) => {
         if (action.kind !== "tool") return;
         expect(action.content).toMatchObject({

@@ -192,7 +192,10 @@ agents are not migrated into this type.
   through the forwarder as this plugin's bundled installation
   (`bundledFederatedIdentity`). That grant exists only while this plugin is
   enabled, so with it turned off that sign-in refuses before opening the
-  browser.
+  browser. Only app-owned code calls as that installation. Settings' Identity
+  page reads the backed-up key that way, and the pairing plugin's mobile card
+  gets only the app's yes-or-no `builderlabPhone.restoresOnPhone`, never the
+  session itself.
   A successful first-run sign-in continues into the app-owned setup steps
   described in [identity](../../../docs/identity.md): the app reads the key
   bound to the account, the destinations saved to it (this plugin's

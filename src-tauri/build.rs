@@ -96,6 +96,7 @@ fn main() {
             "identity_sign_builderlab_binding",
             "federated_identity_snapshot",
             "federated_identity_servers",
+            "federated_identity_requires",
             "federated_identity_sign_in",
             "federated_identity_cancel_sign_in",
             "federated_identity_sign_out",

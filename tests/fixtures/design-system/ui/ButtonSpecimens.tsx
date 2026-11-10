@@ -300,6 +300,9 @@ export function ButtonSpecimen() {
     <Button disabled={!loading} onClick={() => setLoading(false)}>
       Complete saving
     </Button>
+    <Button loading disabled loadingAppearance="disabled">
+      Disabled while loading
+    </Button>
   </div>
   <Button
     aria-expanded={expanded}
@@ -329,6 +332,9 @@ export function ButtonSpecimen() {
               </Button>
               <Button disabled={!loading} onClick={() => setLoading(false)}>
                 Complete saving
+              </Button>
+              <Button loading disabled loadingAppearance="disabled">
+                Disabled while loading
               </Button>
             </div>
             <Button

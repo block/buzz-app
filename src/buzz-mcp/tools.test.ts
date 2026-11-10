@@ -367,7 +367,7 @@ it.each(["agent_create", "agent_update"])(
   },
 );
 
-it("refuses an oversized captured file before review or publication", async () => {
+it("enforces a plugin’s captured-file budget before review or publication", async () => {
   const { client, published } = fake(community);
   const ctx = new Context();
   const agent = {
@@ -387,29 +387,30 @@ it("refuses an oversized captured file before review or publication", async () =
       update: async () => {},
     },
   );
-  const check = vi.fn(async () => true);
   ctx
     .extend({ pluginOwner: { id: "security.test", revision: "one" } })
     .agentProtection.register({
       processProtection: { readOnlyPaths: [], hiddenPaths: [] },
-      check,
+      checkEvidence: async (_metadata, evidence) => {
+        let size = 0;
+        for await (const part of evidence.read())
+          size += new TextEncoder().encode(part).length;
+        return size <= 1024;
+      },
     });
   const protection = service.bind(agent);
   if (!protection) throw new Error("Expected protected handle");
   client.protect = (action) =>
     protection.check(action, new AbortController().signal);
-  client.read = vi.fn(async () =>
-    new TextEncoder().encode("x".repeat(256 * 1024)),
-  );
+  client.read = vi.fn(async () => new TextEncoder().encode("x".repeat(1024)));
   try {
     await expect(
       callSessionTool(client, { channel: "chan" }, "send", {
         audience: "everyone",
         path: "large.md",
       }),
-    ).rejects.toThrow("too large");
+    ).rejects.toThrow("denied by its protection policy");
     expect(client.read).toHaveBeenCalledExactlyOnceWith("large.md");
-    expect(check).not.toHaveBeenCalled();
     expect(client.upload).not.toHaveBeenCalled();
     expect(published).toEqual([]);
   } finally {

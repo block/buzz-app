@@ -1,3 +1,4 @@
+import { BuilderlabIdentityRow } from "./login/IdentityRow";
 import {
   useLayoutEffect,
   useState,
@@ -342,6 +343,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Builderlab",
     icon: BuilderlabLogoIcon,
     group: "Plugins",
+    ...(nativeBuilderlab() && !unavailable
+      ? {
+          identityRow: ({ active }: { active(): boolean }) => (
+            <BuilderlabIdentityRow
+              session={session}
+              active={active}
+              openSettings={() => openSettings("block.builderlab/login")}
+            />
+          ),
+        }
+      : {}),
     component: Settings,
   });
 };

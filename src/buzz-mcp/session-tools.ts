@@ -96,10 +96,11 @@ export const sessionTools = (
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */
 export function sessionHint(added: readonly AddedTool[] = []) {
+  // Codex limits namespace descriptions to 1024 characters. Tool search has the full list.
   const plugins = added.length
-    ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
+    ? " and tools from enabled plugins. Search by capability to discover specific plugin tools"
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it

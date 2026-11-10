@@ -1030,6 +1030,8 @@ selection changes. Standalone icon actions continue to use `IconButton`.
 Disabled controls retain their filled, outline, or unfilled treatment and cannot
 activate. Loading retains the label's geometry, accessible name, focus and variant
 colors while blocking activation; never swap in a differently sized loading label.
+For a visibly unavailable busy action, `loadingAppearance="disabled"` opts into
+the existing disabled color roles while retaining the spinner and geometry.
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
@@ -1082,6 +1084,11 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+`FieldButton appearance="masked"` centers larger, spaced, subtle placeholder dots that
+cannot be selected. It opens the field’s action menu. The feature owns masking;
+a revealed value uses the ordinary Input and can pair with a trailing menu in
+InputGroup. Use `prefix` for ordinary text before masked dots.
 
 `Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
 inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.

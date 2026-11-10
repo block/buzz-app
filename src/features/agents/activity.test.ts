@@ -365,6 +365,37 @@ it("messages clear only their typing scope and suppress delayed typing, while fr
   expect(f.snapshot().typing).toHaveLength(2);
   f.activity.dispose();
 });
+it("a thread reply also clears and briefly suppresses the agent's channel-level typing, but not other threads", async () => {
+  const f = fixture();
+  const root = "b".repeat(64),
+    sibling = "c".repeat(64);
+  f.send(f.item("turn_liveness"));
+  f.activity.channelEvents([typingEvent(), typingEvent(sibling)]);
+  f.activity.channelEvents([{ ...typingEvent(root), kind: 9 }]);
+  expect(f.snapshot().typing.map((entry) => entry.threadRootId)).toEqual([
+    sibling,
+  ]);
+  // A channel-level pulse stamped before the reply but delivered after it.
+  await vi.advanceTimersByTimeAsync(1000);
+  f.activity.channelEvents([
+    typingEvent(undefined, { created_at: Date.now() / 1000 - 1 }),
+  ]);
+  expect(f.snapshot().typing.map((entry) => entry.threadRootId)).toEqual([
+    sibling,
+  ]);
+  await vi.advanceTimersByTimeAsync(2000);
+  f.activity.channelEvents([typingEvent()]);
+  expect(f.snapshot().typing.map((entry) => entry.threadRootId)).toEqual([
+    sibling,
+    undefined,
+  ]);
+  // A channel-level message clears only channel-level typing.
+  f.activity.channelEvents([{ ...typingEvent(), kind: 9 }]);
+  expect(f.snapshot().typing.map((entry) => entry.threadRootId)).toEqual([
+    sibling,
+  ]);
+  f.activity.dispose();
+});
 it("invalid, stale, unknown-agent and ambiguous channel/thread typing cannot create a channel fallback", () => {
   const f = fixture();
   f.send(f.item("turn_liveness"));

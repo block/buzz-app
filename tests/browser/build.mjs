@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// The browser build swaps a fixture for the pairing screen the mobile card shows.
+const PAIRING_CARD = "src/bundled/pairing/MobileApp.tsx";
+const PAIRING_IMPORT = 'import { PairingSettings } from "./PairingSettings";';
+
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
 // Playwright owns this worker-scoped build. Only compiled assets are shared;
@@ -24,6 +28,7 @@ export async function buildApp(
   use,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
+  let pairingSwapped = false;
   try {
     const config = {
       root,
@@ -38,12 +43,23 @@ export async function buildApp(
               {
                 name: "pairing-fixture",
                 transform(code, id) {
-                  if (id !== join(root, "src/bundled/pairing/index.tsx"))
-                    return;
+                  if (id !== join(root, PAIRING_CARD)) return;
+                  if (!code.includes(PAIRING_IMPORT))
+                    throw new Error(
+                      `${PAIRING_CARD} no longer imports PairingSettings as the pairing fixture expects.`,
+                    );
+                  pairingSwapped = true;
                   return code.replace(
-                    'import { PairingSettings } from "./PairingSettings";',
+                    PAIRING_IMPORT,
                     `import { PairingFixture as PairingSettings } from ${JSON.stringify(join(root, "tests/browser/pairing-fixture.tsx"))};`,
                   );
+                },
+                buildEnd(error) {
+                  // A moved card would otherwise build the real pairing screen.
+                  if (!error && !pairingSwapped)
+                    throw new Error(
+                      `The pairing fixture never replaced ${PAIRING_CARD}.`,
+                    );
                 },
               },
             ]

@@ -331,11 +331,19 @@
   .buzz-button[data-disabled] .buzz-button-attention rect {
     animation: none;
   }
-  .buzz-button[data-variant="attention"][data-disabled]:not([data-loading])
+  .buzz-button[data-variant="attention"][data-disabled]:is(
+      :not([data-loading]),
+      [data-loading-appearance="disabled"]
+    )
     .buzz-button-attention {
     opacity: 1;
   }
-  .buzz-button[data-disabled]:not([data-loading]) .buzz-button-attention rect {
+  .buzz-button[data-disabled]:is(
+      :not([data-loading]),
+      [data-loading-appearance="disabled"]
+    )
+    .buzz-button-attention
+    rect {
     stroke: var(--border-standard);
   }
   @media (prefers-reduced-motion: reduce) {
@@ -716,8 +724,11 @@
     background: var(--affordance-accent-hover);
   }
 
-  /* Disabled keeps variant geometry; loading keeps its available colors. */
-  .buzz-button[data-disabled]:not([data-loading]) {
+  /* Loading keeps its colors unless the caller requests disabled appearance. */
+  .buzz-button[data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ) {
     color: var(--text-unavailable);
     background: var(--affordance-disabled);
     cursor: not-allowed;
@@ -728,15 +739,20 @@
     [data-variant="outline"],
     [data-variant="attention"],
     [data-variant="link"]
-  )[data-disabled]:not(
-    [data-loading],
-    [data-icon-variant="tint"],
-    [data-icon-variant="chrome"]
-  ) {
+  )[data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ):not([data-icon-variant="tint"], [data-icon-variant="chrome"]) {
     background: transparent;
   }
-  .buzz-button[data-variant="prominent"][data-disabled]:not([data-loading]),
-  .buzz-button[data-variant="outline"][data-disabled]:not([data-loading]) {
+  .buzz-button[data-variant="prominent"][data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ),
+  .buzz-button[data-variant="outline"][data-disabled]:is(
+    :not([data-loading]),
+    [data-loading-appearance="disabled"]
+  ) {
     box-shadow: inset 0 0 0 1px var(--border-standard);
   }
 

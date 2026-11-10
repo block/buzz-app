@@ -31,6 +31,8 @@ export function appClient(
     check?(): void;
     signal?: AbortSignal;
     protectionContext?(): Promise<unknown>;
+    /** Retain a file-backed native snapshot until the exact tool check settles. */
+    captureProtectionContext?(): Promise<{ value: unknown; release(): void }>;
     /** The runtime reviews each tool call itself before Buzz dispatches it. */
     nativeToolGate?: boolean;
   }>,
@@ -55,27 +57,42 @@ export function appClient(
             action: import("../features/agent-protection/service").ProtectionAction,
           ) => {
             check();
-            if (
-              action.kind === "tool" &&
-              agent.protection?.phases?.tool !== false
-            ) {
-              if (!options.protectionContext)
-                throw new Error(
-                  "The protected tool has no native conversation context",
-                );
-              action = {
-                ...action,
-                content: {
-                  ...(action.content as object),
-                  conversation: await options.protectionContext(),
-                },
-              };
+            let release = () => {};
+            try {
+              if (
+                action.kind === "tool" &&
+                agent.protection?.phases?.tool !== false
+              ) {
+                if (
+                  !options.protectionContext &&
+                  !options.captureProtectionContext
+                )
+                  throw new Error(
+                    "The protected tool has no native conversation context",
+                  );
+                const context = options.captureProtectionContext
+                  ? await options.captureProtectionContext()
+                  : {
+                      value: await options.protectionContext?.(),
+                      release: () => {},
+                    };
+                release = context.release;
+                action = {
+                  ...action,
+                  content: {
+                    ...(action.content as object),
+                    conversation: context.value,
+                  },
+                };
+              }
+              await agent.protection?.check(
+                action,
+                options.signal ?? new AbortController().signal,
+              );
+              check();
+            } finally {
+              release();
             }
-            await agent.protection?.check(
-              action,
-              options.signal ?? new AbortController().signal,
-            );
-            check();
           },
           ...(options.nativeToolGate ? { nativeToolGate: true as const } : {}),
         }

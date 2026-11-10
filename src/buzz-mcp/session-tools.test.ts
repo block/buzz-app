@@ -57,7 +57,26 @@ it("loads the Buzz tools up front, and attention and plugins' tools on search", 
   );
   expect(load("notes_add")).toBe("search");
   expect(sessionHint([tool("notes_add"), tool("tasks_create")])).toContain(
-    "tools plugins add (notes_add, tasks_create)",
+    "tools from enabled plugins",
+  );
+});
+
+it("keeps the namespace hint within 1024 characters with many plugin tools", () => {
+  const added = Array.from({ length: 100 }, (_, index) =>
+    tool(`example_plugin_action_${index}`),
+  );
+  expect(sessionHint(added).length).toBeLessThanOrEqual(1024);
+  expect(
+    sessionTools(added).filter(({ name }) =>
+      name.startsWith("example_plugin_"),
+    ),
+  ).toEqual(
+    added.map(({ name, description, inputSchema }) => ({
+      name,
+      description,
+      inputSchema,
+      load: "search",
+    })),
   );
 });
 

@@ -30,6 +30,8 @@ move, rename, close and pane-collapse controls. Profile and plugin links open
 in the tab workspace. Thread visits bind to their originating DM. Restoring
 one after the Bestie or canonical DM changes retires incompatible thread visits
 and shows the current Bestie's chat; it never reads an old thread in the new DM.
+⌘F on the page searches this DM, and Search Buzz offers **Search conversation
+with** the Bestie, as they do in any other conversation.
 While that exact DM is promoted, Messages omits its
 ordinary row and clears any old device-local hidden-DM intent. Replacing or
 deleting the Bestie, disabling the plugin, changing communities, or losing the

@@ -1,3 +1,4 @@
+import { protectionTranscript } from "./protection-transcript";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
 import { executionSpawn } from "./execution";
@@ -67,7 +68,6 @@ import {
   turnPrompt,
 } from "./prompt";
 import { AgentSessions, localSessions, Spare } from "./sessions";
-import { protectionHistoryEntry } from "./security";
 import {
   readLatestTurns,
   readSessionTitle,
@@ -1382,12 +1382,12 @@ export class ClaudeRuntime {
           appClient(handle, {
             // Its PreToolUse hook reviews every tool, Buzz's included.
             nativeToolGate: true,
-            protectionContext: async () => {
+            captureProtectionContext: async () => {
               if (!conversation)
                 throw new Error(
                   "The native Claude conversation is unavailable",
                 );
-              return entry.sessions.protectionContext(conversation);
+              return entry.sessions.captureProtectionContext(conversation);
             },
             relayAuthor: this.reads(agent)?.relayAuthor?.(),
             signingAuthority: this.reads(agent)?.workflowAuthority(),
@@ -1476,26 +1476,14 @@ export class ClaudeRuntime {
             ? {
                 protection: {
                   gate,
-                  history: async (path: string, signal: AbortSignal) => {
-                    const bytes = await readFile(
+                  history: (path: string, signal: AbortSignal) =>
+                    protectionTranscript(
                       this.spawn,
                       workspace,
                       path,
                       signal,
                       gate.processProtection,
-                    );
-                    const lines = new TextDecoder().decode(bytes).split("\n");
-                    // Claude appends to its transcript as it goes, so the last
-                    // line may still be partial; the next hook reads it whole.
-                    const last = lines.pop() ?? "";
-                    const rows = lines
-                      .filter((line) => line.trim())
-                      .map((line) => JSON.parse(line) as unknown);
-                    try {
-                      if (last.trim()) rows.push(JSON.parse(last));
-                    } catch {}
-                    return rows.map(protectionHistoryEntry);
-                  },
+                    ),
                 },
               }
             : {}),

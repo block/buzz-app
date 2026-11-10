@@ -16665,7 +16665,10 @@ it("revoking the runner while a protected shared tool waits cancels it before an
       readOnlyPaths: ["/provider"],
       hiddenPaths: ["/reviews"],
     },
-    check: async (_request, signal) => {
+    checkEvidence: async (_request, evidence, signal) => {
+      for await (const _part of evidence.read()) {
+        /* consume before deciding */
+      }
       checking = signal;
       entered();
       await allow;

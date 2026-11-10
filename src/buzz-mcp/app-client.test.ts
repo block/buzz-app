@@ -395,3 +395,34 @@ it("never passes on an owner-read capability, even from a handle that carries on
   expect("ownerAccess" in client).toBe(false);
   expect(read).not.toHaveBeenCalled();
 });
+
+it("retains native context through the check and releases it on denial", async () => {
+  const release = vi.fn();
+  let finish!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const check = vi.fn(async () => {
+    await hold;
+    throw new Error("denied");
+  });
+  const agent = {
+    pubkey: "agent",
+    protection: { check },
+  } as unknown as AgentHandle;
+  const client = appClient(agent, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+    captureProtectionContext: async () => ({ value: "snapshot", release }),
+  });
+  const result = client.protect?.({
+    kind: "tool",
+    session: "s",
+    content: { command: "write" },
+  });
+  await vi.waitFor(() => expect(check).toHaveBeenCalled());
+  expect(release).not.toHaveBeenCalled();
+  finish();
+  await expect(result).rejects.toThrow("denied");
+  expect(release).toHaveBeenCalledOnce();
+});

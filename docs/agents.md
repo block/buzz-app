@@ -1199,8 +1199,10 @@ is deliberately omitted; public typing alone does not establish ownership.
 
 Typing expires eight seconds after its signed timestamp (future clock skew is
 capped at receipt), swept by the existing one-second activity timer. Messages
-clear only the matching agent/channel/thread scope and suppress delayed typing
-for two seconds. Disconnect, channel-route failure, disable, access/cache clear
+clear the matching agent/channel/thread scope and suppress delayed typing
+for two seconds; a thread reply does the same for that agent's channel-level
+scope, since an agent's pulses and replies for one turn can be filed apart.
+Other threads keep their typing. Disconnect, channel-route failure, disable, access/cache clear
 and disposal drop typing evidence. A fresh observer frame does not refresh it.
 
 The sidebar's quiet working dot has two independent sources. The plugin source
@@ -1214,7 +1216,7 @@ the library) anywhere in the channel, threads included. Typing remains a working
 self-declared profile hint, are not shown. This store keeps working with the plugin off, rejects
 future timestamps instead of capping them, schedules its own expiry eight
 seconds after the signed timestamp and stays quiet for two seconds after the
-typer's message. It is display-only evidence, not ownership; the channel popover
+typer's message, in that scope and, for a thread reply, at channel level. It is display-only evidence, not ownership; the channel popover
 still offers **View activity** for such an agent while the plugin is off.
 A timeline thread summary shows the same dots from this source while one of the
 viewer's agents types in that thread; before the first reply it offers **View thread**.

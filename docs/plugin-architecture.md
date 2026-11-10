@@ -2740,6 +2740,12 @@ when none is on, and `ctx.decisions.status()` its status. `Decisions` exposes
 no way to choose the provider. `state` and every question go to the provider,
 so send only what the decision needs.
 
+`ctx.decisions.retireProvider(id)` clears a saved choice for a retired provider
+from the calling plugin. Pass the local provider ID, without a plugin prefix.
+The host then uses its default providers. Choices for other providers stay in
+effect. The method throws if the saved change fails or the caller has no plugin
+scope. It does not register a provider or let a plugin select another provider.
+
 | Provider | Plugin | Credentials |
 |----------|--------|-------------|
 | `buzz.typesafe/typesafe` | TypeSafe (bundled, on by default) | The user's TypeSafe key, kept and read only by native code (`src-tauri/src/decisions.rs`) |

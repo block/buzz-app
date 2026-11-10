@@ -26,6 +26,8 @@ import type { ChannelSummary } from "../relay/contracts";
 import { viewerMember } from "../relay/membership";
 import { useChannelWindow } from "../relay/react";
 import { flushPendingDraft } from "../messages/MessageComposer";
+import { useRecoveryOwns } from "../relay/RecoveryNotice";
+import { headRecovering } from "../relay/live-recovery";
 import { readView, viewRevision } from "../../shared/view-state";
 import { writeClipboardText } from "../../shared/clipboard";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -316,6 +318,11 @@ function DraftChannel({
 }) {
   const { session, channelId } = useConversation();
   const channelWindow = useChannelWindow(session.channels, channelId);
+  // While recovery retries this conversation's head read, its notice is the one
+  // report; the preview waits instead of showing its own error and Retry.
+  const headRecovers = useRecoveryOwns(session, (live) =>
+    headRecovering(live, channelId),
+  );
   const [seekError, setSeekError] = useState(false);
   const [noticeHeight, setNoticeHeight] = useState(0);
   const [outgoing, setOutgoing] = useState<string>();
@@ -385,7 +392,8 @@ function DraftChannel({
               inlineTarget={reveal}
             />
           )}
-          {channelWindow.status === "error" || channelWindow.error ? (
+          {(channelWindow.status === "error" || channelWindow.error) &&
+          !headRecovers ? (
             <div className={styles.draftUnavailable}>
               <p role="alert" className="text-body-sm">
                 {channelWindow.error ?? "Could not load conversation."}

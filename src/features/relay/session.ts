@@ -3605,7 +3605,8 @@ export function createRelaySession(
         if (
           next.events === snapshot.events &&
           next.status === snapshot.status &&
-          next.error === snapshot.error
+          next.error === snapshot.error &&
+          next.transient === snapshot.transient
         )
           return;
         snapshot = Object.freeze(next);
@@ -3641,7 +3642,7 @@ export function createRelaySession(
         controller = undefined;
         const visible = visibility(remote);
         remote = clear ? [] : remote.filter(visible);
-        update({ status: "idle", error: undefined });
+        update({ status: "idle", error: undefined, transient: undefined });
       });
       const view = {
         snapshot: () => snapshot,
@@ -3655,7 +3656,7 @@ export function createRelaySession(
           if (disposed || closed || controller) return;
           const owned = new AbortController();
           controller = owned;
-          update({ status: "loading", error: undefined });
+          update({ status: "loading", error: undefined, transient: undefined });
           try {
             const events = await finiteRead(
               filters,

@@ -1019,6 +1019,10 @@ pub fn run() {
                 if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
+                #[cfg(target_os = "macos")]
+                if let Err(error) = window_state::opaque_background(&window) {
+                    eprintln!("Could not set the Buzz window background: {error}");
+                }
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();

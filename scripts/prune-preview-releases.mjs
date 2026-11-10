@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   downloadBranch,
+  previewVersionPattern,
   validateDownloadManifest,
 } from "./download-manifest.mjs";
 
@@ -14,8 +15,6 @@ assert.ok(
 const apply = args[0] === "--apply";
 const repository = process.env.GH_REPO;
 assert.equal(repository, "block/buzz-app", "Unexpected cleanup repository");
-const versionPattern =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const gh = (...arguments_) =>
   execFileSync("gh", arguments_, {
     encoding: "utf8",
@@ -36,7 +35,7 @@ const manifest = JSON.parse(
     "-",
   ),
 );
-assert.match(manifest.version, versionPattern);
+assert.match(manifest.version, previewVersionPattern);
 const protectedTag = `v${manifest.version}`;
 const assets = {
   "darwin-aarch64": "aarch64.app.tar.gz",
@@ -82,7 +81,7 @@ const previews = releases.filter(
     release.draft === false &&
     typeof release.tag_name === "string" &&
     release.tag_name.startsWith("v") &&
-    versionPattern.test(release.tag_name.slice(1)),
+    previewVersionPattern.test(release.tag_name.slice(1)),
 );
 for (const tag of protectedTags) {
   assert.ok(

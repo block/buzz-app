@@ -99,6 +99,9 @@ pub(crate) struct View {
     /// A DM's other person's picture (authorized media source).
     #[serde(default)]
     picture: Option<String>,
+    /// The conversation's members as main's header previews them.
+    #[serde(default)]
+    members: Option<Members>,
     /// A thread (root + replies) rather than a conversation timeline.
     #[serde(default)]
     thread: bool,
@@ -157,6 +160,8 @@ impl MainOperation {
 pub(crate) enum Action {
     OpenLink,
     OpenInMain,
+    /// Open the conversation's members/access in the main window.
+    OpenMembers,
     /// Bring the main window forward after a handoff admitted through the
     /// composer bridge; nothing is forwarded to main.
     FocusMain,
@@ -251,10 +256,36 @@ impl View {
 fn default_kind() -> String {
     "channel".into()
 }
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Members {
+    count: u64,
+    solo: bool,
+    preview: Vec<MemberPreview>,
+}
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MemberPreview {
+    id: String,
+    name: String,
+    picture: Option<String>,
+}
+impl Members {
+    fn valid(&self) -> bool {
+        self.count <= 1_000_000
+            && self.preview.len() <= 3
+            && self.preview.iter().all(|p| {
+                p.id.len() <= 128
+                    && p.name.len() <= 4096
+                    && p.picture.as_ref().is_none_or(|s| s.len() <= 8192)
+            })
+    }
+}
 fn validate(view: &View) -> Result<()> {
     if view.title.len() > 4096
         || !matches!(view.kind.as_str(), "channel" | "private" | "dm" | "solo")
         || view.picture.as_ref().is_some_and(|p| p.len() > 8192)
+        || view.members.as_ref().is_some_and(|m| !m.valid())
         || view.scope.len() > 4096
         || view.appearance.as_ref().is_some_and(|a| !a.valid())
         || view.typing.as_ref().is_some_and(|t| !t.valid())
@@ -555,7 +586,7 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
             return Ok(());
         }
         // All continue in the main window, which may be hidden on macOS.
-        Action::OpenInMain | Action::OpenLink | Action::FocusMain => {
+        Action::OpenInMain | Action::OpenMembers | Action::OpenLink | Action::FocusMain => {
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
                 let _ = main.unminimize();
@@ -749,6 +780,7 @@ mod tests {
             is_dm: false,
             kind: "channel".into(),
             picture: None,
+            members: None,
             thread: true,
             can_go_back: false,
             typing: None,
@@ -939,6 +971,32 @@ mod tests {
         assert!(validate(&view).is_err());
         view.picture = Some("http://buzz-media.localhost/avatar".into());
         assert!(validate(&view).is_ok());
+        // Members: a bounded preview of at most three.
+        let person = |n: usize| MemberPreview {
+            id: format!("{n:0>64}"),
+            name: "Ada".into(),
+            picture: None,
+        };
+        view.members = Some(Members {
+            count: 12,
+            solo: false,
+            preview: (0..3).map(person).collect(),
+        });
+        assert!(validate(&view).is_ok());
+        view.members = Some(Members {
+            count: 12,
+            solo: false,
+            preview: (0..4).map(person).collect(),
+        });
+        assert!(validate(&view).is_err());
+        view.members = Some(Members {
+            count: 1_000_001,
+            solo: false,
+            preview: vec![],
+        });
+        assert!(validate(&view).is_err());
+        let action: Action = serde_json::from_str("\"openMembers\"").unwrap();
+        assert!(action == Action::OpenMembers);
     }
     #[test]
     fn focus_main_is_a_companion_action_with_no_payload() {

@@ -66,12 +66,22 @@ export type PopoutThreadView = {
   kind: PopoutConversationKind;
   /** A DM's other person, as the tab strip shows them (media source). */
   picture?: string | null;
+  /** The conversation's members, as main's header identity shows them:
+   * the whole count, and up to three to picture (agents for a Solo chat,
+   * people otherwise; those with pictures first). */
+  members?: PopoutMembers | undefined;
   /** This frame shows a thread (root + replies), not a conversation timeline. */
   thread: boolean;
   /** People typing and agents working in this frame's conversation. */
   typing?: CompanionTyping | undefined;
 };
 export type PopoutConversationKind = "channel" | "private" | "dm" | "solo";
+export type PopoutMembers = {
+  count: number;
+  solo: boolean;
+  preview: { id: string; name: string; picture: string | null }[];
+};
+const MAX_MEMBER_PREVIEW = 3;
 export type { MainOperation };
 const MAX_OPERATIONS = 64;
 const MAX_REPLIES = 500;
@@ -493,6 +503,57 @@ export function createPopoutThread(
     }
     return (c?.name ?? "Conversation").slice(0, 1000);
   };
+  /** Members as `ChannelMemberAvatars` previews them; `count` is the stack's
+   * overflow basis. Profiles for the previewed few are requested as main's
+   * header requests them, again after a cache clear. */
+  let membersEnsured = "";
+  const members = (c: Channel | undefined): PopoutMembers | undefined => {
+    const list = c?.members;
+    if (!list) return undefined;
+    const solo = c.channelType === "solo";
+    const profiles = session.profiles.snapshot();
+    const agents = new Map(
+      session.agentChoices.snapshot().identities.map((a) => [a.pubkey, a]),
+    );
+    const isAgent = (id: string) =>
+      agents.has(id) || !!profiles.get(id)?.isAgent;
+    const shown = list
+      .filter((id) => (solo ? isAgent(id) : !isAgent(id)))
+      .sort(
+        (a, b) =>
+          Number(!!profiles.get(b)?.picture) -
+          Number(!!profiles.get(a)?.picture),
+      );
+    const wanted = shown.slice(0, MAX_MEMBER_PREVIEW);
+    const epoch = `${session.profiles.generation?.() ?? 0}:${session.profiles.evictions?.() ?? 0}:${wanted.join(",")}`;
+    if (wanted.length && epoch !== membersEnsured) {
+      membersEnsured = epoch;
+      void session.profiles.ensure(wanted, "background").catch(() => {});
+    }
+    return {
+      count: Math.min(shown.length, 1_000_000),
+      solo,
+      preview: wanted.map((id) => {
+        const fallback =
+          profiles.get(id)?.name ??
+          agents.get(id)?.name ??
+          formatPublicKey(id) ??
+          "Member";
+        const picture = avatarMedia(
+          avatarSource(profiles.get(id)?.picture ?? agents.get(id)?.avatar),
+          session.media,
+        );
+        return {
+          id,
+          name: (session.names?.resolve(id, fallback, list) ?? fallback).slice(
+            0,
+            1000,
+          ),
+          picture: picture && bytes(picture) <= 8192 ? picture : null,
+        };
+      }),
+    };
+  };
   /** The DM's first other participant's picture, as the tab icon shows. */
   const picture = (c: Channel | undefined) => {
     const person = c?.channelType === "dm" ? c.participants?.[0] : undefined;
@@ -791,6 +852,7 @@ export function createPopoutThread(
         isDm: c?.channelType === "dm" || c?.channelType === "solo",
         kind: kind(c),
         picture: picture(c),
+        members: members(c),
         thread: !!rootId,
         typing: available() ? typing() : undefined,
       };

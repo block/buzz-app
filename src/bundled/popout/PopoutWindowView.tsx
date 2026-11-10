@@ -27,8 +27,12 @@ import {
   HashIcon,
   LockIcon,
   MessageReplyIcon,
+  RobotIcon,
+  UsersIcon,
 } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
+import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import styles from "./Popout.module.css";
 
@@ -81,6 +85,13 @@ export function PopoutWindowView({
     dm: "Direct message",
     solo: "Solo chat",
   }[view.kind];
+  // Main's header identity: the member stack opens the access dialog there.
+  const members = view.members;
+  const membersLabel = members
+    ? members.solo
+      ? `${members.count} ${members.count === 1 ? "agent" : "agents"} in ${view.title}; opens in the main window`
+      : `${members.count} ${members.count === 1 ? "member" : "members"} of ${conversation}; opens in the main window`
+    : undefined;
   // Main's own words for who is working and typing here.
   const typingText = view.typing
     ? [
@@ -346,6 +357,62 @@ export function PopoutWindowView({
               <span className={styles.kind}>{conversation}</span>
             )}
           </h1>
+          {members && (
+            <SurfaceButton
+              className={styles.members}
+              aria-label={membersLabel}
+              title={members.solo ? "Agents" : "Members"}
+              onClick={() => act("openMembers")}
+            >
+              {members.preview.length ? (
+                <AvatarStack
+                  size="small"
+                  max={3}
+                  items={[
+                    ...members.preview.map((person) => ({
+                      id: person.id,
+                      name: person.name,
+                      src: person.picture ?? undefined,
+                      shape: members.solo
+                        ? ("squircle" as const)
+                        : ("circle" as const),
+                    })),
+                    // Members past the shown ones only count.
+                    ...Array.from(
+                      {
+                        length: Math.max(
+                          0,
+                          Math.min(members.count, 1000) -
+                            members.preview.length,
+                        ),
+                      },
+                      (_, index) => ({
+                        id: `more-${index}`,
+                        name: "",
+                        shape: members.solo
+                          ? ("squircle" as const)
+                          : ("circle" as const),
+                      }),
+                    ),
+                  ]}
+                />
+              ) : (
+                <Avatar
+                  size="small"
+                  shape="circle"
+                  alt=""
+                  fallback={members.solo ? "Agents" : "Members"}
+                  fallbackContent={
+                    members.solo ? (
+                      <RobotIcon size="1rem" aria-hidden="true" />
+                    ) : (
+                      <UsersIcon size="1rem" aria-hidden="true" />
+                    )
+                  }
+                />
+              )}
+            </SurfaceButton>
+          )}
         </header>
         {view.detached && (
           <p role="status" className={styles.notice}>

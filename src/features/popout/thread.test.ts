@@ -39,9 +39,15 @@ it("loads a seeded session thread on opening before offering replies", async () 
   // request to prove the reply gate stays closed until its verified fold.
   expect(thread.snapshot().root?.id).toBe(root.id);
   expect(thread.writable()).toBe(false);
-  await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+  // The projection also asks for the roster's profiles; find the thread read.
+  await vi.waitFor(() =>
+    expect(
+      wire.pending.some((entry) => entry.filters[0]?.ids?.[0] === root.id),
+    ).toBe(true),
+  );
   expect(thread.snapshot().status).toBe("loading");
-  const read = wire.next();
+  let read = wire.next();
+  while (read.filters[0]?.ids?.[0] !== root.id) read = wire.next();
   expect(read.filters[0]?.ids).toEqual([root.id]);
   expect(read.filters[0]?.["#h"]).toEqual(["channel"]);
   read.respond([root]);
@@ -1324,5 +1330,57 @@ it("projects the conversation's kind, names a DM by its people and carries their
     kind: "dm",
     picture: `http://buzz-media.localhost/${encodeURIComponent("https://relay.example/ada.png")}`,
     isDm: true,
+  });
+});
+
+it("projects members as main's header previews them: people (or agents, for Solo) with pictures first, the whole count, and one profile request", () => {
+  const h = fixture();
+  const ADA = "f".repeat(64);
+  const BOB = "e".repeat(64);
+  const CAT = "d".repeat(64);
+  const AGENT = "c".repeat(64);
+  const profiles = new Map([
+    [ADA, { name: "Ada" }],
+    [BOB, { name: "Bob", picture: "https://relay.example/bob.png" }],
+    [AGENT, { name: "Echo", isAgent: true as const }],
+  ]);
+  const ensure = vi.fn(async () => {});
+  const session = {
+    ...h.session,
+    profiles: { ...h.session.profiles, snapshot: () => profiles, ensure },
+    media: (url: string) => `media:${url}`,
+  } as unknown as RelaySession;
+  const thread = createPopoutThread(session, "channel", ROOT, () => {});
+  clean.push(() => thread.dispose());
+  expect(thread.snapshot().members).toBeUndefined();
+  h.channel.current = {
+    ...h.channel.current,
+    members: [VIEWER, ADA, BOB, CAT, AGENT],
+  };
+  expect(thread.snapshot().members).toEqual({
+    count: 4,
+    solo: false,
+    preview: [
+      { id: BOB, name: "Bob", picture: "media:https://relay.example/bob.png" },
+      { id: VIEWER, name: expect.any(String), picture: null },
+      { id: ADA, name: "Ada", picture: null },
+    ],
+  });
+  thread.snapshot();
+  expect(ensure).toHaveBeenCalledExactlyOnceWith(
+    [BOB, VIEWER, ADA],
+    "background",
+  );
+  // A Solo chat previews its agents.
+  h.channel.current = {
+    id: "channel",
+    name: "Planning",
+    channelType: "solo",
+    members: [VIEWER, AGENT],
+  };
+  expect(thread.snapshot().members).toEqual({
+    count: 1,
+    solo: true,
+    preview: [{ id: AGENT, name: "Echo", picture: null }],
   });
 });

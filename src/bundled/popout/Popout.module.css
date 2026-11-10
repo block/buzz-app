@@ -23,6 +23,24 @@
   flex: 0 0 1.25rem;
   color: var(--text-secondary);
 }
+.members {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: var(--size-control-sm);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--text-standard);
+  cursor: pointer;
+}
+.members:hover {
+  background: var(--affordance-subtle-hover);
+}
+.members:active {
+  background: var(--affordance-subtle-pressed);
+}
 .title {
   flex: 1;
   min-width: 0;

@@ -302,3 +302,56 @@ it("shows membership activity as one notice per run and says who is typing or wo
     document.querySelector("[data-conversation-activity]")?.textContent,
   ).toBe("Echo is working. Ada, Bob and 1 others are typing");
 });
+
+it("shows the member stack main's header shows and opens members in the main window", () => {
+  const act = vi.fn();
+  const { rerender } = render(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        members: {
+          count: 5,
+          solo: false,
+          preview: [
+            {
+              id: "a".repeat(64),
+              name: "Ada",
+              picture: "http://buzz-media.localhost/ada",
+            },
+            { id: "b".repeat(64), name: "Bob", picture: null },
+            { id: "c".repeat(64), name: "Cat", picture: null },
+          ],
+        },
+      })}
+      act={act}
+    />,
+  );
+  const members = screen.getByRole("button", {
+    name: "5 members of #Design; opens in the main window",
+  });
+  expect(
+    members.querySelector('img[src="http://buzz-media.localhost/ada"]'),
+  ).toBeTruthy();
+  expect(members).toHaveTextContent("+2");
+  fireEvent.click(members);
+  expect(act).toHaveBeenCalledWith("openMembers");
+  // A Solo chat counts its agents; none known yet shows the agents glyph.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "solo",
+        title: "Plan",
+        members: { count: 0, solo: true, preview: [] },
+      })}
+      act={act}
+    />,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "0 agents in Plan; opens in the main window",
+    }),
+  ).toBeTruthy();
+  expect(screen.queryByText("+2")).toBeNull();
+});

@@ -35,6 +35,7 @@ export type PopoutView = PopoutThreadView & {
 export type PopoutAction =
   | "openLink"
   | "openInMain"
+  | "openMembers"
   | "focusMain"
   | "openThread"
   | "back"
@@ -121,6 +122,9 @@ export function createPopoutWindows(
     ) => void;
     /** Open an agent's activity view beside this conversation in main. */
     openActivity?: (activityTarget: string, target: PopoutTarget) => void;
+    /** Open the conversation's members/access in main (`solo`: no Members
+     * surface exists; the conversation itself opens). */
+    openMembers?: (channelId: string, solo: boolean) => void;
   } = {},
 ) {
   const bridge = options.bridge ?? nativePopoutWindow;
@@ -207,6 +211,14 @@ export function createPopoutWindows(
         return;
       case "focusMain":
         return; // Native handles it and forwards nothing.
+      case "openMembers": {
+        const frame = top(entry);
+        options.openMembers?.(
+          frame.target.channelId,
+          frame.thread.snapshot().kind === "solo",
+        );
+        return;
+      }
       case "openInMain": {
         const { channelId, threadRootId } = top(entry).target;
         options.openLink?.(

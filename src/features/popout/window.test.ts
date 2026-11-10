@@ -52,10 +52,12 @@ function harness(patch: (base: RelaySession) => object = () => ({})) {
   };
   const openLink = vi.fn(() => true);
   const openActivity = vi.fn();
+  const openMembers = vi.fn();
   const windows = createPopoutWindows(relay, {
     bridge,
     openLink,
     openActivity,
+    openMembers,
   });
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   return {
@@ -63,6 +65,7 @@ function harness(patch: (base: RelaySession) => object = () => ({})) {
     bridge,
     openLink,
     openActivity,
+    openMembers,
     flush,
     control: (action: PopoutControl["action"], text?: string, stale = false) =>
       act?.({
@@ -128,6 +131,9 @@ it("drops actions from an earlier incarnation and retires on close", async () =>
   expect(h.openLink).toHaveBeenCalledWith(
     `buzz://message?channel=channel&id=${ROOT}&thread=${ROOT}`,
   );
+  // Members open in main for the frame's conversation (not a Solo chat here).
+  h.control("openMembers");
+  expect(h.openMembers).toHaveBeenCalledWith("channel", false);
   h.control("closed");
   await h.flush();
   expect(h.windows.isOpen({ channelId: "channel", threadRootId: ROOT })).toBe(

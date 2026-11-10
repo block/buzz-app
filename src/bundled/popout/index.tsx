@@ -1,6 +1,7 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useSyncExternalStore } from "react";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { conversationTarget } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import {
   createPopoutWindows,
@@ -99,6 +100,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
           revision: action.revision,
         });
       });
+    },
+    // Members open as main's header opens them: the conversation with its
+    // access dialog; a Solo chat has none, so the conversation alone.
+    openMembers: (channelId, solo) => {
+      const { scope } = ctx.relay.snapshot();
+      if (!scope) return;
+      try {
+        const target = conversationTarget(scope, channelId);
+        void ctx.navigation.open(
+          solo || target.kind !== "conversation"
+            ? target
+            : { ...target, panel: "members" },
+        );
+      } catch {
+        /* An invalid scope opens nothing. */
+      }
     },
     // The agent's activity view opens beside the conversation once main
     // shows it, through the existing panel opener with this channel context.

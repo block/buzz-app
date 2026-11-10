@@ -14,6 +14,7 @@ import {
   type PanelProps,
 } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
+import { ConversationService } from "../../src/features/conversation/service";
 import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
 import { localAgentsFixture } from "../../src/features/agents/local-testing";
@@ -409,6 +410,7 @@ const panels = new PanelsService(context);
 // Profiles reads Agents to choose agent tabs; this fixture has no agents.
 new AgentsService(context, relay, undefined);
 const pages = new PagesService(context);
+new ConversationService(context);
 Object.assign(window, {
   profilesFixture: {
     report,

@@ -24,7 +24,12 @@ import type {
 } from "../../features/panels/service";
 import { createAgentLibrary } from "../../features/agents/library";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import { channelTabs, tabPane, useChannelTabState } from "./useChannelTabState";
+import {
+  channelTabs,
+  tabPane,
+  useChannelTabState,
+  type TabPane,
+} from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
 import {
   claimProfileTranscript,
@@ -893,7 +898,10 @@ it.each(["member", "guest"] as const)(
   },
 );
 
-function launcherHarness(mainPane = false) {
+function launcherHarness(
+  mainPane = false,
+  placement: RegisteredPanel["channelPlacement"] = "tab",
+) {
   const channels = [{ id: "alpha", name: "Alpha" }];
   const session = {
     viewer: "viewer",
@@ -906,7 +914,7 @@ function launcherHarness(mainPane = false) {
     pluginId: "fixture",
     revision: "1",
     title: "Work",
-    channelPlacement: "tab",
+    channelPlacement: placement,
     matches: (target) => target.startsWith("work:"),
     channelLauncher: (props) => {
       launcher = props;
@@ -951,8 +959,76 @@ function launcherHarness(mainPane = false) {
     pressed: () => launcher.pressed,
     entries: () => state.entries,
     workspace: () => workspace,
+    // As the page shows it: the side panel is visible only in the open pane.
+    sideShown: () => state.paneOpen && !!workspace.drawer.side,
+    tabs: () => state.tabs,
   };
 }
+
+it.each([
+  ["open", true],
+  ["closed", false],
+])(
+  "Close all tabs leaves a launcher's side panel as the %s pane showed it, since it isn't a tab",
+  (_, open) => {
+    const h = launcherHarness(false, "side");
+    act(() => {
+      h.workspace().openConversationThread("alpha", "root", "root");
+    });
+    h.toggle("alpha");
+    expect(h.tabs()).toHaveLength(1);
+    expect(h.sideShown()).toBe(true);
+    if (!open) act(() => h.workspace().closePane());
+    act(() => {
+      expect(h.workspace().closeAllTabs()).toBe(true);
+    });
+    expect(h.tabs()).toHaveLength(0);
+    expect(h.sideShown()).toBe(open);
+    expect(h.pressed()).toBe(open);
+  },
+);
+
+it("a side panel's launcher reads unpressed while the closed pane hides it, and one press shows it", () => {
+  const h = launcherHarness(false, "side");
+  act(() => {
+    h.workspace().openConversationThread("alpha", "root", "root");
+  });
+  h.toggle("alpha");
+  expect(h.pressed()).toBe(true);
+  act(() => h.workspace().closePane());
+  expect(h.sideShown()).toBe(false);
+  expect(h.pressed()).toBe(false);
+  h.toggle("alpha");
+  expect(h.sideShown()).toBe(true);
+  expect(h.pressed()).toBe(true);
+  // The pane returns with its tab, and the next press hides the panel.
+  expect(h.tabs()).toHaveLength(1);
+  h.toggle("alpha");
+  expect(h.workspace().drawer.side).toBeFalsy();
+  expect(h.pressed()).toBe(false);
+});
+
+it("Close other tabs on a main-pane tab keeps a launcher's side panel open beside it", () => {
+  setThreadPlacementPreference("main");
+  onTestFinished(() => setThreadPlacementPreference("side"));
+  const h = launcherHarness(true, "side");
+  h.toggle("alpha");
+  act(() => {
+    h.workspace().openConversationThread("alpha", "first", "first");
+  });
+  act(() => {
+    h.workspace().openConversationThread("alpha", "second", "second");
+  });
+  expect(h.workspace().selectedMain).toBe("thread:alpha:second");
+  expect(h.sideShown()).toBe(true);
+  act(() => {
+    expect(h.workspace().closeOtherTabs("thread:alpha:first")).toBe(true);
+  });
+  expect(h.tabs().map((tab) => tab.id)).toEqual(["thread:alpha:first"]);
+  expect(h.workspace().selectedMain).toBe("thread:alpha:first");
+  expect(h.sideShown()).toBe(true);
+  expect(h.pressed()).toBe(true);
+});
 
 it("a launcher takes over a tab a link already opened for its target", () => {
   const h = launcherHarness();
@@ -1894,6 +1970,73 @@ it("mounts a hidden thread tab when first shown and keeps it for the visit", () 
   );
   act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
   expect(restored("thread:alpha:r1")).toBeUndefined();
+});
+
+it("a page withholds one pane's thread content and hosts it again afterwards", () => {
+  setThreadPlacementPreference("side");
+  const channels = [{ id: "alpha", name: "Alpha" }];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const emptyPanels: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const h = renderHook(
+    ({ hostPanes }: { hostPanes?: readonly TabPane[] }) => {
+      const state = useChannelTabState(session, "alpha");
+      const workspace = useConversationTabs({
+        profiles: new Map(),
+        state,
+        relay,
+        session,
+        panels,
+        current: channels[0],
+        channels,
+        scope: "scope:viewer",
+        conversationIcon: () => null,
+        leadingIds: [],
+        continuingVisit: true,
+        mainPane: true,
+        hostPanes,
+        isLive: () => true,
+        openLink: () => false,
+      });
+      return { state, workspace };
+    },
+    { initialProps: {} },
+  );
+  const hosted = () =>
+    h.result.current.workspace.hosts.map(
+      (host) => (host as { key?: string }).key,
+    );
+  act(() => h.result.current.state.openThreadTab("alpha", "r1", "r1"));
+  act(() =>
+    h.result.current.state.openThreadTab(
+      "alpha",
+      "r2",
+      "r2",
+      undefined,
+      "main",
+    ),
+  );
+  expect(h.result.current.state.tabs.map(tabPane)).toEqual(["side", "main"]);
+  expect(hosted()).toEqual(["thread:alpha:r1", "thread:alpha:r2"]);
+  // Only the side thread leaves; the main-pane thread keeps rendering.
+  h.rerender({ hostPanes: ["main"] });
+  expect(hosted()).toEqual(["thread:alpha:r2"]);
+  // Withholding the side thread must not forget that this visit showed it.
+  // Close the pane so r1 is no longer active, then drop hostPanes: r1 comes
+  // back only if the visit still remembers showing it before the withholding.
+  act(() => h.result.current.state.setPaneOpen(false));
+  h.rerender({});
+  expect(h.result.current.state.paneOpen).toBe(false);
+  expect(hosted()).toEqual(["thread:alpha:r1", "thread:alpha:r2"]);
 });
 
 it("a hidden retained thread tab's rows re-render for new panels, not channel-list changes", () => {

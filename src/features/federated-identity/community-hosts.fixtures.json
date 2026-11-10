@@ -82,12 +82,12 @@
     },
     {
       "hosts": ["*.communities.buzz.xyz", "communities.buzz.xyz"],
-      "relay": "wss://buzz.block.builderlab.xyz",
+      "relay": "wss://buzz.acme.builderlab.xyz",
       "covered": false
     },
     {
-      "hosts": ["buzz.block.builderlab.xyz"],
-      "relay": "wss://buzz.block.builderlab.xyz",
+      "hosts": ["buzz.acme.builderlab.xyz"],
+      "relay": "wss://buzz.acme.builderlab.xyz",
       "covered": true
     },
     {
@@ -111,7 +111,7 @@
     { "url": "https://app.builderlab.xyz/?team=1", "builtIn": false },
     { "url": "https://app.builderlab.xyz/staging", "builtIn": false },
     { "url": "http://app.builderlab.xyz", "builtIn": false },
-    { "url": "https://block.builderlab.xyz", "builtIn": false },
+    { "url": "https://acme.builderlab.xyz", "builtIn": false },
     { "url": "not a url", "builtIn": false }
   ]
 }

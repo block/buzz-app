@@ -19,6 +19,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
+import { formatPublicKey } from "../../shared/identity/public-key";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { createRelaySession } from "../../features/relay/session";
 import type { VerifiedProfileAuthority } from "../../features/relay/verified-profile";
@@ -1027,6 +1028,16 @@ it("keeps public-key lookup results whose names do not match the key text", asyn
   expect(t.publish).not.toHaveBeenCalled();
 });
 
+it("finds a local agent the relay has no profile for by a nostr: npub", async () => {
+  const t = await setup("stream", false, true);
+  fireEvent.change(screen.getByRole("searchbox"), {
+    target: { value: `nostr:${npubEncode(t.agent.pubkey)}` },
+  });
+  expect(
+    await screen.findByRole("button", { name: /^Add Fixture agent/ }),
+  ).toBeEnabled();
+});
+
 it("ranks a matching username with the shared people matcher", async () => {
   const t = await setup();
   const handle = profile(keypair(), { display_name: "Alpha", name: "robin" });
@@ -1555,9 +1566,12 @@ it("failed directory searches recover through the shared refresh, not a false em
   expect(within(section).queryByText("Search offline")).not.toBeInTheDocument();
 });
 
-it("finds an existing member by their canonical public key", async () => {
+it.each([
+  ["npub", (pubkey: string) => npubEncode(pubkey)],
+  ["nostr: npub", (pubkey: string) => `nostr:${npubEncode(pubkey)}`],
+])("finds an existing member by their %s", async (_case, typed) => {
   const t = await setup("dm");
-  await t.user.type(screen.getByRole("searchbox"), npubEncode(t.viewer.pubkey));
+  await t.user.type(screen.getByRole("searchbox"), typed(t.viewer.pubkey));
   expect(screen.getByText("Carl (you)")).toBeVisible();
 });
 
@@ -3884,6 +3898,27 @@ it("keeps the visible member page and focus stable while names arrive", async ()
   } finally {
     await act(async () => release());
   }
+});
+
+it("re-sorts members by name when their names arrive", async () => {
+  // Named against their key order, so the rows must change once names load.
+  const keys = [keypair(), keypair(), keypair()].sort((a, b) =>
+    (formatPublicKey(b.pubkey) ?? "").localeCompare(
+      formatPublicKey(a.pubkey) ?? "",
+    ),
+  );
+  await setup("stream", false, false, undefined, undefined, {
+    memberProfiles: keys.map((key, i) =>
+      profile(key, { name: ["Amy", "Kim", "Zed"][i] }),
+    ),
+  });
+  await vi.waitFor(() =>
+    expect(
+      within(memberData())
+        .getAllByText(/^(Amy|Kim|Zed)$/)
+        .map((name) => name.textContent),
+    ).toEqual(["Amy", "Kim", "Zed"]),
+  );
 });
 
 const retainedMemberProfiles = Array.from({ length: 1100 }, (_, i) =>

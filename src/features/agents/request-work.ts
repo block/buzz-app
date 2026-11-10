@@ -21,6 +21,11 @@ export type RequestWork = {
   turns: Snapshot["turns"];
   working: boolean;
 };
+/** Work that no longer needs a pending activity presentation. Errors remain visible. */
+export function isSettledWork(entry: Pick<RequestWork, "state">): boolean {
+  return ["done", "ended", "superseded", "stopped"].includes(entry.state);
+}
+
 /** Only explicit triggering IDs associate work with a message. Typing is not
  * message evidence, and a sibling request must never inherit the same bubble. */
 export function requestWork(

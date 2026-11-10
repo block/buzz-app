@@ -1,6 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 import { readFile } from "node:fs/promises";
 import { watchPageErrors } from "./page-errors.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 const maskedAncestors = (element) => {
   const masked = [];
@@ -418,15 +419,9 @@ test("custom color and footer resize together without reversing direction", asyn
   });
   await custom.waitFor({ state: "visible" });
   // Finish the initial tab transition before measuring the two custom-color states.
-  await page
-    .locator("[data-buzz-ui].popover-surface")
-    .evaluate(async (popup) => {
-      await Promise.all(
-        popup
-          .getAnimations({ subtree: true })
-          .map((animation) => animation.finished),
-      );
-    });
+  await animationsSettled(page.locator("[data-buzz-ui].popover-surface"), {
+    subtree: true,
+  });
   for (const name of ["Custom background color", "Use color"]) {
     const frames = await page
       .getByRole("button", { name, exact: true })
@@ -614,4 +609,85 @@ test("avatar picker previews pointer selections and respects reduced motion", as
   await expect(
     page.getByRole("tab", { name: "Emoji", exact: true }),
   ).toHaveCount(0);
+});
+
+const onboardingAvatar = async (page) => {
+  await page.route("**/api/relay/**", (route) => route.abort());
+  await page.goto("/tests/fixtures/onboarding-profile.html");
+  const add = page.getByRole("button", { name: "Add avatar", exact: true });
+  await add.click();
+  const dialog = page.getByRole("dialog", { name: "Edit avatar", exact: true });
+  await expect(dialog).toBeVisible();
+  return { add, dialog };
+};
+
+// Browser boundary: Base UI outside-press and focus-out dismissal, and return
+// focus to a trigger that is remounted when the draft preview clears.
+test("an unsaved onboarding avatar draft survives an outside press, and closing returns focus", async ({
+  page,
+}) => {
+  const { add, dialog } = await onboardingAvatar(page);
+  const heading = page.getByRole("heading", { name: "Set up your profile" });
+  // An untouched draft still dismisses on an outside press.
+  await heading.click();
+  await expect(dialog).toHaveCount(0);
+  await add.click();
+  const url = page.getByRole("textbox", { name: "Picture URL (optional)" });
+  await url.fill("https://images.example/avatar.png");
+  // The heading is focusable, but the draft keeps focus as well as the popup.
+  await heading.click();
+  await page.mouse.click(4, 4);
+  // A label focuses its control on click, after the press itself.
+  await page
+    .getByText("Display name", { exact: true })
+    .click({ position: { x: 3, y: 5 } });
+  await expect(dialog).toBeVisible();
+  await expect(url).toBeFocused();
+  await expect(url).toHaveValue("https://images.example/avatar.png");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+
+  // A picked emoji is a draft too, even before any URL exists.
+  await add.click();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji" }),
+  ).toBeVisible();
+  await heading.click();
+  await expect(dialog).toBeVisible();
+  await page.getByRole("tab", { name: "Emoji", exact: true }).press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+
+  // Tabbing out still closes, and focus lands on a control, not a hidden guard.
+  await add.click();
+  await url.fill("https://images.example/avatar.png");
+  await page.getByRole("button", { name: "Done", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
+});
+
+// The full validation matrix lives in AvatarEditor.test.tsx; this checks the
+// wiring in a real browser, where Tab moves focus out of the field.
+test("the picture URL error waits for the field to lose focus", async ({
+  page,
+}) => {
+  await onboardingAvatar(page);
+  const url = page.getByRole("textbox", { name: "Picture URL (optional)" });
+  const message = /Use an HTTPS image URL/;
+  await url.pressSequentially("h");
+  await expect(url).not.toHaveAccessibleDescription(message);
+  await url.press("Tab");
+  await expect(url).toHaveAccessibleDescription(message);
+});
+
+test("the onboarding display name keeps nickname autofill without spellcheck", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/onboarding-profile.html");
+  const name = page.getByLabel("Display name", { exact: true });
+  await expect(name).toHaveAttribute("spellcheck", "false");
+  await expect(name).toHaveAttribute("autocomplete", "nickname");
 });

@@ -103,22 +103,6 @@
   padding: 0 var(--space-row-gap) var(--space-panel-inset);
 }
 
-/* The row owns avatar geometry; Avatar owns its artwork and identity shape. */
-.rowAvatar {
-  display: grid;
-  flex: none;
-  width: var(--space-8);
-  height: var(--space-8);
-}
-
-/* Keep readable labels and the standard outer gutter beside the narrow dock. */
-@container inbox-list (max-width: 30rem) {
-  .rowAvatar {
-    width: var(--space-6);
-    height: var(--space-6);
-  }
-}
-
 .row {
   min-width: 0;
 }
@@ -142,13 +126,6 @@
   }
 }
 
-.unreadSlot {
-  display: grid;
-  place-items: center;
-  width: var(--space-2);
-  height: var(--space-2);
-}
-
 /* Mark as read, on unread rows only: revealed on hover or keyboard focus over
    the date, and always shown without a hover pointer. */
 .rowAction {
@@ -168,16 +145,8 @@
   opacity: 1;
 }
 
-.rowDate {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  min-inline-size: var(--size-control-sm);
-  justify-content: flex-end;
-}
-
-.row[data-action]:hover .rowDate,
-.row[data-action]:focus-within .rowDate {
+.row[data-action]:hover [data-inbox-date],
+.row[data-action]:focus-within [data-inbox-date] {
   opacity: 0;
 }
 
@@ -186,65 +155,9 @@
     opacity: 1;
   }
 
-  .row[data-action] .rowDate {
+  .row[data-action] [data-inbox-date] {
     opacity: 0;
   }
-}
-
-.unreadDot {
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--text-navigation-unread);
-}
-
-.content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  white-space: normal;
-  padding-block: var(--space-row-gap);
-}
-
-.heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-1) var(--space-control-inset);
-}
-
-.sender {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.identity {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-2);
-  min-width: 0;
-}
-
-.source {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-subtle);
-}
-
-.preview {
-  max-inline-size: 64ch;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
 }
 
 @media (max-width: 600px) {

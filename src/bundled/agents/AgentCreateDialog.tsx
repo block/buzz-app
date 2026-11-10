@@ -123,21 +123,24 @@ export function AgentCreateDialog({
       return undefined;
     }
   };
-  /** The agent's settings in `item`, with the requested instructions. */
-  const seed = (item: RegisteredAgentType | undefined) => {
+  /** The agent's settings in `item`, or a new agent's defaults, with the
+   * requested instructions. */
+  const seed = (item: RegisteredAgentType | undefined, initial = true) => {
     if (!update) {
       const config = startingConfig(item);
-      return draft?.instructions && item?.adopt
-        ? item.adopt({ instructions: draft.instructions }, config)
+      const instructions =
+        (initial ? request?.instructions : undefined) ?? draft?.instructions;
+      return instructions && item?.adopt
+        ? item.adopt({ instructions }, config)
         : config;
     }
-    const { agent, request } = update;
+    const { agent, request: proposed } = update;
     const config =
       item?.key === agent.type
         ? agent.config
         : (migration(item)?.config ?? startingConfig(item));
-    return request.instructions !== undefined && item?.adopt
-      ? item.adopt({ instructions: request.instructions }, config)
+    return proposed.instructions !== undefined && item?.adopt
+      ? item.adopt({ instructions: proposed.instructions }, config)
       : config;
   };
   const [config, setConfig] = useState(() => seed(type));
@@ -198,12 +201,13 @@ export function AgentCreateDialog({
   const choose = (key: string) => {
     const item = types.find((candidate) => candidate.key === key);
     if (!item || key === type?.key) return;
-    const next = seed(item);
-    // Typed instructions follow a new agent to its new harness. A harness
-    // that carries none was emptied, so a card's text must not come back.
+    // A creation request seeds only the first harness, not later choices.
+    const next = seed(item, false);
+    // Carry the owner's edits, including an explicit clear, across harnesses.
     const carried =
       update || !type?.carry ? undefined : type.carry(config).instructions;
-    const instructions = carried || (draft && type?.carry ? "" : undefined);
+    const instructions =
+      carried || ((draft || request) && type?.carry ? "" : undefined);
     restoreHarnessFocus.current = item.key;
     setConfigurationReady(false);
     chooseModel(
@@ -270,7 +274,11 @@ export function AgentCreateDialog({
             onValueChange={choose}
           />
           {CreateAction && (
-            <CreateAction key={type.key} disabled={pending || avatarBusy} />
+            <CreateAction
+              key={type.key}
+              {...(edited ? { agent: edited } : {})}
+              disabled={pending || avatarBusy}
+            />
           )}
         </div>
       }
@@ -428,6 +436,7 @@ export function AgentCreateDialog({
             {Configuration ? (
               <Configuration
                 key={type.key}
+                {...(edited ? { agent: edited } : {})}
                 config={config}
                 disabled={pending}
                 harnessControl={harnessControl}
@@ -444,6 +453,8 @@ export function AgentCreateDialog({
                       <Model
                         key={type.key}
                         config={config}
+                        // Thinking has its own row beside it.
+                        {...(Thinking && { showEffort: false })}
                         disabled={pending}
                         onChange={(next) => chooseModel(type, next)}
                       />

@@ -21,6 +21,7 @@ type ButtonVariant =
   | "primary"
   | "quiet";
 type ButtonSize =
+  | "text"
   | "caption"
   | "inline"
   | "row"

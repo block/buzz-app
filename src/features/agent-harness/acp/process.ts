@@ -11,6 +11,7 @@ import type {
   AcpHooks,
   Choice,
   McpServer,
+  PlatformTools,
   ServeMcp,
   Spawn,
   ToolServer,
@@ -238,6 +239,11 @@ export class AcpProcess {
       named?: (title: string) => void;
       tools?: ToolServer;
       choice?: () => Choice;
+      /** Built-ins beside the Buzz tools, for harnesses that take them. */
+      platform?: PlatformTools;
+      /** Replaces the harness's own base prompt with `systemPrompt` instead
+       * of appending it, for small models that a long prompt throws off. */
+      replacePrompt?: boolean;
       /** Given the session as soon as the harness has opened it, before it
        * is set up, so a caller can close one whose open then fails. */
       onSession?: (session: AcpSession) => void;
@@ -295,6 +301,7 @@ export class AcpProcess {
             _meta: hooks.newSessionMeta(buzz, {
               ...(title ? { title } : {}),
               provider,
+              ...(launch.platform ? { platform: launch.platform } : {}),
             }),
           }),
         },
@@ -322,7 +329,12 @@ export class AcpProcess {
     }
     try {
       if (systemPrompt && hooks.systemPrompt)
-        await hooks.systemPrompt(this, sessionId, systemPrompt);
+        await hooks.systemPrompt(
+          this,
+          sessionId,
+          systemPrompt,
+          launch.replacePrompt,
+        );
     } catch (error) {
       void this.close(session);
       throw error;
@@ -516,14 +528,17 @@ export class AcpProcess {
     const call = (params ?? {}) as {
       name?: unknown;
       arguments?: { final?: unknown };
+      _meta?: Record<string, unknown>;
     };
     const worked =
       method === "tools/call" &&
       !response.error &&
       !(response.result as { isError?: unknown } | undefined)?.isError;
     if (worked && ANSWERS.has(String(call.name))) session?.answered();
+    // goose names the ACP tool call behind an MCP call in its `_meta`.
+    const toolCall = call._meta?.["agent-tool-call-request-id"];
     if (worked && isFinalMessage(call.name, call.arguments))
-      session?.finished();
+      session?.finished(typeof toolCall === "string" ? toolCall : undefined);
     return response;
   }
 }

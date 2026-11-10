@@ -315,7 +315,7 @@ export function createInboxReactions({
     const next = availableChannels();
     const restored = [...next].some((id) => !available.has(id));
     available = next;
-    const items = snapshot.items.filter((item) => allowed(item.channelId));
+    const items = snapshot.items.filter((item) => next.has(item.channelId));
     if (items.length !== snapshot.items.length) publish({ ...snapshot, items });
     if (requested && restored) void refresh();
   });

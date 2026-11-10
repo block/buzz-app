@@ -5,7 +5,7 @@ mod platform;
 mod policy;
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -94,6 +94,8 @@ struct BrowserSession {
     snapshot: Rc<RefCell<BrowserSnapshot>>,
     policy: NavigationPolicy,
     approvals: Rc<RefCell<Approvals>>,
+    // WebKit requires suspend and resume calls in pairs.
+    media_suspended: Cell<bool>,
 }
 
 impl BrowserSession {
@@ -122,6 +124,15 @@ impl BrowserSession {
             snapshot.loading = platform::loading(&self.guest);
         }
         Ok(snapshot)
+    }
+
+    fn set_media_suspended(&self, suspended: bool) -> Result<(), String> {
+        if self.media_suspended.get() == suspended {
+            return Ok(());
+        }
+        platform::set_media_suspended(&self.guest, suspended)?;
+        self.media_suspended.set(suspended);
+        Ok(())
     }
 
     fn set_bounds(&self, bounds: BrowserBounds, visible: bool) -> Result<(), String> {
@@ -391,6 +402,7 @@ fn build_contents(
         snapshot,
         policy,
         approvals,
+        media_suspended: Cell::new(false),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {
@@ -473,6 +485,21 @@ pub async fn browser_set_bounds(
 ) -> Result<(), String> {
     on_main_thread(&app, move || {
         with_browser(&session_id, |browser| browser.set_bounds(bounds, visible))
+    })
+    .await
+}
+
+/// Holds a page's media while no view shows it, since a hidden page keeps running.
+#[tauri::command]
+pub async fn browser_set_media_suspended(
+    app: AppHandle,
+    session_id: String,
+    suspended: bool,
+) -> Result<(), String> {
+    on_main_thread(&app, move || {
+        with_browser(&session_id, |browser| {
+            browser.set_media_suspended(suspended)
+        })
     })
     .await
 }

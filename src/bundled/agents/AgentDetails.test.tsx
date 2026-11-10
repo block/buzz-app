@@ -112,6 +112,7 @@ it("keeps one provider footer across tabs and measures its changing height for t
     subscribe: () => () => {},
     snapshot: () => ({ agents: [agent] }),
     configHistory: () => undefined,
+    agentSync: () => undefined,
     addedTabs: () => [],
     memberships: () => [],
   } as unknown as Agents;
@@ -279,6 +280,7 @@ it.each([
       subscribe: () => () => {},
       snapshot: () => ({ agents: [agent] }),
       configHistory: () => undefined,
+      agentSync: () => undefined,
       addedTabs: () => [],
       memberships: () => [],
     } as unknown as Agents;
@@ -490,6 +492,7 @@ it("shows every affected community with unsaved shared settings and submits the 
     },
     snapshot: () => ({ agents: [agent] }),
     configHistory: () => undefined,
+    agentSync: () => undefined,
     addedTabs: () => [],
     registerTab: () => {},
     controlAttention: () => {},

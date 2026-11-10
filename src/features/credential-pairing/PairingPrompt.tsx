@@ -3,13 +3,14 @@ import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   answerPairing,
-  isSavedCommunity,
   onPairingEvents,
+  setPairingCommunities,
+  setPairingPrompt,
   type PairRequest,
 } from "./service";
 
-/** Asks the person to approve a command-line tool acting as them. A request
- * for a community they haven't saved here is declined without asking. */
+/** Asks the person to approve a command-line tool acting as them. Native
+ * code declines a community not saved here without asking. */
 export function PairingPrompt({
   communities,
 }: {
@@ -18,25 +19,41 @@ export function PairingPrompt({
   const [request, setRequest] = useState<PairRequest | null>(null);
   const [left, setLeft] = useState(0);
   const deny = useRef<HTMLButtonElement>(null);
-  const saved = useRef(communities);
-  saved.current = communities;
-  useEffect(
-    () =>
-      onPairingEvents({
-        request(next) {
-          if (!isSavedCommunity(next.relay, saved.current)) {
-            void answerPairing(next.id, false);
-            return;
-          }
-          setRequest(next);
-          setLeft(next.expiresIn);
-        },
-        closed(id) {
-          setRequest((current) => (current?.id === id ? null : current));
-        },
-      }),
-    [],
-  );
+  const saved = communities.join("\n");
+  useEffect(() => {
+    void setPairingCommunities(saved ? saved.split("\n") : []);
+  }, [saved]);
+  // Native asks only while a prompt listens. This one is mounted only in the
+  // app shell, so behind sign-in, setup or restoring screens native refuses.
+  useEffect(() => {
+    let stopped = false;
+    let mounted = false;
+    const stop = onPairingEvents({
+      request(next) {
+        // Heard after its cleanup ran: nobody can show it.
+        if (stopped) {
+          void answerPairing(next.id, false);
+          return;
+        }
+        setRequest(next);
+        setLeft(next.expiresIn);
+      },
+      closed(id) {
+        setRequest((current) => (current?.id === id ? null : current));
+      },
+      ready() {
+        // Stopped first, as by a development remount: it never counted.
+        if (stopped) return;
+        mounted = true;
+        void setPairingPrompt(true);
+      },
+    });
+    return () => {
+      stopped = true;
+      stop();
+      if (mounted) void setPairingPrompt(false);
+    };
+  }, []);
   // Leaving the page declines what it was asked.
   const open = useRef<string | null>(null);
   open.current = request?.id ?? null;
@@ -79,7 +96,7 @@ export function PairingPrompt({
           <Button ref={deny} onClick={() => answer(false)}>
             Deny
           </Button>
-          <Button variant="primary" onClick={() => answer(true)}>
+          <Button variant="prominent" onClick={() => answer(true)}>
             Allow
           </Button>
         </>

@@ -1,4 +1,5 @@
 import {
+  activityRow,
   closeSettings,
   openPage,
   openSettings,
@@ -72,7 +73,7 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const alpha = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  const destinations = ["Activity", "Bestie"].map((name) =>
+  const destinations = ["Bestie", "Reminders"].map((name) =>
     page
       .getByRole("navigation", { name: "Apps dock" })
       .getByRole("tab", { name, exact: true }),
@@ -209,13 +210,13 @@ test("section disclosure toggles content and honors reduced motion", async ({
   const section = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator('[data-sidebar-section="channels"]');
-  const summary = section.locator(
-    ":scope > div:first-child > details > summary",
+  const details = section.locator(
+    ":scope > .navigation-section-heading .navigation-section-heading-label > details",
   );
+  const summary = details.locator(":scope > summary");
   const contentId = await summary.getAttribute("aria-controls");
   expect(contentId).toBeTruthy();
   const content = section.locator(`[id="${contentId}"]`);
-  const details = section.locator(":scope > div:first-child > details");
   const expanded = await section.evaluate(
     (el) => el.getBoundingClientRect().height,
   );
@@ -613,7 +614,12 @@ test.extend({ companionFixture: true })(
       await sidebar.getByRole("button", { name, exact: true }).click();
     };
     const openPage = async (name) => {
-      await pages.getByRole("tab", { name, exact: true }).click();
+      if (name === "Activity") {
+        // Activity is a row at the top of the Messages sidebar.
+        await pages.getByRole("tab", { name: "Messages", exact: true }).click();
+        await showNavigation();
+        await activityRow(page).click();
+      } else await pages.getByRole("tab", { name, exact: true }).click();
       const body = page.getByRole("region", { name, exact: true });
       await expect(
         name === "Activity"
@@ -804,9 +810,7 @@ test("non-ready sidebar keeps Retry reachable while dock pages remain available"
   });
   await expect(status).toBeAttached();
   await scrollToBottom(status);
-  const inbox = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Activity", exact: true });
+  const inbox = activityRow(page);
   await inbox.scrollIntoViewIfNeeded();
   await expect(inbox).toBeInViewport();
   await inbox.click();

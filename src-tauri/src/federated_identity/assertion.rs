@@ -68,6 +68,9 @@ pub(crate) struct Assertion {
     /// The server that issued it; every later check asks that server.
     server: Weak<super::Inner>,
 }
+/// The sign-in reason a request carries when this device has no sign-in for a
+/// community that needs one; relay.rs reports it as that community's refusal.
+pub(crate) const SIGNED_OUT: &str = "Federated sign-in is required";
 #[derive(Clone)]
 pub(crate) struct Authorization {
     pub(crate) assertion: Option<Assertion>,
@@ -270,7 +273,7 @@ impl FederatedIdentity {
             .is_some_and(|current| Arc::ptr_eq(current, generation))
     }
     pub(crate) fn close_discovery(&self, id: &str) {
-        for peer in &self.0.peers {
+        for peer in self.peers() {
             peer.close_discovery(id);
         }
         for generation in self
@@ -292,7 +295,7 @@ impl FederatedIdentity {
         generation.result.set(Ok(requires)).unwrap();
     }
     pub(crate) fn clear_discoveries(&self) {
-        for peer in &self.0.peers {
+        for peer in self.peers() {
             peer.clear_discoveries();
         }
         for (_, generation) in self
@@ -418,7 +421,6 @@ impl FederatedIdentity {
         // Advertising NIP-FI is support, not a requirement (NIP-FI Discovery):
         // without a token the request goes plainly and the relay decides.
         const UNCONFIGURED: &str = "Federated identity is not configured for this community";
-        const SIGNED_OUT: &str = "Federated sign-in is required";
         let Some(config) = self.0.config.as_ref() else {
             authorization.unsigned = Some(UNCONFIGURED);
             return Ok(authorization);
@@ -1179,6 +1181,7 @@ mod tests {
             String::new(),
             Arc::new(Memory::default()),
             vec![peer.clone()],
+            None,
         );
         let identity = IdentityHost::fixture();
         peer.discovered("wss://peer.example", true);

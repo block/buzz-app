@@ -1249,6 +1249,56 @@ it("refuses an agent's Bestie change while another is still saving", async () =>
   );
 });
 
+it.each([
+  ["set", "b".repeat(64)],
+  ["clear", null],
+] as const)(
+  "refuses an agent's Bestie change until a failed %s has put back the previous choice",
+  async (_first, agent) => {
+    // Whichever moment the second change finishes reading the agents, before
+    // or after the first one's save fails, device and account still match.
+    for (let ticks = -8; ticks <= 8; ticks++) {
+      const scope = `bestie-rollback-${agent ? "set" : "clear"}-${ticks}`;
+      const previous = "a".repeat(64);
+      const { session, account, hold } = ownerSession(previous);
+      setDefaultAgent(scope, previous);
+      let refuse!: (error: Error) => void;
+      account.write
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((_, reject) => {
+              refuse = reject;
+            }),
+        )
+        .mockRejectedValueOnce(new Error("offline"));
+      const bestie = defaultAgentControl(session, scope);
+      const first = agent ? bestie.set(agent) : bestie.clear();
+      await vi.waitFor(() => expect(account.write).toHaveBeenCalledOnce());
+      const release = hold();
+      const second = bestie.set(previous);
+      const later = async (count: number) => {
+        for (let tick = 0; tick < count; tick++) await Promise.resolve();
+      };
+      try {
+        if (ticks < 0) {
+          release();
+          await later(-ticks);
+          refuse(new Error("offline"));
+        } else {
+          refuse(new Error("offline"));
+          await later(ticks);
+          release();
+        }
+      } finally {
+        release();
+      }
+      await Promise.allSettled([first, second]);
+      expect(await account.read()).toBe(previous);
+      expect(readView(scope, "solo:default-agent", null)).toBe(previous);
+    }
+  },
+);
+
 it("keeps a newer Bestie choice still saving when an agent's change to the same agent fails", async () => {
   const pubkey = "b".repeat(64);
   const { session, account } = ownerSession("a".repeat(64));

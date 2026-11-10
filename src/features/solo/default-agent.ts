@@ -37,6 +37,8 @@ const known = new WeakSet<Account>();
 // here. A read that found no record leaves an account out.
 const recorded = new WeakSet<Account>();
 const saving = new WeakMap<Account, number>();
+// Accounts with an agent's Bestie change in progress.
+const changing = new WeakSet<Account>();
 const listeners = new Set<() => void>();
 function notifySaved() {
   for (const listener of listeners) listener();
@@ -186,14 +188,21 @@ export function defaultAgentControl(session: RelaySession, scope: string) {
     return here;
   };
   const account = session.mainAgent;
-  // An account save in flight holds a choice it hasn't confirmed, which a
-  // change started now could later restore as if it had been.
-  const busy = () => !!account && !!saving.get(account);
-  const refuseWhileSaving = () => {
-    if (busy())
+  const pending = () => !!account && !!saving.get(account);
+  // A change holds a choice it hasn't confirmed until its save and rollback
+  // finish, which a change started meanwhile could restore as if it had been.
+  const exclusive = async <T>(change: () => Promise<T>) => {
+    if (pending() || (account && changing.has(account)))
       throw new Error(
         "Another change to your owner's Bestie is still saving. Try again.",
       );
+    if (!account) return change();
+    changing.add(account);
+    try {
+      return await change();
+    } finally {
+      changing.delete(account);
+    }
   };
   return Object.freeze({
     read: async () => {
@@ -213,23 +222,29 @@ export function defaultAgentControl(session: RelaySession, scope: string) {
         throw new Error(
           "Only an agent your owner owns and can tag in this community can be their Bestie.",
         );
-      refuseWhileSaving();
-      const previous = chosenAgent(scope);
-      try {
-        await chooseDefaultAgent(session, scope, pubkey);
-      } catch (cause) {
-        // Keep the previous choice unless a newer one replaced this attempt
-        // or is still saving.
-        if (chosenAgent(scope) === pubkey && !busy())
-          cache(scope, previous ?? null);
-        throw cause;
-      }
-      return { device: pubkey, account: account ? pubkey : null, here: true };
+      return exclusive(async () => {
+        const previous = chosenAgent(scope);
+        try {
+          await chooseDefaultAgent(session, scope, pubkey);
+        } catch (cause) {
+          // Keep the previous choice unless a newer one replaced this attempt
+          // or is still saving.
+          if (chosenAgent(scope) === pubkey && !pending())
+            cache(scope, previous ?? null);
+          throw cause;
+        }
+        return {
+          device: pubkey,
+          account: account ? pubkey : null,
+          here: true,
+        };
+      });
     },
     async clear() {
-      refuseWhileSaving();
-      await clearDefaultAgent(session, scope);
-      return { device: null, account: null, here: false };
+      return exclusive(async () => {
+        await clearDefaultAgent(session, scope);
+        return { device: null, account: null, here: false };
+      });
     },
   });
 }

@@ -972,7 +972,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows and Shared compute are off by default for fresh installs. Bestie,
+Workflows, Shared compute and Charts are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -2389,6 +2389,15 @@ their text and the plugin disables diagram links, images and Pele's own zoom
 controls. Its action opens the diagram in an expanded dialog, which zooms by
 pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
 Invalid source shows Pele's error with the source.
+The bundled **Charts** plugin (`buzz.charts`, off by default) draws `buzz-chart`
+blocks with [Apache ECharts](https://echarts.apache.org/), loaded on first use
+with the SVG renderer. The JSON is untrusted: version 1 is a bounded
+bar/line/scatter grammar and version 2 passes an ECharts option through an
+allowlist (`spec.ts`, `sanitize.ts`) that drops links, images, graphics, HTML
+tooltips and anything else that fetches or injects. Marks use the four
+`chart-series` roles, with extra version 1 series summed into Other. Its action
+opens the chart in an expanded dialog, and invalid JSON shows the error with the
+source. The host's Copy action copies the fenced JSON.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` components, plus `.Tabs` while a plugin provides it. Generated

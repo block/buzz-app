@@ -10,6 +10,8 @@ import { MembershipRow } from "../../../src/features/messages/MembershipRow";
 import { Button } from "../../../src/shared/design-system/ui/Button";
 import { LinkLabel, linkKind } from "../../../src/bundled/links/InlineLink";
 import { DiffMessage } from "../../../src/bundled/diffs/DiffMessage";
+import { Chart } from "../../../src/bundled/charts/Chart";
+import { ChartExpand } from "../../../src/bundled/charts/ChartExpand";
 import { MermaidDiagram } from "../../../src/bundled/mermaid/MermaidDiagram";
 import { MermaidExpand } from "../../../src/bundled/mermaid/MermaidExpand";
 import { parseAccent } from "../../../src/shared/theme/accent";
@@ -97,6 +99,16 @@ const codeBlocks: readonly Contribution<CodeBlockRenderer>[] = [
     matches: (language) => language.toLowerCase() === "mermaid",
     component: MermaidDiagram,
     action: MermaidExpand,
+  },
+  {
+    id: "buzz-chart",
+    key: "gallery/buzz-chart",
+    pluginId: "gallery",
+    revision: "1",
+    title: "Chart",
+    matches: (language) => language.toLowerCase() === "buzz-chart",
+    component: Chart,
+    action: ChartExpand,
   },
 ];
 const emptyTools: ReturnType<ConversationExtensions["tools"]["snapshot"]> = [];

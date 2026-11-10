@@ -1242,6 +1242,40 @@ Release builds ignore it.
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
 
+### Charts in messages
+
+The optional **Charts** plugin, off until turned on in Settings → Plugins, draws
+a `buzz-chart` code block as a chart. Anyone reading the message needs it on;
+otherwise they see the JSON. The block holds strict JSON (no comments or
+functions), up to 60 KB. **Expand chart** shows it larger and **View data rows**
+lists the plotted values as text.
+
+````
+```buzz-chart
+{"version":1,"type":"bar","title":"Open issues","x":"team","y":"issues","data":[{"team":"Web","issues":12},{"team":"Relay","issues":7}],"source":{"name":"Issue tracker"}}
+```
+````
+
+- Version 1: `type` is `bar` (at most 40 rows), `line` or `scatter` (at most 200),
+  with `title`, `x`, `y` and `data` rows of those two fields. Every `y` is a
+  finite number. Bars use text `x` values. Line and scatter use numbers, or set
+  `"xType":"temporal"` for ISO dates (date-times need seconds and a timezone).
+  Bars and lines need unique `x` values; aggregate first. `series` names a field
+  that splits rows into colored series. Charts use four colors, so the series
+  after the third are summed into one **Other** series; give your own totals when
+  a sum would mislead.
+- Version 2: `{"version":2,"title":"…","height":360,"option":{…}}` where `option`
+  is an Apache ECharts option with its data inline (`dataset.source` or
+  `series[].data`). Series types are bar, line, scatter, pie, heatmap, funnel,
+  gauge, boxplot, candlestick, sankey, treemap and radar. `height` is 160–900.
+  Colors come from the theme: the fourth color is followed by the first again,
+  so keep a chart to four series, slices or nodes when readers must tell them
+  apart. Links, images, graphics, toolbox, custom series, HTML in tooltips and
+  `inside` zoom are removed.
+- Optional `"source":{"name":"…","url":"https://…","metric":"…"}` shows
+  attribution under the chart; it is not verified. `note` adds a caveat line.
+- An invalid chart shows its error and source instead of drawing.
+
 ### Saved External apps approval
 
 External apps can request saved approval. The app can renew valid approval

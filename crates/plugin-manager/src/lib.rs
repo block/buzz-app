@@ -454,6 +454,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mermaid/manifest.json"))
             .expect("bundled mermaid manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/charts/manifest.json"))
+            .expect("bundled charts manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))

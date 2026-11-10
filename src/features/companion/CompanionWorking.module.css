@@ -1,0 +1,41 @@
+@reference "../../shared/styles/globals.css";
+
+.working {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: 0 var(--space-4) var(--space-2);
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.working > [data-agent-response-preview] {
+  width: min(100%, var(--timeline-measure, var(--buzz-message-width, 52rem)));
+}
+
+.agents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.agent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.agent > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.stop {
+  flex-shrink: 0;
+}
+
+.stopIcon {
+  transform: rotate(22.5deg);
+}

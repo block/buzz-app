@@ -16,6 +16,14 @@ import { lastEditableMessage } from "../messages/useMessageEdit";
 import { createAgentOwnerEvidence } from "../profiles/agent-owner-evidence";
 import { knownAgentsOf } from "../messages/TypingIndicator";
 import { currentActivity } from "../agents/current-activity";
+import {
+  conversationWorkStops,
+  type WorkStopAgents,
+} from "../agents/work-stop";
+import { localWorkLabel } from "../agents/local-activity";
+import { remoteWorkDetail } from "../agents/execution-location";
+import { activityStepLabel } from "../messages/ActivityStepPreview";
+import { profileActivityViewTarget } from "../profiles/target";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { linkedAuthors } from "../conversation/linked-message";
 import { messageLinkParts } from "../messages/message-link-parts";
@@ -96,7 +104,27 @@ export type CompanionTyping = {
   humans: string[];
   more: number;
   agents: string[];
+  /** The agents at work here, as main's response preview presents them:
+   * one entry per agent (≤8), with the Stop controls main would offer. */
+  working?: CompanionWorkingAgent[];
 };
+export type CompanionWorkingAgent = {
+  id: string;
+  name: string;
+  picture: string | null;
+  state: "waiting" | "working";
+  /** The current step as the preview shows it; empty while there is none. */
+  step: string;
+  /** The status main's activity row shows for this agent. */
+  status: string;
+  /** Which thread(s) the work is in, for a conversation frame. */
+  scope?: string | undefined;
+  /** The agent's activity view, opened in main. */
+  activity?: string | undefined;
+  /** Stoppable requests; `key` is admitted by main at stop time. */
+  stops: { key: string; label: string }[];
+};
+const MAX_WORKING = 8;
 
 /** What a frame reads: one thread (`session.thread`) or a conversation's
  * top-level timeline (`session.channels.window`). Loading, access and delivery
@@ -179,6 +207,8 @@ export function createPopoutThread(
    * The pop-out's own spawn action is never offered to a thread window. */
   actions?: ContributionReader<MessageAction>,
   excludedActions: ReadonlySet<string> = new Set(["open-thread-window"]),
+  /** Hosted agents, for Stop on work without a lifecycle record. */
+  agents?: WorkStopAgents,
 ) {
   let disposed = false;
   let version = 0;
@@ -397,27 +427,24 @@ export function createPopoutThread(
   }
   /** Typing and agent work for this frame, from the same stores and pure
    * classification main's indicator uses; no step details are projected. */
-  function typing(): CompanionTyping | undefined {
+  /** The live evidence main's indicator reads for this frame: who is working
+   * where, classified as its pure helper classifies it. */
+  function liveActivity() {
     const profiles = session.profiles.snapshot();
-    const entries = session.typing
-      .snapshot()
-      .filter(
-        (entry) =>
-          entry.channelId === channelId &&
-          (rootId ? entry.threadRootId === rootId : !entry.threadRootId),
-      );
+    const entries = session.typing.snapshot();
     const known = knownAgentsOf(
       session.agentChoices.snapshot(),
-      session.typing.snapshot(),
+      entries,
       profiles,
     );
     // As main's indicator: a conversation frame hands work at a shown root
     // with replies to that thread, and an agent live activity identifies is
     // never a typing human, whatever its profile says so far.
     const rows = thread?.snapshot().rows ?? [];
+    const activity = session.agentActivity.snapshot();
     const details = currentActivity(
-      session.agentActivity.snapshot(),
-      session.typing.snapshot(),
+      activity,
+      entries,
       known,
       channelId,
       rootId,
@@ -428,13 +455,38 @@ export function createPopoutThread(
             rows.filter((row) => row.replyCount > 0).map((row) => row.id),
           ),
     );
+    return { profiles, entries, known, rows, activity, details };
+  }
+  /** Stop controls for one agent's work in this frame, as main offers them. */
+  function stopsFor(
+    agent: string,
+    activity = session.agentActivity.snapshot(),
+  ) {
+    return conversationWorkStops(
+      activity,
+      agent,
+      channelId,
+      rootId,
+      session.agentActivity,
+      agents,
+    );
+  }
+  function typing(): CompanionTyping | undefined {
+    const { profiles, entries, known, rows, activity, details } =
+      liveActivity();
+    const here = entries.filter(
+      (entry) =>
+        entry.channelId === channelId &&
+        (rootId ? entry.threadRootId === rootId : !entry.threadRootId),
+    );
     const name = (pubkey: string) =>
       (
-        profiles.get(pubkey)?.name ??
-        formatPublicKey(pubkey) ??
+        session.names?.resolve(pubkey, "", channel()?.members ?? []) ||
+        profiles.get(pubkey)?.name ||
+        formatPublicKey(pubkey) ||
         "Someone"
       ).slice(0, 200);
-    const humans = entries
+    const humans = here
       .filter(
         (entry) =>
           !known.has(entry.pubkey) &&
@@ -442,13 +494,87 @@ export function createPopoutThread(
           entry.pubkey !== session.viewer,
       )
       .map((entry) => entry.pubkey);
-    const agents = [...details.keys()].sort().slice(0, 8).map(name);
-    if (!humans.length && !agents.length) return undefined;
+    const working = [...details.keys()].sort().slice(0, MAX_WORKING);
+    if (!humans.length && !working.length) return undefined;
+    const choices = session.agentChoices.snapshot();
+    // A conversation frame names the thread(s) an agent works in, as main's
+    // chooser rows do, from the rows it already shows.
+    const scopeLabel = (roots: readonly (string | null | undefined)[]) => {
+      if (rootId) return undefined;
+      const labels = roots.slice(0, 2).map((root) => {
+        if (root === null) return "Channel conversation";
+        if (!root) return "Work with unconfirmed thread";
+        const text = rows
+          .find((row) => row.id === root)
+          ?.content.replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 60);
+        return `Thread · ${text || root.slice(0, 8)}`;
+      });
+      return [
+        ...labels,
+        ...(roots.length > 2 ? [`+${roots.length - 2} more`] : []),
+      ].join(" / ");
+    };
     return {
       humans: humans.slice(0, 2).map(name),
       more: Math.max(0, humans.length - 2),
-      agents,
+      agents: working.map(name),
+      working: working.map((agent) => {
+        const detail = details.get(agent);
+        const label = detail?.label;
+        const waiting =
+          label === "Received · waiting to start" || label === "Starting";
+        const preview = label === "Working" || waiting ? undefined : label;
+        const choice = choices.identities.find((c) => c.pubkey === agent);
+        const status =
+          detail?.detailAvailability === "available"
+            ? (label ?? "")
+            : detail?.detailAvailability === "no-current-step"
+              ? (remoteWorkDetail(choice?.execution, choice?.runtime) ??
+                "No current step details received.")
+              : "Only typing updates are reaching this app.";
+        const onlyChannel =
+          detail?.roots.length === 1 && detail.roots[0] === null;
+        const scope = onlyChannel ? undefined : scopeLabel(detail?.roots ?? []);
+        const picture = avatarMedia(
+          avatarSource(profiles.get(agent)?.picture ?? choice?.avatar),
+          session.media,
+        );
+        const stops = stopsFor(agent, activity)
+          .slice(0, 8)
+          .map(({ control, work, threadRootId: root }) => ({
+            key: control.key.slice(0, 512),
+            label: `Stop ${name(agent)}${
+              root && !rootId ? ` in ${scopeLabel([root])}` : ""
+            }`.slice(0, 1000),
+            ...(work ? { status: localWorkLabel(work).slice(0, 1000) } : {}),
+          }));
+        return {
+          id: agent,
+          name: name(agent),
+          picture: picture && bytes(picture) <= 8192 ? picture : null,
+          state: waiting ? "waiting" : "working",
+          step: activityStepLabel(preview),
+          status: status.slice(0, 1000),
+          ...(scope ? { scope: scope.slice(0, 1000) } : {}),
+          ...(profileActivityViewTarget(agent)
+            ? { activity: profileActivityViewTarget(agent) }
+            : {}),
+          stops,
+        };
+      }),
     };
+  }
+  /** Run main's Stop for a control this frame offers now, or none: a key
+   * from an earlier projection whose work has ended is refused. */
+  function stopWork(key: string) {
+    if (disposed) return undefined;
+    const { details, activity } = liveActivity();
+    for (const agent of details.keys())
+      for (const { control } of stopsFor(agent, activity))
+        if (control.key === key) return Promise.resolve(control.interrupt());
+    return undefined;
   }
   /** Actions main would offer for a row, by exact contribution instance,
    * within the native DTO's bounds: at most 32, each field ≤256 UTF-8 bytes.
@@ -635,6 +761,9 @@ export function createPopoutThread(
         return undefined;
       }
     },
+    /** Main's Stop for a control this frame offers now; none once the
+     * work has ended. */
+    stopWork,
     /** Verified agent-owner authority for a shown message, or none. */
     authorization(id: string) {
       const row = this.shown(id);

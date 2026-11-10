@@ -329,6 +329,7 @@ export function createHuddleComposerClient(token: string) {
       request("retryOperation", args),
     handoff: (args: ComposerOperations["handoff"]["args"]) =>
       request("handoff", args),
+    stop: (args: ComposerOperations["stop"]["args"]) => request("stop", args),
     acknowledgeOperations: (
       args: ComposerOperations["acknowledgeOperations"]["args"],
     ) => request("acknowledgeOperations", args),

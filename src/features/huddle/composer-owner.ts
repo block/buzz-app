@@ -56,6 +56,8 @@ export function createHuddleComposerOwner(
     ): import("../relay/messages").AgentOwnerAuthorization | undefined;
     /** Hand a still-registered, still-matching action to the main window. */
     handoff(messageId: string, key: string, revision: string): boolean;
+    /** Stop an agent's work this window shows as live; none once it ended. */
+    stopWork?(key: string): Promise<unknown> | undefined;
   },
 ) {
   const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
@@ -535,6 +537,16 @@ export function createHuddleComposerOwner(
           !shown.handoff(messageId, key, revision)
         )
           throw new Error("This action is no longer available.");
+        return;
+      }
+      case "stop": {
+        check();
+        const key = request.args.key;
+        if (!shown?.stopWork || typeof key !== "string" || key.length > 512)
+          throw new Error("This work can’t be stopped from here.");
+        const run = shown.stopWork(key);
+        if (!run) throw new Error("This work has already finished.");
+        await run;
         return;
       }
       case "acknowledgeOperations": {

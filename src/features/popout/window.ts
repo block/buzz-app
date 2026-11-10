@@ -307,6 +307,8 @@ export function createPopoutWindows(
           else sync(entry);
         },
         options.actions,
+        undefined,
+        options.agents,
       ),
       composer: undefined as unknown as Frame["composer"],
       reading: undefined as unknown as Frame["reading"],
@@ -347,6 +349,12 @@ export function createPopoutWindows(
           if (frame.thread.acknowledge(ids) && top(entry) === frame)
             sync(entry);
         },
+        // Only the frame on top stops work: a covered frame's controls are
+        // not what the window shows.
+        stopWork: (key) =>
+          current(entry) && top(entry) === frame
+            ? frame.thread.stopWork(key)
+            : undefined,
       },
     );
     frame.reading = createReadingOwner(

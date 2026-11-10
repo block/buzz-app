@@ -118,6 +118,9 @@ pub(crate) struct Typing {
     humans: Vec<String>,
     more: u32,
     agents: Vec<String>,
+    /// Agents at work, as main's response preview presents them.
+    #[serde(default)]
+    working: Vec<WorkingAgent>,
 }
 impl Typing {
     fn valid(&self) -> bool {
@@ -128,6 +131,51 @@ impl Typing {
                 .iter()
                 .chain(&self.agents)
                 .all(|n| n.len() <= 1024)
+            && self.working.len() <= 8
+            && self.working.iter().all(|w| w.valid())
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkingAgent {
+    id: String,
+    name: String,
+    picture: Option<String>,
+    state: String,
+    step: String,
+    status: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    activity: Option<String>,
+    #[serde(default)]
+    stops: Vec<WorkStop>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkStop {
+    key: String,
+    label: String,
+    #[serde(default)]
+    status: Option<String>,
+}
+impl WorkingAgent {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        hex(&self.id)
+            && self.name.len() <= 1024
+            && self.picture.as_ref().is_none_or(|p| p.len() <= 8192)
+            && matches!(self.state.as_str(), "waiting" | "working")
+            && self.step.len() <= 2048
+            && self.status.len() <= 4096
+            && self.scope.as_ref().is_none_or(|s| s.len() <= 4096)
+            && self.activity.as_ref().is_none_or(|a| a.len() <= 8192)
+            && self.stops.len() <= 8
+            && self.stops.iter().all(|s| {
+                s.key.len() <= 512
+                    && s.label.len() <= 4096
+                    && s.status.as_ref().is_none_or(|t| t.len() <= 4096)
+            })
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -997,6 +1045,25 @@ mod tests {
         assert!(validate(&view).is_err());
         let action: Action = serde_json::from_str("\"openMembers\"").unwrap();
         assert!(action == Action::OpenMembers);
+        // Working agents: bounded, hex-identified, closed state set.
+        let working = |n: usize, state: &str| -> Typing {
+            serde_json::from_value(serde_json::json!({
+                "humans": [], "more": 0, "agents": ["Echo"],
+                "working": (0..n).map(|i| serde_json::json!({
+                    "id": format!("{i:0>64}"), "name": "Echo", "picture": null,
+                    "state": state, "step": "Reading files", "status": "Reading files",
+                    "stops": [{ "key": "[\"a\",\"c\",\"m\"]", "label": "Stop Echo" }]
+                })).collect::<Vec<_>>()
+            }))
+            .unwrap()
+        };
+        view.members = None;
+        view.typing = Some(working(8, "working"));
+        assert!(validate(&view).is_ok());
+        view.typing = Some(working(9, "working"));
+        assert!(validate(&view).is_err());
+        view.typing = Some(working(1, "done"));
+        assert!(validate(&view).is_err());
     }
     #[test]
     fn focus_main_is_a_companion_action_with_no_payload() {

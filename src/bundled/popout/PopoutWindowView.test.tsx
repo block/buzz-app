@@ -372,3 +372,62 @@ it("shows the member stack main's header shows and opens members in the main win
   ).toBeTruthy();
   expect(screen.queryByText("+2")).toBeNull();
 });
+
+it("shows the agents at work as main's response preview does, with Stop, and names them for assistive technology", async () => {
+  const act = vi.fn();
+  const working = [
+    {
+      id: "3".repeat(64),
+      name: "Echo",
+      picture: null,
+      state: "working" as const,
+      step: "Reading src/app.ts",
+      status: "Reading src/app.ts",
+      activity: `buzz://profile/${"3".repeat(64)}/activity`,
+      stops: [{ key: "k1", label: "Stop Echo" }],
+    },
+    {
+      id: "4".repeat(64),
+      name: "Foxtrot",
+      picture: null,
+      state: "waiting" as const,
+      step: "",
+      status: "Received · waiting to start",
+      stops: [],
+    },
+  ];
+  render(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        typing: {
+          humans: ["Ada"],
+          more: 0,
+          agents: ["Echo", "Foxtrot"],
+          working,
+        },
+      })}
+      act={act}
+    />,
+  );
+  // The preview groups every working agent; the status line keeps only the
+  // humans visibly and the whole sentence for assistive technology.
+  expect(screen.getByRole("img", { name: "Echo, Foxtrot" })).toBeTruthy();
+  // The step shows in the preview and in Echo's row.
+  expect(screen.getAllByText("Reading src/app.ts").length).toBeGreaterThan(1);
+  const status = screen.getByRole("status", {
+    name: "Echo, Foxtrot are working. Ada is typing",
+  });
+  expect(status).toHaveTextContent(/^Ada is typing$/);
+  // Activity opens in main; Stop asks main and reports a refusal here.
+  fireEvent.click(screen.getByRole("button", { name: "View Echo activity" }));
+  expect(act).toHaveBeenCalledWith(
+    "openLink",
+    `buzz://profile/${"3".repeat(64)}/activity`,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
+  expect(
+    await screen.findByText("This window is no longer connected."),
+  ).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Stop Foxtrot/ })).toBeNull();
+});

@@ -1058,7 +1058,7 @@ it("classifies typing as main's indicator does: thread work at a shown root is t
   );
   const thread = createPopoutThread(session, "channel", ROOT, () => {});
   clean.push(conversation.dispose, thread.dispose);
-  expect(thread.snapshot().typing).toEqual({
+  expect(thread.snapshot().typing).toMatchObject({
     humans: [],
     more: 0,
     agents: ["Echo"],
@@ -1066,6 +1066,96 @@ it("classifies typing as main's indicator does: thread work at a shown root is t
   // The conversation frame shows that root with replies: the work belongs to
   // its thread, not the channel's status line.
   expect(conversation.snapshot().typing).toBeUndefined();
+});
+
+it("projects the agents at work as main's response preview shows them, with Stop controls main admits at stop time", async () => {
+  const h = fixture();
+  const agent = "3".repeat(64);
+  const interrupt = vi.fn(async () => {});
+  let local = [
+    {
+      scope: h.session.scope,
+      agent,
+      channelId: "channel",
+      messageId: ROOT,
+      threadRootId: ROOT,
+      state: "working" as const,
+      step: { tool: "Read", target: "src/app.ts" },
+      stoppable: true,
+      startedAt: Date.now(),
+    },
+  ];
+  const session = {
+    ...h.session,
+    typing: { ...h.session.typing, snapshot: () => [] },
+    profiles: {
+      ...h.session.profiles,
+      snapshot: () =>
+        new Map([
+          [
+            agent,
+            {
+              name: "Echo",
+              isAgent: true,
+              picture: "https://relay.example/echo.png",
+            },
+          ],
+        ]),
+    },
+    media: (url: string) => `media:${url}`,
+    agentActivity: {
+      ...h.session.agentActivity,
+      snapshot: () => ({ ...h.session.agentActivity.snapshot(), local }),
+      interrupt,
+    },
+  } as unknown as RelaySession;
+  const thread = createPopoutThread(session, "channel", ROOT, () => {});
+  clean.push(thread.dispose);
+  const typing = thread.snapshot().typing;
+  expect(typing?.working).toHaveLength(1);
+  const [echo] = typing?.working ?? [];
+  expect(echo).toMatchObject({
+    id: agent,
+    name: "Echo",
+    picture: "media:https://relay.example/echo.png",
+    state: "working",
+    step: expect.stringMatching(/src\/app\.ts/),
+    status: expect.stringMatching(/src\/app\.ts/),
+    activity: expect.stringContaining(agent),
+  });
+  expect(echo?.stops).toEqual([
+    {
+      key: expect.any(String),
+      label: "Stop Echo",
+      status: expect.stringMatching(/src\/app\.ts/),
+    },
+  ]);
+  // Stop runs main's own interrupt for the exact request; a key for work
+  // that has since ended is refused rather than stopping something else.
+  const key = echo?.stops[0]?.key ?? "";
+  const owner = createHuddleComposerOwner(
+    session,
+    "channel",
+    "channel",
+    undefined,
+    () => true,
+    () => thread.rootVerified(),
+    undefined,
+    ROOT,
+    { ...shownFor({ ...h, thread }), stopWork: (k) => thread.stopWork(k) },
+  );
+  clean.push(owner.dispose);
+  const client = createHuddleComposerClient(owner.token);
+  clean.push(client.dispose);
+  await vi.waitFor(() => expect(client.snapshot().data?.writable).toBe(true));
+  await client.stop({ key });
+  expect(interrupt).toHaveBeenCalledExactlyOnceWith(agent, "channel", ROOT);
+  local = [];
+  expect(thread.stopWork(key)).toBeUndefined();
+  await expect(client.stop({ key })).rejects.toThrow(
+    "This work has already finished.",
+  );
+  expect(thread.snapshot().typing).toBeUndefined();
 });
 
 it("labels bare message links as main's byline does, through the shared author lookups, and releases lookups that leave the view", async () => {

@@ -10,6 +10,7 @@ import type { PopoutAction, PopoutView } from "../../features/popout/window";
 import { createReadingProxy } from "../../features/popout/reading-bridge";
 import { isBuzzLink } from "../../features/navigation/buzz-links";
 import { CompanionRows } from "../../features/companion/CompanionRows";
+import { CompanionWorking } from "../../features/companion/CompanionWorking";
 import { createCompanionOperations } from "../../features/companion/operations";
 import { toMessage } from "../../features/companion/CompanionManagementItems";
 import type { CompanionRow } from "../../features/companion/row";
@@ -92,19 +93,18 @@ export function PopoutWindowView({
       ? `${members.count} ${members.count === 1 ? "agent" : "agents"} in ${view.title}; opens in the main window`
       : `${members.count} ${members.count === 1 ? "member" : "members"} of ${conversation}; opens in the main window`
     : undefined;
-  // Main's own words for who is working and typing here.
-  const typingText = view.typing
-    ? [
-        view.typing.agents.length
-          ? `${view.typing.agents.join(", ")}${view.typing.agents.length === 1 ? " is working" : " are working"}`
-          : "",
-        view.typing.humans.length
-          ? `${view.typing.humans.join(", ")}${view.typing.more ? ` and ${view.typing.more} others` : ""}${view.typing.humans.length + view.typing.more === 1 ? " is typing" : " are typing"}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(". ")
+  // Main's own words for who is working and typing here. Agents whose work
+  // the preview below shows are named only for assistive technology.
+  const working = view.typing?.working ?? [];
+  const workingText = view.typing?.agents.length
+    ? `${view.typing.agents.join(", ")}${view.typing.agents.length === 1 ? " is working" : " are working"}`
     : "";
+  const humansText = view.typing?.humans.length
+    ? `${view.typing.humans.join(", ")}${view.typing.more ? ` and ${view.typing.more} others` : ""}${view.typing.humans.length + view.typing.more === 1 ? " is typing" : " are typing"}`
+    : "";
+  const typingText = [workingText, humansText].filter(Boolean).join(". ");
+  // What the status line shows: the preview already shows the agents.
+  const shownTypingText = working.length ? humansText : typingText;
   // Companion wording follows the frame: a thread's replies or a
   // conversation's messages.
   const what = view.thread ? "thread" : "conversation";
@@ -483,14 +483,34 @@ export function PopoutWindowView({
             }
             focusConversation={focusConversation}
           />
+          {working.length > 0 && (
+            <CompanionWorking
+              working={working}
+              layout={view.thread ? "thread" : "timeline"}
+              previousAuthor={rows.at(-1)?.authorId}
+              stop={(key) =>
+                client
+                  ? client.stop({ key })
+                  : Promise.reject(
+                      new Error("This window is no longer connected."),
+                    )
+              }
+              openActivity={(target) => {
+                if (!isBuzzLink(target)) return false;
+                act("openLink", target);
+                return true;
+              }}
+            />
+          )}
           {typingText && (
             <p
               role="status"
               aria-live="polite"
-              className={styles.typing}
+              aria-label={typingText}
+              className={shownTypingText ? styles.typing : "sr-only"}
               data-conversation-activity=""
             >
-              {typingText}
+              {shownTypingText || typingText}
             </p>
           )}
           <div ref={tail} />

@@ -809,6 +809,21 @@ three documented gaps close before it leaves draft.
    same icon. GitHub's `SoloPullIcon` gains `describe`. Without jaw's
    go-ahead on the contract edit, this slice is deferred and documented.
 
+### Review log (S3)
+
+- Members `aa5054f` → two P2 (overflow count from a capped placeholder list;
+  only the previewed three profiles requested). Fixed `64f06a5`: `AvatarStack`
+  takes `total`; the bounded roster is enriched before filtering as main's
+  header does. Reviewer-closed.
+- Previews + Stop: `typing.working[≤8]` projected from `currentActivity` +
+  `conversationWorkStops` (the same helpers `TypingIndicator` uses); Stop is
+  the composer-bridge op `stop {key}`, admitted by the top frame's
+  `stopWork(key)` which re-derives the controls at that moment and refuses a
+  key whose work ended. Companion `CompanionWorking` renders
+  `AgentResponsePreview` + `ActivityStepPreview` + one `AgentActivityRow` per
+  agent with Stop; humans keep the status line, the full sentence stays for
+  assistive technology.
+
 ### Non-goals (S3)
 
 Members dialog *inside* the pop-out (it stays main's); starting/stopping

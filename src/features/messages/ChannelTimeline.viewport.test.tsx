@@ -53,6 +53,9 @@ const viewport = vi.hoisted(() => ({
   size: 0,
   start: 0,
   caches: [] as unknown[],
+  itemSizes: [] as unknown[],
+  // Item sizes the mock reports as measured, by index.
+  measured: [] as number[],
   scrollToIndex: vi.fn(),
 }));
 // Control the independent virtualizer's public measurement/shift contract.
@@ -65,21 +68,26 @@ vi.mock("virtua", async () => {
         children,
         shift,
         cache,
+        itemSize,
       }: {
         children: import("react").ReactNode;
         shift: boolean;
         cache?: unknown;
+        itemSize?: unknown;
       },
       ref,
     ) {
       viewport.caches.push(cache);
+      viewport.itemSizes.push(itemSize);
       useImperativeHandle(
         ref,
         () => ({
           get viewportSize() {
             return viewport.size;
           },
-          cache: [[], 40],
+          get cache() {
+            return [viewport.measured, 40];
+          },
           findItemIndex: () => viewport.start,
           getItemOffset: () => 0,
           scrollTo: vi.fn(),
@@ -695,6 +703,7 @@ it.each([
         anchor: { id: firstAnchor, y: 0 },
       });
       const first = render(content(rows, undefined, solo));
+      viewport.measured = Array.from({ length: 50 }, (_, index) => 100 + index);
       first.unmount();
       writeView("activity-folding", "scroll:alpha", {
         offset: 0,
@@ -702,8 +711,15 @@ it.each([
         anchor: { id: nextAnchor, y: 0 },
       });
       render(content(rows, undefined, solo));
-      expect(viewport.caches.at(-1)).toEqual([[], 40]);
+      // The first render of the remount already restores every row's size.
+      const [sizes, estimate] = viewport.caches.at(-1) as [number[], number];
+      expect(estimate).toBe(40);
+      expect(sizes.length).toBeGreaterThan(0);
+      expect(sizes).toEqual(viewport.measured.slice(0, sizes.length));
+      // Restored sizes leave Virtua's estimate unfinished; the saved one ends it.
+      expect(viewport.itemSizes.at(-1)).toBe(40);
     } finally {
+      viewport.measured = [];
       owner.dispose();
     }
   },

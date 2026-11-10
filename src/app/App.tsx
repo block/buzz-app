@@ -697,6 +697,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                 sidebarSections={services.sidebarSections}
                 sidebarScope={services.sidebarScope}
                 sidebarRows={services.sidebarRows}
+                shortcuts={services.shortcuts}
                 target={workspace.target}
               >
                 {pageNavigation}

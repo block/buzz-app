@@ -402,10 +402,19 @@ it("offers a run handle's Bestie, checking the turn and connection before each c
   expect(bestie.clear).not.toHaveBeenCalled();
   // A set checks the turn again once it has read the agents.
   ended = false;
-  await client.bestie?.set("b".repeat(64));
-  const recheck = bestie.set.mock.calls[0]?.[1] as () => void;
+  let read!: () => void;
+  bestie.set.mockImplementationOnce(
+    async (_pubkey: string, check: () => void) => {
+      await new Promise<void>((resolve) => {
+        read = resolve;
+      });
+      check();
+    },
+  );
+  const setting = client.bestie?.set("b".repeat(64));
   ended = true;
-  expect(recheck).toThrow("ended");
+  read();
+  await expect(setting).rejects.toThrow("ended");
 });
 
 it("offers the handle's settings, checking the turn before each call", () => {

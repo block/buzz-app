@@ -185,15 +185,25 @@ export function defaultAgentControl(session: RelaySession, scope: string) {
     if (!here && choices.error) throw new Error(choices.error);
     return here;
   };
-  const state = (account: string | null, here: boolean) => ({
-    device: chosenAgent(scope) ?? null,
-    account,
-    here,
-  });
+  const account = session.mainAgent;
+  // An account save in flight holds a choice it hasn't confirmed, which a
+  // change started now could later restore as if it had been.
+  const busy = () => !!account && !!saving.get(account);
+  const refuseWhileSaving = () => {
+    if (busy())
+      throw new Error(
+        "Another change to your owner's Bestie is still saving. Try again.",
+      );
+  };
   return Object.freeze({
     read: async () => {
-      const account = (await session.mainAgent?.read()) ?? null;
-      return state(account, await tagged(chosenAgent(scope)));
+      const device = chosenAgent(scope);
+      const choice = (await account?.read()) ?? null;
+      return {
+        device: device ?? null,
+        account: choice,
+        here: await tagged(device),
+      };
     },
     /** `check` runs after the inventory read, before anything is saved. */
     async set(pubkey: string, check?: () => void) {
@@ -203,19 +213,23 @@ export function defaultAgentControl(session: RelaySession, scope: string) {
         throw new Error(
           "Only an agent your owner owns and can tag in this community can be their Bestie.",
         );
+      refuseWhileSaving();
       const previous = chosenAgent(scope);
       try {
         await chooseDefaultAgent(session, scope, pubkey);
       } catch (cause) {
-        // Keep the previous choice unless a newer one replaced this attempt.
-        if (chosenAgent(scope) === pubkey) cache(scope, previous ?? null);
+        // Keep the previous choice unless a newer one replaced this attempt
+        // or is still saving.
+        if (chosenAgent(scope) === pubkey && !busy())
+          cache(scope, previous ?? null);
         throw cause;
       }
-      return state(session.mainAgent ? pubkey : null, true);
+      return { device: pubkey, account: account ? pubkey : null, here: true };
     },
     async clear() {
+      refuseWhileSaving();
       await clearDefaultAgent(session, scope);
-      return state(null, false);
+      return { device: null, account: null, here: false };
     },
   });
 }

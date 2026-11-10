@@ -17327,6 +17327,24 @@ it("gives a run its owner's Bestie in its community, and a plugin's handle none"
   });
   expect(write).toHaveBeenCalledExactlyOnceWith(chosen);
   expect(f.plugin.agents.handle(bot)).not.toHaveProperty("bestie");
+  // A control kept past the run's end changes nothing, even one that was
+  // already reading the agents.
+  const control = agent.bestie?.();
+  const inventory = runnerGate();
+  // Only the set's read waits: removal rereads the agents too.
+  const { refresh } = f.session.agentChoices;
+  Object.assign(f.session.agentChoices, {
+    refresh: vi.fn(refresh).mockImplementationOnce(() => inventory.promise),
+  });
+  const setting = control?.set(chosen);
+  try {
+    await f.service.remove(bot);
+  } finally {
+    inventory.resolve();
+  }
+  await expect(setting).rejects.toThrow();
+  await expect(control?.clear()).rejects.toThrow();
+  expect(write).toHaveBeenCalledOnce();
 });
 
 describe("Retired owner-read tools", () => {

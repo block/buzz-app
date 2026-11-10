@@ -2962,7 +2962,26 @@ export class AgentRunners {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
           },
-          bestie: () => this.host.bestie(agent),
+          // The control outlives this call, so each of its calls checks the
+          // run's lifetime, and set again once it has read the agents.
+          bestie: () => {
+            const control = this.host.bestie(agent);
+            const live = () => lifetime.throwIfAborted();
+            return (
+              control &&
+              guarded(
+                {
+                  ...control,
+                  set: async (pubkey: string, check?: () => void) =>
+                    control.set(pubkey, () => {
+                      live();
+                      check?.();
+                    }),
+                },
+                live,
+              )
+            );
+          },
         }),
         templates: () => this.host.templates(agent),
         tabs: () => this.host.tabs(agent),

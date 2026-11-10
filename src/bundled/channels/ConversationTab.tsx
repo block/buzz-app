@@ -1,3 +1,5 @@
+import { useSoloForkLock } from "../../features/solo/useSoloForkLock";
+import { SoloForkPreview } from "./SoloForkPreview";
 import {
   useCallback,
   useEffect,
@@ -79,6 +81,7 @@ export function ConversationTab({
   );
   if (reply !== restoredReply.current) restoredReply.current = undefined;
   const soloConversation = channel.channelType === "solo";
+  const forkLock = useSoloForkLock(session, channel);
   // Likewise a saved reveal belongs to the opening that asked for it.
   const restoredReveal = useRef(initial?.revealRequest);
   if (tab.revealRequest !== restoredReveal.current)
@@ -201,9 +204,11 @@ export function ConversationTab({
               }
               marksRead={opening?.markRead !== false}
             />
+            <SoloForkPreview session={session} state={forkLock} />
             <ConversationComposer
               // Shown follows the tab, not whether showing it visits the chat.
               shown={active}
+              disabled={forkLock.disabled}
               onSend={setSent}
               {...(focusRequest ? { focusRequest } : {})}
             />

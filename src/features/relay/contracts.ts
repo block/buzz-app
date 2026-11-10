@@ -55,6 +55,8 @@ export type ChannelSummary = Readonly<{
   autoJoin?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
+  /** Ancestry tag presence or local create intent; only a hint to require signed fork readback. */
+  forkClaim?: true;
   /** Marked Huddle room; presented through its parent conversation, not the sidebar. */
   huddle?: true;
   /** Metadata update time used for stable work-history ordering. */
@@ -374,6 +376,7 @@ export interface ChannelQueries {
       members: readonly string[];
       labels: readonly string[];
       ttlSeconds?: number | undefined;
+      forkClaim?: true;
     }>,
   ): void;
   /** Drops a started chat the relay did not confirm. */

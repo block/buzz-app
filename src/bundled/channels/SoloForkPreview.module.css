@@ -1,0 +1,16 @@
+.preview {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+}
+.history {
+  max-height: 12rem;
+  overflow: auto;
+}
+.message {
+  padding-block: var(--space-2);
+}
+.body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

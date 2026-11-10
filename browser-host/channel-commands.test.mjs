@@ -310,3 +310,53 @@ it("allows a create to name up to 32 distinct first members after its labels", (
   ])
     expect(validChannelCommand(create(tail))).toBe(false);
 });
+
+it("admits only one canonical ancestry pointer before private Solo labels", () => {
+  const source = "22222222-2222-4222-8222-222222222222";
+  const pointer = ["forked_from", source, "ab".repeat(32)];
+  const head = [
+    ["h", id],
+    ["name", "Fork"],
+    ["visibility", "private"],
+    ["channel_type", "stream"],
+  ];
+  const label = ["t", "buzz.solo"];
+  const create = (tags) => ({ kind: 9007, created_at: 1, content: "", tags });
+  expect(validChannelCommand(create([...head, pointer, label]))).toBe(true);
+  expect(
+    validChannelCommand(
+      create([
+        ...head,
+        ["about", "Notes"],
+        ["ttl", "600"],
+        pointer,
+        label,
+        ["p", "a".repeat(64)],
+        ["client-id", id],
+      ]),
+    ),
+  ).toBe(true);
+  for (const tags of [
+    [...head, pointer],
+    [...head, label, pointer],
+    [...head, pointer, pointer, label],
+    [...head, ["forked_from", id, pointer[2]], label],
+    [...head, ["forked_from", source, "AB".repeat(32)], label],
+    [...head, [...pointer, "extra"], label],
+    [
+      ...head.map((tag) =>
+        tag[0] === "visibility" ? ["visibility", "open"] : tag,
+      ),
+      pointer,
+      label,
+    ],
+    [
+      ...head.map((tag) =>
+        tag[0] === "channel_type" ? ["channel_type", "system"] : tag,
+      ),
+      pointer,
+      label,
+    ],
+  ])
+    expect(validChannelCommand(create(tags))).toBe(false);
+});

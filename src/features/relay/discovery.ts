@@ -438,6 +438,9 @@ export class DiscoveryState {
       id,
       ...(huddle || legacyHuddle ? { huddle: true as const } : {}),
       ...(huddle ? { parentChannelId: huddle } : {}),
+      ...(event?.tags.some(([name]) => name === "forked_from")
+        ? { forkClaim: true as const }
+        : {}),
       ...(!this.authorized(id) || this.cached.has(id) || viewerRole === "guest"
         ? { readOnly: true as const }
         : {}),

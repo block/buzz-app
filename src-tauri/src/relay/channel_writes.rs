@@ -357,7 +357,7 @@ pub(crate) async fn relay_direct_message(
 }
 
 pub(super) fn creation(event: &EventTemplate) -> bool {
-    if event.kind != 9007 || !event.content.is_empty() || !(4..=47).contains(&event.tags.len()) {
+    if event.kind != 9007 || !event.content.is_empty() || !(4..=48).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(visibility), Some(channel_type)) = (
@@ -406,7 +406,29 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
         }
         index += 1;
     }
-    // NIP-CL labels: up to 8 distinct `t` tags after `about`/`ttl`.
+    if event
+        .tags
+        .get(index)
+        .is_some_and(|tag| tag.first().is_some_and(|s| s == "forked_from"))
+    {
+        let fork = &event.tags[index];
+        if fork.len() != 3
+            || !uuid(&fork[1])
+            || fork[1] == "00000000-0000-0000-0000-000000000000"
+            || fork[1] == id
+            || !super::hex_key(&fork[2])
+            || visibility != "private"
+            || channel_type != "stream"
+            || !event
+                .tags
+                .iter()
+                .any(|tag| tag.len() == 2 && tag[0] == "t" && tag[1] == "buzz.solo")
+        {
+            return false;
+        }
+        index += 1;
+    }
+    // NIP-CL labels: up to 8 distinct `t` tags after `about`/`ttl`/ancestry.
     let first_label = index;
     while event
         .tags
@@ -822,6 +844,62 @@ mod boundary_tests {
             event.tags[3][1] = other.into();
             assert!(!creation(&event), "{other:?}");
         }
+    }
+
+    #[test]
+    fn creation_fork_requires_one_distinct_canonical_source_on_a_private_solo() {
+        let base = || EventTemplate {
+            kind: 9007,
+            created_at: 1700000010,
+            content: String::new(),
+            tags: vec![
+                vec!["h".into(), "44444444-4444-4444-8444-444444444444".into()],
+                vec!["name".into(), "Work".into()],
+                vec!["visibility".into(), "private".into()],
+                vec!["channel_type".into(), "stream".into()],
+                vec!["about".into(), "Notes".into()],
+                vec!["ttl".into(), "600".into()],
+                vec![
+                    "forked_from".into(),
+                    "22222222-2222-4222-8222-222222222222".into(),
+                    "ab".repeat(32),
+                ],
+                vec!["t".into(), "buzz.solo".into()],
+                vec!["p".into(), "a".repeat(64)],
+                vec!["client-id".into(), uuid::Uuid::new_v4().to_string()],
+            ],
+        };
+        assert!(creation(&base()));
+        for source in [
+            "00000000-0000-0000-0000-000000000000",
+            "44444444-4444-4444-8444-444444444444",
+            "22222222222242228222222222222222",
+        ] {
+            let mut event = base();
+            event.tags[6][1] = source.into();
+            assert!(!creation(&event));
+        }
+        for cutoff in ["AB".repeat(32), "g".repeat(64), "ab".repeat(31)] {
+            let mut event = base();
+            event.tags[6][2] = cutoff;
+            assert!(!creation(&event));
+        }
+        for (index, value) in [(2, "open"), (3, "system"), (7, "other")] {
+            let mut event = base();
+            event.tags[index][1] = value.into();
+            assert!(!creation(&event));
+        }
+        let mut event = base();
+        event.tags.insert(7, event.tags[6].clone());
+        assert!(!creation(&event));
+        let mut event = base();
+        event.tags.swap(6, 7);
+        assert!(!creation(&event));
+        let mut event = base();
+        event.tags[6].push("extra".into());
+        assert!(!creation(&event));
+        event.tags[6].truncate(2);
+        assert!(!creation(&event));
     }
 
     #[test]

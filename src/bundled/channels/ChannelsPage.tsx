@@ -1,3 +1,5 @@
+import { useSoloForkLock } from "../../features/solo/useSoloForkLock";
+import { SoloForkPreview } from "./SoloForkPreview";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -786,6 +788,7 @@ function ChannelWorkspace({
   // The Solo treatment: an agent conversation. In the owner's own chat it
   // also files into a project; the conversation scope owns composer policy.
   const solo = current?.channelType === "solo";
+  const forkLock = useSoloForkLock(queries, current);
   // Solo has no main tab workspace; its threads open beside the chat.
   const threadPane = solo ? ("side" as const) : undefined;
   // Confirmations belong to this visit; a Solo conversation that leaves the
@@ -2123,12 +2126,14 @@ function ChannelWorkspace({
           }
         />
       )}
+      <SoloForkPreview session={queries} state={forkLock} />
       {current &&
         !current.archived &&
         current.viewerRole !== "guest" &&
         (!current.readOnly || current.cached) && (
           <ConversationComposer
             key={`composer:${current.id}`}
+            disabled={forkLock.disabled}
             onFocusedRemoval={focusArchivedHistory}
             autoFocus={
               // Remote unarchive restores controls within the reader's current visit.

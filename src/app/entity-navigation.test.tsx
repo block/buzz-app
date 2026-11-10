@@ -1463,7 +1463,7 @@ it("keeps the unavailable card for a turned-off external plugin while external p
 // its cards never leave for Messages as the page cards above do.
 it("a Settings section that isn’t available offers Try again, not Go to Messages", async () => {
   const current = legacyPageFixture();
-  await screen.findByRole("tab", { name: "Activity" });
+  await findActivityRow();
   act(() => {
     void current.navigation.open({
       version: 1,
@@ -1503,7 +1503,7 @@ it("a Settings section that isn’t available offers Try again, not Go to Messag
 
 it("a turned-off plugin's Settings section offers Manage plugins, not Go to Messages", async () => {
   const current = legacyPageFixture();
-  await screen.findByRole("tab", { name: "Activity" });
+  await findActivityRow();
   await act(() => current.plugins.change("disable", "buzz.agents"));
   act(() => {
     void current.navigation.open({

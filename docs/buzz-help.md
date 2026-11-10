@@ -409,11 +409,15 @@ revokes all of them, and a pairing unused for 30 days expires.
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. In a channel with more
   history than loads on entry, it appears when the oldest unread message is
-  among the rows loaded on entry, below a message you have read; when the unread
-  messages start at the first loaded row or further up, there is no divider for
-  that visit, even if older rows load later. The divider is settled before the
-  channel marks anything read, so opening a channel does not hide its own
-  divider. It may also be absent when unread evidence is incomplete, or when
+  among the rows loaded on entry, below a message you read by reaching the
+  bottom of the channel or marking the channel read. When the unread messages
+  start at the first loaded row or further up, or the messages above them were
+  only read one by one as you scrolled past, there is no divider for that visit,
+  even if older rows load later. While Buzz is still checking such a channel's
+  older history for unread messages, the channel waits to mark anything read,
+  so opening it then does not hide its own divider; if that check fails, there
+  is no divider for that visit and reading resumes. It may also be absent when
+  unread evidence is incomplete, or when
   read intent or the read evidence needed to locate the boundary changes
   elsewhere before it is established.
 - **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention

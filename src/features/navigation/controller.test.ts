@@ -155,6 +155,29 @@ describe("navigation attempts over one history driver", () => {
     },
   );
 
+  it("a join over a Settings card's action keeps the card's visit without the action, so Close and Back skip it", () => {
+    const { navigation: nav } = setup();
+    void nav.open(page);
+    const routed: OpenTarget = {
+      ...settings,
+      route: { version: 1, params: "create-community" },
+    };
+    void nav.open(routed);
+    const card = nav.snapshot().entry.id;
+    const join = { viewer: "a".repeat(64), visit: "v1" };
+    void nav.open({ ...settings, join });
+    // Back (or a reload's Back) reaches the same visit, spent action dropped.
+    nav.back();
+    expect(nav.snapshot().entry).toEqual({ id: card, target: settings });
+    nav.forward();
+    expect(nav.snapshot().entry.target.join).toEqual(join);
+    // Close returns to that visit, so Back leaves Settings.
+    nav.dismiss((target) => target.join?.visit === "v1", settings);
+    expect(nav.snapshot().entry.id).toBe(card);
+    nav.back();
+    expect(nav.snapshot().entry.target).toEqual(page);
+  });
+
   it("pushes, traverses without a push, preserves forward on retry, and truncates new branches", async () => {
     const { host, navigation: nav } = setup();
     const initial = nav.snapshot().entry;

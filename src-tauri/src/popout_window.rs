@@ -309,6 +309,16 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
         return Err("Invalid pop-out target".into());
     }
     validate(&view)?;
+    // Painted before the page: a dark window opens dark, not white.
+    let background = view
+        .appearance
+        .as_ref()
+        .map(crate::huddle_window::Appearance::background)
+        .unwrap_or(if view.dark {
+            tauri::window::Color(0x2e, 0x2e, 0x2e, 0xff)
+        } else {
+            tauri::window::Color(0xf1, 0xf1, 0xf2, 0xff)
+        });
     let app = window.app_handle();
     let label = {
         let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
@@ -354,6 +364,7 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
             .min_inner_size(360.0, 400.0)
             .center()
             .disable_drag_drop_handler()
+            .background_color(background)
             .build();
     let companion = match built {
         Ok(companion) => companion,
@@ -787,6 +798,26 @@ mod tests {
         assert!(!r.valid());
         r.reactions = vec![group("👍", 0)];
         assert!(!r.valid());
+    }
+    #[test]
+    fn native_background_matches_the_applied_color_mode_tokens() {
+        let tokens = include_str!("../../src/shared/design-system/styles/tokens.css");
+        let hex = |c: tauri::window::Color| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2);
+        let appearance = |mode: &str| -> crate::huddle_window::Appearance {
+            serde_json::from_value(serde_json::json!({ "colorMode": mode })).unwrap()
+        };
+        let dark = hex(appearance("dark").background());
+        let light = hex(appearance("light").background());
+        assert_ne!(dark, light);
+        // `--bg-app` resolves to `--neutral-quiet-hover` in each palette.
+        assert!(
+            tokens.contains(&format!("--neutral-quiet-hover: {dark};")),
+            "{dark}"
+        );
+        assert!(
+            tokens.contains(&format!("--neutral-quiet-hover: {light};")),
+            "{light}"
+        );
     }
     #[test]
     fn link_labels_are_bounded_per_row() {

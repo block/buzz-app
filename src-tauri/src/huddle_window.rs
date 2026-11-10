@@ -273,6 +273,24 @@ pub(crate) struct Appearance {
     font_scale: Option<f32>,
 }
 impl Appearance {
+    fn light() -> Self {
+        Self {
+            color_mode: "light".into(),
+            accent: None,
+            color_level: None,
+            font_scale: None,
+        }
+    }
+    /// The window's native background before its page paints: `--bg-app` of the
+    /// applied color mode (`neutral-quiet-hover`), so a dark window never flashes
+    /// white while its document loads. Keep aligned with the design-system tokens.
+    pub(crate) fn background(&self) -> tauri::window::Color {
+        if self.color_mode == "dark" {
+            tauri::window::Color(0x2e, 0x2e, 0x2e, 0xff)
+        } else {
+            tauri::window::Color(0xf1, 0xf1, 0xf2, 0xff)
+        }
+    }
     pub(crate) fn valid(&self) -> bool {
         let token =
             |s: &String| s.len() <= 32 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
@@ -456,6 +474,11 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
     validate(&view)?;
     let incoming = view.phase == "incoming";
     let id = view.id.clone();
+    let background = view
+        .appearance
+        .as_ref()
+        .map(Appearance::background)
+        .unwrap_or_else(|| Appearance::light().background());
     let on_closed = closed_notice(actions.clone(), id.clone());
     {
         let mut slot = host.0.lock().map_err(|_| "Huddle window unavailable")?;
@@ -482,6 +505,7 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
         .min_inner_size(360.0, 400.0)
         .center()
         .disable_drag_drop_handler()
+        .background_color(background)
         .build()
         .map_err(|e| e.to_string())?,
     };

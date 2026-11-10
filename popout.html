@@ -1,2 +1,16 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Buzz</title></head><body><div id="root"></div><script type="module" src="/src/bundled/popout/window-entry.tsx"></script></body></html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Same bootstrap as the main window: the saved appearance paints before
+         the first frame, then main's projected appearance takes over. -->
+    <script src="/appearance-init.js"></script>
+    <link rel="stylesheet" href="/src/app/startup.css" />
+    <title>Buzz</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/bundled/popout/window-entry.tsx"></script>
+  </body>
+</html>

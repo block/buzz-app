@@ -728,6 +728,15 @@ re-created in the companion (named as a gap in help).
   after Copy link, matching the channel row's menu. Tab menus stay text-only
   like their host items.
 
+- jaw's tryout: a dark pop-out flashed light while opening. The companion
+  page had no appearance bootstrap (white document until React applied the
+  projected appearance) and the native window used the platform default
+  background. Fix: `popout.html`/`huddle.html` load `appearance-init.js` +
+  `startup.css` like `index.html` (saved mode paints first; main's projection
+  then takes over), and the native builder sets `background_color` from the
+  opening view's appearance (`--bg-app`: `#2e2e2e` dark / `#f1f1f2` light,
+  test-pinned to the design tokens).
+
 ### Non-goals (S2)
 
 Canvas/pages/Settings windows; restoring windows after restart; member

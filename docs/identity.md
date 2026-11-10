@@ -167,7 +167,9 @@ where the backup step can run (see
 `404` wherever backups are not configured. Not sent, a `404` or any failure
 leaves the lookup unavailable rather than empty, and never fails setup: it only
 decides whether Welcome back offers a restore and whether an import needs
-automatic backup.
+automatic backup. A lookup that fails, unlike one that isn't configured, still
+lets Welcome back offer the restore: a backup may hold the key, and the restore
+page says when none does and offers **Enter my private key**.
 
 **Not linked** pauses on **Get started with Buzz**, which says the account will
 manage the Buzz identity. **Set me up** creates and links a key; **Use an
@@ -246,8 +248,10 @@ no other sign-in brings up the OS prompt for old Buzz's storage.
 **Linked** pauses on **Welcome back**: the account is already linked to a Buzz
 identity — the key on the user's other device — shown as the full npub under
 *Linked public key (npub)* with **Copy**, with the same *Signed in as {email}.*
-line under the body. A linked key does not mean a
-backed-up one, so only when the lookup lists the linked key does the page also
+line under the body. When the linked key isn't the one on this device, the page
+says so: *Your account’s key isn’t on this device*, then to restore it from a
+backup or, with no restore offered, to enter its private key. A linked key does not mean a
+backed-up one, so only when the lookup lists the linked key, or failed, does the page also
 offer **Restore from backup** (primary), with **Enter your private key** as a
 smaller choice; otherwise **Enter your private key** is primary. It opens the
 same import page, which here accepts only the linked key: any other valid nsec
@@ -1093,7 +1097,9 @@ Membership in any community this build's Builderlab hosts, by the welcome
 screen's `builderlab-hosted.ts` list matched on the saved relay host alone (no
 relay is read for its `self`), saves automatic backup with no prompt, unless
 a choice was saved since it was read: the save checks under the choice lock.
-Otherwise **Back up your key?** asks: **Back up key** and **I will manage my own
+Otherwise **Back up your key?** asks; it says that a self-managed key needs a
+kept copy of its private key to use the account on another device or after a
+reinstall. **Back up key** and **I will manage my own
 key** save the answer, which a hosted
 membership arriving while it is saved does not override; closing it saves
 nothing, and it asks again on the next launch or Builderlab sign-in. A build

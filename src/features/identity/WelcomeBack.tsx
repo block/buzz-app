@@ -9,12 +9,15 @@ export function WelcomeBack({
   npub,
   email,
   profile,
+  onDevice,
   onRestore,
   onImport,
   onSwitchAccount,
 }: {
   npub: string;
   email?: string | undefined;
+  /** The linked key is the one saved on this device. */
+  onDevice: boolean;
   profile?: { name: string; picture: string } | undefined;
   onRestore?: (() => void) | undefined;
   onImport: () => void;
@@ -36,9 +39,13 @@ export function WelcomeBack({
           {name ? "Welcome back" : "Continue with this key"}
         </h1>
         <p className="mt-2 text-body text-subtle">
-          {name
-            ? "Continue with your Buzz profile."
-            : "We found the key to your account."}
+          {onDevice
+            ? name
+              ? "Continue with your Buzz profile."
+              : "We found the key to your account."
+            : onRestore
+              ? "Your account’s key isn’t on this device. Restore it from a backup to continue."
+              : "Your account’s key isn’t on this device. Enter its private key to continue."}
         </p>
         {email && (
           <p className="mt-2 break-words text-body-sm text-subtle">

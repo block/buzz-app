@@ -45,7 +45,7 @@ export const BACKUP_FAILURES = {
   },
   other_key_linked: {
     message:
-      "Your Builderlab account is linked to a different key, so this one can’t be backed up.",
+      "Your Builderlab account is linked to a different key, so this one can’t be backed up. Communities that use Builderlab sign-in refuse this key too.",
     retryable: false,
   },
   invalid_service: {

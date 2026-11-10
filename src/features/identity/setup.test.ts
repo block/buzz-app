@@ -235,9 +235,10 @@ it("reports the backed-up keys, and an unavailable or failed status as none list
   expect(await lookup(() => Promise.resolve("unavailable"))).toEqual([
     [undefined],
   ]);
+  // A failed lookup says so: a backup may still hold the key.
   expect(
     await lookup(() => Promise.reject(new BackupError("unreachable"))),
-  ).toEqual([[undefined]]);
+  ).toEqual([[undefined, true]]);
 });
 
 it("keeping a listed backup saves automatic backup only where this build backs up to Builderlab", async () => {

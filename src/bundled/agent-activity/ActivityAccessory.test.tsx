@@ -3,6 +3,7 @@ import { ActivityGroupPreview } from "../../features/messages/ActivityGroupPrevi
 import {
   activityPresentation,
   useActivityPresentation,
+  type ActivityPresentation,
   type ActivityRowPresentation,
 } from "../../features/messages/activity-presentation";
 import { MessageRow } from "../../features/messages/MessageRow";
@@ -1907,11 +1908,106 @@ it("lets a thread root's live bubble replace that thread's indicator", () => {
   }
 });
 
+/** What a thread mounts for agent work, sharing one session. */
+function threadParts(f: ReturnType<typeof fixture>) {
+  const owner = createRelaySession(null);
+  const session = { ...owner.session, ...f.props.session };
+  const row = (
+    entry: ChannelMessage,
+    activity: ActivityRowPresentation | undefined,
+  ) => (
+    <MessageRow
+      key={entry.id}
+      row={entry}
+      session={session}
+      profile={f.profiles.get(A)}
+      media={() => undefined}
+      onOpenLink={f.props.open}
+      day={false}
+      retry={undefined}
+      recordedActivity={activity}
+    />
+  );
+  return {
+    session,
+    // An agent's update and the viewer's follow-up, each replying to the root.
+    update: {
+      ...f.props.message,
+      authorId: A,
+      threadRootId: root,
+      replyParentId: root,
+      audience: "agents" as const,
+    },
+    followUp: {
+      ...f.props.message,
+      id: next,
+      threadRootId: root,
+      replyParentId: root,
+      content: "Follow-up",
+    },
+    row,
+    accessory: (message = f.props.message) => (
+      <ActivityAccessory
+        {...f.props}
+        session={session}
+        message={message}
+        messageLayout="thread"
+      />
+    ),
+    // Given its rows' presentations, a group also renders its history rows.
+    group: (
+      group: ActivityPresentation,
+      expanded: boolean,
+      byRow?: ReadonlyMap<string, ActivityRowPresentation>,
+    ) => (
+      <ActivityGroupPreview
+        key={group.ids[0]}
+        session={session}
+        group={group}
+        profiles={f.profiles}
+        media={() => undefined}
+        expanded={expanded}
+        onToggle={() => {}}
+        openActivity={f.props.open}
+        canOpenActivity={f.props.canOpen}
+        {...(byRow && {
+          renderHistory: (entry: ChannelMessage) => {
+            const activity = byRow.get(entry.id);
+            if (!activity) throw new Error("Missing recorded activity");
+            return row(entry, { ...activity, container: "history" });
+          },
+        })}
+      />
+    ),
+    tail: (
+      <TypingIndicator
+        session={session}
+        channelId="c"
+        threadRootId={root}
+        inFlow
+      />
+    ),
+    dispose: () => {
+      owner.dispose();
+      f.dispose();
+    },
+  };
+}
+const workingDots = () => [
+  ...document.querySelectorAll('[data-state="working"]'),
+];
+const dotsOn = (id: string) =>
+  workingDots().filter(
+    (dot) =>
+      dot.closest("[data-message-id]")?.getAttribute("data-message-id") === id,
+  );
+const workingCue = () =>
+  screen.queryByRole("button", { name: /Activity: .*working/ });
+
 it("shows thinking and its dots once, moving from the live bubble into recorded history", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
-  const owner = createRelaySession(null);
-  const session = { ...owner.session, ...f.props.session };
+  const t = threadParts(f);
   const work = local.begin({
     scope: "test",
     agent: A,
@@ -1921,22 +2017,12 @@ it("shows thinking and its dots once, moving from the live bubble into recorded 
     thread: true,
   });
   work.step("Thinking");
-  const row = {
-    ...f.props.message,
-    id: "thinking-step",
-    authorId: A,
-    threadRootId: root,
-    replyParentId: root,
-    audience: "agents" as const,
-    content: "Thinking",
-  };
+  const row = { ...t.update, id: "thinking-step", content: "Thinking" };
   // A failure the run reported before it was retried, absorbed into history.
+  const { audience: _audience, ...reply } = row;
   const failure = {
-    ...f.props.message,
+    ...reply,
     id: "failure",
-    authorId: A,
-    threadRootId: root,
-    replyParentId: root,
     notice: "execution-failure" as const,
     content: "Provider unavailable",
   };
@@ -1955,53 +2041,16 @@ it("shows thinking and its dots once, moving from the live bubble into recorded 
   }) {
     const presentation = useActivityPresentation(
       recorded ? (retried ? failed : rows) : empty,
-      session.agentActivity,
+      t.session.agentActivity,
       agents,
       root,
     );
     const group = presentation.groups[0];
     return (
       <>
-        <ActivityAccessory
-          {...f.props}
-          session={session}
-          messageLayout="thread"
-        />
-        {group && (
-          <ActivityGroupPreview
-            session={session}
-            group={group}
-            profiles={f.profiles}
-            media={() => undefined}
-            expanded={expanded}
-            onToggle={() => {}}
-            renderHistory={(entry) => {
-              const activity = presentation.byRow.get(entry.id);
-              if (!activity) throw new Error("Missing recorded activity");
-              return (
-                <MessageRow
-                  row={entry}
-                  session={session}
-                  profile={f.profiles.get(A)}
-                  media={() => undefined}
-                  onOpenLink={f.props.open}
-                  day={false}
-                  retry={undefined}
-                  recordedActivity={{
-                    ...activity,
-                    container: "history",
-                  }}
-                />
-              );
-            }}
-          />
-        )}
-        <TypingIndicator
-          session={session}
-          channelId="c"
-          threadRootId={root}
-          inFlow
-        />
+        {t.accessory()}
+        {group && t.group(group, expanded, presentation.byRow)}
+        {t.tail}
       </>
     );
   }
@@ -2014,66 +2063,52 @@ it("shows thinking and its dots once, moving from the live bubble into recorded 
   try {
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
     // Until history owns the work, the message bubble is its one indicator.
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
+    expect(workingCue()).toBeNull();
     // History then owns the work: one working row, its dots included.
-    const dots = () => document.querySelectorAll('[data-state="working"]');
     view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
-    expect(dots()).toHaveLength(1);
+    expect(workingCue()).toBeNull();
+    expect(workingDots()).toHaveLength(1);
     expect(
       screen.getByRole("button", { name: /Show activity history/ }),
-    ).toContainElement(dots()[0] as HTMLElement);
+    ).toContainElement(workingDots()[0] as HTMLElement);
     view.rerender(ui(true, true));
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
+    expect(workingCue()).toBeNull();
     const step = () =>
       screen.getByRole("button", { name: /Blossom: Thinking/ });
-    expect(dots()).toHaveLength(1);
-    expect(step()).toContainElement(dots()[0] as HTMLElement);
+    expect(workingDots()).toHaveLength(1);
+    expect(step()).toContainElement(workingDots()[0] as HTMLElement);
     // Opening the working step keeps its one set of dots on the step.
     for (const state of ["open", "closed"]) {
       fireEvent.click(step());
       expect(step()).toHaveAttribute("aria-expanded", `${state === "open"}`);
-      expect(
-        screen.queryByRole("button", { name: /Activity: .*working/ }),
-      ).toBeNull();
-      expect(dots()).toHaveLength(1);
-      expect(step()).toContainElement(dots()[0] as HTMLElement);
+      expect(workingCue()).toBeNull();
+      expect(workingDots()).toHaveLength(1);
+      expect(step()).toContainElement(workingDots()[0] as HTMLElement);
     }
     // Expanded, a failure row carries no dots, so the conversation keeps
     // the one cue; collapsed, the summary's dots are that cue again.
-    const cue = () =>
-      screen.queryByRole("button", { name: /Activity: .*working/ });
     view.rerender(ui(true, true, true));
-    expect(dots()).toHaveLength(1);
-    expect(cue()).toContainElement(dots()[0] as HTMLElement);
+    expect(workingDots()).toHaveLength(1);
+    expect(workingCue()).toContainElement(workingDots()[0] as HTMLElement);
     view.rerender(ui(true, false, true));
-    expect(cue()).toBeNull();
-    expect(dots()).toHaveLength(1);
+    expect(workingCue()).toBeNull();
+    expect(workingDots()).toHaveLength(1);
     expect(
       screen.getByRole("button", { name: /Show activity history/ }),
-    ).toContainElement(dots()[0] as HTMLElement);
+    ).toContainElement(workingDots()[0] as HTMLElement);
     view.rerender(ui(true, true));
     act(() => work.finish({ ok: true }));
     expect(screen.getByText("Thinking")).not.toHaveAttribute("data-active");
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
-    expect(dots()).toHaveLength(0);
+    expect(workingCue()).toBeNull();
+    expect(workingDots()).toHaveLength(0);
   } finally {
     view.unmount();
-    owner.dispose();
-    f.dispose();
+    t.dispose();
   }
 });
 
@@ -2166,6 +2201,7 @@ it("hands live work to only the latest history for each agent and keeps Stop and
 it("hands a follow-up's live work to the update its run published to the thread root, never to older root updates", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);
+  const t = threadParts(f);
   const first = local.begin({
     scope: "test",
     agent: A,
@@ -2189,26 +2225,12 @@ it("hands a follow-up's live work to the update its run published to the thread 
   // Normal sends flatten every thread reply to the root; only the publishing
   // run knows which request each update belongs to.
   work.reply("step");
-  const followUp = {
-    ...f.props.message,
-    id: next,
-    threadRootId: root,
-    replyParentId: root,
-    content: "Follow-up",
-  };
-  const update = {
-    ...f.props.message,
-    authorId: A,
-    threadRootId: root,
-    replyParentId: root,
-    audience: "agents" as const,
-  };
   const presentation = activityPresentation(
     [
-      { ...update, id: "old", content: "Checking the root" },
-      followUp,
-      { ...update, id: "stray", content: "Unattributed root update" },
-      { ...update, id: "step", content: "Checking the follow-up" },
+      { ...t.update, id: "old", content: "Checking the root" },
+      t.followUp,
+      { ...t.update, id: "stray", content: "Unattributed root update" },
+      { ...t.update, id: "step", content: "Checking the follow-up" },
     ],
     f.props.session.agentActivity.snapshot(),
     new Set([A]),
@@ -2225,24 +2247,8 @@ it("hands a follow-up's live work to the update its run published to the thread 
   });
   const ui = (expanded: boolean) => (
     <ActivityIndicatorPresentation>
-      <ActivityAccessory
-        {...f.props}
-        message={followUp}
-        messageLayout="thread"
-      />
-      {presentation.groups.map((group) => (
-        <ActivityGroupPreview
-          key={group.ids[0]}
-          session={f.props.session}
-          group={group}
-          profiles={f.profiles}
-          media={() => undefined}
-          expanded={expanded}
-          onToggle={() => {}}
-          openActivity={f.props.open}
-          canOpenActivity={f.props.canOpen}
-        />
-      ))}
+      {t.accessory(t.followUp)}
+      {presentation.groups.map((group) => t.group(group, expanded))}
     </ActivityIndicatorPresentation>
   );
   const view = render(ui(false));
@@ -2268,40 +2274,25 @@ it("hands a follow-up's live work to the update its run published to the thread 
     expect(screen.getAllByText("Root failed")).toHaveLength(1);
   } finally {
     view.unmount();
-    f.dispose();
+    t.dispose();
   }
 });
 
 it("hands a remote follow-up's live work to the update that claims it, leaving older root updates as history", () => {
   const f = fixture();
-  const owner = createRelaySession(null);
-  const session = { ...owner.session, ...f.props.session };
+  const t = threadParts(f);
   f.send(A, "t0", 1, "turn_started", { triggeringEventIds: [root] });
   f.send(A, "t0", 2, "turn_completed");
   f.send(A, "t1", 1, "turn_started", {
     triggeringEventIds: [next],
     threadRootEventId: root,
   });
-  const followUp = {
-    ...f.props.message,
-    id: next,
-    threadRootId: root,
-    replyParentId: root,
-    content: "Follow-up",
-  };
-  const update = {
-    ...f.props.message,
-    authorId: A,
-    threadRootId: root,
-    replyParentId: root,
-    audience: "agents" as const,
-  };
   const rows = [
     f.props.message,
-    { ...update, id: "old", content: "Checking the root" },
-    followUp,
+    { ...t.update, id: "old", content: "Checking the root" },
+    t.followUp,
     {
-      ...update,
+      ...t.update,
       id: "step",
       request: next,
       content: "Checking the follow-up",
@@ -2317,29 +2308,9 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
     );
     return (
       <ActivityIndicatorPresentation>
-        <ActivityAccessory
-          {...f.props}
-          session={session}
-          message={followUp}
-          messageLayout="thread"
-        />
-        {presentation.groups.map((group) => (
-          <ActivityGroupPreview
-            key={group.ids[0]}
-            session={session}
-            group={group}
-            profiles={f.profiles}
-            media={() => undefined}
-            expanded={false}
-            onToggle={() => {}}
-          />
-        ))}
-        <TypingIndicator
-          session={session}
-          channelId="c"
-          threadRootId={root}
-          inFlow
-        />
+        {t.accessory(t.followUp)}
+        {presentation.groups.map((group) => t.group(group, false))}
+        {t.tail}
       </ActivityIndicatorPresentation>
     );
   }
@@ -2353,10 +2324,8 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
       "true",
     );
     // One working presentation: the history row, its dots included.
-    expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
-    expect(document.querySelectorAll('[data-state="working"]')).toHaveLength(1);
+    expect(workingCue()).toBeNull();
+    expect(workingDots()).toHaveLength(1);
     expect(screen.getByText("Checking the root")).not.toHaveAttribute(
       "data-active",
     );
@@ -2369,65 +2338,31 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
     ).toBeNull();
   } finally {
     view.unmount();
-    owner.dispose();
-    f.dispose();
+    t.dispose();
   }
 });
 
 it("keeps a failed request's update from borrowing a nested follow-up's remote work", () => {
   const f = fixture();
-  const owner = createRelaySession(null);
-  const session = { ...owner.session, ...f.props.session };
+  const t = threadParts(f);
   f.send(A, "t0", 1, "turn_started", { triggeringEventIds: [root] });
   f.send(A, "t0", 2, "turn_error");
   f.send(A, "t1", 1, "turn_started", {
     triggeringEventIds: [next],
     threadRootEventId: root,
   });
-  const update = {
-    ...f.props.message,
-    authorId: A,
-    threadRootId: root,
-    audience: "agents" as const,
-  };
-  const old = {
-    ...update,
-    id: "old",
-    replyParentId: root,
-    content: "Earlier root progress",
-  };
+  const old = { ...t.update, id: "old", content: "Earlier root progress" };
   // The follow-up and its signed update both reply under the older update,
   // which is then the thread's only top-level reply.
-  const followUp = {
-    ...f.props.message,
-    id: next,
-    threadRootId: root,
-    replyParentId: old.id,
-    content: "Follow-up",
-  };
+  const followUp = { ...t.followUp, replyParentId: old.id };
   const step = {
-    ...update,
+    ...t.update,
     id: "step",
     replyParentId: old.id,
     request: next,
     content: "Checking current follow-up",
   };
   const agents = new Set([A]);
-  const row = (
-    entry: ChannelMessage,
-    activity: ActivityRowPresentation | undefined,
-  ) => (
-    <MessageRow
-      row={entry}
-      session={session}
-      profile={f.profiles.get(A)}
-      media={() => undefined}
-      onOpenLink={f.props.open}
-      day={false}
-      retry={undefined}
-      recordedActivity={activity}
-    />
-  );
   let outcomes: string[] = [];
   // As in a thread, each reply level is projected on its own.
   function Thread({ branch }: { branch: boolean }) {
@@ -2451,45 +2386,13 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
     return (
       <ActivityIndicatorPresentation>
         {/* The root's live bubble shows only the failed request's outcome. */}
-        <ActivityAccessory
-          {...f.props}
-          session={session}
-          messageLayout="thread"
-        />
-        {row(old, top.byRow.get(old.id))}
-        {branch && (
-          <ActivityGroupPreview
-            session={session}
-            group={current}
-            profiles={f.profiles}
-            media={() => undefined}
-            expanded
-            onToggle={() => {}}
-            renderHistory={(entry) => {
-              const activity = nested.byRow.get(entry.id);
-              if (!activity) throw new Error("Missing recorded activity");
-              return row(entry, { ...activity, container: "history" });
-            }}
-          />
-        )}
-        <TypingIndicator
-          session={session}
-          channelId="c"
-          threadRootId={root}
-          inFlow
-        />
+        {t.accessory()}
+        {t.row(old, top.byRow.get(old.id))}
+        {branch && t.group(current, true, nested.byRow)}
+        {t.tail}
       </ActivityIndicatorPresentation>
     );
   }
-  const dots = () => [...document.querySelectorAll('[data-state="working"]')];
-  const owned = (id: string) =>
-    dots().filter(
-      (dot) =>
-        dot.closest("[data-message-id]")?.getAttribute("data-message-id") ===
-        id,
-    );
-  const cue = () =>
-    screen.queryByRole("button", { name: /Activity: .*working/ });
   const check = (branch: boolean, working = true) => {
     expect(
       screen.getByLabelText("Agent activity on this message"),
@@ -2497,20 +2400,20 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
     expect(screen.getByText("Earlier root progress")).not.toHaveAttribute(
       "data-active",
     );
-    expect(owned(old.id)).toHaveLength(0);
+    expect(dotsOn(old.id)).toHaveLength(0);
     // The failed request keeps its own outcome.
     expect(outcomes).toEqual(["error"]);
     // Exactly one working cue: the follow-up's update, or the tail when hidden.
     if (!working) {
-      expect(cue()).toBeNull();
-      expect(dots()).toHaveLength(0);
+      expect(workingCue()).toBeNull();
+      expect(workingDots()).toHaveLength(0);
     } else if (branch) {
-      expect(cue()).toBeNull();
-      expect(dots()).toHaveLength(1);
-      expect(owned(step.id)).toHaveLength(1);
+      expect(workingCue()).toBeNull();
+      expect(workingDots()).toHaveLength(1);
+      expect(dotsOn(step.id)).toHaveLength(1);
     } else {
-      expect(dots()).toHaveLength(1);
-      expect(cue()).toContainElement(dots()[0] as HTMLElement);
+      expect(workingDots()).toHaveLength(1);
+      expect(workingCue()).toContainElement(workingDots()[0] as HTMLElement);
     }
   };
   let view = render(<Thread branch />);
@@ -2528,8 +2431,7 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
     check(true, false);
   } finally {
     view.unmount();
-    owner.dispose();
-    f.dispose();
+    t.dispose();
   }
 });
 
@@ -2538,8 +2440,7 @@ it.each(["grouped", "standalone"])(
   "keeps a failed follow-up's update, replying to the root, from borrowing the root request's remote work: %s",
   (layout) => {
     const f = fixture();
-    const owner = createRelaySession(null);
-    const session = { ...owner.session, ...f.props.session };
+    const t = threadParts(f);
     f.send(A, "t0", 1, "turn_started", {
       triggeringEventIds: [root],
       threadRootEventId: root,
@@ -2549,29 +2450,15 @@ it.each(["grouped", "standalone"])(
       threadRootEventId: root,
     });
     f.send(A, "t1", 2, "turn_error");
-    const update = {
-      ...f.props.message,
-      authorId: A,
-      threadRootId: root,
-      replyParentId: root,
-      audience: "agents" as const,
-    };
-    const old = { ...update, id: "old", content: "Checking the root" };
-    const followUp = {
-      ...f.props.message,
-      id: next,
-      threadRootId: root,
-      replyParentId: root,
-      content: "Follow-up",
-    };
+    const old = { ...t.update, id: "old", content: "Checking the root" };
     // Signed for the follow-up, though its reply is flattened to the root.
     const step = {
-      ...update,
+      ...t.update,
       id: "step",
       request: next,
       content: "Checking the follow-up",
     };
-    const rows = [old, followUp, step];
+    const rows = [old, t.followUp, step];
     const agents = new Set([A]);
     function Thread() {
       const presentation = useActivityPresentation(
@@ -2580,86 +2467,42 @@ it.each(["grouped", "standalone"])(
         agents,
         root,
       );
-      const row = (
-        entry: ChannelMessage,
-        activity: ActivityRowPresentation | undefined,
-      ) => (
-        <MessageRow
-          key={entry.id}
-          row={entry}
-          session={session}
-          profile={f.profiles.get(A)}
-          media={() => undefined}
-          onOpenLink={f.props.open}
-          day={false}
-          retry={undefined}
-          recordedActivity={activity}
-        />
-      );
       return (
         <ActivityIndicatorPresentation>
           {layout === "standalone" &&
             [old, step].map((entry) =>
-              row(entry, presentation.byRow.get(entry.id)),
+              t.row(entry, presentation.byRow.get(entry.id)),
             )}
           {layout === "grouped" &&
-            presentation.groups.map((group) => (
-              <ActivityGroupPreview
-                key={group.ids[0]}
-                session={session}
-                group={group}
-                profiles={f.profiles}
-                media={() => undefined}
-                expanded
-                onToggle={() => {}}
-                renderHistory={(entry) => {
-                  const activity = presentation.byRow.get(entry.id);
-                  if (!activity) throw new Error("Missing recorded activity");
-                  return row(entry, { ...activity, container: "history" });
-                }}
-              />
-            ))}
-          <TypingIndicator
-            session={session}
-            channelId="c"
-            threadRootId={root}
-            inFlow
-          />
+            presentation.groups.map((group) =>
+              t.group(group, true, presentation.byRow),
+            )}
+          {t.tail}
         </ActivityIndicatorPresentation>
       );
     }
-    const dots = () => [...document.querySelectorAll('[data-state="working"]')];
-    const owned = (id: string) =>
-      dots().filter(
-        (dot) =>
-          dot.closest("[data-message-id]")?.getAttribute("data-message-id") ===
-          id,
-      );
     const view = render(<Thread />);
     try {
       expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
         "data-active",
       );
-      expect(owned(step.id)).toHaveLength(0);
+      expect(dotsOn(step.id)).toHaveLength(0);
       // The root request's own update is its one working cue.
       expect(screen.getByText("Checking the root")).toHaveAttribute(
         "data-active",
         "true",
       );
-      expect(dots()).toHaveLength(1);
-      expect(owned(old.id)).toHaveLength(1);
-      expect(
-        screen.queryByRole("button", { name: /Activity: .*working/ }),
-      ).toBeNull();
+      expect(workingDots()).toHaveLength(1);
+      expect(dotsOn(old.id)).toHaveLength(1);
+      expect(workingCue()).toBeNull();
       f.send(A, "t0", 2, "turn_completed");
       expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
         "data-active",
       );
-      expect(dots()).toHaveLength(0);
+      expect(workingDots()).toHaveLength(0);
     } finally {
       view.unmount();
-      owner.dispose();
-      f.dispose();
+      t.dispose();
     }
   },
 );

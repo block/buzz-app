@@ -110,9 +110,12 @@ export function AppearanceSettings({
     accentError,
     contrast,
     contrastError,
-    density,
+    density: savedDensity,
+    densityOverride,
     densityError,
   } = useSyncExternalStore(appearance.subscribe, appearance.snapshot);
+  // Compact flattens rows and widens them, so the width row and preview follow what applies.
+  const density = densityOverride ?? savedDensity;
   return (
     <section aria-labelledby="appearance-settings-title">
       <Header id="appearance-settings-title" title="Appearance" />
@@ -307,11 +310,16 @@ export function AppearanceSettings({
         <SettingsGroup>
           <PreferenceRow
             title="Message density"
-            subtitle="Compact shows conversations as a flat list that fits more messages on screen."
+            subtitle={
+              densityOverride
+                ? "A plugin sets this. Your saved choice returns when it is turned off."
+                : "Compact shows conversations as a flat list that fits more messages on screen."
+            }
             trailing={
               <Select
                 variant="compact"
                 label="Message density"
+                disabled={densityOverride !== null}
                 value={density}
                 groups={[
                   {
@@ -581,7 +589,10 @@ export function AppearanceSettings({
             title="Message density wasn’t saved"
             description={densityError}
           >
-            <Button size="sm" onClick={() => appearance.setDensity(density)}>
+            <Button
+              size="sm"
+              onClick={() => appearance.setDensity(savedDensity)}
+            >
               Retry saving message density
             </Button>
           </ToastNotice>

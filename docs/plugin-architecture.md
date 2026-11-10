@@ -1363,6 +1363,36 @@ flow while `.shell-header` has `data-compact-pages`), `.shell-body`, and the
 outermost `.panel` elements inside it (nested panels are content). On macOS the
 native window controls sit in the header's leading inset, outside these roles.
 
+### Whole-app appearance
+
+A theme or layout plugin can scope its CSS and set the message density without
+patching host markup. Read the capability with `ctx.reflect.get("appearance")`
+for old-host compatibility; it needs no injection. Both calls return a function
+that undoes the change early, and the host undoes it anyway when the plugin is
+disabled, replaced or the app stops. Only an installed plugin may call them.
+
+```ts
+const appearance = ctx.reflect.get("appearance");
+appearance?.setRootAttribute("data-plugin-theme", "example");
+appearance?.overrideMessageDensity("compact");
+```
+
+- `setRootAttribute(name, value)` sets `name` on the document root so a
+  stylesheet can match `:root[data-plugin-theme="example"]`. `name` is
+  `data-plugin-theme` or `data-plugin-theme-<name>` (lowercase letters and
+  digits); any other name throws, so a plugin cannot touch the host's own root
+  attributes, `class` or `style`. `value` is 1 to 64 characters of lowercase
+  letters, digits, `.`, `_` and `-`. If two plugins set the same name, the newest
+  wins and the other returns when it stops.
+- `overrideMessageDensity("default" | "compact")` applies that density instead
+  of the saved one while the plugin runs. The saved choice is not changed or
+  overwritten, and returns afterwards. **Settings → Appearance → Message
+  density** shows the applied value, disabled, with a note that a plugin sets
+  it. With several overrides the newest wins.
+
+The host stays in charge of the window: colors, accent and mode remain Buzz's
+own role tokens, and no other setting can be overridden this way.
+
 ### Discovery metadata
 
 Plugin manifests may include display-only discovery metadata:

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createNavigationController, NAVIGATION_ABORTED } from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
-import type { OpenTarget } from "./targets";
+import { joinBeneath, type OpenTarget } from "./targets";
 const settings: OpenTarget = {
   version: 1,
   kind: "settings",
@@ -176,6 +176,26 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot().entry.id).toBe(card);
     nav.back();
     expect(nav.snapshot().entry.target).toEqual(page);
+  });
+
+  it("a join over plugin details keeps the details visit, so Back returns to them", () => {
+    const { navigation: nav } = setup();
+    void nav.open(page);
+    const details: OpenTarget = {
+      version: 1,
+      kind: "settings",
+      section: "plugins",
+      pluginId: "example.notes",
+    };
+    void nav.open(details);
+    const visit = nav.snapshot().entry;
+    // As the join service builds it: the view beneath, plus the join.
+    void nav.open({
+      ...joinBeneath(nav.snapshot().entry.target),
+      join: { viewer: "a".repeat(64), visit: "v1" },
+    });
+    nav.back();
+    expect(nav.snapshot().entry).toEqual(visit);
   });
 
   it("pushes, traverses without a push, preserves forward on retry, and truncates new branches", async () => {

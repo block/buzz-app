@@ -377,7 +377,7 @@ it("bounds a join presentation to its viewer and community address, never a code
     expect(() => parseOpenTarget({ ...page, join })).toThrow();
 });
 
-it("keeps Settings' view beneath a join, never a card's one-shot route or plugin data", () => {
+it("keeps Settings' view beneath a join, never a card's one-shot route or a plugin import", () => {
   const view = {
     version: 1,
     kind: "settings",
@@ -401,6 +401,21 @@ it("keeps Settings' view beneath a join, never a card's one-shot route or plugin
       }),
     ),
   ).toBe(targetKey(joinBeneath(routed)));
+  // Plugin details are an addressed view, not an action: they stay.
+  const details = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginId: "example.notes",
+  } as const;
+  expect(joinBeneath({ ...details, join })).toEqual(details);
+  const { pluginId: _pluginId, ...plugins } = details;
+  expect(
+    joinBeneath({
+      ...plugins,
+      pluginImport: { repository: "example-org/notes", reference: "main" },
+    }),
+  ).toEqual(plugins);
   // Other kinds keep everything but the join.
   const page = {
     version: 1,

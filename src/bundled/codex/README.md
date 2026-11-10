@@ -76,8 +76,7 @@ instructions, skills and memories, so no Codex settings, instructions, skills or
 memories reach a review.
 
 Signing in through Buzz runs `codex login` in the review home, records the
-ChatGPT workspace there, and then hands the sign-in to the shared one. Once
-Codex is ready, **Sign in again** in its harness defaults does the same. It
+ChatGPT workspace there, and then hands the sign-in to the shared one. It
 first removes the review home's link, so Codex's sign-out before a sign-in
 revokes nothing and a cancelled sign-in leaves the shared one working; the
 replaced sign-in is left to expire. With

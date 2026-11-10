@@ -61,12 +61,12 @@ home, and reviews start Codex with `forced_chatgpt_workspace_id` set to it and
 recorded for another workspace, before loading any workspace's managed
 configuration. A replacement that records the pinned workspace with another
 workspace's tokens is stopped only if OpenAI's servers check the two match,
-which Buzz has not verified. Existing users must sign in through Buzz once, with
-**Sign in again** in Codex's harness defaults: until then, and while the shared
-sign-in is an API key or names another workspace, Codex reviews fail closed with
-a message saying where to sign in. API key sign-ins, keyring sign-in and custom
-model providers cannot run Codex reviews. Protected Codex gives its tool shells
-an empty protection bridge address and token through
+which Buzz has not verified. Existing users must sign in through Buzz once,
+which Codex's harness defaults offer while Codex is signed out: until then, and
+while the shared sign-in is an API key or names another workspace, Codex reviews
+fail closed with a message saying where to sign in. API key sign-ins, keyring
+sign-in and custom model providers cannot run Codex reviews. Protected Codex
+gives its tool shells an empty protection bridge address and token through
 `shell_environment_policy.set`, which keeps the user's own shell policy. This
 stops tool shells inheriting them, but a same-user command that reads the
 engine's environment can still end the bridge session, and later turns then fail

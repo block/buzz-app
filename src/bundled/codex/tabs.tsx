@@ -781,8 +781,6 @@ export function createTabs(
     const [draft, setDraft] = useState(state.defaults);
     const [saveError, setSaveError] = useState("");
     const [savingDefaults, setSavingDefaults] = useState(false);
-    // Keeps a ready-state sign-in's output once it ends, failed or not.
-    const [signingIn, setSigningIn] = useState(false);
     const action =
       error === NOT_INSTALLED
         ? ({ step: "install", label: "Install integration" } as const)
@@ -853,29 +851,7 @@ export function createTabs(
             </p>
           )}
         </form>
-        {/* Signed in elsewhere, Codex is ready, but reviews need a sign-in
-            made here, which records its workspace. */}
-        {state.readiness === "ready" && (
-          <div className="grid justify-items-start gap-2">
-            <p className="m-0 text-body-sm text-subtle">
-              Security reviews need a ChatGPT sign-in made in Buzz.
-            </p>
-            <Button
-              loading={installing.running === "login"}
-              disabled={installing.running === "install"}
-              onClick={() => {
-                setSigningIn(true);
-                void setup.run("login");
-              }}
-            >
-              Sign in again
-            </Button>
-          </div>
-        )}
-        <div
-          className="grid gap-2"
-          hidden={state.readiness === "ready" && !signingIn}
-        >
+        <div className="grid gap-2" hidden={state.readiness === "ready"}>
           {installing.running ? (
             <div className="flex flex-wrap items-center gap-2">
               <p role="status" className="m-0 text-body-sm">

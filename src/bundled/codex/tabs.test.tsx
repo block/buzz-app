@@ -1993,37 +1993,6 @@ it("installs and signs in Buzz's copy of Codex from its provider settings", asyn
   provider.dispose();
 });
 
-it("signs in again from provider settings once Codex is ready, for security reviews", async () => {
-  const f = fixture();
-  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
-  const again = await screen.findByRole("button", { name: "Sign in again" });
-  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
-  fireEvent.click(again);
-  expect(await screen.findByText("Waiting for Codex sign-in…")).toBeVisible();
-  expect(f.spawn.mock.calls.filter(([id]) => id === "login")).toHaveLength(1);
-  expect(again).toHaveAttribute("aria-busy", "true");
-
-  f.logins[0]?.resolve(0);
-  await waitFor(() => expect(again).not.toHaveAttribute("aria-busy", "true"));
-  expect(screen.queryByText("Waiting for Codex sign-in…")).toBeNull();
-  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
-});
-
-it("keeps a failed sign-in's output once Codex is ready", async () => {
-  const f = fixture();
-  render(<f.tabs.ProviderDialogBody onClose={vi.fn()} />);
-  const again = await screen.findByRole("button", { name: "Sign in again" });
-  fireEvent.click(again);
-  await waitFor(() => expect(f.logins).toHaveLength(1));
-  f.logins[0]?.resolve(1);
-  await waitFor(() => expect(again).not.toHaveAttribute("aria-busy", "true"));
-  expect(f.provider.snapshot()).toMatchObject({ readiness: "ready" });
-  expect(screen.getByRole("log", { name: "Setup output" })).toHaveTextContent(
-    "Sign-in ended (1).",
-  );
-  expect(screen.getByRole("log", { name: "Setup output" })).toBeVisible();
-});
-
 it("separates identity fields from runtime settings without changing the stored config", () => {
   const f = fixture();
   const Settings = f.tabs.SettingsTab;

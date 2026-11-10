@@ -817,7 +817,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "status-unread",
         variable: "--status-unread",
         pointsAt: "magenta-9 light / magenta-11 dark",
-        use: "Unread Activity conversation dot on panel, hover and selected row surfaces; independent of the chosen accent.",
+        use: "Unread dots in Activity and channel/DM sidebars; independent of the chosen accent. Selected sidebar rows retain their paired selection ink.",
         status: "core",
       },
     ],

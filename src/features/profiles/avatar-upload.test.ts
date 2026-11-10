@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { pngChunks, snapshotChunk } from "../messages/image-metadata";
-import { avatarPreview, uploadAvatar } from "./avatar-upload";
+import {
+  avatarPictureError,
+  avatarPreview,
+  uploadAvatar,
+} from "./avatar-upload";
 
 const uploadAttachment = vi.fn(async (file: File) => ({
   type: file.type,
@@ -150,4 +154,17 @@ it("forwards the requested size so previews share the message-row thumbnail URL"
   );
   // The editor keeps the original for its large frame.
   expect(avatarPreview(picture, community)).toBe(proxied(picture));
+});
+
+it("saves Buzz mobile's emoji avatar as-is, like an HTTPS URL", () => {
+  const emoji = `data:image/svg+xml,${encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#FFB84D"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🛹</text></svg>',
+  )}`;
+  for (const picture of [
+    emoji,
+    ` ${emoji}\n`,
+    " https://images.example/a.png ",
+  ])
+    expect(avatarPictureError(picture)).toBeUndefined();
+  expect(avatarPictureError("data:image/svg+xml,%3Csvg%3E")).toBeDefined();
 });

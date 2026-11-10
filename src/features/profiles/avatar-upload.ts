@@ -5,13 +5,15 @@ import { nativeIdentityEnabled } from "../identity/service";
 import { nativeMediaUrl } from "../relay/native";
 import { connectCommunityTransport } from "../communities/connection";
 import { communityDestination } from "../communities/destination";
-import { avatarSource } from "../../shared/avatar-source";
+import { avatarSource, legacyEmojiPicture } from "../../shared/avatar-source";
 
-/** Shared save policy; display-only inherited artwork may still fail validation. */
+/** Shared save policy; display-only inherited artwork may still fail validation.
+ * Old Buzz's emoji SVG saves as-is: Buzz mobile still writes and reads it. */
 export function avatarPictureError(value: string): string | undefined {
   if (
     !value ||
-    (value.length <= 2048 && avatarSource(value)?.startsWith("https://"))
+    (value.length <= 2048 && avatarSource(value)?.startsWith("https://")) ||
+    legacyEmojiPicture(value.trim())
   )
     return undefined;
   return "Use an HTTPS image URL without credentials (up to 2,048 characters), or remove the avatar.";

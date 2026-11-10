@@ -20,9 +20,8 @@ export type AgentLibrarySnapshot = AgentLibrary &
   Readonly<{
     status: "unavailable" | "idle" | "loading" | "ready" | "error";
     error?: string;
-    /** Set with an `error` that a later read can fix: the relay was
-     * unreachable or slow (see isRetryableRead). A local failure is not. */
-    transient?: true;
+    /** `error` is a connectivity failure (isRetryableRead), not a denial. */
+    transient?: true | undefined;
   }>;
 const empty = { definitions: Object.freeze([]), identities: Object.freeze([]) };
 
@@ -84,14 +83,14 @@ export function createAgentLibrary(
         if (!closed && !owned.signal.aborted)
           publish({ ...inheritDefinitionAvatars(library), status: "ready" });
       })
-      .catch((reason: unknown) => {
+      .catch((cause: unknown) => {
         if (!closed && !owned.signal.aborted)
           publish({
             ...snapshot,
             status: "error",
             error:
               "Could not read agent inventory. Check the community connection and local library, then retry; saved data is unchanged.",
-            ...(isRetryableRead(reason) ? { transient: true as const } : {}),
+            transient: isRetryableRead(cause) || undefined,
           });
       })
       .finally(() => {

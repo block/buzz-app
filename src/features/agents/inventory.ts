@@ -91,18 +91,19 @@ export function inventoryReader(
         : remote.status === "rejected"
           ? "Relay inventory unavailable; showing local library. Refresh agents to discover other identities."
           : undefined;
+    // The relay's own failure, when it is the only one: a connectivity failure
+    // recovery can retry. A local failure is not.
+    const transient =
+      remote.status === "rejected" &&
+      saved.status === "fulfilled" &&
+      isRetryableRead(remote.reason);
     return {
       ...combineInventory(
         saved.status === "fulfilled" ? saved.value : empty,
         remote.status === "fulfilled" ? remote.value : empty,
       ),
       ...(error ? { error } : {}),
-      // A partial result is current again once the relay answers.
-      ...(error &&
-      remote.status === "rejected" &&
-      isRetryableRead(remote.reason)
-        ? { transient: true as const }
-        : {}),
+      ...(transient ? { transient: true as const } : {}),
     };
   };
 }

@@ -720,6 +720,8 @@ test.describe("show all conversations", () => {
       { seconds: 5 },
     );
     await filter();
+    // Pause first, so the five seconds count from the press itself.
+    await pauseClock(page);
     await page.keyboard.press(`${modifier}+Shift+f`);
     await everything();
     // Planning is hidden by Work's Unreads filter once the pause ends.
@@ -727,10 +729,33 @@ test.describe("show all conversations", () => {
     await expect(
       page.getByRole("textbox", { name: "Message #Planning" }),
     ).toBeVisible();
-    await pauseClock(page);
-    await page.clock.runFor(4_000);
-    await everything();
-    await page.clock.runFor(1_000);
+    // React renders a timer's update in a posted-message task after runFor
+    // returns. Reading the rows in a message posted now sees that render.
+    // A row leaving the list stays laid out, inert, while it animates out.
+    const listedAfterRender = () =>
+      page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const { port1, port2 } = new MessageChannel();
+            port1.onmessage = () =>
+              resolve(
+                [...document.querySelectorAll("[data-sidebar-section]")]
+                  .flatMap((section) => [
+                    ...section.querySelectorAll("[data-channel-id]"),
+                  ])
+                  .filter((row) => !row.closest("[inert]"))
+                  .map((row) => row.dataset.channelId)
+                  .sort(),
+              );
+            port2.postMessage(null);
+          }),
+      );
+    await page.clock.runFor(4_999);
+    expect(await listedAfterRender()).toEqual(
+      expect.arrayContaining(["beta", "delta", "gamma"]),
+    );
+    await page.clock.runFor(1);
+    expect(await listedAfterRender()).not.toContain("delta");
     await page.clock.resume();
     await expect(
       page.locator(

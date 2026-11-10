@@ -64,6 +64,7 @@ import {
   type ToolServer,
 } from "./goose";
 import { AgentProcess, AgentSessions, localSessions } from "./sessions";
+import { sessionTags } from "./transcript";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -912,6 +913,7 @@ export class GooseRuntime {
           title: title ?? "",
           conversation: conversation ?? null,
         }),
+      tags: (conversation) => sessionTags(agent, conversation),
       onChange: () => this.notify(),
       // Read as each turn starts, so a change needs no restart.
       choice: () => ({

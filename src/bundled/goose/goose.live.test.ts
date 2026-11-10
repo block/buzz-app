@@ -24,6 +24,7 @@ import {
   type ToolServer,
 } from "./goose";
 import { GooseSetup } from "./setup";
+import { GooseHistory, sessionTags } from "./transcript";
 
 const BIN = process.env.GOOSE_ACP_BIN;
 
@@ -288,6 +289,51 @@ describe.skipIf(!BIN)("goose-acp", () => {
       const last = sends().at(-1);
       expect(last?.arguments?.final).toBe(true);
       expect(last?.arguments?.text).toContain(code);
+    } finally {
+      await goose.kill();
+    }
+  });
+
+  it("finds a conversation's session by the tags it opened with", {
+    timeout: 180_000,
+  }, async () => {
+    const { goose, cwd, tools } = await live();
+    const agent = "a".repeat(64);
+    const place = { channelId: "chan", root: "b".repeat(64) };
+    try {
+      const session = await goose.open({
+        cwd,
+        title: "Ada · #general · bbbbbbbb",
+        tools,
+        systemPrompt: "",
+        tags: sessionTags(agent, `${place.channelId}/${place.root}`),
+      });
+      // goose lists only sessions with messages.
+      expect(
+        await session.send("Reply with the single word ok."),
+      ).toMatchObject({
+        ok: true,
+      });
+      await goose.close(session);
+      const history = new GooseHistory({
+        spawn,
+        resolveDirectory: async (path) => path.replace(/^~/, homedir()),
+      });
+      const signal = new AbortController().signal;
+      // No saved id goose still has: the tags find it.
+      const read = await history.transcript(
+        { agent, workspace: cwd, place, sessions: ["gone"] },
+        signal,
+      );
+      expect(read?.turns.map((turn) => turn.sessionId)).toEqual([session.id]);
+      // Another thread, and another agent, find nothing.
+      for (const lookup of [
+        { agent, place: { ...place, root: "c".repeat(64) } },
+        { agent: "d".repeat(64), place },
+      ])
+        expect(
+          await history.transcript({ ...lookup, workspace: cwd }, signal),
+        ).toBeUndefined();
     } finally {
       await goose.kill();
     }

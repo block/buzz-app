@@ -2373,6 +2373,22 @@ contract or relay protocol changes are required. Known channel references and
 unambiguous signed person/agent mentions share the inline hover styling. Names in
 ordinary prose never create notification intent or establish an identity.
 
+`registerLinkPreview({ id, title, matches, order?, component })` contributes a
+card below a message for one of its links. The host lists the credential-free
+HTTPS links in the message's Markdown prose, once each in the order written:
+bare and labeled links, but not `<url>` (which asks for no preview), links in
+code, images, or links naming one of the message's attachments. Diffs, agent
+envelopes and messages a message renderer draws get no cards. For each link the
+lowest-`order` match draws its card under the panel
+[resolution order](#resolution-order), so a plugin claims its own URLs by
+registering below the default web card's catch-all band; a component that
+renders nothing leaves that link without a card. Components receive
+`{ url, messageId, open }`; `open()` routes `url` through the host's link
+handler, as clicking the link does, and returns false once the contribution or
+message has retired. Cards sit between the message bubble and its attachments.
+After three, the rest fold behind "Show N more previews". A render failure drops
+only that card. Registration follows the existing plugin lifetime.
+
 `registerCodeBlock({ id, title, matches, component, action? })` contributes optional
 presentation for a fenced code block. `matches(language)` receives the fence's
 info-string language as written; `component` and `action` receive `{ code, language }`. The

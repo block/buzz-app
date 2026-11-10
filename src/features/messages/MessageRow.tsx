@@ -95,6 +95,8 @@ import { useReferenceDirectory } from "./ReferenceText";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
+import { LinkPreviews } from "./LinkPreviews";
+import { previewLinks } from "./preview-links";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { separateChatCards } from "./chat-cards";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
@@ -603,11 +605,29 @@ function MessageRowContent({
   // The host's Markdown marks an edit after the caption's last line. Plugin
   // cards are marked inside their bubble; diffs and captionless rows after the
   // payload.
-  const editedInBody =
+  const markdownBody =
     bodyShown &&
     !row.diff &&
     !!displayRow.content.trim() &&
     (!messageRenderer || messageRenderer === failedRenderer);
+  const editedInBody = markdownBody;
+  const linkPreviewRegistry = extensions?.linkPreviews;
+  const previewUrls = useMemo(
+    () =>
+      linkPreviewRegistry && markdownBody && !row.agentEnvelope
+        ? previewLinks(
+            displayRow.content,
+            row.attachments.map((attachment) => attachment.url),
+          )
+        : [],
+    [
+      linkPreviewRegistry,
+      markdownBody,
+      row.agentEnvelope,
+      displayRow.content,
+      row.attachments,
+    ],
+  );
   const claimed = (attachment: ChannelMessage["attachments"][number]) => {
     try {
       return !!claims?.call(messageRenderer, row, attachment);
@@ -1352,6 +1372,14 @@ function MessageRowContent({
                   {editedInBubble && shown.edited && <EditedMarker />}
                   {reactionsInBubble && reactionContent}
                 </div>
+              )}
+              {previewUrls.length > 0 && (
+                <LinkPreviews
+                  urls={previewUrls}
+                  messageId={row.id}
+                  registry={linkPreviewRegistry}
+                  onOpenLink={openLink}
+                />
               )}
               {attachmentGroups.length > 0 && (
                 <div

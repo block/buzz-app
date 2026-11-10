@@ -1076,8 +1076,11 @@ export function serve({
     stream.start(async (events) => {
       for (const event of events)
         if (event.type === "run_start") state.busy = true;
-        else if (event.type === "run_end") state.busy = false;
-        else if (
+        else if (event.type === "run_end") {
+          state.busy = false;
+          // A run Pi starts from what it queued has no known scope.
+          state.scope = undefined;
+        } else if (
           event.type === "submission" &&
           event.record.status === "placed" &&
           event.record.requestId
@@ -1223,9 +1226,11 @@ export function serve({
 
   /** Starts a request in a conversation configured for this turn. One that
    * steers a run working in it, `busy`, changes only what its owner picked,
-   * as in Claude. The agent's `core` memory read for it is the
-   * conversation's latest; a failed read shows it none if not yet shown. */
-  async function submit(opened, conversation, turn, busy, refresh) {
+   * as in Claude, and one from another `scope` than the run's, as `watched`
+   * holds it, is told where the run's results still go. The agent's `core`
+   * memory read for it is the conversation's latest; a failed read shows it
+   * none if not yet shown. */
+  async function submit(opened, conversation, turn, busy, refresh, watched) {
     opened.cores.set(conversation.id, turn.core);
     const steers = busy && turn.steer;
     const chosen = await choose(turn);
@@ -1249,10 +1254,19 @@ export function serve({
       if (!prompt) return;
       turn = { ...turn, ...prompt };
     }
+    // Read after the waits above, in which the run may have ended. Pi runs a
+    // steer as a run of its own when the run ends before taking it, so the
+    // added line is worded to hold then too.
+    const running = watched?.scope;
+    const content = !steers
+      ? turn.text
+      : running && turn.scope && running !== turn.scope
+        ? `${turn.steer}\n\nThe reply target above is for the new message only. If you are still working on an earlier request, ordinary replies about that work still go to \`reply: "${running}"\`.`
+        : turn.steer;
     const submission = await conversation.submit(
       {
         type: "input",
-        content: steers ? turn.steer : turn.text,
+        content,
         whenBusy: "steer",
         requestId: turn.request,
       },
@@ -1514,7 +1528,8 @@ export function serve({
         }
         opened.conversations.add(conversation.id);
         opened.contexts.set(conversation.id, tools);
-        const { busy } = await watch(opened, conversation.id);
+        const watched = await watch(opened, conversation.id);
+        const { busy } = watched;
         // Read before the turn is submitted: what Pi then holds decides it.
         const session =
           !busy && (await firstTurn(opened, conversation.id))
@@ -1532,8 +1547,11 @@ export function serve({
           refresh
             ? () => call("prompt", { agent, request: turn.request })
             : undefined,
+          watched,
         );
         if (!submitted) return false;
+        // The scope of the run this turn starts.
+        if (!busy) watched.scope = turn.scope;
         if (session !== undefined) Object.assign(submitted, { session });
         // Recorded once Pi has the turn: one that could not start leaves the
         // messages it would have been shown for the next.

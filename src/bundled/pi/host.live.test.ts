@@ -144,6 +144,53 @@ c.release();
 const cWaits = await Promise.all([c1, c2].map((x) => pi.rpc("wait", { agent, submission: x.submission })));
 out.c = { rewritten: pi.tools.slice(-1)[0]?.arguments, waits: cWaits, saw, results, placed: pi.events.filter((e) => e.type === "placed").map((e) => [e.request, e.entry]), steps: pi.events.filter((e) => e.type === "step").map((e) => e.tool) };
 rewriteTools = false;
+// In a conversation several threads share, a steer from another thread than
+// the running turn's keeps that turn's results in its own thread.
+{
+  const shared = (request, text, scope) => ({ ...turn(request, text), key: "chan", context: { channel: "chan" }, scope });
+  const users = (context) => context.messages.filter((m) => m.role === "user").map((m) => m.content);
+  const settle = async (delivered) => { for (const x of delivered) await pi.rpc("wait", { agent, submission: x.submission }); };
+  const working = held();
+  faux.setResponses([
+    async () => { await working.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    (context) => { out.steered = users(context); return fauxAssistantMessage("Answer to all"); },
+  ]);
+  const steered = [];
+  try {
+    steered.push(await pi.rpc("deliver", shared("R1", "first", "A")));
+    await started(pi.events, "R1");
+    steered.push(await pi.rpc("deliver", shared("R2", "other", "B")));
+    steered.push(await pi.rpc("deliver", shared("R3", "same", "A")));
+  } finally {
+    working.release();
+  }
+  await settle(steered);
+  // A run that ends before taking a steer runs it as a run of its own, which
+  // a steer from the same thread then joins as it is.
+  const ending = held(), promoted = held();
+  faux.setResponses([
+    async () => { await ending.gate; return fauxAssistantMessage("Done"); },
+    async (context) => { out.promoted = users(context).at(-1); await promoted.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    (context) => { out.promotedSteer = users(context).at(-1); return fauxAssistantMessage("Answer to B"); },
+  ]);
+  const queued = [];
+  try {
+    queued.push(await pi.rpc("deliver", shared("Q1", "first", "A")));
+    await started(pi.events, "Q1");
+    queued.push(await pi.rpc("deliver", shared("Q2", "other", "B")));
+    ending.release();
+    await started(pi.events, "Q2");
+    queued.push(await pi.rpc("deliver", shared("Q3", "more", "B")));
+  } finally {
+    ending.release();
+    promoted.release();
+  }
+  await settle(queued);
+  // One delivered after the run ended is a turn of its own.
+  faux.setResponses([(context) => { out.after = users(context).at(-1); return fauxAssistantMessage("Answer"); }]);
+  const later = await pi.rpc("deliver", shared("Q4", "later", "B"));
+  await pi.rpc("wait", { agent, submission: later.submission });
+}
 // A run the host stops in continues in the next host.
 const d = held(), calling = held();
 faux.setResponses([
@@ -390,6 +437,37 @@ out.refresh = { calls: promptCalls, entries: JSON.stringify((await pi.rpc("entri
 out.refresh.dropped = await pi.rpc("deliver", refreshing("R3", 999));
 out.refresh.seen = (await pi.rpc("place", { agent: promptAgent, key: "refresh" })).seen;
 await pi.stop();
+// A steering wake names the run it joins as that run is once its prompt is
+// refreshed: here the run ended meanwhile, and Pi ran the queued steer apart.
+{
+  const asked = held(), answered = held(), ending = held(), working = held();
+  pi = start(async () => { asked.release(); await answered.gate; return { text: "wake", steer: "steer: wake" }; });
+  await pi.rpc("open", { agent: promptAgent, tools });
+  faux.setResponses([
+    async () => { await ending.gate; return fauxAssistantMessage("Done"); },
+    async () => { await working.gate; return fauxAssistantMessage(fauxToolCall("buzz_send", { text: "working" }), { stopReason: "toolUse" }); },
+    (context) => { out.woken = context.messages.filter((m) => m.role === "user").map((m) => m.content).at(-1); return fauxAssistantMessage("Answer"); },
+  ]);
+  const shared = (request, scope, more) => ({ ...turn(request, request), agent: promptAgent, key: "wake", context: { channel: "chan" }, scope, ...more });
+  const delivered = [];
+  try {
+    delivered.push(await pi.rpc("deliver", shared("W1", "A")));
+    await started(pi.events, "W1");
+    delivered.push(await pi.rpc("deliver", shared("W2", "C")));
+    const woken = pi.rpc("deliver", shared("W3", "B", { refresh: true }));
+    await asked.gate;
+    ending.release();
+    await started(pi.events, "W2");
+    answered.release();
+    delivered.push(await woken);
+  } finally {
+    ending.release();
+    answered.release();
+    working.release();
+  }
+  for (const x of delivered) await pi.rpc("wait", { agent: promptAgent, submission: x.submission });
+  await pi.stop();
+}
 // Pi's auth.json: a change that returns nothing, as pi-ai's refresh does when
 // another process refreshed first, keeps the sign-in.
 const auth = new AuthFile(data + "/auth.json");
@@ -675,6 +753,20 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       { type: "text", text: "[Buzz plugin: fixture-policy]" },
       { type: "text", text: "Replaced result" },
     ]);
+    const running =
+      'If you are still working on an earlier request, ordinary replies about that work still go to `reply: "A"`.';
+    expect(out.steered).toEqual([
+      "first",
+      `steer: other\n\nThe reply target above is for the new message only. ${running}`,
+      "steer: same",
+    ]);
+    // Written before Pi decided to run it apart, so worded to hold either way.
+    expect(out.promoted).toBe(
+      `steer: other\n\nThe reply target above is for the new message only. ${running}`,
+    );
+    expect(out.promotedSteer).toBe("steer: more");
+    expect(out.woken).toBe("steer: wake");
+    expect(out.after).toBe("later");
     expect(out.stopped).toEqual({ status: "closed" });
     expect(out.unfinished).toEqual([
       {

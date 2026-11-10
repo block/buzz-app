@@ -33,7 +33,7 @@ it.each(["storage-unavailable", "storage-denied"])(
     expect(h.service.signIn).not.toHaveBeenCalled();
   },
 );
-it("says a damaged saved sign-in is not a permissions problem, and what clears it", () => {
+it("says an unreadable saved sign-in is not a permissions problem, and that signing in can't fix it", () => {
   const h = federatedFixture();
   h.publish({ status: "unavailable", failure: "storage-corrupt" });
   render(
@@ -45,7 +45,7 @@ it("says a damaged saved sign-in is not a permissions problem, and what clears i
   );
   const alert = screen.getByRole("alert");
   expect(alert).toHaveTextContent(
-    "Buzz’s saved sign-in for this server is damaged, so signing in again can’t replace it. Signing out of Buzz on this computer clears it.",
+    "Buzz can’t read its saved sign-in for this server, so signing in again can’t replace it. Contact support.",
   );
   expect(alert).not.toHaveTextContent("credential permissions");
   expect(alert).not.toHaveTextContent("storage-corrupt");

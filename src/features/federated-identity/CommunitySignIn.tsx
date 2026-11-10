@@ -14,10 +14,11 @@ export function recoveryMessage(code: string) {
   if (code === "sign-in-timed-out") return SIGN_IN_TIMED_OUT;
   if (code === "storage-busy")
     return "Secure storage is busy. Close another Buzz instance and try again.";
-  // A record native can't decode: no sign-in can compare and replace it, and
-  // only Sign out of Buzz deletes it without reading it (`store::remove_all`).
+  // A record native can't decode, or (on Linux) duplicate keyring items: no
+  // sign-in can compare and replace it. Sign out of Buzz deletes a damaged
+  // record without reading it, but not duplicates, so it isn't offered here.
   if (code === "storage-corrupt")
-    return "Buzz’s saved sign-in for this server is damaged, so signing in again can’t replace it. Signing out of Buzz on this computer clears it.";
+    return "Buzz can’t read its saved sign-in for this server, so signing in again can’t replace it. Contact support.";
   if (code.startsWith("storage-"))
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
   if (code === "sign-in-canceled")

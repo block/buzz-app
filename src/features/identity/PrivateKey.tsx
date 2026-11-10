@@ -108,7 +108,7 @@ export function PrivateKey({
         await writeClipboardSecret(value);
         if (current === generation.current)
           setMessage(
-            "Private key copied. Paste it somewhere safe now: Buzz clears it from your clipboard in a minute.",
+            "Private key copied. Paste it somewhere safe now: Buzz tries to clear it from your clipboard in a minute.",
           );
       } else {
         focusReveal.current =
@@ -252,7 +252,7 @@ export function PrivateKey({
     presentation === "magnetic" && !failed ? (
       <ToastNotice
         title="Private key copied"
-        description="Paste it somewhere safe now: Buzz clears it from your clipboard in a minute."
+        description="Paste it somewhere safe now: Buzz tries to clear it from your clipboard in a minute."
         tone="success"
         timeout={5000}
         onDismiss={() => setMessage("")}

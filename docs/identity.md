@@ -777,8 +777,13 @@ copied. The nsec is absent from the rendered field until Reveal; Copy can fetch 
 window blur and document hiding retire pending reveals and clear the displayed
 secret. Failed private-key actions report fixed errors. Copy puts the key on the
 OS clipboard through the host (`clipboard_write_text` with `clearAfterSecs`) on
-every platform, and the host clears the clipboard 60 seconds later if it still
-holds that key, so a later copy is never erased; the UI says so. A key the user
+every platform. The host marks the copy as sensitive, so clipboard managers
+(macOS, KDE and other Linux managers) skip it and Windows keeps it out of
+clipboard history and cloud sync. 60 seconds after the latest successful key
+copy it tries to clear the clipboard, if it still holds that key. A copy of the
+same key restarts the wait, and a failed copy leaves the earlier wait in place.
+Failures are ignored, quitting cancels the wait, and another app can still write
+between the read and the clear. The UI says Buzz tries to clear it. A key the user
 selects and copies from the revealed field is not cleared. The one exception is the
 first-run **Enter your private key** page: the typed, pasted or file-read nsec
 lives only in that page's state, masked until **Reveal private key**, and

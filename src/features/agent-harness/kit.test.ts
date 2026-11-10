@@ -176,9 +176,15 @@ describe("harnessKit.conversation", () => {
   it("refuses a mention from anyone else, and triggers that are not its", async () => {
     const { kit, delivery } = setup();
     const event = message("2", "@Ampy rm -rf", { pubkey: mallory });
+    const ignored = vi.fn();
     expect(
-      await kit.conversation(delivery({ type: "mention", event }), "thread"),
+      await kit.conversation(
+        delivery({ type: "mention", event }, { ignored }),
+        "thread",
+      ),
     ).toBeUndefined();
+    // It tells its owner why, as every bundled harness does.
+    expect(ignored).toHaveBeenCalledExactlyOnceWith("sender");
     // A relay workflow mention the bundled harnesses would run: signed by
     // the community's workflow key, owned by the owner, aimed at this agent.
     const workflow = eventDto(
@@ -220,17 +226,23 @@ describe("harnessKit.conversation", () => {
         "thread",
       ),
     ).toBeDefined();
+    const timerIgnored = vi.fn();
     expect(
       await kit.conversation(
-        delivery({
-          type: "timer",
-          slug: "t",
-          timer: {} as never,
-          spent: false,
-        }),
+        delivery(
+          {
+            type: "timer",
+            slug: "t",
+            timer: {} as never,
+            spent: false,
+          },
+          { ignored: timerIgnored },
+        ),
         "thread",
       ),
     ).toBeUndefined();
+    // Not a refusal of who sent it: no reason to show.
+    expect(timerIgnored).not.toHaveBeenCalled();
   });
 
   it("takes a plugin's wake in its thread, and drops one with nowhere to go", async () => {

@@ -257,8 +257,9 @@ agent; all such tags
 must have exactly two fields, a lowercase-hex pubkey, and no duplicate targets.
 The relay emits these tags only for targets present in the owner-authored template
 and the rendered output. A relay running
-[secure workflows mode](https://github.com/block/buzz/blob/main/docs/operator-secure-workflows.md) may leave the tag off; the message still posts, but
-no agent acts on it. Legacy `p` tags route mentions but do not authorize them.
+[owner-only agent mentions](https://github.com/block/buzz/blob/main/docs/operator-workflow-agent-mentions.md) may leave the tag off; the message still posts, but
+no agent acts on it, and the owner's app notes under the message which of their
+agents didn't act. Legacy `p` tags route mentions but do not authorize them.
 Workflows created and maintained under an owned agent's own key remain owned by
 that agent and can wake agents with the same proven human owner. This does not
 grant an agent permission to edit a workflow owned by a different signing identity.

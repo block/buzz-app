@@ -2,7 +2,10 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { hexToBytes } from "nostr-tools/utils";
 import type { ProfileQueries } from "../relay/profile-directory";
 import { hasEventProof, type EventData } from "../relay/events";
-import { workflowMentionOwner } from "../relay/workflow-attribution";
+import {
+  workflowMentionOwner,
+  workflowOwner,
+} from "../relay/workflow-attribution";
 import type { AgentReads } from "./reads";
 
 const KEY = /^[0-9a-f]{64}$/;
@@ -114,6 +117,11 @@ export function workflowOf(
   };
 }
 
+/** Why a mention can't direct an agent, for a note only its owner sees:
+ * `sender`, someone else sent it; `workflow`, the owner's own workflow posted
+ * it without naming this agent as a step's author-written mention. */
+export type MentionRefusal = "sender" | "workflow";
+
 /** Owner prompts, attested siblings, and verified relay workflow mentions
  * delegated by the owner or a profile-verified sibling to this particular agent. */
 export async function fromOwner(
@@ -121,28 +129,57 @@ export async function fromOwner(
   owner: string,
   workflow?: WorkflowCheck,
 ) {
+  return (await mentionAuthority(event, owner, workflow)) === "owner";
+}
+
+/** `fromOwner`'s verdict with its reason. `undefined` refuses without a
+ * reason: a creator's profile that can't be read yet is no verdict. */
+export async function mentionAuthority(
+  event: EventData,
+  owner: string,
+  workflow?: WorkflowCheck,
+): Promise<"owner" | MentionRefusal | undefined> {
   if (event.pubkey === owner || (await attestedOwner(event)) === owner)
-    return true;
-  const creator =
-    workflow && workflowMentionOwner(event, workflow.authority, workflow.agent);
-  if (!creator) return false;
+    return "owner";
+  const creator = workflow && workflowOwner(event, workflow.authority);
+  if (!creator) return "sender";
+  // Only a mention that names this agent reads profiles; the reason for
+  // one that doesn't comes from those already read.
+  const named = !!workflowMentionOwner(
+    event,
+    workflow.authority,
+    workflow.agent,
+  );
+  const owned = await ownedCreator(creator, owner, workflow.profiles, named);
+  if (owned !== true) return owned;
+  return named ? "owner" : "workflow";
+}
+
+/** The workflow's creator is the owner or a profile-verified sibling:
+ * `true`, `"sender"` when it is neither, `undefined` when unreadable.
+ * Without `read`, only an already-read profile counts. */
+async function ownedCreator(
+  creator: string,
+  owner: string,
+  profiles: WorkflowCheck["profiles"],
+  read: boolean,
+): Promise<true | "sender" | undefined> {
   if (creator === owner) return true;
-  const profiles = workflow?.profiles;
-  if (!profiles?.event) return false;
+  if (!profiles?.event) return "sender";
   try {
-    await profiles.ensure([creator]);
+    if (read) await profiles.ensure([creator]);
     const profile = profiles.event(creator);
-    return (
-      !!profile &&
+    return profile &&
       hasEventProof(profile) &&
       profile.kind === 0 &&
       profile.pubkey === creator &&
       (await attestedOwner(profile)) === owner &&
       profiles.event(creator) === profile
-    );
+      ? true
+      : "sender";
   } catch {
     // Missing or failed profile reads are not ownership verdicts; a later
     // mention can retry through the session's existing profile directory.
-    return false;
+    return undefined;
   }
 }

@@ -20,7 +20,7 @@ import {
 } from "../../bundled/claude-code/prompt";
 import type { McpHandler } from "../host/service";
 import type { AgentKey } from "../agents/membership";
-import { fromOwner } from "../agents/owner-attestation";
+import { mentionAuthority } from "../agents/owner-attestation";
 import { ownerReads } from "../agents/reads";
 import type {
   AgentHandle,
@@ -208,7 +208,7 @@ export function harnessKit(sources: Sources): HarnessKit {
 
   return Object.freeze({
     async conversation(
-      { trigger, agent, channelId, signal }: Delivery,
+      { trigger, agent, channelId, signal, ignored }: Delivery,
       scope: HarnessScope,
     ) {
       if (
@@ -224,7 +224,11 @@ export function harnessKit(sources: Sources): HarnessKit {
       if (trigger.type === "mention") {
         // Only the owner or an attested sibling. Unlike the bundled harnesses,
         // which kept relay workflow mentions for compatibility, no workflow check.
-        if (!(await fromOwner(trigger.event, agent.owner))) return undefined;
+        const authority = await mentionAuthority(trigger.event, agent.owner);
+        if (authority !== "owner") {
+          ignored?.(authority);
+          return undefined;
+        }
         signal.throwIfAborted();
       }
       const event =

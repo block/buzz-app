@@ -546,6 +546,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.voice-notes"
             | "buzz.huddles"
             | "buzz.github"
+            | "buzz.bestie"
             | "buzz.watching"
             | "buzz.pairing"
             | "buzz.inbox"
@@ -654,7 +655,7 @@ impl Default for Registry {
         }
     }
 }
-// Freeze known defaults so later releases cannot silently withdraw a feature.
+// Freeze known defaults so later releases cannot silently change a feature's state.
 fn pin_bundled_defaults(registry: &mut Registry, existing_profile: bool) -> bool {
     let mut changed = false;
     for manifest in bundled_manifests() {
@@ -663,9 +664,13 @@ fn pin_bundled_defaults(registry: &mut Registry, existing_profile: bool) -> bool
             .entry(manifest.id.clone())
             .or_insert_with(|| {
                 changed = true;
-                enabled_by_default(&manifest.id)
-                    || (existing_profile
-                        && matches!(manifest.id.as_str(), "buzz.reminders" | "buzz.workflows"))
+                if existing_profile && manifest.id == "buzz.bestie" {
+                    false
+                } else {
+                    enabled_by_default(&manifest.id)
+                        || (existing_profile
+                            && matches!(manifest.id.as_str(), "buzz.reminders" | "buzz.workflows"))
+                }
             });
     }
     changed

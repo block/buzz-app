@@ -2464,7 +2464,9 @@ it("promotes exactly the Bestie DM, restores prior local removal, and releases i
     act(() => {
       forgetDefaultAgent(fizz);
     });
-    expect(screen.getByRole("button", { name: "Bestie" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create an agent" }),
+    ).toBeInTheDocument();
     expect(row("fizz-dm")).not.toBeNull();
 
     act(() => {

@@ -731,7 +731,9 @@ export async function connectNativeTransport(
     },
     async readAgentLibrary(signal) {
       signal.throwIfAborted();
-      const result = await invoke<AgentLibrary>("relay_agent_library");
+      const result = await invoke<AgentLibrary>("relay_agent_library", {
+        community: origin,
+      });
       signal.throwIfAborted();
       return result;
     },

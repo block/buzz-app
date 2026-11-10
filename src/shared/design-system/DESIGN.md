@@ -114,6 +114,8 @@ Settings is a reading/form column inside host-owned navigation. Reuse its center
 page surface, sidebar, fixed viewport width, or nested settings scroll container.
 A Settings destination starts with `Header`, then named groups with `InlineHeader`.
 Align headings with their groups' content, not just their outer borders.
+At narrow Settings widths, an end-aligned Header puts its actions below the
+title.
 
 Choose the group by how it behaves:
 
@@ -753,6 +755,10 @@ has a creation sidebar. The sidebar and detail pane share one joined surface; th
 resize seam is a persistent `border-standard` hairline. Layout and overflow
 remain shell-owned.
 
+Use `Tabs variant="capsule"` for outlined filters with no filled track and a
+wrapping trailing action, as in Hosted Communities. `Header align="end"`
+bottom-aligns its title and trailing action without changing spacing.
+
 Use `Tabs variant="segmented"` for grouped filters on an opaque surface, with
 a capsule track and raised capsule selection (for example, sidebar scope).
 Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px
@@ -899,6 +905,10 @@ shared Panel/Dialog/Popover components, including a nested Panel reset. Verify
 both themes, portals, supported states and actual product flows before adoption
 is called complete; token math alone cannot validate the CSS cascade.
 
+Body-copy links use `Button variant="link" size="text"`: small label type,
+no insets, and the shared keyboard focus treatment. Caption-sized `inline`
+buttons remain for compact controls such as composer choices.
+
 ## Controls
 
 An Input that must retain focus during asynchronous work can pair `readOnly` with
@@ -1020,6 +1030,8 @@ selection changes. Standalone icon actions continue to use `IconButton`.
 Disabled controls retain their filled, outline, or unfilled treatment and cannot
 activate. Loading retains the label's geometry, accessible name, focus and variant
 colors while blocking activation; never swap in a differently sized loading label.
+For a visibly unavailable busy action, `loadingAppearance="disabled"` opts into
+the existing disabled color roles while retaining the spinner and geometry.
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
@@ -1072,6 +1084,11 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+`FieldButton appearance="masked"` centers larger, spaced, subtle placeholder dots that
+cannot be selected. It opens the field’s action menu. The feature owns masking;
+a revealed value uses the ordinary Input and can pair with a trailing menu in
+InputGroup. Use `prefix` for ordinary text before masked dots.
 
 `Checkbox` and `Radio` default to 40px rows with 20px controls. For compact
 inline choices, use `size="sm"`: 32px rows, 16px controls, and an 8px label gap.
@@ -1147,6 +1164,12 @@ while the frame owns the active perimeter stroke. Read-only values can be
 read and copied; disabled actions cannot change a value. Search clear restores
 input focus. SearchField `trailing` places auxiliary actions after Clear inside
 the shared frame. Features still own filtering, custom values, and async recovery.
+
+For a prominent composed value, use `Input textSize="large"` for the complete
+20px body-lg role. `InputGroup wrap` keeps fixed text affixes inside the same
+frame, reserving twelve characters for editing before moving an affix to its
+own line. Keep the affix at the input's type size and connect it through
+`aria-describedby`; it remains readable when enlarged text wraps.
 
 SearchField, Combobox.Control, and code Textarea default to no autocorrection,
 capitalization, or spellcheck. Callers can override these defaults explicitly.

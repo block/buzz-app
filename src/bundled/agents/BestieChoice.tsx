@@ -40,6 +40,7 @@ export function useBestieChoice(
   session: RelaySession,
   scope: string,
   placeOf?: (pubkey: string) => AgentPlace | undefined,
+  onMade?: (pubkey: string) => void,
 ) {
   // Bestie names only the explicit account-saved choice.
   const saved = useSavedAgent(session, scope);
@@ -92,6 +93,7 @@ export function useBestieChoice(
       .then(() => {
         for (const listener of made) listener(pubkey);
         if (choice !== latest.current) return;
+        if (!gone.current) onMade?.(pubkey);
         setReplacement(undefined);
         setRemote(undefined);
       })

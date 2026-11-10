@@ -1435,8 +1435,9 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
   const signal = new AbortController().signal;
   const agent = keypair();
   const dispatch = vi.mocked(invoke);
-  dispatch.mockImplementationOnce(async (command) => {
+  dispatch.mockImplementationOnce(async (command, args) => {
     expect(command).toBe("relay_agent_library");
+    expect(args).toEqual({ community });
     return { definitions: [], identities: [] };
   });
   expect(await transport.readAgentLibrary?.(signal)).toEqual({

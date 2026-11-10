@@ -587,6 +587,7 @@ details:not([open]) > summary .sectionChevron {
   .panelStack > [data-panel-resize] {
     display: none;
   }
+  /* useCoveredByDock treats position: absolute on the dock as covering. */
   .panelStack {
     --panel-motion-duration: var(--duration-panel-enter);
     --panel-motion-distance: 100%;
@@ -609,6 +610,7 @@ details:not([open]) > summary .sectionChevron {
   .panelStack > [data-panel-resize] {
     display: none;
   }
+  /* useCoveredByDock treats position: absolute on the dock as covering. */
   .panelStack {
     --panel-motion-duration: var(--duration-panel-enter);
     --panel-motion-distance: 100%;

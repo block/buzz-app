@@ -12,6 +12,7 @@ import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
   TypingPresentation,
+  useActivityTypingReplacement,
   useReplacedTypers,
 } from "../conversation/typing-presentation";
 import { breathing, localActivity } from "../agents/local-activity";
@@ -1703,6 +1704,21 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     activity?.requestId,
   );
   const active = live || (activity?.active ?? false);
+  // Its dots are then its request's working cue, so the conversation shows
+  // no second one for that request until a newer message follows its run.
+  useActivityTypingReplacement(
+    session && activity?.requestId
+      ? {
+          session,
+          channelId: row.channelId,
+          threadRootId: row.threadRootId,
+          pubkey: row.authorId,
+          requestId: activity.requestId,
+          presence: true,
+        }
+      : undefined,
+    active && !!activity?.requestId && !activity.followed,
+  );
   const keepMounted = props.keepMounted;
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
@@ -1861,6 +1877,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                     active={active}
                   />
                 )}
+                {active && <TypingDots size="message" />}
                 {open && bubble && "Collapse"}
                 {!open && (
                   <span className={styles.audiencePreviewText}>

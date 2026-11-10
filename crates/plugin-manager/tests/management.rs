@@ -1146,8 +1146,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(
             id,
-            "buzz.bestie"
-                | "buzz.pi"
+            "buzz.pi"
                 | "buzz.todos"
                 | "buzz.usage"
                 | "buzz.relay-notes"
@@ -1180,7 +1179,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
             }
         }
     }
-    // Saved choices override default-off even across process restarts.
+    // Saved choices override current defaults even across process restarts.
     for id in ["buzz.bestie", "buzz.reminders", "buzz.workflows"] {
         for enabled in [true, false] {
             manager
@@ -1216,7 +1215,11 @@ fn bundled_defaults_are_pinned_for_fresh_and_untouched_existing_profiles() {
         for _launch in 0..2 {
             let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
             let catalog = manager.catalog().unwrap();
-            for id in ["buzz.reminders", "buzz.workflows"] {
+            for (id, expected) in [
+                ("buzz.reminders", existing),
+                ("buzz.workflows", existing),
+                ("buzz.bestie", !existing),
+            ] {
                 assert_eq!(
                     catalog
                         .plugins
@@ -1224,7 +1227,7 @@ fn bundled_defaults_are_pinned_for_fresh_and_untouched_existing_profiles() {
                         .find(|p| p.manifest.id == id)
                         .unwrap()
                         .enabled,
-                    existing,
+                    expected,
                     "{id}, existing={existing}"
                 );
             }
@@ -1251,9 +1254,13 @@ fn bundled_defaults_are_pinned_for_fresh_and_untouched_existing_profiles() {
         );
         manager.recover().unwrap();
         let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
-        for id in ["buzz.reminders", "buzz.workflows"] {
-            assert!(
-                !reopened
+        for (id, expected) in [
+            ("buzz.reminders", false),
+            ("buzz.workflows", false),
+            ("buzz.bestie", true),
+        ] {
+            assert_eq!(
+                reopened
                     .catalog()
                     .unwrap()
                     .plugins
@@ -1261,6 +1268,7 @@ fn bundled_defaults_are_pinned_for_fresh_and_untouched_existing_profiles() {
                     .find(|p| p.manifest.id == id)
                     .unwrap()
                     .enabled,
+                expected,
                 "reset {id}"
             );
         }
@@ -1302,6 +1310,7 @@ fn failed_default_snapshot_does_not_block_untouched_upgrades() {
             for (id, enabled) in [
                 ("buzz.reminders", true),
                 ("buzz.workflows", saved_workflows.unwrap_or(true)),
+                ("buzz.bestie", false),
             ] {
                 assert_eq!(
                     catalog
@@ -1320,6 +1329,7 @@ fn failed_default_snapshot_does_not_block_untouched_upgrades() {
         let saved: serde_json::Value =
             serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
         assert_eq!(saved["bundledOverrides"]["buzz.reminders"], true);
+        assert_eq!(saved["bundledOverrides"]["buzz.bestie"], false);
         assert_eq!(
             saved["bundledOverrides"]["buzz.workflows"],
             saved_workflows.unwrap_or(true)
@@ -1335,7 +1345,7 @@ fn legacy_plugin_settings_preserve_choices_while_missing_flags_keep_old_defaults
         fs::create_dir_all(&root).unwrap();
         let mut flags = serde_json::json!({ "buzz.github": false });
         if let Some(enabled) = saved {
-            for id in ["buzz.reminders", "buzz.workflows"] {
+            for id in ["buzz.bestie", "buzz.reminders", "buzz.workflows"] {
                 flags[id] = enabled.into();
             }
         }
@@ -1351,7 +1361,7 @@ fn legacy_plugin_settings_preserve_choices_while_missing_flags_keep_old_defaults
         for _launch in 0..2 {
             let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
             let catalog = manager.catalog().unwrap();
-            for id in ["buzz.reminders", "buzz.workflows"] {
+            for id in ["buzz.bestie", "buzz.reminders", "buzz.workflows"] {
                 assert_eq!(
                     catalog
                         .plugins
@@ -1359,7 +1369,7 @@ fn legacy_plugin_settings_preserve_choices_while_missing_flags_keep_old_defaults
                         .find(|p| p.manifest.id == id)
                         .unwrap()
                         .enabled,
-                    saved.unwrap_or(true),
+                    saved.unwrap_or(id != "buzz.bestie"),
                     "{id}, saved={saved:?}"
                 );
             }
@@ -1368,14 +1378,6 @@ fn legacy_plugin_settings_preserve_choices_while_missing_flags_keep_old_defaults
                     .plugins
                     .iter()
                     .find(|p| p.manifest.id == "buzz.github")
-                    .unwrap()
-                    .enabled
-            );
-            assert!(
-                !catalog
-                    .plugins
-                    .iter()
-                    .find(|p| p.manifest.id == "buzz.bestie")
                     .unwrap()
                     .enabled
             );

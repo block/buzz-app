@@ -29,6 +29,7 @@ import {
   PopoverRoot,
   PopoverTrigger,
 } from "../../shared/design-system/ui/Popover";
+import { EmptyBestieAvatar } from "../../bundled/bestie/EmptyBestieAvatar";
 
 export function PageNavigation({
   pages,
@@ -67,11 +68,14 @@ export function PageNavigation({
         items={pages.map((page) => {
           const Badge = page.badge;
           const Preview = page.preview;
-          const { icon, image, avatar, label } = presentation(page);
+          const { icon, image, avatar, label, placeholder } =
+            presentation(page);
           return {
             value: page.key,
             label,
-            icon: avatar ? (
+            icon: placeholder ? (
+              <EmptyBestieAvatar key={page.key} compact />
+            ) : avatar ? (
               <Avatar
                 src={avatar.src}
                 alt=""
@@ -79,15 +83,6 @@ export function PageNavigation({
                 shape={avatar.shape}
                 size="small"
               />
-            ) : page.key === ACTIVITY_PAGE ? (
-              <ActivityNavigationIcon>
-                <PageIcon
-                  icon={icon}
-                  image={image}
-                  size={20}
-                  strokeWidth={2.5}
-                />
-              </ActivityNavigationIcon>
             ) : (
               <PageIcon icon={icon} image={image} size={20} strokeWidth={2.5} />
             ),
@@ -124,7 +119,7 @@ export function PageNavigation({
     );
   }
   return pages.map((page) => {
-    const { label, icon, image, avatar } = presentation(page);
+    const { label, icon, image, avatar, placeholder } = presentation(page);
     const Badge = page.badge;
     const badge = Badge && (
       <ContributionBoundary key={contributionKey(page)} fallback={null}>
@@ -135,7 +130,9 @@ export function PageNavigation({
       onSelect(page.key);
       document.getElementById("main-content")?.focus({ preventScroll: true });
     };
-    const pageIcon = avatar ? (
+    const pageIcon = placeholder ? (
+      <EmptyBestieAvatar key={page.key} compact />
+    ) : avatar ? (
       <Avatar
         key={page.key}
         src={avatar.src}
@@ -144,6 +141,10 @@ export function PageNavigation({
         shape={avatar.shape}
         size="compact"
       />
+    ) : page.key === ACTIVITY_PAGE ? (
+      <ActivityNavigationIcon key={page.key}>
+        <PageIcon icon={icon} image={image} size={16} strokeWidth={2.5} />
+      </ActivityNavigationIcon>
     ) : (
       <PageIcon
         key={page.key}

@@ -1767,18 +1767,13 @@ These labels only help identify the conversation you select.
 ## When your agent ignores a mention
 
 Your agents act only on messages from you, from your other agents, and from
-workflows that you or your agents own and that direct them. When one of your
-agents on this computer ignores a mention for one of those reasons, a short note
-under the message says so. Only you see it, on this device; nothing is posted.
-
-- **“‹Agent› only responds to your messages.”** Someone else sent the message,
-  or someone else’s workflow posted it.
-- **“‹Agent› didn’t respond to this workflow message. This community limits
-  which workflows can use agents, so other people can’t use yours. The
-  workflow’s Runs tab shows why it didn’t respond this time.”** Your own
-  workflow posted it, but the message doesn’t direct this agent.
-
-Buzz shows no note when it can’t yet tell who owns the workflow.
+workflows that you or your agents own and that direct them. When your own
+workflow posts a message that mentions one of your agents on this computer but
+doesn’t direct it, a short note under the message says so: **“‹Agent› didn’t
+respond to this workflow message. This community limits which workflows can use
+agents, so other people can’t use yours. The workflow’s Runs tab shows why it
+didn’t respond this time.”** Only you see it, on this device; nothing is posted.
+Other ignored mentions show no note.
 
 On a relay that uses owner-only agent mentions, the desktop workflow editor
 warns when a message step mentions an agent in the channel:

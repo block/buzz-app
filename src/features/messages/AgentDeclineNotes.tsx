@@ -5,10 +5,8 @@ import styles from "./Messages.module.css";
 
 const noSubscribe = () => () => {};
 
-export function agentDeclineText(name: string, refusal: MentionRefusal) {
-  return refusal === "sender"
-    ? `${name} only responds to your messages.`
-    : `${name} didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.`;
+export function agentDeclineText(name: string) {
+  return `${name} didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.`;
 }
 
 /** Why this device's agents didn't act on this message. Local and owner-only:
@@ -45,13 +43,13 @@ export function AgentDeclineNotes({
     readChoices,
     readChoices,
   );
-  return declined.map(([agent, refusal]) => {
+  return declined.map(([agent]) => {
     const name =
       choices?.identities.find((choice) => choice.pubkey === agent)?.name ??
       "Your agent";
     return (
       <p key={agent} role="status" className={styles.agentNote}>
-        {agentDeclineText(name, refusal)}
+        {agentDeclineText(name)}
       </p>
     );
   });

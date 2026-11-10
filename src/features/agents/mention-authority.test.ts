@@ -51,14 +51,14 @@ it("accepts the owner and an attested sibling", async () => {
   ).toBe("owner");
 });
 
-it("refuses someone else's message for who sent it", async () => {
-  expect(await mentionAuthority(message(stranger), owner.pubkey, check())).toBe(
-    "sender",
-  );
+it("refuses someone else's message with no reason", async () => {
+  expect(
+    await mentionAuthority(message(stranger), owner.pubkey, check()),
+  ).toBeUndefined();
   // Without a workflow check, as plugin harnesses call it.
-  expect(await mentionAuthority(workflow(owner.pubkey), owner.pubkey)).toBe(
-    "sender",
-  );
+  expect(
+    await mentionAuthority(workflow(owner.pubkey), owner.pubkey),
+  ).toBeUndefined();
 });
 
 it("accepts the owner's workflow only when it names this agent", async () => {
@@ -74,10 +74,10 @@ it("accepts the owner's workflow only when it names this agent", async () => {
   ).toBe("workflow");
 });
 
-it("refuses someone else's workflow for who owns it", async () => {
+it("refuses someone else's workflow with no reason", async () => {
   expect(
     await mentionAuthority(workflow(stranger.pubkey), owner.pubkey, check()),
-  ).toBe("sender");
+  ).toBeUndefined();
 });
 
 it("gives no reason while the creator's profile can't be read", async () => {

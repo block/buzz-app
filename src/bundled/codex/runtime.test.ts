@@ -2883,7 +2883,8 @@ it("ignores non-owner messages without spawning", async () => {
   if ("event" in other.trigger) other.trigger.event.pubkey = "f".repeat(64);
   const ignored = vi.fn();
   await f.runtime.run({ ...other, ignored });
-  expect(ignored).toHaveBeenCalledOnce();
+  // No reason, so no note for its owner.
+  expect(ignored).toHaveBeenCalledExactlyOnceWith(undefined);
   expect(f.spawn).not.toHaveBeenCalled();
   expect(f.publish).not.toHaveBeenCalled();
 });

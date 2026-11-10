@@ -32,14 +32,11 @@ const decline = (refusal: LocalDecline["refusal"], who = agent) => ({
 it("says which agent didn't act and why", () => {
   render(
     <AgentDeclineNotes
-      session={session([decline("sender"), decline("workflow", other)])}
+      session={session([decline("workflow", other)])}
       channelId="channel"
       messageId={message}
     />,
   );
-  expect(
-    screen.getByText("Builder only responds to your messages."),
-  ).toBeInTheDocument();
   expect(
     screen.getByText(
       "Your agent didn't respond to this workflow message. This community limits which workflows can use agents, so other people can't use yours. The workflow's Runs tab shows why it didn't respond this time.",
@@ -50,7 +47,7 @@ it("says which agent didn't act and why", () => {
 it("shows nothing for another message", () => {
   const { container } = render(
     <AgentDeclineNotes
-      session={session([decline("sender")])}
+      session={session([decline("workflow")])}
       channelId="channel"
       messageId={other}
     />,

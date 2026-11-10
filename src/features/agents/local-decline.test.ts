@@ -46,7 +46,7 @@ it("keeps why an agent declined a mention, for its owner's view", () => {
   }
 });
 
-it("shows no note for a rejection that isn't about who sent it", () => {
+it("shows no note for a rejection without a reason", () => {
   const local = createLocalAgentActivity();
   begin(local).remove();
   expect(local.reader.declined?.()).toEqual([]);
@@ -54,7 +54,7 @@ it("shows no note for a rejection that isn't about who sent it", () => {
 
 it("forgets notes with the agent's activity", () => {
   const local = createLocalAgentActivity();
-  begin(local).remove("sender");
+  begin(local).remove("workflow");
   local.clear(scope, agent);
   expect(local.reader.declined?.()).toEqual([]);
 });

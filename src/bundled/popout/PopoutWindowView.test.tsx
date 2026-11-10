@@ -335,6 +335,23 @@ it("shows the member stack main's header shows and opens members in the main win
   expect(members).toHaveTextContent("+2");
   fireEvent.click(members);
   expect(act).toHaveBeenCalledWith("openMembers");
+  // The overflow is the whole count, however large.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        members: {
+          count: 1001,
+          solo: false,
+          preview: [{ id: "a".repeat(64), name: "Ada", picture: null }],
+        },
+      })}
+      act={act}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: /^1001 members of #Design/ }),
+  ).toHaveTextContent("+998");
   // A Solo chat counts its agents; none known yet shows the agents glyph.
   rerender(
     <PopoutWindowView

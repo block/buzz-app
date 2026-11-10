@@ -368,33 +368,16 @@ export function PopoutWindowView({
                 <AvatarStack
                   size="small"
                   max={3}
-                  items={[
-                    ...members.preview.map((person) => ({
-                      id: person.id,
-                      name: person.name,
-                      src: person.picture ?? undefined,
-                      shape: members.solo
-                        ? ("squircle" as const)
-                        : ("circle" as const),
-                    })),
-                    // Members past the shown ones only count.
-                    ...Array.from(
-                      {
-                        length: Math.max(
-                          0,
-                          Math.min(members.count, 1000) -
-                            members.preview.length,
-                        ),
-                      },
-                      (_, index) => ({
-                        id: `more-${index}`,
-                        name: "",
-                        shape: members.solo
-                          ? ("squircle" as const)
-                          : ("circle" as const),
-                      }),
-                    ),
-                  ]}
+                  // Members past the previewed ones only count.
+                  total={members.count}
+                  items={members.preview.map((person) => ({
+                    id: person.id,
+                    name: person.name,
+                    src: person.picture ?? undefined,
+                    shape: members.solo
+                      ? ("squircle" as const)
+                      : ("circle" as const),
+                  }))}
                 />
               ) : (
                 <Avatar

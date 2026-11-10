@@ -1367,10 +1367,14 @@ it("projects members as main's header previews them: people (or agents, for Solo
     ],
   });
   thread.snapshot();
+  // The whole roster (bounded) is enriched before filtering, as main's
+  // header does: a fourth member's late profile can change the preview.
   expect(ensure).toHaveBeenCalledExactlyOnceWith(
-    [BOB, VIEWER, ADA],
+    [VIEWER, ADA, BOB, CAT, AGENT],
     "background",
   );
+  profiles.set(CAT, { name: "Cat", isAgent: true as const });
+  expect(thread.snapshot().members?.count).toBe(3);
   // A Solo chat previews its agents.
   h.channel.current = {
     id: "channel",

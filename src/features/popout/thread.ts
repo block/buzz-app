@@ -28,6 +28,7 @@ import { scanMarkdown } from "../relay/message-content";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { dmLabel } from "../../bundled/inbox/dm-label";
 import { avatarMedia, avatarSource } from "../../shared/avatar-source";
+import { PROFILE_CACHE_BASE } from "../relay/budget";
 
 const bytes = (value: string) => new TextEncoder().encode(value).length;
 
@@ -525,10 +526,15 @@ export function createPopoutThread(
           Number(!!profiles.get(a)?.picture),
       );
     const wanted = shown.slice(0, MAX_MEMBER_PREVIEW);
-    const epoch = `${session.profiles.generation?.() ?? 0}:${session.profiles.evictions?.() ?? 0}:${wanted.join(",")}`;
-    if (wanted.length && epoch !== membersEnsured) {
+    // Main's header enriches the roster (bounded by the base cache) before
+    // it filters and orders, so an unrecognised agent or a late picture
+    // changes the preview; request again after a cache clear or eviction.
+    const epoch = `${session.profiles.generation?.() ?? 0}:${session.profiles.evictions?.() ?? 0}:${list.join(",")}`;
+    if (list.length && epoch !== membersEnsured) {
       membersEnsured = epoch;
-      void session.profiles.ensure(wanted, "background").catch(() => {});
+      void session.profiles
+        .ensure(list.slice(0, PROFILE_CACHE_BASE), "background")
+        .catch(() => {});
     }
     return {
       count: Math.min(shown.length, 1_000_000),

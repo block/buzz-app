@@ -14,12 +14,16 @@ export function AvatarStack({
   items,
   size = "compact",
   max = 3,
+  total = items.length,
   animateEntrance = false,
 }: {
   items: readonly StackAvatar[];
   size?: "compact" | "small" | "mini" | "hero" | "hero-large";
   /** How many avatars show before the overflow count. */
   max?: number;
+  /** The whole set's size when `items` is only a sample of it; the overflow
+   * count is `total - max`. Defaults to the items given. */
+  total?: number;
   /** Playful hero entry, matching the huddle avatar spring. */
   animateEntrance?: boolean;
 }) {
@@ -57,7 +61,7 @@ export function AvatarStack({
           />
         </Item>
       ))}
-      {items.length > max &&
+      {total > max &&
         (size === "hero" || size === "hero-large" ? (
           // A hero count is one more stack item, shaped like the avatars.
           <span
@@ -69,11 +73,11 @@ export function AvatarStack({
               className={`${styles.countFill} text-label`}
               data-avatar-shape={items[0]?.shape}
             >
-              +{items.length - max}
+              +{total - max}
             </span>
           </span>
         ) : (
-          <span className={styles.count}>+{items.length - max}</span>
+          <span className={styles.count}>+{total - max}</span>
         ))}
     </span>
   );

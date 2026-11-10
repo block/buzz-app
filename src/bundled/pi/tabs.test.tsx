@@ -631,15 +631,18 @@ it("does not save a replacement key while removing the saved one", async () => {
   });
   render(<SettingsTab agent={AGENT} save={vi.fn()} />);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Change" }));
-  const input = await screen.findByLabelText("API key");
-  await user.type(input, "sk-new");
-  await user.click(screen.getByRole("button", { name: "Remove key" }));
-  // Enter in the key field must not save while the removal is pending.
-  await waitFor(() => expect(input).toBeDisabled());
-  fireEvent.keyDown(input, { key: "Enter" });
-  expect(screen.getByRole("button", { name: "Save to Pi" })).toBeDisabled();
-  release();
+  try {
+    await user.click(await screen.findByRole("button", { name: "Change" }));
+    const input = await screen.findByLabelText("API key");
+    await user.type(input, "sk-new");
+    await user.click(screen.getByRole("button", { name: "Remove key" }));
+    // Enter in the key field must not save while the removal is pending.
+    await waitFor(() => expect(input).toBeDisabled());
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("button", { name: "Save to Pi" })).toBeDisabled();
+  } finally {
+    release();
+  }
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Remove key" })).toBeNull(),
   );

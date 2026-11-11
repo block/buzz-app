@@ -10,12 +10,12 @@ import {
 import { guardDocument } from "../../features/markdown/guard";
 import {
   MarkdownDocument,
+  MarkdownSource,
   sharedComponents,
 } from "../../features/markdown/MarkdownDocument";
 import { LIVE_CANVAS_BYTES } from "../../features/channel-templates/model";
 import { Button } from "../../shared/design-system/ui/Button";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import markdownStyles from "../../features/markdown/Markdown.module.css";
 import styles from "./Canvas.module.css";
 
 /**
@@ -50,11 +50,7 @@ export const CanvasMarkdown = memo(function CanvasMarkdown({
           This Canvas is too large or too complex to render, so it is shown as
           Markdown source.
         </p>
-        <div className={markdownStyles.document}>
-          <pre>
-            <code>{content}</code>
-          </pre>
-        </div>
+        <MarkdownSource content={content} />
       </>
     );
   return (

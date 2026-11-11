@@ -119,6 +119,11 @@
   white-space: pre;
   overflow-wrap: normal;
 }
+/* Source shown in place of a rejected document wraps like prose. */
+.document pre.source code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* Keep every line end reachable beside the pinned action. */
 .document pre:has(> .codeActions) code {
   padding-inline-end: calc(var(--size-control-sm) + var(--space-3));

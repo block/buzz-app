@@ -21,9 +21,9 @@ import {
 import { guardDocument } from "../../features/markdown/guard";
 import {
   MarkdownDocument,
+  MarkdownSource,
   sharedComponents,
 } from "../../features/markdown/MarkdownDocument";
-import markdownStyles from "../../features/markdown/Markdown.module.css";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { MAX_MARKDOWN_LENGTH } from "../../features/relay/message-content";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
@@ -1009,11 +1009,7 @@ function NoteBody({
         <NoteIdentifier note={note} />
       </p>
       {plain ? (
-        <div className={`${markdownStyles.document} ${styles.markdown}`}>
-          <pre>
-            <code>{note.content}</code>
-          </pre>
-        </div>
+        <MarkdownSource content={note.content} className={styles.markdown} />
       ) : (
         <MarkdownDocument
           content={note.content}

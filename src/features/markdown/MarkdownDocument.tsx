@@ -114,3 +114,20 @@ export function MarkdownDocument({
     </div>
   );
 }
+
+/** A document too large or too deep to render, shown as its wrapped source. */
+export function MarkdownSource({
+  content,
+  className,
+}: {
+  content: string;
+  className?: string | undefined;
+}): ReactElement {
+  return (
+    <div className={[styles.document, className].filter(Boolean).join(" ")}>
+      <pre className={styles.source}>
+        <code>{content}</code>
+      </pre>
+    </div>
+  );
+}

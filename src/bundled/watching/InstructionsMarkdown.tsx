@@ -1,12 +1,16 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { DOCUMENT_RENDER_CELLS } from "../../features/markdown/document-profile";
+import { guardDocument } from "../../features/markdown/guard";
 import {
   MarkdownDocument,
+  MarkdownSource,
   sharedComponents,
 } from "../../features/markdown/MarkdownDocument";
 import type { MarkdownProfile } from "../../features/markdown/profiles";
 import { profileKey } from "../../features/profiles/target";
+import { MAX_MARKDOWN_LENGTH } from "../../features/relay/message-content";
 
 /** Opens a link where the tab is shown; see AgentAddedTab. */
 export const OpenLink = createContext<
@@ -60,14 +64,23 @@ const components: Components = {
   a: ({ href, children }) => <Link href={href}>{children}</Link>,
 };
 
+const CLASS = "attention-markdown text-body-sm text-secondary";
+
 export function InstructionsMarkdown({ text }: { text: string }) {
+  if (
+    !guardDocument(text, PROFILE, {
+      chars: MAX_MARKDOWN_LENGTH,
+      cells: DOCUMENT_RENDER_CELLS,
+    })
+  )
+    return <MarkdownSource content={text} className={CLASS} />;
   return (
     <MarkdownDocument
       content={text}
       profile={PROFILE}
       components={components}
       scale="compact"
-      className="attention-markdown text-body-sm text-secondary"
+      className={CLASS}
     />
   );
 }

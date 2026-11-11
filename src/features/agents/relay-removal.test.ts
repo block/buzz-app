@@ -418,3 +418,64 @@ it("keeps the settings and tags of the record it replaces", async () => {
     ],
   });
 });
+
+it.each([true, false, undefined])(
+  "publishes known voice capability %s without losing other settings or tokens",
+  async (huddleVoice) => {
+    const { fixture, instance } = setup();
+    const written = await publishAgentRecord(
+      instance.session,
+      {
+        pubkey: agent.pubkey,
+        name: "Agent",
+        runtime: "example/voice",
+        ...(huddleVoice === undefined ? {} : { huddleVoice }),
+        prior: {
+          content: {
+            parallelism: 3,
+            respond_to: "anyone",
+            capabilities: ["other-v1", "huddle-voice-v1"],
+          },
+          tags: [
+            ["d", agent.pubkey],
+            ["runtime", "example/voice"],
+            ["a", "30175:owner:p1"],
+          ],
+        },
+      },
+      new AbortController().signal,
+    );
+    const [listed] = fixture.published;
+    expect(listed).toMatchObject({ kind: 30177, pubkey: viewer.pubkey });
+    expect(written.content).toEqual({
+      name: "Agent",
+      parallelism: 3,
+      respond_to: "anyone",
+      capabilities:
+        huddleVoice === false ? ["other-v1"] : ["other-v1", "huddle-voice-v1"],
+    });
+    expect(JSON.parse(listed?.content ?? "")).toEqual(written.content);
+    expect(listed?.tags).toContainEqual(["a", "30175:owner:p1"]);
+  },
+);
+
+it("adds voice discovery to a legacy record using the owner-signed outbox", async () => {
+  const { fixture, instance } = setup();
+  await publishAgentRecord(
+    instance.session,
+    {
+      pubkey: agent.pubkey,
+      name: "Agent",
+      runtime: "example/voice",
+      huddleVoice: true,
+    },
+    new AbortController().signal,
+  );
+  expect(fixture.published[0]).toMatchObject({
+    kind: 30177,
+    pubkey: viewer.pubkey,
+  });
+  expect(JSON.parse(fixture.published[0]?.content ?? "").capabilities).toEqual([
+    "huddle-voice-v1",
+  ]);
+});

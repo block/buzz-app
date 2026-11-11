@@ -79,7 +79,7 @@ function ownerAdmissions(
   ].sort();
 }
 
-/** A phone can supply the owner's audio while this desktop hosts their agent.
+/** Another device can supply the owner's audio while this desktop hosts their agent.
  * Only an eligible DM peer explicitly added to the room can receive a seat.
  * The native connection independently verifies membership and owner presence. */
 export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
@@ -138,7 +138,7 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
           channelName: parent.name,
         };
         const agent = dmVoiceAgent(current, destination, agents);
-        if (agent?.type !== "buzz.codex/codex") return [];
+        if (!agent) return [];
         return recentHuddles(
           events,
           parent.id,
@@ -217,7 +217,7 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
               channelName: channel.name,
             },
             agents,
-          )?.type === "buzz.codex/codex",
+          ),
       )
       .map((channel) => channel.id)
       .sort();
@@ -293,7 +293,7 @@ export function remoteDmVoiceCalls(relay: RelayData, agents: Agents) {
   };
 }
 
-/** One seat owner arbitrates local and phone calls, preserving native exclusivity. */
+/** One seat owner arbitrates local and remote calls, preserving native exclusivity. */
 export function withRemoteDmVoiceCalls(
   huddles: Huddles,
   remote: ReturnType<typeof remoteDmVoiceCalls>,

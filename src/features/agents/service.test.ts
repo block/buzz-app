@@ -422,7 +422,21 @@ beforeEach(() => {
   leaveChannels.mockReset();
   leaveChannels.mockImplementation(async () => void steps.push("channels"));
   records.publish.mockReset();
-  records.publish.mockImplementation(async () => {});
+  records.publish.mockImplementation(async (_session, entry) => {
+    if (entry.huddleVoice === undefined) return;
+    return {
+      content: {
+        ...entry.prior?.content,
+        capabilities: [
+          ...(entry.prior?.content.capabilities ?? []).filter(
+            (value: string) => value !== "huddle-voice-v1",
+          ),
+          ...(entry.huddleVoice ? ["huddle-voice-v1"] : []),
+        ],
+      },
+      tags: entry.prior?.tags ?? [],
+    };
+  });
   records.remove.mockReset();
   records.remove.mockImplementation(async () => void steps.push("record"));
   records.removeAgent.mockReset();
@@ -10201,6 +10215,127 @@ it("leaves an agent already listed under its name and type as it is", async () =
   await settle();
   expect(records.publish).not.toHaveBeenCalled();
   expect(service.snapshot().agents).toHaveLength(1);
+});
+
+it("refreshes voice discovery on type registration, preserves it on unload and removes it for a known nonvoice replacement", async () => {
+  const identity = { ...here(bot), name: "Voice", type: "voice/agent" };
+  const { service, ctx, session } = await setup({
+    identities: [identity],
+    listed: [
+      record(bot, {
+        tags: [
+          ["d", bot],
+          ["runtime", "voice/agent"],
+        ],
+        content: JSON.stringify({ name: "Voice", capabilities: ["other-v1"] }),
+      }),
+    ],
+  });
+  await service.refresh();
+  expect(records.publish).not.toHaveBeenCalled();
+  const owner = ctx.extend({ pluginOwner: { id: "voice", revision: "one" } });
+  const type = {
+    id: "agent",
+    title: "Voice",
+    defaults: () => ({ config: {} }),
+    run() {},
+    voice: async () => ({ input() {}, async close() {} }),
+  };
+  const first = owner.plugin((child) => child.agents.register(type));
+  await first;
+  await vi.waitFor(() =>
+    expect(records.publish).toHaveBeenCalledExactlyOnceWith(
+      session,
+      expect.objectContaining({ pubkey: bot, huddleVoice: true }),
+      expect.any(AbortSignal),
+    ),
+  );
+  await first.dispose();
+  await service.refresh();
+  expect(records.publish).toHaveBeenCalledTimes(1);
+  const { voice: _, ...textType } = type;
+  const second = owner.plugin((child) => child.agents.register(textType));
+  await second;
+  await vi.waitFor(() => expect(records.publish).toHaveBeenCalledTimes(2));
+  expect(records.publish).toHaveBeenLastCalledWith(
+    session,
+    expect.objectContaining({
+      pubkey: bot,
+      huddleVoice: false,
+      prior: expect.objectContaining({
+        content: expect.objectContaining({
+          capabilities: ["other-v1", "huddle-voice-v1"],
+        }),
+      }),
+    }),
+    expect.any(AbortSignal),
+  );
+  await service.refresh();
+  expect(records.publish).toHaveBeenCalledTimes(2);
+});
+
+it("preserves a voice declaration when this device has no matching type", async () => {
+  const { service } = await setup({
+    identities: [{ ...here(bot), name: "Voice", type: "missing/voice" }],
+    listed: [
+      record(bot, {
+        tags: [
+          ["d", bot],
+          ["runtime", "missing/voice"],
+        ],
+        content: JSON.stringify({
+          name: "Voice",
+          capabilities: ["huddle-voice-v1"],
+        }),
+      }),
+    ],
+  });
+  await service.refresh();
+  expect(records.publish).not.toHaveBeenCalled();
+});
+
+it("preserves another hosting device's voice declaration when this copy has a known nonvoice type but no custody", async () => {
+  const { service, ctx, native } = await setup({
+    identities: [{ ...here(bot), name: "Voice", type: "voice/agent" }],
+    listed: [
+      record(bot, {
+        tags: [
+          ["d", bot],
+          ["runtime", "voice/agent"],
+        ],
+        content: JSON.stringify({
+          name: "Voice",
+          capabilities: ["huddle-voice-v1"],
+        }),
+      }),
+    ],
+  });
+  native.claim.mockResolvedValue(false);
+  const claims = native.claim.mock.calls.length;
+  const owner = ctx.extend({ pluginOwner: { id: "voice", revision: "old" } });
+  await owner.plugin((child) =>
+    child.agents.register({
+      id: "agent",
+      title: "Old",
+      defaults: () => ({ config: {} }),
+      run() {},
+    }),
+  );
+  await service.refresh();
+  await vi.waitFor(() =>
+    expect(native.claim.mock.calls.length).toBeGreaterThan(claims),
+  );
+  await settle();
+  expect(records.publish).not.toHaveBeenCalled();
+});
+
+it("does not advertise voice for a local identity owned by someone else", async () => {
+  const { service } = await setup({
+    identities: [{ ...here(bot), owner: other }],
+    voice: async () => ({ input() {}, async close() {} }),
+  });
+  await service.refresh();
+  expect(records.publish).not.toHaveBeenCalled();
 });
 
 it("never relists an agent being deleted whose record is already gone", async () => {

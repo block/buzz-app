@@ -106,6 +106,7 @@ import {
   deleteAgentRecord,
   publishAgentRecord,
   type AgentRecordBody,
+  type AgentRecordEntry,
   removeAgentFromChannels,
   removeRelayAgent,
 } from "./relay-removal";
@@ -2123,6 +2124,8 @@ export class AgentsService extends Service implements Agents {
       ownershipChanged: () => {
         this.attend(this.state.running);
         this.notify();
+        for (const [origin, { binding }] of this.bound)
+          if (binding) this.list(origin, binding);
       },
       ready: (key) => this.ready(key),
       agent: (key) => this.agent(key),
@@ -2552,6 +2555,8 @@ export class AgentsService extends Service implements Agents {
           this.hookContributions.validate(this.contributions.snapshot());
           this.update();
           this.notify();
+          for (const [origin, { binding }] of this.bound)
+            if (binding) this.list(origin, binding);
         }),
         // Every agent's Attention turns on or off with its controls.
         this.attentionControls.subscribe(() => {
@@ -5530,7 +5535,7 @@ export class AgentsService extends Service implements Agents {
     return this.rowsOf(origin).find((row) => row.pubkey === pubkey);
   }
   /** Lists each agent here in the community whose record is missing or shows
-   * another name, picture or type. Waits for the first read, so it never
+   * another name, picture, type or known voice capability. Waits for the first read, so it never
    * replaces a record it has not seen. */
   private list(origin: string, binding: Binding) {
     if (!this.listings.has(origin)) return;
@@ -5545,10 +5550,19 @@ export class AgentsService extends Service implements Agents {
         continue;
       const picture = recordPicture(identity.picture);
       const row = this.rowOf(origin, identity.pubkey);
+      const type = this.types().find((type) => type.key === identity.type);
+      // Only the hosting copy can change capability discovery. An absent or older
+      // plugin on another device is not evidence that its host lost voice.
+      const voice =
+        type && this.runners.runs(identity.key) ? !!type.voice : undefined;
+      const declaredVoice =
+        Array.isArray(row?.prior?.content.capabilities) &&
+        row.prior.content.capabilities.includes("huddle-voice-v1");
       if (
         row?.name === identity.name &&
         row.picture === picture &&
-        row.runtime === identity.type
+        row.runtime === identity.type &&
+        (voice === undefined || voice === declaredVoice)
       )
         continue;
       const { key, pubkey } = identity;
@@ -5558,6 +5572,9 @@ export class AgentsService extends Service implements Agents {
         name: identity.name,
         ...(picture ? { picture } : {}),
         runtime: identity.type,
+        ...(voice !== undefined && (voice || declaredVoice)
+          ? { huddleVoice: voice }
+          : {}),
         prior: row?.prior,
       }).then(
         () => {
@@ -5579,7 +5596,7 @@ export class AgentsService extends Service implements Agents {
   private async writeListing(
     origin: string,
     binding: Binding,
-    entry: Listing & { runtime: string },
+    entry: AgentRecordEntry,
   ) {
     if (this.isDeleting(origin, entry.pubkey)) return;
     const prior = await publishAgentRecord(

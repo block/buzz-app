@@ -248,10 +248,11 @@ Seats follow the owner's connected human call on this desktop. Each running
 local agent with a voice hook must belong to the room itself, according to its
 current relay roster, and have the signed-in viewer as owner. Pending, cached,
 read-only and archived room projections cannot seat agents. Parent membership
-alone does not qualify. Multiple agents can sit independently; an owner joining a marked Codex DM room on mobile can also activate its Codex
-peer here. Mobile explicitly adds that peer to a new room before joining. Signed
-relay participation tracks each owner-device admission; the desktop microphone
-stays closed. The desktop and Codex agent must remain running. Other remote
+alone does not qualify. Multiple agents can sit independently; an owner joining a
+marked DM room from another supported device can also activate its voice-capable
+peer here, including a custom agent type. The agent must already belong to that
+room. Signed relay participation tracks each owner-device admission; the desktop microphone
+stays closed. The hosting desktop and agent must remain running. Other remote
 call types do not create seats here. Room resolution runs only when a local,
 owner-matched voice candidate exists. Until it succeeds, no seat opens; a failed
 read stays silent and can retry on the next roster or agent update.

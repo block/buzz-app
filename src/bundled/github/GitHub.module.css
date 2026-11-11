@@ -521,3 +521,6 @@
 .pullCardMeta [data-tone="pending"] {
   color: var(--text-warning);
 }
+.hooks {
+  padding: var(--space-panel-inset);
+}

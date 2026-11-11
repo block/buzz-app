@@ -13,6 +13,7 @@ import { Input } from "../../shared/design-system/ui/Input";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import styles from "./GitHub.module.css";
 import type { PublisherStatus } from "./publisher";
 import {
   HOOK_EVENTS,
@@ -160,7 +161,7 @@ function Hooks({
   };
   const duplicate = !!name && hooks.some((hook) => hook.repo === name);
   return (
-    <section aria-label="GitHub repositories">
+    <section className={styles.hooks} aria-label="GitHub repositories">
       <Header
         title="GitHub"
         subtitle="Follow a repository to post its pull requests here, with their checks and reviews kept current."
@@ -258,73 +259,75 @@ function Hooks({
           {error}
         </p>
       )}
-      <InlineHeader title="Followed repositories" />
-      {status === "unsupported" || status === "error" ? (
-        <p role="status" className="m-0 text-body-sm text-subtle">
-          This community can’t list followed repositories.
-        </p>
-      ) : !hooks.length ? (
-        <p role="status" className="m-0 text-body-sm text-subtle">
-          {status === "loading"
-            ? "Loading…"
-            : "No repositories followed in this channel."}
-        </p>
-      ) : (
-        <SettingsGroup>
-          {hooks.map((hook: Hook) => (
-            <PreferenceRow
-              key={hook.d}
-              title={hook.repo}
-              {...(hook.publisher && {
-                subtitle:
-                  hook.publisher === viewer
-                    ? (publisher?.get(channel, hook.d) ??
-                      "Published from your Buzz. Cards update while it is open.")
-                    : "Published from a member's Buzz. Cards update while it is open.",
-              })}
-              trailing={
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  {seal && !hook.publisher && (
+      <div className="mt-section-gap">
+        <InlineHeader title="Followed repositories" />
+        {status === "unsupported" || status === "error" ? (
+          <p role="status" className="m-0 text-body-sm text-subtle">
+            This community can’t list followed repositories.
+          </p>
+        ) : !hooks.length ? (
+          <p role="status" className="m-0 text-body-sm text-subtle">
+            {status === "loading"
+              ? "Loading…"
+              : "No repositories followed in this channel."}
+          </p>
+        ) : (
+          <SettingsGroup>
+            {hooks.map((hook: Hook) => (
+              <PreferenceRow
+                key={hook.d}
+                title={hook.repo}
+                {...(hook.publisher && {
+                  subtitle:
+                    hook.publisher === viewer
+                      ? (publisher?.get(channel, hook.d) ??
+                        "Published from your Buzz. Cards update while it is open.")
+                      : "Published from a member's Buzz. Cards update while it is open.",
+                })}
+                trailing={
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {seal && !hook.publisher && (
+                      <Button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() =>
+                          void run(`rotate:${hook.d}`, async () => {
+                            const secret = await regenerate(
+                              session,
+                              origin,
+                              seal,
+                              channel,
+                              hook,
+                            );
+                            setSetup({
+                              url: webhookUrl(origin, hook.d),
+                              repo: hook.repo,
+                              secret,
+                            });
+                          })
+                        }
+                      >
+                        Regenerate secret
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       disabled={!!busy}
                       onClick={() =>
-                        void run(`rotate:${hook.d}`, async () => {
-                          const secret = await regenerate(
-                            session,
-                            origin,
-                            seal,
-                            channel,
-                            hook,
-                          );
-                          setSetup({
-                            url: webhookUrl(origin, hook.d),
-                            repo: hook.repo,
-                            secret,
-                          });
-                        })
+                        void run(`unfollow:${hook.d}`, () =>
+                          unfollow(session, channel, hook),
+                        )
                       }
                     >
-                      Regenerate secret
+                      Unfollow
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void run(`unfollow:${hook.d}`, () =>
-                        unfollow(session, channel, hook),
-                      )
-                    }
-                  >
-                    Unfollow
-                  </Button>
-                </div>
-              }
-            />
-          ))}
-        </SettingsGroup>
-      )}
+                  </div>
+                }
+              />
+            ))}
+          </SettingsGroup>
+        )}
+      </div>
     </section>
   );
 }
@@ -347,7 +350,7 @@ export function GitHubHooks({
     state.scope !== channelContext.scope
   )
     return (
-      <p role="status">
+      <p role="status" className={styles.hooks}>
         GitHub repositories are unavailable while the connection recovers.
       </p>
     );

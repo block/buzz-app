@@ -34,6 +34,7 @@ import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { AgentSessions, localSessions } from "./sessions";
+import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
 import { quoted } from "../../features/agent-harness/turn-records";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
@@ -842,6 +843,43 @@ it("ends every turn's prompt with plugins' instructions, before the attention no
     claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
   expect(prompt).toMatch(
     /\n\n<plugin-instructions plugin="acme\.dibs">\nRun dibs_check before a fix\.\n<\/plugin-instructions>\n\n<attention>/,
+  );
+});
+
+it("gives each turn of a kept session the plugins' instructions as they are now", async () => {
+  // Replies in one thread, so one session takes all three turns.
+  const mention = (id: string) =>
+    message(id, "@Claude go on", {
+      created_at: 100 + Number(id),
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ...(id === "1" ? [] : [["e", "1".repeat(64), "", "reply"]]),
+      ],
+    });
+  const { deliver, claudes, agent } = setup([mention("1")]);
+  let current = [{ plugin: "acme.dibs", text: "Run dibs_check first." }];
+  Object.assign(agent, { instructions: () => current });
+  await deliver({ type: "mention", event: mention("1") });
+  await flush(10);
+  // Changed: the session is kept and its next turn has only the new text.
+  current = [{ plugin: "acme.dibs", text: "Run dibs_watch first." }];
+  await deliver({ type: "mention", event: mention("2") });
+  await flush(10);
+  // Removed: the next turn has no section, which the base prompt says
+  // means none apply now.
+  current = [];
+  await deliver({ type: "mention", event: mention("3") });
+  await flush(10);
+  const used = claudes().filter((process) => process.prompts.length);
+  expect(used).toHaveLength(1);
+  const [first, second, third] = used[0]?.prompts ?? [];
+  expect(first).toContain("Run dibs_check first.");
+  expect(second).toContain("Run dibs_watch first.");
+  expect(second).not.toContain("Run dibs_check first.");
+  expect(third).not.toContain("<plugin-instructions");
+  expect(BASE_PROMPT).toContain(
+    "a turn without any means no plugin instructions apply now",
   );
 });
 

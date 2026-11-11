@@ -918,10 +918,14 @@ turn has them too. The base prompt tells the agent to follow them as it
 follows its own instructions, below the base prompt and the owner's requests.
 An optional `when(agent)`, asked as each turn's prompt is built, limits them
 to the agents it returns true for; a `when` that throws leaves out only its
-own. Sections are ordered by plugin and id. The text is sent with every turn,
-so keep it short; text that changes from turn to turn belongs in a note
-(`ctx.agents.note`). They are removed when the plugin is turned off or its
-scope ends. A harness's own prompt hooks (`registerHook`) can add context too,
+own. Sections are ordered by plugin and id. Each turn carries the complete
+current set, and the base prompt tells the agent that it replaces the sets of
+earlier turns, so a session that keeps its history also stops following them
+once the plugin is turned off, its scope ends or its `when` says false. The
+text is the plugin's own and the agent follows it as instructions: write it
+yourself rather than putting others' content in it. It is sent with every
+turn, so keep it short. Context or data for one turn belongs in a note
+(`ctx.agents.note`), which the agent reads as data, not instructions. A harness's own prompt hooks (`registerHook`) can add context too,
 but only for that harness and only as its native hook allows.
 
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by

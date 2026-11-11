@@ -523,7 +523,7 @@ A plugin gives standing instructions to every turn with
 `ctx.agents.addInstructions({ id, text, when? })` (see
 [plugin architecture](plugin-architecture.md)). Unlike a note, they are not
 used up: every turn of every agent this copy runs, or of those `when` accepts,
-shows them while the plugin is on.
+shows them while the plugin is on, and each turn's set replaces the last.
 
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent

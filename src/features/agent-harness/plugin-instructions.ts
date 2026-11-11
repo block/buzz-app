@@ -4,8 +4,10 @@ import type { TurnInstructions } from "../agents/service";
 import { unframed } from "./plugin-wake";
 
 /** One `<plugin-instructions>` section for each plugin's instructions, or
- * undefined when there are none. A plugin's text cannot close its section
- * early or open the turn's event. */
+ * undefined when there are none. A turn's sections are the complete current
+ * set, which the base prompt says replaces earlier turns'. A plugin's text
+ * cannot close its section early; that keeps the prompt well formed and is not
+ * a trust boundary: the text is the trusted plugin's own. */
 export function pluginInstructions(entries: readonly TurnInstructions[] = []) {
   const sections = entries.map(({ plugin, text }) => {
     const body = unframed(

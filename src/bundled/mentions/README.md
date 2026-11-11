@@ -93,7 +93,9 @@ namesakes get qualified labels.
 ## 2. Query syntax
 
 Inline completion opens on `@` at the start of the text or after whitespace,
-`(`, `[`, or `{`. The query is the text from after `@` up to the caret. It MUST
+`(`, `[`, `{`, or one of these punctuation marks, which CJK prose does not
+follow with a space: `，。、．！？；：＂＇（）［］｛｝「」『』《》【】〈〉〔〕〖〗〝〞〟｡｢｣､“”‘’…～〜`.
+The query is the text from after `@` up to the caret. It MUST
 NOT contain `@`, a line break, or a tab. It MAY contain spaces. A client MAY look
 back only 160 characters from the caret. A caret outside the text gives no query.
 

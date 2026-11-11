@@ -606,6 +606,8 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Emoji suggestions** appear when you type `:` and an emoji name. If a name
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip.
+- **Mention, channel and emoji suggestions** also open when you type `@`, `#`
+  or `:` right after CJK punctuation such as `，` or `（`, without a space.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Reminder notifications** open **Reminders** instead of the message if you

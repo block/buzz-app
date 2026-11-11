@@ -50,6 +50,7 @@ export function followUpMessage(
       if (
         !recovery &&
         !message.references.length &&
+        !message.candidates?.length &&
         !Object.keys(message.picks).length
       )
         return session.messages.send(
@@ -66,6 +67,7 @@ export function followUpMessage(
         recovery,
         message.references,
         message.picks,
+        ...(message.candidates ? [message.candidates] : []),
       );
     },
   };

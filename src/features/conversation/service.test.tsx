@@ -82,6 +82,40 @@ it("registers both surfaces under the injecting plugin scope, removes and replac
   await vi.waitFor(() => expect(h.service.tools.snapshot()).toHaveLength(1));
   expect(h.service.tools.snapshot()[0]).not.toBe(first);
 });
+it("exposes plugin-owned pre-send routing through the conversation extensions", async () => {
+  const a = "a".repeat(64),
+    b = "b".repeat(64);
+  const route = vi.fn(async () => [b]);
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerAgentRouter({ id: "assign", route });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  const request = {
+    text: "Check calendar",
+    channelId: "chat",
+    context: [],
+    candidates: [a, b].map((pubkey) => ({
+      pubkey,
+      name: pubkey,
+      description: "",
+    })),
+  };
+  await vi.waitFor(async () =>
+    expect(
+      await h.service.routeAgents(request, new AbortController().signal),
+    ).toEqual([b]),
+  );
+  h.runtime.reconcile([]);
+  await vi.waitFor(async () =>
+    expect(
+      await h.service.routeAgents(request, new AbortController().signal),
+    ).toBeUndefined(),
+  );
+});
+
 it("provides ui.Tabs only while a plugin supplies the tab workspace", async () => {
   const Tabs = () => null;
   const h = harness({

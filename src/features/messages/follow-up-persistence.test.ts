@@ -271,6 +271,26 @@ function fixture(
   };
 }
 
+it("retains a routed request's assigned recipients and candidate pool through queue restoration", async () => {
+  const peer = "b".repeat(64);
+  fixture().enqueue({
+    ...message,
+    references: [peer],
+    candidates: [agent, peer],
+  });
+  const restored = fixture();
+  expect(restored.queue.snapshot()[0]?.message?.candidates).toEqual([
+    agent,
+    peer,
+  ]);
+  const id = restored.queue.snapshot()[0]?.id;
+  if (!id) throw new Error("Missing restored request");
+  restored.queue.sendNow(id);
+  await vi.waitFor(() => expect(restored.send).toHaveBeenCalledOnce());
+  expect(restored.send.mock.calls[0]?.[2]).toEqual([agent]);
+  expect(restored.send.mock.calls[0]?.[7]).toEqual([agent, peer]);
+});
+
 it("restores ordered payloads in the same account/community without automatically publishing", async () => {
   const first = fixture();
   const attachment = {

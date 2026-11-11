@@ -144,6 +144,7 @@ import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { AgentsContext, useSessionState } from "../agents/react";
 import { ComposerModels, type DraftPicks } from "./ComposerModels";
 import type { MentionPicks } from "../relay/messages";
+import { assignAgents } from "./route-agents";
 import type {
   ConversationExtensions,
   CompletionEdit,
@@ -363,6 +364,7 @@ export type MessageComposerProps = {
       picks?: MentionPicks,
       draftPicks?: DraftPicks,
       draftPicksRevision?: string | null,
+      assigned?: readonly string[],
     ) => void;
   };
 };
@@ -2626,7 +2628,11 @@ function Composer({
       );
       return;
     }
-    const savedRevision = revision.current;
+    // New-chat drafts save directly through submission rather than persist(),
+    // so their current stored revision may be newer than this mount's ref.
+    const savedRevision = submission
+      ? viewRevision(scope, draftKey)
+      : revision.current;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
@@ -2722,6 +2728,29 @@ function Composer({
           "Only your available agents can be mentioned in Solo chats. Remove the unavailable recipient and retry.",
         );
       if (submission) {
+        let assigned: readonly string[] | undefined;
+        if (ownSoloConversation && extensions?.routeAgents) {
+          setSending(true);
+          assigned = await assignAgents(
+            extensions,
+            session,
+            channelId,
+            composerMarkdown(captured),
+            capturedRecipients.map(({ pubkey }) => pubkey),
+            attempt.signal,
+          );
+          attempt.signal.throwIfAborted();
+          if (
+            valueRef.current !== captured ||
+            !permitted.current ||
+            !sameAttachmentSelection(
+              attachments.store.snapshot(),
+              capturedAttachments,
+            ) ||
+            viewRevision(scope, draftKey) !== savedRevision
+          )
+            return;
+        }
         // SoloDraft filters the captured choices against its final recipient set.
         submission.submit(
           captured,
@@ -2730,11 +2759,13 @@ function Composer({
           ownSoloConversation ? capturedRunPicks : undefined,
           ownSoloConversation ? capturedPicks : undefined,
           ownSoloConversation ? capturedPicksRevision : undefined,
+          ...(assigned ? [assigned] : []),
         );
         return;
       }
       let references: readonly string[] = [];
       let recipients = capturedRecipients.map((item) => item.pubkey);
+      let routingCandidates: readonly string[] | undefined;
       let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
@@ -2821,6 +2852,27 @@ function Composer({
           }
         }
       }
+      if (ownSoloConversation && !threadRootId && extensions?.routeAgents) {
+        setSending(true);
+        const assigned = await assignAgents(
+          extensions,
+          session,
+          channelId,
+          composerMarkdown(captured),
+          recipients,
+          attempt.signal,
+        );
+        if (assigned) {
+          routingCandidates = [...recipients];
+          references = [
+            ...new Set([
+              ...references,
+              ...recipients.filter((key) => !assigned.includes(key)),
+            ]),
+          ];
+          recipients = [...assigned];
+        }
+      }
       attempt.signal.throwIfAborted();
       if (attachments.store.snapshot().some((item) => item.status === "error"))
         return;
@@ -2843,7 +2895,11 @@ function Composer({
       // Alone with agents, the toolbar keeps the agents; the next draft starts empty.
       const next = routing
         ? mentionDraft("")
-        : rememberedMentions(session, captured, recipients);
+        : rememberedMentions(
+            session,
+            captured,
+            routingCandidates ?? recipients,
+          );
       // Only agents this message still addresses are asked for a model or effort.
       const addressedNow = sessionTargets(recipients);
       const sentPicks: MentionPicks = Object.fromEntries(
@@ -2911,7 +2967,7 @@ function Composer({
               ...(tuned || mediaTargetUrl ? [sentPicks] : []),
               ...(mediaTargetUrl ? [mediaTargetUrl] : []),
             )
-          : references.length || tuned
+          : references.length || tuned || routingCandidates
             ? sender.messages.send(
                 channelId,
                 content,
@@ -2919,7 +2975,8 @@ function Composer({
                 uploaded,
                 undefined,
                 references,
-                ...(tuned ? [sentPicks] : []),
+                ...(tuned || routingCandidates ? [sentPicks] : []),
+                ...(routingCandidates ? [routingCandidates] : []),
               )
             : sender.messages.send(channelId, content, recipients, uploaded);
       }
@@ -2937,6 +2994,7 @@ function Composer({
           attachments: uploaded,
           references,
           picks: sentPicks,
+          ...(routingCandidates ? { candidates: routingCandidates } : {}),
         };
         const send = followUpMessage(host, message);
         return followUpQueue(host).submit(

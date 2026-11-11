@@ -1081,6 +1081,22 @@ members, and teams with unavailable members cannot be selected; edit the team or
 refresh the choices. Adding people to a channel still requires the normal send
 confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
+On builds with pre-send routing support, the optional **Solo Agents Router** plugin
+uses Settings → Decisions API to assign one, several, or all selected agents to
+each request in your own Solo chats. You can add agents ad hoc without creating
+a team or editing their instructions. The selected pool stays available for
+later requests; only the agents assigned to a particular message are notified.
+Open-ended group requests for thoughts, opinions or feedback invite everyone
+to answer. Name particular agents or ask for one answer to narrow the audience.
+Work requiring agent coordination starts all selected agents. Agent replies and
+intermediate outputs continue normally without another routing decision.
+The plugin uses profile bios and the agent instructions Buzz can read here to
+help match requests to agents; these go to your Decisions API provider.
+If routing is uncertain, selects nobody, or fails, the plugin sends to all
+selected agents. Missing instructions do not prevent sending. Disable
+the plugin to restore ordinary sending to every selected agent. Routing selects
+who starts; it does not automatically combine multiple agents' final answers.
+
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls

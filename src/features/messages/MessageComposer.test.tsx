@@ -8396,6 +8396,73 @@ it.each(
   },
 );
 
+it.each(["assigned", "failed", "shared"])(
+  "routes an owner Solo send before publication: %s",
+  async (outcome) => {
+    const h = soloModelPreferenceHarness().mountChat();
+    if (outcome === "shared") {
+      const person = "c".repeat(64);
+      const channels = {
+        status: "ready" as const,
+        channels: [
+          {
+            id: "channel",
+            channelType: "solo" as const,
+            members: [first.pubkey, second.pubkey, person],
+          },
+        ],
+      };
+      Object.assign(h.session.channels, { list: () => channels });
+      Object.assign(h.session.channelWrites, {
+        refreshMembership: vi.fn(async () => channels.channels[0]),
+      });
+      h.setProfiles(
+        new Map([
+          [first.pubkey, { name: "Honey", isAgent: true }],
+          [second.pubkey, { name: "Honey", isAgent: true }],
+          [person, { name: "Person" }],
+        ]),
+      );
+    }
+    h.fill("Check my calendar ");
+    await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+    await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
+    const routeAgents = vi.fn(async () => {
+      if (outcome === "failed") throw new Error("Routing unavailable");
+      return [second.pubkey];
+    });
+    const empty: readonly never[] = [];
+    h.retarget({
+      extensions: {
+        tools: { snapshot: () => empty, subscribe: () => () => {} },
+        inline: { snapshot: () => empty, subscribe: () => () => {} },
+        routeAgents,
+      },
+    });
+    h.submit();
+    await waitFor(() => expect(routeAgents).toHaveBeenCalledOnce());
+    if (outcome === "failed") {
+      await waitFor(() =>
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Routing unavailable",
+        ),
+      );
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.input().value).toContain("Check my calendar");
+    } else {
+      await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+      expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+      expect(h.messages.send.mock.calls[0]?.[5]).toEqual([first.pubkey]);
+      expect(h.messages.send.mock.calls[0]?.[7]).toEqual([
+        first.pubkey,
+        second.pubkey,
+      ]);
+      if (outcome === "shared")
+        expect(h.input().value.match(/@Honey/g)).toHaveLength(2);
+    }
+  },
+);
+
 it("requires explicit recipients when an ordinary Solo chat has multiple agents", async () => {
   const view = mount();
   const list = {

@@ -34,6 +34,7 @@ import type {
   PageTabsProps,
 } from "./contracts";
 import type { RelaySession } from "../relay/session";
+import { createAgentRouting, type AgentRouter } from "./agent-routing";
 
 /** A Solo chat's sidebar icon: what the plugin knows about the chat, or
  * `fallback` when it has nothing to show. */
@@ -57,6 +58,8 @@ export type ChatMenu = Readonly<{
 }>;
 
 export type Conversation = {
+  /** Registers an optional policy for assigning selected Solo agents before send. */
+  registerAgentRouter(router: AgentRouter): void;
   chatMenus: ContributionReader<ChatMenu>;
   registerChatMenu(component: ComponentType<ChatMenuProps>): void;
   attachments: ContributionReader<AttachmentRenderer>;
@@ -142,6 +145,8 @@ function validate(
     );
 }
 export class ConversationService extends Service implements Conversation {
+  private readonly agentRouting;
+  readonly routeAgents;
   readonly attachments;
   private readonly attachmentEntries;
   readonly messages;
@@ -170,6 +175,8 @@ export class ConversationService extends Service implements Conversation {
   readonly ui: Conversation["ui"];
   constructor(ctx: Context) {
     super(ctx, "conversation");
+    this.agentRouting = createAgentRouting(ctx);
+    this.routeAgents = this.agentRouting.route;
     const attachments = createContributions<AttachmentRenderer>(ctx);
     this.attachmentEntries = attachments;
     this.attachments = {
@@ -256,6 +263,9 @@ export class ConversationService extends Service implements Conversation {
         return tabs.snapshot().length ? Tabs : undefined;
       },
     };
+  }
+  registerAgentRouter(router: AgentRouter) {
+    this.agentRouting.register(router, this.ctx);
   }
   registerTabs(component: ComponentType<PageTabsProps>) {
     if (typeof component !== "function")

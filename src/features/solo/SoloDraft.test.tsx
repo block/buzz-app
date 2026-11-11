@@ -276,6 +276,88 @@ it("uses restored explicit mentions, not a separate picker", async () => {
   ]);
 });
 type User = ReturnType<typeof userEvent.setup>;
+it.each(["restored", "typed"])(
+  "sends a %s new-chat draft while notifying only its assigned agent",
+  async (mode) => {
+    const h = setup();
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    const draft = {
+      text: "@Member agent @Outside agent Check calendar",
+      recipients: [
+        { pubkey: a, name: "Member agent", start: 0, end: 13 },
+        { pubkey: b, name: "Outside agent", start: 14, end: 28 },
+      ],
+    };
+    writeView("test", "solo:new-draft", draft);
+    const routeAgents = vi.fn(async () => [b]);
+    render(
+      <SoloDraft
+        session={h.session}
+        scope="test"
+        onStarted={vi.fn()}
+        extensions={{ ...withPill, routeAgents }}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("textbox"));
+    if (mode === "typed") {
+      await user.type(screen.getByRole("textbox"), " tomorrow");
+      expect(
+        readView<{ text: string }>("test", "solo:new-draft", { text: "" }).text,
+      ).toContain("tomorrow");
+    }
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(routeAgents).toHaveBeenCalledOnce();
+    expect(h.channelWrites.start.mock.calls[0]?.[2]).toEqual([a, b]);
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([b]);
+    expect(h.messages.send.mock.calls[0]?.[5]).toEqual([a]);
+    expect(h.messages.send.mock.calls[0]?.[7]).toEqual([a, b]);
+  },
+);
+
+it("does not send a new-chat draft replaced by another writer while routing", async () => {
+  const h = setup();
+  const a = "a".repeat(64),
+    b = "b".repeat(64);
+  const draft = {
+    text: "@Member agent @Outside agent Check calendar",
+    recipients: [
+      { pubkey: a, name: "Member agent", start: 0, end: 13 },
+      { pubkey: b, name: "Outside agent", start: 14, end: 28 },
+    ],
+  };
+  writeView("test", "solo:new-draft", draft);
+  let finish!: (assigned: readonly string[]) => void;
+  const routeAgents = vi.fn(
+    () =>
+      new Promise<readonly string[]>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  render(
+    <SoloDraft
+      session={h.session}
+      scope="test"
+      onStarted={vi.fn()}
+      extensions={{ ...withPill, routeAgents }}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("textbox"));
+  await user.keyboard("{Enter}");
+  await waitFor(() => expect(routeAgents).toHaveBeenCalledOnce());
+  const newer = { ...draft, text: `${draft.text} tomorrow` };
+  writeView("test", "solo:new-draft", newer);
+  await act(async () => {
+    finish([b]);
+  });
+  expect(h.channelWrites.start).not.toHaveBeenCalled();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(readView("test", "solo:new-draft", null)).toEqual(newer);
+});
+
 it.each([
   {
     begun: "text",

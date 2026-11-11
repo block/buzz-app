@@ -99,6 +99,30 @@ ctx.effect(() => {
 
 The table above covers the services most plugins use. The full contract for every service, with TypeScript types and examples, is in [Plugin architecture](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md); the types are exported from [`src/plugins/author.ts`](https://github.com/block/buzz-app/blob/main/src/plugins/author.ts). Read it before you use a service that is not in this table. It describes the latest Buzz, which can have services this app does not. If a service in `inject` is missing, `apply` never runs, so check `plugin_status` after you install.
 
+## Pre-send agent routing
+
+A build with routing support exposes
+`ctx.conversation.registerAgentRouter({ id, async route(request) })` to plugins
+injecting `conversation`. The callback returns a nonempty array of candidate
+pubkeys. It receives the captured request text, channel ID, optional community
+origin, candidate `{ pubkey, name, description }` records, and up to six recent
+loaded messages as `{ author, text }`. No private agent configuration is passed.
+For model-based policy, reuse `ctx.decisions.decide`; the owner selects its provider.
+
+The owner Solo composer invokes one active router before signing, including new
+chats. Multiple active routers, invalid/empty assignments, timeout, errors, and
+plugin replacement while deciding keep the draft unsent. The host validates the
+subset, retains the original candidate pool, and sends ordinary `p` tags only
+to assigned agents. Queue restoration and Outbox retries preserve that captured
+assignment. Single-agent requests, people, ordinary channels, DMs and programmatic
+sends retain ordinary routing. This hook selects initial workers; it does not
+own subsequent agent collaboration or synthesize their final answers.
+
+Feature-check the method: older hosts do not support it. An installable example
+is `examples/plugins/agent-router`. No extra host grant is needed beyond the
+injected trusted plugin services; installation description should explain that
+the plugin changes which selected agents receive a request.
+
 ## Host access (`manifest.host`)
 
 Everything beyond the services above must be declared in `manifest.json`; the owner reviews it at install. Undeclared commands, origins, processes and file access are refused by the host. Limits: at most 16 each of `commands`, `processes`, `networkOrigins`, `agentHooks`. Program names are bare names (`[A-Za-z0-9._-]`, at most 80 bytes, no paths), at most 16 args of 1024 bytes each.

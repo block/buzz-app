@@ -3,6 +3,8 @@
 All example plugins live here with `manifest.json` and prebuilt `plugin.js` files:
 
 - `counter` and `notes`: offline playgrounds.
+- `agent-router`: optional pre-send assignment for ad hoc Solo agents, using the
+  configured Decisions API provider. Requires a host with agent routing support.
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+G /
   Control+Shift+G increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.

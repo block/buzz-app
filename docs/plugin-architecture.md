@@ -2666,6 +2666,14 @@ as they do in Channels.
 
 ### Composer ownership and mention tools
 
+Optional initial agent assignment is registered through
+`conversation.registerAgentRouter`; see [pre-send agent routing](plugin-authoring-guide.md#pre-send-agent-routing).
+`AgentRouter` and `AgentRoutingRequest` are exported by `@buzz/author`. Routing
+changes notification recipients before publication, not agent permissions.
+Signed `buzz:agent-candidate` tags retain the selected pool independently from
+assigned `p` tags. Candidate metadata is display/selection intent only; composer
+reseeding still checks current agent and membership eligibility.
+
 The standard composer is reusable host UI in `features/messages`, not a mandatory
 Composer plugin. Page plugins may compose it through `conversation.ui.Composer`
 (or source props), or build their own editor against the shared session. Built-in

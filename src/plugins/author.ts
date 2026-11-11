@@ -59,6 +59,11 @@ export type {
 } from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
+  AgentRouter,
+  AgentRoutingRequest,
+  RoutingAgent,
+} from "../features/conversation/agent-routing";
+export type {
   ComposerObservation,
   CompletionContext,
   CompletionQuery,

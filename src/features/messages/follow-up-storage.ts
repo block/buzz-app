@@ -14,6 +14,7 @@ export type FollowUpMessage = {
   attachments: readonly UploadedAttachment[];
   references: readonly string[];
   picks: MentionPicks;
+  candidates?: readonly string[];
 };
 export type SavedFollowUp = FollowUpMessage & {
   id: string;
@@ -193,6 +194,7 @@ function valid(value: unknown): value is SavedFollowUp {
     Number.isFinite(v.createdAt) &&
     strings(v.recipients) &&
     strings(v.references) &&
+    (v.candidates === undefined || strings(v.candidates)) &&
     Array.isArray(v.attachments) &&
     v.attachments.every(
       (a) =>

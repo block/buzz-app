@@ -173,3 +173,134 @@ it("links a turn that failed for want of a working key to Settings", async () =>
     "Error: overloaded",
   );
 });
+
+it("defaults to the API key and does not infer Claude account from a saved key", async () => {
+  const { spawn } = host();
+  const auth = new ClaudeAuth(spawn);
+  expect(auth.method).toBe("api-key");
+  expect(auth.signIn).toBeUndefined();
+  expect(auth.attentionLabel).toBe("Add Claude API key");
+  await expect(auth.check()).resolves.toEqual({});
+});
+
+it("persists the method before it becomes active and tells listeners", async () => {
+  const { spawn, started } = host();
+  const data = new Map<string, string>();
+  const storage = {
+    keys: () => [...data.keys()],
+    get: (key: string) => data.get(key) ?? null,
+    read: async (key: string) => data.get(key) ?? null,
+    scan: async (prefix: string) =>
+      Object.fromEntries([...data].filter(([key]) => key.startsWith(prefix))),
+    set: async (key: string, value: string | null) => {
+      if (value === null) data.delete(key);
+      else data.set(key, value);
+    },
+    add: async (key: string, value: string) => {
+      const held = data.get(key);
+      if (held !== undefined) return held;
+      data.set(key, value);
+      return value;
+    },
+  };
+  const auth = new ClaudeAuth(spawn, storage);
+  const told = vi.fn();
+  auth.subscribe(told);
+  await auth.setMethod("cli-account");
+  expect(told).toHaveBeenCalledTimes(1);
+  expect(auth.method).toBe("cli-account");
+  expect(auth.signIn).toEqual(expect.any(Function));
+  expect(auth.attentionLabel).toBe("Sign in to Claude");
+  expect(new ClaudeAuth(spawn, storage).method).toBe("cli-account");
+  expect(started).toEqual([]);
+});
+
+it("starts claude without the API key in account mode, and refuses a turn without a login", async () => {
+  const started: { id: string; options: HostProcessOptions | undefined }[] = [];
+  const spawn: Spawn = async (id, options) => {
+    started.push({ id, options });
+    queueMicrotask(() => {
+      if ((options?.args ?? []).join(" ") === "auth status --json")
+        options?.onStdout?.(id === "claude" ? '{"loggedIn":false}\n' : "");
+    });
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(0),
+    };
+  };
+  const auth = new ClaudeAuth(spawn);
+  await auth.setMethod("cli-account");
+  await expect(
+    auth.authorize(spawn, true)("claude", { env: ENV }),
+  ).rejects.toThrow("Claude needs a Claude account sign-in.");
+  expect(
+    started.some(({ options }) =>
+      options?.secrets?.includes("anthropic-api-key"),
+    ),
+  ).toBe(false);
+});
+
+it("uses claude auth status for account mode and never asks native for the key", async () => {
+  const spawn: Spawn = async (id, options) => {
+    queueMicrotask(() => {
+      if (
+        id === "claude" &&
+        (options?.args ?? []).join(" ") === "auth status --json"
+      )
+        options?.onStdout?.(
+          '{"loggedIn":true,"email":"ada@example.com","orgName":"Example"}\n',
+        );
+    });
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(0),
+    };
+  };
+  store(false);
+  const auth = new ClaudeAuth(spawn);
+  await auth.setMethod("cli-account");
+  await expect(auth.check()).resolves.toEqual({
+    account: "ada@example.com · Example",
+  });
+  const authorized = auth.authorize(spawn, true);
+  await authorized("claude", { env: ENV });
+  expect(state.asked).toBe(0);
+});
+
+it("gives account-mode reviews the setup-token and not the API key", async () => {
+  const spawn: Spawn = async (id, options) => {
+    queueMicrotask(() => {
+      if (id === "review")
+        options?.onStdout?.("/Users/me/review\nsk-ant-oat-review-token\n");
+    });
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(0),
+    };
+  };
+  const auth = new ClaudeAuth(spawn);
+  await auth.setMethod("cli-account");
+  await expect(auth.review()).resolves.toEqual({
+    home: "/Users/me/review",
+    env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-review-token" },
+  });
+  const missing = new ClaudeAuth(async (_id, options) => {
+    queueMicrotask(() => options?.onStdout?.("/Users/me/review\n"));
+    return {
+      write: async () => undefined,
+      end: async () => undefined,
+      kill: async () => undefined,
+      exited: Promise.resolve(0),
+    };
+  });
+  await missing.setMethod("cli-account");
+  await expect(missing.review()).rejects.toThrow(
+    "Claude security reviews need their own sign-in.",
+  );
+});

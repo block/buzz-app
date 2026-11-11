@@ -272,7 +272,9 @@ function applied({
               ? "Darwin arm64\n"
               : args === "--version"
                 ? `${version} (Claude Code)\n`
-                : "",
+                : args === "auth status --json"
+                  ? `${JSON.stringify({ loggedIn: false })}\n`
+                  : "",
       ),
     );
     return {
@@ -899,6 +901,26 @@ it("registers only where setup's bash and base64 exist", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   desktop.tauri = false;
   expect(applied().type).toBeUndefined();
+});
+
+it("lets Claude account be chosen without sending the API key", async () => {
+  const user = userEvent.setup();
+  const Setup = providerSetup(installed().type);
+  render(<Setup onClose={vi.fn()} />);
+  expect(
+    await screen.findByText("Claude runs with your Anthropic API key."),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("combobox", { name: "How Claude signs in" }),
+  );
+  await user.click(
+    await screen.findByRole("option", { name: /Claude account/ }),
+  );
+  expect(
+    await screen.findByText(/Click Sign in to open Claude's login/),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeVisible();
+  expect(screen.queryByLabelText("Anthropic API key")).not.toBeInTheDocument();
 });
 
 it("keeps provider readiness quiet and agent sessions out of Settings", async () => {

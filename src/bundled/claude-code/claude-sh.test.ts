@@ -446,6 +446,25 @@ it.skipIf(process.platform !== "darwin")(
 );
 
 it.skipIf(process.platform !== "darwin")(
+  "saves a review token from stdin and prints it on review",
+  async () => {
+    const { home, review, reviewFolder } = await reviewHome();
+    const saving = run("bash", ["-c", script, "claude.sh", "review-token"], {
+      env: { PATH: process.env.PATH ?? "", HOME: home },
+    });
+    saving.child.stdin?.end("sk-ant-oat-example-token\n");
+    await expect(saving).resolves.toMatchObject({
+      stdout: "Saved the sign-in for Claude security reviews.\n",
+      stderr: "",
+    });
+    await expect(reviewFolder()).resolves.toEqual({
+      stdout: `${review}\nsk-ant-oat-example-token\n`,
+      stderr: "",
+    });
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
   "refuses a review folder that is a link",
   async () => {
     const { home, review, reviewFolder } = await reviewHome();

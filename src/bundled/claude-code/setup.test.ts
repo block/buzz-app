@@ -331,6 +331,29 @@ class InteractiveAuth extends ClaudeAuth {
   }
 }
 
+it("saves a review setup-token on stdin and returns the step's line", async () => {
+  const spawn: Spawn = async (id, options) => {
+    expect(id).toBe("review-token");
+    return {
+      write: async () => undefined,
+      end: async (data = "") => {
+        expect(data).toBe("sk-ant-oat-example\n");
+        queueMicrotask(() =>
+          options?.onStdout?.(
+            "Saved the sign-in for Claude security reviews.\n",
+          ),
+        );
+      },
+      kill: async () => undefined,
+      exited: Promise.resolve(0),
+    };
+  };
+  const setup = new ClaudeSetup(spawn);
+  await expect(
+    setup.saveReviewSignIn("sk-ant-oat-example", new AbortController().signal),
+  ).resolves.toBe("Saved the sign-in for Claude security reviews.");
+});
+
 it("runs an interactive sign-in, shows its output, and checks again after", async () => {
   const { spawn, calls } = scripted({
     "claude auth login": { stdout: "Opening browser…\n" },

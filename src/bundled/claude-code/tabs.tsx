@@ -62,6 +62,32 @@ import {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
+function SignInCode({ setup }: { setup: ClaudeSetup }) {
+  const [code, setCode] = useState("");
+  return (
+    <form
+      className="grid gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void setup.answer(code);
+        setCode("");
+      }}
+    >
+      <Field
+        label="Sign-in code"
+        description="If the browser shows a code to paste, enter it here."
+      >
+        <div className="flex items-center gap-2">
+          <Input value={code} onValueChange={setCode} />
+          <Button type="submit" disabled={!code.trim()}>
+            Send
+          </Button>
+        </div>
+      </Field>
+    </form>
+  );
+}
+
 const label = ({ channelId, name, root }: SavedConversation) =>
   `${name || channelId.slice(0, 8)} · ${root ? `thread ${root.slice(0, 8)}` : "channel"}`;
 const CONVERSATION_LIMIT = 30;
@@ -440,7 +466,7 @@ export function createTabs({
       state.status.state === "signed-out" &&
       !state.running
     )
-      return <Missing openSettings={openSetup} />;
+      return <Missing openSettings={openSetup} method={setup.auth.method} />;
     if (state.status.state !== "ready" || state.running)
       return (
         <ClaudeSignIn
@@ -806,7 +832,9 @@ export function createTabs({
         ? ({ step: "install", label: "Install integration" } as const)
         : status?.state === "outdated"
           ? ({ step: "install", label: "Update Claude" } as const)
-          : status?.state === "signed-out" && setup.auth.signIn
+          : status?.state === "signed-out" &&
+              setup.auth.signIn &&
+              setup.auth.method !== "cli-account"
             ? ({ step: "sign-in", label: "Sign in" } as const)
             : undefined;
     const latestOutputLine = state.output
@@ -864,6 +892,7 @@ export function createTabs({
             </div>
           )}
           {signingIn && <SignIn setup={setup} onSaved={onClose} />}
+          {state.running === "sign-in" && <SignInCode setup={setup} />}
           {status?.state === "error" && (
             <p className="m-0 text-body-sm text-subtle">
               Open Claude Code in a terminal for more details, then please try

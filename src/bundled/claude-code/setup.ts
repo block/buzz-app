@@ -47,6 +47,7 @@ const STEPS: Readonly<Record<string, string>> = {
   install: "install",
   use: "use",
   review: "review",
+  "review-token": "review-token",
 };
 /** Starts `claude` and its other steps as steps of `claude.sh`, which the
  * manifest grants as `bash -c`; other processes start as declared. */
@@ -638,6 +639,35 @@ export class ClaudeSetup {
   /** Sends a line to the running step, such as a sign-in code. */
   answer(text: string) {
     return this.process?.write(`${text}\n`);
+  }
+  /** Saves the token `claude setup-token` printed as security reviews' own
+   * sign-in. Like a sign-in code it goes on stdin, never in an argument, and
+   * the step prints only fixed lines, which this returns or throws. */
+  async saveReviewSignIn(token: string, signal: AbortSignal) {
+    if (!this.spawn) throw new Error("Claude reviews need the desktop app");
+    let output = "";
+    const process = await this.spawn("review-token", {
+      onStdout: (text) => {
+        output += text;
+      },
+      onStderr: (text) => {
+        output += text;
+      },
+    });
+    const stop = () => void process.kill();
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) stop();
+    try {
+      await process.end(`${token}\n`);
+      const code = await process.exited;
+      if (code !== 0)
+        throw new Error(
+          output.trim() || `Saving ended (${code ?? "stopped"}).`,
+        );
+      return output.trim();
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
   }
   cancel() {
     this.cancelled = true;

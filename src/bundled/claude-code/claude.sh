@@ -6,14 +6,15 @@
 #   install VERSION PLATFORM SHA256  downloads a release, unless it is already
 #                                    downloaded, and checks it
 #   use VERSION                      makes a downloaded release the one in use
-#   review                           makes security reviews' folder and
-#                                    prints it
+#   review-token                     saves security reviews' sign-in from stdin
+#   review                           prints their folder, then that sign-in
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
 # Security reviews keep their own Claude folder beside it (macOS only), which
 # Buzz Security hides from contained agents. The API key is not here: native
-# code keeps it in the OS credential store (`claude_key.rs`).
+# code keeps it in the OS credential store (`claude_key.rs`). Account-mode
+# reviews use a setup-token saved in this folder.
 review=""
 if [ "$(uname)" = Darwin ]; then
   dir="$HOME/Library/Application Support/Buzz/claude-code"
@@ -135,12 +136,41 @@ use)
       newer "$folder" "$version" || rm -rf "${dir:?}/$folder"
   done
   ;;
+review-token)
+  # The token `claude setup-token` printed, read from stdin so it is never an
+  # argument, and never printed: only these fixed lines are.
+  [ -n "$review" ] || { echo "Claude security reviews need macOS" >&2; exit 2; }
+  token=""
+  IFS= read -r token || true
+  # Loosely, as its exact form is Claude's: one `sk-ant-` word.
+  LC_ALL=C
+  case "$token" in
+  sk-ant-?*) ;;
+  *) token="" ;;
+  esac
+  case "$token" in "" | *[!A-Za-z0-9_-]*)
+    echo "That is not a Claude token. Paste what claude setup-token printed." >&2
+    exit 1
+    ;;
+  esac
+  make_review
+  umask 077
+  # A new file only, then a rename over the old one, so no link is followed.
+  part="$review/token.$$"
+  trap 'rm -f "$part"' EXIT
+  (set -C && printf '%s\n' "$token" >"$part")
+  mv -f -h "$part" "$review/token"
+  echo "Saved the sign-in for Claude security reviews."
+  ;;
 review)
   # Reviews' own Claude folder, made on first use, which Buzz Security hides
-  # from contained agents.
+  # from contained agents. Folder alone until it holds a sign-in.
   [ -n "$review" ] || { echo "Claude security reviews need macOS" >&2; exit 2; }
   make_review
   printf '%s\n' "$review"
+  if [ -f "$review/token" ] && [ ! -h "$review/token" ]; then
+    cat "$review/token"
+  fi
   ;;
 *)
   echo "Unknown command: $command" >&2

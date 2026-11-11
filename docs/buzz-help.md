@@ -958,21 +958,26 @@ available rather than silently discarding it.
   Builderlab permissions are re-read at most once a minute while the app uses
   them, so a newly granted or removed permission applies without signing in
   again; a failed check keeps the previous permissions.
-  Claude runs with an Anthropic API key pasted under **Anthropic API key**
-  there, once for every Claude agent. When creating a Claude agent or editing
-  one that runs on this computer, click **Add key** beside **Harness** to open
-  **Set up Claude**. Builds with interactive authentication show **Sign in**
-  instead. Selecting Claude does not open setup automatically; closing setup
-  keeps Claude selected. An interactive sign-in continues if you navigate Back;
-  returning to creation restores its pending controls with **Cancel**, without
-  starting another sign-in. Explicitly closing setup cancels a pending sign-in.
-  **Model**, **Thinking**, and agent creation wait until credentials are saved.
-  Agents on execution targets use that target's credentials, not a key on this
+  Claude asks **How Claude signs in** there: **Anthropic API key** (the default)
+  or **Claude account**. The API key is pasted once for every Claude agent.
+  When creating a Claude agent or editing one that runs on this computer, click
+  **Add key** beside **Harness** to open **Set up Claude**. Claude account
+  shows **Sign in** instead, which runs `claude auth login`. Selecting Claude
+  does not open setup automatically; closing setup keeps Claude selected. An
+  interactive sign-in continues if you navigate Back; returning to creation
+  restores its pending controls with **Cancel**, without starting another
+  sign-in. Explicitly closing setup cancels a pending sign-in. **Model**,
+  **Thinking**, and agent creation wait until credentials are saved. Agents on
+  execution targets use that target's credentials, not a key or account on this
   computer. Buzz keeps the API key in the system's secure credential store
   (Keychain on macOS) and
-  gives it to every Claude process, security reviews included. Commands a
-  Claude agent runs inherit it, so they can read the key. Until a key is
-  saved, Claude agents don't answer and Claude reviews fail closed.
+  gives it to every Claude process, security reviews included, only while API
+  key is selected. Commands a Claude agent runs inherit it, so they can read
+  the key. Account mode does not send the key; security reviews then need a
+  `claude setup-token` paste under **Sign in for reviews**. Until the selected
+  method has credentials, Claude agents don't answer and Claude reviews fail
+  closed. Switching methods does not delete a saved key or log out the Claude
+  account.
   Codex security reviews for protected agents need a ChatGPT sign-in made
   there, and fail until there is one, or while Codex's sign-in is for another
   workspace. Codex's harness defaults offer that sign-in while Codex is signed

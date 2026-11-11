@@ -99,6 +99,15 @@ activation rather than failing early. Like the entity links, the form binds to t
 selected community and viewer, and a link is not authorization for anything the
 page itself guards.
 
+The built-in Agents page accepts a shared marketplace listing as
+`buzz://plugin?id=buzz.agents&page=agents&route.shared=<publisher>:<catalog-id>&route.community=<encoded-https-origin>`.
+**Copy link** in the listing's profile produces this address. The publisher and
+catalog ID identify the listing even when its name changes or matches another
+agent. The link opens its latest shared definition for review; importing remains
+an explicit action. Select the link's community before opening it. Another
+community shows where the listing belongs and does not resolve that address there. A listing
+that was withdrawn or is inaccessible shows an unavailable message with retry.
+
 Entity sections are `files`, `commits`, `issues`, `prs`, `contributors`, and
 `channels`; omitting the section opens the overview. Repository commit links add
 `&tab=commits&commit=<40- or 64-hex hash>`. Identifiers use 1-64 ASCII letters,

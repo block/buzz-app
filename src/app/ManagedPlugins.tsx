@@ -49,6 +49,15 @@ export function ManagedPlugins({
 }) {
   const [reviewingId, setReviewingId] = useState<string>();
   const trigger = useRef<HTMLElement | null>(null);
+  // Opening Settings after a failed first fetch retries once, so restored
+  // connectivity shows up without waiting for the next scheduled attempt.
+  const retried = useRef(false);
+  const unavailable = !!plugins.imports && managed?.status === "unavailable";
+  useEffect(() => {
+    if (!unavailable || busy || retried.current) return;
+    retried.current = true;
+    void plugins.refreshManaged();
+  }, [unavailable, busy, plugins]);
   if (!plugins.imports || !managed) return null;
   // Rendered outside the group: installing the last pending row empties the group.
   const review = reviewingId ? (
@@ -73,7 +82,41 @@ export function ManagedPlugins({
       ? managed.plugins.filter(({ state }) => state !== "current")
       : [];
   const section =
-    managed.status === "invalid" ? (
+    managed.status === "loading" ? (
+      <section
+        aria-labelledby="managed-plugins-title"
+        className={styles.pluginCoreSection}
+      >
+        <InlineHeader id="managed-plugins-title" title="Recommended plugins" />
+        <p role="status" className="m-0 text-body-sm text-muted break-words">
+          Loading the recommended plugin list…
+        </p>
+      </section>
+    ) : managed.status === "unavailable" ? (
+      <section
+        aria-labelledby="managed-plugins-title"
+        className={styles.pluginCoreSection}
+      >
+        <InlineHeader
+          id="managed-plugins-title"
+          title="Recommended plugins unavailable"
+          actions={
+            <Button
+              size="sm"
+              variant="subtle"
+              disabled={busy}
+              onClick={() => void plugins.refreshManaged()}
+            >
+              Retry
+            </Button>
+          }
+        />
+        <p role="status" className="m-0 text-body-sm text-muted break-words">
+          Buzz couldn’t load the recommended plugin list from {managed.url}.{" "}
+          {managed.reason}
+        </p>
+      </section>
+    ) : managed.status === "invalid" ? (
       <section
         aria-labelledby="managed-plugins-title"
         className={styles.pluginCoreSection}

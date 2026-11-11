@@ -213,6 +213,10 @@ fn print_managed(managed: &Managed) {
         Managed::Invalid { path, reason } => {
             println!("Policy: {path}\nStatus: unusable\nProblem: {reason}")
         }
+        Managed::Loading { url } => println!("Policy: {url}\nStatus: not fetched yet"),
+        Managed::Unavailable { url, reason } => {
+            println!("Policy: {url}\nStatus: unavailable\nProblem: {reason}")
+        }
         Managed::Ready {
             path,
             source,

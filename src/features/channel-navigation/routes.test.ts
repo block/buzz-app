@@ -56,3 +56,22 @@ it("builds Solo draft destinations in the community", () => {
   );
   expect(() => soloDraftTarget("bad")).toThrow();
 });
+
+it("keeps a region draft's label and refuses a malformed or linked one", () => {
+  const region = "buzz.region:example.tasks:tasks";
+  expect(soloDraft({ kind: "solo-draft", region, project: "p" })).toEqual({
+    region,
+    project: "p",
+  });
+  for (const params of [
+    { kind: "solo-draft", region: "buzz.solo" },
+    { kind: "solo-draft", region: "buzz.region:Example:tasks" },
+    { kind: "solo-draft", region: 1 },
+    {
+      kind: "solo-draft",
+      region,
+      linked: "00000000-0000-4000-8000-000000000000",
+    },
+  ])
+    expect(soloDraft(params)).toBeUndefined();
+});

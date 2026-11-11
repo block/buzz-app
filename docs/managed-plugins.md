@@ -38,9 +38,43 @@ One file serves every local profile (`BUZZODZ_PROFILE`) under that folder. A too
 wants both an installed and a development Buzz to see the policy writes both paths.
 The pre-1.0 `dev.local.buzz.foundation` folder is not read.
 
-A missing file means no policy. Buzz never creates, edits or deletes the file; the
+A missing file means no policy, unless the build carries a
+[packaged policy](#packaged-policy). Buzz never creates, edits or deletes the file; the
 writer creates the folder if needed. "Sign out and erase local data" clears the whole
 app data folder, including this file, so a writer should restore it on its next run.
+
+### Packaged policy
+
+An internal packager can point its build at a policy it publishes, so every install
+recommends the same plugins without anything writing the file, and picks up new pins
+as the packager re-releases them:
+
+```sh
+BUZZ_BUILD_MANAGED_PLUGINS_URL=https://plugins.example/managed-plugins.json bin/pnpm tauri build
+```
+
+The value is read from the build process environment or repository-root `.env.local`.
+The build fails unless it is an `https` URL without credentials or a fragment. Leave it
+unset for OSS builds.
+
+The desktop app fetches the URL when it starts and every 6 hours, or 15 minutes after a
+failed attempt. It follows redirects only to `https` URLs, gives up after 30 seconds,
+and accepts at most 256 KiB. A response that is not a usable version 1 document (the
+rules below) is discarded, and Buzz keeps the last good copy in
+`packaged-managed-plugins-<hash of the URL>.json` beside the profile folders. A copy belongs to its URL: a build that names another URL never shows it, and the first usable policy from the new URL deletes it. Entries the copy ignores
+are reported as they are for the file. Serve the policy with short-lived or no edge
+caching: a stale copy keeps recommending a commit its reference no longer points to.
+
+Until the first fetch succeeds there is no copy to recommend from. Settings → Plugins
+then says the list is loading or, after a failure, that it is unavailable, with the
+reason and a **Retry** button. Opening Settings after a failure also retries once.
+Later failures keep showing the last good copy.
+
+Buzz uses the packaged policy only when no file exists at the resolved location, and
+never when `BUZZ_MANAGED_PLUGINS` names a file. A file written by a machine manager
+therefore replaces it completely; the two are not merged. "Sign out and erase local
+data" deletes the stored copy, and the next fetch restores it. It recommends, exactly
+like the file.
 
 ### Writing the file safely
 
@@ -201,6 +235,9 @@ BUZZ_MANAGED_PLUGINS=/tmp/policy.json buzzodz plugin managed
 The command prints the file path, the source name, each valid entry with its state for
 the selected profile, and the reason for each ignored entry. `buzzodz` and the desktop
 share one implementation, so a writer can use it to check a file it wrote.
+
+To check a packaged policy before publishing it, write it to a scratch file and point
+`BUZZ_MANAGED_PLUGINS` at that file.
 
 ## Writer checklist
 

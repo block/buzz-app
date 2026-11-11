@@ -49,6 +49,7 @@ const nonIconDependencies = new Set([
   "d3-scale", // Chart scales and ticks; marks are Buzz-rendered SVG.
   "diff", // Text line diffs for Canvas history, not an icon library.
   "dockview-react",
+  "echarts", // Chart marks; not an icon library.
   "emoji-mart",
   "flexlayout-react",
   "jsdom",

@@ -112,6 +112,7 @@
     "allow-plugin-update-check",
     "allow-plugin-update-preview",
     "allow-plugin-catalog",
+    "allow-plugin-managed-refresh",
     "allow-plugin-change",
     "allow-plugin-reload",
     "allow-plugin-module",

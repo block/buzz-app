@@ -1135,7 +1135,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows, Changesets and Shared compute are off by default for fresh installs. Bestie,
+Workflows, Changesets, Shared compute and Charts are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -2475,6 +2475,22 @@ Markdown links can use a registered panel target. The host checks `canOpenLink`
 when it renders the link and again on activation. Removing the panel makes the
 target unavailable. External links retain the HTTP(S) URL checks.
 
+`registerAttachment({ id, title, matches, order?, component })` draws a message or draft
+attachment the host would otherwise draw itself. Components receive
+`{ attachment, source, placement?, message?, FileCard?, onRemove?, canOpen, open }`.
+Among matching renderers the lowest `order` wins under the panel
+[resolution order](#resolution-order); throwing matchers are skipped, and render
+failure or removal restores the host attachment. `placement` is `"message"` in message rows
+and `"composer"` in draft and voice-note surfaces. Message rows also pass
+`message`, the message that holds the attachment, so a preview can name its
+author and conversation; drafts omit it. For file attachments the host
+also passes `FileCard`, its own file card. Rendering it with
+`onPreview` makes the card itself open the preview, typically `open(target)`
+for a panel, while a separate trailing action keeps the host's native or browser
+download. Offer `onPreview` only in message placement, and pass the renderer's
+`open` as `onOpenLink` so external files keep ordinary link activation. Older
+hosts may omit `placement`, `message` and `FileCard`.
+
 The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
 kind 40008. Shared history, live, thread and exact readers retain these messages
 independently of the plugin, preserving raw patches rather than interpreting them
@@ -2582,9 +2598,19 @@ their text and the plugin disables diagram links, images and Pele's own zoom
 controls. Its action opens the diagram in an expanded dialog, which zooms by
 pinch, Ctrl/⌘-scroll, drag, double-click and keyboard and offers Copy code.
 Invalid source shows Pele's error with the source.
+The bundled **Charts** plugin (`buzz.charts`, off by default) draws `buzz-chart`
+blocks with [Apache ECharts](https://echarts.apache.org/), loaded on first use
+with the SVG renderer. The JSON is untrusted: version 1 is a bounded
+bar/line/scatter grammar and version 2 passes an ECharts option through an
+allowlist (`spec.ts`, `sanitize.ts`) that drops links, images, graphics, HTML
+tooltips and anything else that fetches or injects. Marks use the four
+`chart-series` roles, with extra version 1 series summed into Other. Its action
+opens the chart in an expanded dialog, and invalid JSON shows the error with the
+source. The host's Copy action copies the fenced JSON.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
-methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` components, plus `.Tabs` while a plugin provides it. Generated
+methods and stable `conversation.ui.Composer` / `.Message` / `.Thread` / `.Conversation` /
+`.ReplyBranch` / `.ReplySummary` components, plus `.Tabs` while a plugin provides it. Generated
 type-only `@buzz/author` declarations are exercised by a source-only external consumer
 fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
 the browser test's temporary profile.
@@ -2599,6 +2625,28 @@ the host's day dividers re-render at local midnight; a plugin that shows these
 labels in its own long-lived view must call them again when the day changes.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+For a page-owned retained reader, `conversation.ui.ReplyBranch` groups the
+page's own root message and child rows with the native expand/collapse controls
+and focus recovery; `conversation.ui.ReplySummary` formats caller-supplied reply
+counts, participants, activity, unread and draft indicators. `ReplyBranch` takes
+`message`, `layout`, `summary`, accessible `label` and `collapseLabel`,
+`hasReplies`, controlled `open` and `depth`, `onExpand`, `onCollapse`, and
+`children`. Match `layout` to the supplied message: `"thread"` for a normal
+thread row or `"continuation"` for a continuing message run. `ReplySummary` takes
+`count`, `participants`, `resolveName`, and `media`; profiles, agent identities, activity, unread and draft presentation
+are optional. The caller owns rows and reply-tree construction, expansion,
+loading and failure state, drafts, reply targets, IME, stable-reading behavior,
+and read acknowledgements. These components do not read relay state or change
+those policies; compose them around the caller's rows instead of replacing its
+reader. Per-reply connector hooks belong to the native thread list and are not
+provided for caller-owned child rows.
+Put `data-message-id` on each message row to use the native expand/collapse
+focus handoff. Expansion sets the first revealed row's `tabIndex` to `-1`
+before focusing it, provided the row is rendered when `open` changes. Callers
+loading rows asynchronously must render them before opening or manage focus for
+their loading and retry feedback themselves. Supply accessible action labels
+that include the summary's visible text, such as "View 1 reply".
 
 `conversation.ui.Thread({ session, scope, channelId, channelName, messageId })`
 renders the existing `ThreadPanel` without its side-panel header, close control

@@ -13,6 +13,8 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import { ReplyBranch } from "../messages/ReplyBranch";
+import { ReplySummary } from "../messages/ReplySummary";
 import {
   formatDayGroupLabel,
   formatFullTimestamp,
@@ -87,6 +89,10 @@ export type Conversation = {
     Conversation: (props: EmbeddedConversationProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+    /** Controlled native reply grouping for caller-owned retained readers. */
+    ReplyBranch: typeof ReplyBranch;
+    /** Native reply summary from the caller's count and participant facts. */
+    ReplySummary: typeof ReplySummary;
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
@@ -252,6 +258,8 @@ export class ConversationService extends Service implements Conversation {
       Message: (props: Omit<MessageRowProps, "extensions">) => (
         <MessageRow {...props} extensions={this} />
       ),
+      ReplyBranch,
+      ReplySummary,
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;
       },

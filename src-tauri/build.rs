@@ -166,6 +166,7 @@ fn main() {
             "plugin_import_install",
             "plugin_import_discard",
             "plugin_catalog",
+            "plugin_managed_refresh",
             "plugin_change",
             "plugin_reload",
             "plugin_module",

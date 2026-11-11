@@ -2242,9 +2242,11 @@ function ChannelWorkspace({
                 draft.project,
                 draft.agent,
                 draft.linked,
+                draft.region,
                 retiredSoloDraft.generation,
               ])}
               linkedId={draft.linked}
+              region={draft.region}
               source={linkedSource}
               visit={navigation}
               focusRequest={

@@ -1,11 +1,14 @@
 import type { JsonValue, OpenTarget } from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
+import { regionLabels } from "../solo/region-labels";
 
 /** An unsent Solo conversation: nothing exists on the relay until its first send. */
 export type SoloDraft = Readonly<{
   project?: string;
   agent?: string;
   linked?: string;
+  /** The Solo region label whose source opened this draft. */
+  region?: string;
 }>;
 
 const agentKey = /^[0-9a-f]{64}$/;
@@ -22,11 +25,19 @@ export function soloDraft(
         key !== "kind" &&
         key !== "project" &&
         key !== "agent" &&
-        key !== "linked",
+        key !== "linked" &&
+        key !== "region",
     )
   )
     return;
-  const { project, agent, linked } = value;
+  const { project, agent, linked, region } = value;
+  if (
+    region !== undefined &&
+    (typeof region !== "string" ||
+      !regionLabels([region]).length ||
+      linked !== undefined)
+  )
+    return;
   if (
     linked !== undefined &&
     (typeof linked !== "string" ||
@@ -49,6 +60,7 @@ export function soloDraft(
     ...(project ? { project } : {}),
     ...(agent ? { agent } : {}),
     ...(linked ? { linked } : {}),
+    ...(region ? { region } : {}),
   };
 }
 

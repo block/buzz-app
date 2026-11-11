@@ -40,6 +40,10 @@ import {
   setClockPreference,
 } from "../shared/clock-preference";
 
+import {
+  setWebsiteViewerPreference,
+  websiteViewerPreference,
+} from "../features/browser/preference";
 const preferenceAppearances: ReturnType<typeof createAppearance>[] = [];
 function preferencesPage() {
   const appearance = createAppearance();
@@ -61,6 +65,7 @@ afterEach(() => {
     seconds: false,
     messageTimestamps: "show",
   });
+  setWebsiteViewerPreference("buzz");
   localStorage.clear();
   vi.unstubAllGlobals();
 });
@@ -346,6 +351,37 @@ it("saves new-thread placement, restores it, and follows another window", async 
     );
   });
   expect(choice()).toHaveTextContent("Side pane");
+});
+
+it("saves where website links open, and hides the choice without a built-in viewer", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const page = (viewerAvailable: boolean) => (
+    <ToastProvider>
+      <AppearanceSettings
+        appearance={appearance}
+        viewerAvailable={viewerAvailable}
+      />
+    </ToastProvider>
+  );
+  render(page(true));
+  const choice = () =>
+    screen.getByRole("combobox", { name: "Open website links in" });
+  expect(choice()).toHaveTextContent("Buzz’s built-in browser");
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "My browser" }));
+  expect(websiteViewerPreference()).toBe("browser");
+  // Another window, or the next launch, reads what was saved.
+  cleanup();
+  render(page(true));
+  expect(choice()).toHaveTextContent("My browser");
+  // A device that cannot show Buzz's website viewer offers no choice.
+  cleanup();
+  render(page(false));
+  expect(
+    screen.queryByRole("combobox", { name: "Open website links in" }),
+  ).not.toBeInTheDocument();
 });
 
 it("keeps unsaved thread placement and recovery through remount, then retries the same choice", async () => {

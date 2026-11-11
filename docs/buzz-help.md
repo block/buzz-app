@@ -701,7 +701,9 @@ revokes all of them, and a pairing unused for 30 days expires.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
-  **Open in browser**.
+  **Open in browser**. On a Mac, **Settings → Appearance → Conversations →
+  Open website links in** sends every link Buzz would show in its built-in
+  website viewer, such as a Builderlab app, to your browser instead.
 - **Close tabs or the window (macOS)**: ⌘W closes the active tab. With no tab
   to close, it closes the window while Buzz and running agents stay open.
   Reopen Buzz from the Dock. ⌘⇧W clears the current channel's tabs without

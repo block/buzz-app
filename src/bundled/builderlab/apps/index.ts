@@ -404,7 +404,7 @@ export function applyApps(
       });
       return opened
         ? "Opened beside the conversation."
-        : "Not opened: your owner is not viewing this conversation in the desktop app now. Post the URL; clicking it opens the app beside the conversation.";
+        : "Not opened: your owner is not viewing this conversation in the desktop app now, or has website links opening in their browser instead of Buzz's built-in viewer. Post the URL; clicking it opens the app wherever their links are set to go.";
     },
   });
 }

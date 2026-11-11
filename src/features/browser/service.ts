@@ -3,6 +3,7 @@ import { createElement, type ComponentType } from "react";
 import type { Browser, BrowserViewProps } from "./api";
 import { BrowserHostView } from "./BrowserHostView";
 import { createBrowserPlatform, type BrowserPlatform } from "./platform";
+import { websiteViewerPreference } from "./preference";
 import { BrowserSessions } from "./sessions";
 
 export class BrowserService extends Service implements Browser {
@@ -22,6 +23,6 @@ export class BrowserService extends Service implements Browser {
       });
   }
   get available() {
-    return this.platform.available;
+    return this.platform.available && websiteViewerPreference() === "buzz";
   }
 }

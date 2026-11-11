@@ -38,6 +38,11 @@ import {
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
+import {
+  setWebsiteViewerPreference,
+  useWebsiteViewerPreference,
+} from "../features/browser/preference";
+import { createBrowserPlatform } from "../features/browser/platform";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
   setClockPreference,
@@ -68,12 +73,15 @@ export function AppearanceSettings({
   appearance,
   active = true,
   autocorrectAvailable = macWebKit(),
+  viewerAvailable = createBrowserPlatform().available,
   communities,
 }: {
   appearance: Appearance;
   active?: boolean;
   /** Only Mac WebKit applies the composer's autocorrect attribute. */
   autocorrectAvailable?: boolean;
+  /** Whether this device can show Buzz's built-in website viewer. */
+  viewerAvailable?: boolean;
   communities?: Pick<Communities, "relay"> | undefined;
 }) {
   const followUp = useFollowUpBehaviorPreference();
@@ -83,6 +91,7 @@ export function AppearanceSettings({
   const names = useNamePreference();
   const verifiedCommunity = useVerifiedCommunity(communities?.relay);
   const { placement, unsaved } = useThreadPlacementPreference();
+  const websiteViewer = useWebsiteViewerPreference();
   const increaseButton = useRef<HTMLButtonElement>(null);
   const pendingFocus = useRef<HTMLButtonElement | null>(null);
   const resetRef = useCallback((node: HTMLButtonElement | null) => {
@@ -466,6 +475,32 @@ export function AppearanceSettings({
                 />
               }
             />
+            {viewerAvailable && (
+              <PreferenceRow
+                title="Open website links in"
+                subtitle="Where links Buzz can show in its built-in browser, such as a Builderlab app, open."
+                trailing={
+                  <Select
+                    variant="compact"
+                    label="Open website links in"
+                    value={websiteViewer.viewer}
+                    groups={[
+                      {
+                        label: "Viewer",
+                        options: [
+                          { value: "buzz", label: "Buzz’s built-in browser" },
+                          { value: "browser", label: "My browser" },
+                        ],
+                      },
+                    ]}
+                    onValueChange={(value) => {
+                      if (value === "buzz" || value === "browser")
+                        setWebsiteViewerPreference(value);
+                    }}
+                  />
+                }
+              />
+            )}
             {autocorrectAvailable && (
               <SwitchPreferenceRow
                 label="Allow automatic spelling correction"

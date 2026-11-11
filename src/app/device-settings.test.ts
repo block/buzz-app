@@ -36,6 +36,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     { key: "conversations.autocorrect", value: false, saved: true },
     { key: "agents.remember_mentioned", value: true, saved: true },
     { key: "search.unread_first", value: true, saved: true },
+    { key: "links.website_viewer", value: "buzz", saved: true },
   ]);
   appearance.dispose();
 });
@@ -184,5 +185,24 @@ it("changes the message and agent preferences through their own setters", () => 
   ])
     expect(set(settings, key, settings.get(key).value).saved).toBe(true);
   for (const event of events) window.removeEventListener(event, changed);
+  appearance.dispose();
+});
+
+it("moves website links to the browser, saved and announced", () => {
+  const appearance = createAppearance(window);
+  const settings = deviceSettings(appearance);
+  const changed = vi.fn();
+  window.addEventListener("buzz-website-viewer-changed", changed);
+  expect(set(settings, "links.website_viewer", "browser")).toEqual({
+    key: "links.website_viewer",
+    description: expect.any(String),
+    schema: { type: "string", enum: ["buzz", "browser"] },
+    applies: expect.stringMatching(/built-in website viewer/),
+    value: "browser",
+    saved: true,
+  });
+  expect(changed).toHaveBeenCalledOnce();
+  expect(localStorage.getItem("buzz-website-viewer.v1")).toBe("browser");
+  window.removeEventListener("buzz-website-viewer-changed", changed);
   appearance.dispose();
 });

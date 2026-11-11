@@ -804,7 +804,10 @@ persisted backup receipt for the key, so a launch offline or signed out shows a
 backed-up key as **Backed up**. A later attempt that can't reach Builderlab, an
 ended sign-in, or a failed account lookup does not unconfirm it; only the
 signed-in account answering that it links no key, or another key, clears it, and
-the next account handoff starts again from the receipt.
+the next account handoff starts again from the receipt. Settings also withholds
+**Backed up** while its own account read shows another key linked and backed
+up there, even when native's pass stopped before it asked the account (for
+example, waiting for consent).
 **Check backup** flips to the explanation and retry.
 The pill sits inside the artwork, so loading cannot move the card or its controls.
 Builds without a service reserve no pill space. The back uses the same concise

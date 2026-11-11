@@ -170,9 +170,6 @@ export function IdentitySettings({
   const management = candidate?.pubkey === viewer ? candidate : undefined;
   const checking = !!identity && !management;
   const managed = management?.policy === "organization-managed";
-  const backupConfirmed =
-    !!management &&
-    (management.initialBackupConfirmed || status?.status === "complete");
   const accountBackup = useBackedUpKey(
     viewer,
     identity,
@@ -180,6 +177,12 @@ export function IdentitySettings({
     offered,
     status?.status === "complete",
   );
+  // A receipt or finished pass confirms this key's backup unless the account
+  // read succeeded and showed another key linked and backed up there.
+  const backupConfirmed =
+    !!management &&
+    (management.initialBackupConfirmed || status?.status === "complete") &&
+    (!accountBackup.key || accountBackup.key === viewer);
   const provider = useSyncExternalStore(
     federatedIdentity?.subscribe ?? emptySubscribe,
     federatedIdentity?.snapshot ?? emptySnapshot,
@@ -373,6 +376,7 @@ export function IdentitySettings({
                           statusError={checking && policyError}
                           identity={identity}
                           offered={offered}
+                          confirmed={backupConfirmed}
                           openBuilderlab={openBuilderlab}
                           accountError={accountBackup.failed}
                           accountPending={accountBackup.pending}
@@ -1011,6 +1015,7 @@ function BackupRecovery({
   statusError,
   identity,
   offered,
+  confirmed,
   openBuilderlab,
   accountError,
   accountPending,
@@ -1024,6 +1029,8 @@ function BackupRecovery({
   statusError: boolean;
   identity: Identity;
   offered: boolean;
+  /** The page's backup confirmation, as the badge shows it. */
+  confirmed: boolean;
   openBuilderlab: (() => void) | undefined;
   accountError: boolean;
   accountPending: boolean;
@@ -1057,8 +1064,6 @@ function BackupRecovery({
       current.current = false;
     };
   }, []);
-  const confirmed =
-    management?.initialBackupConfirmed || status?.status === "complete";
   // A confirmed key's backup is not in question when the account read fails.
   const accountProblem = accountError && !confirmed;
   const running = !!management && status?.status === "running";

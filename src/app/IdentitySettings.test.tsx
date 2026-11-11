@@ -627,6 +627,25 @@ it("shows a confirmed key as backed up when the account read fails", async () =>
   expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
 });
 
+// Backed up K, turned automatic backup off, then linked K2 elsewhere: native
+// stops at consent before it asks the account, so only Settings' own read
+// sees K2.
+it("withholds a receipt's Backed up while the account shows another backed-up key", async () => {
+  const other = "cd".repeat(32);
+  const { fi, mount } = accountFixture(
+    confirmedAt(1, { status: "waiting", reason: "no_consent" }),
+  );
+  fi.request.mockImplementation(async ({ path }) =>
+    accountResponse(path, other, [viewer, other]),
+  );
+  mount();
+  expect(await screen.findByText("Backed-up key · Linked")).toBeVisible();
+  const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+  expect(badge.queryByText("Backed up")).toBeNull();
+  await showKeyDetails();
+  expect(badge.queryByText(/A backup is saved/)).toBeNull();
+});
+
 // Another attempt gets the same answer: the copy says what to do instead.
 it.each([
   [

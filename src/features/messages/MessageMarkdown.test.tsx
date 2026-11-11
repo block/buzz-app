@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
+stubAvatarBrowserApis();
 import {
   act,
   cleanup,
@@ -565,6 +568,38 @@ describe("mounted Markdown preparation", () => {
     expect(screen.getByText("parsed again").tagName).toBe("STRONG");
   });
 });
+
+it.each(["Hello @Mic", `Hello [Mic](${profileTarget(mic)})`])(
+  "previews a mentioned identity and preserves profile navigation: %s",
+  async (content) => {
+    vi.useFakeTimers();
+    const showPopover = HTMLElement.prototype.showPopover;
+    HTMLElement.prototype.showPopover = function () {
+      this.style.display = "block";
+    };
+    const open = vi.fn(() => true);
+    try {
+      renderDom(<MessageMarkdown {...props(content, { onOpenLink: open })} />);
+      const mention = screen.getByRole("button", { name: "View Mic profile" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.mouseEnter(mention);
+      fireEvent.mouseMove(mention);
+      await act(() => vi.advanceTimersByTimeAsync(PREVIEW_REST_MS));
+      expect(
+        screen.getByRole("dialog", { name: "Mic profile preview" }),
+      ).toBeVisible();
+      expect(open).not.toHaveBeenCalled();
+      fireEvent.click(mention);
+      expect(open).toHaveBeenCalledExactlyOnceWith(profileTarget(mic));
+      expect(mention).toHaveFocus();
+    } finally {
+      cleanup();
+      if (showPopover) HTMLElement.prototype.showPopover = showPopover;
+      else Reflect.deleteProperty(HTMLElement.prototype, "showPopover");
+      vi.useRealTimers();
+    }
+  },
+);
 
 describe("Markdown profile mentions", () => {
   it("rebinds mounted prose when a verified alias changes under the same name", () => {

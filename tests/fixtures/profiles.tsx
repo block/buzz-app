@@ -69,7 +69,16 @@ const dmEvents = () => [
   }),
   roster(authority, "member-dm", [viewer.pubkey, mic.pubkey]),
 ];
-const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
+const profilePreviews = new URLSearchParams(location.search).has(
+  "profile-previews",
+);
+const root = message(
+  viewer,
+  "one",
+  profilePreviews ? "Hello @Mic and @Viewer" : "Hello @Mic",
+  10,
+  [["p", mic.pubkey], ...(profilePreviews ? [["p", viewer.pubkey]] : [])],
+);
 const unknown = signed(missing, {
   kind: 40002,
   content: "Unknown author",

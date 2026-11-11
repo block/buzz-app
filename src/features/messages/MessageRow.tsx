@@ -706,6 +706,16 @@ function MessageRowContent({
       edited={editedInBody && displayRow.edited}
     />
   );
+  const profilePeekProps = {
+    viewer,
+    name,
+    picture,
+    pubkey: row.authorId,
+    agent: avatarShape === "squircle",
+    session,
+    channelId: row.channelId,
+    onOpen: openLink,
+  };
   const avatarSize = compactAvatar && !flat ? "small" : "default";
   const authorName = (
     <>
@@ -729,16 +739,10 @@ function MessageRowContent({
   ) : clickable ? (
     <ProfilePeek
       key={`${scope}:${viewer}:${row.authorId}`}
-      viewer={viewer}
-      name={name}
-      picture={picture}
-      pubkey={row.authorId}
-      agent={avatarShape === "squircle"}
-      session={session}
-      channelId={row.channelId}
+      {...profilePeekProps}
       target={target}
-      onOpen={openLink}
       onFocusChange={setAvatarFocused}
+      avoidMessageActions
       trigger={
         <IconButton
           size="sm"
@@ -1174,38 +1178,37 @@ function MessageRowContent({
                   <span className={styles.authorWithStatus}>
                     <strong className={styles.author}>
                       {clickable && !stackPrevious ? (
-                        // The avatar is the group's keyboard stop and preview;
-                        // the name only answers a click. Text, not a button, so
-                        // a selection can start on it and a copy keeps it as
-                        // plain prose (no profile target).
-                        // biome-ignore lint/a11y/useSemanticElements: a <button> would block starting a text selection on the name
-                        <span
-                          role="button"
-                          tabIndex={-1}
-                          data-message-author=""
-                          className={styles.authorLink}
-                          onClick={(event) => {
-                            // A click arriving with text selected (the end of
-                            // a drag, or the second click of a double-click)
-                            // is a selection, not a request. A double-click's
-                            // first click opens the profile like any click.
-                            const selection =
-                              event.currentTarget.ownerDocument.getSelection();
-                            if (selection && !selection.isCollapsed) return;
-                            // WebKit skips focusing on pointer click, so the
-                            // profile tab's close would have no origin.
-                            event.currentTarget.focus();
-                            openLink(target);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" && event.key !== " ")
-                              return;
-                            event.preventDefault();
-                            openLink(target);
-                          }}
-                        >
-                          {authorName}
-                        </span>
+                        <ProfilePeek
+                          {...profilePeekProps}
+                          target={target}
+                          trigger={
+                            // biome-ignore lint/a11y/useSemanticElements: text selection must be able to start on the name
+                            <span
+                              role="button"
+                              tabIndex={-1}
+                              data-message-author=""
+                              className={styles.authorLink}
+                              onClick={(event) => {
+                                const selection =
+                                  event.currentTarget.ownerDocument.getSelection();
+                                if (
+                                  event.detail > 0 &&
+                                  selection &&
+                                  !selection.isCollapsed
+                                )
+                                  event.preventDefault();
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter" && event.key !== " ")
+                                  return;
+                                event.preventDefault();
+                                event.currentTarget.click();
+                              }}
+                            >
+                              {authorName}
+                            </span>
+                          }
+                        />
                       ) : (
                         authorName
                       )}

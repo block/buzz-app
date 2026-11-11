@@ -323,7 +323,8 @@ export function pendingSet(
 }
 
 /** The revision to sign: a complete snapshot, or a deletion. A snapshot
- * keeps `tags`, the annotations of the head it revises. */
+ * keeps `tags`, the annotations of the head it revises; a deletion keeps
+ * only their `root` (NIP-AR Deletion). */
 export function revision(input: {
   channel: string;
   d: string;
@@ -353,7 +354,9 @@ export function revision(input: {
       ...(op === "delete" ? [] : [["title", slug]]),
       ["op", op],
       ...(prev ? [["prev", prev]] : []),
-      ...(op === "delete" ? [] : tags.map((tag) => [...tag])),
+      ...tags
+        .filter(([name]) => op !== "delete" || name === "root")
+        .map((tag) => [...tag]),
     ],
   };
 }
@@ -469,7 +472,14 @@ export async function publishChange(
   if (value === null) {
     if (!head) return null;
     const sent = await send(
-      revision({ channel: set.channel, d, slug, op: "delete", prev: head.id }),
+      revision({
+        channel: set.channel,
+        d,
+        slug,
+        op: "delete",
+        prev: head.id,
+        tags: head.tags,
+      }),
       head.id,
     );
     if (sent.status === "accepted") return null;

@@ -468,7 +468,7 @@ describe("one writer revision", () => {
     });
   });
 
-  it("keeps another client's tags on an edit and on a restore", async () => {
+  it("keeps another client's tags on an edit, and root on a delete and a restore", async () => {
     const r = relay();
     const d = await attentionD(channel, "interest/x");
     const extra = [
@@ -495,21 +495,22 @@ describe("one writer revision", () => {
       value: { ...interest, instructions: "More" },
     });
     expect(annotations(r.sent[0])).toEqual(extra);
-    // Deleted by a client that kept them; an add over it restores them too.
-    const deletion = revision({
-      channel,
-      d,
+    // A deletion keeps root and drops the other annotations and the title.
+    await publishChange(r.io, await r.set(), {
       slug: "interest/x",
-      op: "delete",
-      prev: r.sent[0]?.id,
+      value: null,
     });
-    r.heads.set(d, sign({ ...deletion, tags: [...deletion.tags, ...extra] }));
-    await publishChange(r.io, emptySet(channel), {
+    const deletion = r.sent.at(-1) as RelayEvent;
+    expect(tag(deletion, "op")).toBe("delete");
+    expect(annotations(deletion)).toEqual([extra[0]]);
+    expect(tag(deletion, "title")).toBeUndefined();
+    // An add over that tombstone, which the current set omits, keeps root.
+    await publishChange(r.io, await r.set(), {
       slug: "interest/x",
       value: interest,
     });
     expect(tag(r.sent.at(-1) as RelayEvent, "op")).toBe("restore");
-    expect(annotations(r.sent.at(-1))).toEqual(extra);
+    expect(annotations(r.sent.at(-1))).toEqual([extra[0]]);
   });
 
   it("reports a slug whose head was retired", async () => {

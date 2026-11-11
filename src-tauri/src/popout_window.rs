@@ -6,8 +6,12 @@
 //! against the caller's own label and binding.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Mutex;
-use tauri::{ipc::Channel, Manager, WebviewWindow};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{
+    ipc::Channel, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, WebviewWindow,
+};
 
 use crate::huddle_window::DiscussionRow;
 
@@ -231,7 +235,13 @@ pub(crate) enum Action {
     Guard,
     /// Companion confirmed a guarded close.
     Close,
+    /// Native-owned: the window is gone. Text `kept` when it closed for
+    /// main's close rather than by the person's choice; the owner then lets
+    /// go of it but keeps it saved for the next start.
     Closed,
+    /// Native-owned: the window was moved or resized; text is the outer
+    /// position and client size as JSON, sent once the user pauses.
+    Geometry,
 }
 #[derive(Clone, Serialize)]
 pub(crate) struct Control {
@@ -246,9 +256,56 @@ struct Session {
     guarded: bool,
     actions: Channel<Control>,
     updates: Option<Channel<View>>,
+    /// The latest move/resize not yet reported to main.
+    moved: Option<Geometry>,
+    /// A report of `moved` is scheduled.
+    reporting: bool,
+    /// Main's close asked this guarded window to confirm; a discard it
+    /// confirms now is part of that close, not a close of its own.
+    closing_with_main: bool,
+    /// This window's destruction keeps it saved for the next start: its
+    /// `Closed` carries text `kept`.
+    kept: Arc<AtomicBool>,
 }
+/// Companion sessions by label, and whether the app is closing them all
+/// (exit, or main closing where that destroys the owner): those destructions
+/// are not user closes and are not reported as such.
 #[derive(Default)]
-pub(crate) struct Popouts(Mutex<HashMap<String, Session>>);
+pub(crate) struct Popouts(Mutex<HashMap<String, Session>>, Arc<AtomicBool>);
+
+/// A window's physical outer position and client size, as saved by main's
+/// owner and given back when the window is reopened after a restart.
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Geometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+const COORDINATE_LIMIT: i32 = 1 << 24;
+impl Geometry {
+    fn valid(&self) -> bool {
+        self.x.abs() <= COORDINATE_LIMIT
+            && self.y.abs() <= COORDINATE_LIMIT
+            && (1..=COORDINATE_LIMIT as u32).contains(&self.width)
+            && (1..=COORDINATE_LIMIT as u32).contains(&self.height)
+    }
+}
+/// An automatic reopening: placed where it was when known, shown without
+/// taking focus from the window the person is using.
+#[derive(Clone, Copy, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Restore {
+    #[serde(default)]
+    geometry: Option<Geometry>,
+}
+const DEFAULT_SIZE: LogicalSize<f64> = LogicalSize::new(520.0, 640.0);
+const MIN_SIZE: LogicalSize<f64> = LogicalSize::new(360.0, 400.0);
+/// The companion's own drag/header strip, kept reachable like main's.
+const HEADER_LOGICAL: f64 = 48.0;
+/// How long after the last move/resize the geometry is reported.
+const GEOMETRY_SETTLE: Duration = Duration::from_millis(400);
 
 impl Popouts {
     /// Downloads are limited to attachment sources in this window's own projection.
@@ -382,6 +439,8 @@ fn closed_notice(
     actions: Channel<Control>,
     label: String,
     incarnation: u64,
+    closing_all: Arc<AtomicBool>,
+    kept: Arc<AtomicBool>,
 ) -> impl Fn(&tauri::WindowEvent) + Send + Sync + 'static {
     let actions = Mutex::new(Some(actions));
     move |event| {
@@ -391,16 +450,25 @@ fn closed_notice(
         let Some(actions) = actions.lock().ok().and_then(|mut slot| slot.take()) else {
             return;
         };
+        // Exit destroys every companion with its owner: nothing to report, or
+        // nothing would reopen after a restart. A window closed for main's
+        // close while the owner lives on is reported as kept: the owner lets
+        // go of it but leaves it saved.
+        let report = (!closing_all.load(Ordering::SeqCst))
+            .then(|| kept.load(Ordering::SeqCst).then(|| "kept".to_owned()));
         let label = label.clone();
         // Channel send AND final drop evaluate JavaScript. Neither may reenter
         // Wry while it destroys its window map under a mutable RefCell borrow.
         tauri::async_runtime::spawn_blocking(move || {
-            let _ = actions.send(Control {
-                label,
-                incarnation,
-                action: Action::Closed,
-                text: None,
-            });
+            if let Some(text) = report {
+                let _ = actions.send(Control {
+                    label,
+                    incarnation,
+                    action: Action::Closed,
+                    text,
+                });
+            }
+            drop(actions);
         });
     }
 }
@@ -422,12 +490,16 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
     binding: Binding,
     view: View,
     actions: Channel<Control>,
+    restore: Option<Restore>,
 ) -> Result<Opened> {
     require_main(&window)?;
     if !binding.valid() {
         return Err("Invalid pop-out target".into());
     }
     validate(&view)?;
+    if restore.and_then(|r| r.geometry).is_some_and(|g| !g.valid()) {
+        return Err("Invalid pop-out placement".into());
+    }
     // Painted before the page: a dark window opens dark, not white.
     let background = view
         .appearance
@@ -435,6 +507,7 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
         .map(crate::huddle_window::Appearance::background)
         .unwrap_or_else(|| crate::huddle_window::Appearance::mode(view.dark).background());
     let app = window.app_handle();
+    let kept = Arc::new(AtomicBool::new(false));
     let label = {
         let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
         if map.len() >= 16 {
@@ -467,20 +540,47 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
                 guarded: false,
                 actions: actions.clone(),
                 updates: None,
+                moved: None,
+                reporting: false,
+                closing_with_main: false,
+                kept: kept.clone(),
             },
         );
         label
     };
-    let on_closed = closed_notice(actions, label.clone(), binding.incarnation);
-    let built =
+    let on_closed = closed_notice(
+        actions,
+        label.clone(),
+        binding.incarnation,
+        host.1.clone(),
+        kept,
+    );
+    // A restored window is created where it was and never takes focus:
+    // several may reopen at once while the person is already working. It is
+    // placed at creation because showing a hidden window later would make it
+    // key (tao's `set_visible` is `makeKeyAndOrderFront`); `focused(false)`
+    // on a visible window is a plain `orderFront`.
+    let frame = restore.and_then(|r| r.geometry).and_then(|geometry| {
+        restore_frame(&window.as_ref().window(), geometry)
+            .ok()
+            .flatten()
+    });
+    let mut builder =
         tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("popout.html".into()))
             .title("Buzz")
-            .inner_size(520.0, 640.0)
-            .min_inner_size(360.0, 400.0)
-            .center()
+            .min_inner_size(MIN_SIZE.width, MIN_SIZE.height)
+            .focused(restore.is_none())
             .disable_drag_drop_handler()
-            .background_color(background)
-            .build();
+            .background_color(background);
+    builder = match frame {
+        Some((position, size)) => builder
+            .position(position.x, position.y)
+            .inner_size(size.width, size.height),
+        None => builder
+            .inner_size(DEFAULT_SIZE.width, DEFAULT_SIZE.height)
+            .center(),
+    };
+    let built = builder.build();
     let companion = match built {
         Ok(companion) => companion,
         Err(error) => {
@@ -491,12 +591,152 @@ pub(crate) async fn popout_window_open<R: tauri::Runtime>(
         }
     };
     companion.on_window_event(on_closed);
-    companion.show().map_err(|e| e.to_string())?;
-    companion.set_focus().map_err(|e| e.to_string())?;
+    if restore.is_none() {
+        companion.show().map_err(|e| e.to_string())?;
+        companion.set_focus().map_err(|e| e.to_string())?;
+    }
     Ok(Opened {
         label,
         existing: false,
     })
+}
+
+/// Where a reopened window is created: as saved, or where it can be reached
+/// now, since the monitor layout or scale may have changed.
+fn restore_frame<R: tauri::Runtime>(
+    main: &tauri::Window<R>,
+    saved: Geometry,
+) -> tauri::Result<Option<(tauri::LogicalPosition<f64>, LogicalSize<f64>)>> {
+    let (monitors, fallback) = crate::window_state::screens(main)?;
+    let Some(fallback) = fallback else {
+        return Ok(None);
+    };
+    let areas: Vec<_> = monitors.iter().map(|(area, _)| *area).collect();
+    let scale_at = |position: PhysicalPosition<i32>| {
+        monitors
+            .iter()
+            .find(|(area, _)| {
+                position.x >= area.position.x
+                    && position.y >= area.position.y
+                    && i64::from(position.x)
+                        < i64::from(area.position.x) + i64::from(area.size.width)
+                    && i64::from(position.y)
+                        < i64::from(area.position.y) + i64::from(area.size.height)
+            })
+            .map_or(fallback.1, |(_, scale)| *scale)
+    };
+    let header_height =
+        (HEADER_LOGICAL * scale_at(PhysicalPosition::new(saved.x, saved.y))).ceil() as u32;
+    let (position, size, relocated) = placement(saved, header_height, &areas, fallback);
+    // The builder takes logical units at the scale of the screen the
+    // position lands on.
+    let scale = relocated.unwrap_or_else(|| scale_at(position));
+    Ok(Some((
+        position.to_logical::<f64>(scale),
+        size.to_logical::<f64>(scale),
+    )))
+}
+
+/// The outer position and client size to apply for a saved geometry, and the
+/// fallback monitor's scale when the window had to be relocated to it.
+/// The saved rectangle starts at the outer position, so its reachable strip
+/// is the title bar and the top of the header; no client offset applies, and
+/// main's `Overlay` title bar never has to stand in for the pop-out's default
+/// one. A relocated window lands with its title bar at the work area's top.
+fn placement(
+    saved: Geometry,
+    header_height: u32,
+    areas: &[PhysicalRect<i32, u32>],
+    (fallback, scale): (PhysicalRect<i32, u32>, f64),
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>, Option<f64>) {
+    let frame = PhysicalRect {
+        position: PhysicalPosition::new(saved.x, saved.y),
+        size: PhysicalSize::new(saved.width, saved.height),
+    };
+    // Saved at a lower scale than the fallback's: below the minimum there,
+    // so the default size replaces it.
+    let min: PhysicalSize<u32> = MIN_SIZE.to_physical(scale);
+    let below = saved.width < min.width || saved.height < min.height;
+    let default = below.then(|| DEFAULT_SIZE.to_physical(scale));
+    let relocated =
+        crate::window_state::reachable_client(frame, header_height, areas, fallback, default);
+    let target = relocated.unwrap_or(frame);
+    (target.position, target.size, relocated.map(|_| scale))
+}
+
+/// A companion moved or resized: report its geometry to main's owner once the
+/// person pauses, so the window reopens there after a restart.
+pub(crate) fn geometry_changed<R: tauri::Runtime>(window: &tauri::Window<R>) {
+    if !is_popout(window.label()) {
+        return;
+    }
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    let geometry = Geometry {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    if !geometry.valid() {
+        return;
+    }
+    let Some(host) = window.try_state::<Popouts>() else {
+        return;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return;
+    };
+    let Some(session) = map.get_mut(window.label()) else {
+        return;
+    };
+    session.moved = Some(geometry);
+    if session.reporting {
+        return;
+    }
+    session.reporting = true;
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(GEOMETRY_SETTLE).await;
+        report_geometry(&app, &label);
+    });
+}
+fn report_geometry<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
+    let Some(host) = app.try_state::<Popouts>() else {
+        return;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return;
+    };
+    let Some(session) = map.get_mut(label) else {
+        return;
+    };
+    session.reporting = false;
+    let Some(geometry) = session.moved.take() else {
+        return;
+    };
+    if session.view.detached {
+        return;
+    }
+    let Ok(text) = serde_json::to_string(&geometry) else {
+        return;
+    };
+    let _ = session.actions.send(Control {
+        label: label.to_owned(),
+        incarnation: session.binding.incarnation,
+        action: Action::Geometry,
+        text: Some(text),
+    });
+}
+
+/// The app is closing every companion (exit, or main closing where that
+/// destroys the owner): their destruction is no longer a person's close.
+pub(crate) fn closing_all<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(host) = app.try_state::<Popouts>() {
+        host.1.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Replace a window's presentation; `None` retires the window.
@@ -602,7 +842,9 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
 ) -> Result<()> {
     let label = require_popout(&window)?;
     match action {
-        Action::Closed => return Err("Window closure is native-owned".into()),
+        Action::Closed | Action::Geometry => {
+            return Err("Window closure and placement are native-owned".into())
+        }
         Action::RetryMessage | Action::DiscardMessage => {
             if text
                 .as_ref()
@@ -649,6 +891,11 @@ pub(crate) fn popout_window_action<R: tauri::Runtime>(
         // community exit can name the window's unsent work before discarding it.
         Action::Guard => session.guarded = text.as_deref() == Some("1"),
         Action::Close => {
+            // A discard confirmed for main's close keeps the window saved;
+            // one confirmed for the window's own close does not.
+            if session.closing_with_main {
+                session.kept.store(true, Ordering::SeqCst);
+            }
             drop(map);
             if let Some(companion) = app.get_webview_window(&label) {
                 companion.destroy().map_err(|e| e.to_string())?;
@@ -713,6 +960,9 @@ impl Popouts {
         if !session.guarded {
             return false;
         }
+        // The window's own close: Keep editing after main's close attempt
+        // must not leave a later genuine close classified as main's.
+        session.closing_with_main = false;
         session.view.close_requested += 1;
         if let Some(updates) = &session.updates {
             let _ = updates.send(session.view.clone());
@@ -742,6 +992,7 @@ pub(crate) fn main_closing<R: tauri::Runtime>(
         .collect();
     if guarded.is_empty() {
         // Nothing to ask: every companion closes with its owner.
+        host.1.store(true, Ordering::SeqCst);
         for label in map.keys() {
             if let Some(window) = app.get_webview_window(label) {
                 let _ = window.destroy();
@@ -753,6 +1004,7 @@ pub(crate) fn main_closing<R: tauri::Runtime>(
     // Keep editing leaves every window as it was.
     for label in &guarded {
         if let Some(session) = map.get_mut(label) {
+            session.closing_with_main = true;
             session.view.close_requested += 1;
             if let Some(updates) = &session.updates {
                 let _ = updates.send(session.view.clone());
@@ -772,6 +1024,7 @@ pub(crate) fn main_closing<R: tauri::Runtime>(
 
 /// Main is gone: no companion can act without its owner.
 pub(crate) fn main_destroyed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    closing_all(app);
     let labels: Vec<String> = app
         .try_state::<Popouts>()
         .and_then(|host| host.0.lock().ok().map(|map| map.keys().cloned().collect()))
@@ -1010,6 +1263,10 @@ mod tests {
             guarded,
             actions: Channel::new(|_| Ok(())),
             updates: None,
+            moved: None,
+            reporting: false,
+            closing_with_main: false,
+            kept: Arc::default(),
         }
     }
     #[test]
@@ -1193,12 +1450,146 @@ mod tests {
             sender.send(thread::current().id()).unwrap();
             Ok(())
         });
-        let notice = closed_notice(actions, "popout-x".into(), 1);
+        let notice = closed_notice(
+            actions,
+            "popout-x".into(),
+            1,
+            Arc::default(),
+            Arc::default(),
+        );
         notice(&tauri::WindowEvent::Destroyed);
         notice(&tauri::WindowEvent::Destroyed);
         let thread = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_ne!(thread, thread::current().id());
         drop(notice);
         assert!(receiver.recv().is_err());
+    }
+
+    #[test]
+    fn destruction_while_closing_all_is_silent_and_a_kept_window_reports_so_both_off_thread() {
+        use std::sync::mpsc;
+        use std::thread;
+        for (closing_all, kept) in [(true, false), (false, true)] {
+            let (sender, receiver) = mpsc::channel();
+            let actions = Channel::new(move |control: tauri::ipc::InvokeResponseBody| {
+                sender.send(control).unwrap();
+                Ok(())
+            });
+            // The Channel's final drop evaluates JavaScript for a native
+            // channel: it must leave the event thread even when nothing is
+            // sent. Observe it through a guard moved into the same closure.
+            let (dropped, on_drop) = mpsc::channel();
+            struct Guard(mpsc::Sender<thread::ThreadId>);
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    let _ = self.0.send(thread::current().id());
+                }
+            }
+            let guard = Guard(dropped);
+            let actions_with_guard = Channel::new(move |message| {
+                let _ = &guard;
+                actions.send(message)
+            });
+            let notice = closed_notice(
+                actions_with_guard,
+                "popout-x".into(),
+                1,
+                Arc::new(AtomicBool::new(closing_all)),
+                Arc::new(AtomicBool::new(kept)),
+            );
+            notice(&tauri::WindowEvent::Destroyed);
+            let drop_thread = on_drop.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_ne!(drop_thread, thread::current().id());
+            drop(notice);
+            if closing_all {
+                assert!(receiver.recv().is_err(), "exit reports nothing");
+            } else {
+                let sent = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+                let json = match sent {
+                    tauri::ipc::InvokeResponseBody::Json(json) => json,
+                    other => panic!("unexpected body: {other:?}"),
+                };
+                let control: serde_json::Value = serde_json::from_str(&json).unwrap();
+                assert_eq!(control["action"], "closed");
+                assert_eq!(control["text"], "kept");
+                assert!(receiver.recv().is_err());
+            }
+        }
+    }
+    #[test]
+    fn geometry_is_bounded_and_round_trips_as_main_saves_it() {
+        let g = Geometry {
+            x: -100,
+            y: 40,
+            width: 520,
+            height: 640,
+        };
+        assert!(g.valid());
+        assert!(!Geometry { width: 0, ..g }.valid());
+        assert!(!Geometry {
+            x: COORDINATE_LIMIT + 1,
+            ..g
+        }
+        .valid());
+        let decoded: Geometry = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(decoded, g);
+        assert!(
+            serde_json::from_str::<Geometry>(r#"{"x":1,"y":2,"width":3,"height":4,"z":5}"#)
+                .is_err()
+        );
+        let restore: Restore = serde_json::from_str("{}").unwrap();
+        assert!(restore.geometry.is_none());
+    }
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> PhysicalRect<i32, u32> {
+        PhysicalRect {
+            position: PhysicalPosition::new(x, y),
+            size: PhysicalSize::new(width, height),
+        }
+    }
+    #[test]
+    fn placement_keeps_a_reachable_window_and_recenters_one_on_a_removed_monitor() {
+        let laptop = rect(0, 0, 2880, 1800);
+        let external = rect(2880, -200, 2560, 1440);
+        let saved = Geometry {
+            x: 3000,
+            y: 100,
+            width: 1040,
+            height: 1280,
+        };
+        // Both monitors attached: as saved.
+        let (position, size, relocated) = placement(saved, 96, &[laptop, external], (laptop, 2.0));
+        assert_eq!((position.x, position.y), (3000, 100));
+        assert_eq!((size.width, size.height), (1040, 1280));
+        assert!(relocated.is_none());
+        // External unplugged: centered on the laptop with its title bar at the
+        // work area's top, size kept.
+        let (position, size, relocated) = placement(saved, 96, &[laptop], (laptop, 2.0));
+        assert_eq!((position.x, position.y), ((2880 - 1040) / 2, 0));
+        assert_eq!((size.width, size.height), (1040, 1280));
+        assert_eq!(relocated, Some(2.0));
+        // Flush with the top edge: kept. Above it, the title bar is out of
+        // reach, so it comes back to the top.
+        let flush = Geometry { y: 0, ..saved };
+        let (position, _, relocated) = placement(flush, 96, &[laptop, external], (laptop, 2.0));
+        assert_eq!((position.x, position.y), (3000, 0));
+        assert!(relocated.is_none());
+        let above = Geometry {
+            x: 100,
+            y: -1,
+            ..saved
+        };
+        let (position, _, relocated) = placement(above, 96, &[laptop], (laptop, 2.0));
+        assert_eq!((position.x, position.y), ((2880 - 1040) / 2, 0));
+        assert_eq!(relocated, Some(2.0));
+        // Saved at 1x, below the 2x minimum: the default size at 2x replaces it.
+        let small = Geometry {
+            x: 100,
+            y: 100,
+            width: 600,
+            height: 700,
+        };
+        let (_, size, relocated) = placement(small, 96, &[laptop], (laptop, 2.0));
+        assert_eq!((size.width, size.height), (1040, 1280));
+        assert_eq!(relocated, Some(2.0));
     }
 }

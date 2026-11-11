@@ -1246,9 +1246,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   step, **View activity** (opens in the main window) and **Stop**. Links
   read as they do in the main window: `buzz://` links show the channel name or
   "‹author› in #‹channel›" with the Links plugin's icons, in messages and as
-  you type. Solo chats show the conversation as messages; agent-specific surfaces (response
-  previews, stop controls) stay in the main window. Not available in the
-  browser build.
+  you type. Solo chats show the conversation as messages, with an agent's live
+  work and **Stop** as above. Pop-out windows come back after Buzz restarts,
+  where they were and showing what they showed (a drilled thread keeps its
+  `<`); closing a window removes it from the next start, quitting Buzz keeps
+  it. Not available in the browser build.
 - **Attention**, when available, lets agents use Interests, watches, and timers
   to follow work. Its tab in the profile of an agent running on this device shows
   when each interest wakes the agent (**Triggers**), its instructions after waking

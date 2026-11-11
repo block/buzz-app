@@ -1273,6 +1273,9 @@ pub fn run() {
                 popout_window::destroyed(window);
                 if window.label() == "main" { popout_window::main_destroyed(window.app_handle()); }
             }
+            if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
+                popout_window::geometry_changed(window);
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
             #[cfg(target_os = "macos")]
@@ -1297,7 +1300,12 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 deep_links::focus_main(app);
             }
+            // Exit destroys the pop-out windows; that is not the person closing them.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                popout_window::closing_all(app);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
+                popout_window::closing_all(app);
                 shut_down(app);
                 #[cfg(target_os = "macos")]
                 relaunch::on_exit(app);

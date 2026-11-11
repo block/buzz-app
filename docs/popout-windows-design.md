@@ -899,3 +899,40 @@ restoring windows after restart; community name in header/title.
 Members 80–140; previews + Stop 200–320 (projection 80, owner op 40, native
 40, companion 120); chat icons 60–100. **Total ≈ 350–560.** Same
 stop-and-show rule as §10.
+
+## 13. Restoring windows after a restart (2026-11-11)
+
+jaw asked for pop-outs to come back after Buzz restarts.
+Research and the implementation outline are in the Buzz thread; this is what shipped.
+
+### Behavior
+
+The windows open for an account and community reopen after a restart, each with its drilled thread (Back still works), size and position.
+Closing a window removes it from the next start.
+Quitting Buzz, or main closing where that destroys the owner (Linux, Windows), keeps every window saved, including a window whose unsent reply the person discards to let main close.
+Keep editing there cancels that classification: a later close of the window on its own is the person's close again.
+Leaving the community purges the list with the rest of its device state.
+Nothing reopens for a conversation that a settled roster no longer lists; a notice says how many were skipped.
+A roster is settled when it is complete and the relay has confirmed every membership read from disk.
+Startup lists saved memberships as `cached` until then; a saved window whose conversation is cached waits for confirmation instead of opening, because the companion's revocation rule closes a cached conversation and would otherwise close it at once.
+A closure for cached membership keeps the window saved; only a settled roster lacking the conversation forgets it.
+Reopened windows do not take focus.
+Drafts come back through the composer's own saved drafts.
+
+### Owners
+
+- `src/features/popout/restore-state.ts`: the saved list, one per `origin:viewer` partition under the existing scoped view store (`readView`/`writeView`), bounded to native's 16 windows.
+  It is mutated by target and written through on every change, never derived from live windows, so a restore batch that stops early leaves the unopened windows saved.
+- `src/features/popout/window.ts`: the one writer.
+  Open, drill, Back, a settled move or resize and a close the person made update the list.
+  Owner disposal, a session or community change and app exit do not.
+  Each session restores once, after its roster is `ready`, re-checking on roster notifications until every saved window is decided, through `admit(target, descriptor)`: the drilled frame is built with `createFrame` (not replayed through `openThread`, whose gate needs the root among loaded rows), and native is asked to place the window and not focus it.
+- `src-tauri/src/popout_window.rs`: `popout_window_open` takes an optional `restore` with saved geometry and creates the window visible but `focused(false)` at the frame `window_state::reachable_client` allows (pop-out minimums, default size when the saved size is below the minimum at the fallback monitor's scale).
+  It is placed at creation because tao's `set_visible(true)` is `makeKeyAndOrderFront`: showing a hidden window later would take focus, while a visible window created unfocused is a plain `orderFront`.
+  `Moved`/`Resized` events are reported to the owner as a `geometry` control once the person pauses (400 ms).
+  `Popouts` carries a `closing_all` flag, set at `ExitRequested`/`Exit`, by `main_closing` (no guarded windows) and `main_destroyed`; a guarded window asked by `main_closing` is marked `closing_with_main`, and its confirmed `Close` makes its `Closed` carry text `kept`, so the owner (still alive when Keep editing held main open elsewhere) retires the entry but leaves it saved (a window's own close request clears the mark).
+  While `closing_all` is set `closed_notice` reports nothing; either way the Channel is dropped off the event thread, so exit is never read as the person closing windows.
+
+### Not covered
+
+Recordings and unsent file bytes; a window for a community other than the active one; reopening a window the person closed when the relay reconnects.

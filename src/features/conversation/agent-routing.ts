@@ -61,7 +61,8 @@ export function createAgentRouting(ctx: Context) {
         signal.removeEventListener("abort", abort);
       }
       signal.throwIfAborted();
-      if (!entries.snapshot().includes(router))
+      const current = entries.snapshot();
+      if (current.length !== 1 || current[0] !== router)
         throw new Error(
           "The agent router changed while deciding. Retry your message.",
         );

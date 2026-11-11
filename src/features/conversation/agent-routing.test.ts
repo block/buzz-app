@@ -90,6 +90,25 @@ it("rejects a late result after the contributing plugin unloads", async () => {
   await expect(pending).rejects.toThrow("router changed");
 });
 
+it("rejects a pending result if a second router becomes active", async () => {
+  const h = setup();
+  let finish!: (value: string[]) => void;
+  h.router.register(
+    {
+      id: "one",
+      route: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    },
+    h.owner,
+  );
+  const pending = h.router.route(request, new AbortController().signal);
+  h.router.register({ id: "two", route: async () => [b] }, h.owner);
+  finish([a]);
+  await expect(pending).rejects.toThrow("router changed");
+});
+
 it("bounds a stalled decision and cancels a send without awaiting the plugin", async () => {
   vi.useFakeTimers();
   const h = setup();

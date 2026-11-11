@@ -17,6 +17,8 @@ import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
+import chartsManifest from "./charts/manifest.json";
+import * as charts from "./charts";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -143,6 +145,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...mermaidManifest, apiVersion: 1 },
     module: mermaid,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...chartsManifest, apiVersion: 1 },
+    module: charts,
+    enabledByDefault: false,
   },
   {
     manifest: { ...namingManifest, apiVersion: 1 },

@@ -245,8 +245,15 @@ function useGitHubObject(
       );
       if (!controller.signal.aborted) setLoaded(next);
     } catch (error) {
+      // A failed read again keeps what is shown.
       if (!controller.signal.aborted)
-        setLoaded(error instanceof Error ? error.message : String(error));
+        setLoaded((shown) =>
+          typeof shown === "object"
+            ? shown
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        );
     }
   }, [reference, gh]);
   useEffect(() => {
@@ -749,6 +756,7 @@ function ObjectPanel({
                         body={result.body}
                         bodyHtml={result.bodyHtml}
                         url={reference.url}
+                        refresh={load}
                       />
                     </div>
                   )}
@@ -759,6 +767,7 @@ function ObjectPanel({
                     body={result.body}
                     bodyHtml={result.bodyHtml}
                     url={reference.url}
+                    refresh={load}
                   />
                 )
               )}

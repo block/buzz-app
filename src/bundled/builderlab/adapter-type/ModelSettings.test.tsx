@@ -710,7 +710,9 @@ it("keeps the session and the draft when Builderlab refuses a save, and saves on
   await user.type(field, " Draft");
   h.request.mockResolvedValueOnce({ status: 401, headers: {}, body: "{}" });
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("session expired");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab didn’t accept this request. Try again.",
+  );
   // A 401 refuses only this call: the native session decides when it ends.
   expect(h.session.snapshot().status).toBe("signed-in");
   expect(field).toHaveValue("Saved instructions. Draft");

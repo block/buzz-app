@@ -26,7 +26,6 @@ import type {
   ComposerCompletion,
   ComposerCompletionProps,
   CompletionContext,
-  CompletionEdit,
   CompletionQuery,
   CompletionResult,
   ComposerObservation,
@@ -35,7 +34,12 @@ import type {
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { IdentityMarks } from "./IdentityMarks";
-import { completionResult, matchCompletion } from "./completion";
+import {
+  completionResult,
+  matchCompletion,
+  type HostCompletionEdit,
+  type HostCompletionResult,
+} from "./completion";
 import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -91,14 +95,14 @@ function EmojiCompletionName({
  * popup closed starts empty: `ComposerCompletions` evicts the store in its
  * closed render, so a carried result means only a continuing open query. */
 function createDisplay() {
-  let shown: { key: string; result: CompletionResult | undefined } = {
+  let shown: { key: string; result: HostCompletionResult | undefined } = {
     key: "",
     result: undefined,
   };
   const listeners = new Set<() => void>();
   return {
     read: (key: string) => (shown.key === key ? shown.result : undefined),
-    set(key: string, result: CompletionResult | undefined) {
+    set(key: string, result: HostCompletionResult | undefined) {
       shown = { key, result };
       for (const listener of listeners) listener();
     },
@@ -172,9 +176,10 @@ export function ComposerCompletions({
     recipients: readonly Readonly<{ start: number; end: number }>[];
     /** Mentions still resolving; their `@` is no more an open query. */
     pending?: readonly Readonly<{ start: number; end: number }>[] | undefined;
+    tokens?: readonly Readonly<{ start: number; end: number }>[] | undefined;
   }>;
   replace(
-    edit: CompletionEdit,
+    edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
@@ -210,6 +215,7 @@ export function ComposerCompletions({
     matchCompletion(providers, observation, context, [
       ...resolved.recipients,
       ...(resolved.pending ?? []),
+      ...(resolved.tokens ?? []),
     ]);
   const open =
     !!match &&
@@ -284,7 +290,7 @@ function OwnedCompletion({
     Pick<PointerEvent, "clientX" | "clientY"> | undefined
   >;
   replace(
-    edit: CompletionEdit,
+    edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
@@ -315,7 +321,7 @@ function OwnedCompletion({
     () => display.read(trigger),
   );
   // This lifetime's own publication; a carried display is never acted on.
-  const latest = useRef<CompletionResult | undefined>(undefined);
+  const latest = useRef<HostCompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
   const [keyboardSelection, setKeyboardSelection] = useState<string>();
@@ -360,7 +366,7 @@ function OwnedCompletion({
     let owned = true;
     setPublish(() => (incoming: CompletionResult) => {
       if (!owned || !active()) return false;
-      const next = completionResult(incoming);
+      const next = completionResult(incoming, provider);
       latest.current = next;
       revealSelection.current = true;
       display.set(trigger, next);
@@ -382,7 +388,7 @@ function OwnedCompletion({
       live.current = false;
       latest.current = undefined;
     };
-  }, [active, display, trigger]);
+  }, [active, display, provider, trigger]);
   // A carried result stands only until this query's provider has run its
   // mount effects, which precede this one; a provider that has not published
   // by then leaves the popup closed, as for a first query, so a stale display

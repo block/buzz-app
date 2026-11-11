@@ -206,9 +206,12 @@ device's key in place. When this device has confirmed a stored backup of the key
 (`nsec_backup_confirmed`: a backup record here, under any account, that the
 service receipted or a restore wrote), the question says the key is backed up
 in Builderlab and that signing in to its account again restores it; otherwise
-it says the key may not be backed up. A local receipt is not consent, and the
-backup may since have been deleted, so it only changes the wording. Creating or
-importing a key still refuses while one is on the device.
+it says the key may not be backed up and shows the same private-key controls
+as Settings' **Remove from device**, with its gate: **Replace** stays disabled
+until the key was revealed or copied and **I have my key** is checked. Each new
+question starts unchecked. A local receipt is not consent, and the backup may since
+have been deleted, so a confirmed backup only changes the wording and drops that
+wait. Creating or importing a key still refuses while one is on the device.
 
 An account with no key takes this device's key, else old Buzz's, else a new
 one, without asking. When the account holds no key, the account check can't
@@ -526,7 +529,15 @@ intact. **Go back** returns to community selection without completing the join.
 A trimmed nonempty name is required; the avatar is optional. Settings → Profile
 remains the editor. Denied/unavailable/corrupt storage is not first run: like the page
 shown while the saved identity opens, it is titled **Your Buzz identity**, and
-it keeps the **Retry secure storage access** path.
+it keeps the **Retry secure storage access** path. A saved key native can't
+parse (`MALFORMED`) gets the same bytes on every read, so that page offers
+**Remove from device** instead of a retry. It confirms first, then signs out as
+**Sign out of Buzz** does without erase: the next launch deletes the key and
+opens first run, which restores the account's backup or imports a key. A
+refused sign-out stays in the dialog with its reason. On Windows and Linux,
+several keyring items matching one entry (`Ambiguous`) refuse deletes as well
+as reads, so native answers `AMBIGUOUS` instead, and the page keeps **Retry**:
+the user removes the extra items with their keyring app.
 
 The key setup screen (`IdentitySetup`) is no longer shown on first launch; the
 fixture below still renders it. It offers **Create a new identity** or **Use an

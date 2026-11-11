@@ -547,8 +547,11 @@
      and their focus rings, so their ink and fills keep the pairing they were
      designed for. Resize grips sit on the joined pane surface, which is
      already opaque. */
-  .shell-background:has(> .shell-backdrop) .shell-header > *,
-  .shell-background:has(> .shell-backdrop) .shell-side-dock {
+  .shell-background > .shell-backdrop ~ .shell-header > *,
+  .shell-background
+    > .shell-backdrop
+    ~ :where(.shell-workspace)
+    > .shell-side-dock {
     border-radius: var(--radius-pill);
     background: var(--bg-app);
     box-shadow: 0 0 0 var(--space-2) var(--bg-app);

@@ -12,6 +12,7 @@ import type {
   AgentVoicePipe,
   AgentType,
   AgentHandle,
+  SoloWorkspaces,
   AgentCreationInput,
   AgentReadout,
   AgentUpdateInput,
@@ -518,6 +519,7 @@ export type RunnerHost = {
   handoff(agent: Agent, handoff: AgentHandoff): void;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
+  soloWorkspaces?(agent: Agent): SoloWorkspaces | undefined;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
@@ -2852,6 +2854,8 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
+    const workspaces = run ? this.host.soloWorkspaces?.(agent) : undefined;
+    const creations = new Map<string, (event: RelayEvent) => void>();
     const handle = guarded(
       {
         protection: protection && {
@@ -2879,6 +2883,13 @@ export class AgentRunners {
               lifetime,
               check,
             );
+            if (workspaces && event.kind === 9007) {
+              const id = published.tags.find(([key]) => key === "h")?.[1];
+              if (id) {
+                creations.get(id)?.(published);
+                creations.delete(id);
+              }
+            }
             if (ownReply) {
               const channel = this.host.channel(agent, published);
               if (
@@ -2959,6 +2970,44 @@ export class AgentRunners {
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
+          },
+        }),
+        ...(workspaces && {
+          soloWorkspaces: {
+            list: (signal?: AbortSignal) =>
+              workspaces.list(
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
+            prepare: async (
+              workspace: string,
+              members: readonly string[],
+              channelId: string,
+              signal?: AbortSignal,
+            ) => {
+              const active = AbortSignal.any([
+                lifetime,
+                ...(signal ? [signal] : []),
+              ]);
+              const file = await workspaces.prepare(workspace, members, active);
+              // Each overlapping call owns one exact future create, consumed once.
+              let created: RelayEvent | undefined;
+              if (creations.has(channelId))
+                throw new Error("Chat creation already prepared");
+              creations.set(channelId, (event) => {
+                created = event;
+              });
+              let attempted = false;
+              return async (id: string) => {
+                active.throwIfAborted();
+                if (attempted)
+                  throw new Error("Solo placement was already attempted");
+                const event = created;
+                if (id !== channelId || !event)
+                  throw new Error("No new chat from this run to file");
+                attempted = true;
+                return file(event);
+              };
+            },
           },
         }),
         templates: () => this.host.templates(agent),

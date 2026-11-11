@@ -339,11 +339,15 @@ export function ModelSettings({
                     }
                   />
                 )}
-                {login.status === "signed-out" && !waitingToRetry && (
-                  <p className="m-0 pb-3 text-body-sm text-secondary">
-                    Sign in to edit settings. You can still message this agent.
-                  </p>
-                )}
+                {/* A sign-in error beside Sign in already says what to do. */}
+                {login.status === "signed-out" &&
+                  !login.error &&
+                  !waitingToRetry && (
+                    <p className="m-0 pb-3 text-body-sm text-secondary">
+                      Sign in to edit settings. You can still message this
+                      agent.
+                    </p>
+                  )}
                 {feedback && <div className="pb-3">{feedback}</div>}
               </div>
             )}

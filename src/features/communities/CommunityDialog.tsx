@@ -18,7 +18,10 @@ import { createJoinJournal, type PendingJoin } from "./join-journal";
 import { admitCommunity, completeJoin, type Current } from "./join";
 import { consentAsked, type JoinPolicy } from "./join-policy";
 import { ACCOUNT_CONSENT, accountConsents } from "./account-consent";
-import { CommunitySignIn } from "../federated-identity/CommunitySignIn";
+import {
+  CommunitySignIn,
+  useExplainedRefusal,
+} from "../federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../federated-identity/service";
 import { OnboardingBack } from "../identity/OnboardingBack";
 import { OnboardingScreen } from "../identity/OnboardingScreen";
@@ -317,6 +320,11 @@ export function CommunityDialog({
     mode === "join" &&
     !!original?.exists &&
     profilesEqual(profile, original.profile);
+  const refusalIdentity =
+    (destination && federatedIdentity?.forCommunity?.(destination.url)) ||
+    federatedIdentity;
+  // An explained refusal replaces the raw error, so it shows once.
+  const explained = useExplainedRefusal(refusalIdentity, error);
   const looking = busy && step === "destination";
   // While busy, the primary action names the operation its step started.
   const [action, actionPending] =
@@ -474,7 +482,7 @@ export function CommunityDialog({
               step === "destination" && (
                 <Field
                   label="Community URL"
-                  error={error || undefined}
+                  error={(!explained && error) || undefined}
                   description={
                     connectionFrom
                       ? undefined
@@ -583,18 +591,14 @@ export function CommunityDialog({
                 disabled={busy}
               />
             )}
-            {error && step !== "destination" && (
+            {error && step !== "destination" && !explained && (
               <p role="alert" className={styles.error}>
                 {error}
               </p>
             )}
             {error && (
               <CommunitySignIn
-                identity={
-                  (destination &&
-                    federatedIdentity?.forCommunity?.(destination.url)) ||
-                  federatedIdentity
-                }
+                identity={refusalIdentity}
                 error={error}
                 relay={destination?.url}
                 memberships={client.memberships}

@@ -815,6 +815,22 @@ Regression source: `features/agents/choices.test.ts`, plus the chooser, composer
 and Solo chat admission tests. They exercise shared selection and Solo chat admission,
 not native execution.
 
+## Creating a Solo chat in a personal workspace
+
+Locally hosted agent runs can call `solo_workspace_list` for the host-bound
+owner's personal workspace IDs and names in that community. Pass an exact ID as
+`workspace` to `channel_create` with `solo: true`, and name the owner explicitly
+in `members`. This files only that new confirmed Solo chat. It does not enroll
+members implicitly, copy default agents/Canvas, or change agent authorship.
+Unknown targets and missing owner membership fail before creation. A target
+removed later or a failed preference write leaves the created chat intact; the
+result preserves its ID. A known refusal before assignment says “created, not
+filed”; after assignment starts, failure says placement is unconfirmed and may
+have completed. Inspect or refresh the chat before using **Move to**; never
+create a duplicate. Omit `workspace` for unchanged creation.
+External/standalone tools, Nexus worker requests, and plugin agent handles do
+not gain this host-private capability or a general move operation.
+
 ## Exact channel-member mentions
 
 The shared channel summary now exposes exact members from its existing verified

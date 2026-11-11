@@ -153,9 +153,12 @@ async function nativeImports(
           );
           if (!candidate)
             throw new Error("Saved source no longer contains this plugin");
-          return window.importCategory
-            ? `${candidate.path}-${window.importCategory}`
-            : candidate.revision;
+          return {
+            revision: window.importCategory
+              ? `${candidate.path}-${window.importCategory}`
+              : candidate.revision,
+            publisher: candidate.publisher ?? null,
+          };
         }
         if (command === "plugin_import_git" && args?.checkOnly) {
           // A journey can hold an update check to observe it in progress.

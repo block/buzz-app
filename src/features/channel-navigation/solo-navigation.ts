@@ -1,6 +1,11 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { JsonValue } from "../navigation/targets";
@@ -149,8 +154,6 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   presentation(source: RegisteredSoloSource, binding: SoloRegionBinding) {
     const active = () =>
       sameBinding(this.binding, binding) && this.sources().includes(source);
-    const key = `solo-region-state:${binding.viewer}:${source.key}`;
-    const memoryKey = `${binding.scope}/${key}`;
     return {
       revealRequests: {
         subscribe: (listener: (channelId: string) => void) => {
@@ -172,19 +175,39 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           return stop;
         },
       },
-      state: {
-        get: () => {
-          const saved = viewRevision(binding.scope, key);
-          if (saved === undefined && this.states.has(memoryKey))
+      state: this.regionState(source, binding),
+    };
+  }
+  private regionState(
+    source: RegisteredSoloSource,
+    binding: SoloRegionBinding,
+  ) {
+    binding = Object.freeze({ ...binding });
+    const active = () =>
+      sameBinding(this.binding, binding) && this.sources().includes(source);
+    const key = `solo-region-state:${binding.viewer}:${source.key}`;
+    const memoryKey = `${binding.scope}/${key}`;
+    const current = () => {
+      if (!active()) throw new Error("This Solo region binding has ended");
+    };
+    return {
+      get: () => {
+        current();
+        const saved = viewRevision(binding.scope, key);
+        if (saved === undefined) {
+          if (this.states.has(memoryKey))
             return structuredClone(this.states.get(memoryKey));
-          try {
-            return saved ? (JSON.parse(saved) as JsonValue) : undefined;
-          } catch {
-            return undefined;
-          }
-        },
-        set: (value: JsonValue) => {
-          if (!active()) return false;
+          throw new Error("Solo region storage is unavailable");
+        }
+        try {
+          return saved === null ? undefined : (JSON.parse(saved) as JsonValue);
+        } catch {
+          throw new Error("Solo region state is invalid");
+        }
+      },
+      set: (value: JsonValue) => {
+        if (!active()) return false;
+        try {
           const json = JSON.stringify(value);
           if (
             json === undefined ||
@@ -192,10 +215,39 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           )
             return false;
           const copy = JSON.parse(json) as JsonValue;
-          if (!writeView(binding.scope, key, copy)) return false;
+          const previous = this.states.get(memoryKey);
+          // writeView notifies synchronously; a listener can accept a newer value.
           this.states.set(memoryKey, copy);
+          if (!writeView(binding.scope, key, copy)) {
+            if (previous === undefined) this.states.delete(memoryKey);
+            else this.states.set(memoryKey, previous);
+            return false;
+          }
           return true;
-        },
+        } catch {
+          return false;
+        }
+      },
+      subscribe: (listener: () => void) => {
+        current();
+        const signal = this.runtimes.get(source)?.controller.signal;
+        if (!signal || signal.aborted)
+          throw new Error("This Solo region binding has ended");
+        const stopView = subscribeView(binding.scope, (changedKey) => {
+          if (active() && (changedKey === undefined || changedKey === key)) {
+            try {
+              listener();
+            } catch {
+              /* A source listener cannot reject an accepted storage write. */
+            }
+          }
+        });
+        const stop = () => {
+          stopView();
+          signal.removeEventListener("abort", stop);
+        };
+        signal.addEventListener("abort", stop, { once: true });
+        return stop;
       },
     };
   }
@@ -389,6 +441,16 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       ? { source: region.source, binding }
       : undefined;
   }
+  async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
+    const region = this.value.regions.find((item) => item.source);
+    const source = region?.source;
+    if (!source?.composeWorkspaces || !source.openWorkspace) return false;
+    const binding = this.value.binding;
+    if (!binding || region?.reason)
+      throw new Error("Workspace selection is not ready. Try again.");
+    await source.openWorkspace(binding, workspaceId);
+    return true;
+  }
   retry = (key: string) => {
     if (this.sources().some((source) => source.key === key)) this.bind(true);
   };
@@ -434,20 +496,34 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       )
         return;
       return "workspace" in saved && typeof saved.workspace === "string"
-        ? { workspace: saved.workspace }
+        ? {
+            workspace: saved.workspace,
+            ...("lead" in saved && saved.lead === true
+              ? { lead: true as const }
+              : {}),
+          }
         : {};
     };
     this.contributions.register(this.ctx, { ...source, identity });
     return Object.freeze({
       label,
+      state(binding) {
+        current(binding);
+        const registered = host
+          .sources()
+          .find((entry) => entry.identity === identity);
+        if (!registered) throw new Error("This Solo region binding has ended");
+        return host.regionState(registered, binding);
+      },
       openDraft(binding, input = {}) {
         current(binding);
         const { workspace } = input;
         if (
-          workspace !== undefined &&
-          (typeof workspace !== "string" ||
-            !workspace ||
-            workspace.length > 256)
+          (workspace !== undefined &&
+            (typeof workspace !== "string" ||
+              !workspace ||
+              workspace.length > 256)) ||
+          (input.lead && !workspace)
         )
           throw new Error("Invalid workspace");
         if (workspace) {
@@ -475,6 +551,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           soloDraftTarget(binding.scope, {
             region: label,
             ...(workspace ? { project: workspace } : {}),
+            ...(workspace && input.lead ? { lead: true } : {}),
           }),
         );
       },

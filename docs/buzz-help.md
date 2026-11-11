@@ -85,8 +85,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
   sign-in asks the browser to sign in again rather than reuse the account it
   remembers. Signing in to a different account than the one saved on this
   computer replaces it: Buzz restarts and signs you in again by itself. When
-  the saved account may not be backed up, Buzz asks first, and **Cancel**
-  leaves it in place.
+  the saved account may not be backed up, Buzz asks first: copy or reveal its
+  private key and check **I have my key** before **Replace**; **Cancel** leaves
+  it in place. If the key saved on this computer is malformed, Buzz offers
+  **Remove from device** at launch: after you confirm, Buzz restarts, deletes
+  that key on the next launch, and you can sign in to restore your account's
+  backup or enter your private key.
   Builderlab setup backs the key up automatically;
   if backup fails temporarily, retry to complete setup. If backup is not supported
   by the build or account, choose **Continue without backup** to finish setup.
@@ -375,6 +379,14 @@ revokes all of them, and a pairing unused for 30 days expires.
   message, attachments, and choices while this window stays open. Retry never
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
+  A locally hosted agent can list your personal workspace IDs with
+  `solo_workspace_list` and explicitly choose one when creating a Solo chat,
+  provided it includes you in the chat’s members. This only files the new chat;
+  it does not copy workspace defaults or Canvas. A known pre-write refusal
+  reports “created, not filed.” A write that cannot be
+  confirmed reports that placement may have completed: inspect or refresh the
+  reported chat before **Move to**, and never create it again.
+  This option is not available through external/standalone or Nexus requests.
   Solo chats can also be shared with other people; do not describe every Solo
   chat as visible only to its creator.
   New chats start **Ongoing** unless **Chat settings** chooses **Temporary**,
@@ -395,9 +407,34 @@ revokes all of them, and a pairing unused for 30 days expires.
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  With Nexus enabled, each workspace also contains its tasks and can have a Lead
+  task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.
+  Creating a workspace selects it so you can start a conversation with its Lead.
+  The title or blank row area opens the workspace's Lead, or a task composer if
+  it has none; sending from that composer makes the new task its Lead. Only the
+  chevron expands or collapses
+  the workspace. Hover Solo or a workspace and use **New task**, beside **…**, for another task. The button also appears with keyboard focus. **New task** is also in the workspace's **…** menu, the only place it shows when the header is too narrow, for example with enlarged text. Chat creation
+  is available only in **Chats**. The workspace itself stays selected while its Lead
+  conversation is open; the Lead has no separate task row. New task's agent picker
+  lists agents eligible to run the task on this device.
+  Without Nexus, chat creation remains available in the global **+** menu,
+  Solo and each workspace; creating a workspace opens a chat draft filed there.
   Folders are optional unless **Work in a new worktree** is on. In that mode,
   add at least one project folder; the form shows a message beside Folders
-  until you add one or turn worktree mode off.
+  until you add one or turn worktree mode off. In **New chat**, typing **#**
+  lists your workspaces above channels; choosing one sets the composer's
+  workspace control and leaves no text in the message. A plugin's chat, such as
+  a Nexus task, shows the workspace control when its plugin files it; until
+  that chat's first message, **#** offers its workspaces too, and choosing one
+  files the chat right away.
+- **Folder chips.** In the desktop app, type **!** and part of a folder name in
+  any composer to list matching folders in this community's repositories folder
+  (**Local settings**). Choosing one adds it to the message as a chip; the
+  message shows the folder's name. When you send it to your own Claude or Codex
+  agent on this device, the agent is told the folder's path, and Claude may also
+  work in that folder for the rest of the conversation. A chip someone else
+  sends, or a folder no longer in your repositories folder, grants nothing.
+  A bare **!**, or **!** before a space, stays text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
@@ -1086,7 +1123,14 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 ## Optional features and limits
 
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
-  them. Do not assume a particular optional plugin is on.
+  them. Unsigned external plugins can install and run by default. Launch Buzz
+  with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with
+  the variable unset or set to `0` to turn enforcement off. When enforcement is
+  enabled, unsigned installations remain blocked until replaced with signed
+  releases. Use **Update** in the plugin’s Settings details to apply a signed
+  release, even when its code has not changed. Supplied signatures are always
+  verified. Plugins built into Buzz are exempt.
+  Do not assume a particular optional plugin is on.
   A page whose plugin is turned off says so, and its **Manage plugins** opens
   that plugin, where **Enable** turns it back on.
   If a plugin hides the focused Team sidebar row, keyboard focus moves to a
@@ -1249,6 +1293,40 @@ Release builds ignore it.
 ### Builderlab in development
 
 With the pinned-viewer development server, Settings → Plugins → Builderlab manages one sign-in for hosted communities, remote agents and apps. It survives app reloads while the server runs. Signing out or session expiry signs all three out. The credential stays on the server and is not saved to disk.
+
+### Charts in messages
+
+The optional **Charts** plugin, off until turned on in Settings → Plugins, draws
+a `buzz-chart` code block as a chart. Anyone reading the message needs it on;
+otherwise they see the JSON. The block holds strict JSON (no comments or
+functions), up to 60 KB. **Expand chart** shows it larger and **View data rows**
+lists the plotted values as text.
+
+````
+```buzz-chart
+{"version":1,"type":"bar","title":"Open issues","x":"team","y":"issues","data":[{"team":"Web","issues":12},{"team":"Relay","issues":7}],"source":{"name":"Issue tracker"}}
+```
+````
+
+- Version 1: `type` is `bar` (at most 40 rows), `line` or `scatter` (at most 200),
+  with `title`, `x`, `y` and `data` rows of those two fields. Every `y` is a
+  finite number. Bars use text `x` values. Line and scatter use numbers, or set
+  `"xType":"temporal"` for ISO dates (date-times need seconds and a timezone).
+  Bars and lines need unique `x` values; aggregate first. `series` names a field
+  that splits rows into colored series. Charts use four colors, so the series
+  after the third are summed into one **Other** series; give your own totals when
+  a sum would mislead.
+- Version 2: `{"version":2,"title":"…","height":360,"option":{…}}` where `option`
+  is an Apache ECharts option with its data inline (`dataset.source` or
+  `series[].data`). Series types are bar, line, scatter, pie, heatmap, funnel,
+  gauge, boxplot, candlestick, sankey, treemap and radar. `height` is 160–900.
+  Colors come from the theme: the fourth color is followed by the first again,
+  so keep a chart to four series, slices or nodes when readers must tell them
+  apart. Links, images, graphics, toolbox, custom series, HTML in tooltips and
+  `inside` zoom are removed.
+- Optional `"source":{"name":"…","url":"https://…","metric":"…"}` shows
+  attribution under the chart; it is not verified. `note` adds a caveat line.
+- An invalid chart shows its error and source instead of drawing.
 
 ### Saved External apps approval
 

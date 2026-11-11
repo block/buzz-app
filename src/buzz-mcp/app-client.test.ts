@@ -399,6 +399,84 @@ it("offers the handle's settings, checking the turn before each call", () => {
   expect(settings.get).not.toHaveBeenCalled();
 });
 
+it("forwards workspace discovery and one-use filing only while the app client is live", async () => {
+  let live = true;
+  const file = vi.fn(async () => {});
+  const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
+  const prepare = vi.fn(async () => file);
+  const client = appClient(
+    { soloWorkspaces: { list, prepare } } as unknown as AgentHandle,
+    {
+      read: async () => new Uint8Array(),
+      memories: async () => ({ entries: [], partial: false }),
+      check: () => {
+        if (!live) throw new Error("retired");
+      },
+    },
+  );
+  expect(await client.soloWorkspaces?.list()).toEqual([
+    { id: "work", name: "Work" },
+  ]);
+  const place = await client.soloWorkspaces?.prepare("work", ["owner"], "chat");
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    ["owner"],
+    "chat",
+    undefined,
+  );
+  live = false;
+  await expect(place?.("chat")).rejects.toThrow("retired");
+  expect(file).not.toHaveBeenCalled();
+  await expect(client.soloWorkspaces?.list()).rejects.toThrow("retired");
+});
+
+it("rejects app retirement after a completed placement without undoing it", async () => {
+  const started = gate<void>(),
+    release = gate<void>();
+  let live = true,
+    durable = false;
+  const file = vi.fn(async () => {
+    durable = true;
+    started.resolve();
+    await release.promise;
+    return { status: "filed" as const };
+  });
+  const client = appClient(
+    {
+      soloWorkspaces: { list: async () => [], prepare: async () => file },
+    } as unknown as AgentHandle,
+    {
+      read: async () => new Uint8Array(),
+      memories: async () => ({ entries: [], partial: false }),
+      check: () => {
+        if (!live) throw new Error("retired");
+      },
+    },
+  );
+  const place = await client.soloWorkspaces?.prepare("work", ["owner"], "chat");
+  const pending = place?.("chat");
+  const refused = expect(pending).rejects.toThrow("retired");
+  try {
+    await started.promise;
+    expect(durable).toBe(true);
+    live = false;
+  } finally {
+    release.resolve();
+  }
+  await refused;
+  expect(file).toHaveBeenCalledExactlyOnceWith("chat");
+  expect(durable).toBe(true);
+});
+
+it("does not expose workspace capability on unsupported handles", () => {
+  expect(
+    appClient({} as AgentHandle, {
+      read: async () => new Uint8Array(),
+      memories: async () => ({ entries: [], partial: false }),
+    }).soloWorkspaces,
+  ).toBeUndefined();
+});
+
 it("never passes on an owner-read capability, even from a handle that carries one", () => {
   const read = vi.fn();
   const stale = Object.fromEntries(

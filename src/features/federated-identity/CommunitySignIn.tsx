@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 import type { Membership } from "../communities/service";
 import { communityDestination } from "../communities/destination";
@@ -33,6 +33,44 @@ const ISSUER_REFUSALS = new Set([
   "invalid-response",
   "response-too-large",
 ]);
+
+const SIGN_IN_REQUIRED =
+  /Federated sign-in is required|reauthentication-required|Federated authorization (changed|expired)/;
+
+/** Whether `CommunitySignIn` explains this refusal with its own message. */
+function explains(state: SessionSnapshot, error: string | undefined) {
+  const refusal = error || state.failure || "";
+  return (
+    /binding[-_]mismatch|authorization[-_]denied/.test(refusal) ||
+    ISSUER_REFUSALS.has(refusal) ||
+    (!!error &&
+      SIGN_IN_REQUIRED.test(error) &&
+      !!state.authority &&
+      state.status !== "signed-in")
+  );
+}
+
+const noSubscribe = () => () => {};
+const noSnapshot = () => undefined;
+
+/** True once `CommunitySignIn` has explained `error`, so the caller does
+ * not also show the raw error. It stays true until `error` clears: a sign-in
+ * that resolves the refusal publishes signed-in before its retry clears the
+ * error, and the raw error must not mount as an alert in between. */
+export function useExplainedRefusal(
+  identity: FederatedIdentity | undefined,
+  error: string | undefined,
+) {
+  const state = useSyncExternalStore(
+    identity?.subscribe ?? noSubscribe,
+    identity?.snapshot ?? noSnapshot,
+    identity?.snapshot ?? noSnapshot,
+  );
+  const explained = useRef<string | undefined>(undefined);
+  if (!error) explained.current = undefined;
+  else if (state && explains(state, error)) explained.current = error;
+  return !!error && explained.current === error;
+}
 
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
@@ -91,6 +129,7 @@ function Action({
         retry={retry}
       />
     );
+  if (!explains(state, error)) return null;
   const refusal = error || state.failure || "";
   const mismatch = /binding[-_]mismatch/.test(refusal);
   if (mismatch || /authorization[-_]denied/.test(refusal)) {
@@ -132,15 +171,8 @@ function Action({
         administrator.
       </p>
     );
-  if (
-    !error ||
-    !/Federated sign-in is required|reauthentication-required|Federated authorization (changed|expired)/.test(
-      error,
-    ) ||
-    !state.authority
-  )
-    return null;
-  if (state.status === "signed-in") return null;
+  // What remains is a sign-in the community requires.
+  if (!state.authority) return null;
   return (
     <>
       <p className="text-body-sm">

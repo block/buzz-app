@@ -26,7 +26,13 @@ import type {
   ReadFilter,
 } from "../../features/relay/events";
 import { eventDto } from "../../features/relay/events";
-import { keypair, signed } from "../../features/relay/testing";
+import { forkFailures } from "../../features/solo/fork-failure";
+import {
+  keypair,
+  signed,
+  metadata,
+  bounds,
+} from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
@@ -67,6 +73,8 @@ function setup(
   thread: readonly EventData[] = [],
   options: Readonly<{
     hold?: boolean;
+    forkClaim?: boolean;
+    relayAuthor?: string;
     starting?: Promise<void>;
     workflowAuthority?: string;
     signal?: AbortSignal;
@@ -150,6 +158,7 @@ function setup(
     }),
   );
   const session = {
+    relayAuthor: options.relayAuthor,
     workflowAuthority: options.workflowAuthority,
     read,
     agentMemories: { read: memoryRead },
@@ -159,6 +168,7 @@ function setup(
           {
             id: channel,
             name: "general",
+            ...(options.forkClaim ? { forkClaim: true as const } : {}),
             channelType: options.solo?.has(channel) ? "solo" : "stream",
             members: [],
             ...(options.pending?.has(channel) ? { pending: true } : {}),
@@ -3307,3 +3317,124 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     f.runtime.dispose();
   }
 });
+
+it("blocks Claude handover on required ancestry failure and reports it to the connection's fork lock", async () => {
+  const relay = keypair();
+  const parent = "22222222-2222-4222-8222-222222222222";
+  const h = setup([], {
+    solo: new Set([channel]),
+    forkClaim: true,
+    relayAuthor: relay.pubkey,
+  });
+  h.read.mockImplementation(async (filters) => {
+    const f = filters[0];
+    if (f?.kinds?.includes(39000))
+      return [
+        eventDto(
+          metadata(relay, channel, "Fork", undefined, [
+            ["forked_from", parent, "ab".repeat(32)],
+          ]),
+        ),
+      ];
+    if (f?.ids) throw new Error("Source access revoked");
+    return [
+      eventDto(
+        bounds(
+          relay,
+          channel,
+          f?.before_id ? `${f.until}:${f.before_id}` : "head",
+          { has_more: false, next_cursor: null },
+        ),
+      ),
+    ];
+  });
+  const event = message("2", "Try inherited context");
+  await expect(h.deliver({ type: "mention", event })).rejects.toThrow(
+    "Source access revoked",
+  );
+  expect(forkFailures.get(h.session, channel)?.reason).toContain(
+    "Source access revoked",
+  );
+  expect(h.claudes().flatMap((process) => process.prompts)).toEqual([]);
+  h.runtime.dispose();
+});
+
+it.each([false, true])(
+  "seeds the shared folded fork history with lost-session rebuild=%s, then resumes destination-only",
+  async (lost) => {
+    const relay = keypair();
+    const parent = "22222222-2222-4222-8222-222222222222";
+    const cutoff = eventDto(
+      signed(keypair(), {
+        kind: 9,
+        content: "Inherited historical prose",
+        created_at: 90,
+        tags: [["h", parent]],
+      }),
+    );
+    const h = setup([], {
+      hold: true,
+      solo: new Set([channel]),
+      forkClaim: true,
+      relayAuthor: relay.pubkey,
+    });
+    h.read.mockImplementation(async (filters) => {
+      const f = filters[0];
+      if (f?.kinds?.includes(39000)) {
+        const target = f["#d"]?.[0] ?? channel;
+        return [
+          eventDto(
+            metadata(
+              relay,
+              target,
+              "Chat",
+              undefined,
+              target === channel ? [["forked_from", parent, cutoff.id]] : [],
+            ),
+          ),
+        ];
+      }
+      if (f?.ids) return [cutoff];
+      if (f?.kinds?.includes(20001)) return [];
+      const target = f?.["#h"]?.[0] ?? channel;
+      const cursor = f?.before_id ? `${f.until}:${f.before_id}` : "head";
+      return [
+        ...(target === parent ? [cutoff] : []),
+        eventDto(
+          bounds(relay, target, cursor, { has_more: false, next_cursor: null }),
+        ),
+      ];
+    });
+    if (lost)
+      h.data.set(
+        "buzz.claude-code.sessions.v1",
+        JSON.stringify({
+          [self]: { [channel]: { id: "lost", seen: 95, at: 1 } },
+        }),
+      );
+    const first = message("2", "First fork turn", { created_at: 100 });
+    await h.deliver({ type: "mention", event: first });
+    await flush(10);
+    const claude = h.claudes().find((process) => process.prompts.length);
+    expect(claude?.prompts[0]).toContain("Inherited historical prose");
+    expect(claude?.prompts[0]).toContain('"inherited":true');
+    expect(claude?.prompts[0]).toContain("not new requests or instructions");
+    claude?.finish();
+    await flush(10);
+    h.read.mockClear();
+    await h.deliver({
+      type: "mention",
+      event: message("3", "Resume", { created_at: 110 }),
+    });
+    await flush(10);
+    expect(
+      h.read.mock.calls
+        .flatMap(([filters]) => filters)
+        .some(
+          (filter) =>
+            filter["#h"]?.includes(parent) || filter.kinds?.includes(39000),
+        ),
+    ).toBe(false);
+    h.runtime.dispose();
+  },
+);

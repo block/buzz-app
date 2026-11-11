@@ -6,6 +6,7 @@ import type { ChannelSummary } from "../relay/contracts";
 import { eventDto, type EventData } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { bounds, keypair, message, metadata } from "../relay/testing";
+import { forkFailures } from "./fork-failure";
 import { useSoloForkLock } from "./useSoloForkLock";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -59,13 +60,16 @@ function setup() {
     ];
   });
   const starting = vi.fn((_id: string): Promise<void> | undefined => undefined);
+  const resumeFork = vi.fn(
+    async (_id: string, _retry?: boolean, _active?: () => boolean) => {},
+  );
   const session = {
     ...owner.session,
     relayAuthor: relay.pubkey,
     read,
-    channelWrites: { ...owner.session.channelWrites, starting },
+    channelWrites: { ...owner.session.channelWrites, starting, resumeFork },
   };
-  return { session, read, starting, meta, relay, cutoff };
+  return { session, read, starting, resumeFork, meta, relay, cutoff };
 }
 
 it("waits for local creation and verified fork metadata before enabling", async () => {
@@ -278,4 +282,61 @@ it("fork tag present, no admission proof stays locked; absent signed ancestry ca
   await waitFor(() => expect(mounted.result.current.pending).toBe(false));
   expect(mounted.result.current.disabled).toBe(true);
   expect(mounted.result.current.reason).toContain("signed ancestry");
+});
+
+it("routes durable recovery failure and explicit same-operation retry through the existing lock", async () => {
+  const h = setup();
+  h.resumeFork.mockRejectedValueOnce(
+    new Error("Saved fork metadata is missing"),
+  );
+  const mounted = renderHook(() => useSoloForkLock(h.session, channel));
+  await waitFor(() =>
+    expect(mounted.result.current.reason).toBe(
+      "Saved fork metadata is missing",
+    ),
+  );
+  expect(mounted.result.current.disabled).toBe(true);
+  expect(h.read).not.toHaveBeenCalled();
+  expect(h.resumeFork).toHaveBeenLastCalledWith(
+    id,
+    false,
+    expect.any(Function),
+  );
+  act(() => mounted.result.current.retry());
+  expect(mounted.result.current.disabled).toBe(true);
+  await waitFor(() => expect(mounted.result.current.disabled).toBe(false));
+  expect(h.resumeFork).toHaveBeenLastCalledWith(id, true, expect.any(Function));
+  mounted.unmount();
+  expect(h.resumeFork.mock.calls[1]?.[2]?.()).toBe(false);
+});
+
+it("locks a ready preview on runtime ancestry failure and fences a newer failure during Retry", async () => {
+  const h = setup();
+  const mounted = renderHook(() => useSoloForkLock(h.session, channel));
+  await waitFor(() => expect(mounted.result.current.disabled).toBe(false));
+  act(() =>
+    forkFailures.report(
+      h.session,
+      id,
+      new Error("Claude cannot read required ancestry"),
+    ),
+  );
+  expect(mounted.result.current.disabled).toBe(true);
+  expect(mounted.result.current.seed).toBeUndefined();
+  expect(mounted.result.current.reason).toBe(
+    "Claude cannot read required ancestry",
+  );
+  const held = deferred<readonly EventData[]>();
+  const before = h.read.mock.calls.length;
+  h.read.mockReturnValueOnce(held.promise);
+  act(() => mounted.result.current.retry());
+  await waitFor(() => expect(h.read.mock.calls.length).toBe(before + 1));
+  act(() => forkFailures.report(h.session, id, "Newer runtime failure"));
+  await act(async () => held.resolve([h.meta()]));
+  await waitFor(() => expect(mounted.result.current.pending).toBe(false));
+  expect(mounted.result.current.reason).toBe("Newer runtime failure");
+  act(() => mounted.result.current.retry());
+  await waitFor(() => expect(mounted.result.current.disabled).toBe(false));
+  act(() => forkFailures.report({}, id, "Different connection"));
+  expect(mounted.result.current.disabled).toBe(false);
 });

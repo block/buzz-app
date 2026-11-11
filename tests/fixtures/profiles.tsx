@@ -435,31 +435,34 @@ const manager = createPluginManager(context, {
                       matches: (target) =>
                         !!profilePanelKey(target) ||
                         !!profileActivityViewKey(target),
-                      component: (props) => {
-                        const Native = ctx.panels
-                          .snapshot()
-                          .find(
-                            (panel) => panel.key === "buzz.profiles/profile",
-                          )?.component as
-                          | ComponentType<
-                              PanelProps &
-                                import("../../src/bundled/profiles/ProfilePanel").PersonProfileInfoContent
-                            >
-                          | undefined;
-                        return Native ? (
-                          <Native
-                            {...props}
-                            renderPersonInfo={(content) => (
-                              <>
-                                <button type="button">
-                                  Extra profile action
-                                </button>
-                                {content}
-                              </>
-                            )}
-                          />
-                        ) : null;
-                      },
+                      component: Object.assign(
+                        (props: PanelProps) => {
+                          const Native = ctx.panels
+                            .snapshot()
+                            .find(
+                              (panel) => panel.key === "buzz.profiles/profile",
+                            )?.component as
+                            | ComponentType<
+                                PanelProps &
+                                  import("../../src/bundled/profiles/ProfilePanel").PersonProfileInfoContent
+                              >
+                            | undefined;
+                          return Native ? (
+                            <Native
+                              {...props}
+                              renderPersonInfo={(content) => (
+                                <>
+                                  <button type="button">
+                                    Extra profile action
+                                  </button>
+                                  {content}
+                                </>
+                              )}
+                            />
+                          ) : null;
+                        },
+                        { profileHistory: true },
+                      ),
                     });
                   },
                 },

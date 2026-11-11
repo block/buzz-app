@@ -2465,9 +2465,9 @@ and marker failures each render nothing and leave the row and menu usable. The
 bundled Reminders plugin is the first consumer.
 
 `registerIdentityMark({ id, title, component })` adds presentation right after a
-person's name, such as an identity check. The host draws every active mark after
-the author name in message bylines (before the author's status) and after the
-name in the bundled @mention suggestions; other completion providers get none.
+person's name in the bundled @mention suggestions, such as an identity check that
+tells a person apart from a lookalike while choosing whom to mention. Other
+completion providers, group and channel suggestions, and message bylines get none.
 `component` receives `{ pubkey, profiles }`, where `profiles` is the session's
 shared profile directory. A directory entry's `verified` carries community
 verification when the community provides it, so a mark can read
@@ -2475,10 +2475,9 @@ verification when the community provides it, so a mark can read
 follow it. Marks decide for themselves whether to draw anything: return `null`
 for people they do not mark. The host owns the row, focus and selection; marks
 are presentation only and get no opener. Each mark renders in its own boundary,
-so a failing mark renders nothing and leaves the name and row usable. Marks draw
-in registration order. Continuation rows, workflow bylines, agent coordination
-lines and group or channel suggestions show none. A mark's text is part of the
-byline, so keep it to an icon with an accessible label.
+so a failing mark renders nothing and leaves the suggestion usable. Marks draw
+in registration order. A mark's text is part of the suggestion's name, so keep
+it to an icon with an accessible label.
 
 `placement: "toolbar"` puts the action in the host's message toolbar. The
 toolbar appears on hover and keyboard focus. The host supplies an icon button

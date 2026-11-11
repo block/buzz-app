@@ -83,7 +83,6 @@ import {
   ContributionBoundary,
   contributionKey,
 } from "../conversation/ContributionBoundary";
-import { IdentityMarks } from "../conversation/IdentityMarks";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
@@ -1211,14 +1210,6 @@ function MessageRowContent({
                         authorName
                       )}
                     </strong>
-                    {session && !stackPrevious && (
-                      <IdentityMarks
-                        registry={extensions?.identityMarks}
-                        pubkey={row.authorId}
-                        profiles={session.profiles}
-                        className={styles.authorIdentityMarks}
-                      />
-                    )}
                     {session && !stackPrevious && (
                       <UserStatusDisplay
                         session={session}

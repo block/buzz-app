@@ -264,9 +264,9 @@ export type MessageAction = Readonly<{
    */
   marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
 }>;
-/** Presentation after a person's name in message bylines and @mention
- * suggestions, such as an identity check. The host owns placement, focus and
- * the row; the component decides from `pubkey` whether to draw anything. */
+/** Presentation after a person's name in @mention suggestions, such as an
+ * identity check. The host owns placement, focus and the row; the component
+ * decides from `pubkey` whether to draw anything. */
 export type IdentityMark = Readonly<{
   id: string;
   title: string;

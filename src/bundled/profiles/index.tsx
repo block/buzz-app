@@ -4,7 +4,7 @@ import {
   profilePanelKey,
   profileActivityViewKey,
 } from "../../features/profiles/target";
-import { ProfilePanel, type ProfileInfoContent } from "./ProfilePanel";
+import { ProfilePanel, type PersonProfileInfoContent } from "./ProfilePanel";
 
 export const inject = [
   "panels",
@@ -21,7 +21,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     matches: (target) =>
       !!profilePanelKey(target) || !!profileActivityViewKey(target),
     component: Object.assign(
-      (props: PanelProps & ProfileInfoContent) => (
+      (props: PanelProps & PersonProfileInfoContent) => (
         <ProfilePanel
           {...props}
           relay={ctx.relay}
@@ -31,7 +31,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           linkRenderers={ctx.conversation.links}
         />
       ),
-      { supportsInfoContent: true },
+      { supportsPersonInfoContent: true },
     ),
   });
 };

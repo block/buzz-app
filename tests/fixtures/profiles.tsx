@@ -443,13 +443,13 @@ const manager = createPluginManager(context, {
                           )?.component as
                           | ComponentType<
                               PanelProps &
-                                import("../../src/bundled/profiles/ProfilePanel").ProfileInfoContent
+                                import("../../src/bundled/profiles/ProfilePanel").PersonProfileInfoContent
                             >
                           | undefined;
                         return Native ? (
                           <Native
                             {...props}
-                            renderInfo={(content) => (
+                            renderPersonInfo={(content) => (
                               <>
                                 <button type="button">
                                   Extra profile action

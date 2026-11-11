@@ -120,9 +120,9 @@ function openedFrom(session: RelaySession, context: PanelProps["context"]) {
   };
 }
 
-/** Optional Info composition for a panel specializing canonical profile targets. */
-export type ProfileInfoContent = {
-  renderInfo?: ((content: ReactNode) => ReactNode) | undefined;
+/** Optional Info composition for a panel specializing canonical person profiles. */
+export type PersonProfileInfoContent = {
+  renderPersonInfo?: ((content: ReactNode) => ReactNode) | undefined;
 };
 const plainInfo = (content: ReactNode) => content;
 
@@ -135,9 +135,9 @@ export function ProfilePanel({
   communities,
   linkRenderers,
   close,
-  renderInfo,
+  renderPersonInfo,
 }: PanelProps &
-  ProfileInfoContent & {
+  PersonProfileInfoContent & {
     relay: RelayData;
     navigation?: Navigation;
     /** Agents show their type's tabs. */
@@ -213,7 +213,7 @@ export function ProfilePanel({
     );
   return (
     <ProfileDetails
-      renderInfo={renderInfo}
+      renderPersonInfo={renderPersonInfo}
       linkRenderers={linkRenderers}
       key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
@@ -372,8 +372,8 @@ function ProfileDetails({
   viewer,
   openConversation,
   close,
-  renderInfo = plainInfo,
-}: ProfileInfoContent & {
+  renderPersonInfo = plainInfo,
+}: PersonProfileInfoContent & {
   agents: Agents | undefined;
   linkRenderers: ConversationExtensions["links"] | undefined;
   communities: CommunityReader | undefined;
@@ -696,7 +696,7 @@ function ProfileDetails({
               {selected.startsWith("agent:") ? (
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
-                renderInfo(
+                (displayAgent ? plainInfo : renderPersonInfo)(
                   <>
                     {profile?.verified && (
                       <SettingsGroup>

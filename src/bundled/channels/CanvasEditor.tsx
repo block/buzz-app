@@ -312,7 +312,7 @@ export function CanvasEditor({
     ) : undefined;
   const body = (
     <>
-      <div className={styles.stack}>
+      <div className={`${styles.stack} ${panelStyles.views}`}>
         {readOnly && <p role="status">Canvas is read-only.</p>}
         <Tabs
           variant="panel"

@@ -108,12 +108,36 @@ test("document screens share heading roles, list markers and code frames", async
         // Copy: on pointer hover and on keyboard focus.
         const pre = canvas.locator("pre");
         const copy = pre.getByRole("button", { name: "Copy code block" });
+        // `toBeVisible` passes at opacity 0, so read the actions' opacity.
+        const actions = copy.locator("..");
         await pre.hover();
-        await expect(copy).toBeVisible();
+        await expect(actions).toHaveCSS("opacity", "1");
         await page.mouse.move(0, 0);
+        await expect(actions).toHaveCSS("opacity", "0");
         await copy.focus();
         await expect(copy).toBeFocused();
-        await expect(copy).toBeVisible();
+        await expect(actions).toHaveCSS("opacity", "1");
+        // A line that cannot wrap scrolls inside its block, not the Canvas.
+        const host = await page
+          .locator('[data-screen="canvas-host"]')
+          .evaluate((section) => {
+            const code = section.querySelector("pre code");
+            return {
+              host: section.getBoundingClientRect().width,
+              article: section.firstElementChild.getBoundingClientRect().width,
+              client: code.clientWidth,
+              scroll: code.scrollWidth,
+            };
+          });
+        expect(host.article, label).toBeLessThanOrEqual(host.host);
+        expect(host.scroll, label).toBeGreaterThan(host.client);
+        // A rejected document's source still wraps.
+        const source = page.locator('[data-screen="canvas-source"] pre code');
+        await expect(source).toHaveCSS("white-space", "pre-wrap");
+        expect(
+          await source.evaluate((code) => code.scrollWidth <= code.clientWidth),
+          label,
+        ).toBe(true);
         await page.screenshot({
           path: `${SHOTS}${mode}-${width}-${size}.png`,
           fullPage: true,

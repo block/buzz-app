@@ -2,6 +2,8 @@
 // sample, for rendered checks across themes, widths and text sizes.
 import { createRoot } from "react-dom/client";
 import { PluginReadme } from "../../src/app/PluginReadme";
+import canvasStyles from "../../src/bundled/channels/Canvas.module.css";
+import templateStyles from "../../src/bundled/channels/ChannelTemplates.module.css";
 import { CanvasMarkdown } from "../../src/bundled/channels/CanvasView";
 import { GitHubBody } from "../../src/bundled/github/GitHubBody";
 import { InstructionsMarkdown } from "../../src/bundled/watching/InstructionsMarkdown";
@@ -23,6 +25,10 @@ const SAMPLE = [
   "```\nconst value = 1;\n```",
 ].join("\n\n");
 
+// A line that cannot wrap, and a document too deep to render.
+const LONG_LINE = `\`\`\`\n${"abcdefghijklmnopqrstuvwxyz ".repeat(40)}\n\`\`\``;
+const TOO_DEEP = `${">".repeat(120)} ${"deep ".repeat(200)}`;
+
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.colorMode = params.get("mode") ?? "light";
 document.documentElement.dataset.fontSize = params.get("size") ?? "default";
@@ -41,6 +47,16 @@ createRoot(root).render(
     >
       <section data-screen="canvas">
         <CanvasMarkdown content={SAMPLE} openLink={() => false} />
+      </section>
+      {/* The Canvas editor's view track, with its own classes. */}
+      <section
+        data-screen="canvas-host"
+        className={`${templateStyles.stack} ${canvasStyles.views}`}
+      >
+        <CanvasMarkdown content={LONG_LINE} openLink={() => false} />
+      </section>
+      <section data-screen="canvas-source">
+        <CanvasMarkdown content={TOO_DEEP} openLink={() => false} />
       </section>
       <section data-screen="plugin-readme">
         <PluginReadme text={SAMPLE} />

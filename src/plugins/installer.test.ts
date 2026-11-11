@@ -546,6 +546,10 @@ it("reports only recognized installation source kinds from ready catalog data", 
   bundled.updateSource = { root: "/plugins/bundled", path: "." };
   const git = info("example.git");
   git.updateSource = { ...base, path: "example-git" };
+  const defaultReferenceGit = info("example.default-reference-git");
+  defaultReferenceGit.updateSource = { ...base, reference: "", path: "." };
+  const spacedGit = info("example.spaced-git");
+  spacedGit.updateSource = { ...base, path: "nested folder/插件" };
   const url = info("example.url");
   url.updateSource = {
     url: "https://artifacts.example.com/plugins/example.url.json",
@@ -617,6 +621,8 @@ it("reports only recognized installation source kinds from ready catalog data", 
     plugins: [
       bundled,
       git,
+      defaultReferenceGit,
+      spacedGit,
       url,
       folder,
       windowsFolder,
@@ -634,6 +640,8 @@ it("reports only recognized installation source kinds from ready catalog data", 
   const expected = {
     "example.bundled": "bundled",
     "example.git": "git",
+    "example.default-reference-git": "git",
+    "example.spaced-git": "git",
     "example.url": "url",
     "example.folder": "folder",
     "example.windows-folder": "folder",

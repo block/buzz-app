@@ -573,9 +573,11 @@ returns `absent` only when the manifest ID is missing. For a present plugin,
 recognized saved `updateSource.repository`, `updateSource.url`, or
 `updateSource.root` returns `git`, `url`, or `folder`, respectively. Before the
 catalog is ready, or when a manifest ID is duplicated or saved source metadata
-is missing, unknown, malformed, or ambiguous, it returns `unavailable`. It
-returns no source location or other saved metadata, and does not check for or
-establish an update. Folder metadata is recognized only when its root is an
+is missing, unknown, malformed, or ambiguous, it returns `unavailable`.
+Git metadata includes an empty reference (the repository default) and UTF-8
+plugin folder names, including spaces. The method returns no source location
+or other saved metadata, and does not check for or establish an update.
+Folder metadata is recognized only when its root is an
 absolute path without an embedded NUL and its plugin path is relative without
 parent components; ordinary path names may include spaces or Unicode.
 

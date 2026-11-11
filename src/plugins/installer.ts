@@ -424,9 +424,10 @@ function savedInstallationSourceKind(
     typeof source.repository === "string" &&
     gitRepository(source.repository) !== null &&
     typeof source.reference === "string" &&
-    gitReference(source.reference) !== null &&
+    (source.reference === "" || gitReference(source.reference) !== null) &&
     typeof source.path === "string" &&
-    relativePath(source.path) !== null &&
+    // Native Git discovery records UTF-8 folders with POSIX separators.
+    relativeFolderPath(source.path, "/") !== null &&
     (source.commit === undefined ||
       (typeof source.commit === "string" &&
         commit.test(source.commit.toLowerCase())))

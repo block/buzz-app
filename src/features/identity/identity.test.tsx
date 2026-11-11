@@ -6199,9 +6199,7 @@ it.each([
 it("a restore that fails for a reason a retry may clear offers Try again, and Back returns to Welcome back", async () => {
   const wait = vi
     .fn()
-    .mockRejectedValueOnce(
-      "Try again, or enter your private key if you have a copy.",
-    )
+    .mockRejectedValueOnce("Restore was canceled. Try again.")
     .mockImplementationOnce(() => new Promise(() => {}));
   const account = backedUpAccount({
     nsec_restore_begin: () => ({ attempt: "attempt-1" }),
@@ -6212,8 +6210,9 @@ it("a restore that fails for a reason a retry may clear offers Try again, and Ba
   const user = userEvent.setup();
   await welcomeBackPage(user, identity, account);
   await restoreLinkedKey(user);
+  // The welcome-back screen names native's cause, not generic advice.
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Try again, or enter your private key if you have a copy.",
+    "Restore was canceled. Try again. Or enter your private key if you have a copy.",
   );
   expect(storedSecurely()).toBeNull();
   expect(

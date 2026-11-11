@@ -1,9 +1,10 @@
 //! App-lifetime clipboard ownership keeps copied content available on Linux.
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 
+use sha2::{Digest as _, Sha256};
 use tauri::Manager as _;
 use zeroize::Zeroizing;
 
@@ -91,7 +92,7 @@ pub(crate) async fn clipboard_write_text<R: tauri::Runtime>(
         .await;
     };
     let text = Zeroizing::new(text);
-    let copied = text.clone();
+    let copied = fingerprint(&text);
     let generation = write(&app, move |clipboard, secrets| {
         copy_secret(clipboard, secrets, &text).map_err(|_| "Could not copy text".to_owned())
     })
@@ -109,7 +110,13 @@ pub(crate) async fn clipboard_write_text<R: tauri::Runtime>(
         if app.state::<Clipboard>().1 .0.load(Ordering::SeqCst) != generation {
             return;
         }
+        let Some(reading) = Reading::begin(&READING) else {
+            return;
+        };
+        // The worker gets only the fingerprint: a read that never returns
+        // can't be stopped, so it must not hold the key.
         let read = tauri::async_runtime::spawn_blocking(move || {
+            let _reading = reading;
             arboard::Clipboard::new()
                 .ok()
                 .is_some_and(|mut board| holds(&mut board, &copied))
@@ -136,6 +143,32 @@ pub(crate) async fn clipboard_write_text<R: tauri::Runtime>(
 /// Wayland), so the expiry check reads from a worker with its own handle and
 /// only the clear runs on the main thread.
 const READ_OFF_MAIN_THREAD: bool = cfg!(all(unix, not(target_os = "macos")));
+
+/// Set while an expiry read runs. A blocking read can't be stopped, and a
+/// Wayland owner that never finishes a transfer holds it forever, so later
+/// checks leave the clipboard alone instead of stacking workers behind it.
+static READING: AtomicBool = AtomicBool::new(false);
+
+/// Holds `READING` until dropped.
+struct Reading(&'static AtomicBool);
+impl Reading {
+    /// `None` while another read holds `flag`.
+    fn begin(flag: &'static AtomicBool) -> Option<Self> {
+        (!flag.swap(true, Ordering::SeqCst)).then_some(Self(flag))
+    }
+}
+impl Drop for Reading {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// What the expiry check compares the clipboard against, so the copied key
+/// itself isn't kept for the wait.
+type Fingerprint = [u8; 32];
+fn fingerprint(text: &str) -> Fingerprint {
+    Sha256::digest(text.as_bytes()).into()
+}
 
 /// The clipboard operations a secret copy needs, so tests can stand in for the OS.
 trait Board {
@@ -179,18 +212,19 @@ fn copy_secret(
 /// Best effort: clears the clipboard if no later secret copy restarted the
 /// wait and it still holds `copied`. Another app can still write between the
 /// read and the clear; an unreadable clipboard is left alone.
-fn clear_secret(board: &mut impl Board, secrets: &Secrets, generation: u64, copied: &str) {
+fn clear_secret(board: &mut impl Board, secrets: &Secrets, generation: u64, copied: &Fingerprint) {
     if secrets.0.load(Ordering::SeqCst) == generation && holds(board, copied) {
         clear_if_latest(board, secrets, generation);
     }
 }
 
-/// Whether the clipboard still holds `copied`; unreadable counts as no.
-fn holds(board: &mut impl Board, copied: &str) -> bool {
+/// Whether the clipboard still holds the text `copied` fingerprints;
+/// unreadable counts as no.
+fn holds(board: &mut impl Board, copied: &Fingerprint) -> bool {
     board
         .text()
         .map(Zeroizing::new)
-        .is_ok_and(|now| now.as_str() == copied)
+        .is_ok_and(|now| fingerprint(&now) == *copied)
 }
 
 /// Clears unless a later secret copy restarted the wait.
@@ -230,7 +264,7 @@ mod tests {
     fn a_secret_copy_is_cleared_once_its_wait_ends() {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
         let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
-        clear_secret(&mut board, &secrets, first, "nsec1key");
+        clear_secret(&mut board, &secrets, first, &fingerprint("nsec1key"));
         assert_eq!(board.text, None);
     }
 
@@ -239,9 +273,9 @@ mod tests {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
         let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         let second = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
-        clear_secret(&mut board, &secrets, first, "nsec1key");
+        clear_secret(&mut board, &secrets, first, &fingerprint("nsec1key"));
         assert_eq!(board.text.as_deref(), Some("nsec1key"));
-        clear_secret(&mut board, &secrets, second, "nsec1key");
+        clear_secret(&mut board, &secrets, second, &fingerprint("nsec1key"));
         assert_eq!(board.text, None);
     }
 
@@ -251,7 +285,7 @@ mod tests {
         let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         board.refuse = true;
         assert!(copy_secret(&mut board, &secrets, "nsec1key").is_err());
-        clear_secret(&mut board, &secrets, first, "nsec1key");
+        clear_secret(&mut board, &secrets, first, &fingerprint("nsec1key"));
         assert_eq!(board.text, None);
     }
 
@@ -261,12 +295,12 @@ mod tests {
         // lands between the two keeps its own wait.
         let (mut board, secrets) = (Fake::default(), Secrets::default());
         let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
-        assert!(holds(&mut board, "nsec1key"));
+        assert!(holds(&mut board, &fingerprint("nsec1key")));
         copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         clear_if_latest(&mut board, &secrets, first);
         assert_eq!(board.text.as_deref(), Some("nsec1key"));
         board.text = None;
-        assert!(!holds(&mut board, "nsec1key"));
+        assert!(!holds(&mut board, &fingerprint("nsec1key")));
     }
 
     #[test]
@@ -274,10 +308,19 @@ mod tests {
         let (mut board, secrets) = (Fake::default(), Secrets::default());
         let first = copy_secret(&mut board, &secrets, "nsec1key").unwrap();
         board.text = Some("something else".into());
-        clear_secret(&mut board, &secrets, first, "nsec1key");
+        clear_secret(&mut board, &secrets, first, &fingerprint("nsec1key"));
         assert_eq!(board.text.as_deref(), Some("something else"));
         board.text = None;
-        clear_secret(&mut board, &secrets, first, "nsec1key");
+        clear_secret(&mut board, &secrets, first, &fingerprint("nsec1key"));
         assert_eq!(board.text, None);
+    }
+
+    #[test]
+    fn only_one_expiry_read_runs_at_a_time() {
+        static FLAG: AtomicBool = AtomicBool::new(false);
+        let stuck = Reading::begin(&FLAG).unwrap();
+        assert!(Reading::begin(&FLAG).is_none());
+        drop(stuck);
+        assert!(Reading::begin(&FLAG).is_some());
     }
 }

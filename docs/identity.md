@@ -785,7 +785,9 @@ same key restarts the wait, and a failed copy leaves the earlier wait in place.
 Failures are ignored, quitting cancels the wait, and another app can still write
 between the read and the clear. On Linux the check reads the clipboard off the
 main thread, because the owner may be Buzz's own GTK loop; a clipboard that
-doesn't answer within 10 seconds is left alone. The UI says Buzz tries to clear it. A key the user
+doesn't answer within 10 seconds is left alone. A read can't be stopped, so it
+compares a SHA-256 fingerprint of the key, never the key, and while one read is
+still waiting later checks leave the clipboard alone. The UI says Buzz tries to clear it. A key the user
 selects and copies from the revealed field is not cleared, unless a Copy
 button wait is still running. The one exception is the
 first-run **Enter your private key** page: the typed, pasted or file-read nsec

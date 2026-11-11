@@ -21,6 +21,7 @@ after this list:
 - `buzz://mcp-authorize?version=1&client=<name>&callback=<loopback-url>&state=<state>&scope=<scopes>&code_challenge=<challenge>&code_challenge_method=S256`
 - `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
 - `buzz://plugin-install?repository=<encoded-https-or-ssh-url>[&ref=<encoded-branch-or-tag>][&path=<encoded-folder>][&commit=<40-or-64-hex>]`
+- `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-artifact-url>&sha256=<64-hex>`
 - `buzz://channel/<id>`
 - `buzz://channel/<id>/<event>` (the original desktop message alias)
 - `buzz://repo?owner=<64-hex key>&d=<identifier>[&tab=<section>]`
@@ -31,6 +32,7 @@ after this list:
 - `buzz://add-community?relay=<wss-url>[&name=<name>]`
 - `buzz://plugin?id=<plugin id>[&page=<page id>][&route.<key>=<value>...]`
 - `buzz://agent/new?card=<id>`
+- `buzz://settings[?section=<section>][&provider=<agent type>]`, such as `buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code`, which opens Claude's setup in Agent setup. `provider` needs `section=agents`. Like the Settings target it becomes, it only presents Settings and has no community scope.
 
 Two more links work only at the OS boundary. Neither names a destination, and
 neither is a Buzz link form, so messages and Notes show them as plain text.
@@ -53,6 +55,9 @@ repository (relative, `/`-separated; no `..`, backslashes or absolute paths). `c
 pins the install to that exact commit: nothing installs unless the fetched repository
 matches it. Repeating any of the four keys makes the link invalid. Review the plugin
 and computer access, then select **Install plugin**. Opening the link does not install, enable, or grant access.
+A link with both `path` and `commit` for a plugin already installed from that repository and
+folder opens an **Update** review instead. The review says when the link's `ref` changes the branch
+or tag that later updates follow. Other links to an installed plugin offer **Open in Buzz**.
 You can close a linked preview while Git loads; its late result is discarded.
 An omitted `ref` uses the repository default. Duplicate known parameters and
 repository credentials are rejected.

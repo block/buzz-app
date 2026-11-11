@@ -1,5 +1,6 @@
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
+import type { ComposerToken } from "./composer-token";
 
 export const inlineFormats = [
   {
@@ -103,17 +104,21 @@ export type ComposerInputElement = HTMLDivElement & {
     text: string,
     recipient?: MentionRecipient | readonly MentionRecipient[],
     range?: { start: number; end: number },
-    /** A typed closing colon is recorded before conversion for one-step undo. */
-    terminator?: ":",
+    /** The key typed to end the query. A closing colon is recorded before
+     * conversion for one-step undo; after recipients, it takes the place of
+     * the space that follows each one. */
+    terminator?: string,
     /** Automatic edits preserve focus and the current selection. */
     focus?: boolean,
   ): boolean;
   replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
-  /** Replace the typed `@name` with a chip the host is still resolving; the
-   * returned id names it until `settlePendingMention`. One undo step. */
+  /** Replace the typed `@name` with a chip the host is still resolving,
+   * followed by the key that ended it (a space by default); the returned id
+   * names it until `settlePendingMention`. One undo step. */
   insertPendingMention(
     name: string,
     range: { start: number; end: number },
+    terminator?: string,
   ): string | false;
   /** Turn a pending chip into its recipient, or back into its typed text.
    * Outside undo history and allowed while sending; false once the chip is
@@ -134,6 +139,11 @@ export type ComposerInputElement = HTMLDivElement & {
   ): boolean | Promise<boolean>;
   /** Host-owned inline link atom at the caret; a string is the rejection reason. */
   insertResource(resource: ComposerResource): true | string;
+  /** A semantic chip over the open query, one undo step. */
+  insertToken(
+    token: ComposerToken,
+    range: { start: number; end: number },
+  ): boolean;
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(): boolean;
   editLink(): ComposerLinkEdit | null;

@@ -36,8 +36,8 @@ export type AddedTool = Readonly<{
   name: string;
   description: string;
   inputSchema: Readonly<Record<string, unknown>>;
-  /** Runs it as the agent working in `context`. A throw is a tool error for
-   * the agent to correct. */
+  /** Runs as the agent in `context`. Use `client.signal` to cancel waits and
+   * check it before external writes. A throw is a tool error for the agent. */
   call(
     client: BuzzClient,
     context: Context,
@@ -46,14 +46,11 @@ export type AddedTool = Readonly<{
 }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
 
-/** The Buzz tools that post a message, and so take `final`. Each harness
- * strips its own prefix from a tool's name before asking. */
-export const MESSAGE_TOOLS = ["send", "reply_in_subthread"] as const;
-export const isMessageTool = (name: unknown) =>
-  (MESSAGE_TOOLS as readonly unknown[]).includes(name);
-/** Whether a call posts a message marked final, which can end the turn. */
-export const isFinalMessage = (name: unknown, args: unknown) =>
-  isMessageTool(name) && (args as { final?: unknown } | null)?.final === true;
+export {
+  isFinalMessage,
+  isMessageTool,
+  MESSAGE_TOOLS,
+} from "./message-tools";
 
 export type BuzzSession = Readonly<{ tools: readonly Tool[] }>;
 
@@ -99,10 +96,11 @@ export const sessionTools = (
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */
 export function sessionHint(added: readonly AddedTool[] = []) {
+  // Codex limits namespace descriptions to 1024 characters. Tool search has the full list.
   const plugins = added.length
-    ? ` and tools plugins add (${added.map((tool) => tool.name).join(", ")})`
+    ? " and tools from enabled plugins. Search by capability to discover specific plugin tools"
     : "";
-  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), Nexus workers an owner lets you run (solo_worker_connections), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
+  return `Read and act in Buzz as this agent. Search for the rest when you need them: your attention (Interests, event watches and timers; interest_set and watch_add say how they work), this device's plugins (plugin_list; install, update, enable and remove are requests your owner confirms)${plugins}.`;
 }
 
 /** Changes when the added tools change, so a session that keeps the list it

@@ -739,7 +739,11 @@ fn isolated_agent_ipc_probe() {
     assert_eq!(resolved["relayUrl"], "wss://relay.test");
     #[cfg(unix)]
     {
-        let library = invoke("relay_agent_library", serde_json::json!({})).unwrap();
+        let library = invoke(
+            "relay_agent_library",
+            serde_json::json!({"community":"https://relay.test"}),
+        )
+        .unwrap();
         assert_eq!(
             library,
             serde_json::json!({"definitions": [], "identities": []})
@@ -750,20 +754,47 @@ fn isolated_agent_ipc_probe() {
             .unwrap()
             .join("agents/identities.json");
         assert!(path.starts_with(std::env::var("HOME").unwrap()));
-        let saved = serde_json::json!([{
-            "pubkey": "a".repeat(64), "relay": "wss://relay.test", "owner": public,
-            "auth": "private attestation", "type": "plugin/agent", "name": "Current agent",
-            "picture": "https://images.example/current.png"
-        }])
+        let saved = serde_json::json!([
+            {
+                "pubkey": "a".repeat(64), "relay": "wss://elsewhere.test", "owner": public,
+                "auth": "private attestation", "type": "plugin/agent", "name": "Elsewhere"
+            },
+            {
+                "pubkey": "b".repeat(64), "relay": "wss://relay.test", "owner": "c".repeat(64),
+                "auth": "private attestation", "type": "plugin/agent", "name": "Other account"
+            },
+            {
+                "pubkey": "a".repeat(64), "relay": "wss://relay.test", "owner": public,
+                "auth": "private attestation", "type": "plugin/agent", "name": "Current agent",
+                "picture": "https://images.example/current.png"
+            }
+        ])
         .to_string();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &saved).unwrap();
         assert_eq!(
-            invoke("relay_agent_library", serde_json::json!({})).unwrap(),
+            invoke(
+                "relay_agent_library",
+                serde_json::json!({"community":"https://relay.test"})
+            )
+            .unwrap(),
             serde_json::json!({"definitions": [], "identities": [{
                 "pubkey": "a".repeat(64), "name": "Current agent", "avatar": "https://images.example/current.png"
             }]})
         );
+        assert_eq!(
+            invoke(
+                "relay_agent_library",
+                serde_json::json!({"community":"https://new.test"})
+            )
+            .unwrap(),
+            serde_json::json!({"definitions": [], "identities": []})
+        );
+        assert!(invoke(
+            "relay_agent_library",
+            serde_json::json!({"community":"https://relay.test/path"})
+        )
+        .is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
         std::fs::remove_file(&path).unwrap();
         assert!(app
@@ -4473,4 +4504,110 @@ fn reaction_author_address_is_accepted_by_packaged_signing() {
         ],
     };
     assert!(validate_event("https://relay.test", &event).is_ok());
+}
+
+#[tokio::test]
+async fn community_refusals_reach_the_window_from_any_signed_request() {
+    let response = |status, body: &str| -> Result<RelayResponse> {
+        Ok(RelayResponse {
+            status,
+            headers: BTreeMap::new(),
+            body: body.into(),
+        })
+    };
+    for (result, expected) in [
+        (response(401, "authentication required\n"), Some("sign-in")),
+        (response(403, "evidence rejected\n"), Some("sign-in")),
+        (response(403, "authorization denied\n"), Some("access")),
+        (
+            response(
+                403,
+                r#"{"error":"relay_membership_required","message":"You must be a relay member to access this relay"}"#,
+            ),
+            Some("access"),
+        ),
+        (
+            response(
+                403,
+                r#"{"error":"blocked: you are banned from this community"}"#,
+            ),
+            Some("access"),
+        ),
+        // Media routes spell a non-member's or a banned key's refusal apart.
+        (
+            response(403, r#"{"error":"relay membership required"}"#),
+            Some("access"),
+        ),
+        (Err(SIGNED_OUT.into()), Some("sign-in")),
+        // Exact bytes and status only: an item's refusal or an edge page stays
+        // with whoever asked for it.
+        (response(401, "authorization denied\n"), None),
+        (response(403, "authorization denied"), None),
+        (
+            response(403, r#"{"error":"restricted: authorization denied"}"#),
+            None,
+        ),
+        (response(503, "authorization unavailable\n"), None),
+        (
+            response(503, r#"{"error":"media service temporarily unavailable"}"#),
+            None,
+        ),
+        (
+            response(401, r#"{"error":"relay_membership_required"}"#),
+            None,
+        ),
+        (
+            response(403, r#"{"error":"restricted: not a channel member"}"#),
+            None,
+        ),
+        (response(403, "relay_membership_required"), None),
+        (Err("Relay request could not be confirmed".into()), None),
+    ] {
+        assert_eq!(community_refusal(&result), expected);
+    }
+    let mut refused = refusals().subscribe();
+    let url = Url::parse("https://refusal.test/query").unwrap();
+    observe_refusal(&url, &response(200, "[]"));
+    observe_refusal(&url, &response(403, "authorization denied\n"));
+    loop {
+        let refusal = refused.recv().await.unwrap();
+        if refusal.community == "https://refusal.test" {
+            assert_eq!(refusal.refusal, "access");
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_plugin_request_refused_without_the_users_sign_in_is_not_their_refusal() {
+    // Native plugins read and publish without federated evidence, so an
+    // FI-gated community's missing-evidence refusal is about that request.
+    let (url, task) = fixture_server(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 24\r\nConnection: close\r\n\r\nauthentication required\n"
+            .into(),
+    );
+    let community = url.origin().ascii_serialization();
+    let mut refused = refusals().subscribe();
+    let response = send(
+        &IdentityHost::fixture(),
+        None,
+        url,
+        "POST",
+        Some("[]".into()),
+        true,
+        MAX_RESPONSE,
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status, 401);
+    task.join().unwrap();
+    let marker = Url::parse("https://plugin-refusal-marker.test/query").unwrap();
+    observe_refusal(&marker, &Err(SIGNED_OUT.into()));
+    loop {
+        let refusal = refused.recv().await.unwrap();
+        assert_ne!(refusal.community, community);
+        if refusal.community == "https://plugin-refusal-marker.test" {
+            break;
+        }
+    }
 }

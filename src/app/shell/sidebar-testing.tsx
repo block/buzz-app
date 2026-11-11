@@ -23,6 +23,7 @@ import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
+import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 
 export const owners: ReturnType<typeof createRelaySession>[] = [];
 export const id = "11111111-1111-4111-8111-111111111111";
@@ -45,12 +46,14 @@ export function fixture(
     transport?: ReadTransport;
     federatedIdentity?: FederatedIdentity;
     sidebarScope?: SidebarScope;
+    sidebarRows?: SidebarRows;
   } = {},
 ) {
   const owner = createRelaySession(host.transport ?? null);
   owners.push(owner);
   const base = owner.session;
   const listeners = new Set<() => void>();
+  const rosterListeners = new Set<() => void>();
   const subscribe = (listener: () => void) => {
     listeners.add(listener);
     return () => {
@@ -84,7 +87,7 @@ export function fixture(
     durability: "saved" as const,
     sync: "pending" as const,
   }));
-  const list = {
+  let list = {
     status: "ready" as const,
     channels: [
       {
@@ -125,7 +128,15 @@ export function fixture(
     scope,
     viewer,
     channelCreation: { ...base.channelCreation, available: canCreate },
-    channels: { ...base.channels, list: () => list, ensureList() {} },
+    channels: {
+      ...base.channels,
+      list: () => list,
+      subscribeList(listener) {
+        rosterListeners.add(listener);
+        return () => rosterListeners.delete(listener);
+      },
+      ensureList() {},
+    },
     sidebarPreferences: {
       ...base.sidebarPreferences,
       sectionCreationWritable: canCreate,
@@ -234,6 +245,7 @@ export function fixture(
                   target={target}
                   chatIcons={chatIcons}
                   chatMenus={chatMenus}
+                  sidebarRows={host.sidebarRows}
                   sidebarScope={host.sidebarScope}
                   {...(host.federatedIdentity
                     ? { federatedIdentity: host.federatedIdentity }
@@ -252,6 +264,7 @@ export function fixture(
             target={target}
             chatIcons={chatIcons}
             chatMenus={chatMenus}
+            sidebarRows={host.sidebarRows}
           />
         )}
       </ChannelNavigationProvider>
@@ -302,6 +315,13 @@ export function fixture(
       act(() => {
         threads = next;
         publish();
+      });
+    },
+    /** A roster update, as the relay delivers one: a new list of channels. */
+    roster(update: (channels: typeof list.channels) => typeof list.channels) {
+      act(() => {
+        list = { ...list, channels: update(list.channels) };
+        for (const listener of rosterListeners) listener();
       });
     },
     clearUnread() {

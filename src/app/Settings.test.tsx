@@ -11,9 +11,10 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useSyncExternalStore } from "react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { createCommunityMembership } from "../bundled/moderation/membership";
 import {
   SettingsCardsService,
@@ -21,11 +22,20 @@ import {
   type SettingsCards,
 } from "../features/settings/service";
 import type { ClientSnapshot } from "../features/communities/service";
+import { federatedFixture } from "../features/federated-identity/testing";
 import type { DecisionsService } from "../features/decisions/service";
 import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
 import { createPluginInstallRequests } from "../plugins/installer";
 import { createPluginRequests } from "../plugins/requests";
+import { createPluginManager } from "../plugins/manager";
+import { PagesService } from "../features/pages/service";
+import type { PluginStorage } from "../plugins/storage";
+import type {
+  ImportPreview,
+  PluginInfo,
+  StorageResult,
+} from "../plugins/types";
 
 afterEach(cleanup);
 // Settings reads agent plugin requests from every plugin manager.
@@ -189,6 +199,7 @@ it("opens the addressed plugin's update checkbox and keeps its action separate f
             pluginId: "example.notes",
           },
           complete: vi.fn(),
+          savePosition: vi.fn(),
         } as unknown as Parameters<typeof Settings>[0]["navigation"]
       }
       plugins={
@@ -719,6 +730,159 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
 });
 
 // These fixtures exercise catalog updates through the same subscription as the host.
+it.each(["folder", "git"] as const)(
+  "repairs an enabled unsigned plugin through Settings without changing its revision (%s)",
+  async (source) => {
+    const signatureError = "External plugins require a signed release";
+    const unsigned: PluginInfo = {
+      manifest: { id: "example.repair", name: "Repair", apiVersion: 1 },
+      source: "external",
+      enabled: true,
+      revision: "unchanged",
+      previous: null,
+      hasSignature: false,
+      publisher: null,
+      reloadable: true,
+      updateSource:
+        source === "folder"
+          ? { root: "/plugins", path: "dist" }
+          : {
+              repository: "https://example.com/plugins.git",
+              reference: "main",
+              path: "dist",
+            },
+      error: signatureError,
+    };
+    const signed = {
+      ...unsigned,
+      hasSignature: true,
+      publisher: "a".repeat(64),
+      error: null,
+    };
+    let installed = unsigned;
+    const catalog = (): StorageResult => ({
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [installed] },
+    });
+    const preview: ImportPreview = {
+      token: "repair-preview",
+      source: "/plugins",
+      commit: null,
+      warnings: [],
+      candidates: [
+        {
+          path: "dist",
+          manifest: signed.manifest,
+          revision: signed.revision,
+          publisher: signed.publisher,
+        },
+      ],
+    };
+    const code = `export const inject = ["pages"];
+export function apply(ctx) {
+  ctx.pages.register({ id: "repaired", title: "Repaired", component: () => null });
+}`;
+    const originalURL = URL;
+    vi.stubGlobal(
+      "URL",
+      class extends originalURL {
+        static createObjectURL() {
+          return `data:text/javascript,${encodeURIComponent(code)}`;
+        }
+        static revokeObjectURL() {}
+      },
+    );
+    const install = vi.fn(async () => {
+      installed = signed;
+      return catalog();
+    });
+    const storage: PluginStorage = {
+      getCatalog: async () => catalog(),
+      changePlugin: vi.fn(),
+      recoverSettings: vi.fn(),
+      reloadPlugin: vi.fn(),
+      readModule: vi.fn(async () => code),
+      imports: {
+        folder: vi.fn(),
+        files: vi.fn(),
+        git: vi.fn(async () => preview),
+        url: vi.fn(),
+        checkGit: vi.fn(async () => preview),
+        checkFolder: vi.fn(async () => ({
+          revision: signed.revision,
+          publisher: signed.publisher,
+        })),
+        previewFolder: vi.fn(async () => preview),
+        install,
+        discard: vi.fn(async () => {}),
+      },
+    };
+    const root = new Context();
+    const plugins = createPluginManager(root, { storage, bundled: [] });
+    const pages = new PagesService(root);
+    const { cards } = registry([]);
+    const view = render(<Settings {...host} cards={cards} plugins={plugins} />);
+    try {
+      await waitFor(() => expect(plugins.startup()).toBe("ready"));
+      fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "View Repair details" }),
+      );
+      const details = screen.getByRole("complementary", {
+        name: "Repair details",
+      });
+      expect(within(details).getByText(signatureError)).toBeVisible();
+      if (source === "git")
+        fireEvent.click(
+          within(details).getByRole("button", { name: "Check for updates" }),
+        );
+      await waitFor(() =>
+        expect(
+          within(details).getByRole("button", { name: "Update" }),
+        ).toBeEnabled(),
+      );
+      fireEvent.click(within(details).getByRole("button", { name: "Update" }));
+      const dialog = await screen.findByRole("dialog", {
+        name: "Update Repair",
+      });
+      const confirm = await within(dialog).findByRole("button", {
+        name: "Update",
+      });
+      expect(install).not.toHaveBeenCalled();
+      expect(storage.readModule).not.toHaveBeenCalled();
+      expect(pages.snapshot()).toEqual([]);
+      fireEvent.click(confirm);
+      await waitFor(() =>
+        expect(pages.snapshot().map((page) => page.key)).toEqual([
+          "example.repair/repaired",
+        ]),
+      );
+      expect(install).toHaveBeenCalledExactlyOnceWith("repair-preview", "dist");
+      expect(plugins.snapshot().configuration).toMatchObject({
+        catalog: {
+          plugins: [
+            {
+              enabled: true,
+              revision: "unchanged",
+              hasSignature: true,
+              error: null,
+            },
+          ],
+        },
+      });
+      expect(within(details).queryByText(signatureError)).toBeNull();
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(within(details).getByText("Up to date")).toBeVisible();
+    } finally {
+      view.unmount();
+      await plugins.dispose();
+      await root.fiber.dispose();
+      vi.stubGlobal("URL", originalURL);
+    }
+  },
+);
+
 function reviewPluginFixture(
   extra: Partial<Parameters<typeof Settings>[0]> = {},
 ) {
@@ -1327,9 +1491,98 @@ it("opens Manage plugins from the Decisions API hint", async () => {
   expect(screen.getByRole("region", { name: "Manage plugins" })).toHaveFocus();
 });
 
+it("opens Builderlab from Identity sync only while its card is registered", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  onTestFinished(() => {
+    vi.unstubAllEnvs();
+  });
+  const user = userEvent.setup();
+  const builderlab = {
+    ...card("login", "Builderlab", "Plugins"),
+    key: "block.builderlab/login",
+    pluginId: "block.builderlab",
+  };
+  const { cards, set } = registry([builderlab]);
+  const status = {
+    seq: 1,
+    pass: 1,
+    builderlab: true,
+    status: "waiting",
+    reason: "not_linked",
+    management: {
+      pubkey: communityState.viewer,
+      policy: "self-managed",
+      initialBackupConfirmed: false,
+    },
+  };
+  const identity = {
+    exportKey: vi.fn(),
+    backup: {
+      subscribe: () => () => {},
+      snapshot: () => status,
+      ready: async () => status,
+    },
+  } as unknown as Parameters<typeof Settings>[0]["identity"];
+  const onSection = vi.fn();
+  const view = (section: string) => (
+    <ToastProvider>
+      <main id="main-content" tabIndex={-1}>
+        <Settings
+          {...host}
+          cards={cards}
+          identity={identity}
+          navigation={
+            {
+              target: { version: 1, kind: "settings", section },
+              complete: () => true,
+            } as never
+          }
+          onSection={onSection}
+        />
+      </main>
+    </ToastProvider>
+  );
+  const identitySection = () =>
+    screen.getByRole("region", { name: "Identity" });
+  const link = () =>
+    within(identitySection()).queryByRole("button", { name: "Builderlab" });
+  const sentence = () =>
+    within(identitySection()).queryByText(
+      (_, el) =>
+        el?.tagName === "P" &&
+        el.textContent ===
+          "This key isn’t linked to your Builderlab account yet, so it can’t be backed up",
+    );
+  const { rerender } = render(view("identity"));
+  await user.click(screen.getByRole("button", { name: "More options" }));
+  await within(identitySection()).findByRole("button", { name: "Builderlab" });
+  const shown = sentence();
+  expect(shown).not.toBeNull();
+  // Turning the plugin off while Identity is open unlinks the name in place.
+  act(() => set([]));
+  expect(link()).toBeNull();
+  expect(sentence()).toBe(shown);
+  act(() => set([builderlab]));
+  await user.click(link() as HTMLElement);
+  expect(onSection).toHaveBeenCalledExactlyOnceWith("block.builderlab/login");
+  // The link goes with Identity, so focus moves into the section it opened.
+  rerender(view("block.builderlab/login"));
+  expect(screen.getByText("Builderlab body")).toBeVisible();
+  expect(document.getElementById("main-content")).toHaveFocus();
+
+  // With the plugin off, the sentence still names Builderlab, unlinked.
+  act(() => set([]));
+  rerender(view("identity"));
+  await user.click(screen.getByRole("button", { name: "More options" }));
+  await waitFor(() => expect(sentence()).not.toBeNull());
+  expect(link()).toBeNull();
+  expect(sentence()).not.toBeNull();
+});
+
 function pluginSectionsFixture(
   cards: SettingsCards,
   decisions?: DecisionsService,
+  manager?: object,
 ) {
   const plugin = (id: string, name: string) => ({
     manifest: { id, name, apiVersion: 1 as const },
@@ -1366,9 +1619,36 @@ function pluginSectionsFixture(
     change: vi.fn(),
     reload: vi.fn(),
     dismissError: vi.fn(),
+    ...manager,
   } as unknown as Parameters<typeof Settings>[0]["plugins"];
   const onSection = vi.fn();
-  const view = (section: string, communities = host.communities) => (
+  const onPluginDetailsClosed = vi.fn();
+  const onPluginImportClosed = vi.fn();
+  /** Per-visit positions, as the navigation service keeps them. */
+  const positions = new Map<string, unknown>();
+  const stored = (entryId: string) =>
+    positions.get(JSON.stringify([entryId, "settings.pluginDetails"]));
+  /** One request per visit, kept across renders as App's `route.request` is. */
+  const requests = new Map<string, unknown>();
+  const request = (section: string, visit: Visit = {}) => {
+    const { entryId = section, traversal, ...address } = visit;
+    const target = { version: 1, kind: "settings", section, ...address };
+    const key = JSON.stringify([entryId, traversal, target]);
+    if (!requests.has(key))
+      requests.set(key, {
+        entryId,
+        ...(traversal && { traversal }),
+        target,
+        signal: new AbortController().signal,
+        complete: () => true,
+        position: (name: string) =>
+          positions.get(JSON.stringify([entryId, name])),
+        savePosition: (name: string, value: unknown) =>
+          positions.set(JSON.stringify([entryId, name]), value),
+      });
+    return requests.get(key) as never;
+  };
+  const settings = (navigation: never, communities = host.communities) => (
     <div id="settings-content" tabIndex={-1}>
       <Settings
         {...host}
@@ -1376,17 +1656,19 @@ function pluginSectionsFixture(
         cards={cards}
         plugins={plugins}
         decisions={decisions}
-        navigation={
-          {
-            target: { version: 1, kind: "settings", section },
-            complete: () => true,
-          } as never
-        }
+        navigation={navigation}
         onSection={onSection}
+        onPluginDetailsClosed={onPluginDetailsClosed}
+        onPluginImportClosed={onPluginImportClosed}
         navigationPane
       />
     </div>
   );
+  const view = (
+    section: string,
+    communities = host.communities,
+    visit?: Visit,
+  ) => settings(request(section, visit), communities);
   /** The named link line in a plugin's open details, or null without one. */
   const links = (name: string) =>
     within(
@@ -1396,8 +1678,25 @@ function pluginSectionsFixture(
     within(links(name) as HTMLElement)
       .getAllByRole("button")
       .map((button) => button.textContent);
-  return { onSection, view, links, linkNames };
+  return {
+    onSection,
+    onPluginDetailsClosed,
+    onPluginImportClosed,
+    request,
+    settings,
+    view,
+    links,
+    linkNames,
+    positions,
+    stored,
+  };
 }
+type Visit = {
+  entryId?: string;
+  traversal?: true;
+  pluginId?: string;
+  pluginImport?: { repository: string; reference: string };
+};
 
 it("links a plugin's details to the Settings sections it adds", async () => {
   const user = userEvent.setup();
@@ -1457,6 +1756,262 @@ it("links a plugin's details to the Settings sections it adds", async () => {
     screen.queryByRole("complementary", { name: "GitHub details" }),
   ).toBeNull();
   expect(document.getElementById("settings-content")).toHaveFocus();
+});
+
+it("reopens the details a Manage plugins visit showed on Back or Forward, not on a new visit", async () => {
+  const user = userEvent.setup();
+  const { cards } = registry([
+    {
+      ...card("authors", "GitHub comment authors", "Plugins"),
+      key: "buzz.github/authors",
+      pluginId: "buzz.github",
+    },
+  ]);
+  const { view, positions, stored } = pluginSectionsFixture(cards);
+  const details = () =>
+    screen.queryByRole("complementary", { name: "GitHub details" });
+  const row = () => screen.getByRole("button", { name: "View GitHub details" });
+
+  const { rerender } = render(view("plugins", undefined, { entryId: "p1" }));
+  fireEvent.click(row());
+  await user.click(
+    screen.getByRole("button", { name: "GitHub comment authors" }),
+  );
+  rerender(view("buzz.github/authors", undefined, { entryId: "a2" }));
+  expect(details()).toBeNull();
+
+  // Back, then Forward and Back again, return to the details that visit showed.
+  for (const _pass of [1, 2]) {
+    rerender(view("plugins", undefined, { entryId: "p1", traversal: true }));
+    expect(details()).toBeVisible();
+    expect(row()).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByRole("button", { name: "Close plugin details" }),
+    ).toHaveFocus();
+    rerender(
+      view("buzz.github/authors", undefined, {
+        entryId: "a2",
+        traversal: true,
+      }),
+    );
+  }
+
+  // Once closed, the visit comes back as the list.
+  rerender(view("plugins", undefined, { entryId: "p1", traversal: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  rerender(
+    view("buzz.github/authors", undefined, { entryId: "a2", traversal: true }),
+  );
+  rerender(view("plugins", undefined, { entryId: "p1", traversal: true }));
+  expect(details()).toBeNull();
+  expect(row()).toHaveAttribute("aria-expanded", "false");
+
+  // A new visit starts at the list, and a plugin removed since has no details.
+  fireEvent.click(row());
+  rerender(view("buzz.github/authors", undefined, { entryId: "a3" }));
+  rerender(view("plugins", undefined, { entryId: "p4" }));
+  expect(details()).toBeNull();
+  positions.set(
+    JSON.stringify(["p5", "settings.pluginDetails"]),
+    "buzz.removed",
+  );
+  rerender(view("plugins", undefined, { entryId: "p5", traversal: true }));
+  expect(screen.queryByRole("complementary")).toBeNull();
+  expect(stored("p5")).toBeNull();
+});
+
+/** The open details' plugin name, or null. */
+const shownDetails = () =>
+  screen
+    .queryByRole("complementary")
+    ?.getAttribute("aria-label")
+    ?.replace(/ details$/, "") ?? null;
+const toggleDetails = (name: string) =>
+  fireEvent.click(screen.getByRole("button", { name: `View ${name} details` }));
+
+/** Manage plugins visits from p1. */
+function pluginVisits() {
+  const fixture = pluginSectionsFixture(registry([]).cards);
+  const { rerender } = render(
+    fixture.view("plugins", undefined, { entryId: "p1" }),
+  );
+  return {
+    ...fixture,
+    visit: (section: string, visit: Visit) =>
+      rerender(fixture.view(section, undefined, visit)),
+    toggle: toggleDetails,
+    shown: shownDetails,
+  };
+}
+
+/** Settings under a visit store, as App renders `route.request`, so a
+ * dismissal can land inside its callback or later, as history does. */
+function pluginHost(manager: object, first: Visit) {
+  const fixture = pluginSectionsFixture(registry([]).cards, undefined, manager);
+  let current = fixture.request("plugins", first);
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const land = (section: string, visit: Visit) => {
+    current = fixture.request(section, visit);
+    for (const listener of listeners) listener();
+  };
+  function Host() {
+    return fixture.settings(useSyncExternalStore(subscribe, () => current));
+  }
+  render(<Host />);
+  return {
+    ...fixture,
+    land,
+    visit: (section: string, visit: Visit) => act(() => land(section, visit)),
+    entry: () => (current as { entryId: string }).entryId,
+    toggle: toggleDetails,
+    shown: shownDetails,
+  };
+}
+const imported = { repository: "https://example.com/p.git", reference: "main" };
+/** A linked import of `id`; Codex is already installed. */
+const linkedImport = (id: string, install = Promise.resolve(true)) => ({
+  installImport: vi.fn(() => install),
+  imports: {
+    git: vi.fn(async () => ({
+      token: "linked",
+      source: imported.repository,
+      commit: null,
+      warnings: [],
+      candidates: [
+        {
+          path: ".",
+          revision: "two",
+          manifest: { id, name: id, apiVersion: 1 },
+        },
+      ],
+    })),
+    discard: vi.fn(async () => {}),
+  },
+});
+
+it("shows the list on Back to a visit that closed its details", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("Codex");
+  toggle("Codex");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.github" });
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBeNull();
+});
+
+it("records the details an adjacent visit inherits", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p2", pluginImport: imported, traversal: true });
+  expect(shown()).toBe("GitHub");
+});
+
+it("shows the list on Back to a visit that never opened details", () => {
+  const { visit, shown } = pluginVisits();
+  visit("plugins", { entryId: "p2", pluginId: "buzz.github" });
+  expect(shown()).toBe("GitHub");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBeNull();
+});
+
+it("records nothing for a section Manage plugins is left for", () => {
+  const { visit, toggle, stored } = pluginVisits();
+  toggle("GitHub");
+  visit("appearance", { entryId: "s2" });
+  expect(stored("s2")).toBeUndefined();
+});
+
+it("returns from addressed details to the details the earlier visit showed", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex" });
+  expect(shown()).toBe("Codex");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
+});
+
+it("returns through another section to addressed details, then the earlier visit's", () => {
+  const { visit, toggle, shown } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex" });
+  visit("appearance", { entryId: "s3" });
+  expect(shown()).toBeNull();
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex", traversal: true });
+  expect(shown()).toBe("Codex");
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBe("GitHub");
+});
+
+it("lands on the list when Close dismisses addressed details", () => {
+  const { visit, toggle, shown, onPluginDetailsClosed } = pluginVisits();
+  toggle("GitHub");
+  visit("plugins", { entryId: "p2", pluginId: "buzz.codex" });
+  fireEvent.click(screen.getByRole("button", { name: "Close plugin details" }));
+  expect(onPluginDetailsClosed).toHaveBeenCalledOnce();
+  visit("plugins", { entryId: "p1", traversal: true });
+  expect(shown()).toBeNull();
+});
+
+it("keeps the plugin Open in Buzz shows when the import's dismissal lands later", async () => {
+  const { visit, land, entry, shown, stored, onPluginImportClosed } =
+    pluginHost(linkedImport("buzz.codex"), { entryId: "p1" });
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  // History returns to p1 after Open in Buzz has shown its plugin.
+  onPluginImportClosed.mockImplementation(() =>
+    setTimeout(() => land("plugins", { entryId: "p1", traversal: true })),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Open in Buzz" }));
+  await waitFor(() => expect(entry()).toBe("p1"));
+  expect(shown()).toBe("Codex");
+  expect(stored("p1")).toBe("buzz.codex");
+});
+
+it("records the plugin Open in Buzz shows on the visit replacing its import", async () => {
+  const { visit, land, shown, stored, onPluginImportClosed } = pluginHost(
+    linkedImport("buzz.codex"),
+    { entryId: "i1", pluginImport: imported },
+  );
+  // Opened from a channel: the import is replaced while it closes.
+  onPluginImportClosed.mockImplementation(() =>
+    land("plugins", { entryId: "p2" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Open in Buzz" }));
+  await waitFor(() => expect(shown()).toBe("Codex"));
+  expect(stored("p2")).toBe("buzz.codex");
+  visit("appearance", { entryId: "s3" });
+  visit("plugins", { entryId: "p2", traversal: true });
+  expect(shown()).toBe("Codex");
+});
+
+it("keeps an earlier visit's details when an import finishes after Back", async () => {
+  let finish!: (installed: boolean) => void;
+  const installed = new Promise<boolean>((resolve) => {
+    finish = resolve;
+  });
+  const { visit, toggle, shown, onPluginImportClosed } = pluginHost(
+    linkedImport("example.new", installed),
+    { entryId: "p0" },
+  );
+  toggle("Codex");
+  visit("plugins", { entryId: "p1", pluginId: "buzz.github" });
+  visit("plugins", { entryId: "p2", pluginImport: imported });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install plugin" }),
+  );
+  visit("plugins", { entryId: "p1", pluginId: "buzz.github", traversal: true });
+  // The finished install closes a visit that is no longer shown.
+  await act(async () => finish(true));
+  await waitFor(() => expect(onPluginImportClosed).toHaveBeenCalledOnce());
+  visit("plugins", { entryId: "p0", traversal: true });
+  expect(shown()).toBe("Codex");
 });
 
 it("links a decision provider's details to Decisions API", async () => {
@@ -1661,6 +2216,7 @@ it("keeps Community admin hidden after applying a verified ordinary-member roste
       session: {
         relayAuthor,
         read: () => roster,
+        subscribeLive: () => () => {},
         profiles: { ensure: vi.fn(async () => {}) },
       },
     }),
@@ -1927,7 +2483,7 @@ it("keeps related plugins out of the pane even when tags overlap", () => {
   };
   const plugins = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(),
       folder: vi.fn(),
       files: vi.fn(),
@@ -2397,17 +2953,54 @@ it("keeps identity independent of community profile and clears revealed keys on 
     screen.queryByRole("button", { name: "Reveal private key" }),
   ).toBeNull();
   await user.click(screen.getByRole("button", { name: "Identity" }));
-  await user.click(screen.getByRole("button", { name: "Reveal private key" }));
+  await user.click(screen.getByRole("button", { name: "More options" }));
+  await user.click(screen.getByRole("button", { name: "Private key actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Reveal private key" }),
+  );
   expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
     "nsec-public-test-fixture",
   );
   await user.click(screen.getByRole("button", { name: "Appearance" }));
   expect(screen.queryByLabelText("Private key (nsec)")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Identity" }));
-  expect(screen.getByLabelText("Private key (nsec)")).toHaveValue(
-    "••••••••••••••••",
-  );
+  await user.click(screen.getByRole("button", { name: "More options" }));
+  expect(
+    screen.getByRole("button", { name: "Private key actions" }),
+  ).toHaveTextContent("••••••••••••••••");
   expect(exportKey).toHaveBeenCalledTimes(1);
+});
+
+it("retires contributed identity rows and their stale actions with the owning revision", async () => {
+  const navigate = vi.fn();
+  let stillActive = () => false;
+  const entry = {
+    ...card("account", "Account", "Plugins"),
+    identityRow: ({ active }: { active(): boolean }) => {
+      stillActive = active;
+      return (
+        <button type="button" onClick={() => active() && navigate()}>
+          Open account settings
+        </button>
+      );
+    },
+  };
+  const { cards, set } = registry([entry]);
+  const h = federatedFixture();
+  render(
+    <ToastProvider>
+      <Settings {...host} cards={cards} federatedIdentity={h.service} />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Identity" }));
+  const link = await screen.findByRole("button", {
+    name: "Open account settings",
+  });
+  fireEvent.click(link);
+  expect(navigate).toHaveBeenCalledOnce();
+  act(() => set([]));
+  expect(screen.queryByText("Open account settings")).toBeNull();
+  expect(stillActive()).toBe(false);
 });
 
 it("offers Retry beside a failed installed revision without changing saved state", () => {
@@ -2513,11 +3106,11 @@ it("retains both local drafts across section navigation but retires them with th
 });
 
 it("allows Add to install while an independent folder check is pending, including pane remount", async () => {
-  let finish!: (revision: string) => void;
+  let finish!: (release: { revision: string }) => void;
   const fixture = reviewPluginFixture();
   const checkFolder = vi.fn(
     () =>
-      new Promise<string>((resolve) => {
+      new Promise<{ revision: string }>((resolve) => {
         finish = resolve;
       }),
   );
@@ -2561,7 +3154,7 @@ it("allows Add to install while an independent folder check is pending, includin
   await within(dialog).findByRole("button", { name: "Install plugin" });
   fixture.external.revision = "cli-reloaded";
   act(fixture.publish);
-  await act(async () => finish("current"));
+  await act(async () => finish({ revision: "current" }));
   expect(discard).not.toHaveBeenCalled();
   fireEvent.click(
     within(dialog).getByRole("switch", { name: "Enable plugin" }),
@@ -2572,6 +3165,33 @@ it("allows Add to install while an independent folder check is pending, includin
   await waitFor(() =>
     expect(installImport).toHaveBeenCalledExactlyOnceWith("add", "dist"),
   );
+});
+
+it("shows a URL-installed plugin's pinned file instead of offering a folder or Git update", async () => {
+  const fixture = reviewPluginFixture();
+  const sha256 = "e".repeat(64);
+  const checkFolder = vi.fn();
+  Object.assign(fixture.external, {
+    updateSource: { url: "https://plugins.example.org/zebra.json", sha256 },
+  });
+  Object.assign(fixture.manager, {
+    imports: { checkFolder, discard: vi.fn(async () => {}) },
+  });
+  act(fixture.publish);
+  fireEvent.click(
+    screen.getByRole("button", { name: "View Zebra external details" }),
+  );
+  const updates = await screen.findByRole("region", {
+    name: "Plugin updates",
+  });
+  expect(updates).toHaveTextContent("https://plugins.example.org/zebra.json");
+  expect(updates).toHaveTextContent(`SHA-256: ${sha256}`);
+  expect(updates).toHaveTextContent(/plugin marketplace or a new install link/);
+  expect(screen.queryByText(/No saved source/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Check for updates" }),
+  ).toBeNull();
+  expect(checkFolder).not.toHaveBeenCalled();
 });
 
 const pinned = "0123456789abcdef0123456789abcdef01234567";
@@ -2637,7 +3257,7 @@ it("recommends managed plugins in Settings and points to them from navigation", 
     }),
   );
   const dialog = await screen.findByRole("dialog", {
-    name: "Review plugin access",
+    name: "Review Managed Plugin access",
   });
   await within(dialog).findByRole("button", { name: "Install plugin" });
   expect(git).toHaveBeenCalledWith(
@@ -2880,4 +3500,53 @@ it("leaves a confirmed install's request to the install when Settings closes", a
   requests.settle(id, "installed");
   unconfirm();
   await expect(outcome).resolves.toBe("installed");
+});
+
+it("reviews a requested plugin artifact in place of the add dialog and cancels it when Settings closes", async () => {
+  const url = vi.fn(async () => ({
+    token: "preview",
+    source: "https://cdn.example.com/a.json",
+    commit: null,
+    warnings: [],
+    candidates: [
+      {
+        path: ".",
+        revision: "d".repeat(64),
+        manifest: { id: "example.artifact", name: "Artifact", apiVersion: 1 },
+      },
+    ],
+  }));
+  const git = vi.fn();
+  const { cards, plugins, requests } = installRequestFixture({
+    git,
+    url,
+    discard: vi.fn(async () => {}),
+  });
+  const view = render(
+    <Settings
+      {...host}
+      cards={cards}
+      plugins={plugins}
+      installRequests={requests}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+  const outcome = requests.request(
+    {
+      id: "example.artifact",
+      url: "https://cdn.example.com/a.json",
+      sha256: "d".repeat(64),
+    },
+    market,
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "Review Artifact Plugin access",
+  });
+  expect(
+    await within(dialog).findByText(`SHA-256: ${"d".repeat(64)}`),
+  ).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: "Add a plugin" })).toBeNull();
+  expect(git).not.toHaveBeenCalled();
+  view.unmount();
+  await expect(outcome).resolves.toBe("cancelled");
 });

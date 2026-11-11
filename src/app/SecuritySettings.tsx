@@ -5,6 +5,7 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { Button } from "../shared/design-system/ui/Button";
 import { EmptyState } from "../shared/design-system/ui/EmptyState";
 import { LockIcon } from "../shared/design-system/icons";
+import { ExternalIdentityAuthorization } from "./ExternalIdentityAuthorization";
 import {
   listPairedTools,
   onPairingEvents,
@@ -19,8 +20,13 @@ const date = (seconds: number) =>
     day: "numeric",
   });
 
-/** Command-line tools that act as you through Buzz, each revocable. */
-export function SecuritySettings() {
+/** Local paired tools and authorization for applications with their own key. */
+export function SecuritySettings({
+  viewer,
+}: {
+  /** Available only when the host has a native identity. */
+  viewer?: string | undefined;
+}) {
   const [tools, setTools] = useState<PairedTool[] | null>(null);
   const [error, setError] = useState("");
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -54,7 +60,7 @@ export function SecuritySettings() {
       <Header
         id="security-settings-title"
         title="Security"
-        subtitle="Tools you allowed to use Buzz as you on this device."
+        subtitle="Tools paired on this device, and applications you authorize to act as you."
       />
       <InlineHeader id="paired-tools-title" title="Paired command-line tools" />
       {error && (
@@ -90,6 +96,7 @@ export function SecuritySettings() {
           </SettingsGroup>
         )
       )}
+      {viewer && <ExternalIdentityAuthorization key={viewer} viewer={viewer} />}
     </section>
   );
 }

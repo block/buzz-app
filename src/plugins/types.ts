@@ -14,12 +14,15 @@ export type PluginInfo = {
   updateSource?:
     | { root: string; path: string }
     | { repository: string; reference: string; path: string; commit?: string }
+    | { url: string; sha256: string }
     | null;
   error: string | null;
   readmeRevision?: string | null;
   iconPngRevision?: string | null;
   iconJpgRevision?: string | null;
 };
+export type PluginRelease = Pick<PluginInfo, "revision" | "publisher">;
+
 export type Catalog = {
   profile: string;
   location: string;
@@ -34,7 +37,7 @@ export type ManagementAction =
   | "disable-update-checks";
 
 export type ManagedState = "missing" | "current" | "outdated" | "other";
-export type ManagedEntry = {
+export type ManagedGitEntry = {
   id: string;
   repository: string;
   reference: string;
@@ -42,8 +45,20 @@ export type ManagedEntry = {
   path: string;
   state: ManagedState;
 };
+/** A single plugin artifact pinned by SHA-256, for people without Git access. */
+export type ManagedUrlEntry = {
+  id: string;
+  url: string;
+  sha256: string;
+  state: ManagedState;
+};
+export type ManagedEntry = ManagedGitEntry | ManagedUrlEntry;
 export type ManagedPlugins =
   | { status: "invalid"; path: string; reason: string }
+  /** The build's packaged policy has not been fetched yet. */
+  | { status: "loading"; url: string }
+  /** The build's packaged policy could not be fetched, and there is no earlier copy. */
+  | { status: "unavailable"; url: string; reason: string }
   | {
       status: "ready";
       path: string;
@@ -86,7 +101,7 @@ export type ImportFile = { path: string } & (
 );
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;
-  checkFolder(id: string): Promise<string>;
+  checkFolder(id: string): Promise<PluginRelease>;
   previewFolder(id: string): Promise<ImportPreview | null>;
   files(source: string, files: ImportFile[]): Promise<ImportPreview | null>;
   /**
@@ -99,6 +114,8 @@ export type PluginImports = {
     authorization?: string,
     commit?: string,
   ): Promise<ImportPreview | null>;
+  /** Downloads one plugin artifact; refused unless it hashes to `sha256`. */
+  url(url: string, sha256: string): Promise<ImportPreview | null>;
   /** Reads Git metadata without acquiring or replacing an installation preview. */
   checkGit(
     repository: string,

@@ -9,6 +9,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
+import {
+  WorkspaceCompositionContext,
+  RegionWorkspace,
+  RegionChats,
+  type ComposeWorkspaces,
+} from "../../features/channel-navigation/WorkspaceComposition";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
@@ -34,6 +41,14 @@ afterEach(() => {
   localStorage.clear();
 });
 
+/** A workspace heading's row, which also holds its actions. */
+const PROJECT_HEADER = '[data-solo-menu-id^="project-"]';
+/** The workspace containing a heading: its row and its chats. */
+function projectOf(heading: HTMLElement) {
+  const project = heading.closest(PROJECT_HEADER)?.parentElement;
+  if (!project) throw new Error("Missing project");
+  return project;
+}
 function fixture(projectName = "Work") {
   const owner = createRelaySession(null);
   const details = { ...owner.session.channelDetails };
@@ -103,8 +118,10 @@ function fixture(projectName = "Work") {
       { id: "chat", title: "Planning" },
       { id: "other", title: "Existing chat" },
     ],
+    compose?: ComposeWorkspaces,
   ) => (
     <SoloWorkspaces
+      compose={compose}
       onNew={onNew}
       session={
         {
@@ -180,7 +197,7 @@ it("creates and moves through the relay service, then restores in a fresh store"
   const second = h.store();
   render(h.view(second.queries, "other-device"));
   const project = await screen.findByRole("button", { name: "Projects" });
-  expect(project.parentElement?.parentElement).toHaveTextContent("Planning");
+  expect(projectOf(project)).toHaveTextContent("Planning");
   fireEvent.click(project);
   expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
   expect(screen.getByRole("button", { name: "Existing chat" })).toBeVisible();
@@ -206,7 +223,7 @@ it("rolls back a rejected move and keeps retry available", async () => {
   await user.click(await screen.findByRole("menuitem", { name: "Work" }));
   expect(await screen.findByText("Relay unavailable")).toBeVisible();
   expect(
-    screen.getByRole("button", { name: "Chats" }).parentElement?.parentElement,
+    projectOf(screen.getByRole("button", { name: "Chats" })),
   ).toHaveTextContent("Planning");
   await user.click(screen.getByRole("button", { name: "Retry move" }));
   await waitFor(() => expect(h.saved().assignments.chat).toBe("work"));
@@ -214,7 +231,7 @@ it("rolls back a rejected move and keeps retry available", async () => {
     expect(screen.queryByText("Relay unavailable")).toBeNull(),
   );
   expect(
-    screen.getByRole("button", { name: "Work" }).parentElement?.parentElement,
+    projectOf(screen.getByRole("button", { name: "Work" })),
   ).toHaveTextContent("Planning");
   store.dispose();
 });
@@ -320,7 +337,7 @@ it("starts a chat in a project from its heading plus", async () => {
   render(h.view(store.queries));
   try {
     const heading = await screen.findByRole("button", { name: "Work" });
-    const header = heading.parentElement;
+    const header = heading.closest<HTMLElement>(PROJECT_HEADER);
     if (!header) throw new Error("Missing project header");
     await user.click(
       within(header).getByRole("button", { name: "New chat in Work" }),
@@ -348,6 +365,85 @@ it("opens the exact project from an empty project's New chat row", async () => {
     row.focus();
     await user.keyboard("{Enter}");
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("shares a workspace frame while keeping selection, disclosure and chat creation separate", async () => {
+  const h = fixture();
+  const store = h.store();
+  const onTask = vi.fn();
+  const onSelect = vi.fn();
+  await store.queries.ensure();
+  await store.queries.assign("chat", "work");
+  function View() {
+    const [selected, select] = useState(false);
+    return h.view(
+      store.queries,
+      "workspace-composition",
+      undefined,
+      undefined,
+      (parts) => (
+        <WorkspaceCompositionContext value={parts}>
+          <RegionWorkspace
+            id="work"
+            selected={selected}
+            onSelect={() => {
+              onSelect();
+              select(true);
+            }}
+            onNewTask={onTask}
+          >
+            <button type="button">Workspace task</button>
+          </RegionWorkspace>
+          <RegionChats />
+        </WorkspaceCompositionContext>
+      ),
+    );
+  }
+  render(<View />);
+  const user = userEvent.setup();
+  try {
+    const title = await screen.findByRole("button", { name: "Work" });
+    expect(screen.getAllByRole("button", { name: "Work" })).toHaveLength(1);
+    await user.click(
+      screen.getByRole("button", { name: "Hide tasks and chats in Work" }),
+    );
+    expect(screen.queryByRole("button", { name: "Workspace task" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Planning" })).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    await user.click(title);
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(title).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("button", { name: "Show tasks and chats in Work" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    const card = title.closest("[data-navigation-card]");
+    expect(card).toHaveAttribute("data-tone", "tonal");
+    await user.click(
+      screen.getByRole("button", { name: "Show tasks and chats in Work" }),
+    );
+    expect(card).toContainElement(
+      screen.getByRole("button", { name: "Workspace task" }),
+    );
+    expect(card).toContainElement(
+      screen.getByRole("button", { name: "Planning" }),
+    );
+    await user.click(screen.getByRole("button", { name: "New task in Work" }));
+    expect(onTask).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+    expect(screen.queryByRole("menuitem", { name: "New task" })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: "New chat in Work" }),
+    ).toBeNull();
+    const create = screen.getAllByRole("button", { name: /New chat/ });
+    expect(create).toHaveLength(1);
+    expect(create[0]).toHaveAccessibleName("New chat in Chats");
+    await user.click(screen.getByRole("button", { name: "New chat in Chats" }));
+    expect(h.onNew).toHaveBeenCalledExactlyOnceWith(undefined);
   } finally {
     store.dispose();
   }
@@ -745,8 +841,7 @@ it("lists and focuses a chat moved into a full workspace", async () => {
   await user.keyboard("{ArrowRight}");
   await user.click(await screen.findByRole("menuitem", { name: "Work" }));
   await waitFor(() => expect(h.saved().assignments.chat).toBe("work"));
-  const work = screen.getByRole("button", { name: "Work" }).parentElement
-    ?.parentElement as HTMLElement;
+  const work = projectOf(screen.getByRole("button", { name: "Work" }));
   await waitFor(() =>
     expect(
       within(work).getByRole("button", { name: "Planning" }),

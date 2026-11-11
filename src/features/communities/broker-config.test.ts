@@ -172,7 +172,7 @@ it("keeps the development broker's Builderlab sign-in for a pinned viewer withou
     // An added server wins over the broker.
     vi.stubEnv(
       "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG",
-      '{"identityOrigin":"https://block.builderlab.xyz","apiBasePath":"/api/goose/"}',
+      '{"identityOrigin":"https://acme.builderlab.xyz","apiBasePath":"/api/goose/"}',
     );
     expect(await define(viewer, "serve")).toEqual(['"1"', '"1"']);
   } finally {

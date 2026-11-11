@@ -10,32 +10,35 @@ type AccessChannel = Pick<
   "channelType" | "viewerRole" | "readOnly" | "joinRole"
 >;
 
+const soloReadOnlyAccess = Object.freeze({
+  title: "Chat access",
+  label: (name: string) => `Chat access for ${name}`,
+});
+const soloAccess = Object.freeze({
+  title: "Share access",
+  label: (name: string) => `Share access to ${name}`,
+});
+const readOnlyAccess = Object.freeze({
+  title: "Channel access",
+  label: (name: string) => `Channel access for ${name}`,
+});
+const manageAccess = Object.freeze({
+  title: "Manage members",
+  label: (name: string) => `Manage members of ${name}`,
+});
+
 /** What the viewer can do in a conversation's access dialog: its title, and
- * the name of a control that opens it. */
+ * the name of a control that opens it. Returns one of four shared, frozen
+ * objects so a list subscription can select it without re-rendering. */
 export function memberAccess(channel: AccessChannel | undefined) {
   const solo = channel?.channelType === "solo";
   const readOnly =
     channel?.viewerRole === "guest" ||
     (channel?.readOnly && channel.joinRole === "guest");
-  if (solo && readOnly)
-    return {
-      title: "Chat access",
-      label: (name: string) => `Chat access for ${name}`,
-    };
-  if (solo)
-    return {
-      title: "Share access",
-      label: (name: string) => `Share access to ${name}`,
-    };
-  if (readOnly)
-    return {
-      title: "Channel access",
-      label: (name: string) => `Channel access for ${name}`,
-    };
-  return {
-    title: "Manage members",
-    label: (name: string) => `Manage members of ${name}`,
-  };
+  if (solo && readOnly) return soloReadOnlyAccess;
+  if (solo) return soloAccess;
+  if (readOnly) return readOnlyAccess;
+  return manageAccess;
 }
 
 /** One artwork/name target opens the conversation's existing access dialog. */

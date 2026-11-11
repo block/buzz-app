@@ -2,7 +2,10 @@ import {
   readComposerSnapshot,
   composerMarkdownContext,
 } from "../messages/composer-document";
-import type { ComposerSnapshot } from "../messages/mention-draft";
+import {
+  mentionTerminator,
+  type ComposerSnapshot,
+} from "../messages/mention-draft";
 import { scanMarkdown } from "../relay/message-content";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import { createPortal } from "react-dom";
@@ -23,14 +26,18 @@ import type {
   ComposerCompletion,
   ComposerCompletionProps,
   CompletionContext,
-  CompletionEdit,
   CompletionQuery,
   CompletionResult,
   ComposerObservation,
   ContributionReader,
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
-import { completionResult, matchCompletion } from "./completion";
+import {
+  completionResult,
+  matchCompletion,
+  type HostCompletionEdit,
+  type HostCompletionResult,
+} from "./completion";
 import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -86,14 +93,14 @@ function EmojiCompletionName({
  * popup closed starts empty: `ComposerCompletions` evicts the store in its
  * closed render, so a carried result means only a continuing open query. */
 function createDisplay() {
-  let shown: { key: string; result: CompletionResult | undefined } = {
+  let shown: { key: string; result: HostCompletionResult | undefined } = {
     key: "",
     result: undefined,
   };
   const listeners = new Set<() => void>();
   return {
     read: (key: string) => (shown.key === key ? shown.result : undefined),
-    set(key: string, result: CompletionResult | undefined) {
+    set(key: string, result: HostCompletionResult | undefined) {
       shown = { key, result };
       for (const listener of listeners) listener();
     },
@@ -165,9 +172,10 @@ export function ComposerCompletions({
     recipients: readonly Readonly<{ start: number; end: number }>[];
     /** Mentions still resolving; their `@` is no more an open query. */
     pending?: readonly Readonly<{ start: number; end: number }>[] | undefined;
+    tokens?: readonly Readonly<{ start: number; end: number }>[] | undefined;
   }>;
   replace(
-    edit: CompletionEdit,
+    edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
@@ -203,6 +211,7 @@ export function ComposerCompletions({
     matchCompletion(providers, observation, context, [
       ...resolved.recipients,
       ...(resolved.pending ?? []),
+      ...(resolved.tokens ?? []),
     ]);
   const open =
     !!match &&
@@ -274,7 +283,7 @@ function OwnedCompletion({
     Pick<PointerEvent, "clientX" | "clientY"> | undefined
   >;
   replace(
-    edit: CompletionEdit,
+    edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
@@ -285,9 +294,11 @@ function OwnedCompletion({
   const mention = provider.pluginId === "buzz.mentions";
   const channel = provider.pluginId === "buzz.channels";
   const named = mention || channel;
-  // Typing the terminator accepts the provider-verified exact match (spaceId):
-  // plain Space after a name, the closing colon after an emoji shortcode.
-  const terminator = provider.pluginId === "buzz.emoji" ? ":" : " ";
+  // Typing a terminator accepts the provider-verified exact match (spaceId):
+  // plain Space after a name, closing punctuation after a mention too, and the
+  // closing colon after an emoji shortcode.
+  const terminates = (key: string) =>
+    compact ? key === ":" : mention ? mentionTerminator(key) : key === " ";
   const popup = useCompletionPosition(
     input,
     compact ? 0.375 : 1,
@@ -303,7 +314,7 @@ function OwnedCompletion({
     () => display.read(trigger),
   );
   // This lifetime's own publication; a carried display is never acted on.
-  const latest = useRef<CompletionResult | undefined>(undefined);
+  const latest = useRef<HostCompletionResult | undefined>(undefined);
   // Only user navigation pins an ID; automatic selection follows the first result.
   const [selected, setSelected] = useState<string | typeof RETRY>();
   const [keyboardSelection, setKeyboardSelection] = useState<string>();
@@ -348,7 +359,7 @@ function OwnedCompletion({
     let owned = true;
     setPublish(() => (incoming: CompletionResult) => {
       if (!owned || !active()) return false;
-      const next = completionResult(incoming);
+      const next = completionResult(incoming, provider);
       latest.current = next;
       revealSelection.current = true;
       display.set(trigger, next);
@@ -370,7 +381,7 @@ function OwnedCompletion({
       live.current = false;
       latest.current = undefined;
     };
-  }, [active, display, trigger]);
+  }, [active, display, provider, trigger]);
   // A carried result stands only until this query's provider has run its
   // mount effects, which precede this one; a provider that has not published
   // by then leaves the popup closed, as for a first query, so a stale display
@@ -400,7 +411,7 @@ function OwnedCompletion({
     // Publication is synchronous; React may still be displaying the previous
     // result. Keep the user's chosen ID, but use only its current evidence/edit.
     // The terminator names its own item, which that display may not have yet.
-    const id = key === terminator ? published.spaceId : items[index]?.id;
+    const id = terminates(key) ? published.spaceId : items[index]?.id;
     const item = published.items.find((item) => item.id === id);
     if (!item || item.disabled || item.canSelect?.(key) === false) return false;
     const accepted = current.current.replace(
@@ -437,9 +448,17 @@ function OwnedCompletion({
         current.current.editor.invalidate();
         return true;
       }
-      if (event.altKey || event.ctrlKey || event.metaKey) return false;
-      // Shift types ":" on common layouts; other shifted keys keep editing.
-      if (event.shiftKey && event.key !== ":") return false;
+      // Option types curly quotes and, on some Mac layouts, other closing
+      // punctuation, so it may close a mention; elsewhere it keeps editing.
+      if (event.ctrlKey || event.metaKey || (event.altKey && !mention))
+        return false;
+      // Shift types ":" and closing punctuation on common layouts; other
+      // modified keys, Space included, keep editing.
+      if (
+        (event.shiftKey || event.altKey) &&
+        (event.key === " " || !terminates(event.key))
+      )
+        return false;
       if (!active()) {
         // A displayed choice owns plain acceptance even when its final evidence
         // was revoked. Never turn a rejected edit into an unintended send.
@@ -458,12 +477,12 @@ function OwnedCompletion({
       // is never accepted on its own; only the publication selects.
       const published = latest.current;
       if (
-        event.key === terminator &&
+        terminates(event.key) &&
         published?.spaceId &&
         (!result?.spaceId || result.spaceId === published.spaceId)
       ) {
         // Selected by ID, so no displayed row is needed.
-        if (accept(-1, terminator)) {
+        if (accept(-1, event.key)) {
           event.preventDefault();
           event.stopPropagation();
           return true;
@@ -476,14 +495,14 @@ function OwnedCompletion({
       // as undecided: no other recipient overrules what the user saw, the
       // decision is deferred to the resolver under the full rule.
       if (
-        event.key === terminator &&
+        terminates(event.key) &&
         published?.spacePending &&
         !published.spaceId &&
         current.current.replace(
           { pending: published.spacePending },
           query,
           observation,
-          terminator,
+          event.key,
         )
       ) {
         event.preventDefault();

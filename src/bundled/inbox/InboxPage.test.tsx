@@ -12,7 +12,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { PageTabs } from "../channels/PageTabs";
 import { InboxPage } from "./InboxPage";
@@ -568,6 +568,8 @@ async function markRead(h: ReturnType<typeof fixture>, channelId: string) {
     for (const item of items)
       if (item.target.kind === "channel")
         await h.session.unread.prepareChannelRead(channelId)();
+      else if (item.timeline)
+        await h.session.unread.markTimelineRead(channelId, item.messageIds);
       else
         for (const step of item.readThrough)
           await h.session.unread.markThrough(step.target, step.messageId);
@@ -580,7 +582,7 @@ it("previews recent conversations and opens a row directly", async () => {
   render(previewAt(h, close));
   await waitFor(() => expect(previewRows()).toHaveLength(3));
   expect(
-    screen.getByText("1 mention · 1 thread · 1 DM unread"),
+    screen.getByText("3 unread · 1 mention · 1 thread · 1 DM"),
   ).toBeInTheDocument();
 
   // The newest #Design row opens at its exact message, in its thread when it has one.
@@ -619,7 +621,9 @@ it("keeps Unread only to the card and offers recent activity once caught up", as
   expect(screen.getByRole("switch", { name: "Unread only" })).not.toBeChecked();
   await markRead(h, "dm-room");
   await waitFor(() =>
-    expect(screen.getByText("1 mention · 1 thread unread")).toBeInTheDocument(),
+    expect(
+      screen.getByText("2 unread · 1 mention · 1 thread"),
+    ).toBeInTheDocument(),
   );
   const unreadOnly = () => screen.getByRole("switch", { name: "Unread only" });
   fireEvent.click(unreadOnly());
@@ -639,6 +643,37 @@ it("keeps Unread only to the card and offers recent activity once caught up", as
   fireEvent.click(screen.getByRole("button", { name: "Show recent activity" }));
   await waitFor(() => expect(previewRows()).toHaveLength(3));
   expect(unreadOnly()).not.toBeChecked();
+});
+
+it("leads the card's header with the total and counts a mention only while it is unread", async () => {
+  const h = fixture({ withSolo: true });
+  render(previewAt(h));
+  await waitFor(() => expect(previewRows()).toHaveLength(3));
+  expect(
+    screen.getByText("3 unread · 1 mention · 1 thread"),
+  ).toBeInTheDocument();
+  // A Solo chat's flat row has no kind, so only the total counts it.
+  await markRead(h, "room");
+  expect(await screen.findByText("1 unread")).toBeInTheDocument();
+
+  const reply = (content: string, at: number, tags: string[][] = []) => {
+    const event = message(h.alice, "room", content, at, [
+      ["e", h.root?.id ?? "", "", "reply"],
+      ...tags,
+    ]);
+    h.addEvent(event);
+    act(() => h.emit([event]));
+  };
+  reply("Can you check this?", 30, [["p", h.viewer.pubkey]]);
+  expect(await screen.findByText("2 unread · 1 mention")).toBeInTheDocument();
+
+  // A plain reply after the mention was read is thread activity, as Mentions
+  // with Unread only would list nothing.
+  await markRead(h, "room");
+  await markRead(h, "solo-room");
+  expect(await screen.findByText("Nothing unread")).toBeInTheDocument();
+  reply("Following up", 31);
+  expect(await screen.findByText("1 unread · 1 thread")).toBeInTheDocument();
 });
 
 it("shows the card's connection and read failures with their recovery", async () => {
@@ -762,15 +797,22 @@ it("retries the card's connection, activity and read-state failures", async () =
   act(() => h.failSync());
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-  // Cleared activity is not reported as nothing to read.
-  await act(async () => {
-    await h.owner.clearCache();
+  // Cleared activity is not reported as nothing to read while the repair the
+  // clear starts observes it again, and that repair brings it back.
+  let clearing: Promise<void> | undefined;
+  act(() => {
+    clearing = h.owner.clearCache();
   });
   expect(
     screen.queryByRole("list", { name: "Recent activity" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("No recent activity")).not.toBeInTheDocument();
   expect(screen.queryByText("Nothing unread")).not.toBeInTheDocument();
+  await act(async () => {
+    await clearing;
+  });
+  await waitFor(() => expect(previewRows()).toHaveLength(2));
+  expect(screen.queryByText("No recent activity")).not.toBeInTheDocument();
   view.unmount();
 
   act(() => h.failConnection("relay offline"));
@@ -778,6 +820,19 @@ it("retries the card's connection, activity and read-state failures", async () =
   expect(await screen.findByText("relay offline")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry connection" }));
   expect(h.retryConnection).toHaveBeenCalledOnce();
+  // A refusal is the community's, not the connection's: its notice on every
+  // page offers what fixes it, so Activity neither shows the relay's raw text
+  // nor a retry of the same request.
+  act(() =>
+    h.failConnection("restricted: authorization denied", { denied: true }),
+  );
+  expect(
+    await screen.findByText("You don’t have access to this community"),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/restricted:/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry connection" }),
+  ).not.toBeInTheDocument();
 });
 
 function fixture(
@@ -785,6 +840,7 @@ function fixture(
     failRoster?: boolean;
     archivedChannel?: boolean;
     withDm?: boolean;
+    withSolo?: boolean;
     withSenders?: boolean;
     holdProfiles?: boolean;
     withWriter?: boolean;
@@ -916,6 +972,17 @@ function fixture(
             ["hidden"],
           ]),
           message(alice, "dm-room", "A direct reply", 23),
+        ]
+      : []),
+    ...(options.withSolo
+      ? [
+          roster(relayKey, "solo-room", [viewer.pubkey, alice.pubkey], 10),
+          metadata(relayKey, "solo-room", "Notes", 10, [
+            ["t", "stream"],
+            ["private"],
+            ["t", "buzz.solo"],
+          ]),
+          message(alice, "solo-room", "A Solo update", 23),
         ]
       : []),
     ...(options.withSenders
@@ -1071,6 +1138,7 @@ function fixture(
       readStateFloor: () => 0,
       outboxStorage: { load: () => [], save: () => {} },
       readStateStorage: {
+        capture: async () => structuredClone(journal),
         async update(change) {
           if (hold) {
             saveStarted = true;
@@ -1394,8 +1462,14 @@ function fixture(
         : undefined;
       for (const listener of syncListeners) listener();
     },
-    failConnection(error: string) {
-      connection = { ...connection, status: "error", error, generation: 2 };
+    failConnection(error: string, refused?: Partial<RelaySnapshot>) {
+      connection = {
+        ...connection,
+        status: "error",
+        error,
+        generation: 2,
+        ...refused,
+      };
       for (const listener of subscribers) listener();
     },
   };
@@ -2969,8 +3043,24 @@ it("waits for roster recovery before explicit evidence refresh", async () => {
 
 it("cache clear shows explicit refresh instead of a spinner with no pending work", async () => {
   const h = fixture();
+  const root = h.root;
+  if (!root) throw new Error("Missing fixture root");
+  // Only the feed reads reactions; unread evidence never includes them.
+  h.addEvent(
+    signed(h.alice, {
+      kind: 7,
+      content: "❤️",
+      created_at: 30,
+      tags: [
+        ["e", root.id],
+        ["p", h.viewer.pubkey],
+      ],
+    }),
+  );
+  const reaction = { name: /Alice reacted with heart/ };
   render(h.view);
   await screen.findByText("Please review this");
+  await screen.findByRole("button", reaction);
   await waitFor(() =>
     expect(
       screen.queryByText("Checking recent activity…"),
@@ -2979,12 +3069,19 @@ it("cache clear shows explicit refresh instead of a spinner with no pending work
   await act(async () => {
     await h.owner.clearCache();
   });
+  // The repair the clear starts brings back the mention from unread evidence
+  // on its own, but the cleared feed stays idle: it offers Refresh rather than
+  // a spinner with nothing pending.
+  await screen.findByText("Please review this");
+  expect(h.owner.session.inboxFeed.snapshot().status).toBe("idle");
   expect(screen.getByText("Check recent activity.")).toBeVisible();
   expect(
     screen.queryByText("Checking recent activity…"),
   ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", reaction)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  await screen.findByText("Please review this");
+  await screen.findByRole("button", reaction);
+  expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready");
   expect(h.retrySync).not.toHaveBeenCalled();
 });
 
@@ -4166,7 +4263,28 @@ function threadLayout() {
       ? ([box] as unknown as DOMRectList)
       : getClientRects.call(this);
   });
+  // A reveal's completion notice does not bubble, so capture it.
+  const positioned = new Set<Element>();
+  const notice = (event: Event) => {
+    if (event.target instanceof Element) positioned.add(event.target);
+  };
+  document.addEventListener("reading-positioned", notice, true);
+  onTestFinished(() =>
+    document.removeEventListener("reading-positioned", notice, true),
+  );
   return async (reader: HTMLElement, read: () => void) => {
+    // The fake clock below never runs a frame requested before it, so first
+    // let this reader's reveal finish on the real one: it notifies reading
+    // once its row is placed and verified.
+    await waitFor(() =>
+      expect(
+        [...positioned].some(
+          (target) =>
+            target.isConnected &&
+            (target.contains(reader) || reader.contains(target)),
+        ),
+      ).toBe(true),
+    );
     windowFocus.mockReturnValue(true);
     vi.useFakeTimers({
       toFake: [

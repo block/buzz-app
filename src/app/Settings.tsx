@@ -37,7 +37,6 @@ import {
   type ReactNode,
   forwardRef,
   type RefObject,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -57,17 +56,27 @@ import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
+import { PluginUpdateFailure } from "./PluginUpdates";
 import { AgentPluginRequests } from "./AgentPluginRequests";
-import { ManagedPluginUpdate, ManagedPlugins } from "./ManagedPlugins";
+import {
+  ManagedPluginUpdate,
+  ManagedPlugins,
+  UrlPluginInstallReview,
+  UrlPluginDetails,
+} from "./ManagedPlugins";
 import { managedBy, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
-import type { PluginInstallRequests } from "../plugins/installer";
+import {
+  isUrlInstallSource,
+  type PluginInstallRequest,
+  type PluginInstallRequests,
+} from "../plugins/installer";
 import { PluginReadme } from "./PluginReadme";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
 import { ProfileSettings } from "./ProfileSettings";
-import { IdentitySettings, keyActivity } from "./IdentitySettings";
+import { IdentitySettings } from "./IdentitySettings";
 import { SecuritySettings } from "./SecuritySettings";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
@@ -240,6 +249,8 @@ const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
 const noProviders: readonly RegisteredProvider[] = [];
 const noDecisionProviders = () => noProviders;
+/** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
+const PLUGIN_DETAILS = "settings.pluginDetails";
 
 function restrictedPlugin(plugin: PluginInfo) {
   return (
@@ -521,24 +532,33 @@ function PluginDetails({
           {...(authorizeGit ? { authorizeGit } : {})}
         />
       )}
-      {plugin.source === "external" && plugins.imports && !managed && (
-        <PluginImport
-          key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
-          initialUpdateAvailable={initialUpdateAvailable}
-          actionTarget={actionTarget}
-          onUpdateAvailableChange={onUpdateAvailableChange}
-          reviewRequested={reviewRequested}
-          onReviewHandled={onReviewHandled}
-          holdReview={holdReview}
-          statusTarget={installedStatus}
-          returnFocus={() => close.current}
-          updateId={plugin.manifest.id}
-          plugins={plugins}
-          catalog={catalog}
-          busy={busy}
-          {...(authorizeGit ? { authorizeGit } : {})}
-        />
-      )}
+      {plugin.source === "external" &&
+        !managed &&
+        plugin.updateSource &&
+        "url" in plugin.updateSource && (
+          <UrlPluginDetails source={plugin.updateSource} />
+        )}
+      {plugin.source === "external" &&
+        plugins.imports &&
+        !managed &&
+        !(plugin.updateSource && "url" in plugin.updateSource) && (
+          <PluginImport
+            key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
+            initialUpdateAvailable={initialUpdateAvailable}
+            actionTarget={actionTarget}
+            onUpdateAvailableChange={onUpdateAvailableChange}
+            reviewRequested={reviewRequested}
+            onReviewHandled={onReviewHandled}
+            holdReview={holdReview}
+            statusTarget={installedStatus}
+            returnFocus={() => close.current}
+            updateId={plugin.manifest.id}
+            plugins={plugins}
+            catalog={catalog}
+            busy={busy}
+            {...(authorizeGit ? { authorizeGit } : {})}
+          />
+        )}
       {sections.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: This names links to Settings sections, not a fieldset of form controls.
         <p
@@ -702,6 +722,10 @@ export function Settings({
     installRequests?.subscribe ?? noAccessSubscription,
     installRequests?.snapshot ?? noInstallRequest,
   );
+  const linkedPlugin =
+    navigation?.target.kind === "settings"
+      ? navigation.target.pluginImport
+      : undefined;
   const settingsMounted = useRef(false);
   useEffect(() => {
     settingsMounted.current = true;
@@ -732,6 +756,7 @@ export function Settings({
     decisions?.subscribe ?? noAccessSubscription,
     decisions?.providers ?? noDecisionProviders,
   );
+  const identityCards = contributed.filter((card) => card.identityRow);
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
@@ -894,21 +919,47 @@ export function Settings({
     );
   }, [catalog?.plugins, pluginFilter, pluginQuery]);
   const [selectedPluginId, setSelectedPluginId] = useState<string>();
+  const shownPluginId = useRef(selectedPluginId);
+  shownPluginId.current = selectedPluginId;
   const addressedPlugin = useRef(false);
+  // Set while Settings dismisses its own visit: the visit it lands on keeps
+  // what is shown rather than what it last showed.
+  const closingVisit = useRef(false);
+  // Open in Buzz and a finished install can call back after the visit changed.
+  const currentNavigation = useRef(navigation);
+  useLayoutEffect(() => {
+    currentNavigation.current = navigation;
+  }, [navigation]);
   const requestedPluginId =
     navigation?.target.kind === "settings"
       ? navigation.target.pluginId
       : undefined;
   useEffect(() => {
-    if (selected !== "plugins" || !navigation?.entryId) return;
-    if (requestedPluginId) {
-      setSelectedPluginId(requestedPluginId);
-      addressedPlugin.current = true;
-    } else if (addressedPlugin.current) {
-      setSelectedPluginId(undefined);
-      addressedPlugin.current = false;
+    if (
+      selected !== "plugins" ||
+      requestedSection !== "plugins" ||
+      !navigation?.entryId
+    )
+      return;
+    const leftAddressed = addressedPlugin.current;
+    const closed = closingVisit.current;
+    addressedPlugin.current = !!requestedPluginId;
+    closingVisit.current = false;
+    if (requestedPluginId) setSelectedPluginId(requestedPluginId);
+    else if (navigation.traversal && !closed) {
+      const shown = navigation.position(PLUGIN_DETAILS);
+      setSelectedPluginId(typeof shown === "string" ? shown : undefined);
+    } else {
+      // A visit records what it starts with; addressed details don't carry over.
+      const shown = leftAddressed ? undefined : shownPluginId.current;
+      setSelectedPluginId(shown);
+      navigation.savePosition(PLUGIN_DETAILS, shown ?? null);
     }
-  }, [requestedPluginId, navigation?.entryId, selected]);
+  }, [requestedPluginId, requestedSection, navigation, selected]);
+  const showPluginDetails = (id: string | undefined) => {
+    setSelectedPluginId(id);
+    currentNavigation.current?.savePosition(PLUGIN_DETAILS, id ?? null);
+  };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
   const [updateChecks, setUpdateChecks] = useState<
     Record<string, { revision: string; available: boolean }>
@@ -936,7 +987,10 @@ export function Settings({
   const visibleReturn = (target: HTMLElement | null) =>
     covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
   useEffect(() => {
-    if (selected !== "plugins") setSelectedPluginId(undefined);
+    if (selected !== "plugins") {
+      setSelectedPluginId(undefined);
+      addressedPlugin.current = closingVisit.current = false;
+    }
   }, [selected]);
   useEffect(() => {
     const element = layout.current;
@@ -962,14 +1016,18 @@ export function Settings({
     if (selectedPluginId && catalog && !selectedPlugin) {
       pluginSection.current?.focus();
       setSelectedPluginId(undefined);
+      navigation?.savePosition(PLUGIN_DETAILS, null);
     }
-  }, [catalog, selectedPlugin, selectedPluginId]);
+  }, [catalog, navigation, selectedPlugin, selectedPluginId]);
   const closePluginDetails = () => {
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
-    setSelectedPluginId(undefined);
-    if (requestedPluginId) onPluginDetailsClosed?.();
+    showPluginDetails(undefined);
+    if (requestedPluginId) {
+      closingVisit.current = true;
+      onPluginDetailsClosed?.();
+    }
   };
   useLayoutEffect(() => {
     const held = heldPluginRow.current;
@@ -1136,7 +1194,7 @@ export function Settings({
                         pluginTrigger.current = event.currentTarget;
                         holdPluginRow(event.currentTarget);
                         if (!active) setActivationAttempt(undefined);
-                        setSelectedPluginId(active ? undefined : id);
+                        showPluginDetails(active ? undefined : id);
                       }}
                     >
                       {isEssentialPlugin(plugin) && (
@@ -1197,7 +1255,7 @@ export function Settings({
                           onClick={(event) => {
                             holdPluginRow(event.currentTarget);
                             setActivationAttempt(undefined);
-                            setSelectedPluginId(id);
+                            showPluginDetails(id);
                             setReviewPluginId(id);
                           }}
                         >
@@ -1277,6 +1335,17 @@ export function Settings({
                       {failure}
                     </p>
                   )}
+                  <PluginUpdateFailure
+                    pluginId={id}
+                    className={styles.pluginRowStatus}
+                    returnFocus={() =>
+                      Array.from(
+                        pluginSection.current?.querySelectorAll<HTMLElement>(
+                          "[data-plugin-id]",
+                        ) ?? [],
+                      ).find((row) => row.dataset.pluginId === id)
+                    }
+                  />
                 </PluginListEntry>
               );
             })}
@@ -1285,15 +1354,10 @@ export function Settings({
       </PluginListEntry>
     );
   };
-  // A new connection's session reads activity again.
+  // The current community supplies the profile shown on the identity card.
   const relay = useSyncExternalStore(
     communities.relay.subscribe,
     communities.relay.snapshot,
-  );
-  const relaySession = relay.status === "ready" ? relay.session : undefined;
-  const lastActive = useCallback(
-    (pubkey: string) => keyActivity(relaySession, pubkey),
-    [relaySession],
   );
   const authorizePluginGit = async (repository: string) => {
     const connection = communities.relay.snapshot();
@@ -1371,6 +1435,7 @@ export function Settings({
                   return (
                     <Card
                       active={active}
+                      navigation={navigation}
                       {...(!card.group && selectedCommunity
                         ? { community: selectedCommunity }
                         : {})}
@@ -1426,10 +1491,43 @@ export function Settings({
             federatedIdentity={federatedIdentity}
             memberships={client.memberships}
             builderlabIdentity={builderlabIdentity}
-            lastActive={lastActive}
+            openBuilderlab={
+              openSection &&
+              contributed.some((card) => card.key === "block.builderlab/login")
+                ? () => openSection("block.builderlab/login")
+                : undefined
+            }
+            profileSession={
+              relay.viewer === client.viewer &&
+              (relay.status === "ready" || relay.cached)
+                ? relay.session
+                : undefined
+            }
+            community={selectedCommunity}
+            accountRows={
+              identityCards.length
+                ? identityCards.map(
+                    (card) =>
+                      card.identityRow && (
+                        <OwnedContribution
+                          key={card.key}
+                          entry={card}
+                          registry={cards}
+                        >
+                          {(entry, active) => {
+                            const Row = entry.identityRow;
+                            return Row ? <Row active={active} /> : null;
+                          }}
+                        </OwnedContribution>
+                      ),
+                  )
+                : undefined
+            }
           />
         )}
-        {selected === "security" && <SecuritySettings />}
+        {selected === "security" && (
+          <SecuritySettings viewer={identity ? client.viewer : undefined} />
+        )}
         {developerMode && (
           <div hidden={selected !== "developer"}>
             <DeveloperSettings relay={communities.relay} />
@@ -1508,23 +1606,60 @@ export function Settings({
                 </motion.div>
               </motion.div>
             )}
+            {catalog && installRequest && installRequests && (
+              <UrlInstallRequestReview
+                key={installRequest.id}
+                request={installRequest}
+                requests={installRequests}
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                returnFocus={() => pluginSection.current}
+              />
+            )}
+            {catalog && linkedPlugin && "url" in linkedPlugin && (
+              <UrlPluginInstallReview
+                key={`url:${navigation?.entryId}`}
+                plugins={plugins}
+                catalog={catalog}
+                busy={busy}
+                source={linkedPlugin}
+                requester="A link"
+                holdReview={installRequests?.holdReview}
+                returnFocus={() => pluginSection.current}
+                onClose={() => onPluginImportClosed?.()}
+              />
+            )}
             {catalog ? (
               <PluginImport
                 key={
-                  navigation?.target.kind === "settings" &&
-                  navigation.target.pluginImport
-                    ? navigation.entryId
+                  linkedPlugin && !("url" in linkedPlugin)
+                    ? navigation?.entryId
                     : "add"
                 }
                 initialGit={
-                  navigation?.target.kind === "settings"
-                    ? navigation.target.pluginImport
+                  linkedPlugin && !("url" in linkedPlugin)
+                    ? linkedPlugin
                     : undefined
                 }
                 requestSignal={navigation?.signal}
-                onClosed={() => onPluginImportClosed?.()}
+                onClosed={() => {
+                  // "Open in Buzz" shows its plugin before this dismissal
+                  // lands. An install finishing after Back closes nothing.
+                  if (
+                    navigation?.target.kind === "settings" &&
+                    navigation.target.pluginImport &&
+                    navigation.entryId === currentNavigation.current?.entryId
+                  )
+                    closingVisit.current = true;
+                  onPluginImportClosed?.();
+                }}
                 actionTarget={pluginImportActions}
-                request={installRequest}
+                request={
+                  installRequest && !isUrlInstallSource(installRequest.source)
+                    ? { ...installRequest, source: installRequest.source }
+                    : undefined
+                }
                 onRequestSettled={installRequests?.settle}
                 onRequestClaimed={installRequests?.claim}
                 onRequestConfirmed={installRequests?.confirm}
@@ -1542,7 +1677,7 @@ export function Settings({
                       ) ?? []),
                     ].find((button) => button.dataset.pluginId === id) ?? null;
                   setActivationAttempt(undefined);
-                  setSelectedPluginId(id);
+                  showPluginDetails(id);
                 }}
                 returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />
@@ -1764,5 +1899,28 @@ export function Settings({
         </div>
       </Panel>
     </div>
+  );
+}
+
+function UrlInstallRequestReview({
+  request,
+  requests,
+  ...props
+}: Omit<
+  Parameters<typeof UrlPluginInstallReview>[0],
+  "source" | "requester" | "request" | "holdReview"
+> & {
+  request: PluginInstallRequest;
+  requests: PluginInstallRequests;
+}) {
+  if (!isUrlInstallSource(request.source)) return null;
+  return (
+    <UrlPluginInstallReview
+      {...props}
+      source={request.source}
+      requester={request.origin.name}
+      holdReview={requests.holdReview}
+      request={{ ...requests, id: request.id }}
+    />
   );
 }

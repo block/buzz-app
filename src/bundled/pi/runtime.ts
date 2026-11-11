@@ -1365,6 +1365,11 @@ export class PiRuntime {
     return spawn;
   }
 
+  /** A file as the agent's sessions read one: in its saved workspace. */
+  workspaceFile(agent: Agent, path: string) {
+    return this.readFile(path, { cwd: config(agent.config).workspace });
+  }
+
   private get readFile() {
     const readFile = this.host.readFile?.bind(this.host);
     if (!readFile) throw new Error("Pi agents run only in the desktop app");

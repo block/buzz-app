@@ -202,12 +202,26 @@ second
 
 - [x] checked`);
     expect(html).toContain("<h1>Heading</h1>");
-    expect(html).toContain("first<br/>\nsecond");
+    expect(html).toContain("<p>first<br/>second</p>");
     expect(html).toContain("<ul>");
     expect(html).toContain("<del>done</del>");
     expect(html).toContain("<blockquote>");
     expect(html).toContain("<table>");
     expect(html).toContain('type="checkbox" disabled="" checked=""');
+  });
+
+  it("keeps authored spaces and writes no newline that pre-wrap would show", () => {
+    const html = render(
+      "hello       -   3\nnext  line\n\n- a\n  - b\n- c\n\n1. x\n\n2. y\n\n> quote   here\n\n| a     b |\n| - |\n| c   d |\n\n`a    b`\n\n```\none\n  two\n```",
+    );
+    expect(html).toContain(
+      `<div class="${styles.text}"><p>hello       -   3<br/>next  line</p>` +
+        "<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>" +
+        "<ol><li><p>x</p></li><li><p>y</p></li></ol>" +
+        "<blockquote><p>quote   here</p></blockquote>" +
+        "<table><thead><tr><th>a     b</th></tr></thead><tbody><tr><td>c   d</td></tr></tbody></table>" +
+        "<p><code>a    b</code></p><pre><code>one\n  two\n</code>",
+    );
   });
 
   it("renders inline and fenced code without parsing markdown inside it", () => {
@@ -243,7 +257,7 @@ second
       '<div onclick="x()">\n**not bold** :party:\n</div>\n\n<!-- note -->',
     );
     expect(block).toContain(
-      "<p>&lt;div onclick=&quot;x()&quot;&gt;<br/>\n**not bold** :party:<br/>\n&lt;/div&gt;</p>",
+      "<p>&lt;div onclick=&quot;x()&quot;&gt;<br/>**not bold** :party:<br/>&lt;/div&gt;</p>",
     );
     expect(block).not.toContain("note");
     expect(block).not.toContain("<div onclick");
@@ -584,7 +598,7 @@ describe("Markdown profile mentions", () => {
     const html = render("**@Mic Smith**, _@Mic_! @Other @Missing @Microscopic");
     expect(html).toContain("<strong><button");
     expect(html).toContain('aria-label="View Mic Smith profile"');
-    expect(html).toContain("</svg>Mic Smith</button></strong>");
+    expect(html).toContain("</svg>M</span>ic Smith</button></strong>");
     // The raw helper conservatively treats trailing underscore as a name suffix.
     expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).toContain("<em>@Mic</em>");
@@ -601,7 +615,7 @@ describe("Markdown profile mentions", () => {
       extensions,
     });
     expect(html).toContain(`aria-label="View ${name} profile"`);
-    expect(html).toContain(`</svg>${name}</button></strong>`);
+    expect(html).toContain(`</svg>M</span>${name.slice(1)}</button></strong>`);
     expect(html).not.toContain("<em>");
     expect(html).not.toContain("<img");
   });
@@ -1054,51 +1068,36 @@ it("renders tagged agent library names and profile names with the same agent ico
   ).not.toContain("data-mention-kind=");
 });
 
-describe("paragraph-leading profile capsules", () => {
-  it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
-    "aligns %s only at the paragraph start",
-    (mention) => {
-      for (const [content, leading] of [
-        [mention, true],
-        [`Hello ${mention}`, false],
-        [`Hello  \n${mention}`, false],
-      ] as const) {
-        const view = renderDom(<MessageMarkdown {...props(content)} />);
-        const capsule = view.getByRole("button", { name: "View Mic profile" });
-        expect(capsule.closest("p")?.hasAttribute("data-leading-mention")).toBe(
-          leading,
-        );
-        view.unmount();
-      }
-    },
-  );
-});
+it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
+  "keeps the %s chip icon on the line with the first character",
+  (mention) => {
+    const view = renderDom(<MessageMarkdown {...props(`Hello ${mention}`)} />);
+    const chip = view.container.querySelector("[data-mention-kind]");
+    const lead = chip?.firstElementChild;
+    expect(lead).toHaveClass(referenceStyles.lead ?? "");
+    expect(lead?.querySelector("svg")).not.toBeNull();
+    expect(lead?.textContent).toBe("M");
+    expect(chip?.textContent).toBe("Mic");
+  },
+);
 
-it("keeps explicit profile identities visible but inert when Profiles is unavailable", () => {
+it.each<[string, RenderOptions]>([
+  ["a refusing opener", { canOpenLink: () => false }],
+  ["no opener", { canOpenLink: undefined }],
+  ["a preview", { interactive: false }],
+])("renders explicit profile links as inert chips with %s", (_, options) => {
   const target = profileTarget(mic);
   const view = renderDom(
     <MessageMarkdown
-      {...props(`[@Mic](${target})`, {
-        patch: { mentions: [] },
-        canOpenLink: () => false,
-      })}
+      {...props(`[@Mic](${target})`, { patch: { mentions: [] }, ...options })}
     />,
   );
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();
-  expect(view.container.textContent).toContain(target);
-  expect(view.container.querySelector("[data-leading-mention]")).toBeNull();
-  view.rerender(
-    <MessageMarkdown
-      {...props(`[@Mic](${target})`, {
-        patch: { mentions: [] },
-        interactive: false,
-      })}
-    />,
-  );
-  expect(screen.queryByRole("button")).toBeNull();
-  expect(screen.queryByRole("link")).toBeNull();
-  expect(view.container.textContent).toContain("Mic");
+  const chip = view.container.querySelector("[data-mention-kind]");
+  expect(chip?.tagName).toBe("SPAN");
+  expect(chip).toHaveAttribute("data-profile-target", target);
+  expect(view.container.textContent).toBe("Mic");
 });
 
 it.each([

@@ -1,5 +1,10 @@
+import meshManifest from "./mesh-compute/manifest.json";
+import * as mesh from "./mesh-compute";
 import voiceNotesManifest from "./voice-notes/manifest.json";
 import * as voiceNotes from "./voice-notes";
+
+import draftsSentManifest from "./drafts-sent/manifest.json";
+import * as draftsSent from "./drafts-sent";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
 import todosManifest from "./todos/manifest.json";
@@ -12,6 +17,8 @@ import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
+import chartsManifest from "./charts/manifest.json";
+import * as charts from "./charts";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -28,6 +35,7 @@ import watchingManifest from "./watching/manifest.json";
 import * as watching from "./watching";
 import claudeCodeManifest from "./claude-code/manifest.json";
 import * as claudeCode from "./claude-code";
+import { leadsHarnesses as claudeLeadsHarnesses } from "./claude-code/auth";
 import codexManifest from "./codex/manifest.json";
 import * as codex from "./codex";
 import gooseManifest from "./goose/manifest.json";
@@ -44,8 +52,6 @@ import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
-import draftsSentManifest from "./drafts-sent/manifest.json";
-import * as draftsSent from "./drafts-sent";
 import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
@@ -57,6 +63,8 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
+import linkPreviewsManifest from "./link-previews/manifest.json";
+import * as linkPreviews from "./link-previews";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -69,7 +77,24 @@ import * as pluginDevelopment from "./plugin-development";
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
 
+const codexHarness: BundledPlugin = {
+  manifest: { ...codexManifest, apiVersion: 1 },
+  module: codex,
+  enabledByDefault: true,
+};
+const claudeHarness: BundledPlugin = {
+  manifest: { ...claudeCodeManifest, apiVersion: 1 },
+  module: claudeCode,
+  enabledByDefault: true,
+};
+
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...meshManifest, apiVersion: 1 },
+    module: mesh,
+    // Opt-in: it reads community membership in the background once enabled.
+    enabledByDefault: false,
+  },
   {
     manifest: { ...relayNotesManifest, apiVersion: 1 },
     module: relayNotes,
@@ -89,6 +114,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...builderlabManifest, apiVersion: 1 },
     module: builderlab,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...draftsSentManifest, apiVersion: 1 },
+    module: draftsSent,
+    // Opt-in until it is ready for everyone.
+    enabledByDefault: false,
   },
   {
     manifest: { ...pairingManifest, apiVersion: 1 },
@@ -116,6 +147,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...chartsManifest, apiVersion: 1 },
+    module: charts,
+    enabledByDefault: false,
+  },
+  {
     manifest: { ...namingManifest, apiVersion: 1 },
     module: naming,
     enabledByDefault: true,
@@ -141,6 +177,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...linkPreviewsManifest, apiVersion: 1 },
+    module: linkPreviews,
+    enabledByDefault: true,
+  },
+  {
     manifest: { ...channelsManifest, apiVersion: 1 },
     module: channels,
     enabledByDefault: true,
@@ -153,7 +194,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...bestieManifest, apiVersion: 1 },
     module: bestie,
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
   {
     manifest: { ...usageManifest, apiVersion: 1 },
@@ -163,11 +204,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...inboxManifest, apiVersion: 1 },
     module: inbox,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...draftsSentManifest, apiVersion: 1 },
-    module: draftsSent,
     enabledByDefault: true,
   },
   {
@@ -195,16 +231,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: watching,
     enabledByDefault: true,
   },
-  {
-    manifest: { ...claudeCodeManifest, apiVersion: 1 },
-    module: claudeCode,
-    enabledByDefault: true,
-  },
-  {
-    manifest: { ...codexManifest, apiVersion: 1 },
-    module: codex,
-    enabledByDefault: true,
-  },
+  // The first of Codex and Claude leads the Harness list and is new agents'
+  // default: Codex, unless Claude's auth seam says Claude may.
+  ...(claudeLeadsHarnesses
+    ? [claudeHarness, codexHarness]
+    : [codexHarness, claudeHarness]),
   {
     manifest: { ...gooseManifest, apiVersion: 1 },
     module: goose,

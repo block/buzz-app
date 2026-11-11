@@ -19,6 +19,7 @@ mod keychain;
 mod owner;
 mod pairing;
 pub(crate) use pairing::Unrevoked;
+mod peer;
 mod policy;
 // No token is issued on Windows, so there is nothing to test there.
 #[cfg(all(test, not(windows)))]
@@ -460,6 +461,12 @@ impl CredentialService {
             advertise::remove(&home, &self.0.instance);
         }
     }
+    /// A new page in the main webview: a request the old page left waiting is
+    /// declined, and until the new page's prompt is mounted, `pair` is refused
+    /// without asking.
+    pub(crate) fn page_load(&self) {
+        self.0.pairings.page_load();
+    }
     /// Saves the revocation of every pairing promptly when the human signs
     /// out of NIP-FI or changes account. Requests fence on their own (see
     /// `Pairings::follow`); a restart under another human or account revokes
@@ -804,12 +811,17 @@ async fn answer(
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(str::to_owned);
     let version = header(&request, VERSION_HEADER).and_then(|value| value.trim().parse().ok());
+    let connection = request
+        .extensions()
+        .get::<loopback::Peer>()
+        .zip(authority.parse().ok())
+        .map(|(peer, service)| (peer.0, service));
     let body = Limited::new(request.into_body(), BODY_LIMIT).collect();
     let body = match tokio::time::timeout(BODY_TIMEOUT, body).await {
         Ok(Ok(body)) => body.to_bytes(),
         _ => Bytes::new(),
     };
-    let (status, reply) = respond(service, token.as_deref(), version, &body).await;
+    let (status, reply) = respond(service, token.as_deref(), version, &body, connection).await;
     Ok(response
         .status(status)
         .header(headers::CONTENT_TYPE, "application/json")
@@ -823,6 +835,7 @@ async fn respond(
     token: Option<&str>,
     version: Option<u32>,
     body: &[u8],
+    connection: Option<(std::net::SocketAddr, std::net::SocketAddr)>,
 ) -> (StatusCode, Value) {
     #[derive(Deserialize)]
     struct Message {
@@ -845,7 +858,7 @@ async fn respond(
         }
         let message = message.map_err(|_| Failure::new("invalid_request", "Invalid request"))?;
         if message.method == "pair" {
-            return service.pair(&message.params).await;
+            return service.pair(&message.params, connection).await;
         }
         let token = token.ok_or(Failure::revoked())?;
         if !service.callers().contains_key(&digest(token)) {
@@ -893,6 +906,21 @@ pub(crate) fn credential_pair_answer(
     approve: bool,
 ) {
     service.0.pairings.answer(&id, approve);
+}
+
+#[tauri::command]
+pub(crate) async fn credential_pairing_communities(
+    service: tauri::State<'_, CredentialService>,
+    communities: Vec<String>,
+) -> Result<(), ()> {
+    service.0.pairings.set_communities(communities).await;
+    Ok(())
+}
+
+/// The page's pairing prompt began (`mounted`) or stopped listening.
+#[tauri::command]
+pub(crate) fn credential_pair_prompt(service: tauri::State<'_, CredentialService>, mounted: bool) {
+    service.0.pairings.prompt(mounted);
 }
 
 #[tauri::command]

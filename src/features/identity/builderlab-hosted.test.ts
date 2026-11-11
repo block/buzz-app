@@ -28,7 +28,7 @@ const PUBLIC = server("bb-public", [
   "*.communities.buzz.xyz",
   "communities.buzz.xyz",
 ]);
-const BLOCK = server("bb-block", ["buzz.block.builderlab.xyz"]);
+const ACME = server("bb-acme", ["buzz.acme.builderlab.xyz"]);
 const hosted = (input: string, servers: SessionSnapshot[]) =>
   hostedByThisBuilderlab({ url: relayOrigin(input) }, async () => servers);
 
@@ -41,9 +41,9 @@ it("follows the build's first compiled server, by its community hosts", async ()
   expect(await hosted("wss://a.b.communities.buzz.xyz", [PUBLIC])).toBe(false);
   // Another server covers it, but first run signs in to the first only.
   expect(
-    await hosted("wss://design.communities.buzz.xyz", [BLOCK, PUBLIC]),
+    await hosted("wss://design.communities.buzz.xyz", [ACME, PUBLIC]),
   ).toBe(false);
-  expect(await hosted("wss://buzz.block.builderlab.xyz", [BLOCK, PUBLIC])).toBe(
+  expect(await hosted("wss://buzz.acme.builderlab.xyz", [ACME, PUBLIC])).toBe(
     true,
   );
 });

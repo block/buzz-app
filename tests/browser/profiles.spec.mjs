@@ -1,5 +1,6 @@
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+import { animationsSettled } from "./animations.mjs";
 
 // Real Members -> Profiles wiring must retain a visible distinction after the
 // browser collapses trailing whitespace, without changing the clicked key.
@@ -968,17 +969,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
       await page.setViewportSize({ width, height: 320 });
       await expect(surface).toBeInViewport({ ratio: 1 });
       // Measure the settled layout, not the open or resize transition.
-      await dialog.evaluate(async (element) => {
-        await Promise.all(
-          element
-            .getAnimations({ subtree: true })
-            .filter(
-              (animation) =>
-                animation.effect?.getComputedTiming().iterations !== Infinity,
-            )
-            .map((animation) => animation.finished),
-        );
-      });
+      await animationsSettled(dialog, { subtree: true });
       await expect(surface).toHaveCSS(
         "background-color",
         mode === "light" ? "rgb(255, 255, 255)" : "rgb(40, 40, 40)",
@@ -1165,6 +1156,13 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   const profileTab = page
     .getByRole("tablist", { name: "Panel tabs" })
     .getByRole("tab", { name: "Viewer", exact: true });
+  // Escape retires the profile visit with a native Back that can land after
+  // focus returns. A dialog opened before it lands is undone by it, so wait
+  // for the address to leave the profile before reopening Members.
+  const profileReturned = () =>
+    expect(page).toHaveURL(
+      (url) => !decodeURIComponent(url.hash).includes('"detail"'),
+    );
   await expect(dialog).toHaveCount(0);
   await expect(profileTab).toBeFocused();
   await expect(
@@ -1173,12 +1171,14 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await profileTab.press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(members).toBeFocused();
+  await profileReturned();
   await members.press("Enter");
   await row.focus();
   await row.press("Enter");
   await expect(profileTab).toBeFocused();
   await profileTab.press("Escape");
   await expect(members).toBeFocused();
+  await profileReturned();
   // Every row, including the viewer and protected identities, has one
   // always-visible action slot. Hover/focus never changes row geometry.
   await members.click();
@@ -1190,17 +1190,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
   await search.focus();
   await search.hover();
   await expect(actionSlot).toHaveCSS("opacity", "1");
-  await dialog.evaluate(async (element) => {
-    await Promise.all(
-      element
-        .getAnimations({ subtree: true })
-        .filter(
-          (animation) =>
-            animation.effect?.getComputedTiming().iterations !== Infinity,
-        )
-        .map((animation) => animation.finished),
-    );
-  });
+  await animationsSettled(dialog, { subtree: true });
   const restingBounds = await row.boundingBox();
   await memberRow.hover();
   await expect(actionSlot).toHaveCSS("opacity", "1");
@@ -1243,6 +1233,7 @@ test("member rows hand off to Profiles without trapping or losing keyboard focus
     await expect(profileTab).toBeFocused();
     await profileTab.press("Escape");
     await expect(members).toBeFocused();
+    await profileReturned();
     await members.press("Enter");
   }
   await dialog.getByRole("button", { name: "Close" }).click();

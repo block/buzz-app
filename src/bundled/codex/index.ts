@@ -9,7 +9,7 @@ import { CodexLogoIcon } from "../../shared/design-system/icons";
 import { type Config, config, defaults, validWorkspace } from "./config";
 import { codexRun, TYPE_ID } from "./run";
 import { CodexRuntime } from "./runtime";
-import { CodexSetup, reviewHome, withScript } from "./setup";
+import { CodexSetup, explainTurn, reviewHome, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
 import { readUsage } from "./usage";
 import { reviewModel } from "./security-review";
@@ -71,6 +71,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.host,
     (pubkey) => ctx.agents.handle(pubkey),
   );
+  // Failed turns' notices link to where Codex signs in.
+  runtime.explain = (notice) =>
+    explainTurn(
+      notice,
+      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
+    );
   ctx.agentProtection.registerModels({
     label: "Codex",
     models: async () => {
@@ -152,6 +158,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   ctx.agents.register<Config>({
     id: TYPE_ID,
+    voice: async (seat) => {
+      if (typeof RTCPeerConnection !== "function")
+        throw new Error("Voice is unsupported on this device");
+      // Protection is not known to review realtime input, so voice refuses it.
+      if (seat.agent.protection)
+        throw new Error("Voice is unavailable for protected agents");
+      await setup.installed(seat.signal);
+      const handle = ctx.agents.handle(seat.agent.key);
+      if (!handle) throw new Error("The Codex agent is not running");
+      return runtime.voice(seat, handle);
+    },
     execution: true,
     hooks: { events: CODEX_HOOK_EVENTS },
     retire: (pubkey) => runtime.retire(pubkey),

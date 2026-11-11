@@ -8,6 +8,8 @@ import type { PluginManager } from "../../plugins/manager";
 import { relayPartition } from "../relay/partition";
 import { ownSolo, soloLabels } from "../solo/labels";
 import { regionLabels, soloRegionLabel } from "../solo/region-labels";
+import { soloDraftTarget } from "./routes";
+import { createSoloWorkspaces } from "./solo-workspaces";
 import {
   projectSoloRegions,
   type RegisteredSoloSource,
@@ -33,6 +35,12 @@ export type SoloNavigationSnapshot = SoloPlacement &
 const readers = new WeakMap<RelaySession, SoloNavigationService>();
 export const soloNavigationFor = (session: RelaySession) =>
   readers.get(session);
+/** A region's New chat draft, one per workspace as for ordinary New chat. */
+export const regionDraftKey = (label: string, workspace?: string) =>
+  `solo:region:${label}${workspace ? `:project:${workspace}` : ""}`;
+/** View state linking a chat to the region draft it was started from. */
+export const regionStartKey = (channelId: string) =>
+  `solo-region-start:${channelId}`;
 const sameBinding = (a: SoloRegionBinding | undefined, b: SoloRegionBinding) =>
   !!a &&
   a.scope === b.scope &&
@@ -42,6 +50,7 @@ const sameBinding = (a: SoloRegionBinding | undefined, b: SoloRegionBinding) =>
 /** The connection owns source binding even while the sidebar is unmounted. */
 export class SoloNavigationService extends Service implements SoloNavigation {
   readonly version = 2 as const;
+  readonly workspaces;
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   private readonly runtimes = new Map<RegisteredSoloSource, Runtime>();
@@ -66,6 +75,13 @@ export class SoloNavigationService extends Service implements SoloNavigation {
     private readonly plugins?: Pick<PluginManager, "snapshot" | "subscribe">,
   ) {
     super(ctx, "soloNavigation");
+    this.workspaces = createSoloWorkspaces(
+      (binding) =>
+        sameBinding(this.binding, binding)
+          ? this.session?.soloPreferences
+          : undefined,
+      relay.subscribe,
+    );
     this.contributions = createContributions<
       SoloRegionSource & { identity: object }
     >(ctx);
@@ -365,6 +381,24 @@ export class SoloNavigationService extends Service implements SoloNavigation {
     }
     for (const listener of this.listeners) listener();
   };
+  /** The running source that owns a region draft, with its binding. */
+  draftRegion(label: string) {
+    const region = this.value.regions.find((item) => item.label === label);
+    const binding = this.value.binding;
+    return region?.source && !region.reason && binding
+      ? { source: region.source, binding }
+      : undefined;
+  }
+  async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
+    const region = this.value.regions.find((item) => item.source);
+    const source = region?.source;
+    if (!source?.composeWorkspaces || !source.openWorkspace) return false;
+    const binding = this.value.binding;
+    if (!binding || region?.reason)
+      throw new Error("Workspace selection is not ready. Try again.");
+    await source.openWorkspace(binding, workspaceId);
+    return true;
+  }
   retry = (key: string) => {
     if (this.sources().some((source) => source.key === key)) this.bind(true);
   };
@@ -395,9 +429,77 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         throw new Error("This Solo region binding has ended");
       return host.session;
     };
+    const started = (binding: SoloRegionBinding, channelId: string) => {
+      current(binding);
+      const saved = readView<unknown>(
+        binding.scope,
+        regionStartKey(channelId),
+        null,
+      );
+      if (
+        !saved ||
+        typeof saved !== "object" ||
+        !("region" in saved) ||
+        saved.region !== label
+      )
+        return;
+      return "workspace" in saved && typeof saved.workspace === "string"
+        ? {
+            workspace: saved.workspace,
+            ...("lead" in saved && saved.lead === true
+              ? { lead: true as const }
+              : {}),
+          }
+        : {};
+    };
     this.contributions.register(this.ctx, { ...source, identity });
     return Object.freeze({
       label,
+      openDraft(binding, input = {}) {
+        current(binding);
+        const { workspace } = input;
+        if (
+          (workspace !== undefined &&
+            (typeof workspace !== "string" ||
+              !workspace ||
+              workspace.length > 256)) ||
+          (input.lead && !workspace)
+        )
+          throw new Error("Invalid workspace");
+        if (workspace) {
+          // As New chat in a workspace: it starts there, and instructions
+          // chosen for another workspace do not carry over.
+          const key = regionDraftKey(label, workspace);
+          const settings = readView<unknown>(
+            binding.scope,
+            `${key}:settings`,
+            null,
+          );
+          if (
+            readView(binding.scope, `${key}:new-project`, workspace) !==
+              workspace &&
+            settings &&
+            typeof settings === "object"
+          )
+            writeView(binding.scope, `${key}:settings`, {
+              ...settings,
+              canvas: undefined,
+            });
+          writeView(binding.scope, `${key}:new-project`, null);
+        }
+        void host.ctx.navigation?.open(
+          soloDraftTarget(binding.scope, {
+            region: label,
+            ...(workspace ? { project: workspace } : {}),
+            ...(workspace && input.lead ? { lead: true } : {}),
+          }),
+        );
+      },
+      started,
+      forget(binding, channelId) {
+        if (started(binding, channelId))
+          writeView(binding.scope, regionStartKey(channelId), null);
+      },
       async createChat(binding, input) {
         const session = current(binding);
         const start = session.channelWrites.start(

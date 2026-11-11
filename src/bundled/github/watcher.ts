@@ -64,8 +64,15 @@ function load(): Map<string, Cursor> {
 }
 
 const PROVIDER = "attention/github-pr";
-const save = (watches: Map<string, Watch>) =>
-  localStorage.setItem(CURSORS, JSON.stringify([...watches.values()]));
+/** Progress kept for a restart. A watch keeps its own in memory, so one that
+ * cannot be saved, as when storage is full, still watches. */
+const save = (watches: Map<string, Watch>) => {
+  try {
+    localStorage.setItem(CURSORS, JSON.stringify([...watches.values()]));
+  } catch (error) {
+    console.warn("GitHub watches' progress was not saved", error);
+  }
+};
 
 async function slug(url: string) {
   const hash = await crypto.subtle.digest(
@@ -475,15 +482,15 @@ export function watchPulls(
           level: "feedback",
           wantsText: (id) => !!prior?.seen && !prior.seen.includes(id),
         })
-        .catch(() => undefined);
+        .catch((error: Error) => ({ state: undefined, error }));
       if (disposed) throw new Error("The GitHub plugin has stopped");
       const snapshot =
-        typeof found?.state === "object" && !found.error
+        typeof found.state === "object" && !found.error
           ? snapshotOf(found.state, prior?.seen)
           : undefined;
       if (!snapshot)
         throw new Error(
-          "Could not read the pull request with gh. Check that gh is installed, signed in, and can see it.",
+          `Could not read the pull request with gh${found.error ? `: ${found.error.message}` : ""}. Check that gh is installed, signed in, and can see it.`,
         );
       const watch: Watch = {
         ...(prior ?? { wakes: 0 }),

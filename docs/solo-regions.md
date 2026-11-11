@@ -48,6 +48,18 @@ unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stal
 write returns false and does not update the memory value. Sources must keep their
 own accepted state unchanged when a write fails.
 
+`openDraft` opens the host's New chat editor for the region, optionally in a
+workspace, with its own draft, files, model, and effort. Send works like an
+ordinary New chat: the create goes out unguarded with the region label before
+the first message, so the Outbox retries both after a restart. A source's
+`draftAgent` narrows the agents the draft may address. Send is refused while the
+source is not running and ready. Before the create, the host saves on this
+device how the chat started; `started` returns it to that region's source until
+`forget`. Sources reconcile their own records from it by channel ID.
+With `lead`, a workspace draft's start also records that the chat leads that
+workspace, but only while the draft still targets it. The host does not store
+Leads; the source saves the Lead in its own records.
+
 Host reveal listeners receive live intent only. A pending request is kept only
 for a late source subscriber and ends when navigation leaves or the connection
 changes. The header chip can explicitly reveal the same current chat after a
@@ -63,3 +75,17 @@ then the region heading; removing the region restores focus to the Solo heading.
 Focused tests live beside `solo-navigation.ts` and `SoloRegions.tsx`. Browser and
 native app checks must still cover geometry, both themes, enlarged text, keyboard
 focus, hidden sections, and relay signing. DOM checks do not establish those facts.
+
+## Personal workspaces
+
+`ctx.soloNavigation.workspaces` exposes the bound user's Solo workspace catalog.
+Pass the current region binding to `snapshot`, `subscribe`, `refresh`, and
+`create({id, name})`. The snapshot contains IDs, names, status, creation
+availability, and any read error. Ordinary chat assignments remain host-owned.
+Refresh before retrying uncertain creation and keep the same ID and name.
+Ended bindings cannot read or write a new community. The existing Solo writer
+enforces authorization, record capacity, and revision checks.
+
+Regions own their task filing; they do not add an ordinary Solo assignment for
+each task. Workspace selection in a task draft is personal metadata and is
+never part of the signed message.

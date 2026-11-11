@@ -9,6 +9,7 @@ import {
   type PluginInstallOrigin,
 } from "./installer";
 import type { ConfigurationState, PluginInfo } from "./types";
+import { createPluginUpdates } from "./updates";
 
 const commit = "0123456789abcdef0123456789abcdef01234567";
 const base = {
@@ -43,6 +44,27 @@ it("accepts HTTPS, SSH and scp-style repositories and normalizes the commit", ()
   expect(parsePluginInstallSource({ ...base, path: "." })).toMatchObject({
     path: ".",
   });
+});
+
+it("accepts a plugin artifact pinned by id and SHA-256", () => {
+  const source = {
+    id: "example.plugin",
+    url: "https://artifacts.example.com/plugins/a.json",
+    sha256: "AB".repeat(32),
+  };
+  expect(parsePluginInstallSource(source)).toEqual({
+    ...source,
+    sha256: "ab".repeat(32),
+  });
+  for (const invalid of [
+    { ...source, url: "http://artifacts.example.com/a.json" },
+    { ...source, url: "https://artifacts.example.com/a.json?token=x" },
+    { ...source, sha256: "ab".repeat(20) },
+    { ...source, id: "Example" },
+    { ...source, reference: "main" },
+    { url: source.url, sha256: source.sha256 },
+  ])
+    expect(parsePluginInstallSource(invalid)).toBeNull();
 });
 
 it.each([
@@ -244,9 +266,14 @@ function setup({
   plugins?: PluginInfo[];
 } = {}) {
   let configuration: ConfigurationState = ready(plugins);
+  const managerListeners = new Set<() => void>();
   const manager = {
     imports: imports ?? undefined,
-    snapshot: () => ({ configuration }),
+    snapshot: () => ({ configuration, activation: {} }),
+    subscribe(listener: () => void) {
+      managerListeners.add(listener);
+      return () => managerListeners.delete(listener);
+    },
   };
   const requests = createPluginInstallRequests();
   const core = createPluginInstallCore({
@@ -263,6 +290,7 @@ function setup({
     core,
     manager,
     open,
+    managerListenerCount: () => managerListeners.size,
     as(id: string) {
       let installer: PluginInstaller | undefined;
       const fiber = root
@@ -276,6 +304,7 @@ function setup({
     fibers,
     set(next: ConfigurationState) {
       configuration = next;
+      for (const listener of managerListeners) listener();
     },
   };
 }
@@ -283,6 +312,324 @@ const settleRequest = (
   requests: ReturnType<typeof createPluginInstallRequests>,
   outcome: "installed" | "updated" | "cancelled",
 ) => requests.settle(requests.snapshot()?.id ?? 0, outcome);
+
+it("checks installed ids even when disabled, source-backed, or contribution-free", async () => {
+  const folder = info("example.folder");
+  folder.enabled = false;
+  folder.updateSource = { root: "/plugins/example-folder", path: "." };
+  const git = info("example.git");
+  git.updateSource = {
+    repository: "https://example.com/plugins.git",
+    reference: "main",
+    path: "example-git",
+  };
+  const contributionFree = info("example.contributionless");
+  const { as } = setup({ plugins: [folder, git, contributionFree] });
+  const installer = await as("example.market");
+
+  expect(installer.getInstallationStatus("example.folder")).toBe("installed");
+  expect(installer.getInstallationStatus("example.git")).toBe("installed");
+  expect(installer.getInstallationStatus("example.contributionless")).toBe(
+    "installed",
+  );
+  expect(installer.getInstallationStatus("example.missing")).toBe("absent");
+});
+
+it("exposes update discovery as an optional capability with unavailable state until registered", async () => {
+  const { as } = setup();
+  const installer = await as("example.market");
+
+  expect(installer.updates?.getSnapshot().status).toBe("unavailable");
+  expect(installer.updates?.queueUpdates([])).toBeUndefined();
+});
+
+async function setupUpdates() {
+  const target = info("example.notes");
+  target.manifest = { ...target.manifest, updates: { defaultEnabled: true } };
+  target.updateSource = { ...base, path: "." };
+  const checkGit = vi.fn(async () => ({
+    token: "preview",
+    source: base.repository,
+    candidates: [{ path: ".", manifest: target.manifest, revision: "r2" }],
+    warnings: [],
+  }));
+  const f = setup({
+    plugins: [target, info("example.market"), info("example.other")],
+    imports: { checkGit },
+  });
+  const updates = createPluginUpdates(f.manager as never, async () => null);
+  const unregister = f.requests.registerUpdates(updates);
+  await updates.check();
+  const token = updates.capability.getSnapshot().candidates[0]?.token;
+  if (!token) throw new Error("Expected an update candidate");
+  return { ...f, updates, token, unregister, checkGit };
+}
+
+it("isolates request identities by plugin and replays after that caller remounts", async () => {
+  const f = await setupUpdates();
+  try {
+    const first = (await f.as("example.market")).updates;
+    const second = (await f.as("example.other")).updates;
+    if (!first || !second) throw new Error("Expected update capabilities");
+    const ownerId = first.ownerId;
+    if (!ownerId) throw new Error("Expected a provider identity");
+    const identity = { ownerId, requestId: "update-all" };
+    const request = { ...identity, tokens: [f.token] };
+    const one = first.queueUpdates(request.tokens, identity);
+    const two = second.queueUpdates(request.tokens, identity);
+    expect(one).toBeDefined();
+    expect(two).toBeDefined();
+    expect(two?.id).not.toBe(one?.id);
+    expect(first.getQueueRequest(request)).toEqual({
+      status: "admitted",
+      queue: one,
+    });
+    expect(second.getQueueRequest(request)).toEqual({
+      status: "admitted",
+      queue: two,
+    });
+    expect(first.getQueueRequest({ ...request, tokens: [] }).status).toBe(
+      "conflict",
+    );
+
+    await f.fibers[0]?.dispose();
+    const remounted = (await f.as("example.market")).updates;
+    if (!remounted) throw new Error("Expected remounted capability");
+    expect(remounted.getQueueRequest(request)).toEqual({
+      status: "admitted",
+      queue: one,
+    });
+    expect(remounted.queueUpdates(request.tokens, identity)).toBe(one);
+    f.unregister();
+    expect(remounted.getQueueRequest(request).status).toBe("unknown");
+    const replacement = createPluginUpdates(
+      f.manager as never,
+      async () => null,
+    );
+    const stopReplacement = f.requests.registerUpdates(replacement);
+    try {
+      expect(remounted.getQueueRequest(request).status).toBe("unknown");
+      expect(remounted.queueUpdates(request.tokens, identity)).toBeUndefined();
+    } finally {
+      stopReplacement();
+      replacement.dispose();
+    }
+  } finally {
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+  }
+});
+
+it("reports an old provider retired to plugins only after its confirmed update releases the shared review", async () => {
+  const f = await setupUpdates();
+  const replacement = createPluginUpdates(f.manager as never, async () => null);
+  let stopReplacement = () => {};
+  try {
+    const market = (await f.as("example.market")).updates;
+    const other = (await f.as("example.other")).updates;
+    const ownerId = market?.ownerId;
+    if (!market || !other || !ownerId) throw new Error("Expected updates");
+    const queue = market.queueUpdates([f.token]);
+    const review = f.updates.startNextReview(f.requests.tryHoldReview);
+    if (!queue || !review) throw new Error("Expected an open update review");
+    expect(f.updates.beginOperation(queue.id, review.token)).toBeDefined();
+
+    stopReplacement = f.requests.registerUpdates(replacement);
+    f.unregister();
+    f.updates.dispose();
+    expect(market.ownerId).toBe(replacement.capability.ownerId);
+    expect(market.getOwnerStatus?.(ownerId)).toBe("unknown");
+    expect(f.requests.tryHoldReview()).toBeUndefined();
+    await expect(
+      f.core.submit(base, { id: "example.market", lifetime: () => () => {} }),
+    ).resolves.toBe("unavailable");
+    await replacement.check();
+    const next = replacement.capability.getSnapshot().candidates[0]?.token;
+    if (!next) throw new Error("Expected a replacement candidate");
+    expect(market.queueUpdates([next])).toBeDefined();
+    expect(
+      replacement.startNextReview(f.requests.tryHoldReview),
+    ).toBeUndefined();
+
+    expect(f.updates.finishReview(queue.id, review.token, "updated")).toBe(
+      true,
+    );
+    expect(market.getOwnerStatus?.(ownerId)).toBe("retired");
+    expect(other.getOwnerStatus?.(ownerId)).toBe("retired");
+    await f.fibers[0]?.dispose();
+    const remounted = (await f.as("example.market")).updates;
+    expect(remounted?.getOwnerStatus?.(ownerId)).toBe("retired");
+    const replacementId = replacement.capability.ownerId;
+    if (!replacementId) throw new Error("Expected a replacement identity");
+    expect(remounted?.getOwnerStatus?.(replacementId)).toBe("unknown");
+    expect(replacement.startNextReview(f.requests.tryHoldReview)).toBeDefined();
+  } finally {
+    stopReplacement();
+    replacement.dispose();
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+  }
+});
+
+it("bounds sequential plugin refreshes without throttling host-forced checks", async () => {
+  vi.useFakeTimers();
+  const f = await setupUpdates();
+  try {
+    const first = (await f.as("example.market")).updates;
+    const second = (await f.as("example.other")).updates;
+    if (!first || !second) throw new Error("Expected update capabilities");
+    await first.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(2);
+    await second.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(2);
+    await f.updates.check(true);
+    expect(f.checkGit).toHaveBeenCalledTimes(3);
+    vi.advanceTimersByTime(59_999);
+    await first.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(3);
+    vi.advanceTimersByTime(1);
+    await second.refresh();
+    expect(f.checkGit).toHaveBeenCalledTimes(4);
+  } finally {
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+    vi.useRealTimers();
+  }
+});
+
+it("owns both update subscriptions with the calling plugin lifetime", async () => {
+  const f = await setupUpdates();
+  try {
+    const first = (await f.as("example.market")).updates;
+    const second = (await f.as("example.other")).updates;
+    if (!first || !second) throw new Error("Expected update capabilities");
+    const one = first.queueUpdates([f.token]);
+    const two = second.queueUpdates([f.token]);
+    if (!one || !two) throw new Error("Expected admitted queues");
+    const goneSnapshot = vi.fn();
+    const goneQueue = vi.fn();
+    const liveSnapshot = vi.fn();
+    const liveQueue = vi.fn();
+    const stops = [
+      first.subscribe(goneSnapshot),
+      first.subscribeQueue(one.id, goneQueue),
+      second.subscribe(liveSnapshot),
+      second.subscribeQueue(two.id, liveQueue),
+    ];
+    await f.fibers[0]?.dispose();
+    await f.updates.check(true);
+    first.cancelQueue(one.id);
+    second.cancelQueue(two.id);
+    expect(goneSnapshot).not.toHaveBeenCalled();
+    expect(goneQueue).not.toHaveBeenCalled();
+    expect(liveSnapshot).toHaveBeenCalled();
+    expect(liveQueue).toHaveBeenCalledOnce();
+    for (const stop of stops) stop();
+    liveSnapshot.mockClear();
+    liveQueue.mockClear();
+    f.unregister();
+    expect(liveSnapshot).not.toHaveBeenCalled();
+    expect(liveQueue).not.toHaveBeenCalled();
+  } finally {
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+  }
+});
+
+it("keeps unavailable configuration distinct from absence and emits presence changes", async () => {
+  const { as, set } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const changes: string[] = [];
+  const stop = installer.subscribeInstallationStatus(
+    "example.plugin",
+    (status) => {
+      changes.push(status);
+    },
+  );
+
+  expect(installer.getInstallationStatus("example.plugin")).toBe("absent");
+  set({ status: "loading" });
+  expect(installer.getInstallationStatus("example.plugin")).toBe("unavailable");
+  set({
+    status: "recovery",
+    reason: "settings need recovery",
+    canReset: false,
+  });
+  expect(installer.getInstallationStatus("example.plugin")).toBe("unavailable");
+
+  const installed = info("example.plugin");
+  installed.enabled = false;
+  set(ready([installed]));
+  expect(installer.getInstallationStatus("example.plugin")).toBe("installed");
+  set(ready([]));
+  expect(installer.getInstallationStatus("example.plugin")).toBe("absent");
+  expect(changes).toEqual(["unavailable", "installed", "absent"]);
+  stop();
+});
+
+it("stops notifying when a status subscription is explicitly removed", async () => {
+  const { as, set, managerListenerCount } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const listener = vi.fn();
+  const stop = installer.subscribeInstallationStatus(
+    "example.plugin",
+    listener,
+  );
+  expect(managerListenerCount()).toBe(1);
+
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+  stop();
+  expect(managerListenerCount()).toBe(0);
+  set(ready([]));
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+});
+
+it("stops notifying when the calling plugin is disposed", async () => {
+  const { as, set, fibers, managerListenerCount } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const listener = vi.fn();
+  const stop = installer.subscribeInstallationStatus(
+    "example.plugin",
+    listener,
+  );
+  expect(managerListenerCount()).toBe(1);
+
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+  await fibers[0]?.dispose();
+  expect(managerListenerCount()).toBe(0);
+  set(ready([]));
+  set(ready([info("example.plugin")]));
+  expect(listener).toHaveBeenCalledOnce();
+  stop();
+});
+
+it("keeps status listener errors from stopping other manager notifications", async () => {
+  const { as, set, manager } = setup({ plugins: [] });
+  const installer = await as("example.market");
+  const listener = vi.fn(() => {
+    throw new Error("listener failed");
+  });
+  const following = vi.fn();
+  const stopStatus = installer.subscribeInstallationStatus(
+    "example.plugin",
+    listener,
+  );
+  const stopFollowing = manager.subscribe(following);
+
+  expect(() => set(ready([info("example.plugin")]))).not.toThrow();
+  expect(listener).toHaveBeenCalledWith("installed");
+  expect(following).toHaveBeenCalledOnce();
+
+  stopStatus();
+  stopFollowing();
+});
 
 it("names the request after the calling plugin and resolves with the user's outcome", async () => {
   const { requests, open, as } = setup({
@@ -439,7 +786,7 @@ it("is unavailable without native imports, before the catalog is ready, or while
     installer.requestInstall({ ...base, reference: "other" }),
   ).resolves.toBe("unavailable");
   expect(busy.open).toHaveBeenCalledOnce();
-  expect(busy.requests.snapshot()?.source.reference).toBe("main");
+  expect(busy.requests.snapshot()?.source).toMatchObject({ reference: "main" });
   settleRequest(busy.requests, "cancelled");
   await expect(first).resolves.toBe("cancelled");
 });
@@ -454,4 +801,20 @@ it("reports a confirmed self-update as updated even though it replaces the reque
   expect(requests.snapshot()?.id).toBe(id);
   requests.settle(id, "updated");
   await expect(outcome).resolves.toBe("updated");
+});
+
+it("advertises URL sources and admits a URL request for review", async () => {
+  const { as, requests, open } = setup();
+  const installer = await as("example.market");
+  expect(installer.sources).toEqual(["git", "url"]);
+  const source = {
+    id: "example.artifact",
+    url: "https://cdn.example.com/a.json",
+    sha256: "e".repeat(64),
+  };
+  const outcome = installer.requestInstall(source);
+  expect(requests.snapshot()?.source).toEqual(source);
+  expect(open).toHaveBeenCalledOnce();
+  settleRequest(requests, "cancelled");
+  await expect(outcome).resolves.toBe("cancelled");
 });

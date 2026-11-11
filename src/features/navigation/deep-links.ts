@@ -6,7 +6,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { parseInviteLink, type InviteLink } from "../communities/invite-link";
 import { communityDestination } from "../communities/destination";
 import type { ClientSnapshot } from "../communities/service";
-import { agentCardTarget, parseBuzzLink } from "./buzz-links";
+import { agentCardTarget, parseBuzzLink, settingsTarget } from "./buzz-links";
 import { entityTarget } from "../repos/routes";
 import type { Navigation, OpenFailure, OpenResult } from "./controller";
 import { parseOpenTarget, type OpenTarget } from "./targets";
@@ -75,6 +75,7 @@ export function deepLinkStep(
           pluginImport: link.source,
         }),
       };
+    if (link.format === "settings") return { open: settingsTarget(link) };
     if (!client.viewer || !client.selected) return { fail: "unavailable" };
     if (link.format === "removed")
       return {

@@ -51,20 +51,17 @@
   border-radius: var(--radius-row);
   background: var(--affordance-panel-hover);
 }
-.projectHeading {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  text-align: start;
-  /* Like NavigationItem, this disclosure is navigation, not document text. */
-  -webkit-user-select: none;
-  user-select: none;
+/* A composed workspace header's primary target spans its blank space. A header
+   too narrow for both of its controls keeps only Actions, whose menu also
+   offers New task. */
+.workspaceHeader {
+  position: relative;
+  container: solo-workspace-header / inline-size;
 }
-.projectHeading span {
-  overflow-wrap: anywhere;
-}
-.projectHeading svg {
-  flex-shrink: 0;
+@container solo-workspace-header (max-width: 9rem) {
+  .workspaceHeader [data-solo-workspace-new-task] {
+    display: none;
+  }
 }
 .organizedRow {
   display: flex;
@@ -179,6 +176,10 @@
 .organizedRow:has([aria-current="page"])::before {
   background: var(--surface-sidebar-selected);
 }
+/* Composed workspace chats share the task card's complete interaction surface. */
+.composedChat .organizedRow::before {
+  display: none;
+}
 /* Bold is Solo's only unread cue, as on Team rows. */
 .organizedRow [data-channel-unread-title="true"] {
   color: var(--text-navigation-unread);
@@ -252,23 +253,6 @@
   .organizedRow [data-channel-activity] {
     opacity: 0;
   }
-}
-
-/* Project menus share the channel header's trailing action slots. */
-.projectHeader > [data-solo-overflow-action] {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  inset-inline-end: calc(var(--space-1) + var(--size-control-sm));
-}
-.projectHeader:is(
-    :hover,
-    [data-context-menu-present],
-    :focus-within,
-    :has([aria-expanded="true"][aria-haspopup="menu"])
-  )
-  > [data-solo-overflow-action] {
-  opacity: 1;
 }
 
 /* Working flows in the row, so the title reserves exactly the pill. */

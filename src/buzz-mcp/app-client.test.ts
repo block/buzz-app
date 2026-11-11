@@ -158,6 +158,30 @@ it("carries connection authorities independently of query event authors", async 
   expect(query).toHaveBeenCalledWith([{ kinds: [39000] }]);
 });
 
+it("reads effective edit state as the agent and withholds it after the turn retires", async () => {
+  const result = gate<Awaited<ReturnType<AgentHandle["effectiveEdit"]>>>();
+  const effectiveEdit = vi.fn(() => result.promise);
+  let live = true;
+  const client = appClient({ effectiveEdit } as unknown as AgentHandle, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+    check: () => {
+      if (!live) throw new Error("retired");
+    },
+  });
+  const pending = client.effectiveEdit?.("target", "private");
+  expect(effectiveEdit).toHaveBeenCalledWith("target", "private");
+  live = false;
+  result.resolve({ id: "head" } as Awaited<
+    ReturnType<AgentHandle["effectiveEdit"]>
+  >);
+  await expect(pending).rejects.toThrow("retired");
+  await expect(client.effectiveEdit?.("target", "private")).rejects.toThrow(
+    "retired",
+  );
+  expect(effectiveEdit).toHaveBeenCalledOnce();
+});
+
 it("does not invent authority when a host has none", () => {
   const client = appClient({ pubkey: "agent" } as AgentHandle, {
     read: vi.fn(),
@@ -451,4 +475,56 @@ it("does not expose workspace capability on unsupported handles", () => {
       memories: async () => ({ entries: [], partial: false }),
     }).soloWorkspaces,
   ).toBeUndefined();
+});
+
+it("never passes on an owner-read capability, even from a handle that carries one", () => {
+  const read = vi.fn();
+  const stale = Object.fromEntries(
+    [
+      "channels",
+      "channel",
+      "members",
+      "messages",
+      "canvas",
+      "canvasHistory",
+      "held",
+    ].map((name) => [name, read]),
+  );
+  const client = appClient(
+    { pubkey: "agent", ownerAccess: stale } as unknown as AgentHandle,
+    { read: vi.fn(), memories: async () => ({ entries: [], partial: false }) },
+  );
+  expect("ownerAccess" in client).toBe(false);
+  expect(read).not.toHaveBeenCalled();
+});
+
+it("retains native context through the check and releases it on denial", async () => {
+  const release = vi.fn();
+  let finish!: () => void;
+  const hold = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const check = vi.fn(async () => {
+    await hold;
+    throw new Error("denied");
+  });
+  const agent = {
+    pubkey: "agent",
+    protection: { check },
+  } as unknown as AgentHandle;
+  const client = appClient(agent, {
+    read: vi.fn(),
+    memories: async () => ({ entries: [], partial: false }),
+    captureProtectionContext: async () => ({ value: "snapshot", release }),
+  });
+  const result = client.protect?.({
+    kind: "tool",
+    session: "s",
+    content: { command: "write" },
+  });
+  await vi.waitFor(() => expect(check).toHaveBeenCalled());
+  expect(release).not.toHaveBeenCalled();
+  finish();
+  await expect(result).rejects.toThrow("denied");
+  expect(release).toHaveBeenCalledOnce();
 });

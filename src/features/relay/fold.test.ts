@@ -62,6 +62,42 @@ describe("message fold", () => {
       expect(row?.content).toBe(content);
     }
   });
+  it("reads one exact signed request id, and none from conflicting or malformed tags", () => {
+    const a = "a".repeat(64),
+      b = "b".repeat(64);
+    for (const [tags, request] of [
+      [[["buzz:request", a]], a],
+      [
+        [
+          ["buzz:request", a],
+          ["buzz:request", a],
+        ],
+        a,
+      ],
+      [
+        [
+          ["buzz:request", a],
+          ["buzz:request", b],
+        ],
+        undefined,
+      ],
+      [[["buzz:request", a.toUpperCase()]], undefined],
+      [[["buzz:request", "nope"]], undefined],
+      [[["buzz:request"]], undefined],
+      [[["request", a]], undefined],
+    ] as const) {
+      const [row] = foldMessages(channel, relay.pubkey, [
+        message(
+          alice,
+          channel,
+          "Checking",
+          1,
+          tags.map((tag) => [...tag]),
+        ),
+      ]);
+      expect(row?.request).toBe(request);
+    }
+  });
   it("reads the id of a plugin request from the signed tag", () => {
     const content = "Requested: install Browser — Check the staging site";
     const id = "5d1f0b8e-8c2a-4a39-9a54-0f6a4e7e6c11";
@@ -92,6 +128,28 @@ describe("message fold", () => {
       ]);
       expect(plain?.pluginRequest).toBeUndefined();
     }
+  });
+  it("reads one safe signed media target without accepting ambiguous tags", () => {
+    const root = message(alice, channel, "Two videos", 1);
+    const url = "https://fixture.test/second.mp4";
+    const reply = (targets: readonly string[][]) =>
+      message(bob, channel, "⏱ 0:21 — 😍", 2, [
+        ["e", root.id, "", "reply"],
+        ...targets,
+      ]);
+    const fold = (targets: readonly string[][]) =>
+      foldMessages(channel, relay.pubkey, [root, reply(targets)], {
+        includeReplies: true,
+      })[1]?.mediaTargetUrl;
+    expect(fold([["buzz:media", url]])).toBe(url);
+    expect(fold([["buzz:media", "javascript:alert(1)"]])).toBeUndefined();
+    expect(
+      fold([
+        ["buzz:media", url],
+        ["buzz:media", "https://fixture.test/other.mp4"],
+      ]),
+    ).toBeUndefined();
+    expect(fold([["buzz:media", url, "extra"]])).toBeUndefined();
   });
 
   it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {

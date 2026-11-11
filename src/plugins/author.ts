@@ -186,6 +186,9 @@ export type {
 
 export type {
   SoloNavigation,
+  SoloWorkspaces,
+  SoloWorkspaceSnapshot,
+  SoloWorkspaceProps,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,
@@ -198,6 +201,7 @@ export type {
   SoloConversationLinkProps,
   SoloCardProps,
   SoloDisclosureProps,
+  SoloDraftStart,
 } from "../features/channel-navigation/solo-navigation-contract";
 
 export type {

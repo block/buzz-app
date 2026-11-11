@@ -42,16 +42,19 @@ Solo chats include ordinary incoming top-level messages, excluding agent-only co
 
 ### Open Activity with a filter
 
-Four shortcuts ("Open unread in Activity" and so on) open the Activity page with its filters applied, including from the composer, like Slack's: ⌘⇧A (Ctrl+Shift+A elsewhere) opens All activity with Unread on, and ⌘⇧T, ⌘⇧M and ⌘⇧K open Threads, Mentions and DMs. Threads, Mentions and DMs keep the saved Unread choice; Sender is never changed. They are rebindable in Settings → Shortcuts. The shortcut opens `buzz.inbox/inbox` with a versioned route (`{ attention?, activity?, sender? }`) that the page validates, and a plain open from the sidebar or topbar carries none and leaves saved filters alone. Omitted fields keep their saved choice. Plugins and `buzz://plugin?id=buzz.inbox&page=inbox&route.<key>=<value>` links use the same route. The page applies a route once per presentation of the visit, but not when Back/Forward returns to it, which keeps the filters as they were left, using the same saved choices as the toolbar, so pressing a shortcut again after changing the filters by hand applies it again, even though the host treats an identical address as the same history entry.
+Four shortcuts ("Open unread in Activity" and so on) open the Activity page with its filters applied, including from the composer, like Slack's: ⌘⇧A (Ctrl+Shift+A elsewhere) opens All activity with Unread on, and ⌘⇧T, ⌘⇧M and ⌘⇧K open Threads, Mentions and DMs. Threads, Mentions and DMs keep the saved Unread choice; Sender is never changed. They are rebindable in Settings → Shortcuts. The shortcut opens `buzz.inbox/inbox` with a versioned route (`{ attention?, activity?, sender? }`) that the page validates, and a plain open from the sidebar carries none and leaves saved filters alone. Omitted fields keep their saved choice. Plugins and `buzz://plugin?id=buzz.inbox&page=inbox&route.<key>=<value>` links use the same route. The page applies a route once per presentation of the visit, but not when Back/Forward returns to it, which keeps the filters as they were left, using the same saved choices as the toolbar, so pressing a shortcut again after changing the filters by hand applies it again, even though the host treats an identical address as the same history entry.
 
 ### Sidebar preview
 
-Resting a pointer on the sidebar's Activity row opens a card of recent conversations
-through the page contract's `preview`. It reads the same `session.unread.inbox()`
+Resting a pointer on the Activity row in the Messages sidebar opens a card of recent
+conversations through the page contract's `preview`. It reads the same `session.unread.inbox()`
 and `session.inboxFeed` projection as the page, with All activity and Everyone,
 newest first and bounded to 50 rows after mixing conversations and reactions, as on the
-page. The header counts unread
-conversations once each, as a DM, mention or thread. Unread only is the card's own
+page. The header leads with the number of
+unread conversations, then counts each once by its most specific kind: DM, then
+mention, then thread. A mention counts only while it is unread, as Mentions with
+Unread only would list it; a Solo chat's flat row has no kind, so only the total
+counts it. Unread only is the card's own
 choice, saved on this device per account and community, and never changes the
 page's filters. A row opens its conversation directly, through the same
 conversation target as the page's fallback, and closes the card without opening
@@ -254,23 +257,6 @@ Main retains loading, representative People/Agents filters, grouped Mentions,
 selected-read visibility, read/retry, workflow attribution, thread follows, exact
 readers and draft persistence. Deletion retains consent and text-before-attachment
 cleanup. The former history/candidate/exact-mention work is excluded.
-
-**Separate engineering handoff:** diagnose missing older/agent conversations by
-tracing fetched events, participation evidence and filtering. Agree mixed/unknown
-sender behavior, mention policy and filter persistence separately. Coordinate
-John's archive/refresh/development work; progressive relay loading is not fixed here.
-
-**Evidence:** integration with main `ce2f66ea` preserves John's #757 archive
-retirement and #758 refresh status without shifting rows, plus main's #800 test
-pruning. It passes 116 Inbox tests, 2 shared-hook tests, TypeScript/build and 74
-Chromium/WebKit executions across Inbox, sidebar and existing panel journeys.
-Independent merge-resolution review found no blockers. The prior `5b4d45d0` head
-passed hosted CI and DCO; current-head hosted checks remain a separate gate.
-Common splitter checks stay in Inbox; Drafts keeps cross-view width, header
-alignment, narrow sizing, editing and modal/focus coverage. No browser cases were
-removed. Human confirmation and required review remain open; local synthetic
-checks do not attest native/live acceptance.
-
 
 ## Reaction activity
 

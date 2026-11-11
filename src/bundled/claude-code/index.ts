@@ -7,6 +7,8 @@ import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
+import { withProviderWords } from "../../features/agents/failure-words";
+import { refusedByBuzz } from "./auth";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
 import { claudeRun, TYPE_ID } from "./run";
@@ -20,7 +22,7 @@ export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
-export const inject = ["agents", "host", "agentProtection"];
+export const inject = ["agents", "host", "agentProtection", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
@@ -40,8 +42,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     complete: (model, prompt, signal) => setup.review(model, prompt, signal),
   });
   const providerDefaults = new ClaudeDefaults(agents.storage);
+  // No turn starts without credentials.
   const runtime = new ClaudeRuntime(
-    spawn ? { spawn } : {},
+    spawn ? { spawn: setup.auth.authorize(spawn, true) } : {},
     (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
     (key, signal) => agents.core(key, signal),
     agents.storage,
@@ -88,6 +91,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   if (spawn) {
     const unsubscribe = agents.subscribe(sync);
     const unsubscribeDefaults = providerDefaults.subscribe(sync);
+    const unsubscribeAuth = setup.auth.subscribe(() => runtime.restart());
     sync();
     const timer = setInterval(
       () => void setup.update(needed ?? false),
@@ -97,13 +101,34 @@ export const apply: PluginModule["apply"] = (ctx) => {
       clearInterval(timer);
       unsubscribe();
       unsubscribeDefaults();
+      unsubscribeAuth();
       runtime.dispose();
       setup.dispose();
     });
   }
 
+  const openSetup = () =>
+    void ctx.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "agents",
+      provider: typeKey,
+    });
+  // Failed turns' reports link to the same place, then quote Claude. Buzz's
+  // own refusal to start Claude isn't Claude's words, and the link says it.
+  runtime.explain = (error) => {
+    const explained = setup.auth.explainTurn(
+      error,
+      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
+    );
+    return explained === error || refusedByBuzz(error)
+      ? explained
+      : withProviderWords(explained, "Claude", error);
+  };
   const {
     Create,
+    CreateAction,
+    CreateConfiguration,
     CreateModel,
     CreateThinking,
     DefaultControl,
@@ -114,6 +139,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     setup,
     defaults: providerDefaults,
     runtime,
+    openSetup,
   });
   agents.register<Config>({
     id: TYPE_ID,
@@ -127,6 +153,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       "Claude on this computer. Each thread it is mentioned in is one continuing session.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
     Create,
+    CreateAction,
+    CreateConfiguration,
     CreateModel,
     createModelReportsReadiness: true,
     CreateThinking,
@@ -184,14 +212,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,
       check: () => setup.check(),
+      /** Settings' row updates or signs in with one click. A missing copy
+       * has no action: its row opens DialogBody, so the download note is
+       * seen before the download starts. */
       get attentionAction() {
         const state = setup.snapshot();
         if (state.running) return undefined;
-        return state.status?.state === "missing" ||
-          state.status?.state === "outdated"
+        return state.status?.state === "outdated"
           ? () => void setup.run("install")
-          : state.status?.state === "signed-out"
-            ? () => void setup.run("login")
+          : state.status?.state === "signed-out" && setup.auth.signIn
+            ? () => void setup.run("sign-in")
             : undefined;
       },
       DialogBody: ProviderDialogBody,
@@ -224,6 +254,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         title: "Settings",
         role: "settings",
         splitSettings: true,
+        reconcilesConfig: true,
         component: SettingsTab,
       },
       {

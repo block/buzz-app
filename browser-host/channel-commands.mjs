@@ -1,4 +1,5 @@
 import { validChannelLabel } from "../src/features/relay/channel-labels.ts";
+import { validSoloForkCreate } from "../src/features/relay/solo-fork-protocol.ts";
 // Host signing allowlist. No arbitrary kinds, roles or metadata edits.
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function validChannelCommand(event) {
@@ -25,6 +26,7 @@ export function validChannelCommand(event) {
   const [h] = tags;
   if (h?.length !== 2 || h[0] !== "h" || !uuid.test(h[1])) return false;
   if (event.kind === 9007) {
+    if (!validSoloForkCreate(tags)) return false;
     const expected = ["h", "name", "visibility", "channel_type"];
     // block/buzz#8421: up to 32 distinct `p` tags after the labels name the
     // first members.
@@ -53,6 +55,7 @@ export function validChannelCommand(event) {
     )
       return false;
     if (labels.length) tags = tags.slice(0, firstLabel);
+    if (tags.at(-1)?.[0] === "forked_from") tags = tags.slice(0, -1);
     const optional = tags.slice(expected.length);
     const optionalNames = optional.map(([name]) => name);
     const validOptionalOrder = [[], ["about"], ["ttl"], ["about", "ttl"]].some(

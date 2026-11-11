@@ -1,3 +1,5 @@
+import { soloFork, type SoloFork } from "./solo-fork-protocol";
+import { readSoloFork } from "./solo-fork-history";
 import { canonicalDetailsName } from "./channel-details-protocol";
 import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
@@ -651,11 +653,19 @@ export function createChannelWrites(
       members: readonly string[] = [],
       active?: () => boolean,
       labels: readonly string[] = [],
+      forkedFrom?: SoloFork,
     ) {
       writer();
       identifier(id);
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
       if (!channelIdentity) throw channelIdentityUnsupported();
+      if (forkedFrom) {
+        soloFork({
+          tags: [["forked_from", forkedFrom.channelId, forkedFrom.messageId]],
+        });
+        if (forkedFrom.channelId === id)
+          throw new Error("A fork needs a distinct source chat.");
+      }
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
@@ -675,6 +685,9 @@ export function createChannelWrites(
             ["visibility", "private"],
             ["channel_type", "stream"],
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+            ...(forkedFrom
+              ? [["forked_from", forkedFrom.channelId, forkedFrom.messageId]]
+              : []),
             ...channelLabelTags([
               SOLO_LABEL,
               ...(named ? [SOLO_NAMED_LABEL] : []),
@@ -701,7 +714,11 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
-      options?: { labels?: readonly string[]; active?: () => boolean },
+      options?: {
+        labels?: readonly string[];
+        active?: () => boolean;
+        forkedFrom?: SoloFork;
+      },
     ) {
       const create = api.create(
         id,
@@ -711,10 +728,12 @@ export function createChannelWrites(
         members,
         options?.active,
         options?.labels,
+        options?.forkedFrom,
       );
       channels.start?.({
         id,
         name: title,
+        ...(options?.forkedFrom ? { forkClaim: true as const } : {}),
         members,
         labels: [
           SOLO_LABEL,
@@ -725,7 +744,25 @@ export function createChannelWrites(
       });
       // The relay adds the members in the create, so the chat takes events
       // once the create is OK.
-      const ready = created(create);
+      const ready = created(create).then(async () => {
+        if (!options?.forkedFrom) return;
+        const confirmed = await readSoloFork(
+          {
+            read: (filters, caller) =>
+              discovery.read(filters, { signal: caller, fresh: true }),
+            relayAuthor: () => relayAuthor,
+          },
+          id,
+          signal,
+        );
+        if (
+          confirmed?.channelId !== options.forkedFrom.channelId ||
+          confirmed?.messageId !== options.forkedFrom.messageId
+        )
+          throw new Error(
+            "The fork's signed source could not be confirmed. Retry this operation, not a new chat.",
+          );
+      });
       starts.set(id, ready);
       canvases.set(id, setup?.canvas ?? "");
       const settled = setup

@@ -451,6 +451,7 @@ export function createChannelStore(
         old.autoJoin === channel.autoJoin &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
+        old.forkClaim === channel.forkClaim &&
         old.huddle === channel.huddle &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
@@ -3452,6 +3453,7 @@ export function createChannelStore(
       discovery.start({
         id: channel.id,
         name: channel.name,
+        ...(channel.forkClaim ? { forkClaim: true as const } : {}),
         channelType: "solo",
         members: Object.freeze(
           [...new Set([transport.viewer, ...channel.members])].sort(),

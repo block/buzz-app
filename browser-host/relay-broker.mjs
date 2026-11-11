@@ -327,6 +327,9 @@ async function relayAuthority(fetch, relay) {
     relayAuthor: author,
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
+    soloFork:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-solo-fork-v1"),
     // NIP-CL: the relay keeps channel labels and answers label lookups.
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
@@ -3019,7 +3022,9 @@ export function relayBrokerPlugin({
                 !enrollment &&
                 !(
                   validChannelCommand(filters) &&
-                  (filters.kind === 9000 || authority.channelCreation)
+                  (filters.kind === 9000 || authority.channelCreation) &&
+                  (!filters.tags.some(([name]) => name === "forked_from") ||
+                    authority.soloFork)
                 )
               )
                 return json(res, 400, {

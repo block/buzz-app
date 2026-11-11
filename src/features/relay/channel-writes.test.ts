@@ -15,7 +15,7 @@ import {
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 import { canAddMembers } from "../channel-members/members";
-import type { ReadFilter, RelayEvent } from "./events";
+import { eventDto, type ReadFilter, type RelayEvent } from "./events";
 const event = message(keypair(), "chat", "Work", 1);
 
 it("keeps verified Solo chat roster reads available for sends without member-add capability", async () => {
@@ -1642,6 +1642,101 @@ describe("starting a Solo chat", () => {
     await ready;
     await membership.catch(() => {});
     expect(roster()).toBe(1);
+  });
+
+  it("holds a fork until its accepted create has matching signed metadata", async () => {
+    const relay = keypair();
+    const test = setup(true, undefined, undefined, relay.pubkey);
+    const fork = {
+      channelId: "22222222-2222-4222-8222-222222222222",
+      messageId: "ab".repeat(32),
+    };
+    const confirmed = eventDto(
+      metadata(relay, id, "Work", undefined, [
+        ["forked_from", fork.channelId, fork.messageId],
+      ]),
+    );
+    let release!: (events: RelayEvent[]) => void;
+    const gate = new Promise<RelayEvent[]>((resolve) => {
+      release = resolve;
+    });
+    test.reader.read.mockImplementation(() => gate);
+    const { ready } = test.service.start(
+      id,
+      "Work",
+      [agent],
+      undefined,
+      false,
+      undefined,
+      { forkedFrom: fork },
+    );
+    let settled = false;
+    void ready
+      .then(() => {
+        settled = true;
+      })
+      .catch(() => {});
+    try {
+      await vi.waitFor(() => expect(test.reader.read).toHaveBeenCalled());
+      expect(test.reader.read).toHaveBeenCalledWith(
+        [
+          {
+            kinds: [39000],
+            authors: [relay.pubkey],
+            "#d": [id],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
+        { signal: test.controller.signal, fresh: true },
+      );
+      expect(settled).toBe(false);
+      expect(test.service.starting(id)).toBe(ready);
+      expect(
+        vi.mocked(test.outbox.send).mock.calls[0]?.[0].tags,
+      ).toContainEqual(["forked_from", fork.channelId, fork.messageId]);
+    } finally {
+      release([confirmed]);
+    }
+    await ready;
+    expect(settled).toBe(true);
+  });
+
+  it("does not confirm a fork from missing or mismatched metadata", async () => {
+    const relay = keypair();
+    for (const tags of [
+      [],
+      [
+        [
+          "forked_from",
+          "22222222-2222-4222-8222-222222222222",
+          "cd".repeat(32),
+        ],
+      ],
+    ]) {
+      const test = setup(true, undefined, undefined, relay.pubkey);
+      test.reader.read.mockResolvedValue([
+        eventDto(metadata(relay, id, "Work", undefined, tags)),
+      ]);
+      const { ready } = test.service.start(
+        id,
+        "Work",
+        [agent],
+        undefined,
+        false,
+        undefined,
+        {
+          forkedFrom: {
+            channelId: "22222222-2222-4222-8222-222222222222",
+            messageId: "ab".repeat(32),
+          },
+        },
+      );
+      await expect(ready).rejects.toThrow(
+        "signed source could not be confirmed",
+      );
+      expect(test.channels.abandon).not.toHaveBeenCalled();
+    }
   });
 
   it("drops the pending chat when the relay refuses the create", async () => {

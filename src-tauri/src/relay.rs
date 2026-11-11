@@ -282,7 +282,7 @@ pub(crate) async fn relay_sign(
     event: EventTemplate,
 ) -> Result<serde_json::Value> {
     validate_event(&community, &event)?;
-    if event.kind == 9007 && !channel_creation_supported(&community).await? {
+    if event.kind == 9007 && !channel_creation_supported(&community, &event).await? {
         return Err("Channel creation is unavailable".into());
     }
     if event.kind == 30078 {
@@ -753,7 +753,7 @@ fn verify_signature(event: &serde_json::Value) -> Result<()> {
         .map_err(|_| "Invalid outgoing signature".into())
 }
 
-async fn channel_creation_supported(community: &str) -> Result<bool> {
+async fn channel_creation_supported(community: &str, event: &EventTemplate) -> Result<bool> {
     let info = relay_info(community).await?;
     Ok(info
         .get("self")
@@ -762,7 +762,17 @@ async fn channel_creation_supported(community: &str) -> Result<bool> {
         && info
             .get("supported_nips")
             .and_then(serde_json::Value::as_array)
-            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29))))
+            .is_some_and(|nips| nips.contains(&serde_json::Value::from(29)))
+        && (!event
+            .tags
+            .iter()
+            .any(|tag| tag.first().is_some_and(|name| name == "forked_from"))
+            || info
+                .get("supported_extensions")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|extensions| {
+                    extensions.contains(&serde_json::Value::from("buzz-solo-fork-v1"))
+                })))
 }
 
 /// The community's unsigned NIP-11 document.
@@ -872,6 +882,14 @@ pub(crate) async fn relay_http(
             )?;
             if !channel_writes::creation(&template) {
                 return Err("Agent enrollment or channel operation unavailable or invalid".into());
+            }
+            if template
+                .tags
+                .iter()
+                .any(|tag| tag.first().is_some_and(|name| name == "forked_from"))
+                && !channel_creation_supported(&community, &template).await?
+            {
+                return Err("This community does not support Solo forks yet".into());
             }
         }
         if matches!(kind, Some(9002 | 9008 | 9021 | 9022 | 41012 | 9035 | 9036)) {

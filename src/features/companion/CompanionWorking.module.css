@@ -13,27 +13,10 @@
   width: min(100%, var(--timeline-measure, var(--buzz-message-width, 52rem)));
 }
 
-.agents {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-}
-
-.agent {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.agent > :first-child {
-  flex: 1;
-  min-width: 0;
-}
-
-.stop {
+.stopAction {
+  align-self: center;
   flex-shrink: 0;
+  padding: var(--space-1);
 }
 
 .stopIcon {

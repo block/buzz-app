@@ -838,6 +838,14 @@ three documented gaps close before it leaves draft.
   frames, no root subtraction; the bridge answers `{lifecycle, running}` and
   the companion drives main's own `useWorkStops` (toasts, 30 s retry window,
   "nothing running"), controls carrying `lifecycle`.
+- jaw's tryout (2026-11-11): the pop-out kept every agent's row and Stop in
+  an always-visible card under the preview, where main shows only the
+  compact step cue and opens its "Working now" chooser on hover or click.
+  Fix: main's chooser moved out of `TypingIndicator` into
+  `messages/AgentChooser.tsx` (one implementation, both windows);
+  `CompanionWorking` renders it inside the response preview, with the same
+  `NavigationCard` rows and Stop that main builds. Rows reach main through
+  the chooser's `navigate`, which closes the popup as main's does.
 
 - Plugin chat icons: jaw approved the FOUNDATION edit. `ChatIcon.describer?:
   { describe(session, channelId) → { icon: ChatIconName, tone?, label } |

@@ -6,7 +6,10 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { CompanionWorking } from "../../features/companion/CompanionWorking";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
@@ -446,7 +449,8 @@ it("shows the member stack main's header shows and opens members in the main win
   expect(screen.queryByText("+2")).toBeNull();
 });
 
-it("shows the agents at work as main's response preview does, with Stop, and names them for assistive technology", async () => {
+it("shows the agents at work as main's compact cue, with their rows and Stop in the Working now chooser, and names them for assistive technology", async () => {
+  const user = userEvent.setup();
   const act = vi.fn();
   const working = [
     {
@@ -488,30 +492,43 @@ it("shows the agents at work as main's response preview does, with Stop, and nam
   // The preview groups every working agent; the status line keeps only the
   // humans visibly and the whole sentence for assistive technology.
   expect(screen.getByRole("img", { name: "Echo, Foxtrot" })).toBeTruthy();
-  // The step shows in the preview and in Echo's row.
-  expect(screen.getAllByText("Reading src/app.ts").length).toBeGreaterThan(1);
   const status = screen.getByRole("status", {
     name: "Echo, Foxtrot are working. Ada is typing",
   });
   expect(status).toHaveTextContent(/^Ada is typing$/);
-  // Activity opens in main; Stop asks main and reports a refusal here.
-  fireEvent.click(screen.getByRole("button", { name: "View Echo activity" }));
-  expect(act).toHaveBeenCalledWith(
-    "openLink",
-    `buzz://profile/${"3".repeat(64)}/activity`,
-  );
+  // Only the step shows until the cue opens main's chooser.
+  expect(
+    screen.queryByText("Only typing updates are reaching this app."),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Stop Echo" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Reading src/app.ts" }));
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
+  expect(within(dialog).getByText("Received · waiting to start")).toBeTruthy();
+  expect(
+    within(dialog).queryByRole("button", { name: /Stop Foxtrot/ }),
+  ).toBeNull();
   // Stop is main's own state owner (`useWorkStops`): a refusal ends the
   // attempt and is reported as a notice.
-  fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
+  await user.click(within(dialog).getByRole("button", { name: "Stop Echo" }));
   expect(
     await screen.findByText(
       "Couldn’t stop Echo. This window is no longer connected.",
     ),
   ).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
-    "Stop",
+  expect(
+    within(dialog).getByRole("button", { name: "Stop Echo" }),
+  ).toHaveTextContent("Stop");
+  // Activity opens in main and closes the chooser.
+  await user.click(
+    within(dialog).getByRole("button", { name: "View Echo activity" }),
   );
-  expect(screen.queryByRole("button", { name: /Stop Foxtrot/ })).toBeNull();
+  expect(act).toHaveBeenCalledWith(
+    "openLink",
+    `buzz://profile/${"3".repeat(64)}/activity`,
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Working now" })).toBeNull(),
+  );
 });
 
 it("keeps a hosted Stop pending only for main's retry window, then offers it again", async () => {
@@ -539,6 +556,10 @@ it("keeps a hosted Stop pending only for main's retry window, then offers it aga
         />
       </ToastProvider>,
     );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Activity: Echo working" }),
+    );
+    await screen.findByRole("dialog", { name: "Working now" });
     fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
     expect(await screen.findByText("Stopping Echo")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
@@ -594,9 +615,11 @@ it("shows a request row's live work under that row with Stop, as main's row bubb
     bubble.compareDocumentPosition(screen.getByText("A reply")) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  expect(screen.getAllByText("Running a command").length).toBeGreaterThan(0);
+  // The step is the cue into the chooser, as main's row bubble is.
+  fireEvent.click(screen.getByRole("button", { name: "Running a command" }));
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
   // Stop without a connected owner reports its refusal, like the footer's.
-  fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop Echo" }));
   expect(
     await screen.findByText(
       "Couldn’t stop Echo. This window is no longer connected.",

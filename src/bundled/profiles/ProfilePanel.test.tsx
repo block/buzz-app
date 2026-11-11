@@ -1229,7 +1229,7 @@ it("composes Info in place while preserving the native header, focus region and 
         relay={relay}
         target={profileTarget(key) ?? ""}
         close={() => {}}
-        renderInfo={(content) => (
+        renderPersonInfo={(content) => (
           <section aria-label="Extended Info">
             <button type="button">Extra profile action</button>
             {content}
@@ -1256,6 +1256,37 @@ it("composes Info in place while preserving the native header, focus region and 
     expect(
       screen.getByRole("button", { name: "Extra profile action" }),
     ).toBeTruthy();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("leaves an agent-hinted profile outside person Info composition", () => {
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  const renderPersonInfo = vi.fn((content: ReactNode) => content);
+  try {
+    render(
+      <ProfilePanel
+        relay={relay}
+        target={`buzz:agent-profile:${key}`}
+        close={() => {}}
+        renderPersonInfo={renderPersonInfo}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Copy npub" })).toBeTruthy();
+    expect(renderPersonInfo).not.toHaveBeenCalled();
   } finally {
     owner.dispose();
   }

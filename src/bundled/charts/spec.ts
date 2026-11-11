@@ -213,9 +213,11 @@ function foldSeries(spec: PlotSpec): Row[] {
   const names = [...new Set(spec.data.map((r) => r[series]))];
   if (names.length <= PALETTE_SIZE) return spec.data;
   const kept = new Set(names.slice(0, PALETTE_SIZE - 1));
+  let other = OTHER;
+  for (let n = 2; kept.has(other); n++) other = `${OTHER} ${n}`;
   if (spec.type === "scatter")
     return spec.data.map((r) =>
-      kept.has(r[series] as string) ? r : { ...r, [series]: OTHER },
+      kept.has(r[series] as string) ? r : { ...r, [series]: other },
     );
   const sums = new Map<string | number, Row>();
   const rows: Row[] = [];
@@ -231,7 +233,7 @@ function foldSeries(spec: PlotSpec): Row[] {
     const sum = sums.get(key);
     if (sum) sum[y] = (sum[y] as number) + (r[y] as number);
     else {
-      const row = { ...r, [series]: OTHER };
+      const row = { ...r, [series]: other };
       sums.set(key, row);
       rows.push(row);
     }

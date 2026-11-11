@@ -317,6 +317,26 @@ describe("series colors", () => {
     ]);
   });
 
+  it("keeps the folded bucket distinct from an input series named Other", () => {
+    const names = ["Other", "b", "c", "d", "e"];
+    const bars = series("bar", names);
+    expect(bars.map((s) => s.name)).toEqual(["Other", "b", "c", "Other 2"]);
+    expect(bars[0]?.data).toEqual([
+      { value: 1, label: { position: "right" } },
+      { value: 10, label: { position: "right" } },
+    ]);
+    expect(bars[3]?.data).toEqual([
+      { value: 9, label: { position: "right" } },
+      { value: 90, label: { position: "right" } },
+    ]);
+    const lines = series("line", names);
+    expect(lines.map((s) => s.name)).toEqual(["Other", "b", "c", "Other 2"]);
+    expect(lines[0]?.data).toEqual([
+      [1, 1],
+      [2, 10],
+    ]);
+  });
+
   it("relabels scatter points without summing them", () => {
     const scatter = series("scatter", ["a", "b", "c", "d", "e"]);
     expect(scatter.map((s) => s.name)).toEqual(["a", "b", "c", "Other"]);

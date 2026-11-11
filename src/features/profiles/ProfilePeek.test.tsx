@@ -224,3 +224,33 @@ it("records the originating avatar as the profile navigation focus target", asyn
     f.owner.dispose();
   }
 });
+
+it("opens on hover beside revealed message actions only in Compact", async () => {
+  const { view } = fixture();
+  view.container.setAttribute("data-actions-revealed", "");
+  const avatar = screen.getByRole("button", { name: "Avatar" });
+  const rest = async () => {
+    vi.useFakeTimers();
+    try {
+      fireEvent.mouseEnter(avatar);
+      fireEvent.mouseMove(avatar);
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+  const preview = () =>
+    screen.queryByRole("dialog", { name: "Morgan profile preview" });
+
+  await rest();
+  expect(preview()).toBeNull();
+
+  fireEvent.mouseLeave(avatar);
+  document.documentElement.setAttribute("data-message-density", "compact");
+  try {
+    await rest();
+    expect(preview()).toBeVisible();
+  } finally {
+    document.documentElement.removeAttribute("data-message-density");
+  }
+});

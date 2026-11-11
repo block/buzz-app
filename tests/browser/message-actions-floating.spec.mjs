@@ -1205,4 +1205,10 @@ test("Compact reveals actions from row whitespace and pins them to the trailing 
   // Escape retains keyboard access; pointer dismissal releases that focus.
   await page.mouse.click(0, 0);
   await hidden(actions);
+  // Resting on an avatar reveals its row's actions, and its preview still opens.
+  await row.getByRole("button", { name: /^View .* profile$/ }).hover();
+  await shown(actions);
+  await expect(
+    page.getByRole("dialog", { name: /profile preview$/ }),
+  ).toBeVisible();
 });

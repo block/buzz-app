@@ -16,6 +16,7 @@ import {
   type FocusEvent,
 } from "react";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
+import { useMessageDensity } from "../../shared/theme/message-density";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import { usePresenceStatus } from "../presence/react";
 import type { RelaySession } from "../relay/session";
@@ -79,6 +80,7 @@ export function ProfilePeek({
   onFocusChange,
 }: ProfilePeekProps) {
   const [open, setOpen] = useState(false);
+  const compact = useMessageDensity() === "compact";
   const [hoveredAction, setHoveredAction] = useState<"profile" | "message">();
   const profileButton = useRef<HTMLButtonElement>(null);
   const returningFromProfile = useRef<"pending" | "returned" | null>(null);
@@ -179,10 +181,13 @@ export function ProfilePeek({
       open={open}
       onOpenChange={(next, details) => {
         // Crossing an avatar on the active toolbar's safe pointer route must
-        // not put a new preview between the message and its actions.
+        // not put a new preview between the message and its actions. Compact
+        // reveals the toolbar for the whole row, avatar included, so resting
+        // on the avatar would always trip this.
         const avatar = document.getElementById(triggerId);
         if (
           next &&
+          !compact &&
           details.reason === "trigger-hover" &&
           document.activeElement !== avatar &&
           avatar?.closest("[data-actions-revealed]")

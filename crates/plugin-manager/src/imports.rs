@@ -907,7 +907,10 @@ impl Git {
     }
     fn reset(&mut self) -> Result<()> {
         self.promisor = false;
-        fs::remove_dir_all(self.scratch.path().join("repository")).map_err(err)
+        match fs::remove_dir_all(self.scratch.path().join("repository")) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(err(error)),
+            _ => Ok(()),
+        }
     }
     fn clone_tip(&mut self, clone_url: &str, reference: &str) -> Result<()> {
         let mut args = vec![
@@ -1453,6 +1456,15 @@ mod tests {
     fn read_head(git: &Git) -> Result<PreparedImport> {
         git.read_plugins("fixture".into(), &git.tip()?, None)
     }
+    #[test]
+    fn reset_tolerates_a_repository_that_was_never_created() {
+        let mut git = Git::new().unwrap();
+        git.reset().unwrap();
+        fs::create_dir(git.scratch.path().join("repository")).unwrap();
+        git.reset().unwrap();
+        assert!(!git.scratch.path().join("repository").exists());
+    }
+
     #[test]
     fn https_credential_failures_suggest_ssh() {
         let prompt =

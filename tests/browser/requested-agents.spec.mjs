@@ -41,8 +41,10 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
-const scoutRow = (page) =>
-  page.getByRole("listitem").filter({ hasText: "Scout" });
+// Toasts are list items too; only the agent list's rows are the subject.
+const rows = (page) =>
+  page.getByRole("list", { name: "Your remote agents" }).getByRole("listitem");
+const scoutRow = (page) => rows(page).filter({ hasText: "Scout" });
 
 for (const { theme, large, width } of [
   { theme: "light", large: false, width: 900 },
@@ -57,8 +59,7 @@ for (const { theme, large, width } of [
     const row = scoutRow(page);
     await expect(row).toContainText("Requested by Helper");
     await expect(
-      page
-        .getByRole("listitem")
+      rows(page)
         .filter({ has: page.getByText("Helper", { exact: true }) })
         .getByRole("button", { name: "Approve" }),
     ).toHaveCount(0);

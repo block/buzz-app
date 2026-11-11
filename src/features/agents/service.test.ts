@@ -12160,6 +12160,8 @@ it("binds run-only Solo placement to the owner, community and just-created confi
 });
 
 it.each([
+  "cached preferences",
+  "read-only preferences",
   "owner missing",
   "caller missing",
   "wrong creator",
@@ -12210,9 +12212,10 @@ it.each([
     snapshotRead: vi.fn(async () => [metadata, roster]),
     soloPreferences: {
       refresh: async () => {},
-      writable: true,
+      writable: failure !== "read-only preferences",
       snapshot: () => ({
         status: "ready",
+        ...(failure === "cached preferences" ? { cached: true } : {}),
         data: { sections: [{ id: "work", name: "Work" }] },
       }),
       assign,
@@ -12221,6 +12224,20 @@ it.each([
   await f.service.create({ type: "example/echo", name: "Echo" });
   const handle = await handleOf(f.run, f.emit);
   try {
+    if (
+      failure === "cached preferences" ||
+      failure === "read-only preferences"
+    ) {
+      await expect(handle.soloWorkspaces?.list()).rejects.toThrow(
+        "Solo workspaces are unavailable",
+      );
+      await expect(
+        handle.soloWorkspaces?.prepare("work", [viewer], "new-chat"),
+      ).rejects.toThrow("Solo workspaces are unavailable");
+      expect(f.session.snapshotRead).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
+      return;
+    }
     const file = await handle.soloWorkspaces?.prepare(
       "work",
       [viewer],

@@ -46,5 +46,7 @@ Disabling the plugin restores normal sends to all selected agents.
   Multiple assigned agents can each respond. Those capabilities are separate
   from avoiding unnecessary initial runs.
 
-No inference savings or routing accuracy have been measured yet. The router's
-decision adds latency and cost; compare total usage against the avoided runs.
+The [synthetic routing benchmark](BENCHMARK.md) records live worker selections
+and decision request sizes, including the policy and agent context. Net token
+and cost savings remain unmeasured. The router adds latency and cost; compare
+total usage, including JEV, against the avoided runs.

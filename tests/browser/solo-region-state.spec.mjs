@@ -30,6 +30,17 @@ test("region state reaches the component after a headless write and a write in a
   });
   await expect(output).toHaveText('{"filter":"needs-you"}');
   await page.reload();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        try {
+          return window.fixtureSoloRegion?.state().get();
+        } catch {
+          return undefined;
+        }
+      }),
+    )
+    .toEqual({ filter: "needs-you" });
   await page.evaluate(() => window.fixtureSoloRegion.status("ready"));
   await expect(output).toHaveText('{"filter":"needs-you"}');
 });

@@ -16,7 +16,7 @@ import {
   MenuPopup,
 } from "../../shared/design-system/ui/Menu";
 import { readView, writeView } from "../../shared/view-state";
-import { StartLinkedChat } from "./StartLinkedChat";
+import { StartLinkedChat, canStartLinkedChatFrom } from "./StartLinkedChat";
 
 const owner = createRelaySession(null);
 afterAll(() => owner.dispose());
@@ -258,4 +258,31 @@ it("stays unavailable while Buzz can't create chats", async () => {
   expect(
     await screen.findByRole("menuitem", { name: "Start Solo chat" }),
   ).toHaveAttribute("aria-disabled", "true");
+});
+
+it("offers the message action only on messages the relay accepted", () => {
+  for (const delivery of [undefined, "accepted", "seen"] as const)
+    expect(canStartLinkedChatFrom({ ...message, delivery }, session)).toBe(
+      true,
+    );
+  // Whatever the source is: here a Solo chat and a DM.
+  for (const channelType of ["solo", "dm"] as const) {
+    const source = {
+      ...session,
+      channels: {
+        ...session.channels,
+        list: () => ({
+          status: "ready" as const,
+          channels: [{ id: "source", name: "Source", channelType }],
+        }),
+      },
+    };
+    expect(
+      canStartLinkedChatFrom({ ...message, channelId: "source" }, source),
+    ).toBe(true);
+  }
+  for (const delivery of ["sending", "unknown", "failed"] as const)
+    expect(canStartLinkedChatFrom({ ...message, delivery }, session)).toBe(
+      false,
+    );
 });

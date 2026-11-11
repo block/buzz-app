@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 import { MessagesSidebar } from "./MessagesSidebar";
 import { soloSidebarSource } from "./SoloSidebarSource";
 import { teamSidebarSource } from "./TeamSidebarSource";
-import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import { StartLinkedChat, canStartLinkedChatFrom } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
@@ -86,9 +86,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Start Solo chat",
     placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
-    matches: (message, session) =>
-      canStartLinkedChat(session) &&
-      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
+    matches: canStartLinkedChatFrom,
     component: ({ message, session }) => (
       <StartLinkedChat
         session={session}

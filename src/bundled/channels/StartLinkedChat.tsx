@@ -21,6 +21,17 @@ export function canStartLinkedChat(session: RelaySession) {
   return !!(session.viewer && session.channelWrites.available);
 }
 
+/** The message action's match: any message the relay has accepted. */
+export function canStartLinkedChatFrom(
+  message: ChannelMessage,
+  session: RelaySession,
+) {
+  return (
+    canStartLinkedChat(session) &&
+    (!message.delivery || ["accepted", "seen"].includes(message.delivery))
+  );
+}
+
 /** Existing menu tree owns anchoring/dismissal. Nothing is published until first send. */
 export function StartLinkedChat({
   session,

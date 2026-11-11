@@ -909,28 +909,17 @@ activity. The signal is a live object, not part of saved tool arguments or
 session archives. `BuzzClient` from `@buzz/author` declares this property;
 `AddedToolContext` keeps only the conversation destination.
 
-A plugin, bundled or installed, can give standing instructions to every turn of
-the agents this copy of the app runs with `ctx.agents.addInstructions({ id,
-text, when? })`. Each turn of a Claude, Codex, goose or Pi agent, and of an
-installed harness that builds its turns with `ctx.agents.harness.turnPrompt`,
-ends with a `<plugin-instructions plugin="…">` section for each plugin's
-instructions, before the end-of-turn attention note; a watch's or timer's own
-turn has them too, and so does each message steered into a running turn. Mesh
-agents, which build their own prompt, do not get them. The base prompt tells the
-agent to follow them as it follows its own instructions, below the base prompt
-and the owner's requests. An optional `when(agent)`, asked as each turn's prompt
-is built, limits them to the agents it returns true for; a `when` that throws
-leaves out only its own, and so does one that returns anything but `true`, such
-as a Promise. Sections are ordered by plugin and id. Each turn carries the
-complete current set, and the base prompt tells the agent that it replaces the
-sets of earlier turns, so a session that keeps its history also stops following
-them once the plugin is turned off, its scope ends or its `when` says false. The
-text is the plugin's own and the agent follows it as instructions: write it
-yourself rather than putting others' content in it. It is sent with every turn,
-so keep it short. Context or data for one turn belongs in a note
-(`ctx.agents.note`), which the agent reads as data, not instructions. A
-harness's own prompt hooks (`registerHook`) can add context too, but only for
-that harness and only as its native hook allows.
+A plugin, bundled or installed, can give standing instructions to the agents
+this copy of the app runs with `ctx.agents.addInstructions({ id, text, when?
+})`. Every turn then ends with a `<plugin-instructions plugin="…">` section for
+each plugin, before the attention note; Mesh agents, which build their own
+prompt, get none. The section names its plugin, and its text cannot open or
+close a section, so a transcript shows which plugin said what. The agent follows
+it below the base prompt and the owner's requests. Each turn carries the
+complete current set, replacing earlier turns', so turning the plugin off or a
+`when(agent)` that stops returning `true` ends them. Write the text yourself and
+keep it short: it is sent with every turn. Context for one turn belongs in a
+note, which the agent reads as data.
 
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns

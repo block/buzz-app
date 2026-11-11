@@ -290,6 +290,41 @@ it("strips a proposed picture's metadata before uploading it as the agent", asyn
   expect(pngChunks(sent).map((c) => c.kind)).toEqual(["IHDR", "IDAT", "IEND"]);
 });
 
+it("strips an attached image's metadata and sends other files as they are", async () => {
+  const upload = vi.fn(async (_data: string, type: string) => ({
+    url: "https://relay/media/x",
+    sha256: "ab",
+    size: 1,
+    type,
+  }));
+  const client = appClient(
+    { pubkey: "agent", upload } as unknown as AgentHandle,
+    {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    },
+  );
+  const gif = (...extra: number[]) =>
+    new Uint8Array([
+      ...new TextEncoder().encode("GIF89a"),
+      ...[1, 0, 1, 0, 0, 0, 0],
+      ...extra,
+      ...[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0, 0x3b],
+    ]);
+  const text = new TextEncoder().encode("GPS 51.5,-0.12");
+  // A comment extension carrying a location.
+  await client.upload(gif(0x21, 0xfe, 3, 0x47, 0x50, 0x53, 0), "image/gif");
+  await client.upload(text, "text/plain");
+  const sent = upload.mock.calls.map(([data, type]) => [
+    Uint8Array.from(atob(data), (c) => c.charCodeAt(0)),
+    type,
+  ]);
+  expect(sent).toEqual([
+    [gif(), "image/gif"],
+    [text, "text/plain"],
+  ]);
+});
+
 it("refuses a proposed picture its preparation does not recognize", async () => {
   const upload = vi.fn();
   const client = appClient(

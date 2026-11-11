@@ -51,6 +51,9 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
+/** A minimal GIF with no metadata, so attaching it uploads it unchanged. */
+const GIF =
+  "GIF89a\x01\x00\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
 const root = "c".repeat(64);
 const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
@@ -281,11 +284,7 @@ function fixture(
         path: value?.args?.[0] ?? "",
       });
       value?.onStdout?.(
-        btoa(
-          value?.args?.[0] === "attachment.jpg"
-            ? "\xff\xd8\xff"
-            : "FILE CONTENT",
-        ),
+        btoa(value?.args?.[0] === "attachment.gif" ? GIF : "FILE CONTENT"),
       );
       return { ...process, exited: Promise.resolve(0) };
     }
@@ -3971,7 +3970,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
       await f.tool("send", {
         audience: "everyone",
         path: "answer.txt",
-        files: ["attachment.jpg"],
+        files: ["attachment.gif"],
         final: true,
       })
     )?.result,
@@ -3987,10 +3986,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
   );
   expect(f.fileReads).toEqual([
-    { cwd: "/tmp/codex-test", path: "attachment.jpg" },
+    { cwd: "/tmp/codex-test", path: "attachment.gif" },
     { cwd: "/tmp/codex-test", path: "answer.txt" },
   ]);
-  expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
+  expect(f.upload).toHaveBeenCalledWith(btoa(GIF), "image/gif");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("FILE CONTENT"),
     tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),

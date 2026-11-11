@@ -130,7 +130,11 @@ export async function checkoutsOf(
   }
   if (!checkouts.length)
     checkouts.push({ dir: top, prefix, label: baseName(top) });
-  // A worktree inside another checkout would show there as one changed file.
+  return nest(checkouts);
+}
+
+/** A worktree inside another checkout would show there as one changed file. */
+export function nest<T extends Checkout>(checkouts: T[]): T[] {
   for (const checkout of checkouts) {
     const inside = checkouts.filter((other) =>
       other.dir.startsWith(`${checkout.dir}/`),
@@ -141,6 +145,19 @@ export async function checkoutsOf(
       );
   }
   return checkouts;
+}
+
+/** The tree a worktree was created with, from the oldest entry of its HEAD's
+ * reflog; undefined when git kept none. */
+export async function startingTree(
+  git: Git,
+  dir: string,
+): Promise<string | undefined> {
+  const log = await git(["-C", dir, "reflog", "show", "--format=%H", "HEAD"]);
+  const first = log.trim().split("\n").at(-1) ?? "";
+  if (!TREE.test(first)) return undefined;
+  const tree = (await git(["-C", dir, "rev-parse", `${first}^{tree}`])).trim();
+  return TREE.test(tree) ? tree : undefined;
 }
 
 const scopeOf = ({ prefix, skip = [] }: Pick<Checkout, "prefix" | "skip">) => [
@@ -182,6 +199,7 @@ async function take(git: Git, checkout: Checkout): Promise<string> {
     if (head) await git([...at, "read-tree", "-m", head], { env });
     seeded.add(gitDir);
   }
+  await dropIgnored(git, at, env);
   const changed = split0(
     await git(
       [
@@ -214,6 +232,37 @@ async function take(git: Git, checkout: Checkout): Promise<string> {
     },
   );
   return (await git([...at, "write-tree"], { env })).trim();
+}
+
+/** Takes out of the private index what an ignore rule now covers, unless git
+ * tracks it: `add --all` keeps updating any file the index already holds. */
+async function dropIgnored(
+  git: Git,
+  at: string[],
+  env: Record<string, string>,
+) {
+  const list = [
+    "ls-files",
+    "-z",
+    "--cached",
+    "--ignored",
+    "--exclude-standard",
+  ];
+  const ignored = split0(
+    await git([...at, ...list], { env, limit: MAX_LIST_BYTES }),
+  );
+  if (!ignored.length) return;
+  const read = (extra: string[]) =>
+    git([...at, ...list, ...extra], { limit: MAX_LIST_BYTES });
+  const tracked = new Set(
+    split0(await read(["--with-tree=HEAD"]).catch(() => read([]))),
+  );
+  const gone = ignored.filter((path) => !tracked.has(path));
+  if (gone.length)
+    await git([...at, "update-index", "--force-remove", "-z", "--stdin"], {
+      env,
+      input: `${gone.join("\0")}\0`,
+    });
 }
 
 /** Which of `paths` are over the size limit. Git reads each size only after

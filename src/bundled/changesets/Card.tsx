@@ -88,6 +88,12 @@ function ChangesetCard({
           )
         }
       />
+      {checkout.late && (
+        <p className={styles.note}>
+          Recording began a moment after the agent started, so its first edits
+          may be missing.
+        </p>
+      )}
       {checkout.shared && (
         <p className={styles.note}>
           Another agent was working here too, so some of this may not be this

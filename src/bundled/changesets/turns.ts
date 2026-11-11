@@ -9,7 +9,9 @@ import {
   changedFiles,
   checkoutsOf,
   filePatch,
+  nest,
   snapshot,
+  startingTree,
 } from "./git";
 import { projectFolders } from "./paths";
 
@@ -20,6 +22,8 @@ export type TurnCheckout = Checkout & {
   /** Another local agent was working here at the same time, so these changes
    * may not all be this turn's. */
   shared?: true;
+  /** The first snapshot was slow, so the agent's first edits may be missing. */
+  late?: true;
 };
 
 /** One local agent turn in a chat with project folders: each checkout as it
@@ -37,6 +41,8 @@ export type Turn = {
   checkouts: TurnCheckout[];
   /** The agent's last message in the turn, which shows the card. */
   message?: { id: string; at: number };
+  /** Messages the run published, as its activity names them. */
+  published?: string[];
 };
 
 export const TURNS_KEY = "buzz-changesets-turns.v1";
@@ -44,6 +50,9 @@ export const KEEP = 300;
 /** Messages this long after a turn ends still count as its reply. */
 const GRACE_MS = 15_000;
 const KEEP_SUMMARIES = 50;
+const LATE_MS = 1_500;
+const NEW_WORKTREES = 5;
+const KEEP_PUBLISHED = 20;
 const NONE: readonly Turn[] = [];
 
 type Identity = { viewer: string; origin: string };
@@ -189,7 +198,15 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
       const taken = await Promise.all(
         unique.map(async (checkout) => {
           const before = await snapshot(git, checkout).catch(() => undefined);
-          return before ? { ...checkout, before } : undefined;
+          return before
+            ? {
+                ...checkout,
+                before,
+                ...(Date.now() - start > LATE_MS
+                  ? { late: true as const }
+                  : {}),
+              }
+            : undefined;
         }),
       );
       record.checkouts = taken.filter((checkout) => !!checkout);
@@ -209,7 +226,28 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
     return undefined;
   }
 
+  async function addedWorktrees(record: Turn) {
+    const known = new Set(record.checkouts.map((checkout) => checkout.dir));
+    const repos = [...known].slice(0, 10);
+    const found = (
+      await Promise.all(
+        repos.map((dir) => checkoutsOf(git, dir).catch(() => [])),
+      )
+    ).flat();
+    const added: TurnCheckout[] = [];
+    for (const checkout of found) {
+      if (known.has(checkout.dir) || added.length >= NEW_WORKTREES) continue;
+      known.add(checkout.dir);
+      const before = await startingTree(git, checkout.dir).catch(
+        () => undefined,
+      );
+      if (before) added.push({ ...checkout, before });
+    }
+    if (added.length) record.checkouts = nest([...record.checkouts, ...added]);
+  }
+
   async function finish(record: Turn) {
+    await addedWorktrees(record).catch(() => {});
     await Promise.all(
       record.checkouts.map(async (checkout, index) => {
         const after = await snapshot(git, checkout).catch(() => undefined);
@@ -229,6 +267,34 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
     save();
   }
 
+  const started = new Map<string, Promise<Turn | undefined>>();
+  const ended = new Set<string>();
+  const known = new Set<string>();
+  // A request folded into a running turn hands its snapshots to the next.
+  const handed = new Map<string, Promise<Turn | undefined>>();
+
+  function retire(record: Turn) {
+    active.delete(record);
+    turns = turns.filter((turn) => turn !== record);
+    reindex();
+  }
+  function forget(key: string) {
+    const turn = started.get(key);
+    started.delete(key);
+    ended.delete(key);
+    void turn?.then((record) => record && !record.end && retire(record));
+  }
+
+  function publish(record: Turn, ids: readonly string[]) {
+    const next = ids.slice(-KEEP_PUBLISHED);
+    if (record.published?.join() === next.join()) return;
+    record.published = next;
+    for (const other of turns)
+      if (other !== record && other.message && next.includes(other.message.id))
+        delete other.message;
+    save();
+  }
+
   function watch(session: RelaySession, origin: string | undefined) {
     const signedIn =
       session.viewer && origin ? { viewer: session.viewer, origin } : undefined;
@@ -237,20 +303,27 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
       signedIn?.origin !== identity?.origin
     ) {
       identity = signedIn;
+      for (const key of [...started.keys()]) forget(key);
+      known.clear();
+      handed.clear();
       notify();
     }
     const activity = session.agentActivity;
     const release = activity.activate();
-    // Work already going when the plugin started is only partly visible.
-    const known = new Set((activity.snapshot().local ?? []).map(workKey));
-    const started = new Map<string, Promise<Turn | undefined>>();
-    const ended = new Set<string>();
-    // A request folded into a running turn hands its snapshots to the next.
-    const handed = new Map<string, Promise<Turn | undefined>>();
+    // Work already going when the plugin started is only partly visible, and
+    // a turn this plugin followed under an earlier binding carries on.
+    const rows = activity.snapshot().local ?? [];
+    const present = new Set(rows.map(workKey));
+    for (const key of [...started.keys()]) if (!present.has(key)) forget(key);
+    for (const key of present) if (!started.has(key)) known.add(key);
     const scan = () => {
       for (const work of activity.snapshot().local ?? []) {
         const key = workKey(work);
         const turn = started.get(key);
+        if (turn && work.publishedMessageIds?.length) {
+          const ids = work.publishedMessageIds;
+          void turn.then((record) => record && publish(record, ids));
+        }
         if (work.state === "waiting" || work.state === "working") {
           if (known.has(key) || turn) continue;
           if (!runsHere(session, work.agent)) {
@@ -314,19 +387,28 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
         "id" | "authorId" | "channelId" | "createdAt" | "threadRootId"
       > & { createdAtMs?: number },
     ) {
-      const all = byChat.get(chatOf(message.authorId, message.channelId));
-      if (!all) return;
-      const chat = all.filter(
-        (turn) =>
-          mine(turn) && (!turn.thread || turn.thread === message.threadRootId),
-      );
       const at = message.createdAtMs ?? message.createdAt * 1000;
+      const owner = turns.find(
+        (turn) => mine(turn) && turn.published?.includes(message.id),
+      );
+      const all = byChat.get(chatOf(message.authorId, message.channelId));
+      if (!owner && !all) return;
+      const chat = (owner ? [owner] : (all ?? [])).filter(
+        (turn) =>
+          mine(turn) &&
+          (owner ||
+            (message.threadRootId
+              ? turn.thread === message.threadRootId
+              : !turn.thread)),
+      );
       let claimed = false;
       chat.forEach((turn, index) => {
-        if (at < turn.start - 1000) return;
-        if (turn.end && at > turn.end + GRACE_MS) return;
-        const next = chat[index + 1];
-        if (next && at >= next.start - 1000) return;
+        if (!owner) {
+          if (at < turn.start - 1000) return;
+          if (turn.end && at > turn.end + GRACE_MS) return;
+          const next = chat[index + 1];
+          if (next && at >= next.start - 1000) return;
+        }
         if (
           !turn.message ||
           turn.message.at < at ||
@@ -380,6 +462,7 @@ const isTurn = (value: unknown): value is Turn =>
   typeof value.origin === "string" &&
   (value.thread === undefined || typeof value.thread === "string") &&
   typeof value.start === "number" &&
+  strings(value.published) &&
   Array.isArray(value.checkouts) &&
   value.checkouts.every(
     (checkout) =>

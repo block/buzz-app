@@ -128,6 +128,25 @@ describe("snapshot and changedFiles", () => {
     expect(files.map((f) => f.path)).toEqual(["kept.txt"]);
   });
 
+  it("stops capturing a file once an ignore rule covers it, but keeps tracked ones", async () => {
+    const dir = repo({ "tracked.log": "t0\n", "a.txt": "x\n" });
+    const c = here(dir);
+    write(dir, "secret.env", "key=1\n");
+    await snapshot(git, c);
+    write(dir, ".gitignore", "secret.env\n*.log\n");
+    write(dir, "secret.env", "key=2-changed\n");
+    write(dir, "tracked.log", "t1\n");
+    const before = await snapshot(git, c);
+    write(dir, "secret.env", "key=3-changed-again\n");
+    write(dir, "tracked.log", "t2\n");
+    const after = await snapshot(git, c);
+    const files = await changedFiles(git, c, before, after);
+    expect(files.map((f) => f.path)).toEqual(["tracked.log"]);
+    expect(sh(dir, "ls-tree", "-r", "--name-only", after)).not.toContain(
+      "secret.env",
+    );
+  });
+
   it("covers only the folder a chat opened, when it is inside the repository", async () => {
     const dir = repo({ "pkg/a.txt": "x\n", "other/b.txt": "y\n" });
     const c: Checkout = { dir, prefix: "pkg/", label: "pkg" };

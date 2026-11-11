@@ -131,6 +131,16 @@ it("says when another agent was working in the same checkout", async () => {
   ).toBeInTheDocument();
 });
 
+it("says when recording began after the agent started", async () => {
+  const t = turn();
+  const late = t.checkouts[0];
+  if (late) late.late = true;
+  render(<TurnCards {...props()} turns={fakeTurns({ cardsFor: () => [t] })} />);
+  expect(
+    await screen.findByText(/first edits may be missing/),
+  ).toBeInTheDocument();
+});
+
 it("explains a changeset that cannot be read and tries again", async () => {
   const summary = vi
     .fn()

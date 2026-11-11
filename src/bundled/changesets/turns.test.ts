@@ -1,13 +1,13 @@
 // @vitest-environment node
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LocalWork } from "../../features/agents/local-activity";
 import type { RelaySession } from "../../features/relay/session";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { Git } from "./git";
-import { only, realGit, repo } from "./testing";
-import { KEEP, TURNS_KEY, createTurns } from "./turns";
+import { only, realGit, repo, sh } from "./testing";
+import { KEEP, TURNS_KEY, type Turn, createTurns } from "./turns";
 
 const canvases = new Map<string, string>();
 vi.mock("../../features/agent-harness/project", () => ({
@@ -56,7 +56,10 @@ function world(
   } as unknown as RelaySession;
   const real = realGit();
   let snapshots = 0;
+  let delay = 0;
   const git: Git = async (args, options) => {
+    if (delay && args.includes("write-tree"))
+      await new Promise((done) => setTimeout(done, delay));
     const out = await real(args, options);
     if (args.includes("write-tree")) snapshots++;
     return out;
@@ -65,7 +68,16 @@ function world(
     session,
     git,
     snapshots: () => snapshots,
-    set(agent: string, id: string, state: LocalWork["state"], channelId = "c") {
+    slowSnapshots(ms: number) {
+      delay = ms;
+    },
+    set(
+      agent: string,
+      id: string,
+      state: LocalWork["state"],
+      channelId = "c",
+      extra: Partial<LocalWork> = {},
+    ) {
       local = [
         ...local.filter((row) => row.messageId !== id),
         {
@@ -76,6 +88,7 @@ function world(
           threadRootId: "",
           state,
           startedAt: 1,
+          ...extra,
         },
       ];
       for (const listener of listeners) listener();
@@ -330,5 +343,192 @@ describe("createTurns", () => {
     expect(() =>
       createTurns(w.git, storage({ [TURNS_KEY]: "{" })),
     ).not.toThrow();
+  });
+});
+
+const seeded = (
+  id: string,
+  extra: Partial<Turn> & { start: number; end: number },
+): Turn => ({
+  id,
+  agent: "A",
+  channelId: "c",
+  viewer: "me",
+  origin: "https://relay.example",
+  checkouts: [
+    {
+      dir: "/x",
+      prefix: "",
+      label: "x",
+      before: "a".repeat(40),
+      after: "b".repeat(40),
+      files: 1,
+    },
+  ],
+  ...extra,
+});
+const reply = (id: string, at: number, threadRootId?: string) => ({
+  id,
+  authorId: "A",
+  channelId: "c",
+  createdAt: 0,
+  createdAtMs: at,
+  ...(threadRootId ? { threadRootId } : {}),
+});
+
+describe("matching replies to turns", () => {
+  const turnsWith = (list: Turn[]) => {
+    const turns = createTurns(
+      realGit(),
+      storage({ [TURNS_KEY]: JSON.stringify(list) }),
+    );
+    turns.watch(world().session, "https://relay.example");
+    return turns;
+  };
+
+  it("keeps a thread's reply off an overlapping channel-level turn", () => {
+    const turns = turnsWith([
+      seeded("thread", { start: 0, end: 100_000, thread: "root" }),
+      seeded("channel", { start: 50_000, end: 150_000 }),
+    ]);
+    turns.claim(reply("in-thread", 105_000, "root"));
+    turns.claim(reply("in-channel", 140_000));
+    expect(turns.cardsFor("in-thread").map((t) => t.id)).toEqual(["thread"]);
+    expect(turns.cardsFor("in-channel").map((t) => t.id)).toEqual(["channel"]);
+  });
+
+  it("gives a message to the turn whose run published it, whatever the times", () => {
+    const turns = turnsWith([
+      seeded("early", { start: 0, end: 10_000 }),
+      seeded("late", { start: 500_000, end: 600_000, published: ["m"] }),
+    ]);
+    turns.claim(reply("m", 5_000));
+    expect(turns.cardsFor("m").map((t) => t.id)).toEqual(["late"]);
+  });
+
+  it("learns what a run published from its activity", async () => {
+    const dir = repo();
+    canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));
+    const w = world();
+    const turns = createTurns(w.git, storage());
+    turns.watch(w.session, "https://relay.example");
+    w.set("A", "req", "working");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(1));
+    writeFileSync(join(dir, "n.txt"), "n\n");
+    w.set("A", "req", "working", "c", { publishedMessageIds: ["p1"] });
+    w.set("A", "req", "done", "c", { publishedMessageIds: ["p1"] });
+    await vi.waitFor(() => expect(w.snapshots()).toBe(2));
+    turns.claim(reply("p1", NOW() + 3_600_000));
+    await vi.waitFor(() => expect(turns.cardsFor("p1")).toHaveLength(1));
+  });
+});
+
+describe("watching across rebinding", () => {
+  it("carries a running turn over to the replacement watcher", async () => {
+    const dir = repo();
+    canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));
+    const w = world();
+    const turns = createTurns(w.git, storage());
+    const first = turns.watch(w.session, "https://relay.example");
+    w.set("A", "req", "working");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(1));
+    first();
+    turns.watch({ ...w.session } as RelaySession, "https://relay.example");
+    writeFileSync(join(dir, "n.txt"), "n\n");
+    w.set("A", "req", "done");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(2));
+    turns.claim(reply("m1", NOW()));
+    await vi.waitFor(() => expect(turns.cardsFor("m1")).toHaveLength(1));
+  });
+
+  it("drops a turn the replacement no longer sees, so later turns are not marked shared", async () => {
+    const dir = repo();
+    canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));
+    const old = world();
+    const turns = createTurns(old.git, storage());
+    const release = turns.watch(old.session, "https://relay.example");
+    old.set("A", "req", "working");
+    await vi.waitFor(() => expect(old.snapshots()).toBe(1));
+    release();
+    const fresh = world();
+    turns.watch(fresh.session, "https://relay.example");
+    fresh.set("B", "solo", "working");
+    await vi.waitFor(() => expect(old.snapshots()).toBe(2));
+    writeFileSync(join(dir, "n.txt"), "n\n");
+    fresh.set("B", "solo", "done");
+    await vi.waitFor(() => expect(old.snapshots()).toBe(3));
+    turns.claim({ ...reply("mb", NOW()), authorId: "B" });
+    await vi.waitFor(() => expect(turns.cardsFor("mb")).toHaveLength(1));
+    expect(turns.cardsFor("mb")[0]?.checkouts[0]?.shared).toBeUndefined();
+  });
+
+  it("drops in-flight turns when the account changes", async () => {
+    const dir = repo();
+    canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));
+    const old = world();
+    const turns = createTurns(old.git, storage());
+    turns.watch(old.session, "https://relay.example");
+    old.set("A", "req", "working");
+    await vi.waitFor(() => expect(old.snapshots()).toBe(1));
+    const fresh = world();
+    turns.watch(
+      { ...fresh.session, viewer: "someone-else" } as RelaySession,
+      "https://relay.example",
+    );
+    fresh.set("B", "solo", "working");
+    await vi.waitFor(() => expect(old.snapshots()).toBe(2));
+    writeFileSync(join(dir, "n.txt"), "n\n");
+    fresh.set("B", "solo", "done");
+    await vi.waitFor(() => expect(old.snapshots()).toBe(3));
+    turns.claim({ ...reply("mb", NOW()), authorId: "B" });
+    await vi.waitFor(() => expect(turns.cardsFor("mb")).toHaveLength(1));
+    expect(turns.cardsFor("mb")[0]?.checkouts[0]?.shared).toBeUndefined();
+  });
+});
+
+describe("worktrees and slow baselines", () => {
+  it("includes a worktree the agent created during the turn", async () => {
+    const dir = repo();
+    canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));
+    const w = world();
+    const turns = createTurns(w.git, storage());
+    turns.watch(w.session, "https://relay.example");
+    w.set("A", "req", "working");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(1));
+    const side = `${dir}-side`;
+    sh(dir, "worktree", "add", "-q", "-b", "side", side);
+    mkdirSync(side, { recursive: true });
+    writeFileSync(join(side, "made.txt"), "m\n");
+    writeFileSync(join(side, "a.txt"), "one\nedited\n");
+    sh(side, "add", "--all");
+    sh(side, "commit", "-q", "-m", "in the new worktree");
+    w.set("A", "req", "done");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(3));
+    turns.claim(reply("m1", NOW()));
+    await vi.waitFor(() => expect(turns.cardsFor("m1")).toHaveLength(1));
+    const turn = only(turns.cardsFor("m1"));
+    const index = turn.checkouts.findIndex((c) => c.dir === side);
+    expect(index).toBeGreaterThan(0);
+    const files = await turns.summary(turn.id, index);
+    expect(files.map((f) => f.path)).toEqual(["a.txt", "made.txt"]);
+    expect(turn.checkouts[0]?.files).toBe(0);
+  });
+
+  it("marks a card whose first snapshot was slow", async () => {
+    const dir = repo();
+    canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));
+    const w = world();
+    w.slowSnapshots(1_700);
+    const turns = createTurns(w.git, storage());
+    turns.watch(w.session, "https://relay.example");
+    w.set("A", "req", "working");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(1), { timeout: 5_000 });
+    w.slowSnapshots(0);
+    writeFileSync(join(dir, "n.txt"), "n\n");
+    w.set("A", "req", "done");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(2));
+    turns.claim(reply("m1", NOW()));
+    await vi.waitFor(() => expect(turns.cardsFor("m1")).toHaveLength(1));
+    expect(turns.cardsFor("m1")[0]?.checkouts[0]?.late).toBe(true);
   });
 });

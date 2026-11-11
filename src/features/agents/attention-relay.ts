@@ -669,8 +669,9 @@ export async function publishAll(
   // owner confirmed pruning: delete that head first (a changed one is
   // refused), so the add below restores this device's value over it.
   // Between the two, a community watch that names a replaced Interest has
-  // none; if the restore fails, until the owner retries. Runtimes already
-  // treat that record as missing, since they can't read it either.
+  // none; if the restore fails, until the move is retried. Runtimes using
+  // this reader already treat that record as missing; a client that reads
+  // its newer form does not.
   const replaced = Object.keys(attention)
     .filter((slug) => {
       const confirmed = options.prune?.[slug];

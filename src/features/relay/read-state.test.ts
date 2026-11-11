@@ -2394,9 +2394,11 @@ describe("durable read-state owner", () => {
     await restarted.ready;
     expect(restarted.floor()).toBe(floor);
   });
-  it("rejects a captured read when a full protected reserve drops its message mark", async () => {
+  it("rejects a captured reply when retention drops its mark despite a retained thread frontier", async () => {
     const f = fixture();
+    const rootId = (READ_RESERVE_KEYS - 1).toString(16).padStart(64, "0");
     const selectedKey = `msg:${"e".repeat(64)}`;
+    const selectedAt = 6000;
     const overrideKey = "manual";
     const override = { [overrideKey]: { set: 2, clear: 0, baseline: 0 } };
     const journal = newReadJournal();
@@ -2416,7 +2418,7 @@ describe("durable read-state owner", () => {
     const reserve = Object.fromEntries(
       Array.from({ length: READ_RESERVE_KEYS }, (_, n) => [
         `thread:${n.toString(16).padStart(64, "0")}`,
-        100,
+        n === READ_RESERVE_KEYS - 1 ? selectedAt : 100 + n,
       ]),
     );
     f.setJournal({
@@ -2435,7 +2437,14 @@ describe("durable read-state owner", () => {
 
     await expect(
       owner.readMessages(
-        [{ key: selectedKey, timestamp: 200, channelId: "target-room" }],
+        [
+          {
+            key: selectedKey,
+            timestamp: selectedAt,
+            channelId: "target-room",
+            rootId,
+          },
+        ],
         undefined,
         () => true,
         false,
@@ -2448,7 +2457,19 @@ describe("durable read-state owner", () => {
     expect(f.journal()).toEqual(before);
     expect(owner.floor()).toBe(0);
     expect(owner.state().frontiers[selectedKey]).toBeUndefined();
+    expect(
+      effectiveFrontier(owner.state(), selectedKey, "target-room"),
+    ).toBeUndefined();
     expect(owner.localUnread(selectedKey)).toBe(1);
+
+    owner.dispose();
+    const reloaded = f.make();
+    await reloaded.ready;
+    expect(reloaded.localUnread(selectedKey)).toBe(1);
+    expect(reloaded.state().frontiers[selectedKey]).toBeUndefined();
+    expect(
+      effectiveFrontier(reloaded.state(), selectedKey, "target-room"),
+    ).toBeUndefined();
   });
   it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
     const f = fixture();

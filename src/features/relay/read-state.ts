@@ -1504,11 +1504,11 @@ export function createReadState({
               const home = homeLookup({ ...current.homes, ...kept.homes });
               const covered = coveredWith(home);
               if (
-                messages.some(({ key, timestamp, channelId, rootId }) => {
+                messages.some(({ key, timestamp, channelId }) => {
                   if (
                     timestamp <= kept.floor ||
-                    (effectiveFrontier(retainedState, key, channelId, rootId) ??
-                      -1) >= timestamp
+                    (effectiveFrontier(retainedState, key, channelId) ?? -1) >=
+                      timestamp
                   )
                     return false;
                   const cover = covered?.(key, (other) =>

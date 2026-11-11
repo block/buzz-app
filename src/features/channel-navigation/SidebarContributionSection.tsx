@@ -4,17 +4,21 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
+  type CSSProperties,
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { SidebarSection } from "../../bundled/channels/SidebarSection";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import styles from "../../bundled/channels/Channels.module.css";
 import type { Navigation } from "../navigation/controller";
 import { targetKey, type OpenTarget } from "../navigation/targets";
-import type {
-  RegisteredSidebarSection,
-  SidebarSections,
+import {
+  maxSidebarRowDepth,
+  type RegisteredSidebarSection,
+  type SidebarSections,
 } from "./sidebar-sections-service";
 import { DroppableSidebarSection } from "./ChannelSidebarDnd";
 
@@ -47,6 +51,32 @@ function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
 
   // An omitted page scope retains the current community.
   return targetKey({ ...destination, scope: target.scope }) === selectedKey;
+}
+
+/**
+ * A group-placed section is its own top-level group, which nothing reorders, so
+ * it skips the drag-and-drop frame that only exists inside the Team group.
+ */
+function ContributionFrame({
+  grouped,
+  reorderable,
+  groupIndex,
+  ...section
+}: ComponentProps<typeof SidebarSection> & {
+  grouped: boolean;
+  reorderable: boolean;
+  groupIndex: number;
+}) {
+  if (grouped) return <SidebarSection {...section} persistentChevron />;
+  return (
+    <DroppableSidebarSection
+      {...section}
+      disabled={false}
+      reorderable={reorderable}
+      groupIndex={groupIndex}
+      groupDomain="contributions"
+    />
+  );
 }
 
 export function SidebarContributionSection({
@@ -92,11 +122,10 @@ export function SidebarContributionSection({
       registry={registry}
       resetIdentity={attempt}
       fallback={
-        <DroppableSidebarSection
-          disabled={false}
+        <ContributionFrame
+          grouped={entry.placement === "group"}
           reorderable={reorderable}
           groupIndex={groupIndex}
-          groupDomain="contributions"
           sectionKey={sectionKey}
           title={entry.title}
           open={open}
@@ -115,7 +144,7 @@ export function SidebarContributionSection({
           >
             Retry
           </Button>
-        </DroppableSidebarSection>
+        </ContributionFrame>
       }
     >
       {(section, active) => (
@@ -182,6 +211,15 @@ function SectionContents({
       !row.label.trim()
     )
       throw new Error("Sidebar rows need unique ids and non-empty labels");
+    if (
+      row.depth !== undefined &&
+      (!Number.isInteger(row.depth) ||
+        row.depth < 0 ||
+        row.depth > maxSidebarRowDepth)
+    )
+      throw new Error(
+        `Sidebar row depth must be a whole number from 0 to ${maxSidebarRowDepth}`,
+      );
     ids.add(row.id);
   }
   const select = (destination: OpenTarget) => {
@@ -214,9 +252,8 @@ function SectionContents({
     />
   ));
   return (
-    <DroppableSidebarSection
-      groupDomain="contributions"
-      disabled={false}
+    <ContributionFrame
+      grouped={entry.placement === "group"}
       reorderable={reorderable}
       groupIndex={groupIndex}
       sectionKey={`plugin:${entry.key}`}
@@ -247,7 +284,13 @@ function SectionContents({
           .join(" · ");
         const destination = entry.select(row);
         return (
-          <div key={row.id} className={styles.contributionNavigationItem}>
+          <div
+            key={row.id}
+            className={styles.contributionNavigationItem}
+            style={
+              { "--contribution-row-depth": row.depth ?? 0 } as CSSProperties
+            }
+          >
             <NavigationItem
               label={row.label}
               icon={row.icon}
@@ -264,6 +307,6 @@ function SectionContents({
           </div>
         );
       })}
-    </DroppableSidebarSection>
+    </ContributionFrame>
   );
 }

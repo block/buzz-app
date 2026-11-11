@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactElement,
   type ReactNode,
   type ComponentProps,
 } from "react";
@@ -125,6 +126,8 @@ type Inventory = {
   frame: Pick<ComponentProps<typeof SidebarFrame>, "busy" | "launchPending">;
   before: ReactNode;
   content: ReactNode;
+  /** Plugin sections that are top-level groups beside Solo and Team. */
+  groups: readonly ReactElement[];
   after: ReactNode;
   dialogs: ReactNode;
 };
@@ -726,9 +729,16 @@ export function ChannelInventory({
   // Group drags land on the placement drop targets, so they need both writers.
   const orderWritable = placementWritable && preferences.sectionOrderWritable;
   const groupIds = preferences.data?.sections.map(({ id }) => id) ?? [];
+  // Group-placed sections render beside Team, outside its drag and drop frame.
+  const teamContributions = contributions.filter(
+    ({ placement }) => placement !== "group",
+  );
+  const groupContributions = contributions.filter(
+    ({ placement }) => placement === "group",
+  );
   // Saved order uses the same section keys as collapse and drag.
   const orderedContributions = orderContributedSidebarSections(
-    contributions.map((entry) => ({
+    teamContributions.map((entry) => ({
       key: contributedSidebarSectionKey(entry.key),
       entry,
     })),
@@ -1603,7 +1613,7 @@ export function ChannelInventory({
             const sectionKey = contributedSidebarSectionKey(entry.key);
             const previousKey = orderedContributions[index - 1]?.key;
             const nextKey = orderedContributions[index + 1]?.key;
-            const reorderable = contributions.length > 1;
+            const reorderable = teamContributions.length > 1;
             return (
               <SidebarContributionSection
                 key={entry.key}
@@ -1659,6 +1669,24 @@ export function ChannelInventory({
         )}
       </>
     ),
+    groups: groupContributions.map((entry, index) => {
+      const sectionKey = contributedSidebarSectionKey(entry.key);
+      return (
+        <SidebarContributionSection
+          key={entry.key}
+          entry={entry}
+          registry={contributedSections ?? emptySidebarSections}
+          navigator={navigator}
+          target={target}
+          open={!sidebar.collapsed.includes(sectionKey)}
+          onToggle={(open) => sidebar.toggle(sectionKey, open)}
+          groupIndex={index}
+          reorderable={false}
+          move={undefined}
+          onRowsCommitted={sidebar.retryReveal}
+        />
+      );
+    }),
     after: (
       <>
         {cached && connectionError && (

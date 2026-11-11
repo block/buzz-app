@@ -837,7 +837,8 @@ for 30 days expires.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
 - **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
-  collapse either section independently. Buzz remembers the collapsed sections
+  collapse either section independently. A plugin can add a section of its own
+  after **Team**, shown only in **All**. Buzz remembers the collapsed sections
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.

@@ -796,6 +796,71 @@ it("preserves disabled contribution positions when active sections reorder", asy
   );
 });
 
+it("shows a group-placed section beside Team, only in the All view", async () => {
+  const makeSection = (
+    id: string,
+    placement: "team" | "group",
+  ): RegisteredSidebarSection => {
+    const rows = [{ id: `${id}-row`, label: `${id} item` }];
+    return {
+      version: 1,
+      id,
+      title: id,
+      icon: "★",
+      placement,
+      rows: { snapshot: () => rows, subscribe: () => () => {} },
+      select: () => ({ version: 1, kind: "home" }),
+      key: `example.plugin/${id}`,
+      pluginId: "example.plugin",
+      revision: "one",
+    };
+  };
+  const sections = [
+    makeSection("nested", "team"),
+    makeSection("projects", "group"),
+  ];
+  const registry: SidebarSections = {
+    version: 1,
+    snapshot: () => sections,
+    subscribe: () => () => {},
+    register: () => {},
+  };
+  const h = fixture(undefined, "ready", undefined, registry);
+  const user = userEvent.setup();
+  render(h.view("alpha"));
+
+  const team = await waitFor(() => {
+    const element = document.querySelector<HTMLElement>(
+      '[data-sidebar-section="scope:team"]',
+    );
+    if (!element) throw new Error("The Team group is not mounted");
+    return element;
+  });
+  const projects = document.querySelector<HTMLElement>(
+    '[data-sidebar-section="plugin:example.plugin/projects"]',
+  );
+  assert.exists(projects);
+  expect(
+    team.querySelector('[data-sidebar-section="plugin:example.plugin/nested"]'),
+  ).not.toBeNull();
+  expect(team.contains(projects)).toBe(false);
+  expect(projects).toBeVisible();
+
+  await user.click(screen.getByRole("tab", { name: "Solo" }));
+  expect(projects).not.toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Team" }));
+  expect(projects).not.toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "All" }));
+  expect(projects).toBeVisible();
+
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  await user.click(within(projects).getByText("projects"));
+  expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+    collapsed: ["plugin:example.plugin/projects"],
+  });
+});
+
 it("retries a contributed section after invalid rows recover", async () => {
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
   try {

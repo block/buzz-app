@@ -6,6 +6,8 @@ import {
   type Contribution,
 } from "../../plugins/contributions.ts";
 
+export const maxSidebarRowDepth = 4;
+
 export type SidebarSectionRow = Readonly<{
   id: string;
   label: string;
@@ -13,6 +15,8 @@ export type SidebarSectionRow = Readonly<{
   badge?: string;
   count?: number;
   status?: string;
+  /** Whole indent levels, 0 to `maxSidebarRowDepth`. */
+  depth?: number;
 }>;
 
 export type SidebarSectionAction = Readonly<{
@@ -22,11 +26,15 @@ export type SidebarSectionAction = Readonly<{
   onSelect: () => void | Promise<void>;
 }>;
 
+/** `team` nests the section in the Team group; `group` makes it a group of its own. */
+export type SidebarSectionPlacement = "team" | "group";
+
 export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
   title: string;
   icon: ReactNode;
+  placement?: SidebarSectionPlacement;
   rows: Readonly<{
     snapshot: () => readonly SidebarSectionRow[];
     subscribe: (listener: () => void) => () => void;
@@ -50,6 +58,7 @@ declare module "@deepseek-ai/cordis" {
   }
 }
 
+const placements: readonly SidebarSectionPlacement[] = ["team", "group"];
 const idPattern = /^[a-z0-9][a-z0-9._-]*$/;
 
 export class SidebarSectionsService extends Service implements SidebarSections {
@@ -75,6 +84,8 @@ export class SidebarSectionsService extends Service implements SidebarSections {
       typeof section.title !== "string" ||
       !section.title.trim() ||
       section.icon == null ||
+      (section.placement !== undefined &&
+        !placements.includes(section.placement)) ||
       !section.rows ||
       typeof section.rows.snapshot !== "function" ||
       typeof section.rows.subscribe !== "function" ||

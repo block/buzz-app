@@ -48,6 +48,31 @@ it("registers a versioned section under its owner and disposes it with the plugi
   await root.fiber.dispose();
 });
 
+it("accepts a group placement and rejects an unknown one", async () => {
+  const root = rootContext();
+  const registry = new SidebarSectionsService(root);
+  const register = (placement: unknown, id: string) =>
+    root
+      .extend({ pluginOwner: { id: "example.plugin", revision: "one" } })
+      .plugin((ctx) =>
+        ctx.sidebarSections?.register({ ...section, id, placement } as never),
+      );
+
+  await register("group", "projects").await();
+  await register("team", "nested").await();
+  await expect(register("top", "bad").await()).rejects.toThrow(
+    "A sidebar section needs",
+  );
+
+  expect(
+    registry.snapshot().map(({ id, placement }) => ({ id, placement })),
+  ).toEqual([
+    { id: "projects", placement: "group" },
+    { id: "nested", placement: "team" },
+  ]);
+  await root.fiber.dispose();
+});
+
 it("ignores an unsupported contribution version without failing plugin activation", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const root = rootContext();

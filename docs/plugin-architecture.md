@@ -641,6 +641,13 @@ renders its rows inside the existing Team sidebar using the same collapsible,
 reorderable, resizable section frame as built-in
 sections. It owns presentation and persists contributed section expansion and
 relative order; a plugin supplies row data and actions, not another sidebar.
+`placement: "group"` instead renders the section as its own top-level group
+after Team in the All view; it is hidden under the Solo and Team tabs, is
+collapsible but not reorderable, and persists its expansion like any other
+contributed section. The default `"team"` keeps the nested behavior. A row may
+set `depth` (a whole number from 0 to 4) to indent it one step per level under
+either placement. Any other value makes the rows invalid, which fails only that
+section.
 
 Each registration is owned by the plugin's Cordis scope and is removed on
 disable, replacement, or teardown. Rows use an external-store snapshot and

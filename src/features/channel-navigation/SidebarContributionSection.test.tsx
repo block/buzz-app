@@ -423,3 +423,65 @@ it("preserves the receiver for an external row store", () => {
   });
   expect(screen.getByRole("button", { name: "Later item" })).toBeVisible();
 });
+
+function renderSection(rows: readonly SidebarSectionRow[]) {
+  const entry = makeEntry("good", {
+    snapshot: () => rows,
+    subscribe: () => () => {},
+  });
+  const registry: SidebarSections = {
+    version: 1,
+    snapshot: () => [entry],
+    subscribe: () => () => {},
+    register: () => {},
+  };
+  render(
+    <ChannelSidebarDnd
+      writable={false}
+      onMove={() => {}}
+      onReorder={() => {}}
+      overlay={() => null}
+    >
+      <SidebarContributionSection
+        entry={entry}
+        registry={registry}
+        navigator={{ open: vi.fn() } as unknown as Navigation}
+        target={target}
+        open
+        onToggle={() => {}}
+        groupIndex={0}
+        reorderable={false}
+        move={{}}
+      />
+    </ChannelSidebarDnd>,
+  );
+}
+
+it("indents a row by its depth", () => {
+  renderSection([
+    { id: "parent", label: "Parent" },
+    { id: "child", label: "Child", depth: 2 },
+  ]);
+
+  const depthOf = (name: string) =>
+    screen
+      .getByRole("button", { name })
+      .closest<HTMLElement>("[style]")
+      ?.style.getPropertyValue("--contribution-row-depth");
+  expect(depthOf("Parent")).toBe("0");
+  expect(depthOf("Child")).toBe("2");
+});
+
+it.each([-1, 5, 1.5, Number.NaN])(
+  "rejects the row depth %s without breaking the sidebar",
+  (depth) => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    renderSection([{ id: "child", label: "Child", depth }]);
+
+    expect(screen.getByText(/Good section is unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Child" })).toBeNull();
+    consoleError.mockRestore();
+  },
+);

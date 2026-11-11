@@ -280,6 +280,7 @@ function ScopedSidebar({
             frame,
             before,
             content,
+            groups,
             after,
             dialogs,
           }) => (
@@ -378,6 +379,15 @@ function ScopedSidebar({
                       content
                     )}
                   </div>
+                  {groups.map((group) => (
+                    <div
+                      key={group.key}
+                      className={styles.sidebarGroup}
+                      hidden={filter !== "all"}
+                    >
+                      {group}
+                    </div>
+                  ))}
                 </SidebarUnread>
                 {after}
               </SidebarFrame>

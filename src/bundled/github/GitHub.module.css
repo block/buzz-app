@@ -285,6 +285,14 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-standard);
 }
+/* GitHub gives no media height, so a frame shown before its media loads
+   would guess its size, then jump; it stays collapsed until then. */
+.attachment:not([data-loaded]) [data-media-preview] {
+  height: 0;
+  aspect-ratio: auto;
+  margin-block: 0;
+  visibility: hidden;
+}
 /* Paint above the image: matching-color content cannot cover its edge. */
 .attachment [data-image-preview]::after {
   content: "";

@@ -1,12 +1,15 @@
 import {
   Children,
+  createContext,
+  Fragment,
   isValidElement,
   memo,
+  useContext,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import Markdown, { type ExtraProps } from "react-markdown";
+import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import type { PhrasingContent, Root, RootContent } from "mdast";
@@ -22,15 +25,14 @@ import {
   attachmentMetadata,
   bodyUrl,
   inertHtml,
+  signedSource,
 } from "./attachments";
 import styles from "./GitHub.module.css";
 
-function containsImage(node: NonNullable<ExtraProps["node"]>): boolean {
-  return (
-    node.tagName === "img" ||
-    node.children.some(
-      (child) => child.type === "element" && containsImage(child),
-    )
+function images(node: NonNullable<ExtraProps["node"]>): unknown[] {
+  if (node.tagName === "img") return [node.properties.src];
+  return node.children.flatMap((child) =>
+    child.type === "element" ? images(child) : [],
   );
 }
 
@@ -172,28 +174,138 @@ function githubHtml() {
   };
 }
 
+// GitHub signs a private attachment's URL for minutes and signs it afresh on
+// each read, so the newest signed URL is tried first and the plain URL after.
+// One that loaded stays, so a refresh doesn't reload what is shown.
 function EmbeddedAttachment({
-  children,
+  source,
+  signed,
+  render,
   fallback,
   caption,
 }: {
-  children: ReactNode;
+  source: string;
+  signed: string | undefined;
+  render: (source: string) => ReactNode;
   fallback: ReactNode;
   caption: ReactNode;
 }) {
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState<string>();
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const shown =
+    loaded ?? [signed, source].find((url) => url && !failed.has(url)) ?? source;
   return (
     <div
       className={styles.attachment}
-      onLoadCapture={() => setLoaded(true)}
-      onLoadedDataCapture={() => setLoaded(true)}
-      onErrorCapture={() => setLoaded(false)}
+      data-loaded={loaded ? "" : undefined}
+      onLoadCapture={() => setLoaded(shown)}
+      onLoadedMetadataCapture={() => setLoaded(shown)}
+      onLoadedDataCapture={() => setLoaded(shown)}
+      onErrorCapture={() => {
+        setLoaded(undefined);
+        setFailed((urls) => new Set(urls).add(shown));
+      }}
     >
-      {children}
+      <Fragment key={shown}>{render(shown)}</Fragment>
       {loaded ? caption : fallback}
     </div>
   );
 }
+
+// The body's attachments, from its rendered HTML. Each read of a private
+// repository's body signs its URLs afresh; reading them from context keeps the
+// Markdown components the same, so a refresh doesn't remount loaded media.
+const Metadata = createContext<ReturnType<typeof attachmentMetadata>>(
+  new Map(),
+);
+
+function BodyMedia({
+  source,
+  label,
+  image = false,
+  description,
+}: {
+  source: string;
+  label: ReactNode;
+  image?: boolean;
+  description?: string | undefined;
+}) {
+  const metadata = useContext(Metadata);
+  const attachment = attachmentFor(source, metadata, image);
+  const link = (
+    <a href={source} target="_blank" rel="noreferrer">
+      {label || attachment?.name || "Open attachment"}
+    </a>
+  );
+  if (!attachment) return link;
+  return (
+    <EmbeddedAttachment
+      key={source}
+      source={source}
+      signed={signedSource(source, metadata)}
+      fallback={link}
+      caption={
+        !image && Children.toArray(label).some((part) => part !== source)
+          ? label
+          : null
+      }
+      render={(shown) =>
+        attachment.kind === "audio" ? (
+          <AudioAttachment attachment={attachment} source={shown} />
+        ) : (
+          <MediaAttachment
+            attachment={attachment}
+            media={() => shown}
+            {...(description !== undefined
+              ? { imageDescription: description }
+              : {})}
+            preload="auto"
+            loading="eager"
+          />
+        )
+      }
+    />
+  );
+}
+
+const components: Components = {
+  // Players are block elements, including when embedded in prose.
+  p: ({ children }) => <div className={styles.paragraph}>{children}</div>,
+  a: ({ href, children, node }) => {
+    if (!href) return <>{children}</>;
+    const linked = node ? images(node) : [];
+    if (linked.length)
+      return (
+        <div>
+          {children}
+          {/* GitHub links an uploaded image to itself; the preview opens it. */}
+          {!linked.every((src) => src === href) && (
+            <a href={href} target="_blank" rel="noreferrer">
+              {href}
+            </a>
+          )}
+        </div>
+      );
+    return (
+      <BodyMedia
+        source={href}
+        label={children}
+        description={plainText(children) || undefined}
+      />
+    );
+  },
+  img: ({ src, alt }) =>
+    typeof src === "string" && src ? (
+      <BodyMedia source={src} label={alt} image description={alt} />
+    ) : (
+      alt
+    ),
+  table: ({ children }) => (
+    <div className={styles.tableScroll}>
+      <table>{children}</table>
+    </div>
+  ),
+};
 
 export const GitHubBody = memo(function GitHubBody({
   body,
@@ -214,84 +326,17 @@ export const GitHubBody = memo(function GitHubBody({
   );
   if (!bounded) return <div className={styles.plainBody}>{body}</div>;
 
-  const media = (
-    source: string,
-    label: ReactNode,
-    image = false,
-    description?: string,
-  ) => {
-    const attachment = attachmentFor(source, metadata, image);
-    const link = (
-      <a href={source} target="_blank" rel="noreferrer">
-        {label || attachment?.name || "Open attachment"}
-      </a>
-    );
-    if (!attachment) return link;
-    return (
-      <EmbeddedAttachment
-        key={source}
-        fallback={link}
-        caption={
-          !image && Children.toArray(label).some((part) => part !== source)
-            ? label
-            : null
-        }
-      >
-        {attachment.kind === "audio" ? (
-          <AudioAttachment attachment={attachment} source={source} />
-        ) : (
-          <MediaAttachment
-            attachment={attachment}
-            media={(value) => value}
-            {...(description !== undefined
-              ? { imageDescription: description }
-              : {})}
-            preload="metadata"
-          />
-        )}
-      </EmbeddedAttachment>
-    );
-  };
-
   return (
     <div className={styles.body}>
-      <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks, githubHtml]}
-        urlTransform={(value) => bodyUrl(value, url) ?? ""}
-        components={{
-          // Players are block elements, including when embedded in prose.
-          p: ({ children }) => (
-            <div className={styles.paragraph}>{children}</div>
-          ),
-          a: ({ href, children, node }) => {
-            if (!href) return <>{children}</>;
-            if (node && containsImage(node))
-              return (
-                <div>
-                  {children}
-                  <a href={href} target="_blank" rel="noreferrer">
-                    {href}
-                  </a>
-                </div>
-              );
-            return media(
-              href,
-              children,
-              false,
-              plainText(children) || undefined,
-            );
-          },
-          img: ({ src, alt }) =>
-            typeof src === "string" && src ? media(src, alt, true, alt) : alt,
-          table: ({ children }) => (
-            <div className={styles.tableScroll}>
-              <table>{children}</table>
-            </div>
-          ),
-        }}
-      >
-        {body}
-      </Markdown>
+      <Metadata.Provider value={metadata}>
+        <Markdown
+          remarkPlugins={[remarkGfm, remarkBreaks, githubHtml]}
+          urlTransform={(value) => bodyUrl(value, url) ?? ""}
+          components={components}
+        >
+          {body}
+        </Markdown>
+      </Metadata.Provider>
     </div>
   );
 });

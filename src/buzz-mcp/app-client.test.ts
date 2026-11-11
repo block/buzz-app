@@ -290,6 +290,16 @@ it("strips a proposed picture's metadata before uploading it as the agent", asyn
   expect(pngChunks(sent).map((c) => c.kind)).toEqual(["IHDR", "IDAT", "IEND"]);
 });
 
+/** A 1x1 two-colour GIF, with `extra` blocks before its image. */
+function gif(...extra: number[]) {
+  return new Uint8Array([
+    ...new TextEncoder().encode("GIF89a"),
+    ...[1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 255, 255, 255],
+    ...extra,
+    ...[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0, 0x3b],
+  ]);
+}
+
 it("strips an attached image's metadata and sends other files as they are", async () => {
   const upload = vi.fn(async (_data: string, type: string) => ({
     url: "https://relay/media/x",
@@ -304,13 +314,6 @@ it("strips an attached image's metadata and sends other files as they are", asyn
       memories: async () => ({ entries: [], partial: false }),
     },
   );
-  const gif = (...extra: number[]) =>
-    new Uint8Array([
-      ...new TextEncoder().encode("GIF89a"),
-      ...[1, 0, 1, 0, 0, 0, 0],
-      ...extra,
-      ...[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0, 0x3b],
-    ]);
   const text = new TextEncoder().encode("GPS 51.5,-0.12");
   // A comment extension carrying a location.
   await client.upload(gif(0x21, 0xfe, 3, 0x47, 0x50, 0x53, 0), "image/gif");
@@ -324,6 +327,47 @@ it("strips an attached image's metadata and sends other files as they are", asyn
     [text, "text/plain"],
   ]);
 });
+
+it.each(["signal", "check"])(
+  "uploads no attached image when the turn ends during its preparation (%s)",
+  async (retire) => {
+    const upload = vi.fn();
+    const controller = new AbortController();
+    let retired = false;
+    const client = appClient(
+      { pubkey: "agent", upload } as unknown as AgentHandle,
+      {
+        read: vi.fn(),
+        signal: controller.signal,
+        check: () => {
+          if (retired) throw new Error("Turn ended");
+        },
+        memories: async () => ({ entries: [], partial: false }),
+      },
+    );
+    // The second read is the prepared image's, after its last check.
+    const read = File.prototype.arrayBuffer;
+    let reads = 0;
+    const spy = vi
+      .spyOn(File.prototype, "arrayBuffer")
+      .mockImplementation(async function (this: File) {
+        if (++reads === 2) {
+          if (retire === "signal") controller.abort(new Error("Turn ended"));
+          else retired = true;
+        }
+        return read.call(this);
+      });
+    try {
+      await expect(client.upload(gif(), "image/gif")).rejects.toThrow(
+        "Turn ended",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(reads).toBe(2);
+    expect(upload).not.toHaveBeenCalled();
+  },
+);
 
 it("refuses a proposed picture its preparation does not recognize", async () => {
   const upload = vi.fn();

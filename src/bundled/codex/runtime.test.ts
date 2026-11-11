@@ -51,9 +51,9 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
-/** A minimal GIF with no metadata, so attaching it uploads it unchanged. */
+/** A 1x1 two-colour GIF without metadata, so attaching it uploads it unchanged. */
 const GIF =
-  "GIF89a\x01\x00\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+  "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
 const root = "c".repeat(64);
 const scope = `https://relay.test:${owner}`;
 function deferred<T>() {

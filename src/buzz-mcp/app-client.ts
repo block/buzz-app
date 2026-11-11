@@ -194,9 +194,9 @@ export function appClient(
           new File([new Uint8Array(data)], "file", { type: mime }),
           options.signal ?? new AbortController().signal,
         );
-        check();
         data = new Uint8Array(await image.arrayBuffer());
         mime = image.type;
+        check();
       }
       return agent.upload(toBase64(data), mime);
     },

@@ -70,6 +70,16 @@ test("specialized profile panels preserve Back/Forward, explicit Close and reope
     return (await read()).entry.id;
   };
   const viewer = await view("Viewer");
+  const extra = page.getByRole("button", {
+    name: "Extra profile action",
+    exact: true,
+  });
+  await expect(extra).toBeVisible();
+  await extra.focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Copy npub", exact: true }),
+  ).toBeFocused();
   const mic = await view("Mic");
   const tabs = page.getByRole("tablist", { name: "Panel tabs" });
   await expect(tabs.getByRole("tab")).toHaveCount(1);

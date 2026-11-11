@@ -3,7 +3,12 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
-import { StrictMode, useLayoutEffect, useState } from "react";
+import {
+  StrictMode,
+  useLayoutEffect,
+  useState,
+  type ComponentType,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -435,8 +440,25 @@ const manager = createPluginManager(context, {
                           .snapshot()
                           .find(
                             (panel) => panel.key === "buzz.profiles/profile",
-                          )?.component;
-                        return Native ? <Native {...props} /> : null;
+                          )?.component as
+                          | ComponentType<
+                              PanelProps &
+                                import("../../src/bundled/profiles/ProfilePanel").ProfileInfoContent
+                            >
+                          | undefined;
+                        return Native ? (
+                          <Native
+                            {...props}
+                            renderInfo={(content) => (
+                              <>
+                                <button type="button">
+                                  Extra profile action
+                                </button>
+                                {content}
+                              </>
+                            )}
+                          />
+                        ) : null;
                       },
                     });
                   },

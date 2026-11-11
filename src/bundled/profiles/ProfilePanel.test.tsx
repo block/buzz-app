@@ -1208,3 +1208,55 @@ it("shows historical verification time and issuer, discloses cache, and hides di
     owner.dispose();
   }
 });
+
+it("composes Info in place while preserving the native header, focus region and Channels", async () => {
+  const owner = createRelaySession(null);
+  const snapshot = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  try {
+    render(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(key) ?? ""}
+        close={() => {}}
+        renderInfo={(content) => (
+          <section aria-label="Extended Info">
+            <button type="button">Extra profile action</button>
+            {content}
+          </section>
+        )}
+      />,
+    );
+    const region = screen.getByRole("region", { name: "Profile details" });
+    region.focus();
+    expect(region).toHaveFocus();
+    expect(
+      within(screen.getByRole("region", { name: "Extended Info" })).getByRole(
+        "button",
+        { name: "Copy npub" },
+      ),
+    ).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Channels" }));
+    expect(screen.queryByRole("region", { name: "Extended Info" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Profile details" })).toBe(
+      region,
+    );
+    await user.click(screen.getByRole("tab", { name: "Info" }));
+    expect(
+      screen.getByRole("button", { name: "Extra profile action" }),
+    ).toBeTruthy();
+  } finally {
+    owner.dispose();
+  }
+});

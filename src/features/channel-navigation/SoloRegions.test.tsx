@@ -476,6 +476,24 @@ it("distinguishes missing state from unavailable storage and rejects invalid or 
   expect(state.get()).toBeUndefined();
 });
 
+it("retains the latest accepted subscriber write when storage becomes unavailable", async () => {
+  const h = fixture();
+  const source = await h.register();
+  const state = source.handle.state(source.binding());
+  const stop = state.subscribe(() => {
+    if (state.get() === "first") expect(state.set("second")).toBe(true);
+  });
+  expect(state.set("first")).toBe(true);
+  expect(state.get()).toBe("second");
+  stop();
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("denied");
+  });
+  expect(state.get()).toBe("second");
+  expect(state.set("rejected")).toBe(false);
+  expect(state.get()).toBe("second");
+});
+
 it("retains accepted presentation state across unmount, disposal and re-registration and refuses stale or failed writes", async () => {
   const h = fixture();
   let props: SoloRegionProps | undefined;

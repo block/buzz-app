@@ -34,10 +34,13 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
 } from "react";
 import {
   CheckCircleIcon,
@@ -48,6 +51,14 @@ import { AgentAvatar } from "../../features/agents/AgentAvatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
+import {
+  ContributionBoundary,
+  contributionKey,
+} from "../../features/conversation/ContributionBoundary";
+import type {
+  ProfileTabs,
+  RegisteredProfileTab,
+} from "../../features/profiles/tabs";
 import type { PanelProps } from "../../features/panels/service";
 import {
   claimProfileTranscript,
@@ -91,6 +102,28 @@ import { writeClipboardText } from "../../shared/clipboard";
 
 const noSubscribe = () => () => {};
 const emptyAgentTypes = Object.freeze([]);
+const noProfileTabs: readonly RegisteredProfileTab[] = Object.freeze([]);
+/** Notes, as a plugin's tab goes away, whether it held keyboard focus. */
+function PluginTabFocus({
+  lostFocus,
+  children,
+}: {
+  lostFocus: RefObject<boolean>;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    return () => {
+      if (node?.contains(document.activeElement)) lostFocus.current = true;
+    };
+  }, [lostFocus]);
+  return (
+    <div ref={ref} className="contents">
+      {children}
+    </div>
+  );
+}
 /** This session's community, which targets opened from the panel stay in. */
 function panelCommunity(scope: string | undefined, viewer: string | undefined) {
   if (!scope || !viewer || !scope.endsWith(`:${viewer}`)) return undefined;
@@ -127,6 +160,7 @@ export function ProfilePanel({
   agents,
   communities,
   linkRenderers,
+  profileTabs,
   close,
 }: PanelProps & {
   relay: RelayData;
@@ -135,6 +169,8 @@ export function ProfilePanel({
   agents?: Agents;
   communities?: CommunityReader | undefined;
   linkRenderers?: ConversationExtensions["links"] | undefined;
+  /** People show the tabs plugins add. */
+  profileTabs?: ProfileTabs | undefined;
 }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
@@ -205,6 +241,7 @@ export function ProfilePanel({
   return (
     <ProfileDetails
       linkRenderers={linkRenderers}
+      profileTabs={profileTabs}
       key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
       initialTranscript={initialTranscript}
@@ -349,6 +386,7 @@ function OwnedAgentProfile({
 
 function ProfileDetails({
   linkRenderers,
+  profileTabs,
   initialTab,
   initialTranscript,
   agentHint,
@@ -365,6 +403,7 @@ function ProfileDetails({
 }: {
   agents: Agents | undefined;
   linkRenderers: ConversationExtensions["links"] | undefined;
+  profileTabs: ProfileTabs | undefined;
   communities: CommunityReader | undefined;
   initialTab: "info" | "activity";
   initialTranscript: TranscriptRequest | undefined;
@@ -388,6 +427,11 @@ function ProfileDetails({
     selection.snapshot,
   );
   const profile = profiles.get(pubkey);
+  const addedTabs = useSyncExternalStore(
+    profileTabs?.subscribe ?? noSubscribe,
+    profileTabs?.snapshot ?? (() => noProfileTabs),
+    () => noProfileTabs,
+  );
   const verificationDate = profile?.verified
     ? new Date(profile.verified.verifiedAt * 1000)
     : undefined;
@@ -404,7 +448,7 @@ function ProfileDetails({
   const retryButton = useRef<HTMLButtonElement>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [tab, setTab] = useState<
-    "info" | "activity" | "channels" | `agent:${string}`
+    "info" | "activity" | "channels" | `agent:${string}` | `profile:${string}`
   >(initialTab);
   // A new transcript request shows Activity, as choosing its tab would.
   const opening = initialTranscript?.opening;
@@ -460,6 +504,15 @@ function ProfileDetails({
   useEffect(() => {
     if (!tabbed) region.current?.focus();
   }, [tabbed]);
+  // A plugin's tab can go while focused: its `when` declines or its plugin
+  // turns off. The panel shows Info then; keep focus in the profile.
+  const lostFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!lostFocus.current) return;
+    lostFocus.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body) region.current?.focus();
+  });
   const profileGeneration = useProfileGeneration(session.profiles);
   // Each target/session owns this completion; shared data work remains session-owned.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery; a purge generation rereads.
@@ -499,8 +552,48 @@ function ProfileDetails({
     attempt,
   );
   const verifiedOwner = ownership.owner;
+  // Plugins' tabs are for people; agents have theirs from `agents.registerTab`.
+  const personTabs = displayAgent
+    ? []
+    : addedTabs
+        .filter(({ when }) => {
+          try {
+            return !when || when(pubkey, profile);
+          } catch {
+            return false;
+          }
+        })
+        .map((tab) => ({
+          value: `profile:${tab.key}` as const,
+          label: tab.title,
+          render: () => (
+            <PluginTabFocus key={tab.key} lostFocus={lostFocus}>
+              <ContributionBoundary
+                key={contributionKey(tab)}
+                fallback={
+                  <p role="alert" className="m-0 text-body-sm text-danger">
+                    {tab.title} is unavailable.
+                  </p>
+                }
+              >
+                <tab.component
+                  pubkey={pubkey}
+                  profile={profile}
+                  open={(target) => !!context?.open(target)}
+                  canOpen={(target) => !!context?.canOpen(target)}
+                />
+              </ContributionBoundary>
+            </PluginTabFocus>
+          ),
+        }));
+  const personTab = personTabs.find((item) => item.value === requestedTab);
+  // A tab that went away doesn't take the selection back if it returns.
+  if (tab.startsWith("profile:") && !personTab) setTab("info");
   const selectedTab =
-    requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
+    (requestedTab.startsWith("agent:") && !section) ||
+    (requestedTab.startsWith("profile:") && !personTab)
+      ? "info"
+      : requestedTab;
   const community = panelCommunity(scope, viewer);
   const communityOrigin = community?.communityOrigin;
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
@@ -676,6 +769,7 @@ function ProfileDetails({
           items={[
             { value: "info", label: "Info" },
             ...sections.map(({ value, label }) => ({ value, label })),
+            ...personTabs.map(({ value, label }) => ({ value, label })),
             { value: "channels", label: "Channels" },
           ]}
           label="Profile sections"
@@ -684,6 +778,8 @@ function ProfileDetails({
             <div className={styles.tabContent}>
               {selected.startsWith("agent:") ? (
                 sections.find((item) => item.value === selected)?.render()
+              ) : selected.startsWith("profile:") ? (
+                personTabs.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
                 <>
                   {profile?.verified && (

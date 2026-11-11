@@ -1141,6 +1141,11 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   A saved plugin sort can briefly wait for its plugin at startup, within the
   sidebar's 1.5-second loading budget. If unavailable, it falls back to A–Z
   without forgetting the saved choice.
+- Plugins can add tabs to a person's profile, between **Info** and
+  **Channels**; agents' profiles don't show them. Turning the plugin off removes
+  its tab. A tab that fails says it is unavailable, and the rest of the profile
+  keeps working. If the open tab goes away while it has keyboard focus, the
+  profile shows **Info** and focus moves to the profile.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without

@@ -33,7 +33,7 @@ test("generated author package in a path with spaces exposes shared message fact
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops } from "@buzz/author";
+import type { Context, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, UnreadCapability, Backdrops, ProfileTabs } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -180,6 +180,14 @@ export function apply(ctx: Context) {
   backdrops?.register({ id: "glow", component: () => null });
   // @ts-expect-error A backdrop must be a React component.
   backdrops?.register({ id: "bad-glow", component: "div" });
+  const profileTabs: ProfileTabs | undefined = ctx.reflect.get("profileTabs");
+  profileTabs?.register({
+    id: "details", title: "Details",
+    when: (_pubkey, profile) => !!profile?.verified,
+    component: ({ pubkey, profile, open }) => createElement("button", { onClick: () => open(pubkey) }, profile?.name),
+  });
+  // @ts-expect-error A profile tab must be a React component.
+  profileTabs?.register({ id: "bad-details", title: "Details", component: "div" });
   const sidebar: SidebarSections | undefined = ctx.reflect.get("sidebarSections");
   sidebar?.register(section);
   // @ts-expect-error Sidebar contribution versions are explicit.

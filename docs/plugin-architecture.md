@@ -864,6 +864,19 @@ meant only for agents running here says so in its `when`
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
+A plugin can add a tab to people's profile panels with
+`ctx.profileTabs.register({ id, title, component, when })`. Read the service
+with `ctx.reflect.get("profileTabs")` so the plugin still activates on hosts
+without it. The component receives `{ pubkey, profile, open, canOpen }`:
+`profile` is what the panel shows and is absent until it loads, and its
+`verified` name is the relay's assertion, not account access. `open` and
+`canOpen` work as they do for agent tabs. An optional `when(pubkey, profile)`
+limits the tab to the people it returns true for; one that throws hides only
+its own tab. Tabs follow Info and precede Channels, in registration order.
+Agents' profiles show none: they have `agents.registerTab`. A component that
+throws shows that the tab is unavailable, and the rest of the panel keeps
+working. It is removed when the plugin is turned off or its scope ends.
+
 A plugin that shows Attention calls `ctx.agents.controlAttention()`.
 Installed plugins may call it too. Agents' watches, timers and sources run on
 this device only while such a plugin is on, and then for every agent: there is

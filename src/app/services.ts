@@ -9,6 +9,7 @@ import {
   nativeIdentityEnabled,
 } from "../features/identity/service";
 import { SettingsCardsService } from "../features/settings/service";
+import { ProfileTabsService } from "../features/profiles/tabs";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
 import {
@@ -112,6 +113,7 @@ export function createServices() {
   const accountActions = new AccountActionsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
+  new ProfileTabsService(ctx);
   const identityNames = new IdentityNamesService(ctx, localAgents.agents);
   const identity = nativeIdentityEnabled() ? createIdentity() : undefined;
   const communities = createCommunities(

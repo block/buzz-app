@@ -159,6 +159,11 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
 .input ol {
   list-style: decimal;
 }
+.annotation {
+  text-decoration: underline wavy var(--text-danger);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
 .input [data-spoiler] {
   background: var(--affordance-subtle);
   border-radius: var(--radius-chip);

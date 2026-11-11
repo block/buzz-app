@@ -2475,7 +2475,10 @@ verification when the community provides it, so a mark can read
 follow it. Marks decide for themselves whether to draw anything: return `null`
 for people they do not mark. The host owns the row, focus and selection; marks
 are presentation only and get no opener. Each mark renders in its own boundary,
-so a failing mark renders nothing and leaves the name and row usable.
+so a failing mark renders nothing and leaves the name and row usable. Marks draw
+in registration order. Continuation rows, workflow bylines, agent coordination
+lines and group or channel suggestions show none. A mark's text is part of the
+byline, so keep it to an icon with an accessible label.
 
 `placement: "toolbar"` puts the action in the host's message toolbar. The
 toolbar appears on hover and keyboard focus. The host supplies an icon button

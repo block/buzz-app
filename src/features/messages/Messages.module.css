@@ -250,6 +250,9 @@
   align-items: center;
   gap: var(--space-1);
 }
+.authorIdentityMarks:empty {
+  display: none;
+}
 .author {
   font-weight: var(--type-weight-medium);
   flex-shrink: 0;

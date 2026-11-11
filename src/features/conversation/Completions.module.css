@@ -124,6 +124,9 @@
   gap: var(--space-1);
   margin-inline-start: var(--space-1);
 }
+.identityMarks:empty {
+  display: none;
+}
 .name {
   display: block;
   min-width: 0;

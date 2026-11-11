@@ -2863,6 +2863,26 @@ it("draws identity marks right after the author name, containing a broken one", 
     error.mockRestore();
     cleanup();
   }
+  renderDom(
+    <MessageRow
+      row={{ ...row, replyCount: 0 }}
+      session={session}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      layout="continuation"
+      extensions={{
+        tools: { snapshot: () => none, subscribe: () => () => {} },
+        inline: { snapshot: () => none, subscribe: () => () => {} },
+        identityMarks: { snapshot: () => marks, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(screen.getByText("Root")).toBeInTheDocument();
+  expect(screen.queryByText("identity mark")).toBeNull();
+  cleanup();
 });
 
 it("contains a throwing plugin action icon and opened component", async () => {

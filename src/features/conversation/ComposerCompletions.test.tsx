@@ -138,6 +138,11 @@ function mountPeople(
       label: "Hannah",
       edit: { mention: { pubkey: "b".repeat(64), name: "Hannah" } },
     },
+    {
+      id: "team:helpers",
+      label: "helpers",
+      edit: { mentions: [{ pubkey: "b".repeat(64), name: "Hannah" }] },
+    },
   ];
   const people: Contribution<ComposerCompletion> = {
     id: "people",
@@ -226,6 +231,7 @@ it("draws identity marks after a mentioned person's name, containing a broken on
     screen.getByRole("option", { name: /^Honey\s*Agent\s*Managed by Wes$/ }),
   ).not.toBeNull();
   expect(seen).toContainEqual({ tag: "profiles" });
+  expect(screen.getByRole("option", { name: /^helpers$/ })).not.toBeNull();
   error.mockRestore();
 });
 it("draws no identity marks for providers outside the bundled mentions", async () => {

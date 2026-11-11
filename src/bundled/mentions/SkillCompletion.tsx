@@ -11,10 +11,10 @@ import { BookIcon } from "../../shared/design-system/icons";
 import { useHeldListing } from "./held-listing";
 
 /** The folders each bundled local harness reads its own skills from, by
- * agent type. */
+ * agent type. The host resolves `$CODEX_HOME` as Codex's launcher does. */
 const SKILL_FOLDERS: Readonly<Record<string, readonly string[]>> = {
   "buzz.claude-code/claude-code": ["~/.claude/skills"],
-  "buzz.codex/codex": ["~/.codex/skills", "~/.agents/skills"],
+  "buzz.codex/codex": ["$CODEX_HOME/skills", "~/.agents/skills"],
 };
 /** The chip keeps a short description for its details. */
 const DESCRIPTION_LIMIT = 300;

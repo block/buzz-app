@@ -62,17 +62,40 @@ fn front_matter(text: &str) -> Option<(String, String)> {
     None
 }
 
+/// A leading `$CODEX_HOME` names Codex's home as its launcher resolves it:
+/// the variable when set, else `~/.codex`. A relative value names no folder.
+fn codex_root(root: &str, codex_home: Option<&str>) -> Option<String> {
+    let Some(rest) = root
+        .strip_prefix("$CODEX_HOME")
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+    else {
+        return Some(root.to_owned());
+    };
+    match codex_home.filter(|value| !value.is_empty()) {
+        Some(value) if Path::new(value).is_absolute() => Some(format!("{value}{rest}")),
+        Some(_) => None,
+        None => Some(format!("~/.codex{rest}")),
+    }
+}
+
 /// Each `<root>/<folder>/SKILL.md` with a named front matter, by name. The
 /// first root to name a skill wins, and a missing root lists nothing. Follows
 /// linked skill folders, as the harnesses do. Reads only; the caller names the
 /// harness's folders.
-pub(crate) fn skills(roots: &[String], home: Option<&Path>) -> Result<Vec<LocalSkill>, String> {
+pub(crate) fn skills(
+    roots: &[String],
+    home: Option<&Path>,
+    codex_home: Option<&str>,
+) -> Result<Vec<LocalSkill>, String> {
     if roots.len() > MAX_ROOTS {
         return Err("Too many skill folders.".into());
     }
     let mut found: Vec<LocalSkill> = Vec::new();
     for root in roots {
-        let root = crate::workspace_folder::expand(root.trim(), home);
+        let Some(root) = codex_root(root.trim(), codex_home) else {
+            continue;
+        };
+        let root = crate::workspace_folder::expand(&root, home);
         if !root.is_absolute() {
             return Err("A skill folder must be absolute or under ~/.".into());
         }
@@ -125,8 +148,9 @@ pub(crate) async fn local_skills_list<R: tauri::Runtime>(
 ) -> Result<Vec<LocalSkill>, String> {
     use tauri::Manager as _;
     let home = app.path().home_dir().ok();
+    let codex_home = std::env::var("CODEX_HOME").ok();
     crate::host_files::bounded_listing("Listing skills took too long", move || {
-        skills(&roots, home.as_deref())
+        skills(&roots, home.as_deref(), codex_home.as_deref())
     })
     .await
 }
@@ -173,7 +197,7 @@ mod tests {
         skill(".agents/skills", "audit", "---\nname: audit\n---\n");
         std::fs::write(home.join(".claude/skills/README.md"), "not a skill").unwrap();
         let roots = ["~/.claude/skills", "~/.agents/skills", "~/.missing/skills"].map(String::from);
-        let listed = skills(&roots, Some(&home)).unwrap();
+        let listed = skills(&roots, Some(&home), None).unwrap();
         let names: Vec<_> = listed.iter().map(|skill| skill.name.as_str()).collect();
         assert_eq!(names, ["audit", "write"]);
         assert_eq!(listed[1].description, "Prose");
@@ -182,8 +206,13 @@ mod tests {
             listed[1].path,
             home.join(".claude/skills/write/SKILL.md").to_str().unwrap()
         );
-        assert!(skills(&["relative".into()], Some(&home)).is_err());
-        assert!(skills(&vec![String::from("~/.claude/skills"); 9], Some(&home)).is_err());
+        assert!(skills(&["relative".into()], Some(&home), None).is_err());
+        assert!(skills(
+            &vec![String::from("~/.claude/skills"); 9],
+            Some(&home),
+            None
+        )
+        .is_err());
     }
 
     #[test]
@@ -203,7 +232,7 @@ mod tests {
         );
         skill("short", "---\nname: short\n---\n");
         let roots = ["~/skills".to_string()];
-        let names: Vec<_> = skills(&roots, Some(&home))
+        let names: Vec<_> = skills(&roots, Some(&home), None)
             .unwrap()
             .into_iter()
             .map(|skill| skill.name)
@@ -213,7 +242,7 @@ mod tests {
             skill(&format!("s{index}"), &format!("---\nname: s{index}\n---\n"));
         }
         assert_eq!(
-            skills(&roots, Some(&home)).unwrap_err(),
+            skills(&roots, Some(&home), None).unwrap_err(),
             "There are more than 512 skills."
         );
     }
@@ -228,8 +257,44 @@ mod tests {
         std::fs::write(shared.join("SKILL.md"), "---\nname: review\n---\n").unwrap();
         std::fs::create_dir_all(home.join(".codex/skills")).unwrap();
         std::os::unix::fs::symlink(&shared, home.join(".codex/skills/review")).unwrap();
-        let listed = skills(&["~/.codex/skills".into()], Some(&home)).unwrap();
+        let listed = skills(&["~/.codex/skills".into()], Some(&home), None).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].display_path, "~/.codex/skills/review/SKILL.md");
+    }
+
+    #[test]
+    fn reads_codex_skills_from_the_launcher_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = dunce::canonicalize(temp.path()).unwrap();
+        for (root, name) in [
+            (".codex/skills/a", "default"),
+            ("profile/skills/a", "profile"),
+        ] {
+            std::fs::create_dir_all(home.join(root)).unwrap();
+            std::fs::write(
+                home.join(root).join("SKILL.md"),
+                format!("---\nname: {name}\n---\n"),
+            )
+            .unwrap();
+        }
+        let names = |codex_home: Option<&str>| -> Vec<String> {
+            skills(&["$CODEX_HOME/skills".into()], Some(&home), codex_home)
+                .unwrap()
+                .into_iter()
+                .map(|skill| skill.name)
+                .collect()
+        };
+        let profile = home.join("profile");
+        assert_eq!(names(Some(profile.to_str().unwrap())), ["profile"]);
+        assert_eq!(names(None), ["default"]);
+        assert_eq!(names(Some("")), ["default"]);
+        assert!(
+            names(Some("profile")).is_empty(),
+            "A relative home names no folder"
+        );
+        assert!(
+            skills(&["$CODEX_HOMES/skills".into()], Some(&home), None).is_err(),
+            "Only the whole variable name is replaced"
+        );
     }
 }

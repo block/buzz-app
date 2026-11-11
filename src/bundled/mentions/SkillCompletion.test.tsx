@@ -173,7 +173,7 @@ it("offers the one addressed local agent's skills as chips for that agent, liste
   const other = showSkills("two", [codex], "");
   await waitFor(() => expect(other.labels()).toEqual(["review", "write"]));
   expect(invoke).toHaveBeenCalledExactlyOnceWith("local_skills_list", {
-    roots: ["~/.codex/skills", "~/.agents/skills"],
+    roots: ["$CODEX_HOME/skills", "~/.agents/skills"],
   });
   expect(other.last()?.items[0]?.edit).toMatchObject({
     token: { target: codex },

@@ -1086,6 +1086,8 @@ uses Settings → Decisions API to assign one, several, or all selected agents t
 each request in your own Solo chats. You can add agents ad hoc without creating
 a team or editing their instructions. The selected pool stays available for
 later requests; only the agents assigned to a particular message are notified.
+Routing supports up to eight selected agents. With more than eight, every selected
+agent is notified without a Decisions API call.
 Open-ended group requests for thoughts, opinions or feedback invite everyone
 to answer. Name particular agents or ask for one answer to narrow the audience.
 Work requiring agent coordination starts all selected agents. Agent replies and

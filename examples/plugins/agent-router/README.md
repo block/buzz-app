@@ -7,9 +7,10 @@ Only the assigned agents receive notification mentions and start work.
 For up to eight candidates, one choice question lists every nonempty subset,
 including single agents and the full set. JEV chooses the exact assigned set
 with confidence; there are no per-agent yes/no questions on this path.
-Eight candidates produce 255 options, the Decisions API limit. Larger pools
-retain the bounded plan-plus-membership path: one named agent, all, or a subset
-whose members are chosen by per-agent questions in the same decision batch.
+Eight candidates produce 255 options, the Decisions API limit. Routing supports
+at most eight selected agents. With more than eight, the plugin sends to all
+selected agents without calling the Decisions API. There is no alternate
+routing algorithm for larger pools.
 
 It needs the host's `conversation.registerAgentRouter` extension. It will refuse
 to activate on builds without it. Install this folder through Settings → Plugins

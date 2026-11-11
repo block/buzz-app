@@ -277,6 +277,101 @@ it("defaults to all selected agents if a decision unexpectedly rejects", async (
   h.decide.mockRejectedValueOnce(new Error("Provider unavailable"));
   expect(await h.router.route(request)).toEqual([a, b, c]);
 });
+it.each([0.01, 0.5, 0.69])(
+  "sends to all selected agents when the set choice is uncertain: %s",
+  async (probability) => {
+    const h = setup({
+      outcome: "answered",
+      answers: {
+        assignment: {
+          type: "choice",
+          choice: "agent_0",
+          confidence: probability,
+        },
+        ...Object.fromEntries(
+          [a, b, c].map((_, i) => [
+            `group_${i}`,
+            { type: "yes_no", probability },
+          ]),
+        ),
+      },
+    });
+    expect(
+      await h.router.route({
+        ...request,
+        text: "how does my calendar look like?",
+      }),
+    ).toEqual([a, b, c]);
+    expect(h.decide).toHaveBeenCalledOnce();
+  },
+);
+it.each([
+  ["agent_0", [a]],
+  ["agent_1", [b]],
+  ["agent_2", [c]],
+  ["set_3", [a, b]],
+  ["set_5", [a, c]],
+  ["set_6", [b, c]],
+  ["all", [a, b, c]],
+])(
+  "maps the complete subset choice %s back to its exact recipients",
+  async (choice, expected) => {
+    const h = setup({
+      outcome: "answered",
+      answers: { assignment: { type: "choice", choice, confidence: 0.99 } },
+    });
+    expect(
+      await h.router.route({
+        ...request,
+        candidates: [...request.candidates].reverse(),
+      }),
+    ).toEqual(expected);
+    expect(h.decide).toHaveBeenCalledOnce();
+  },
+);
+it("offers all 255 nonempty subsets at the eight-agent limit", async () => {
+  const candidates = Array.from({ length: 8 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `Agent ${i}`,
+    description: "",
+  }));
+  const h = setup({
+    outcome: "answered",
+    answers: {
+      assignment: { type: "choice", choice: "set_129", confidence: 0.99 },
+    },
+  });
+  expect(await h.router.route({ ...request, candidates })).toEqual([
+    candidates[0].pubkey,
+    candidates[7].pubkey,
+  ]);
+  expect(h.decide).toHaveBeenCalledOnce();
+  const questions = h.decide.mock.calls[0][0].questions;
+  expect(Object.keys(questions)).toEqual(["assignment"]);
+  expect(Object.keys(questions.assignment.options)).toHaveLength(255);
+});
+it.each([9, 32])(
+  "uses ordinary delivery for %s agents without reading instructions or calling JEV",
+  async (count) => {
+    const candidates = Array.from({ length: count }, (_, i) => ({
+      pubkey: i.toString(16).padStart(64, "0"),
+      name: `Agent ${i}`,
+      description: "",
+    })).reverse();
+    const agents = { snapshot: vi.fn(), types: vi.fn() };
+    const h = setup(undefined, agents);
+    expect(await h.router.route({ ...request, candidates })).toEqual(
+      candidates.map(({ pubkey }) => pubkey),
+    );
+    expect(agents.snapshot).not.toHaveBeenCalled();
+    expect(agents.types).not.toHaveBeenCalled();
+    expect(h.decide).not.toHaveBeenCalled();
+  },
+);
+it("requires host support instead of appearing active while routing nothing", () => {
+  expect(() => apply({ conversation: {} })).toThrow("pre-send agent routing");
+});
+
 it("the host accepts ordinary delivery after settings and decision failures", async () => {
   const root = new Context();
   root.provide("pluginStatus", {
@@ -313,144 +408,4 @@ it("the host accepts ordinary delivery after settings and decision failures", as
   } finally {
     await root.fiber.dispose();
   }
-});
-it.each([0.01, 0.5, 0.69])(
-  "sends to all selected agents when the set choice is uncertain: %s",
-  async (probability) => {
-    const h = setup({
-      outcome: "answered",
-      answers: {
-        assignment: {
-          type: "choice",
-          choice: "agent_0",
-          confidence: probability,
-        },
-        ...Object.fromEntries(
-          [a, b, c].map((_, i) => [
-            `group_${i}`,
-            { type: "yes_no", probability },
-          ]),
-        ),
-      },
-    });
-    expect(
-      await h.router.route({
-        ...request,
-        text: "how does my calendar look like?",
-      }),
-    ).toEqual([a, b, c]);
-    expect(h.decide).toHaveBeenCalledOnce();
-  },
-);
-it("sends to all candidates when the final pair's assignment is uncertain, even if another agent is assigned", async () => {
-  const candidates = Array.from({ length: 32 }, (_, i) => ({
-    pubkey: i.toString(16).padStart(64, "0"),
-    name: `Agent ${i}`,
-    description: "",
-  }));
-  const h = setup({
-    outcome: "answered",
-    answers: {
-      assignment: { type: "choice", choice: "subset", confidence: 1 },
-      ...Object.fromEntries(
-        Array.from({ length: 30 }, (_, i) => [
-          `group_${i}`,
-          { type: "yes_no", probability: i === 0 ? 0.99 : 0.01 },
-        ]),
-      ),
-      group_30: { type: "choice", choice: "none", confidence: 0.59 },
-    },
-  });
-  expect(await h.router.route({ ...request, candidates })).toEqual(
-    candidates.map(({ pubkey }) => pubkey),
-  );
-  expect(h.decide).toHaveBeenCalledOnce();
-});
-it.each([
-  ["agent_0", [a]],
-  ["agent_1", [b]],
-  ["agent_2", [c]],
-  ["set_3", [a, b]],
-  ["set_5", [a, c]],
-  ["set_6", [b, c]],
-  ["all", [a, b, c]],
-])(
-  "maps the complete subset choice %s back to its exact recipients",
-  async (choice, expected) => {
-    const h = setup({
-      outcome: "answered",
-      answers: { assignment: { type: "choice", choice, confidence: 0.99 } },
-    });
-    expect(
-      await h.router.route({
-        ...request,
-        candidates: [...request.candidates].reverse(),
-      }),
-    ).toEqual(expected);
-    expect(h.decide).toHaveBeenCalledOnce();
-  },
-);
-it.each([
-  [8, 1, 255],
-  [9, 10, 11],
-])(
-  "uses a bounded plan at %s candidates",
-  async (count, questionCount, optionCount) => {
-    const candidates = Array.from({ length: count }, (_, i) => ({
-      pubkey: i.toString(16).padStart(64, "0"),
-      name: `Agent ${i}`,
-      description: "",
-    }));
-    const h = setup({
-      outcome: "answered",
-      answers: {
-        assignment: { type: "choice", choice: "all", confidence: 0.99 },
-      },
-    });
-    expect(await h.router.route({ ...request, candidates })).toHaveLength(
-      count,
-    );
-    const questions = h.decide.mock.calls[0][0].questions;
-    expect(Object.keys(questions)).toHaveLength(questionCount);
-    expect(Object.keys(questions.assignment.options)).toHaveLength(optionCount);
-  },
-);
-it("keeps the maximum 32 candidates in one bounded decision", async () => {
-  const h = setup({
-    outcome: "answered",
-    answers: { assignment: { type: "choice", choice: "all", confidence: 1 } },
-  });
-  const candidates = Array.from({ length: 32 }, (_, i) => ({
-    pubkey: i.toString(16).padStart(64, "0"),
-    name: `Agent ${i}`,
-    description: "",
-  }));
-  expect(await h.router.route({ ...request, candidates })).toHaveLength(32);
-  expect(Object.keys(h.decide.mock.calls[0][0].questions)).toHaveLength(32);
-});
-it("can assign the final pair at the 32-agent limit without starting the other candidates", async () => {
-  const candidates = Array.from({ length: 32 }, (_, i) => ({
-    pubkey: i.toString(16).padStart(64, "0"),
-    name: `Agent ${i}`,
-    description: "",
-  }));
-  const h = setup({
-    outcome: "answered",
-    answers: {
-      assignment: { type: "choice", choice: "subset", confidence: 1 },
-      ...Object.fromEntries(
-        Array.from({ length: 30 }, (_, i) => [
-          `group_${i}`,
-          { type: "yes_no", probability: 0 },
-        ]),
-      ),
-      group_30: { type: "choice", choice: "both", confidence: 0.99 },
-    },
-  });
-  expect(await h.router.route({ ...request, candidates })).toEqual(
-    candidates.slice(30).map(({ pubkey }) => pubkey),
-  );
-});
-it("requires host support instead of appearing active while routing nothing", () => {
-  expect(() => apply({ conversation: {} })).toThrow("pre-send agent routing");
 });

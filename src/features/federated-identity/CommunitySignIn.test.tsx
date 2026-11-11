@@ -33,6 +33,23 @@ it.each(["storage-unavailable", "storage-denied"])(
     expect(h.service.signIn).not.toHaveBeenCalled();
   },
 );
+it("says an unreadable saved sign-in is not a permissions problem, and that signing in can't fix it", () => {
+  const h = federatedFixture();
+  h.publish({ status: "unavailable", failure: "storage-corrupt" });
+  render(
+    <CommunitySignIn
+      identity={h.service}
+      error="Federated sign-in is required"
+      retry={vi.fn()}
+    />,
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Buzz can’t read its saved sign-in for this server, and signing in again may not replace it. If this keeps happening, contact support.",
+  );
+  expect(alert).not.toHaveTextContent("credential permissions");
+  expect(alert).not.toHaveTextContent("storage-corrupt");
+});
 it.each([null, "Builderlab"])(
   "names server %s and requires explicit sign-in before retrying admission",
   async (organization) => {

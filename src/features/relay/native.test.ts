@@ -2252,3 +2252,63 @@ it.each([
   await expect(work).rejects.toBeInstanceOf(ArtifactIncrementalError);
   await expect(work).rejects.toMatchObject({ code });
 });
+
+it.each([
+  ["sign-in", 401, "authentication required\n"],
+  ["access", 403, "authorization denied\n"],
+  ["access", 403, JSON.stringify({ error: "relay_membership_required" })],
+])(
+  "a refused response reports its %s refusal to the community's observer without the window event",
+  async (kind, status, body) => {
+    // This test environment has no Tauri window, so the event listener never
+    // installs: only the response itself can report the refusal.
+    const transport = await connectNativeTransport(community);
+    const refusals: string[] = [];
+    const stop = transport.observeRefusal?.((refusal) =>
+      refusals.push(refusal),
+    );
+    const answer = vi.mocked(invoke).getMockImplementation();
+    vi.mocked(invoke).mockImplementation(async (command, args, options) =>
+      command === "relay_http" && (args as Request).path === "/query"
+        ? { status, headers: {}, body }
+        : answer?.(command, args, options),
+    );
+    await expect(
+      transport.query([{ kinds: [9], "#h": ["channel"], limit: 10 }]),
+    ).rejects.toThrow();
+    expect(refusals).toEqual([kind]);
+    stop?.();
+  },
+);
+
+it("an ordinary 403 reports no community refusal", async () => {
+  const transport = await connectNativeTransport(community);
+  const refusals: string[] = [];
+  const stop = transport.observeRefusal?.((refusal) => refusals.push(refusal));
+  respond = () => ({
+    status: 403,
+    body: { error: "restricted: not a channel member" },
+  });
+  await expect(
+    transport.query([{ kinds: [9], "#h": ["channel"], limit: 10 }]),
+  ).rejects.toThrow();
+  expect(refusals).toEqual([]);
+  stop?.();
+});
+
+it("a refused unsigned GET reports no community refusal", async () => {
+  // Native signs only POST and reports refusals only for signed requests.
+  const transport = await connectNativeTransport(community);
+  const refusals: string[] = [];
+  const stop = transport.observeRefusal?.((refusal) => refusals.push(refusal));
+  const answer = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args, options) =>
+    command === "relay_http" && (args as Request).method === "GET"
+      ? { status: 401, headers: {}, body: "authentication required\n" }
+      : answer?.(command, args, options),
+  );
+  const response = await nativeRelayRequest(community, "/gated");
+  expect(response.status).toBe(401);
+  expect(refusals).toEqual([]);
+  stop?.();
+});

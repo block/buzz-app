@@ -86,6 +86,18 @@ class ObservationExpired extends Error {
     super("Reading observation expired");
   }
 }
+export class CapturedReadWouldWidenError extends Error {
+  constructor() {
+    super("Exact captured read would widen the retained read set");
+    this.name = "CapturedReadWouldWidenError";
+  }
+}
+export class CapturedReadNotRetainedError extends Error {
+  constructor() {
+    super("Exact captured read could not retain every selected message");
+    this.name = "CapturedReadNotRetainedError";
+  }
+}
 const same = (a: unknown, b: unknown): boolean => {
   if (Object.is(a, b)) return true;
   if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
@@ -1419,6 +1431,7 @@ export function createReadState({
       quiet = false,
       fence?: LocalUnreadFence,
       clearLocalKeys: readonly string[] = [],
+      options: { preserveCapturedSet?: boolean } = {},
     ) =>
       queue(async () => {
         await ready;
@@ -1472,6 +1485,43 @@ export function createReadState({
                   homes: current.homes ?? {},
                   floor: current.floor ?? 0,
                 };
+            if (
+              options.preserveCapturedSet &&
+              kept.floor > (current.floor ?? 0)
+            ) {
+              // The local floor reads every older message, beyond the captured set.
+              throw new CapturedReadWouldWidenError();
+            }
+            if (options.preserveCapturedSet) {
+              const retainedFrontiers = {
+                ...kept.reserve,
+                ...kept.state.frontiers,
+              };
+              const retainedState = {
+                frontiers: retainedFrontiers,
+                overrides: kept.state.overrides,
+              };
+              const home = homeLookup({ ...current.homes, ...kept.homes });
+              const covered = coveredWith(home);
+              if (
+                messages.some(({ key, timestamp, channelId }) => {
+                  if (
+                    timestamp <= kept.floor ||
+                    (effectiveFrontier(retainedState, key, channelId) ?? -1) >=
+                      timestamp
+                  )
+                    return false;
+                  const cover = covered?.(key, (other) =>
+                    other === key ? timestamp : retainedFrontiers[other],
+                  );
+                  return (
+                    cover === undefined ||
+                    (retainedFrontiers[cover] ?? -1) < timestamp
+                  );
+                })
+              )
+                throw new CapturedReadNotRetainedError();
+            }
             return {
               ...current,
               revision,

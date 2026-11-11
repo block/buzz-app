@@ -4,6 +4,7 @@ import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
+import { refusalOfError } from "./http-admission";
 import type {
   ChannelReference,
   ChannelList,
@@ -920,10 +921,40 @@ export function createChannelStore(
       if (!discovery?.authorized(id) && unchangedPreview(id, version))
         denyChannel(id, new Error("Conversation is unavailable"));
   }
+  /** Ends a window's reads and leaves it showing only the refusal. */
+  function closeWindow(state: WindowState, error: unknown) {
+    state.generation++;
+    state.controller?.abort();
+    state.noticeRead?.controller.abort();
+    state.events = [];
+    state.notices.clear();
+    state.noticeCursor = undefined;
+    state.floor = undefined;
+    state.traffic.clear();
+    setWindow(state, {
+      status: "error",
+      rows: EMPTY_ROWS,
+      error: describe(error),
+      loadingOlder: false,
+      refreshing: undefined,
+    });
+  }
   function denyChannel(channelId: string, error: unknown) {
     // A chat still starting is not there to deny yet; only a refused or
     // missing create ends it (see channelWrites.start).
     if (discovery?.isPending(channelId)) return;
+    // The community refused the account, not this channel. Its owner (the
+    // relay service's deny) ends the session and decides what saved data
+    // survives: it keeps it for an ended sign-in. Until then, stop showing
+    // this channel's rows and preview, but keep its access and saved copy.
+    if (refusalOfError(error)) {
+      heads.delete(channelId);
+      tails.delete(channelId);
+      const state = windows.get(channelId);
+      if (state) closeWindow(state, error);
+      setList(list);
+      return;
+    }
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
     discovery?.deny(channelId);
     allowed?.delete(channelId);
@@ -931,22 +962,7 @@ export function createChannelStore(
       heads.delete(channelId);
       tails.delete(channelId);
       const state = windows.get(channelId);
-      if (state) {
-        state.generation++;
-        state.controller?.abort();
-        state.noticeRead?.controller.abort();
-        state.events = [];
-        state.notices.clear();
-        state.noticeCursor = undefined;
-        state.floor = undefined;
-        state.traffic.clear();
-        setWindow(state, {
-          status: "error",
-          rows: EMPTY_ROWS,
-          error: describe(error),
-          loadingOlder: false,
-        });
-      }
+      if (state) closeWindow(state, error);
       setList(
         {
           ...list,
@@ -2083,7 +2099,12 @@ export function createChannelStore(
           };
       if (error instanceof ReadError && error.retryAfterMs !== undefined)
         listRetryAt = performance.now() + error.retryAfterMs;
-      if (denyAllOnFailure && readErrorKind(error) === "denied") {
+      if (
+        denyAllOnFailure &&
+        readErrorKind(error) === "denied" &&
+        // A community-wide refusal belongs to the relay service (see denyChannel).
+        !refusalOfError(error)
+      ) {
         discovery.denyAll();
         transport.revokeAccess(() => {
           for (const id of allowed ?? [])

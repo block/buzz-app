@@ -182,6 +182,11 @@ export interface UnreadCapability {
     channelId: string,
     messageId: string,
   ): Promise<ReadMutationResult>;
+  /** Explicitly read exactly these captured messages, never their subtrees or
+   * a channel prefix. Optional so older hosts remain compatible. */
+  markCapturedMessagesRead?(
+    messageIds: readonly string[],
+  ): Promise<ReadMutationResult>;
   /** End the channel visit; the device-local sidebar force remains until next open. */
   leaveChannel(channelId: string): void;
   /** Reconcile the previous visit's sidebar force without clearing independent channel intent. */
@@ -398,6 +403,41 @@ export function createUnread({
       if (mutations.get(channelId) === settled) mutations.delete(channelId);
     });
     return next;
+  }
+  function serializeChannels<T>(
+    channelIds: readonly string[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const ordered = [...new Set(channelIds)].sort();
+    // Keep multi-channel queue admission deterministic.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const locks = ordered.map((channelId) => {
+      let acquired!: () => void;
+      const started = new Promise<void>((resolve) => {
+        acquired = resolve;
+      });
+      const completion = serialize(channelId, async () => {
+        acquired();
+        await gate;
+      });
+      return { started, completion };
+    });
+    return (async () => {
+      try {
+        await Promise.all(locks.map(({ started }) => started));
+        const result = await operation();
+        release();
+        await Promise.all(locks.map(({ completion }) => completion));
+        return result;
+      } catch (error) {
+        release();
+        await Promise.allSettled(locks.map(({ completion }) => completion));
+        throw error;
+      }
+    })();
   }
 
   let bytes = 0;
@@ -2905,6 +2945,95 @@ export function createUnread({
           if (!forced?.size) forcedMessages.delete(channelId);
           publish(new Set([channelId]));
         }
+        return result;
+      });
+    },
+    async markCapturedMessagesRead(messageIds) {
+      const selected = [...new Set(messageIds)].map((id) => {
+        const event = events.get(id);
+        const channelId = event && channelOf(event);
+        if (!channelId)
+          throw new Error("Verified readable message evidence unavailable");
+        return {
+          id,
+          channelId,
+          event: requireMessage(
+            { kind: "message", channelId, messageId: id },
+            id,
+          ),
+        };
+      });
+      if (!selected.length) throw new Error("Read target unavailable");
+      const channelIds = [
+        ...new Set(selected.map(({ channelId }) => channelId)),
+      ];
+      const channelValid = new Map(
+        channelIds.map((channelId) => [
+          channelId,
+          channelIntentValid(channelId),
+        ]),
+      );
+      const visit = new Map(
+        channelIds.map((channelId) => [channelId, visits.get(channelId) ?? 0]),
+      );
+      const generation = epoch;
+      const valid = () =>
+        !closed &&
+        generation === epoch &&
+        selected.every(
+          ({ id, channelId, event }) =>
+            channelValid.get(channelId)?.() &&
+            (visits.get(channelId) ?? 0) === visit.get(channelId) &&
+            events.get(id) === event &&
+            !deleted(event) &&
+            channelOf(event) === channelId,
+        );
+      const messageKeys = selected.map(({ id }) => `msg:${id}`);
+      const fence = reads.captureLocalUnread([
+        ...selected.map(({ id }) => `msg:${id}`),
+        ...channelIds.map(messageForceKey),
+      ]);
+      return serializeChannels(channelIds, async () => {
+        if (!valid()) throw new Error("Unread channel visit expired");
+        const result = await reads.readMessages(
+          selected
+            .filter(({ event }) => event.pubkey !== viewer)
+            .map(({ id, channelId, event }) => ({
+              key: `msg:${id}`,
+              timestamp: event.created_at,
+              channelId,
+              ...(threadReference(event) && root(event)
+                ? { rootId: root(event) }
+                : {}),
+            })),
+          undefined,
+          valid,
+          false,
+          fence,
+          // This sidebar hint is shared across windows, not owned by this set.
+          messageKeys,
+          { preserveCapturedSet: true },
+        );
+        // The save succeeded; do not clear overlays from a visit that ended
+        // while storage was committing.
+        const changed = new Set<string>();
+        for (const { id, event, channelId } of selected) {
+          if (
+            closed ||
+            generation !== epoch ||
+            !channelValid.get(channelId)?.() ||
+            (visits.get(channelId) ?? 0) !== visit.get(channelId) ||
+            events.get(id) !== event ||
+            deleted(event) ||
+            channelOf(event) !== channelId
+          )
+            continue;
+          const forced = forcedMessages.get(channelId);
+          forced?.delete(id);
+          if (!forced?.size) forcedMessages.delete(channelId);
+          changed.add(channelId);
+        }
+        if (changed.size) publish(changed);
         return result;
       });
     },

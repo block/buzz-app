@@ -894,7 +894,14 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
   await capture();
   await page.evaluate(() => window.profilesFixture.replace());
   expect(await invoke()).toBe(false);
-  await expect(panel).toHaveCount(0);
+  // The canonical profile address restores with fresh authority in the same
+  // scope. The previous session's callback must stay revoked.
+  await expect(panel).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => window.profilesFixture.contexts.at(-1) === window.oldPanelContext,
+    ),
+  ).toBe(false);
   await capture();
   await page.evaluate(() => window.profilesFixture.disconnect());
   expect(await invoke()).toBe(false);

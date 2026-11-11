@@ -31,8 +31,10 @@ import type {
   CompletionResult,
   ComposerObservation,
   ContributionReader,
+  IdentityMark,
 } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
+import { IdentityMarks } from "./IdentityMarks";
 import { completionResult, matchCompletion } from "./completion";
 import type { CompletionEditor } from "./useCompletionEditor";
 import styles from "./Completions.module.css";
@@ -152,6 +154,7 @@ function channelCompletionInProse(
 
 export function ComposerCompletions({
   registry,
+  identityMarks,
   editor,
   input,
   replace,
@@ -159,6 +162,7 @@ export function ComposerCompletions({
   ...context
 }: CompletionContext & {
   registry: ContributionReader<ComposerCompletion>;
+  identityMarks?: ContributionReader<IdentityMark> | undefined;
   editor: CompletionEditor;
   input: RefObject<ComposerInputElement | null>;
   /** Chip ranges and the draft text they were measured against. */
@@ -242,6 +246,7 @@ export function ComposerCompletions({
       <OwnedCompletion
         {...context}
         registry={registry}
+        identityMarks={identityMarks}
         display={display}
         provider={match.provider}
         query={match.query}
@@ -257,6 +262,7 @@ export function ComposerCompletions({
 function OwnedCompletion({
   provider,
   registry,
+  identityMarks,
   display,
   query,
   observation,
@@ -268,6 +274,7 @@ function OwnedCompletion({
 }: CompletionContext & {
   provider: Contribution<ComposerCompletion>;
   registry: ContributionReader<ComposerCompletion>;
+  identityMarks?: ContributionReader<IdentityMark> | undefined;
   display: ReturnType<typeof createDisplay>;
   query: CompletionQuery;
   observation: ComposerObservation;
@@ -618,6 +625,14 @@ function OwnedCompletion({
                       // Only the name ellipsizes; the agent mark stays visible.
                       <span className={styles.nameRow}>
                         <span className={styles.name}>{item.label}</span>
+                        {mention && item.edit.mention && (
+                          <IdentityMarks
+                            registry={identityMarks}
+                            pubkey={item.edit.mention.pubkey}
+                            profiles={context.session.profiles}
+                            className={styles.identityMarks}
+                          />
+                        )}
                         {item.agent && (
                           <span aria-hidden="true" className={styles.agentMark}>
                             <RobotIcon />

@@ -3313,6 +3313,7 @@ function Composer({
         {active && extensions?.completions && (
           <ComposerCompletions
             registry={extensions.completions}
+            identityMarks={extensions.identityMarks}
             editor={completion}
             input={input}
             session={session}

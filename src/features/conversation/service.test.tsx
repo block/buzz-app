@@ -280,6 +280,41 @@ it("registers link previews and withdraws them with their plugin", async () => {
   );
 });
 
+it("registers identity marks and withdraws them with their plugin", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      expect(() =>
+        ctx.conversation.registerIdentityMark({
+          id: "Bad id",
+          title: "Check",
+          component: Component,
+        }),
+      ).toThrow("id, title and component");
+      expect(() =>
+        ctx.conversation.registerIdentityMark({
+          id: "check",
+          title: "Check",
+        } as never),
+      ).toThrow("id, title and component");
+      ctx.conversation.registerIdentityMark({
+        id: "check",
+        title: "Check",
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.identityMarks.snapshot()).toHaveLength(1),
+  );
+  expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("active");
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.identityMarks.snapshot()).toHaveLength(0),
+  );
+});
+
 it("rejects an attachment renderer order that is neither a number nor a function", async () => {
   const h = harness({
     inject: ["conversation"],

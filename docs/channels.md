@@ -570,14 +570,29 @@ the returned command, and confirms relay-owned state before removing a row. Arch
 confirmed Delete/Leave use the existing access-loss purge. Commands use narrow
 development-broker routes or the packaged native `relay_channel_sign` and
 `relay_channel_publish` commands, never the message outbox or automatic replay.
-The same route carries the **Starter channel for new members** switch as two commands
-without a confirmation dialog, `auto-join-on` and `auto-join-off`, each a `9002`
-with `auto_join=true|false`. The lifecycle owner requires fresh relay metadata for an
-active public stream channel before signing (channel roles cannot show community
-ownership; the relay accepts the flag only from community owners and admins) and
-confirms the result from the republished `39000`: the relay advertises the flag
-as a bare `auto_join` tag only while it is in effect, so success is that tag's
-presence or absence, not the written value.
+The community **Welcome** settings card ([communities](communities.md#welcome-channel))
+uses the same route to add and remove starter channels, two commands without a
+confirmation dialog, `auto-join-on` and `auto-join-off`, each a `9002` with
+`auto_join=true|false`. The lifecycle owner requires fresh relay metadata for an
+active public stream channel before signing, whether or not the viewer is in it
+(channel roles cannot show community ownership; the relay accepts the flag only
+from community owners and admins), and confirms the result from the republished
+`39000`: the relay advertises the flag as a bare `auto_join` tag only while it is
+in effect, so success is that tag's presence or absence, not the written value.
+That reread updates the channel list only for a channel the viewer can access.
+The card's welcome form uses the same route for the welcome channel. Each save is
+one `9002` carrying the full state, `landing=true`, `welcome=<text>` and
+`welcome_title=<text>`, each empty for its default; the relay accepts a repeat of
+the current state. Before signing
+and again before publishing, the lifecycle owner requires fresh relay metadata
+for an active, open stream channel without an expiry. It confirms the save with a
+strong reread of the target's `39000`: the relay advertises a bare `landing` tag
+there while the channel is designated, plus `welcome` and `welcome_title` tags
+while the message and title are custom. Neither tag counts without `landing`. The relay's `invalid:`
+reason is shown with the draft kept. When the result can't be confirmed, the
+card keeps the draft, disables Save and offers **Check again**, which reads the
+designation and message from the relay afresh instead of republishing; a change
+that did land leaves nothing to save, while a missing one reopens Save.
 A published lifecycle command keeps its bounded, fresh, strong confirmation
 when access loss retires access-dependent work. Retired confirmation reads
 are reread; caller cancellation, session clear/disposal and the original deadline
@@ -585,11 +600,14 @@ still abort its signal. A rejected publication or definitive confirmation-read
 failure still fails the command; an aborted read alone never confirms it. These signals
 do not forcibly interrupt an in-flight native publication IPC.
 Both hosts admit only the exact two-tag `9002` shape with `archived=true` (Archive),
-`archived=false` (Unarchive) or `auto_join=true|false` (the switch); other values,
+`archived=false` (Unarchive) or `auto_join=true|false` (adding or removing a starter channel), and the
+four-tag welcome shape: `landing=true`, a `welcome` of 1–4,000 characters (no
+control characters except line breaks and tabs) or empty, and a `welcome_title`
+of 1–120 characters (no control characters or line separators) or empty; other values,
 extra tags, cross-route commands and
 altered or foreign signatures are rejected. Hosts without this capability display
-an unavailable notice. Native Unarchive and the auto-join switch require
-rebuilding/restarting the desktop
+an unavailable notice. Native Unarchive, starter changes and the welcome
+command require rebuilding/restarting the desktop
 binary; updating the frontend alone does not update the Rust validator. Rust
 validator and production-IPC tests cover both values, but do not establish an
 installed desktop Archive → Unarchive round trip against a live relay; that
@@ -664,23 +682,14 @@ row are omitted.
 Duration uses Create's Ongoing/Temporary cards. Access controls live in the members
 dialog, separate from the text and lifespan draft. These details controls stage
 changes; none publishes immediately.
-**Starter channel for new members**, between Description and Members, is separate: an
-immediate switch that publishes its own narrow `9002` (see
-[Channel lifecycle](#channel-lifecycle)) and shows pending, the relay's refusal
-or, when the change is not confirmed, a prompt to try again beside itself. Once the
-channel's metadata shows the value that toggle wanted, the prompt clears, so trying
-again cannot undo a change that landed. It appears only to community owners and admins
-(the relay-signed kind `13534` roster) who are members of an active public stream
-channel, not previewing it or a guest in it, and only once the channel is loaded
-live rather than from cache. The relay checks the community role, not channel
-membership, so the gate is display-only and narrower: an owner or admin must join
-the channel to see the switch.
-Archiving a starter channel or making it private hides the switch and pauses the
-flag without clearing it: the relay stops advertising and applying it, refuses
-to change it on a private channel, and resumes adding new members on Unarchive
-or once the channel is public again. For a starter channel, the Archive and
-**Change general access?** (to Private) confirmations say so, so an owner or
-admin can turn the switch off first.
+Starter channels are chosen in **Settings → Community admin → Welcome** (see
+[communities](communities.md#welcome-channel)), not here.
+Archiving a starter channel or making it private removes it from that list and
+pauses the flag without clearing it: the relay stops advertising and applying it,
+refuses to change it on a private channel, and resumes adding new members on
+Unarchive or once the channel is public again. For a starter channel, the Archive
+and **Change general access?** (to Private) confirmations say so and point to the
+Welcome settings, so an owner or admin can turn the flag off first.
 **Save changes** submits the draft together and is enabled only for valid, changed values.
 **Cancel** explicitly discards edits and closes without confirmation. Close, Escape
 and backdrop clicks close untouched forms immediately; changed drafts first show
@@ -1292,11 +1301,45 @@ concurrently with the real connection handshake. Saved groups, stars and channel
 names are display data, not a confirmed preference mutation base. No cache means
 the ordinary cold connection flow; unavailable/corrupt storage never grants access.
 
-With no saved selection, Messages opens the first channel the relay flags
-`auto_join` (its starter channel for new members), then the first non-Solo
-channel; an explicit empty route bypasses both. The relay adds people to its
-`auto_join` channels itself, and the resulting membership hints populate the
-sidebar live:
+With no saved selection, Messages opens the community's welcome channel if the
+viewer is in it, then the first channel the relay flags `auto_join` (its starter
+channel for new members), then the first non-Solo channel; an explicit empty
+route bypasses all three. The welcome channel is the stream channel whose
+relay-signed `39000` carries `landing`. Until every listed channel's metadata
+has arrived, any of them could be the welcome channel, so the starter and
+first-channel fallbacks wait. They also wait for the relay's NIP-11 document,
+read when Messages has nothing saved or requested to open, and while the
+welcome channel it names is not listed yet: no DM or other channel opens in its
+place until it arrives or ten seconds pass from the channel list first loading.
+That wait applies only while the list still looks like a new member's, with
+nothing but the relay's starter channels and DMs in it; once a channel the
+person joined themselves is listed, the relay is not adding them to the welcome
+channel, so the fallback opens at once, as for a member from before it was
+designated or one who left it. The channel opened when the wait ends is saved
+as the selection, so the next opening does not wait again. A saved selection
+whose metadata is still arriving needs no NIP-11 read; an archived one no
+longer opens, so it does not count. The relay's membership hints can still add a new
+member to their starter channel before their welcome channel, so a fallback
+opened while no welcome channel is listed is provisional: a welcome channel that
+arrives within ten seconds of the channel list first loading replaces it, unless
+the viewer has clicked or typed anywhere in the window or opened anything else,
+Settings included, meanwhile. Focus the viewer has moved outside Messages stays
+where it is.
+A new member also sees the [pinned welcome](#pinned-welcome) there. While the
+channel list or its metadata is still loading, Messages shows **Opening your
+channels…** instead of the blank selection view. A list with no channel to open keeps that state for up to ten
+seconds, once per community visit, since the relay can still be adding a new
+member to the welcome channel; a channel that arrives meanwhile opens at once. A
+returning member with no channels left waits the same once. A relay whose NIP-11
+document does not advertise `buzz-landing-channel` adds no one to a welcome
+channel, so its first empty list shows the empty state at once. After that
+wait, an empty state offers **Try again**, which re-reads the channel list and
+waits the same way again, on any relay. A welcome channel that arrives after
+Messages opened without one, even after the empty state, opens then and is
+saved as the selection; it replaces that opening in history, unless Settings or
+another visit is shown by then. The client never joins the welcome channel for them. The relay
+adds people to its welcome and `auto_join` channels itself, welcome channel
+first, and the resulting membership hints populate the sidebar live:
 
 - A community that requires relay membership adds a member once, when they join
   its roster: an invite claim that answers `joined`, or an admin's kind `9030`
@@ -1310,7 +1353,68 @@ sidebar live:
 Either way a later leave stands: the roster path does not run again for an
 existing member, and on the open path a leave or removal keeps a membership
 record, so the relay does not add the person back. The client only reads the
-flag; it never sends a join on a member's behalf.
+flag; it never sends a join on a member's behalf. The welcome channel is joined
+only at a person's first entry, on either path: moving the designation never adds
+anyone who already entered.
+
+### Pinned welcome
+
+The welcome is a card pinned over the end of the welcome channel's history,
+directly above the composer, in the place a preview's join notice takes. It is
+never a message or a row in the timeline, so it is there however long the
+history is, and an empty channel shows its usual empty notice beside it. The
+history's end grows by the card's height, as for the join notice, so the last
+messages scroll clear of it, and a long message scrolls within the card. The
+card is a region named by its title: the custom title, or the default ("Welcome
+to" the community's configured name, else "Welcome"). Below it, the custom
+message or the default one renders as a message body does, with its channel,
+message and identity links. It never takes focus on mount; **Dismiss** removes
+it and hands focus to the composer if focus was in the card.
+
+It shows only while all four of these hold:
+
+1. The open channel is the community's welcome channel (its relay-signed
+   `39000` carries `landing`), and the viewer is a member with its composer.
+2. This device has a first-open time T for the community: unix seconds, written
+   the first time Messages opens the community on this device, and on an
+   existing install the first time after upgrading. It is view state scoped by
+   the community origin alone, with no viewer, under `welcome-first-open`, and
+   is never replaced.
+3. The relay has no event by the viewer from before T less ten minutes. One
+   read, through the session's snapshot read (the HTTP `/query` bridge on both
+   hosts), asks `{ "authors": [viewer], "until": T - 600, "limit": 1 }`, with no
+   kinds and no `#h`, so any kind in any channel the relay lets the viewer read
+   counts. Replaceable events such as profiles and preferences count only if
+   last updated before then, since a relay keeps only their newest version. An
+   event means an existing member.
+   Because of the ten minutes, a newcomer's own events from joining, such as a
+   profile set up just before the app opened, do not count. The answer is kept
+   per device under `welcome-earlier-activity`, scoped by origin and viewer, so
+   another identity on the same device asks for itself. The session reader and
+   the browser broker admit this one filter without kinds or IDs, and only
+   about the viewer.
+4. The card has not been dismissed on this device: `welcome-dismissed:<channel
+   id>`, scoped by origin alone. A new title or message from an admin never
+   brings it back. A welcome moved to another channel is a new welcome: it can
+   show once more there, to a member this device still classes as new, and the
+   channel it left stays dismissed.
+
+Nothing shows while the read is pending. A read that fails, whether refused,
+timed out, offline or without a session, is no answer: nothing is kept and the
+next visit to the welcome channel asks again, so a network failure never shows
+the card to an existing member.
+
+These are accepted trade-offs. Someone with no events at all, such as a lurker,
+looks new on each new device and sees the card once there. Dismissal is per
+device, and shared by the identities on it, as T is. A lurker already in a
+channel that becomes the welcome channel, such as `#general`, sees the card
+once per device after the upgrade. Leaving or removing the community forgets T
+and the dismissals with the rest of its device state (see
+[Communities](communities.md)), so a rejoin starts over, with the read still
+classing a member with older events as existing. Since T and the dismissals
+are shared by the identities on the device, one identity leaving clears them
+for all of them, and another identity that had dismissed the card may see it
+once more.
 
 A cached roster can display previously downloaded, reverified history for up to
 24 hours. It cannot authorize head/history reads, unread evidence, typing or

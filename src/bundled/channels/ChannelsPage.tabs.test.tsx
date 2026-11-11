@@ -21,28 +21,31 @@ import type {
 } from "../../features/panels/service";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { OpenTarget } from "../../features/navigation/targets";
-import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import {
+  conversationTarget,
+  soloDraftTarget,
+} from "../../features/channel-navigation/routes";
 import {
   createRelaySession,
   type RelaySession,
 } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { matchesEvent } from "../../features/relay/projection";
-import type { RelayEvent } from "../../features/relay/events";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import {
+  bounds,
   keypair,
   metadata,
   roster,
   signed,
 } from "../../features/relay/testing";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import type { Navigation } from "../../features/navigation/controller";
 import { useChannelTabState } from "./useChannelTabState";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { SOLO_LABEL } from "../../features/solo/labels";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
-import { ChannelsPage } from "./ChannelsPage";
-import type { CommunityMembership } from "../moderation/membership";
+import { ChannelsPage, type LandingReader } from "./ChannelsPage";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { BrowserHostView } from "../../features/browser/BrowserHostView";
 import { BrowserSessions } from "../../features/browser/sessions";
@@ -302,38 +305,39 @@ it.each(["side", "main"] as const)(
   },
 );
 
-/** A page over `events` with no saved selection and no registered panels. */
+/** A page over `events` with no saved selection and no registered panels.
+ * A read waits for the promise `hold` returns for its filters, if any; the
+ * relay's welcome-channel support is read from `landing`, if given. A history
+ * window is served only for a channel whose 39006 bounds are in `events`. */
 function workspace(
   events: RelayEvent[],
   viewer = keypair(),
   authority = keypair(),
-  {
-    membership,
-    lifecycle,
-  }: {
-    membership?: CommunityMembership;
-    lifecycle?: (event: RelayEvent) => Promise<void>;
-  } = {},
+  hold?: (filters: readonly ReadFilter[]) => Promise<void> | undefined,
+  landing?: LandingReader,
 ) {
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) =>
-        events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
-        ),
+      query: async (filters) => {
+        await hold?.(filters);
+        return events.filter((event) =>
+          filters.some(
+            (filter) =>
+              matchesEvent(event, filter) ||
+              // The relay answers a window read with its bounds.
+              (event.kind === 39006 &&
+                !!filter.top_level &&
+                matchesEvent(event, { "#h": filter["#h"] ?? [], limit: 1 })),
+          ),
+        );
+      },
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
       },
-      ...(lifecycle && {
-        channelLifecycle: {
-          sign: async (template) => signed(viewer, template),
-          publish: lifecycle,
-        },
-      }),
     },
     { outboxStorage: { load: () => [], save: () => {} } },
   );
@@ -361,9 +365,8 @@ function workspace(
     requestOpen: () => false,
     handleOpenRequests: () => () => {},
   };
-  const navigator = createNavigationController(
-    createMemoryHistory(),
-  ).navigation;
+  const controller = createNavigationController(createMemoryHistory());
+  const navigator = controller.navigation;
   const page = (navigation?: PageNavigation) => (
     <ToastProvider>
       <ChannelsPage
@@ -371,17 +374,19 @@ function workspace(
         panels={panels}
         navigator={navigator}
         navigation={navigation}
-        membership={membership}
+        landing={landing}
       />
     </ToastProvider>
   );
   const { rerender } = render(page());
-  /** Re-route the mounted page; `undefined` returns to the unrouted workspace. */
-  const visit = (target?: OpenTarget) =>
+  /** Re-route the mounted page; `undefined` returns to the unrouted workspace.
+   * A `hosted` visit answers the navigator's pending attempt, as the host's
+   * does, so once it has opened it resolves nothing. */
+  const visit = (target?: OpenTarget, entryId = "visit", hosted = false) =>
     rerender(
       page(
         target && {
-          entryId: "visit",
+          entryId,
           target,
           signal: new AbortController().signal,
           position: () => undefined,
@@ -390,12 +395,24 @@ function workspace(
           forSession() {
             return this;
           },
-          resolve: () => true,
-          complete: () => true,
+          resolve: hosted
+            ? (next) => controller.resolve(navigator.snapshot().attempt, next)
+            : () => true,
+          complete: hosted
+            ? (result) =>
+                controller.complete(navigator.snapshot().attempt, result)
+            : () => true,
         },
       ),
     );
-  return { owner, viewer, authority, scope: snapshot.scope, visit };
+  return {
+    owner,
+    viewer,
+    authority,
+    scope: snapshot.scope,
+    navigator,
+    visit,
+  };
 }
 
 it("opens the community's auto-join channel first when nothing is saved", async () => {
@@ -417,52 +434,544 @@ it("opens the community's auto-join channel first when nothing is saved", async 
   await screen.findByRole("textbox", { name: "Message #Beta" });
 });
 
-it("hands the community roster to Channel settings and follows the republished flag", async () => {
+it("opens the community's welcome channel before its auto-join channel and pins the welcome above the composer", async () => {
   const viewer = keypair(),
     authority = keypair();
-  const id = "11111111-1111-4111-8111-111111111111";
-  const open = (at: number, extra: string[][] = []) =>
-    metadata(authority, id, "Alpha", at, [
-      ["t", "stream"],
-      ["public"],
-      ...extra,
-    ]);
-  const events = [roster(authority, id, [viewer.pubkey]), open(1_700_000_000)];
-  const ensure = vi.fn(() => () => {});
-  workspace(events, viewer, authority, {
-    membership: {
-      snapshot: () => ({
-        status: "ready",
-        members: [],
-        role: "owner",
-        refreshing: false,
-      }),
-      subscribe: () => () => true,
-      ensure,
-      refresh: async () => {},
-      dispose: () => {},
-    },
-    // The relay applies the accepted 9002 and republishes its metadata.
-    lifecycle: async (event) => {
-      if (event.kind === 9002)
-        events.push(open(1_700_000_100, [["auto_join"]]));
-    },
-  });
-  await screen.findByRole("textbox", { name: "Message #Alpha" });
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Channel actions" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View channel details" }),
+  workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [
+        ["t", "stream"],
+        ["auto_join"],
+      ]),
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+        ["welcome", "Say **hi**\nand introduce yourself."],
+        ["welcome_title", "Hello, newcomer"],
+      ]),
+      // Beta's history is empty.
+      bounds(authority, "beta", "head", { has_more: false, next_cursor: null }),
+    ],
+    viewer,
+    authority,
   );
-  const control = await screen.findByRole("switch", {
-    name: "Starter channel for new members",
+  const composer = await screen.findByRole("textbox", {
+    name: "Message #Beta",
   });
-  expect(ensure).toHaveBeenCalledOnce();
-  expect(control).not.toBeChecked();
-  await user.click(control);
-  await vi.waitFor(() => expect(control).toBeChecked());
-  expect(control).not.toHaveAttribute("aria-busy");
-  expect(control.closest("dd")?.querySelector("[role=alert]")).toBeNull();
+  // This viewer has written nothing on the relay, so they are new here.
+  const welcome = await screen.findByRole("region", {
+    name: "Hello, newcomer",
+  });
+  // The message is Markdown, rendered as a message body is: its single
+  // newline is a line break.
+  expect(welcome).toHaveTextContent("Say hiand introduce yourself.");
+  expect(welcome.querySelector("strong")).toHaveTextContent("hi");
+  expect(welcome.querySelector("strong + br")).not.toBeNull();
+  // Pinned beside the history, not a row in it; an empty channel says so.
+  expect(welcome.closest("[data-message-scroller]")).toBeNull();
+  expect(await screen.findByText("No messages yet.")).toBeVisible();
+  // It never takes focus, and the history leaves room for it.
+  expect(welcome).not.toContainElement(document.activeElement as HTMLElement);
+  const conversation = composer.closest<HTMLElement>(
+    "[data-attachment-drop-zone]",
+  );
+  expect(
+    conversation?.style.getPropertyValue("--channel-preview-inset"),
+  ).toMatch(/^calc\(/);
+  await userEvent.click(
+    within(welcome).getByRole("button", { name: "Dismiss" }),
+  );
+  expect(screen.queryByRole("region", { name: "Hello, newcomer" })).toBeNull();
+  expect(conversation?.style.getPropertyValue("--channel-preview-inset")).toBe(
+    "0px",
+  );
+  // Dismiss leaves with the card, so focus goes on to the composer.
+  await vi.waitFor(() => expect(composer).toHaveFocus());
+});
+
+it("pins no welcome for a member who wrote on the relay before this device first opened it", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const reads: (readonly ReadFilter[])[] = [];
+  workspace(
+    [
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+      signed(viewer, {
+        kind: 9,
+        content: "Hi all",
+        created_at: Math.floor(Date.now() / 1000) - 86_400,
+        tags: [["h", "beta"]],
+      }),
+    ],
+    viewer,
+    authority,
+    (filters) => {
+      reads.push(filters);
+      return undefined;
+    },
+  );
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+  // One read over every kind and channel, for this viewer's events from
+  // before the first open less ten minutes.
+  await vi.waitFor(() =>
+    expect(
+      readView(
+        `https://relay.test:${viewer.pubkey}`,
+        "welcome-earlier-activity",
+        undefined,
+      ),
+    ).toBe(true),
+  );
+  const asked = reads.filter((filters) =>
+    filters.some((filter) => !filter.kinds && !filter.ids),
+  );
+  expect(asked).toHaveLength(1);
+  expect(asked[0]).toStrictEqual([
+    {
+      authors: [viewer.pubkey],
+      limit: 1,
+      until:
+        readView<number>("https://relay.test", "welcome-first-open", 0) - 600,
+    },
+  ]);
+  expect(screen.queryByRole("region", { name: "Welcome" })).toBeNull();
+});
+
+it("waits for the welcome channel's metadata before opening an auto-join channel listed first", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let holding = false;
+  const { owner } = workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [
+        ["t", "stream"],
+        ["auto_join"],
+      ]),
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+    ],
+    viewer,
+    authority,
+    (filters) => {
+      // Hold every metadata read naming the welcome channel.
+      if (
+        !filters.some(
+          (filter) =>
+            filter.kinds?.includes(39000) && filter["#d"]?.includes("beta"),
+        )
+      )
+        return;
+      holding = true;
+      return held;
+    },
+  );
+  try {
+    await vi.waitFor(() => expect(holding).toBe(true));
+    // The auto-join channel's metadata lands first, by an exact lookup.
+    await act(() => owner.session.channels.resolve?.(["alpha"]));
+    const listed = owner.session.channels.list().channels;
+    const alpha = listed.find(({ id }) => id === "alpha");
+    expect(alpha?.autoJoin).toBe(true);
+    expect(alpha?.metadataPending).toBeFalsy();
+    expect(listed.find(({ id }) => id === "beta")?.metadataPending).toBe(true);
+    expect(screen.getByText("Opening your channels…")).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "Message #Alpha" }),
+    ).toBeNull();
+  } finally {
+    release();
+  }
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+  expect(await screen.findByRole("region", { name: "Welcome" })).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message #Alpha" })).toBeNull();
+});
+
+it("shows the default welcome only in the welcome channel", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const { visit, scope } = workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [
+        ["t", "stream"],
+        // A stale message without the designation is ignored.
+        ["welcome", "Old"],
+      ]),
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+    ],
+    viewer,
+    authority,
+  );
+  expect(
+    await screen.findByRole("region", { name: "Welcome" }),
+  ).toHaveTextContent("This is a place to connect with the community");
+  visit(conversationTarget(scope, "alpha"));
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  expect(screen.queryByRole("region", { name: "Welcome" })).toBeNull();
+  expect(screen.queryByText("Old")).toBeNull();
+});
+
+it("keeps a saved selection over the welcome channel", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  writeView(`https://relay.test:${viewer.pubkey}`, "selected-channel", "alpha");
+  workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+    ],
+    viewer,
+    authority,
+  );
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  expect(screen.queryByRole("region", { name: "Welcome" })).toBeNull();
+});
+
+it("falls back when the viewer is not in the welcome channel", async () => {
+  const viewer = keypair(),
+    authority = keypair(),
+    other = keypair();
+  workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+      roster(authority, "beta", [other.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["public"],
+        ["landing"],
+      ]),
+    ],
+    viewer,
+    authority,
+  );
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+});
+
+it("keeps opening after an empty first list, then offers a list refresh instead of a blank view", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const viewer = keypair(),
+      authority = keypair();
+    const events: RelayEvent[] = [];
+    const { owner } = workspace(events, viewer, authority);
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    // The relay may still be adding this new member to the welcome channel.
+    expect(screen.getByText("Opening your channels…")).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "You’re not in any channels yet" }),
+    ).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(9_000));
+    expect(screen.getByText("Opening your channels…")).toBeVisible();
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      screen.getByRole("heading", { name: "You’re not in any channels yet" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Select a channel to read it.")).toBeNull();
+    // Try again re-reads the list rather than reconnecting a healthy session,
+    // and waits for it the same bounded way.
+    events.push(
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+    );
+    const tryAgain = screen.getByRole("button", { name: "Try again" });
+    tryAgain.focus();
+    fireEvent.click(tryAgain);
+    expect(
+      screen.queryByRole("heading", { name: "You’re not in any channels yet" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Channel history" }),
+    ).toHaveFocus();
+    await screen.findByRole("textbox", { name: "Message #Beta" });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("opens the welcome channel as soon as it arrives while the opening state waits", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const events: RelayEvent[] = [];
+  const { owner } = workspace(events, viewer, authority);
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  expect(screen.getByText("Opening your channels…")).toBeVisible();
+  events.push(
+    roster(authority, "beta", [viewer.pubkey]),
+    metadata(authority, "beta", "Beta", undefined, [
+      ["t", "stream"],
+      ["landing"],
+    ]),
+  );
+  owner.session.channels.refreshList?.();
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+  expect(await screen.findByRole("region", { name: "Welcome" })).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "You’re not in any channels yet" }),
+  ).toBeNull();
+});
+
+/** The Messages page, opened through the navigator's own visit. */
+const messagesPage: OpenTarget = {
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.channels",
+  pageId: "channels",
+};
+
+it("shows an empty list at once on a relay without welcome channels", async () => {
+  const landing = vi.fn<LandingReader>(async () => ({
+    landingChannels: false,
+  }));
+  const { owner } = workspace([], keypair(), keypair(), undefined, landing);
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  // No one is being added to a welcome channel, so there is nothing to wait for.
+  expect(
+    await screen.findByRole("heading", {
+      name: "You’re not in any channels yet",
+    }),
+  ).toBeVisible();
+  expect(screen.queryByText("Opening your channels…")).toBeNull();
+  expect(landing).toHaveBeenCalledWith("https://relay.test", expect.anything());
+});
+
+/** A member listed in a DM, and with `joined` in a stream channel they joined
+ * themselves, on a relay whose NIP-11 names `beta` as its welcome channel. */
+async function awaitingWelcome({ hosted = false, joined = false } = {}) {
+  const viewer = keypair(),
+    authority = keypair(),
+    other = keypair();
+  const events: RelayEvent[] = [
+    roster(authority, "pat", [viewer.pubkey, other.pubkey]),
+    metadata(authority, "pat", "Pat", undefined, [["t", "dm"]]),
+    ...(joined
+      ? [
+          roster(authority, "alpha", [viewer.pubkey, other.pubkey]),
+          metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+        ]
+      : []),
+  ];
+  const landing = vi.fn<LandingReader>(async () => ({
+    landingChannels: true,
+    landingChannel: "beta",
+  }));
+  const { owner, scope, navigator, visit } = workspace(
+    events,
+    viewer,
+    authority,
+    undefined,
+    landing,
+  );
+  if (hosted) visit(messagesPage, navigator.snapshot().entry.id, true);
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  await vi.waitFor(() => expect(landing).toHaveBeenCalledOnce());
+  // The read has answered and the page has rendered its outcome.
+  await act(async () => {});
+  return { owner, scope, navigator, viewer, authority, events };
+}
+
+it("waits for the welcome channel the relay names rather than open a DM, then opens it", async () => {
+  const { owner, viewer, authority, events } = await awaitingWelcome();
+  expect(screen.getByText("Opening your channels…")).toBeVisible();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  events.push(
+    roster(authority, "beta", [viewer.pubkey]),
+    metadata(authority, "beta", "Beta", undefined, [
+      ["t", "stream"],
+      ["landing"],
+    ]),
+  );
+  owner.session.channels.refreshList?.();
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+  expect(await screen.findByRole("region", { name: "Welcome" })).toBeVisible();
+});
+
+it("opens a channel the person joined themselves at once, though the relay names an unlisted welcome channel", async () => {
+  // Only a new member's list, of starter channels and DMs, is still being
+  // filled by the relay; an established member's is not held.
+  await awaitingWelcome({ joined: true });
+  expect(
+    await screen.findByRole("textbox", { name: "Message #Alpha" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Opening your channels…")).toBeNull();
+});
+
+it("skips the NIP-11 read for a saved selection whose metadata is still arriving", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const landing = vi.fn<LandingReader>(async () => ({
+    landingChannels: true,
+    landingChannel: "beta",
+  }));
+  const scope = `https://relay.test:${viewer.pubkey}`;
+  writeView(scope, "selected-channel", "alpha");
+  const { owner } = workspace(
+    [
+      roster(authority, "alpha", [viewer.pubkey]),
+      metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+    ],
+    viewer,
+    authority,
+    (filters) =>
+      filters.some(
+        (filter) =>
+          filter.kinds?.includes(39000) && filter["#d"]?.includes("alpha"),
+      )
+        ? held
+        : undefined,
+    landing,
+  );
+  try {
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    expect(
+      owner.session.channels.list().channels.find(({ id }) => id === "alpha")
+        ?.metadataPending,
+    ).toBe(true);
+    expect(screen.getByText("Opening your channels…")).toBeVisible();
+  } finally {
+    release();
+  }
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  expect(landing).not.toHaveBeenCalled();
+});
+
+it("reads NIP-11 and holds for a newcomer's list whose saved selection is archived", async () => {
+  const viewer = keypair(),
+    authority = keypair(),
+    other = keypair();
+  const landing = vi.fn<LandingReader>(async () => ({
+    landingChannels: true,
+    landingChannel: "beta",
+  }));
+  const scope = `https://relay.test:${viewer.pubkey}`;
+  // An archived selection is listed, but not shown or read; the rest of the
+  // list is a DM, as a new member's can be.
+  writeView(scope, "selected-channel", "old");
+  const { owner } = workspace(
+    [
+      roster(authority, "old", [viewer.pubkey]),
+      metadata(authority, "old", "Old", undefined, [
+        ["t", "stream"],
+        ["archived", "true"],
+      ]),
+      roster(authority, "pat", [viewer.pubkey, other.pubkey]),
+      metadata(authority, "pat", "Pat", undefined, [["t", "dm"]]),
+    ],
+    viewer,
+    authority,
+    undefined,
+    landing,
+  );
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  await vi.waitFor(() => expect(landing).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(screen.getByText("Opening your channels…")).toBeVisible();
+  expect(screen.queryByRole("textbox")).toBeNull();
+});
+
+it("opens and keeps the DM once the welcome channel the relay names stays unlisted", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { scope, navigator } = await awaitingWelcome({ hosted: true });
+    // The visit opened on the wait; the DM then replaces it.
+    expect(navigator.snapshot().status).toBe("opened");
+    await act(() => vi.advanceTimersByTimeAsync(9_000));
+    expect(screen.getByText("Opening your channels…")).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(await screen.findByRole("textbox")).toBeVisible();
+    expect(navigator.snapshot()).toMatchObject({
+      canGoBack: false,
+      entry: { target: { kind: "conversation", channelId: "pat" } },
+    });
+    // Saved, so the next opening shows it without waiting again.
+    expect(readView(scope, "selected-channel", undefined)).toBe("pat");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("opens and saves a welcome channel that arrives after the empty list settled", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const viewer = keypair(),
+      authority = keypair();
+    const events: RelayEvent[] = [];
+    const { owner, scope, navigator, visit } = workspace(
+      events,
+      viewer,
+      authority,
+    );
+    visit(messagesPage, navigator.snapshot().entry.id, true);
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(
+      screen.getByRole("heading", { name: "You’re not in any channels yet" }),
+    ).toBeVisible();
+    // The visit opened on the empty state, so it can no longer be resolved.
+    expect(navigator.snapshot().status).toBe("opened");
+    events.push(
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+    );
+    owner.session.channels.refreshList?.();
+    await screen.findByRole("textbox", { name: "Message #Beta" });
+    // The same opening, corrected: no way back to the empty state.
+    expect(navigator.snapshot()).toMatchObject({
+      canGoBack: false,
+      entry: { target: { kind: "conversation", channelId: "beta" } },
+    });
+    expect(readView(scope, "selected-channel", undefined)).toBe("beta");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("selects a default channel the relay adds after the page opened", async () => {
@@ -482,6 +991,172 @@ it("selects a default channel the relay adds after the page opened", async () =>
   );
   await act(() => owner.session.channels.resolve?.(["beta"]));
   await screen.findByRole("textbox", { name: "Message #Beta" });
+});
+
+/** A new member's empty first list, then a membership hint confirming their
+ * starter channel on its own read, as the relay's hints can arrive; with
+ * `listedFirst`, the first list already has it. Routed, the page shows the
+ * navigator's current visit, as the host routes Messages. */
+async function starterConfirmedFirst({
+  routed = false,
+  listedFirst = false,
+} = {}) {
+  const viewer = keypair(),
+    authority = keypair();
+  const starter = [
+    roster(authority, "alpha", [viewer.pubkey]),
+    metadata(authority, "alpha", "Alpha", undefined, [
+      ["t", "stream"],
+      ["auto_join"],
+    ]),
+  ];
+  const events: RelayEvent[] = listedFirst ? [...starter] : [];
+  const { owner, scope, navigator, visit } = workspace(
+    events,
+    viewer,
+    authority,
+  );
+  if (routed)
+    visit(
+      {
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+      },
+      navigator.snapshot().entry.id,
+    );
+  await vi.waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  if (!listedFirst) {
+    events.push(...starter);
+    await act(() => owner.session.channels.resolve?.(["alpha"]));
+  }
+  const alpha = await screen.findByRole("textbox", { name: "Message #Alpha" });
+  /** The welcome channel's hint, confirmed on a later read. Returns once the
+   * page has rendered the confirmed list and run its effects, so the switch
+   * has happened or never will; the first test below proves it. */
+  const confirmWelcome = async () => {
+    events.push(
+      roster(authority, "beta", [viewer.pubkey]),
+      metadata(authority, "beta", "Beta", undefined, [
+        ["t", "stream"],
+        ["landing"],
+      ]),
+    );
+    await act(() => owner.session.channels.resolve?.(["beta"]));
+    await vi.waitFor(() =>
+      expect(
+        owner.session.channels.list().channels.find(({ id }) => id === "beta")
+          ?.landing,
+      ).toBe(true),
+    );
+    await act(async () => {});
+  };
+  return { alpha, scope, navigator, visit, confirmWelcome };
+}
+
+/** The starter channel kept: shown, and its history entry untouched. */
+function expectStarterKept(navigator: Navigation, shown = "home") {
+  expect(navigator.snapshot().entry.target.kind).toBe(shown);
+  expect(screen.getByRole("textbox", { name: "Message #Alpha" })).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message #Beta" })).toBeNull();
+}
+
+it("opens a welcome channel confirmed after the starter channel it opened first", async () => {
+  const { navigator, confirmWelcome } = await starterConfirmedFirst();
+  await confirmWelcome();
+  // Asserted at once: the barrier the tests below rely on covers the switch.
+  // It replaces the opening, leaving no way back to the starter channel.
+  expect(navigator.snapshot()).toMatchObject({
+    canGoBack: false,
+    entry: { target: { kind: "conversation", channelId: "beta" } },
+  });
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+  expect(await screen.findByRole("region", { name: "Welcome" })).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "Message #Alpha" })).toBeNull();
+});
+
+it("opens a welcome channel that follows the starter channel across a routed visit's handoff", async () => {
+  // The starter channel is chosen while the routed visit is still pending.
+  const { scope, navigator, visit, confirmWelcome } =
+    await starterConfirmedFirst({ routed: true, listedFirst: true });
+  const entryId = navigator.snapshot().entry.id;
+  // Resolving the visit to it hands the route off: one commit without
+  // navigation, then the same history entry as a conversation.
+  visit();
+  visit(conversationTarget(scope, "alpha"), entryId);
+  await confirmWelcome();
+  expect(navigator.snapshot()).toMatchObject({
+    canGoBack: false,
+    entry: { target: { kind: "conversation", channelId: "beta" } },
+  });
+});
+
+it.each([
+  [
+    "clicks in it",
+    async (alpha: HTMLElement) => {
+      await userEvent.setup().click(alpha);
+    },
+  ],
+  [
+    "presses a key outside Messages",
+    async () => {
+      render(<button type="button">Sidebar</button>);
+      fireEvent.keyDown(screen.getByRole("button", { name: "Sidebar" }), {
+        key: "Tab",
+      });
+    },
+  ],
+])(
+  "keeps the starter channel once the reader %s, though the welcome channel follows",
+  async (_, input) => {
+    const { alpha, navigator, confirmWelcome } = await starterConfirmedFirst();
+    await input(alpha);
+    await confirmWelcome();
+    expectStarterKept(navigator);
+  },
+);
+
+it.each([
+  ["a routed", true],
+  ["an unrouted", false],
+])(
+  "leaves Settings open over %s starter channel when the welcome channel follows",
+  async (_, routed) => {
+    const { navigator, confirmWelcome } = await starterConfirmedFirst({
+      routed,
+    });
+    // Messages stays mounted with its visit behind Settings, as the host keeps it.
+    void navigator.open({ version: 1, kind: "settings" });
+    await confirmWelcome();
+    expectStarterKept(navigator, "settings");
+  },
+);
+
+it("leaves focus outside Messages where it is when the welcome channel replaces the starter channel", async () => {
+  const { confirmWelcome } = await starterConfirmedFirst();
+  render(<button type="button">Sidebar</button>);
+  const sidebar = screen.getByRole("button", { name: "Sidebar" });
+  // Focus can move without a click or key press, as when a dialog returns it.
+  act(() => sidebar.focus());
+  await confirmWelcome();
+  await screen.findByRole("textbox", { name: "Message #Beta" });
+  expect(sidebar).toHaveFocus();
+});
+
+it("keeps the starter channel when the welcome channel follows after the opening window", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { navigator, confirmWelcome } = await starterConfirmedFirst();
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    await confirmWelcome();
+    expectStarterKept(navigator);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("keeps the channel being read when a default channel arrives later", async () => {

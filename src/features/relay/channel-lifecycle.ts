@@ -1,4 +1,4 @@
-import { getEventHash } from "nostr-tools";
+import { getEventHash, type EventTemplate } from "nostr-tools";
 import { attestedOwner } from "../agents/owner-attestation";
 import type { RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
@@ -7,7 +7,8 @@ import { isTransientFailure, readErrorKind } from "./errors";
 import { retryRead } from "./read-retry";
 import { yieldToHost } from "./yield";
 import { hasTag, newer, type RelayEvent } from "./events";
-import { openMetadata } from "./discovery";
+import { metadataName, openMetadata } from "./discovery";
+import { landingTags } from "./landing";
 import {
   channelTypeTag,
   DM_VISIBILITY_KIND,
@@ -16,9 +17,11 @@ import {
   lifecycleRecord,
   lifecycleSettings,
   lifecycleTemplate,
+  landingTemplate,
   ownerAgentGrant,
   type ChannelLifecycleCommand,
   type ChannelLifecycleSettings,
+  type WelcomeCommand,
 } from "./channel-lifecycle-protocol";
 
 /** No automatic or same-dialog retry after a request may have reached the relay. */
@@ -30,6 +33,18 @@ export class ChannelLifecycleUnconfirmed extends Error {
     this.name = "ChannelLifecycleUnconfirmed";
   }
 }
+
+/** A channel's signed welcome state. `welcome` and `welcomeTitle` are absent
+ * for the default message and title. */
+export type ChannelLanding = Readonly<{
+  /** Signed metadata currently designates this channel. */
+  landing?: true;
+  welcome?: string;
+  welcomeTitle?: string;
+  name?: string;
+  /** A starter channel: the relay adds people who join to it. */
+  autoJoin?: true;
+}>;
 
 export type DmVisibility = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
@@ -56,6 +71,20 @@ export interface ChannelLifecycleCapability {
   subscribe(listener: () => void): () => void;
   refreshVisibility(signal?: AbortSignal): Promise<void>;
   observeRemoval(listener: (channelId: string) => void): () => void;
+  /** Strong read of relay-signed channel metadata; no membership needed. */
+  readLanding(
+    channelId: string,
+    signal?: AbortSignal,
+  ): Promise<ChannelLanding | undefined>;
+  /** Owner/admin command: make this the community's welcome channel with
+   * `welcome` as its message and title, `""` for either default. */
+  setLanding(
+    channelId: string,
+    welcome: WelcomeCommand,
+    signal?: AbortSignal,
+    /** Checked synchronously right before publishing; false publishes nothing. */
+    active?: () => boolean,
+  ): Promise<void>;
 }
 
 export function createChannelLifecycle({
@@ -65,6 +94,7 @@ export function createChannelLifecycle({
   relayAuthor,
   canAccess,
   acceptDiscovery,
+  acceptDirectory,
   removed,
 }: {
   reader?: RelayReader | undefined;
@@ -73,6 +103,8 @@ export function createChannelLifecycle({
   relayAuthor: string;
   canAccess(id: string): boolean;
   acceptDiscovery(events: readonly RelayEvent[]): void;
+  /** Display-only directory metadata, for any open channel. */
+  acceptDirectory?: ((events: readonly RelayEvent[]) => void) | undefined;
   removed(id: string): void;
 }) {
   let closed = false;
@@ -170,6 +202,54 @@ export function createChannelLifecycle({
       await yieldToHost();
       signal.throwIfAborted();
     }
+  }
+  /** Each channel's commands keep strictly increasing timestamps. */
+  function issue(id: string, fresh: EventTemplate): EventTemplate {
+    const template = {
+      ...fresh,
+      created_at: Math.max(fresh.created_at, (issued.get(id) ?? -1) + 1),
+    };
+    issued.set(id, template.created_at);
+    return template;
+  }
+  async function sign(
+    signer: RelayWriter,
+    template: EventTemplate,
+    signal: AbortSignal,
+  ) {
+    const signed = await signer.sign(structuredClone(template), signal);
+    signal.throwIfAborted();
+    if (
+      signed.pubkey !== viewer ||
+      signed.kind !== template.kind ||
+      signed.created_at !== template.created_at ||
+      signed.content !== template.content ||
+      JSON.stringify(signed.tags) !== JSON.stringify(template.tags) ||
+      getEventHash(signed) !== signed.id
+    )
+      throw new Error("Signer changed the channel lifecycle command");
+    return signed;
+  }
+  function pause(delay: number, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!delay) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener("abort", abort);
+        resolve();
+      }, delay);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+  async function readMetadata(id: string, signal: AbortSignal, strong = false) {
+    const events = await reread(signal, () =>
+      read([39000], id, signal, false, strong),
+    );
+    return lifecycleRecord(events, 39000, id, relayAuthor);
   }
   type OwnedAgentAction = "archive" | "unarchive" | "delete";
   async function load(
@@ -411,12 +491,11 @@ export function createChannelLifecycle({
             return false;
           };
           // The relay accepts the auto-join flag only from community owners
-          // and admins, a role the channel's own records cannot show. Check
-          // what signed metadata can: an active public stream channel.
+          // and admins, who need not belong to the channel; that role is not
+          // in the channel's own records. Check what signed metadata can: an
+          // active public stream channel.
           const flaggable = async () => {
-            assertAccess(id);
             const metadata = await read([39000], id, signal);
-            assertAccess(id);
             const channel = lifecycleRecord(metadata, 39000, id, relayAuthor);
             if (
               !channel ||
@@ -461,23 +540,11 @@ export function createChannelLifecycle({
               );
           };
           if (await authorize()) return;
-          const fresh = lifecycleTemplate(action, id);
-          const template = {
-            ...fresh,
-            created_at: Math.max(fresh.created_at, (issued.get(id) ?? -1) + 1),
-          };
-          issued.set(id, template.created_at);
-          const signed = await writer.sign(structuredClone(template), signal);
-          signal.throwIfAborted();
-          if (
-            signed.pubkey !== viewer ||
-            signed.kind !== template.kind ||
-            signed.created_at !== template.created_at ||
-            signed.content !== template.content ||
-            JSON.stringify(signed.tags) !== JSON.stringify(template.tags) ||
-            getEventHash(signed) !== signed.id
-          )
-            throw new Error("Signer changed the channel lifecycle command");
+          const signed = await sign(
+            writer,
+            issue(id, lifecycleTemplate(action, id)),
+            signal,
+          );
           if (await authorize()) return;
           signal.throwIfAborted();
           if (active?.() === false)
@@ -487,19 +554,7 @@ export function createChannelLifecycle({
           // An accepted write may precede its relay-owned side effects. Do not
           // optimistically revoke membership or confuse a failed read with absence.
           for (const delay of [0, 250, 750, 1500]) {
-            signal.throwIfAborted();
-            if (delay)
-              await new Promise<void>((resolve, reject) => {
-                const abort = () => {
-                  clearTimeout(timer);
-                  reject(signal.reason);
-                };
-                const timer = setTimeout(() => {
-                  signal.removeEventListener("abort", abort);
-                  resolve();
-                }, delay);
-                signal.addEventListener("abort", abort, { once: true });
-              });
+            await pause(delay, signal);
             if (action === "hide") {
               const hidden = await reread(signal, () =>
                 readVisibility(signal, true),
@@ -527,7 +582,10 @@ export function createChannelLifecycle({
                   record.tags.some(([key]) => key === "auto_join") ===
                     (action === "auto-join-on")
                 ) {
-                  acceptDiscovery([record]);
+                  // Only a channel this viewer reads joins the discovery state;
+                  // the browsing directory lists every open channel.
+                  if (canAccess(id)) acceptDiscovery([record]);
+                  acceptDirectory?.([record]);
                   return;
                 }
               } else if (action === "archive" || action === "unarchive") {
@@ -553,6 +611,94 @@ export function createChannelLifecycle({
           }
           throw new Error(
             "The relay accepted the request, but the change is not confirmed. Refresh channels before trying again.",
+          );
+        });
+      } catch (error) {
+        if (scope.published && !(error instanceof PublishRejected))
+          throw new ChannelLifecycleUnconfirmed(error);
+        throw error;
+      } finally {
+        busy = false;
+      }
+    },
+    async readLanding(value: string, caller?: AbortSignal) {
+      const id = lifecycleChannelId(value);
+      return owned({ id, caller }, (signal) =>
+        retryRead(async () => {
+          const record = await readMetadata(id, signal, true);
+          if (!record) return undefined;
+          // A strong read is current: the channel's projections take it too,
+          // so a check also refreshes its starter flag.
+          if (canAccess(id)) acceptDiscovery([record]);
+          acceptDirectory?.([record]);
+          const name = metadataName(record);
+          return Object.freeze({
+            ...landingTags(record.tags),
+            ...(name ? { name } : {}),
+            ...(record.tags.some(([key]) => key === "auto_join")
+              ? { autoJoin: true as const }
+              : {}),
+          });
+        }, signal),
+      );
+    },
+    async setLanding(
+      value: string,
+      welcome: WelcomeCommand,
+      caller?: AbortSignal,
+      active?: () => boolean,
+    ) {
+      if (!available || !writer)
+        throw new Error("Channel actions are unavailable on this connection");
+      if (busy) throw new Error("Another channel action is still in progress");
+      const id = lifecycleChannelId(value);
+      const template = landingTemplate(id, welcome);
+      busy = true;
+      const scope: Scope = { id, caller };
+      try {
+        await owned(scope, async (signal) => {
+          // The relay accepts this only from community owners and admins, who
+          // need not belong to the channel. Check what signed metadata can
+          // show: an active public stream channel without an expiry.
+          const eligible = async () => {
+            const channel = await readMetadata(id, signal);
+            if (
+              !channel ||
+              !openMetadata(channel) ||
+              exactLifecycleTag(channel, "archived") === "true" ||
+              channelTypeTag(channel) !== "stream" ||
+              channel.tags.some(([key]) => key === "ttl")
+            )
+              throw new Error(
+                "Only active public channels that don’t expire can welcome new members.",
+              );
+          };
+          await eligible();
+          const signed = await sign(writer, issue(id, template), signal);
+          await eligible();
+          signal.throwIfAborted();
+          if (active?.() === false)
+            throw new DOMException("Channel action cancelled", "AbortError");
+          scope.published = true;
+          await writer.publish(signed, signal);
+          // Readback is the bare `landing` designation plus the stored message
+          // and title, each absent for its default.
+          for (const delay of [0, 250, 750, 1500]) {
+            await pause(delay, signal);
+            const record = await readMetadata(id, signal, true);
+            const state = record && landingTags(record.tags);
+            if (
+              record &&
+              state?.landing &&
+              (state.welcome ?? "") === welcome.message &&
+              (state.welcomeTitle ?? "") === welcome.title
+            ) {
+              if (canAccess(id)) acceptDiscovery([record]);
+              return;
+            }
+          }
+          throw new Error(
+            "The relay accepted the request, but the change is not confirmed.",
           );
         });
       } catch (error) {

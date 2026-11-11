@@ -1100,6 +1100,26 @@ it.each<[string, RenderOptions]>([
   expect(view.container.textContent).toBe("Mic");
 });
 
+it("shows an explicit profile identity as an inert chip in a preview", () => {
+  const target = profileTarget(mic);
+  const view = renderDom(
+    <MessageMarkdown
+      {...props(`[@Mic](${target}) says hi`, {
+        patch: { mentions: [] },
+        interactive: false,
+      })}
+    />,
+  );
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  // The chip a message would show, without its profile action.
+  const chip = view.container.querySelector("[data-mention-kind]");
+  expect(chip?.tagName).toBe("SPAN");
+  expect(chip).toHaveAttribute("data-profile-target", target);
+  expect(chip).toHaveTextContent("Mic");
+  expect(view.container.textContent).not.toContain(target);
+});
+
 it.each([
   "nostr:npub1invalid",
   "nostr:nsec1invalid",

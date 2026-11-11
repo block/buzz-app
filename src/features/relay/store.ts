@@ -449,6 +449,9 @@ export function createChannelStore(
         old.hidden === channel.hidden &&
         old.private === channel.private &&
         old.autoJoin === channel.autoJoin &&
+        old.landing === channel.landing &&
+        old.welcome === channel.welcome &&
+        old.welcomeTitle === channel.welcomeTitle &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
         old.huddle === channel.huddle &&
@@ -2348,6 +2351,9 @@ export function createChannelStore(
         open?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
         /** A first read's open channels so far, for browsing only. */
         pages?: ReturnType<NonNullable<ChannelQueries["openDirectory"]>>;
+        /** Metadata confirmed outside this read while it runs, which a
+         * failure hands back to the prior read. */
+        accepted?: RelayEvent[];
       }
     | undefined;
   const noOpenDirectory: ReturnType<
@@ -2380,6 +2386,10 @@ export function createChannelStore(
       ...(type === "stream" || type === "forum" ? { channelType: type } : {}),
       ...(tag(event, "about") ? { description: tag(event, "about") } : {}),
       ...(hasTag(event, "archived", "true") ? { archived: true as const } : {}),
+      // The bare tag says the relay joins new members here now.
+      ...(event.tags.some(([key]) => key === "auto_join")
+        ? { autoJoin: true as const }
+        : {}),
     });
   }
   function openDirectoryChannels(events: readonly RelayEvent[]) {
@@ -2561,6 +2571,7 @@ export function createChannelStore(
           entry.partial = partial;
           delete entry.previous;
           delete entry.pages;
+          delete entry.accepted;
           // Name references in mounted rows read the directory through the
           // list subscription; the list itself is unchanged.
           entry.open = openDirectoryChannels(entry.events);
@@ -2573,12 +2584,49 @@ export function createChannelStore(
           if (publicDirectory === entry) {
             publicDirectory = prior;
             if (entry.pages) notify(directoryListeners);
+            if (entry.accepted) acceptDirectory(entry.accepted);
           }
           land();
         },
       );
     }
     return publicDirectory;
+  }
+  /** Fold relay-signed metadata confirmed outside a directory read, such as
+   * a lifecycle command's readback, into this epoch's directory, so browsing
+   * and name references show it before the next read. The read in flight, or
+   * the next one, keeps it unless the relay has newer metadata. Display only,
+   * like the directory itself. */
+  function acceptDirectory(events: readonly RelayEvent[]) {
+    const entry = publicDirectory;
+    if (disposed || !transport || entry?.generation !== epoch) return;
+    const author = transport.relayAuthor;
+    const fresh = events.filter(
+      (event) =>
+        event.kind === 39000 && event.pubkey === author && !!tag(event, "d"),
+    );
+    if (!fresh.length) return;
+    entry.events.push(...fresh);
+    if (entry.at !== undefined)
+      entry.open = openDirectoryChannels(entry.events);
+    else {
+      // The read folds them in when it finishes; until then, patch the rows
+      // shown meanwhile.
+      entry.accepted = [...(entry.accepted ?? []), ...fresh];
+      const latest = latestPublicMetadata(fresh);
+      const patch = (rows: readonly DirectoryChannel[]) =>
+        Object.freeze(
+          rows.flatMap((row) => {
+            const event = latest.get(row.id);
+            const channel = event ? directoryChannel(row.id, event) : row;
+            return channel ? [channel] : [];
+          }),
+        );
+      if (entry.open) entry.open = patch(entry.open);
+      if (entry.pages) entry.pages = patch(entry.pages);
+    }
+    notify(listListeners);
+    notify(directoryListeners);
   }
   /** Read the whole open-channel directory, for browsing. Shares the search
    * read; `openDirectory` then names its channels. Never resolves them. */
@@ -4171,6 +4219,7 @@ export function createChannelStore(
     },
     suspendedPreviews: () => discovery?.suspendedChannels() ?? [],
     acceptDiscovery: applyDiscovery,
+    acceptDirectory,
     accept,
     clearCache,
     dispose,

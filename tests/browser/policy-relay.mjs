@@ -200,9 +200,13 @@ export function policyRelay({
       try {
         if (latencyMs)
           await new Promise((resolve) => setTimeout(resolve, latencyMs));
-        // NIP-11 is a public GET with no signed query body. The rail now reads
-        // it for saved communities, including inactive ones.
+        // NIP-11 and the join policy are public GETs with no signed query body.
+        // The rail reads NIP-11 for saved communities, including inactive ones;
+        // Messages reads both (the broker's info route) for the welcome channel.
+        // These communities are open: they publish no join policy.
         if (!init?.body) {
+          if (new URL(url).pathname === "/api/join-policy")
+            return new Response(null, { status: 404 });
           expect(new URL(url).pathname).toBe("/");
           return Response.json(discovery?.(communityOf(url)) ?? {});
         }

@@ -157,7 +157,7 @@ it.each([
     );
     await select(user, "General access", option);
     const starter =
-      "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn off Starter channel for new members in Settings first.";
+      "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn it off in Settings → Community admin → Welcome first.";
     const confirm = await screen.findByRole("alertdialog", {
       name: "Change general access?",
     });

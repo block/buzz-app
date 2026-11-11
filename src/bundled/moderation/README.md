@@ -15,3 +15,22 @@ community where you are an owner or admin.
 
 Direct addition by public identity is retained behind `DIRECT_MEMBER_ADD_ENABLED`
 for a possible return, but is hidden in the shipped UI.
+
+On relays that support it, **Settings → Community admin → Welcome** lets an
+owner or admin choose the public channel new members join and open first, and
+the title and message of the welcome card pinned above that channel's
+composer for new members. The message editor has the composer's formatting
+toolbar and saves Markdown; pasted channel and
+message links show with the same link presentation as in messages, through
+the conversation's link renderers. Saving moves the welcome to the chosen
+channel; people already in the community keep their channels. Editing the
+title or message never shows the card again to anyone who dismissed it;
+moving the welcome to another channel is a new welcome, which can show once
+more there.
+
+Below that, **Also add new members to** lists the starter channels, which new
+members join too: **Add a channel** searches other open channels, and **Remove**
+takes one off. These edit the same draft as the welcome: **Save** publishes
+the welcome first, then each starter change, and **Cancel** discards them.
+Saved changes apply to people who join afterwards. The list, with its Save,
+also appears on relays without a welcome channel.

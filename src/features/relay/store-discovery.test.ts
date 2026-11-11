@@ -9,6 +9,7 @@ import { createRelaySession } from "./session";
 import type { ChannelSummary } from "./contracts";
 import type { ChannelStoreOptions } from "./store";
 import { isRetryableRead } from "./read-retry";
+import { matchesEvent } from "./projection";
 import {
   flush,
   keypair,
@@ -1123,14 +1124,15 @@ it("merges incremental metadata and periodically replaces the full directory", a
   delta.request.respond([
     open("renamed", "after", start / 1000 + 1),
     open("archived", "active", start / 1000 + 2, [["archived", "true"]]),
-    open("new", "new-channel", start / 1000 + 3),
+    // The relay joins new members to a channel with the bare tag.
+    open("new", "new-channel", start / 1000 + 3, [["auto_join"]]),
   ]);
   expect(await delta.search).toEqual({ channels: [], partial: false });
   expect(h.channels.openDirectory?.()).toEqual([
     { id: "renamed", name: "after" },
     { id: "archived", name: "active", archived: true },
     { id: "future", name: "future" },
-    { id: "new", name: "new-channel" },
+    { id: "new", name: "new-channel", autoJoin: true },
   ]);
   clock += 30_000;
   const empty = await read();
@@ -1146,7 +1148,7 @@ it("merges incremental metadata and periodically replaces the full directory", a
   clock = start + 5 * 60_000;
   const full = await read();
   expect(full.request.filters[0]?.since).toBeUndefined();
-  full.request.respond([open("new", "new-channel", start / 1000 + 3)]);
+  full.request.respond([open("new", "new-channel", start / 1000 + 4)]);
   await full.search;
   expect(h.channels.openDirectory?.()).toEqual([
     { id: "new", name: "new-channel" },
@@ -1491,6 +1493,67 @@ it("reads the open directory for browsing with descriptions, sharing the search 
   // Within the reuse window, browsing again reads nothing.
   expect(await h.channels.readDirectory?.()).toEqual({ partial: false });
   expect(h.pending).toHaveLength(0);
+});
+
+it("shows a confirmed auto-join change in the directory before any directory re-read", async () => {
+  // An owner or admin flags channels they are not in, so the directory, not
+  // the list, carries this one.
+  const admin = keypair();
+  const id = "13050000-0000-4000-8000-000000000001";
+  let flagged = true;
+  const channel = () =>
+    metadata(relay, id, "starter", flagged ? 1_700_000_000 : 1_700_000_001, [
+      ["public"],
+      ["t", "stream"],
+      ...(flagged ? [["auto_join"]] : []),
+    ]);
+  const directoryReads = vi.fn();
+  const owner = createRelaySession(
+    {
+      viewer: admin.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async (filters) => {
+        if (
+          filters.some((filter) => filter.kinds?.[0] === 39000 && !filter["#d"])
+        )
+          directoryReads();
+        return [channel()].filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+      },
+      channelLifecycle: {
+        sign: async (template) => signed(admin, template),
+        publish: async (event) => {
+          if (event.kind === 9002) flagged = false;
+        },
+      },
+    },
+    { outboxStorage: { load: () => [], save() {} } },
+  );
+  owners.push(owner);
+  const { channels } = owner.session;
+  channels.ensureList();
+  await vi.waitFor(() => expect(channels.list().status).toBe("ready"));
+  await channels.readDirectory?.();
+  expect(channels.browseDirectory?.()).toEqual([
+    { id, name: "starter", channelType: "stream", autoJoin: true },
+  ]);
+  const listeners = vi.fn();
+  const off = channels.subscribeDirectory?.(listeners);
+  try {
+    await owner.session.channelLifecycle.run("auto-join-off", id);
+    // Within the reuse window: the readback, not another directory read.
+    const unflagged = [{ id, name: "starter", channelType: "stream" }];
+    expect(channels.browseDirectory?.()).toEqual(unflagged);
+    expect(channels.openDirectory?.()).toEqual(unflagged);
+    expect(listeners).toHaveBeenCalled();
+    expect(await channels.readDirectory?.()).toEqual({ partial: false });
+    expect(channels.browseDirectory?.()).toEqual(unflagged);
+    expect(directoryReads).toHaveBeenCalledOnce();
+  } finally {
+    off?.();
+  }
 });
 
 it("shows a first directory read's pages to browsing only, and names them for references once it finishes", async () => {

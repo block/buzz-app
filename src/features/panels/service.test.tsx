@@ -52,7 +52,7 @@ it("independently unloads panels without removing the page or shared data", asyn
       sync: emptySync(),
     }),
   });
-  // Channels hands community membership to its page for auto-join settings.
+  // Channels hands community membership to its page for the first-channel setup.
   root.provide("adminAccess", { membership: undefined });
   // GitHub reads through gh where the host can run it; here it cannot.
   root.provide("host", {});

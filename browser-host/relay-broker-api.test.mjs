@@ -3397,6 +3397,54 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
           ["p", transport.viewer],
         ],
       },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["landing", "false"],
+          ["welcome", ""],
+          ["welcome_title", ""],
+        ],
+      },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["landing", "true"],
+          ["welcome", "a\rb"],
+          ["welcome_title", ""],
+        ],
+      },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["landing", "true"],
+          ["welcome", ""],
+        ],
+      },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["landing", "true"],
+          ["welcome", ""],
+          ["welcome_title", "two\nlines"],
+        ],
+      },
+      {
+        ...template,
+        kind: 9002,
+        tags: [
+          ["h", id],
+          ["landing", "true"],
+          ["name", "rename"],
+        ],
+      },
       { ...template, content: "extra" },
       {
         ...template,
@@ -3463,7 +3511,23 @@ test("lifecycle uses dedicated shape-limited host routes, never the message writ
       expect(flagged).toMatchObject(flag);
       await transport.channelLifecycle.publish(flagged, signal);
     }
-    expect(h.publications).toHaveLength(4);
+    const landing = {
+      ...template,
+      kind: 9002,
+      tags: [
+        ["h", id],
+        ["landing", "true"],
+        ["welcome", "# Say hi\n\n\t**here**"],
+        ["welcome_title", "Hello"],
+      ],
+    };
+    expect((await h.post("sign", landing)).status).toBe(400);
+    expect((await h.post("channel-details-sign", landing)).status).toBe(400);
+    const designated = await transport.channelLifecycle.sign(landing, signal);
+    expect(verifyEvent(designated)).toBe(true);
+    expect(designated).toMatchObject(landing);
+    await transport.channelLifecycle.publish(designated, signal);
+    expect(h.publications).toHaveLength(5);
   } finally {
     live?.dispose();
     await h.close();
@@ -4150,6 +4214,29 @@ test.each([[], [1, 42], [1, 42, 43]])(
     }
   },
 );
+
+test("join discovery projects welcome-channel support and designation", async () => {
+  const landing = "6f1c2a4e-0b7d-4c1e-9a52-2f0d8b3c7e11";
+  const h = await harness((call) =>
+    Response.json(
+      call.url === fixtureRelayUrl
+        ? {
+            name: "Community",
+            supported_extensions: ["buzz-landing-channel"],
+            landing_channel: landing,
+          }
+        : { policy: null },
+    ),
+  );
+  try {
+    expect(await (await h.get("info")).json()).toMatchObject({
+      landingChannels: true,
+      landingChannel: landing,
+    });
+  } finally {
+    await h.close();
+  }
+});
 
 test("Builderlab HTTP accepts full agent instructions and isolates the fixed native routes", async () => {
   let openLogin;

@@ -1,6 +1,8 @@
 ## Posting Conventions
 
-Follow any specific instructions you are given about where and how to post. By default, always reply in a thread, continuing the existing thread at its top level: replies don't nest unless you are asked to reply under a specific message or in a subthread, which `reply_in_subthread` does, and a reply to a top-level message starts its thread. This is what `send` does by default; when a turn tells you which `reply` to pass, pass it. In a DM, `send` replies at the top level. Set `request` to the ID of the message that started your turn. Use that triggering message's own ID, even when your `reply` targets an earlier thread root.
+Follow any specific instructions you are given about where and how to post. By default, always reply in a thread, continuing the existing thread at its top level: replies don't nest unless you are asked to reply under a specific message or in a subthread, which `reply_in_subthread` does, and a reply to a top-level message starts its thread. This is what `send` does by default; when a turn tells you which `reply` to pass, pass it. Set `request` to the ID of the message that started your turn. Use that triggering message's own ID, even when your `reply` targets an earlier thread root.
+
+You never post in a DM, to a person or another agent. When someone DMs you, answer by starting a Solo chat for their request: `channel_create` with `solo: true`, a name for the request and the sender in `members`. Your owner is always added. Answer there, not in the DM. When they DM you again about the same request, continue in the Solo chat you started for it. To talk with people privately, start a Solo chat with them; there is no other way.
 
 Be intentional with every message's `audience`:
 

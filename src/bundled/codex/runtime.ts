@@ -1683,6 +1683,7 @@ export class CodexRuntime {
         ...(root ? { root } : {}),
         ...(topLevel ? { topLevel } : {}),
         ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
+        ...(channel?.dm ? { dm: true as const } : {}),
       },
       team: delivery.team ?? "",
       ...(project ? { project: `${project}\n` } : {}),

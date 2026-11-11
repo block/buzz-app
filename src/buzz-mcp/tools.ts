@@ -277,7 +277,7 @@ export const TOOLS: readonly Tool[] = [
   }),
   tool(
     "channel_create",
-    "Create a channel. template: one of your owner's, by name. solo: a private Solo chat, with members added in the create.",
+    "Create a channel. template: one of your owner's, by name. solo: a private Solo chat, with members and your owner added in the create.",
     {
       name: str,
       visibility: { type: "string", enum: ["open", "private"] },
@@ -332,7 +332,6 @@ export const TOOLS: readonly Tool[] = [
     ["pubkeys"],
   ),
   tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
-  tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
   tool(
     "mem_get",
     "Read memory: slug gives its version and text; q finds entries with every word; neither lists slugs.",
@@ -1040,43 +1039,6 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return rows.map(({ row }) => row).join("\n") || "No users.";
   },
 
-  async dm(tools, args) {
-    const { client } = tools;
-    const to = list(args.to).map(pubkey);
-    if (!to.length) throw new Error("to is required.");
-    const people = new Set([client.pubkey, ...to]);
-    const find = async () =>
-      (
-        await client.query([
-          { kinds: [39000], "#p": [client.pubkey], "#t": ["dm"], limit: 500 },
-        ])
-      ).find((event) => {
-        const members = new Set(
-          event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
-        );
-        return (
-          members.size === people.size &&
-          [...people].every((key) => members.has(key))
-        );
-      });
-    let found = await find();
-    if (!found) {
-      await client.publish({
-        kind: 41010,
-        content: "",
-        tags: [...to.map((key) => ["p", key]), ["d", crypto.randomUUID()]],
-      });
-      // The relay creates the channel's metadata just after answering.
-      for (let tries = 0; !found && tries < 5; tries++) {
-        if (tries) await new Promise((resolve) => setTimeout(resolve, 400));
-        found = await find();
-      }
-    }
-    const channel = found && tag(found, "d");
-    if (!channel) throw new Error("The DM did not open.");
-    return channel;
-  },
-
   async mem_get(tools, args) {
     const slug = text(args.slug);
     const q = typeof args.q === "string" ? args.q : undefined;
@@ -1608,6 +1570,11 @@ async function post(
   thread: readonly string[][],
   extra: readonly string[][] = [],
 ) {
+  const metadata = await tools.metadata(channel);
+  if (metadata && tag(metadata, "t") === "dm")
+    throw new Error(
+      "Agents don't post in DMs. Start a Solo chat instead: channel_create with solo true and the people as members; your owner is added too.",
+    );
   const files = await tools.attach(list(args.files));
   const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
   const mentions = await tools.mentions(channel, content, list(args.mentions));
@@ -1757,9 +1724,14 @@ class Tools {
     const solo = args.solo === true;
     if (!solo && args.members !== undefined)
       throw new Error("members is for Solo chats.");
-    const members = keys(args, "members").filter(
-      (key) => key !== this.client.pubkey,
-    );
+    const owner = this.client.owner;
+    if (solo && !owner)
+      throw new Error(
+        "A Solo chat includes your owner, and your host does not name them.",
+      );
+    const members = [
+      ...new Set([...keys(args, "members"), ...(solo && owner ? [owner] : [])]),
+    ].filter((key) => key !== this.client.pubkey);
     // Its members are only the ones named, so no template adds agents.
     if (
       solo &&

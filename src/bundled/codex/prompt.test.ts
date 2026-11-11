@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { DM_PROMPT } from "../../buzz-mcp/prompt";
 import { MENTION_PROMPT } from "../../features/agent-harness/base-prompt";
 import type { EventData } from "../../features/relay/events";
 import { developerInstructions, turnInput } from "./prompt";
@@ -37,4 +38,14 @@ it("tells a turn a mention starts what it owes the mention, and a wake's turn no
   });
   expect(instructions).not.toContain("MUST reply");
   expect(instructions).not.toContain("MUST publish");
+});
+
+it("sends a DM's answer to a Solo chat", () => {
+  const dm = { channelId: "dm", name: "dm", dm: true as const };
+  expect(turnInput("agent", event, dm, "what changed?")).toContain(
+    `</context>\n${DM_PROMPT}\n`,
+  );
+  expect(
+    turnInput("agent", event, conversation, "what changed?"),
+  ).not.toContain(DM_PROMPT);
 });

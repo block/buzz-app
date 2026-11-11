@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { quoted } from "../../features/agent-harness/turn-records";
 import type { ConversationWake } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
-import { BUZZ_PROMPT } from "../../buzz-mcp/prompt";
+import { BUZZ_PROMPT, DM_PROMPT } from "../../buzz-mcp/prompt";
 import { mentionSection } from "../../features/agent-harness/base-prompt";
 import threadHandoff from "./session_handoff_thread.md?raw";
 import {
@@ -364,10 +364,9 @@ it("says earlier context is already in the session when none is new", () => {
   expect(prompt).toContain(
     "Earlier context is already available in this session.",
   );
-  // A DM's session spans its threads, so it names the one to reply in.
-  expect(prompt).toContain(
-    `pass \`reply: "${event("3", "").id}"\` to \`send\``,
-  );
+  // Agents never post in a DM, so it sends the reply to a Solo chat.
+  expect(prompt).toContain(`IMPORTANT: ${DM_PROMPT}`);
+  expect(prompt).not.toContain("pass `reply:");
 });
 
 it("shows a DM's recent messages as conversation context", () => {

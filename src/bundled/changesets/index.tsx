@@ -41,7 +41,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "changes",
     title: "Changes",
     matches: (url) => !!parseTarget(url),
-    keepOpen: true,
     component: ({ target }) => <ChangesetPanel target={target} turns={turns} />,
   });
 };

@@ -783,7 +783,9 @@ clipboard history and cloud sync. Buzz can't make every manager honor it. 60 sec
 copy it tries to clear the clipboard, if it still holds that key. A copy of the
 same key restarts the wait, and a failed copy leaves the earlier wait in place.
 Failures are ignored, quitting cancels the wait, and another app can still write
-between the read and the clear. The UI says Buzz tries to clear it. A key the user
+between the read and the clear. On Linux the check reads the clipboard off the
+main thread, because the owner may be Buzz's own GTK loop; a clipboard that
+doesn't answer within 10 seconds is left alone. The UI says Buzz tries to clear it. A key the user
 selects and copies from the revealed field is not cleared, unless a Copy
 button wait is still running. The one exception is the
 first-run **Enter your private key** page: the typed, pasted or file-read nsec

@@ -311,6 +311,29 @@ it("shows a conversation as a timeline with day dividers, drills into a row's th
   );
   fireEvent.click(screen.getByRole("button", { name: "Back to conversation" }));
   expect(act).toHaveBeenCalledWith("back");
+  // Reply from the conversation opens the row's thread, as main's channel
+  // view does, instead of replying in the conversation; once the thread
+  // shows, the window focuses its conversation area for typing.
+  act.mockClear();
+  rerender(<PopoutWindowView view={conversation} act={act} />);
+  const replies = screen.getAllByRole("button", { name: "Reply" });
+  fireEvent.click(replies[0] as HTMLElement);
+  expect(act).toHaveBeenCalledWith("openThread", "1".repeat(64));
+  expect(screen.queryByText(/Replying to/)).toBeNull();
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: true,
+        canGoBack: true,
+        root: row("1".repeat(64), "Monday"),
+        replies: [],
+      })}
+      act={act}
+    />,
+  );
+  expect(document.activeElement).toBe(
+    screen.getByRole("log", { name: "Thread messages" }),
+  );
 });
 
 it("shows membership activity as one notice per run and says who is typing or working, in main's words", () => {

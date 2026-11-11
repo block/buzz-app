@@ -69,18 +69,31 @@ export function PopoutWindowView({
   // changing frames does; navigation asks first while one is in progress.
   const [capturing, setCapturing] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<
-    { action: "openThread"; rootId: string } | { action: "back" }
+    | { action: "openThread"; rootId: string; intent?: "reply" }
+    | { action: "back" }
   >();
+  // Reply from a conversation opens the thread and, once it shows, its
+  // composer takes focus — main's Reply from a channel does the same.
+  const focusOnThread = useRef(false);
   const navigate = (
-    next: { action: "openThread"; rootId: string } | { action: "back" },
+    next:
+      | { action: "openThread"; rootId: string; intent?: "reply" }
+      | { action: "back" },
   ) => {
     if (capturing) {
       setPendingNavigation(next);
       return;
     }
-    if (next.action === "openThread") act("openThread", next.rootId);
-    else act("back");
+    if (next.action === "openThread") {
+      focusOnThread.current = next.intent === "reply";
+      act("openThread", next.rootId);
+    } else act("back");
   };
+  useEffect(() => {
+    if (!view.thread || !focusOnThread.current) return;
+    focusOnThread.current = false;
+    focusConversation();
+  });
   const rows = useMemo(
     () => (view.root ? [view.root, ...view.replies] : view.replies),
     [view.root, view.replies],
@@ -494,7 +507,12 @@ export function PopoutWindowView({
               // window; main re-points the projection and keeps the way back.
               onOpenThread: view.thread
                 ? undefined
-                : (rootId) => navigate({ action: "openThread", rootId }),
+                : (rootId, intent) =>
+                    navigate({
+                      action: "openThread",
+                      rootId,
+                      ...(intent ? { intent } : {}),
+                    }),
             }}
             layout={view.thread ? "thread" : "timeline"}
             openLink={(url) => {
@@ -644,9 +662,10 @@ export function PopoutWindowView({
                   onClick={() => {
                     const next = pendingNavigation;
                     setPendingNavigation(undefined);
-                    if (next.action === "openThread")
+                    if (next.action === "openThread") {
+                      focusOnThread.current = next.intent === "reply";
                       act("openThread", next.rootId);
-                    else act("back");
+                    } else act("back");
                   }}
                 >
                   Discard and continue

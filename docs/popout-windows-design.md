@@ -881,6 +881,13 @@ three documented gaps close before it leaves draft.
   and `#root` are now pinned to the viewport with `overflow: hidden` in both
   companion entries — only the message list scrolls.
 
+- jaw's tryout: in a channel window the row's Reply replied in the
+  conversation composer; main's channel view opens the thread and focuses
+  its composer. Conversation frames no longer pass `onReply`; `MessageRow`
+  falls through to `onOpenThread(root, root, "reply")`, the companion drills
+  in with that intent and focuses the conversation area once the thread
+  frame shows. Thread windows still reply in place.
+
 ### Non-goals (S3)
 
 Members dialog *inside* the pop-out (it stays main's); starting/stopping

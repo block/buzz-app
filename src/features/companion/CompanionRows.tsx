@@ -45,8 +45,9 @@ export type CompanionRowCapabilities = {
   onReply?: ((messageId: string) => void) | undefined;
   /** Main-admitted message management, driven by each row's projected policy. */
   management?: CompanionManagementActions | undefined;
-  /** Conversation timelines: a row's thread opens in this window. */
-  onOpenThread?: ((rootId: string) => void) | undefined;
+  /** Conversation timelines: a row's thread opens in this window; `reply`
+   * also focuses its composer, as main's Reply does from a channel. */
+  onOpenThread?: ((rootId: string, intent?: "reply") => void) | undefined;
   /** Stop an agent's live work on a shown request, admitted in main. */
   stopWork?: ((key: string) => Promise<StopOutcome>) | undefined;
 };
@@ -154,8 +155,10 @@ export function CompanionRows({
               }
               scope={scope}
               viewer={reactions?.session.viewer}
+              // A thread window replies in place; a conversation window's
+              // Reply opens the thread, as main's channel view does.
               onReply={
-                capabilities?.onReply && writable
+                layout !== "timeline" && capabilities?.onReply && writable
                   ? capabilities.onReply
                   : undefined
               }
@@ -234,7 +237,8 @@ export function CompanionRows({
               layout={layout}
               onOpenThread={
                 layout === "timeline" && openThread
-                  ? (_messageId, threadRootId) => openThread(threadRootId)
+                  ? (_messageId, threadRootId, intent) =>
+                      openThread(threadRootId, intent)
                   : undefined
               }
               startsThreads={layout === "timeline" && !!openThread && writable}

@@ -894,7 +894,7 @@ describe("bind", () => {
     expect((failed as Error).message).toBe(
       "Builderlab account link failed (HTTP 200: challenge for another origin).",
     );
-    expect((failed as { retryable?: unknown }).retryable).toBe(false);
+    expect((failed as { retryable?: unknown }).retryable).toBeUndefined();
     expect(sent.map(({ url }) => url.split("/").at(-1))).toEqual([
       "current",
       "challenge",
@@ -1154,6 +1154,27 @@ describe("unbind", () => {
     expect((failed as Error).message).toBe("offline");
     expect((failed as { retryable?: unknown }).retryable).toBe(true);
   });
+
+  // Start over's page has no way past a failed unlink but Try again, so only
+  // an ended sign-in, where signing in again helps instead, may withdraw it.
+  it.each([
+    ["a lapsed session", lapsed, false],
+    ["a refused origin", refusal(403, "invalid_origin"), undefined],
+    ["a non-JSON refusal", answer(403, "Forbidden"), undefined],
+  ])(
+    "keeps Try again for an unlink failing on %s unless the sign-in ended",
+    async (_label, reply, retryable) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const failed: unknown = await forwardedAccount(
+        credential,
+        kgoose(bound(old), reply).request,
+        untouched,
+      )
+        .unbind(old, pubkey)
+        .catch((error: unknown) => error);
+      expect((failed as { retryable?: unknown }).retryable).toBe(retryable);
+    },
+  );
 
   // kgoose's delete answers 200 or a 403 `invalid_origin`; its
   // `@Authenticated` gate answers a lapsed session with misk's 401.

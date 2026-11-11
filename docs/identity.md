@@ -309,9 +309,10 @@ device, but it isn’t linked to your account or backed up yet.* when
 the unlink or link failed (a key that isn't linked can't be backed up),
 otherwise *Your key is saved on this device.* **Try again** repeats the failed step and the rest of the
 lane without creating another key. It is offered only where another attempt
-can help: an error that says it cannot (`retryable: false`), such as an ended
-Builderlab sign-in or a refused link, or a backup failure the failure table
-marks not retryable, leaves only the way out. An expired backup session prompts sign-in
+can help: an ended Builderlab sign-in (HTTP 401, `retryable: false`), where
+signing in again helps instead, or a backup failure the failure table marks not
+retryable, leaves only the way out. Other refusals keep Try again: after Start
+over it is the only way past a failed unlink. An expired backup session prompts sign-in
 again and verifies the original account subject before uploading. Canceled or
 wrong-account sign-in leaves setup and the key intact. When backup is explicitly unavailable in the build or not offered by the
 account, **Continue without backup** skips only that backup step and runs the

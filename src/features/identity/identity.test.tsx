@@ -7117,48 +7117,53 @@ it("a development seed's fail-once backup fails only the first backup, and Try a
   identity.dispose();
 });
 
-it("a development seed's unlink status fails Start over's unlink as kgoose would, still without a request", async () => {
-  vi.stubEnv(
-    "VITE_BUZZ_FIRST_RUN_ACCOUNT",
-    JSON.stringify({ npub: linkedNpub, unlink: 503 }),
-  );
-  vi.mocked(invoke).mockImplementation((command) => {
-    if (command === "nsec_backup_choice")
-      return Promise.resolve({
-        available: false,
-        pubkey: viewer,
-        automatic: null,
-      });
-    if (command === "identity_restore") return Promise.resolve(null);
-    if (command === "identity_legacy_available") return Promise.resolve(false);
-    if (command === "identity_create") return Promise.resolve(viewer);
-    throw new Error(`Unexpected command ${command}`);
-  });
-  const identity = createIdentity();
-  const user = userEvent.setup();
-  await welcomeBackPage(user, identity, undefined);
-  await startOver(user);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Builderlab account unlink failed (HTTP 503).",
-  );
-  // The failed unlink blocks: Try again is the only action, and the seed
-  // fails it again.
-  expect(
-    screen.queryByRole("button", { name: "Continue without linking" }),
-  ).toBeNull();
-  expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Try again" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Builderlab account unlink failed (HTTP 503).",
-  );
-  expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
-  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
-    "identity_restore",
-    "identity_legacy_available",
-    "identity_create",
-  ]);
-  identity.dispose();
-});
+it.each([
+  [503, "Builderlab account unlink failed (HTTP 503)."],
+  // A refusal takes the production error path too, and still keeps Try
+  // again: it is the page's only way past the unlink.
+  [403, "Builderlab account unlink failed (HTTP 403)."],
+])(
+  "a development seed's unlink status %i fails Start over's unlink as kgoose would, still without a request",
+  async (unlink, message) => {
+    vi.stubEnv(
+      "VITE_BUZZ_FIRST_RUN_ACCOUNT",
+      JSON.stringify({ npub: linkedNpub, unlink }),
+    );
+    vi.mocked(invoke).mockImplementation((command) => {
+      if (command === "nsec_backup_choice")
+        return Promise.resolve({
+          available: false,
+          pubkey: viewer,
+          automatic: null,
+        });
+      if (command === "identity_restore") return Promise.resolve(null);
+      if (command === "identity_legacy_available")
+        return Promise.resolve(false);
+      if (command === "identity_create") return Promise.resolve(viewer);
+      throw new Error(`Unexpected command ${command}`);
+    });
+    const identity = createIdentity();
+    const user = userEvent.setup();
+    await welcomeBackPage(user, identity, undefined);
+    await startOver(user);
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    // The failed unlink blocks: Try again is the only action, and the seed
+    // fails it again.
+    expect(
+      screen.queryByRole("button", { name: "Continue without linking" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+      "identity_restore",
+      "identity_legacy_available",
+      "identity_create",
+    ]);
+    identity.dispose();
+  },
+);
 
 it("restores the backed-up key and continues without a welcome-back confirmation", async () => {
   vi.stubEnv(

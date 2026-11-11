@@ -646,6 +646,40 @@ it("withholds a receipt's Backed up while the account shows another backed-up ke
   expect(badge.queryByText(/A backup is saved/)).toBeNull();
 });
 
+// A receipt counts for any account. Backed up K with account A, turned
+// automatic backup off, then signed in to B: native stops at consent before it
+// asks B, and B's read finds no backup of K. The pill stays; the copy names
+// this account only once it confirms the backup.
+it.each([
+  { linked: "cd".repeat(32), backups: [] as string[], holder: "a" },
+  { linked: viewer, backups: [viewer], holder: "your" },
+])(
+  "says a receipt's backup is with $holder account after reading $linked",
+  async ({ linked, backups, holder }) => {
+    const { fi, mount } = accountFixture(
+      confirmedAt(1, { status: "waiting", reason: "no_consent" }),
+    );
+    fi.request.mockImplementation(async ({ path }) =>
+      accountResponse(path, linked, backups),
+    );
+    mount();
+    await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.allSettled(
+        fi.request.mock.results.map((result) => result.value),
+      );
+    });
+    const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+    expect(badge.getByText("Backed up")).toBeVisible();
+    await showKeyDetails();
+    expect(
+      badge.getByText(`A backup is saved with ${holder} Builderlab account.`, {
+        exact: false,
+      }),
+    ).toBeVisible();
+  },
+);
+
 // Another attempt gets the same answer: the copy says what to do instead.
 it.each([
   [

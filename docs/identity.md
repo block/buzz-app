@@ -807,7 +807,10 @@ signed-in account answering that it links no key, or another key, clears it, and
 the next account handoff starts again from the receipt. Settings also withholds
 **Backed up** while its own account read shows another key linked and backed
 up there, even when native's pass stopped before it asked the account (for
-example, waiting for consent).
+example, waiting for consent). The receipt counts for any account, so the
+tooltip and key details say the backup is with *your* account only after a pass
+for the signed-in account completes or its read shows this key backed up; until
+then they say *a* Builderlab account.
 **Check backup** flips to the explanation and retry.
 The pill sits inside the artwork, so loading cannot move the card or its controls.
 Builds without a service reserve no pill space. The back uses the same concise

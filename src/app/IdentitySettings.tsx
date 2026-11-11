@@ -190,6 +190,11 @@ export function IdentitySettings({
   const backupLocation = provider?.authority
     ? serverName(provider.authority)
     : "Builderlab";
+  // The receipt counts for any account: only a finished pass for this account,
+  // or this account's read of this key, makes the backup this account's.
+  const backupAccount = `${
+    status?.status === "complete" || accountBackup.key === viewer ? "your" : "a"
+  } ${backupLocation} account`;
   useEffect(() => {
     if (keyScope.current !== viewer) setSigningOut(false);
     keyScope.current = viewer;
@@ -306,7 +311,7 @@ export function IdentitySettings({
                             ? "attention"
                             : "pending"
               }
-              backupLocation={backupLocation}
+              backupAccount={backupAccount}
               onCopy={() => void copyIdentity(npub, "Buzz ID")}
             >
               {(active, badgeAction) => (
@@ -329,11 +334,7 @@ export function IdentitySettings({
                             <p className="text-body-sm text-secondary">
                               This key is stored securely on this device.
                               {status?.builderlab && backupConfirmed && (
-                                <>
-                                  {" "}
-                                  A backup is saved with your {backupLocation}{" "}
-                                  account.
-                                </>
+                                <> A backup is saved with {backupAccount}.</>
                               )}
                             </p>
                             <p className="text-body-sm text-secondary">

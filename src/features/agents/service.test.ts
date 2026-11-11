@@ -17831,7 +17831,11 @@ async function relayAttentionSetup(
             try {
               accept(event);
             } catch (error) {
-              throw new PublishRejected("conflict", String(error));
+              // The relay's refusal text, as NIP-01 sends it.
+              throw new PublishRejected(
+                "conflict",
+                error instanceof Error ? error.message : String(error),
+              );
             }
           },
         },
@@ -18887,13 +18891,39 @@ it("never writes a move over a community record it can't read", async () => {
     instructions: "",
   } as AttentionValue);
   const before = [...f.heads.values()].map((event) => event.id);
-  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+  const shown = await f.service.migrateAttention(bot);
+  expect(shown).toMatchObject({
     migrated: false,
     skipped: ["interest/default"],
   });
   expect(f.ownerWrites).toHaveLength(0);
   expect([...f.heads.values()].map((event) => event.id)).toEqual(before);
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  // A confirmed prune at a head that changed since is refused.
+  await expect(
+    f.service.migrateAttention(bot, {
+      prune: { "interest/default": "f".repeat(64) },
+    }),
+  ).resolves.toMatchObject({ migrated: false, skipped: ["interest/default"] });
+  expect(f.ownerWrites).toHaveLength(0);
+  // At the head the owner saw, it deletes that record and restores this
+  // device's value over it.
+  await expect(
+    f.service.migrateAttention(bot, { prune: shown.heads }),
+  ).resolves.toMatchObject({ migrated: true, skipped: [] });
+  const tag = (event: RelayEvent | undefined, name: string) =>
+    event?.tags.find((t) => t[0] === name)?.[1];
+  // The ensure flow: its create is refused over the deletion, which it
+  // then restores.
+  expect(f.ownerWrites.map((event) => tag(event, "op"))).toEqual([
+    "delete",
+    "create",
+    "restore",
+  ]);
+  expect(f.ownerWrites[0] && tag(f.ownerWrites[0], "prev")).toBe(
+    shown.heads["interest/default"],
+  );
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
 });
 
 it("creates no attention channel where the relay has no artifact sync", async () => {

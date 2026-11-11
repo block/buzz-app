@@ -645,8 +645,8 @@ export type AttentionMigration = Readonly<{
 }>;
 
 /** Publishes each object of `attention` the relay does not already hold
- * (Rollout 3), never over a record it skipped, then reads the set back
- * and compares it. It also deletes
+ * (Rollout 3), never over a record it skipped unless the owner confirmed
+ * pruning that head, then reads the set back and compares it. It also deletes
  * each object in `prune` (slug to the head the owner saw) that the relay
  * still holds at that head, only there or skipped (Rollback: "deletes them
  * only when asked"). One added or changed since the owner saw it stays, and
@@ -664,7 +664,26 @@ export async function publishAll(
     missingOnly?: boolean;
   }> = {},
 ): Promise<Readonly<{ set: AttentionSet; found: AttentionMigration }>> {
-  const before = await read();
+  let before = await read();
+  // A record it can't read under a slug this device holds, whose head the
+  // owner confirmed pruning: delete that head first (a changed one is
+  // refused), so the add below restores this device's value over it.
+  const replaced = Object.keys(attention).filter((slug) => {
+    const confirmed = options.prune?.[slug];
+    return (
+      !!before.skipped[slug] &&
+      confirmed !== undefined &&
+      before.heads[slug]?.id === confirmed
+    );
+  });
+  if (replaced.length) {
+    await publishChanges(
+      io,
+      before,
+      replaced.map((slug) => ({ slug, value: null })),
+    );
+    before = await read();
+  }
   const rank = ({ slug, value }: AttentionEdit) => {
     const interest = slug.startsWith("interest/");
     return value === null ? (interest ? 3 : 0) : interest ? 1 : 2;
@@ -674,7 +693,7 @@ export async function publishAll(
       .filter(({ slug, value }) => {
         const there = before.attention[slug];
         // Never over a record it can't read: the move is refused with it
-        // listed, and only a prune the owner confirms replaces it.
+        // listed, and only a prune the owner confirms replaces it (above).
         if (before.skipped[slug]) return false;
         if (options.missingOnly) return !there;
         return !there || !sameValue(there.value, value);

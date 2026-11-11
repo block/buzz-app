@@ -475,6 +475,10 @@ describe("one writer revision", () => {
       ["root", "a".repeat(64)],
       ["client", "example"],
     ];
+    const signer = [
+      ["auth", "b".repeat(64), "", "c".repeat(128)],
+      ["ms", "123"],
+    ];
     const annotations = (event: RelayEvent | undefined) =>
       event?.tags.filter(([name]) => name === "root" || name === "client");
     r.heads.set(
@@ -486,7 +490,7 @@ describe("one writer revision", () => {
           slug: "interest/x",
           op: "create",
           value: interest,
-          tags: extra,
+          tags: [...extra, ...signer],
         }),
       ),
     );
@@ -495,6 +499,10 @@ describe("one writer revision", () => {
       value: { ...interest, instructions: "More" },
     });
     expect(annotations(r.sent[0])).toEqual(extra);
+    // Another signer's NIP-OA proof and ms are its own, never copied.
+    expect(
+      r.sent[0]?.tags.some(([name]) => name === "auth" || name === "ms"),
+    ).toBe(false);
     // A deletion keeps root and drops the other annotations and the title.
     await publishChange(r.io, await r.set(), {
       slug: "interest/x",

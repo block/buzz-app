@@ -74,8 +74,19 @@ export type RelayHead = Readonly<{
   d: string;
   tags?: readonly (readonly string[])[];
 }>;
-/** NIP-AR's envelope tags, which each revision sets itself. */
-const ENVELOPE = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
+/** Tags each revision sets itself: NIP-AR's envelope, and the signer's own
+ * NIP-OA `auth` and `ms`, which the relay checks against that signer. */
+const ENVELOPE = new Set([
+  "ar",
+  "d",
+  "h",
+  "type",
+  "title",
+  "op",
+  "prev",
+  "auth",
+  "ms",
+]);
 const annotations = (event: Pick<RelayEvent, "tags">) =>
   event.tags.filter(([name]) => name === undefined || !ENVELOPE.has(name));
 const headOf = (event: Pick<RelayEvent, "id" | "tags">, d: string) => {

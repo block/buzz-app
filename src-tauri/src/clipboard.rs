@@ -152,9 +152,14 @@ static READING: AtomicBool = AtomicBool::new(false);
 /// Holds `READING` until dropped.
 struct Reading(&'static AtomicBool);
 impl Reading {
-    /// `None` while another read holds `flag`.
+    /// `None` while another read holds `flag`. A guard exists only once the
+    /// flag is taken, so a refusal leaves the holder's flag set.
     fn begin(flag: &'static AtomicBool) -> Option<Self> {
-        (!flag.swap(true, Ordering::SeqCst)).then_some(Self(flag))
+        if flag.swap(true, Ordering::SeqCst) {
+            None
+        } else {
+            Some(Self(flag))
+        }
     }
 }
 impl Drop for Reading {
@@ -319,6 +324,8 @@ mod tests {
     fn only_one_expiry_read_runs_at_a_time() {
         static FLAG: AtomicBool = AtomicBool::new(false);
         let stuck = Reading::begin(&FLAG).unwrap();
+        // A refused admission must not release the read that holds the flag.
+        assert!(Reading::begin(&FLAG).is_none());
         assert!(Reading::begin(&FLAG).is_none());
         drop(stuck);
         assert!(Reading::begin(&FLAG).is_some());

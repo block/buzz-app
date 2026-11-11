@@ -98,6 +98,7 @@ import {
 import { isApplePlatform } from "../shortcuts/format";
 import { macWebKit, webKit } from "./mac-webkit";
 import { useMessageAutocorrectPreference } from "./autocorrect-preference";
+import { useMessageMarkupPreference } from "./markup-preference";
 import { composerLinkUrl } from "./composer-link";
 import { messageLinkParts } from "./message-link-parts";
 import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
@@ -420,6 +421,7 @@ export function EditableInput({
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const { enabled: autocorrect } = useMessageAutocorrectPreference();
+  const { enabled: markup } = useMessageMarkupPreference();
   const current = useRef({
     draft,
     decorationsFor,
@@ -432,6 +434,7 @@ export function EditableInput({
     disabled,
     placeholder,
     autocorrect,
+    markup,
   });
   current.current = {
     draft,
@@ -445,6 +448,7 @@ export function EditableInput({
     disabled,
     placeholder,
     autocorrect,
+    markup,
   };
   const tokenClassName = styles.token ?? "";
   const tokenClass = useRef(tokenClassName);
@@ -1951,7 +1955,9 @@ export function EditableInput({
           // itself can be filtered out; then nothing converts. Completions
           // claim Space on keydown when a result has a spaceId, so that Space
           // never reaches this rule; a marker line has no completion trigger.
+          // With markup formatting on, typed delimiters stay as their source.
           if (
+            !current.current.markup &&
             from === to &&
             (composerFenceDelimiters.has(text) ||
               composerPrefixDelimiters.has(text) ||

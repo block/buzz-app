@@ -1,5 +1,6 @@
 import { autocorrectSetting } from "../features/messages/autocorrect-preference";
 import { followUpBehaviorSetting } from "../features/messages/follow-up-preference";
+import { markupSetting } from "../features/messages/markup-preference";
 import { rememberAgentsSetting } from "../features/messages/mention-preferences";
 import { threadPlacementSetting } from "../features/messages/thread-preferences";
 import { unreadFirstSetting } from "../features/search/unread-first-preference";
@@ -18,6 +19,7 @@ export const deviceSettings = (appearance: Appearance) =>
     threadPlacementSetting,
     followUpBehaviorSetting,
     autocorrectSetting,
+    markupSetting,
     rememberAgentsSetting,
     unreadFirstSetting,
   ]);

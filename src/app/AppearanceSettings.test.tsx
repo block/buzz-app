@@ -36,6 +36,10 @@ import {
   setMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
 import {
+  messageMarkupPreference,
+  setMessageMarkupPreference,
+} from "../features/messages/markup-preference";
+import {
   clockPreference,
   setClockPreference,
 } from "../shared/clock-preference";
@@ -55,6 +59,7 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
+  setMessageMarkupPreference(false);
   setUnreadFirstPreference(true);
   setClockPreference({
     hourCycle: "system",
@@ -591,6 +596,61 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
     screen.getByRole("button", { name: "Retry saving spelling correction" }),
   );
   expect(localStorage.getItem("buzz-message-autocorrect.v1")).toBe("on");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+});
+
+it("offers formatting messages with markup on every platform, off until this device opts in", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const page = (
+    <AppearanceSettings appearance={appearance} autocorrectAvailable={false} />
+  );
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Format messages with markup" });
+  render(page, { wrapper: ToastProvider });
+  expect(toggle()).not.toBeChecked();
+  await user.click(toggle());
+  expect(messageMarkupPreference()).toBe(true);
+  expect(localStorage.getItem("buzz-message-markup.v1")).toBe("on");
+  cleanup();
+  render(page, { wrapper: ToastProvider });
+  expect(toggle()).toBeChecked();
+  act(() => {
+    localStorage.setItem("buzz-message-markup.v1", "off");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-message-markup.v1" }),
+    );
+  });
+  expect(toggle()).not.toBeChecked();
+});
+
+it("keeps an unsaved markup opt-in active and retries the same choice", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(
+    screen.getByRole("switch", { name: "Format messages with markup" }),
+  );
+  expect(messageMarkupPreference()).toBe(true);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Markup preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving markup preference" }),
+  );
+  expect(localStorage.getItem("buzz-message-markup.v1")).toBe("on");
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );

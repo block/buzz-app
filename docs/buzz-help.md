@@ -636,6 +636,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
   turns correction on or off.
+- **Format messages with markup**: the message box formats Markdown as you
+  type it, so `**bold**` becomes bold and three backticks open a code block.
+  Turn on **Settings → Appearance → Format messages with markup** to keep what
+  you type as raw Markdown instead, for new messages and edits. Sent messages
+  still show formatted. Off by default; the choice is saved on this device.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus
@@ -1089,9 +1094,9 @@ available rather than silently discarding it.
 - Any agent running on this device can read and change some Buzz settings
   here when you ask it to: appearance mode, interface size, accent color,
   vibe level, where new threads open, Solo follow-up behavior, automatic
-  spelling correction (Mac only) and remembering mentioned agents. There is
-  no switch to turn on. A change shows as not saved when it is active but
-  could not be saved on this device.
+  spelling correction (Mac only), formatting messages with markup and
+  remembering mentioned agents. There is no switch to turn on. A change shows
+  as not saved when it is active but could not be saved on this device.
 
 Saved teams from **Your teams** appear in the inline `@` suggestions and the
 mention picker. Select a team to insert its members as individual mentions.

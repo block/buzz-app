@@ -34,6 +34,10 @@ import {
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
 import {
+  setMessageMarkupPreference,
+  useMessageMarkupPreference,
+} from "../features/messages/markup-preference";
+import {
   setUnreadFirstPreference,
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
@@ -78,6 +82,7 @@ export function AppearanceSettings({
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
+  const markup = useMessageMarkupPreference();
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -475,6 +480,12 @@ export function AppearanceSettings({
               />
             )}
             <SwitchPreferenceRow
+              label="Format messages with markup"
+              description="Keeps Markdown such as **bold**, `code` and - lists as you type it, instead of formatting it in the message box. Sent messages still show formatted."
+              checked={markup.enabled}
+              onCheckedChange={setMessageMarkupPreference}
+            />
+            <SwitchPreferenceRow
               label="Show unread first in search"
               description="With nothing typed, search leads with unread channels and DMs and selects the newest."
               checked={unreadFirst.enabled}
@@ -535,6 +546,21 @@ export function AppearanceSettings({
               }
             >
               Retry saving spelling correction
+            </Button>
+          </ToastNotice>
+        )}
+
+        {active && markup.unsaved && (
+          <ToastNotice
+            title="Markup preference wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setMessageMarkupPreference(markup.enabled)}
+            >
+              Retry saving markup preference
             </Button>
           </ToastNotice>
         )}

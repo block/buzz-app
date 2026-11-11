@@ -402,6 +402,29 @@ type InstallHost = Readonly<{
 const invalidSource =
   "A plugin install request needs either an HTTPS, SSH or scp-style Git repository, a branch or tag, and optionally a relative folder and a commit; or a plugin id, an HTTPS artifact url and its sha256";
 
+function savedGitRepository(value: string) {
+  // Native imports save normalized URLs with broader SSH usernames than requests allow.
+  // Keep legacy scp metadata readable without changing request admission.
+  if (!value.includes("://")) return gitRepository(value) !== null;
+  if (/[\s\p{Cc}]/u.test(value) || value.includes("?") || value.includes("#"))
+    return false;
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "ssh:") &&
+      !!url.hostname &&
+      !url.hostname.startsWith("-") &&
+      !url.username.startsWith("-") &&
+      !url.password &&
+      (url.protocol !== "https:" || !url.username) &&
+      url.pathname.replaceAll("/", "") !== "" &&
+      !githubTree(url.hostname, url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function savedInstallationSourceKind(
   plugin: PluginInfo,
 ): PluginInstallationSourceKind {
@@ -422,7 +445,7 @@ function savedInstallationSourceKind(
   if (
     hasOnlyKeys("repository", "reference", "path", "commit") &&
     typeof source.repository === "string" &&
-    gitRepository(source.repository) !== null &&
+    savedGitRepository(source.repository) &&
     typeof source.reference === "string" &&
     (source.reference === "" || gitReference(source.reference) !== null) &&
     typeof source.path === "string" &&

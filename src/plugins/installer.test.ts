@@ -79,6 +79,10 @@ it.each([
   ["no repository path", { repository: "https://example.com/" }],
   ["whitespace", { repository: "https://example.com/a b.git" }],
   ["a non-string repository", { repository: 4 }],
+  [
+    "an SSH username outside the request grammar",
+    { repository: "ssh://deploy+ci@code.example.org/team/plugins.git" },
+  ],
   ["an empty reference", { reference: "" }],
   ["an option-like reference", { reference: "--upload-pack=x" }],
   ["a reference with spaces", { reference: "my branch" }],
@@ -589,6 +593,12 @@ it("reports only recognized installation source kinds from ready catalog data", 
     reference: "main",
     path: ".",
   };
+  const nativeSshGit = info("example.native-ssh-git");
+  nativeSshGit.updateSource = {
+    repository: "ssh://deploy+ci@code.example.org/team/plugins.git",
+    reference: "main",
+    path: ".",
+  };
   const pinnedGit = info("example.pinned-git");
   pinnedGit.updateSource = {
     ...base,
@@ -631,6 +641,7 @@ it("reports only recognized installation source kinds from ready catalog data", 
       invalidWindowsFolder,
       scpGit,
       sshGit,
+      nativeSshGit,
       pinnedGit,
       longPinnedGit,
       uppercaseDigestUrl,
@@ -650,6 +661,7 @@ it("reports only recognized installation source kinds from ready catalog data", 
     "example.invalid-windows-folder": "unavailable",
     "example.scp-git": "git",
     "example.ssh-git": "git",
+    "example.native-ssh-git": "git",
     "example.pinned-git": "git",
     "example.long-pinned-git": "git",
     "example.uppercase-digest-url": "url",
@@ -687,6 +699,18 @@ it("keeps unknown or malformed source metadata unavailable without side effects"
       id: "example.invalid-repository",
       source: { ...base, repository: "http://example.com/plugins.git" },
     },
+    ...[
+      "ssh://-deploy@code.example.org/team/plugins.git",
+      "ssh://deploy:password@code.example.org/team/plugins.git",
+      "https://deploy@code.example.org/team/plugins.git",
+      "ssh://deploy@code.example.org/",
+      "ssh://deploy@code.example.org/team/plugins.git?",
+      "ssh://deploy@code.example.org/team/plugins.git#",
+      "ssh://deploy@code.example.org/team/plugin s.git",
+    ].map((repository, index) => ({
+      id: `example.invalid-saved-repository-${index}`,
+      source: { ...base, path: ".", repository },
+    })),
     {
       id: "example.invalid-reference",
       source: { ...base, reference: "../main" },

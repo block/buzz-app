@@ -33,7 +33,7 @@ import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { localStore, type AgentStore } from "../../features/agents/store";
-import type { AgentReads } from "../../features/agents/reads";
+import { ownerDm, type AgentReads } from "../../features/agents/reads";
 import type {
   Agent,
   AgentHandle,
@@ -1332,6 +1332,7 @@ export class PiRuntime {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
         dm,
+        ...(ownerDm(summary, agent.pubkey, owner) ? { ownerDm: true } : {}),
       },
       ...(thread ? { thread } : {}),
       context: unseen,

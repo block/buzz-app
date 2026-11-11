@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
+import { DM_PROMPT, RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import { fromOwner } from "../agents/owner-attestation";
 import type { AgentHandle, Delivery } from "../agents/service";
 import { eventDto, type EventData, type RelayEvent } from "../relay/events";
@@ -44,6 +44,7 @@ function setup(
   options: Readonly<{
     type?: "stream" | "dm" | "solo";
     name?: string;
+    members?: readonly string[];
     thread?: readonly EventData[];
     core?: string | null;
     notes?: readonly string[];
@@ -70,7 +71,7 @@ function setup(
             id: channel,
             ...(options.name === "" ? {} : { name: options.name ?? "general" }),
             channelType: options.type ?? "stream",
-            members: [],
+            members: options.members ?? [],
           },
         ],
       }),
@@ -171,6 +172,20 @@ describe("harnessKit.conversation", () => {
         "thread",
       ),
     ).toMatchObject({ key: channel, topLevel: true });
+  });
+
+  it("answers in a DM with only its owner, and sends any other DM's answer to a Solo chat", async () => {
+    const event = reply("2", "1", "go");
+    const prompt = async (members: readonly string[]) => {
+      const { kit, delivery } = setup({ type: "dm", name: "", members });
+      const d = delivery({ type: "mention", event });
+      const conversation = await kit.conversation(d, "thread");
+      if (!conversation) throw new Error("not admitted");
+      return (await kit.turnPrompt(d, conversation)).text;
+    };
+    expect(await prompt([self, alice])).not.toContain(DM_PROMPT);
+    expect(await prompt([self, alice, mallory])).toContain(DM_PROMPT);
+    expect(await prompt([])).toContain(DM_PROMPT);
   });
 
   it("refuses a mention from anyone else, and triggers that are not its", async () => {

@@ -31,7 +31,7 @@ export type ChannelFacts = Readonly<{
 /** Whether `facts` is a DM only the agent and its owner are in, the one DM
  * an agent answers in. */
 export function ownerDm(
-  facts: ChannelFacts | undefined,
+  facts: Pick<ChannelFacts, "dm" | "members"> | undefined,
   agent: string,
   owner: string | undefined,
 ) {

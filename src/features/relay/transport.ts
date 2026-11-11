@@ -1,3 +1,9 @@
+import {
+  readMembershipSnapshot,
+  admitMembershipSnapshot,
+  type MembershipSnapshot,
+  type MembershipHostResult,
+} from "./membership-snapshot";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -97,6 +103,11 @@ export interface ReadTransport {
   readonly observeRefusal?: (
     listener: (kind: CommunityRefusal) => void,
   ) => () => void;
+  readMembershipSnapshot?(
+    types: readonly string[],
+    signal: AbortSignal,
+    priority: "foreground" | "background",
+  ): Promise<MembershipSnapshot>;
   readonly artifactIncremental?: ArtifactIncrementalReader;
   readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
@@ -710,6 +721,42 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    async readMembershipSnapshot(types, signal, priority) {
+      if (!relayHttpUrl)
+        throw new ReadError("invalid-response", "Missing relay origin");
+      return readMembershipSnapshot(
+        {
+          origin: relayHttpUrl,
+          viewer: session.viewer as string,
+          relay: session.relayAuthor as string,
+          async info(signal) {
+            const response = await fetch(`${endpoint}/membership-info`, {
+              credentials: "same-origin",
+              signal,
+              cache: "no-store",
+            });
+            if (!response.ok) throw httpReadError(response.status);
+            return response.json();
+          },
+          async request(types, signal) {
+            const response = await fetch(`${endpoint}/membership-snapshot`, {
+              method: "POST",
+              credentials: "same-origin",
+              signal,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Buzz-Read-Priority": priority,
+              },
+              body: JSON.stringify({ types }),
+            });
+            if (!response.ok) throw httpReadError(response.status);
+            return response.json();
+          },
+        },
+        types,
+        signal,
+      );
+    },
     viewer: session.viewer,
     relayAuthor: session.relayAuthor,
     ...(typeof session.archiveAuthority === "string"
@@ -1358,6 +1405,23 @@ export async function connectBrokerTransport(
 }
 
 const signedAdmissions = createHostAdmission();
+export const admitSignedMembershipSnapshot = (
+  origin: string,
+  viewer: string,
+  request: () => Promise<{
+    response: Response;
+    binding: Omit<MembershipHostResult, "status" | "body">;
+  }>,
+  signal: AbortSignal,
+  priority: "foreground" | "background",
+) =>
+  admitMembershipSnapshot(
+    signedAdmissions(relayOrigin(origin), viewer).api,
+    request,
+    signal,
+    priority,
+  );
+
 /** A native purpose-bound read shares signed HTTP capacity and server cooldowns. */
 export function admittedSignedWorkflowRead(
   origin: string,

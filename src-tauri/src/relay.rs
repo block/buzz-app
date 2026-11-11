@@ -1,6 +1,7 @@
 //! Packaged human relay access. Credentials stay with IdentityHost; redirects never carry auth.
 pub(crate) mod agent;
 mod huddle;
+mod membership;
 use crate::federated_identity::{
     assertion::{Authorization, HEADER, SIGNED_OUT},
     FederatedIdentity,
@@ -12,6 +13,7 @@ pub(crate) use agent::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
+pub(crate) use membership::relay_membership_snapshot;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -897,6 +899,16 @@ async fn cancellable(
     path: &str,
     request: impl std::future::Future<Output = Result<RelayResponse>>,
 ) -> Result<RelayResponse> {
+    cancellable_result(id, method, path, request, cancelled_read).await
+}
+
+async fn cancellable_result<T>(
+    id: Option<&str>,
+    method: &str,
+    path: &str,
+    request: impl std::future::Future<Output = Result<T>>,
+    cancelled_result: impl Fn() -> T,
+) -> Result<T> {
     let Some(id) = id else {
         return request.await;
     };
@@ -908,12 +920,12 @@ async fn cancellable(
         .start(id)
         .map_err(|_| "Relay reads are busy")?
     else {
-        return Ok(cancelled_read());
+        return Ok(cancelled_result());
     };
     // Dropping the request future closes its connection.
     let result = tokio::select! {
         biased;
-        _ = cancelled => Ok(cancelled_read()),
+        _ = cancelled => Ok(cancelled_result()),
         result = request => result,
     };
     read_cancels().finish(id);
@@ -1079,6 +1091,36 @@ async fn send_authorized(
     authenticated: bool,
     response_limit: usize,
 ) -> Result<RelayResponse> {
+    send_correlated(
+        host,
+        authorization,
+        url,
+        method,
+        body,
+        authenticated,
+        response_limit,
+    )
+    .await
+    .map(|(response, _)| response)
+}
+
+struct RequestIdentity {
+    request_id: String,
+    signer_pubkey: String,
+    origin: String,
+}
+
+// Identity is produced by this exact signing attempt and never obtained from relay headers.
+async fn send_correlated(
+    host: &IdentityHost,
+    authorization: AuthorizationContext<'_>,
+    url: Url,
+    method: &str,
+    body: Option<String>,
+    authenticated: bool,
+    response_limit: usize,
+) -> Result<(RelayResponse, Option<RequestIdentity>)> {
+    let mut identity = None;
     let mut request = client()?.request(
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| "Invalid relay method")?,
         url.clone(),
@@ -1108,6 +1150,17 @@ async fn send_authorized(
                 .concat(),
             })
             .await?;
+        identity = Some(RequestIdentity {
+            request_id: auth["id"]
+                .as_str()
+                .ok_or("Invalid request identity")?
+                .into(),
+            signer_pubkey: auth["pubkey"]
+                .as_str()
+                .ok_or("Invalid request identity")?
+                .into(),
+            origin: url.origin().ascii_serialization(),
+        });
         request = request
             .header(
                 "Authorization",
@@ -1154,12 +1207,14 @@ async fn send_authorized(
         }
         read_response(response, response_limit).await
     };
-    if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
+    let response = if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion)
+    {
         fi.during_admitted_operation(host, assertion, mutation, operation)
             .await?
     } else {
         operation.await
-    }
+    }?;
+    Ok((response, identity))
 }
 
 async fn read_response(mut response: reqwest::Response, limit: usize) -> Result<RelayResponse> {

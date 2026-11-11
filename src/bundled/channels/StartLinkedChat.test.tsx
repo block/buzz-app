@@ -178,3 +178,84 @@ it("drops a start whose visit was superseded while its draft id was computed", a
     spy.mockRestore();
   }
 });
+
+it.each([
+  ["a Solo chat", { channelType: "solo" as const, members: [viewer] }],
+  ["a DM", { channelType: "dm" as const, members: [viewer] }],
+  [
+    "an archived, read-only channel",
+    {
+      channelType: "stream" as const,
+      archived: true as const,
+      readOnly: true as const,
+    },
+  ],
+  ["an unjoined channel", { channelType: "forum" as const, members: [] }],
+  ["a channel missing from the list", undefined],
+])("starts from a message in %s", async (_label, shape) => {
+  const { open, navigation } = fakeNavigation();
+  const anywhere = {
+    ...session,
+    channels: {
+      ...session.channels,
+      list: () => ({
+        status: "ready" as const,
+        channels: shape ? [{ id: "source", name: "Source", ...shape }] : [],
+      }),
+    },
+  };
+  render(
+    <MenuRoot>
+      <MenuTrigger>Message actions</MenuTrigger>
+      <MenuPopup>
+        <StartLinkedChat
+          session={anywhere}
+          navigation={navigation}
+          channelId="source"
+          message={{ ...message, channelId: "source" }}
+        />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Message actions" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+  );
+  await waitFor(() => expect(open).toHaveBeenCalledOnce());
+  const destination = open.mock.calls[0]?.[0];
+  const id =
+    destination?.kind === "page"
+      ? soloDraft(destination.route?.params)?.linked
+      : undefined;
+  expect(readLinkedChat(scope, linkedDraftKey(id ?? ""))).toEqual({
+    channelId: "source",
+    link: `buzz://message?channel=source&id=${reply}&thread=${root}`,
+  });
+});
+
+it("stays unavailable while Buzz can't create chats", async () => {
+  const { navigation } = fakeNavigation();
+  render(
+    <MenuRoot>
+      <MenuTrigger>Message actions</MenuTrigger>
+      <MenuPopup>
+        <StartLinkedChat
+          session={{
+            ...session,
+            channelWrites: { ...session.channelWrites, available: false },
+          }}
+          navigation={navigation}
+          channelId="design"
+          message={message}
+        />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Message actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+  ).toHaveAttribute("aria-disabled", "true");
+});

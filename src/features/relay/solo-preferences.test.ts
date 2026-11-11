@@ -1,3 +1,4 @@
+import { ReadError } from "./errors";
 import { createSoloPreferences } from "./solo-preferences";
 import { TEAM_MANIFEST_TAG } from "../channel-templates/team-payload";
 import { afterEach, expect, it, vi } from "vitest";
@@ -301,6 +302,27 @@ it("drops the retired Solo channel list on the next project write", async () => 
     expect(value.channels).toBeUndefined();
     expect(value.assignments).toEqual({ [channel]: "work", [other]: "work" });
     expect(f.assignment).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("keeps a connectivity failure transient so session recovery retries Solo preferences", async () => {
+  const f = fixture();
+  try {
+    f.query.mockRejectedValue(new ReadError("unavailable", "Relay down", 503));
+    await f.session.soloPreferences.refresh();
+    expect(f.session.soloPreferences.snapshot()).toMatchObject({
+      status: "error",
+      transient: true,
+    });
+    f.query.mockReset();
+    f.query.mockImplementation(async () => []);
+    await f.session.soloPreferences.refresh();
+    expect(f.session.soloPreferences.snapshot().status).toBe("ready");
+    expect(f.session.soloPreferences.snapshot()).not.toHaveProperty(
+      "transient",
+    );
   } finally {
     f.dispose();
   }

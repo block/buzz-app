@@ -4,7 +4,13 @@ import type { LocalAgents } from "../agents/local";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
-import { provideRelay, type RelayData } from "../relay/service";
+import { isTransientFailure, transientStatus } from "../relay/errors";
+import { RECOVERY_DELAYS_MS } from "../relay/recovery";
+import {
+  provideRelay,
+  type RelayData,
+  type RelaySnapshot,
+} from "../relay/service";
 import { connectBrokerTransport, type ReadTransport } from "../relay/transport";
 import {
   communityDestination,
@@ -51,6 +57,9 @@ export type ClientSnapshot = Saved & {
   relayAvailable: boolean;
   viewer?: string;
   error?: string;
+  /** The identity could not be read for a reason that clears by itself (the
+   * broker is unreachable); it is read again until it answers. */
+  retrying?: true;
 };
 /** Read-only membership inventory; does not acquire or select relay sessions. */
 export type CommunityReader = {
@@ -138,6 +147,8 @@ export function createCommunities(
     required = false,
   ) => {
     const next = { ...state, ...patch };
+    // A settled identity is no longer being retried.
+    if (next.status !== "unavailable") delete next.retrying;
     // Commit a deliberate selection only after required persistence succeeds.
     const selection =
       persist && Object.hasOwn(patch, "selected") ? null : unresolvedSelection;
@@ -221,31 +232,64 @@ export function createCommunities(
     }
   };
   // Compatibility reader for bundled plugins; captured commands remain bound to their concrete session.
+  // While the identity is being read again no community can be selected, so
+  // the connection reads as failing and retrying: the shell shows its one
+  // connection notice and "Connecting…", not an access problem.
+  let identityView: { base: RelaySnapshot; view: RelaySnapshot } | undefined;
+  const connection = (): RelaySnapshot => {
+    const base = current().snapshot();
+    if (state.status !== "unavailable" || !state.retrying) return base;
+    if (identityView?.base !== base) {
+      const { error: _error, ...rest } = base;
+      identityView = {
+        base,
+        view: Object.freeze({
+          ...rest,
+          status: "error",
+          error: state.error ?? "Local identity unavailable",
+          retrying: true as const,
+        }),
+      };
+    }
+    return identityView.view;
+  };
   const relay: RelayData = {
-    snapshot: () => current().snapshot(),
+    snapshot: connection,
     subscribe(fn) {
       relayListeners.add(fn);
       return () => {
         relayListeners.delete(fn);
       };
     },
-    retry: () => current().retry(),
+    retry: () => {
+      if (state.status === "unavailable" && state.retrying) readIdentity();
+      else current().retry();
+    },
     disconnect: () => current().disconnect(),
     clearCache: () => current().clearCache(),
   };
   ctx.provide("relay", relay);
-  const identity =
-    identityReady ??
-    (live
-      ? fetch("/api/relay/identity", { signal: controller.signal }).then(
-          async (response) => {
-            if (!response.ok) throw new Error("Local identity unavailable");
-            const { viewer } = await response.json();
-            return viewer as string;
-          },
-        )
-      : undefined);
-  if (identity)
+  // Failures of the identity read that clear by themselves (the broker is
+  // unreachable or answering 5xx), as opposed to an answer that is wrong.
+  const unreachable = new WeakSet<object>();
+  const fetchIdentity = () =>
+    fetch("/api/relay/identity", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const error = new Error("Local identity unavailable");
+          if (transientStatus(response.status)) unreachable.add(error);
+          throw error;
+        }
+        const { viewer } = await response.json();
+        return viewer as string;
+      })
+      .catch((error: unknown) => {
+        if (typeof error === "object" && error && isTransientFailure(error))
+          unreachable.add(error);
+        throw error;
+      });
+  const identity = identityReady ?? (live ? fetchIdentity() : undefined);
+  const admit = (identity: Promise<string>) =>
     void identity
       .then((viewer) => {
         if (typeof viewer !== "string" || !/^[a-f0-9]{64}$/.test(viewer))
@@ -346,9 +390,65 @@ export function createCommunities(
         refreshPresentation();
       })
       .catch((error) => {
-        if (!disposed)
-          update({ status: "unavailable", error: String(error) }, false);
+        if (disposed) return;
+        // An unreachable broker is not an access problem: keep asking until
+        // it answers. Only a settled answer (invalid identity) stops.
+        const transient =
+          live &&
+          !identityReady &&
+          typeof error === "object" &&
+          !!error &&
+          unreachable.has(error);
+        if (!transient && state.retrying) {
+          const { retrying: _retrying, ...rest } = state;
+          state = rest;
+        }
+        update(
+          {
+            status: "unavailable",
+            error: String(error),
+            ...(transient ? { retrying: true as const } : {}),
+          },
+          false,
+        );
+        if (transient) scheduleIdentity();
       });
+  let identityTimer: ReturnType<typeof setTimeout> | undefined;
+  let identityAttempts = 0;
+  let identityBusy = false;
+  function scheduleIdentity() {
+    clearTimeout(identityTimer);
+    identityTimer = setTimeout(
+      readIdentity,
+      RECOVERY_DELAYS_MS[
+        Math.min(identityAttempts++, RECOVERY_DELAYS_MS.length - 1)
+      ] ?? 30_000,
+    );
+  }
+  function readIdentity() {
+    if (disposed || identityBusy || state.status !== "unavailable") return;
+    clearTimeout(identityTimer);
+    identityBusy = true;
+    admit(
+      fetchIdentity().finally(() => {
+        identityBusy = false;
+      }),
+    );
+  }
+  if (identity) admit(identity);
+  if (live && !identityReady && typeof window !== "undefined") {
+    // The network or the window returning is a hint the broker may answer.
+    const hint = () => {
+      if (state.retrying) readIdentity();
+    };
+    window.addEventListener("online", hint);
+    window.addEventListener("focus", hint);
+    controller.signal.addEventListener("abort", () => {
+      clearTimeout(identityTimer);
+      window.removeEventListener("online", hint);
+      window.removeEventListener("focus", hint);
+    });
+  }
   ctx.effect(() => () => {
     disposed = true;
     controller.abort();

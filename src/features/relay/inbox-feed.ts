@@ -1,5 +1,6 @@
 import { createInboxReactions } from "./inbox-reactions";
 import { byteSize } from "./budget";
+import { isRetryableRead } from "./read-retry";
 import type { ChannelQueries } from "./contracts";
 import type { RelayEvent, ReadFilter } from "./events";
 import type { RelayReader } from "./reader";
@@ -15,6 +16,8 @@ const older = (event: RelayEvent, cursor: ReturnType<typeof cursorOf>) =>
 export type InboxFeedSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   error?: string | undefined;
+  /** `error` is a connectivity failure (isRetryableRead), not a denial. */
+  transient?: true | undefined;
   /** Exact addressed targets whose stored edits/deletions are not settled. */
   incomplete: readonly string[];
 }>;
@@ -196,6 +199,7 @@ export function createInboxFeed({
           status: "ready",
           incomplete: [],
           error: undefined,
+          transient: undefined,
         });
       } catch (error) {
         if (closed || generation !== epoch || owned.signal.aborted) return;
@@ -205,6 +209,7 @@ export function createInboxFeed({
             error instanceof Error
               ? error.message
               : "Inbox history unavailable",
+          ...(isRetryableRead(error) ? { transient: true as const } : {}),
         });
       }
     })().finally(() => {
@@ -214,7 +219,7 @@ export function createInboxFeed({
       }
     });
     if (generation === epoch && controller === owned)
-      publish({ status: "loading", error: undefined });
+      publish({ status: "loading", error: undefined, transient: undefined });
     return work;
   }
   function clear(incomplete: readonly string[] = []) {
@@ -224,7 +229,12 @@ export function createInboxFeed({
     controller = undefined;
     work = undefined;
     // Previously demanded data recovers explicitly or through reconnect.
-    publish({ status: "idle", incomplete, error: undefined });
+    publish({
+      status: "idle",
+      incomplete,
+      error: undefined,
+      transient: undefined,
+    });
   }
   const retainedIncomplete = () =>
     Object.freeze(snapshot.incomplete.filter((id) => retainedEvent(id)));
@@ -249,6 +259,7 @@ export function createInboxFeed({
         status: "idle",
         incomplete: retainedIncomplete(),
         error: undefined,
+        transient: undefined,
       });
     },
     reconnect() {

@@ -47,7 +47,7 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { useRecovery } from "../relay/RecoveryNotice";
+import { useRecoverableRead, useRecovery } from "../relay/RecoveryNotice";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -745,10 +745,28 @@ function Timeline({
   }, []);
   useMessageSelection(scroller, rows, queries);
   // While the connection recovers, its notice is the one report, so the
-  // history edge does not repeat the reason. Recovery does not retry older
-  // history, and paging stops on a failed read, so Retry stays either way.
+  // history edge does not repeat the reason. An older page that failed for
+  // connectivity joins recovery, which pages again by itself (the edge reads
+  // "Loading older…" meanwhile); any other failure keeps its reason and Retry,
+  // because paging stops on a failed read.
   const { recovering } = useRecovery(queries.recovery);
-  const edgeError = recovering ? undefined : window.error;
+  const { quiet: olderQuiet } = useRecoverableRead(
+    queries.recovery,
+    {
+      status: window.loadingOlder
+        ? "loading"
+        : window.error
+          ? "error"
+          : "ready",
+      error: window.error,
+      transient: window.transient === true,
+    },
+    () => queries.channels.loadOlder(channelId),
+  );
+  const edgeError = recovering || olderQuiet ? undefined : window.error;
+  // Saved history has no older page to read until the connection returns, and
+  // the app-level notice already says so: the edge offers nothing inert.
+  const offlineEdge = window.hasMore && !!queries.channels.cachedOnly;
   // Keep pagination space through EOF so removing its control cannot change
   // Virtua's start margin in the same measurement cycle as a prepend.
   const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
@@ -1912,9 +1930,10 @@ function Timeline({
         {edgeError && <span role="alert">{edgeError}</span>}
         {window.historyLimited ? (
           <span>History window limit reached</span>
-        ) : window.hasMore && queries.channels.cachedOnly ? (
-          <span>You can load older messages once Buzz reconnects.</span>
-        ) : window.hasMore && (historyControl === "button" || window.error) ? (
+        ) : olderQuiet ? (
+          <span role="status">Loading older…</span>
+        ) : offlineEdge ? null : window.hasMore &&
+          (historyControl === "button" || window.error) ? (
           <Button
             type="button"
             disabled={window.loadingOlder}

@@ -9,6 +9,7 @@ import { byteSize } from "./budget";
 import { eventVisibility } from "./event-access";
 import { foldMessages, messageAuthor } from "./fold";
 import { validReactionContent } from "./emoji";
+import { isRetryableRead } from "./read-retry";
 
 export type InboxReaction = Readonly<{
   id: string;
@@ -21,6 +22,8 @@ export type ReactionFeedSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   items: readonly InboxReaction[];
   error?: string | undefined;
+  /** `error` is a connectivity failure (isRetryableRead), not a denial. */
+  transient?: true | undefined;
 }>;
 const newest = (a: RelayEvent, b: RelayEvent) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);
@@ -279,6 +282,7 @@ export function createInboxReactions({
             error instanceof Error
               ? error.message
               : "Reaction activity unavailable",
+          ...(isRetryableRead(error) ? { transient: true as const } : {}),
         });
         live.clear();
       })
@@ -288,7 +292,12 @@ export function createInboxReactions({
           work = undefined;
         }
       });
-    publish({ ...snapshot, status: "loading", error: undefined });
+    publish({
+      ...snapshot,
+      status: "loading",
+      error: undefined,
+      transient: undefined,
+    });
     return work;
   }
   function clear() {

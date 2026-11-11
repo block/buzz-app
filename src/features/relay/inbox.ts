@@ -43,4 +43,6 @@ export type InboxSnapshot = Readonly<{
   items: readonly InboxItem[];
   freshness: "unknown" | "observed" | "stale";
   error?: string | undefined;
+  /** `error` is a connectivity failure (isRetryableRead), not a denial. */
+  transient?: true | undefined;
 }>;

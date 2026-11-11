@@ -354,7 +354,11 @@ it("explicit retries jump background traffic that starves the passive catalog lo
     expect(h.session.emoji.snapshot()).toMatchObject({
       status: "error",
       error: expect.stringContaining("Relay read timed out"),
+      // A timeout is a connectivity failure: the picker leaves it to recovery.
+      transient: true,
     });
+    // The class name is not text, here or in the send-time preparation error.
+    expect(h.session.emoji.snapshot().error).not.toMatch(/^ReadError/);
     h.wire.pending.splice(0);
     busy(h, relay);
     await vi.advanceTimersByTimeAsync(0);

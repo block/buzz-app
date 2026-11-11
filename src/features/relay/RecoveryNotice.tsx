@@ -1,6 +1,11 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { isSignInRefusal, type RelayRecovery } from "./recovery";
+import {
+  createRecoverableRead,
+  isConnectivityFailure,
+  type RecoverableReadState,
+} from "./recoverable-read";
 import type { RelaySession } from "./session";
 
 const NONE = Object.freeze({
@@ -89,6 +94,40 @@ export function useRecoveryOwns(
   const read = () => owns(session.live.snapshot());
   const owned = useSyncExternalStore(session.live.subscribe, read, read);
   return recovering && owned;
+}
+
+/** A passive read on the main surface joins the one recovery notice; see the
+ * rule in recoverable-read.ts. Pass the read's current `{status, error}` (or
+ * `{error, transient}`) and a function that starts it again. While the failure
+ * is a connectivity failure the read registers with `recovery`, which retries
+ * it on its backoff and on reconnect, focus, wake and network signals.
+ *
+ * `quiet` is true then: hide the surface's own error and Retry. It is also
+ * true when `recovery` is undefined (a cached/offline session), where the
+ * app-level notice covers the failure and the replaced session mounts reads
+ * again. `failed` is the same failure without the retry-in-flight hold. `retry`
+ * may be an inline closure; the latest one is used. */
+export function useRecoverableRead(
+  recovery: RelayRecovery | undefined,
+  read: RecoverableReadState,
+  retry: () => void,
+) {
+  const latest = useRef(retry);
+  latest.current = retry;
+  const controller = useMemo(
+    () => createRecoverableRead(recovery, () => latest.current()),
+    [recovery],
+  );
+  useEffect(() => () => controller.dispose(), [controller]);
+  const { status, error, transient } = read;
+  // Effect, not render: registering notifies recovery's subscribers.
+  const quiet = useRef(false);
+  useEffect(() => {
+    quiet.current = controller.report({ status, error, transient });
+  }, [controller, status, error, transient]);
+  const failed = isConnectivityFailure(read);
+  // A retry in flight after a failure stays quiet; the controller holds that.
+  return { failed, quiet: failed || (status === "loading" && quiet.current) };
 }
 
 export const RECOVERY_TITLE = "Buzz is having trouble connecting";

@@ -9,7 +9,6 @@ import {
 import { SoloRegions } from "../../features/channel-navigation/SoloRegions";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { soloDraft } from "../../features/channel-navigation/routes";
-import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import {
   ChannelInventory,
   sidebarEntryLocation,
@@ -267,6 +266,7 @@ function ScopedSidebar({
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}
+          connectionRetrying={!!connection.retrying}
           render={({
             sidebar,
             dmPreviews,
@@ -284,10 +284,7 @@ function ScopedSidebar({
                 {...frame}
               >
                 {/* Relay outages for every inventory recover through one
-                    automatic owner; its one notice shows on every page. */}
-                {!connection.cached && (
-                  <RecoveryNotice recovery={connection.session.recovery} />
-                )}
+                    automatic owner; the app mounts its one notice. */}
                 <LiveSignIn
                   session={connection.session}
                   identity={communityIdentity(

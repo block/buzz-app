@@ -449,7 +449,9 @@ export function SoloWorkspaces({
           Loading workspaces…
         </p>
       )}
-      {snapshot.status === "error" && (
+      {/* A connectivity failure is the recovery notice's to report, and
+          session recovery retries it; other failures keep their Retry. */}
+      {snapshot.status === "error" && !snapshot.transient && (
         <div role="alert" className={styles.listMessage}>
           <p>{snapshot.error ?? "Workspaces couldn’t load."}</p>
           <Button onClick={() => void preferences.refresh()}>

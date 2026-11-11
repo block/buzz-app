@@ -1149,13 +1149,17 @@ it("finds and opens saved conversations while the community is unreachable or st
     // The button goes as the retry starts; focus stays with the field.
     expect(field).toHaveFocus();
 
-    // While a launch is still connecting, the same results say why.
+    // While the community connects, or fails and retries by itself, the app's
+    // one connection notice is the report: search adds no copy or Retry.
     expect(within(dialog).getByRole("option", { name: /^Beta/ })).toBeVisible();
-    const connectingNotice = within(dialog).getByText(
-      "Only saved conversations are searched until this community connects.",
-    );
-    expect(connectingNotice).toBeVisible();
-    expect(results).not.toContainElement(connectingNotice);
+    expect(within(dialog).queryByText(/^Only saved conversations/)).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: /^Retry/ })).toBeNull();
+    connection = { ...connection, status: "error", retrying: true };
+    await act(async () => {
+      for (const listener of listeners) listener();
+    });
+    expect(within(dialog).getByRole("option", { name: /^Beta/ })).toBeVisible();
+    expect(within(dialog).queryByText(/^Only saved conversations/)).toBeNull();
     expect(within(dialog).queryByRole("button", { name: /^Retry/ })).toBeNull();
 
     fireEvent.click(within(dialog).getByRole("option", { name: /^Beta/ }));

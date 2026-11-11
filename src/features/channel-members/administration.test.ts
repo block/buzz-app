@@ -631,8 +631,26 @@ it("retains confirmed roles on refresh failure", async () => {
   await h.owner.capability.refresh(id);
   expect(h.owner.capability.snapshot(id)).toMatchObject({
     status: "error",
+    transient: false,
     authority: { roles: { [target]: "member" } },
   });
+});
+it("marks a roles read that failed on connectivity as transient", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness();
+    await h.owner.capability.refresh(id);
+    h.read.mockRejectedValue(new TypeError("Load failed"));
+    const refresh = h.owner.capability.refresh(id);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await refresh;
+    expect(h.owner.capability.snapshot(id)).toMatchObject({
+      status: "error",
+      transient: true,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it.each(["clear", "dispose"] as const)(
   "%s fences late publication completion",

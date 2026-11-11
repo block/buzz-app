@@ -172,18 +172,6 @@ export function ChannelsPage({
   const session = useRelayConnection(relay);
   const openSwitcher = useContext(OpenCommunitySwitcher);
   const sessionNavigation = navigation?.forSession(relay, session);
-  // An opening visit's deadline bounds Connecting; once it has settled, a
-  // retrying connection is a failure that keeps trying, not a connection.
-  // Only that case reads the visit, so only it follows the visit settling.
-  const settled = () =>
-    session.status === "error" &&
-    session.retrying &&
-    navigator.snapshot().status !== "opening";
-  const visitSettled = useSyncExternalStore(
-    navigator.subscribe,
-    settled,
-    settled,
-  );
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;
@@ -261,19 +249,15 @@ export function ChannelsPage({
                 title={communityRefusalTitle(session.refusal)}
               />
             </div>
-          ) : session.status === "error" &&
-            (!session.retrying || visitSettled) ? (
-            // Usually a failed visit's card covers this page, but a visit that
-            // already opened from cached content keeps it: say so plainly.
+          ) : session.status === "error" && !session.retrying ? (
+            // A failure nothing retries. A connection that retries by itself
+            // is reported once, by the app's connection notice, while this
+            // page keeps showing Connecting below.
             <div role="alert" className={styles.failed}>
               <EmptyState
                 icon={<CloudOffIcon />}
                 title="Can’t connect"
-                description={
-                  session.retrying
-                    ? "Check your connection. We’ll keep trying."
-                    : "Check your connection, then try again."
-                }
+                description="Check your connection, then try again."
                 action={
                   <Button
                     type="button"

@@ -56,6 +56,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         context={channelContext}
         close={close}
         active={isActive}
+        recovery={state.session.recovery}
         onOpenLink={(url) => host?.open(url) ?? false}
       />
     );

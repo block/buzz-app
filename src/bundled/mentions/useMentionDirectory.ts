@@ -6,6 +6,7 @@ import { matchPerson } from "../../features/search/person-match";
 import { verifiedName } from "../../features/profiles/useVerifiedNames";
 import { searchDebounce, searchable } from "../../shared/search-debounce";
 import { typedPublicKey } from "../../shared/identity/public-key";
+import { isRetryableRead } from "../../features/relay/read-retry";
 
 type Person = Awaited<
   ReturnType<ComposerSession["directMessages"]["people"]>
@@ -162,6 +163,8 @@ export function useMentionDirectory(
     /** A settled page that is not cached (an empty result), for this opening only. */
     page?: Page;
     error?: string;
+    /** The failure was a connectivity failure (see isRetryableRead). */
+    transient?: boolean;
   }>();
   const own =
     state?.session === session &&
@@ -207,11 +210,12 @@ export function useMentionDirectory(
           // A non-empty page is now cached; `own.page` keeps an empty one.
           setState(page.people.length ? current : { ...current, page });
         },
-        () => {
+        (reason: unknown) => {
           if (!controller.signal.aborted)
             setState({
               ...current,
               error: "Could not search community people. Retry to refresh.",
+              transient: isRetryableRead(reason),
             });
         },
       );
@@ -223,6 +227,8 @@ export function useMentionDirectory(
   }, [session, query, searching, attempt, lifetime]);
   if (hit) settle(session, lifetime, hit);
   const error = active && !hit ? own?.error : undefined;
+  const transient = error ? own?.transient : undefined;
+  const passive = !query.trim();
   const shown = hit ?? settled.get(session)?.get(lifetime);
   const retry = useCallback(() => {
     pages.get(session)?.delete(query);
@@ -238,11 +244,15 @@ export function useMentionDirectory(
       people: active && shown?.people.length ? shown.people : empty,
       loading: searching && !error,
       error,
+      /** The error is a connectivity failure, which a later read can fix. */
+      transient,
+      /** The listing the chooser loads by itself; typed text is the person's search. */
+      passive,
       more: !!hit?.more,
       /** Text too short to search: people not yet read may still match. */
       tooShort,
       retry,
     }),
-    [active, shown, hit, searching, tooShort, error, retry],
+    [active, shown, hit, searching, tooShort, error, transient, passive, retry],
   );
 }

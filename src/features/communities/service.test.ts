@@ -11,7 +11,13 @@ import { readView, writeView } from "../../shared/view-state";
 const viewer = "a".repeat(64);
 const roots: Context[] = [];
 const requests: string[] = [];
-function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
+function setup(
+  saved?: unknown,
+  savedViewer = viewer,
+  openRelay = "",
+  /** Answers the identity read in place of the default. */
+  identity?: () => Response | Promise<Response>,
+) {
   const storage = new Map<string, string>();
   // A string is stored verbatim so cases can pin the exact stored text.
   if (saved !== undefined)
@@ -32,7 +38,8 @@ function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
     "fetch",
     vi.fn(async (input: string) => {
       requests.push(input);
-      if (input.endsWith("/identity")) return Response.json({ viewer });
+      if (input.endsWith("/identity"))
+        return identity ? identity() : Response.json({ viewer });
       if (input.endsWith("/session")) {
         const destination = input.split("/")[3];
         assert.exists(destination);
@@ -1032,4 +1039,55 @@ it("hydrates native public identity without contacting the development broker", 
   await flush();
   expect(fetch).not.toHaveBeenCalled();
   expect(client.relay.snapshot().status).not.toBe("ready");
+});
+it("keeps reading the identity while the broker is unreachable, reading as a failing connection rather than a refusal", async () => {
+  vi.useFakeTimers();
+  try {
+    let reachable = false;
+    const client = setup(undefined, viewer, "", () => {
+      if (!reachable) throw new TypeError("Load failed");
+      return Response.json({ viewer });
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    // Nothing is known about the account yet: not a denial and not "no
+    // community". The connection reports a failure that retries by itself.
+    expect(client.snapshot()).toMatchObject({
+      status: "unavailable",
+      retrying: true,
+    });
+    expect(client.relay.snapshot()).toMatchObject({
+      status: "error",
+      retrying: true,
+    });
+    expect(client.relay.snapshot().denied).toBeUndefined();
+    const reads = () =>
+      requests.filter((url) => url.endsWith("/identity")).length;
+    expect(reads()).toBe(1);
+    // It asks again on the recovery backoff, with nobody clicking.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reads()).toBe(2);
+    reachable = true;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(reads()).toBe(3);
+    expect(client.snapshot()).toMatchObject({ status: "ready", viewer });
+    expect(client.snapshot().retrying).toBeUndefined();
+    expect(client.relay.snapshot().status).not.toBe("error");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("does not retry an identity the broker answered wrongly", async () => {
+  vi.useFakeTimers();
+  try {
+    const client = setup(undefined, viewer, "", () =>
+      Response.json({ error: "no" }, { status: 401 }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.snapshot()).toMatchObject({ status: "unavailable" });
+    expect(client.snapshot().retrying).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(requests.filter((url) => url.endsWith("/identity"))).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
 });

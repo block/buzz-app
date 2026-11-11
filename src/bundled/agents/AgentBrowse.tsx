@@ -33,7 +33,10 @@ import {
   useProfileGeneration,
   useRelayConnection,
 } from "../../features/relay/react";
-import { useReauthorizedRetry } from "../../features/relay/RecoveryNotice";
+import {
+  useReauthorizedRetry,
+  useRecoverableRead,
+} from "../../features/relay/RecoveryNotice";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -112,7 +115,15 @@ function SharedAgentList({
   const [more, setMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [cause, setCause] = useState<unknown>();
   const [attempt, setAttempt] = useState(0);
+  // The catalog loads by itself when the tab opens: a connectivity failure
+  // joins session recovery and shows only its notice, not this error or Retry.
+  const { quiet } = useRecoverableRead(
+    session.recovery,
+    { status: loading ? "loading" : error ? "error" : "ready", error: cause },
+    () => setAttempt((value) => value + 1),
+  );
   // A catalog opened while signed out loads once sign-in lands.
   const reauthorized = useReauthorizedRetry(session.recovery, () =>
     setAttempt((value) => value + 1),
@@ -122,6 +133,7 @@ function SharedAgentList({
     const controller = new AbortController();
     setLoading(true);
     setError(false);
+    setCause(undefined);
     const failed = reauthorized.begin();
     const readPage = async () => {
       let limit = pageSize;
@@ -155,6 +167,7 @@ function SharedAgentList({
       .catch((problem) => {
         if (controller.signal.aborted) return;
         setError(true);
+        setCause(problem);
         failed(problem);
       })
       .finally(() => {
@@ -177,8 +190,10 @@ function SharedAgentList({
   }, [present, selectedId]);
   return (
     <div className="flex flex-col gap-section-gap">
-      {loading && <p role="status">Loading shared agents…</p>}
-      {error && (
+      {(loading || (error && quiet)) && (
+        <p role="status">Loading shared agents…</p>
+      )}
+      {error && !quiet && (
         <div role="alert">
           <p>Couldn’t load shared agents.</p>
           <Button onClick={() => setAttempt((value) => value + 1)}>

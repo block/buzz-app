@@ -4,6 +4,7 @@ import { keypair, signed, roster, metadata } from "../relay/testing";
 import { combineInventory, inventoryReader } from "./inventory";
 import { seedAgents } from "../messages/remembered-mentions";
 import type { ChannelMessage } from "../relay/contracts";
+import { ReadError } from "../relay/errors";
 import type { ReadTransport } from "../relay/transport";
 
 it("combines exact keys and explicit profile links without joining equal names or lossy slug collisions", () => {
@@ -99,6 +100,37 @@ it("keeps either available source visible and makes partial failure explicit", a
   await expect(inventoryReader(fail, fail)(signal)).rejects.toThrow(
     "sources unavailable",
   );
+  warn.mockRestore();
+});
+
+it("marks a relay-only connectivity failure transient, and no other failure", async () => {
+  const data = {
+    definitions: [],
+    identities: [{ pubkey: "a".repeat(64), name: "Local" }],
+  };
+  const signal = new AbortController().signal;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const down = async () => {
+    throw new ReadError("unavailable", "Relay request failed (503)", 503);
+  };
+  const broken = async () => {
+    throw new Error("private host detail");
+  };
+  // Not retried quietly for long: a 503 ends the read's quiet retries too.
+  vi.useFakeTimers();
+  try {
+    const pending = inventoryReader(async () => data, down)(signal);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await pending).toMatchObject({ transient: true });
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(
+    await inventoryReader(broken, async () => data)(signal),
+  ).not.toHaveProperty("transient");
+  expect(
+    await inventoryReader(async () => data, broken)(signal),
+  ).not.toHaveProperty("transient");
   warn.mockRestore();
 });
 

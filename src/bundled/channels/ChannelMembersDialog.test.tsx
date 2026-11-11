@@ -1402,6 +1402,27 @@ it("does not promote saved agents after a client inventory failure and recovers"
   expect(screen.queryByText("Some agents could not load.")).toBeNull();
 });
 
+it("leaves an agent inventory connectivity failure to session recovery", async () => {
+  const t = await setup();
+  t.readAgentLibrary.mockRejectedValue(new TypeError("Failed to fetch"));
+  await act(async () => {
+    await t.session.agentChoices.refresh();
+  });
+  await vi.waitFor(() =>
+    expect(t.session.agentChoices.snapshot().transient).toBe(true),
+  );
+  expect(screen.queryByText("Some agents could not load.")).toBeNull();
+  t.readAgentLibrary.mockResolvedValue({
+    definitions: [],
+    identities: [t.agent],
+  });
+  act(() => t.session.recovery?.retryAll());
+  await vi.waitFor(() =>
+    expect(t.session.agentChoices.snapshot().status).toBe("ready"),
+  );
+  expect(screen.queryByText("Some agents could not load.")).toBeNull();
+});
+
 it("keeps archived agents out of the default invitations", async () => {
   const t = await setup("stream", false, true, undefined, undefined, {
     archivedAgent: true,

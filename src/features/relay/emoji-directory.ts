@@ -1,4 +1,4 @@
-import { retryRead } from "./read-retry";
+import { isRetryableRead, retryRead } from "./read-retry";
 import type { UploadedAttachment } from "./attachments";
 import { byteSize } from "./budget";
 import {
@@ -21,6 +21,9 @@ export type EmojiSnapshot = Readonly<{
   /** The viewer's own latest set: the only one this client may republish. */
   mine: readonly CustomEmoji[];
   error?: string | undefined;
+  /** Set with an error that a later read can fix (a connectivity failure; see
+   * isRetryableRead). The picker then leaves the report to the recovery notice. */
+  transient?: true | undefined;
 }>;
 export type EmojiAuthoring = Readonly<{
   writer: RelayWriter;
@@ -53,7 +56,14 @@ export function createEmojiDirectory(
     mine: Object.freeze([]),
   });
   function publish(patch: Partial<EmojiSnapshot> = {}) {
-    snapshot = Object.freeze({ ...snapshot, ...patch });
+    // `transient` describes `error`: it never outlives a change of it.
+    snapshot = Object.freeze({
+      ...snapshot,
+      ...("error" in patch && !("transient" in patch)
+        ? { transient: undefined }
+        : {}),
+      ...patch,
+    });
     for (const listener of listeners) notify(listener);
   }
   function accept(incoming: readonly RelayEvent[]) {
@@ -147,7 +157,9 @@ export function createEmojiDirectory(
         if (!closed && !owned.signal.aborted)
           publish({
             status: snapshot.status === "ready" ? "ready" : "error",
-            error: String(error),
+            // The message alone: "ReadError: …" is the class name, not text.
+            error: error instanceof Error ? error.message : String(error),
+            transient: isRetryableRead(error) || undefined,
           });
       } finally {
         if (controller === owned) {

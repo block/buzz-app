@@ -119,20 +119,20 @@ function BestieDestination({
         <EmptyState
           icon={<BestieIcon />}
           title={
-            connection.status === "connecting"
+            connection.status === "connecting" || connection.retrying
               ? "Connecting…"
               : connection.status === "error"
                 ? "This community is unavailable"
                 : "No community selected"
           }
           description={
-            connection.status === "connecting"
+            connection.status === "connecting" || connection.retrying
               ? "Your Bestie opens once this community is connected."
               : (connection.error ??
                 "Choose a community to continue with your Bestie.")
           }
           action={
-            connection.status === "error" ? (
+            connection.status === "error" && !connection.retrying ? (
               <Button onClick={relay.retry}>Retry connection</Button>
             ) : undefined
           }

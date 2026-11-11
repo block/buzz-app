@@ -25,6 +25,7 @@ import { WorkflowRuns } from "./WorkflowRuns";
 import { ARCHIVED_REASON, saveAwaitsReadback } from "./WorkflowLanding";
 import { exactSaveReadback } from "./editor-model";
 import { DEFAULT_FORM_STATE, formStateToYaml } from "./workflowFormTypes";
+import type { RelayRecovery } from "../../features/relay/recovery";
 import { useWorkflowView } from "./useWorkflowView";
 import { useWorkflowCanDelete } from "./useWorkflowCanDelete";
 import { readWorkflowDocumentFields } from "./workflowYamlDocument";
@@ -65,9 +66,12 @@ export function WorkflowChannel({
   onSaveReadback,
   onClose,
   onDelete,
+  recovery,
 }: {
   capability: WorkflowCapability;
   channelId: string;
+  /** Session recovery, which retries a connectivity failure of a read. */
+  recovery?: RelayRecovery | undefined;
   channel: ChannelLabel & Pick<ChannelSummary, "archived">;
   initialSelection: WorkflowDefinition | "new";
   viewer: string;
@@ -83,6 +87,7 @@ export function WorkflowChannel({
       () => capability.definitions(channelId),
       [capability, channelId],
     ),
+    recovery,
   );
   const operations = useSyncExternalStore(
     capability.operations.subscribe,
@@ -444,6 +449,7 @@ export function WorkflowChannel({
                   capability={capability}
                   workflow={draft.original}
                   heading={false}
+                  recovery={recovery}
                 />
               )
             }

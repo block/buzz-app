@@ -820,6 +820,14 @@ it("retries the card's connection, activity and read-state failures", async () =
   expect(await screen.findByText("relay offline")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry connection" }));
   expect(h.retryConnection).toHaveBeenCalledOnce();
+  // A connection retrying by itself is reported once, by the app's notice:
+  // Activity shows no raw error and no Retry of its own.
+  act(() => h.failConnection("TypeError: Load failed", { retrying: true }));
+  expect(await screen.findByText("Connecting to your activity…")).toBeVisible();
+  expect(screen.queryByText(/Load failed/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry connection" }),
+  ).not.toBeInTheDocument();
   // A refusal is the community's, not the connection's: its notice on every
   // page offers what fixes it, so Activity neither shows the relay's raw text
   // nor a retry of the same request.

@@ -206,8 +206,12 @@ export type ChannelList = Readonly<{
   asOf?: number;
   /** Initial Recent ordering observation, independent of roster/access readiness. */
   activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
+  /** The activity read failed on a connectivity failure; session recovery retries it. */
+  activityTransient?: true;
   channels: readonly ChannelSummary[];
   error?: string;
+  /** The roster read failed on a connectivity failure, not a denial or a bad reply. */
+  transient?: true;
 }>;
 export type WindowStatus = "idle" | "loading" | "ready" | "error";
 /** One bounded, chronologically ordered history window. Not the whole channel. */
@@ -219,6 +223,9 @@ export type ChannelWindow = Readonly<{
   hasMore: boolean;
   loadingOlder: boolean;
   error: string | undefined;
+  /** `error` is a connectivity failure (see isTransientFailure) of an older
+   * page or of a first read with no rows, which a retry can clear. */
+  transient?: true | undefined;
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;

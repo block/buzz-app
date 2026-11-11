@@ -265,11 +265,11 @@ function fixture(
   };
 }
 
-function visibilityFixture() {
+function visibilityFixture(
+  failure: Error = new ReadError("unavailable", "offline", 503),
+) {
   const f = fixture();
-  const read = vi
-    .fn()
-    .mockRejectedValue(new ReadError("unavailable", "offline", 503));
+  const read = vi.fn().mockRejectedValue(failure);
   const lifecycle = createChannelLifecycle({
     reader: { read },
     viewer: f.session.viewer,
@@ -282,44 +282,56 @@ function visibilityFixture() {
   return { f, read, lifecycle };
 }
 
-it("keeps visibility recovery quiet, then offers the existing retry after exhaustion", async () => {
-  vi.useFakeTimers();
-  const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
-  const { f, read, lifecycle } = visibilityFixture();
-  try {
-    render(f.view("alpha"));
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(read).toHaveBeenCalledOnce();
-    expect(
-      screen.queryByText("Hidden conversations could not be refreshed."),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Retry hidden conversations" }),
-    ).not.toBeInTheDocument();
-    f.commit();
-    await act(() => vi.advanceTimersByTimeAsync(1000));
-    f.commit();
-    await act(() => vi.advanceTimersByTimeAsync(4250));
-    expect(read).toHaveBeenCalledTimes(4);
-    expect(
-      screen.getByText("Hidden conversations could not be refreshed."),
-    ).toBeVisible();
-    read.mockResolvedValue([]);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Retry hidden conversations" }),
-    );
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(read).toHaveBeenCalledTimes(5);
-    expect(
-      screen.queryByRole("button", { name: "Retry hidden conversations" }),
-    ).not.toBeInTheDocument();
-  } finally {
-    cleanup();
-    lifecycle.dispose();
-    random.mockRestore();
-    vi.useRealTimers();
-  }
-});
+it.each([
+  [
+    "a connectivity failure",
+    new ReadError("unavailable", "offline", 503),
+    false,
+  ],
+  ["a denial", new ReadError("denied", "denied", 403), true],
+])(
+  "keeps visibility quiet through %s: Retry only when it is not a disconnect",
+  async (_name, failure, offersRetry) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const { f, read, lifecycle } = visibilityFixture(failure);
+    try {
+      render(f.view("alpha"));
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      expect(read).toHaveBeenCalledOnce();
+      f.commit();
+      await act(() => vi.advanceTimersByTimeAsync(1000));
+      f.commit();
+      await act(() => vi.advanceTimersByTimeAsync(4250));
+      expect(lifecycle.capability.snapshot().status).toBe("error");
+      const message = screen.queryByText(
+        "Hidden conversations could not be refreshed.",
+      );
+      const retry = screen.queryByRole("button", {
+        name: "Retry hidden conversations",
+      });
+      if (!offersRetry) {
+        expect(message).not.toBeInTheDocument();
+        expect(retry).not.toBeInTheDocument();
+        return;
+      }
+      expect(message).toBeVisible();
+      const before = read.mock.calls.length;
+      read.mockResolvedValue([]);
+      fireEvent.click(retry as HTMLElement);
+      await act(() => vi.advanceTimersByTimeAsync(0));
+      expect(read).toHaveBeenCalledTimes(before + 1);
+      expect(
+        screen.queryByRole("button", { name: "Retry hidden conversations" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      cleanup();
+      lifecycle.dispose();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("keeps a roster failure quiet while recovery retries it, but not a denial while another read recovers", async () => {
   vi.useFakeTimers();

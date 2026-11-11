@@ -33,6 +33,7 @@ import {
 import type { VerifiedProfile } from "../relay/verified-profile";
 import { peopleRelationships } from "../profiles/relationships";
 import { useChipRemoval } from "./useChipRemoval";
+import { useRecoverableRead } from "../relay/RecoveryNotice";
 import styles from "./NewMessage.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
@@ -94,6 +95,22 @@ export function RecipientPicker({
   const id = useId();
   const errorId = useId();
   const directory = usePeople(session, query);
+  // The people list is a passive load: a connectivity failure is the recovery
+  // notice's to report. The list hides its error and Retry, and reads again
+  // when the relay answers.
+  const peopleRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: directory.error
+        ? "error"
+        : directory.loading
+          ? "loading"
+          : "ready",
+      error: directory.error || undefined,
+      transient: directory.transient,
+    },
+    directory.loadMore,
+  );
   // Searched people the community verified carry their verified names, as in
   // Command-K; the read waits for the directory to settle.
   const verified = useVerifiedNames(session, directory.people, {
@@ -725,20 +742,22 @@ export function RecipientPicker({
                         </div>
                       </div>
                     )}
-                  {directory.error && (
+                  {directory.error && !peopleRead.quiet && (
                     <p role="alert">Could not load people.</p>
                   )}
-                  {!directory.loading && directory.hasMore && (
-                    <Button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={directory.loadMore}
-                    >
-                      {directory.error
-                        ? "Retry loading people"
-                        : "Load more people"}
-                    </Button>
-                  )}
+                  {!directory.loading &&
+                    directory.hasMore &&
+                    !(directory.error && peopleRead.quiet) && (
+                      <Button
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={directory.loadMore}
+                      >
+                        {directory.error
+                          ? "Retry loading people"
+                          : "Load more people"}
+                      </Button>
+                    )}
                 </div>
               )}
             </Popover.Popup>

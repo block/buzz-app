@@ -40,6 +40,12 @@ export type RelayRecovery = Readonly<{
    * A source busy with a read begun under the old credentials retries again
    * once that read settles, so joining it cannot keep its stale refusal. */
   retryAll(): void;
+  /** Adds a source for as long as the caller needs it (see
+   * recoverable-read.ts). It takes part in evaluation, the backoff retries,
+   * the notice timer, retryNow and retryAll like a static source. The returned
+   * function removes it and re-evaluates, so a failed source that goes away
+   * cannot keep the notice up. Registering twice adds it once. */
+  register(source: RecoverySource): () => void;
   dispose(): void;
 }>;
 
@@ -86,7 +92,7 @@ export const RECOVERY_DELAYS_MS = Object.freeze([
 export const RECOVERY_NOTICE_DELAY_MS = 30_000;
 
 export function createRecovery(
-  sources: readonly RecoverySource[],
+  initial: readonly RecoverySource[],
   timers: Readonly<{
     setTimeout(callback: () => void, ms: number): unknown;
     clearTimeout(handle: unknown): void;
@@ -97,6 +103,9 @@ export function createRecovery(
   },
 ): RelayRecovery {
   const listeners = new Set<() => void>();
+  /** Static sources, then registered ones in registration order. */
+  const live = new Map<RecoverySource, () => void>();
+  const sources = () => [...live.keys()];
   /** Sources whose pre-reauthorization read is still in flight. */
   const stale = new Set<RecoverySource>();
   let reauthorized = 0;
@@ -146,7 +155,7 @@ export function createRecovery(
           if (!disposed) source.retry();
         }, 0);
       }
-    const states = sources.map((source) => source.status());
+    const states = sources().map((source) => source.status());
     if (!states.includes("failed")) {
       cancel();
       // A retry in flight is not proof of recovery: keep the notice and the
@@ -188,14 +197,17 @@ export function createRecovery(
     // Retries can publish synchronously; evaluate once after all of them.
     running = true;
     try {
-      for (const source of sources)
+      for (const source of sources())
         if (source !== except && source.status() === "failed") source.retry();
     } finally {
       running = false;
     }
     evaluate();
   }
-  const stops = sources.map((source) => source.subscribe(evaluate));
+  const add = (source: RecoverySource) => {
+    if (!live.has(source)) live.set(source, source.subscribe(evaluate));
+  };
+  for (const source of initial) add(source);
   evaluate();
   return Object.freeze({
     snapshot: () => snapshot,
@@ -218,7 +230,7 @@ export function createRecovery(
       reauthorized++;
       running = true;
       try {
-        for (const source of sources)
+        for (const source of sources())
           if (source.reauthorize) source.reauthorize();
           else if (source.status() === "busy") stale.add(source);
           else source.retry();
@@ -228,12 +240,26 @@ export function createRecovery(
       evaluate();
       publish({ ...snapshot, reauthorized });
     },
+    register(source: RecoverySource) {
+      if (disposed || live.has(source)) return () => {};
+      add(source);
+      evaluate();
+      return () => {
+        const stop = live.get(source);
+        if (!stop) return;
+        live.delete(source);
+        stale.delete(source);
+        stop();
+        evaluate();
+      };
+    },
     dispose() {
       disposed = true;
       cancel();
       cancelNotice();
       stale.clear();
-      for (const stop of stops) stop();
+      for (const stop of live.values()) stop();
+      live.clear();
       listeners.clear();
     },
   });

@@ -23,6 +23,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { PairingPrompt } from "../features/credential-pairing/PairingPrompt";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { ConnectionNotice } from "../features/relay/ConnectionNotice";
 import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
@@ -273,10 +274,15 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     startup === "recovery" ||
     route.state.status === "failed" ||
     (!route.state.ingress && !!route.failure);
+  // An unreachable broker is the connection notice's to report: the shell
+  // opens now, connecting, rather than holding the launch surface.
+  const brokerUnreachable =
+    client.status === "unavailable" && !!client.retrying;
   const launchReady =
     settings ||
     terminal ||
     firstRun ||
+    brokerUnreachable ||
     (!restoring && startup !== "loading" && !route.waiting);
   useEffect(
     () => setLaunchReady(launchReady, terminal),
@@ -428,7 +434,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           ? "offline"
           : "unavailable";
   // Only a timed-out or unavailable visit reopens by itself, and only while
-  // the connection is still being retried.
+  // the connection is still being retried or recovery is retrying its reads.
   const keepTrying =
     route.reconnecting &&
     !route.state.ingress &&
@@ -700,6 +706,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           }
         >
           <UpdateNotice updates={services.updates} />
+          {/* The one report of a connection that is down or retrying. */}
+          <ConnectionNotice connection={connection} />
           <RejectedLinkNotice links={services.rejectedLinks} />
           <ExternalAuthorizationDialog
             connection={services.externalApps}
@@ -716,7 +724,16 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&
             ((!route.state.ingress && route.failure) || failedPage) ? (
-            destinationFailure
+            // A visit that failed only because the connection is down, or
+            // because session recovery is retrying a live one, reopens by
+            // itself; the one connection notice reports it, so the page keeps
+            // its loading state instead of a second "Can’t connect".
+            keepTrying &&
+            (failureKind === "offline" || failureKind === "unavailable") ? (
+              opening
+            ) : (
+              destinationFailure
+            )
           ) : !settings && route.waiting ? (
             opening
           ) : startup === "loading" || restoring ? (

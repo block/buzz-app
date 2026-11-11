@@ -38,6 +38,10 @@ export type ThreadSnapshot = Readonly<{
   root: ChannelMessage | undefined;
   replies: readonly ChannelMessage[];
   error: string | undefined;
+  /** The failure is a connectivity failure (`isRetryableRead`): the reader
+   * hides its own error and joins session recovery. Only meaningful with an
+   * `error`; `error` is only a string, so the kind travels beside it. */
+  transient?: boolean | undefined;
   /** Continuation is possible, not a claim about total thread size or exhaustion. */
   canLoadMore: boolean;
   limited: boolean;
@@ -54,6 +58,9 @@ export type ThreadRetarget =
   | "different"
   | "unavailable"
   | "error"
+  /** The selected message's read failed with a connectivity failure
+   * (`isRetryableRead`), unlike `error`, which is not retried by recovery. */
+  | "offline"
   | "cancelled";
 export type ThreadView = {
   snapshot(): ThreadSnapshot;
@@ -369,6 +376,7 @@ export function createThreadView({
         status: "error",
         limited: true,
         canLoadMore: false,
+        transient: false,
         error:
           "Thread view exceeded its memory limit. Refresh to read from the beginning.",
       });
@@ -549,10 +557,12 @@ export function createThreadView({
           : { status: "ready", error: undefined, readKind: undefined },
       );
       return snapshot.targetStatus === "ready" ? "selected" : "unavailable";
-    } catch {
+    } catch (error) {
       return disposed || owned.signal.aborted || selectionController !== owned
         ? "cancelled"
-        : "error";
+        : isRetryableRead(error)
+          ? "offline"
+          : "error";
     } finally {
       signal.removeEventListener("abort", cancel);
       if (selectionController === owned) {
@@ -841,7 +851,11 @@ export function createThreadView({
         // would clear that error.
         older = false;
         if (targetStatus === "loading") targetStatus = "error";
-        publishStatus({ status: "error", error: String(error) });
+        publishStatus({
+          status: "error",
+          error: String(error),
+          transient: isRetryableRead(error),
+        });
       }
     } finally {
       if (controller === owned) {

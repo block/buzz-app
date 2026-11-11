@@ -24,6 +24,7 @@ export type ViewState = {
   status: "idle" | "loading" | "ready" | "error";
   events: readonly ReadEvent[];
   error?: string | undefined;
+  transient?: boolean | undefined;
 };
 const noop = () => {};
 

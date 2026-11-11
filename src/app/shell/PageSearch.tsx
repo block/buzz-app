@@ -485,22 +485,29 @@ function CommunitySearch({
   }, [view]);
   // Saved conversations stay searchable while the community connects or is
   // unreachable; message, people and open-channel search wait for the relay.
+  // A connection that retries by itself is reported once, by the app's
+  // connection notice, so search adds no copy and no Retry for it. Only a
+  // failure nothing retries keeps its note and Retry here.
   const saved = !!connection.cached && !scopedChannelId;
   const connecting = connection.status === "connecting";
+  // Down for a reason nothing retries (an error, or no connection at all).
+  const settled = !connecting && !connection.retrying;
   const notice =
     !enabled || !client.selected || connection.status === "ready"
       ? undefined
       : saved
-        ? `Only saved conversations are searched ${connecting ? "until this community connects" : "while this community is disconnected"}.`
-        : !connecting
+        ? settled
+          ? "Only saved conversations are searched while this community is disconnected."
+          : undefined
+        : settled
           ? "Message search is unavailable while this community is disconnected."
-          : query.trim() && !scopedChannelId
+          : connecting && query.trim() && !scopedChannelId
             ? "Connecting to this community…"
             : undefined;
   const offline = notice && (
     <div className="px-3 text-body-sm text-subtle" aria-live="polite">
       <p>{notice}</p>
-      {!connecting && (
+      {settled && (
         <Button
           size="sm"
           variant="ghost"
@@ -648,6 +655,7 @@ function CommunitySearch({
         usageScope={usageScope(scope)}
         sidebarScope={connection.scope}
         views={views}
+        savedOnly={saved}
         offline={saved ? offline : undefined}
         openConversation={openConversation}
         openAgentSession={(pubkey) => {

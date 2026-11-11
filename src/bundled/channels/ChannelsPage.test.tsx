@@ -288,19 +288,16 @@ it("animates Connecting only while a connection is actually under way", async ()
       expect(screen.getByRole("status").textContent).toContain("Connecting…");
       expect(screen.queryByRole("alert")).toBeNull();
     }
-    // Once the visit has settled no deadline ends the wait: between retries,
-    // say it can't connect and keeps trying instead of animating forever. The
-    // page follows the visit settling without another render from its host.
+    // Even once the visit has settled, a connection that retries by itself is
+    // reported once, by the app's notice: the page keeps saying Connecting.
     act(() => {
       controller.complete(controller.navigation.snapshot().attempt, {
         status: "opened",
       });
     });
     act(() => vi.advanceTimersByTime(1_000));
-    expect(screen.getByRole("alert").textContent).toContain(
-      "We’ll keep trying.",
-    );
-    expect(screen.queryByText("Connecting…")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Connecting…");
+    expect(screen.queryByRole("alert")).toBeNull();
     view.rerender(page({ status: "connecting" }));
     act(() => vi.advanceTimersByTime(1_000));
     expect(screen.getByRole("status").textContent).toContain("Connecting…");

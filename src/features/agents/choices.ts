@@ -156,10 +156,8 @@ export function createAgentChoices({
         });
       }
     const ready = legacy.status === "ready" || local?.status === "ready";
-    const errors = [
-      legacy.error,
-      local?.status === "error" ? local.error : undefined,
-    ].filter(Boolean);
+    const localError = local?.status === "error" ? local.error : undefined;
+    const errors = [legacy.error, localError].filter(Boolean);
     const templateSource =
       !local || local.status === "unavailable" ? legacy : local;
     const templates: TemplateChoices = {
@@ -200,6 +198,11 @@ export function createAgentChoices({
       ),
       archives: archive,
       ...(errors.length ? { error: errors.join(" ") } : {}),
+      // Only when every error shown can clear by itself: the local source's
+      // errors are about this device, not the connection.
+      ...(errors.length && legacy.transient && !localError
+        ? { transient: true as const }
+        : {}),
     };
     cached = { legacy, local, archive, value };
     return value;

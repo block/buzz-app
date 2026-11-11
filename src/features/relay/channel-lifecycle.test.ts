@@ -242,6 +242,7 @@ describe("bounded visibility recovery", () => {
       status: "error",
       hidden: [],
       error: "offline",
+      transient: true,
     });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.read).toHaveBeenCalledTimes(4);
@@ -258,6 +259,7 @@ describe("bounded visibility recovery", () => {
     const h = harness();
     h.read.mockRejectedValue(error);
     await h.owner.capability.refreshVisibility();
+    expect(h.owner.capability.snapshot()).not.toHaveProperty("transient");
     expect(h.owner.capability.snapshot()).toMatchObject({
       status: "error",
       error: error.message,

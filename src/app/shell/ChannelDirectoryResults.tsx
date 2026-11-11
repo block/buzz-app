@@ -4,7 +4,12 @@ import {
   useChannelDirectory,
   useMemberCounts,
 } from "../../features/channels/useChannelDirectory";
+import { rosterRecovering } from "../../features/relay/live-recovery";
 import { useChannelRoster } from "../../features/relay/react";
+import {
+  useRecoverableRead,
+  useRecoveryOwns,
+} from "../../features/relay/RecoveryNotice";
 import type { RelaySession } from "../../features/relay/session";
 import { matchName } from "../../features/search/match";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -52,6 +57,24 @@ export function ChannelDirectoryResults({
   const list = useChannelRoster(session.channels);
   const ready = list.status === "ready";
   const directory = useChannelDirectory(session.channels, ready);
+  // Both lists load when the view opens. A connectivity failure joins session
+  // recovery, which retries it, and the app's one notice reports it: neither
+  // shows an error or Retry of its own.
+  const rosterRecovers = useRecoveryOwns(session, (live) =>
+    rosterRecovering(live.roster),
+  );
+  const directoryRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: directory.error
+        ? "error"
+        : directory.loading
+          ? "loading"
+          : "ready",
+      error: directory.cause,
+    },
+    directory.retry,
+  );
   const members = useMemberCounts(session.channels);
   const needle = query.trim().toLowerCase().replace(/^#/, "");
   const { joined, member } = useMemo(
@@ -182,8 +205,13 @@ export function ChannelDirectoryResults({
           joined ? openConversation(channel.id) : openPreview(channel.id),
       };
     });
-  const failed = list.status === "error" || directory.error;
-  const settled = ready && !directory.loading && !failed;
+  const rosterQuiet = list.status === "error" && rosterRecovers;
+  const quiet = rosterQuiet || (directory.error && directoryRead.quiet);
+  const failed =
+    (list.status === "error" && !rosterRecovers) ||
+    (directory.error && !directoryRead.quiet);
+  // A failure recovery is retrying is neither an error nor an empty list.
+  const settled = ready && !directory.loading && !failed && !quiet;
   const count = rows.length;
   // One polite summary once a switch or filter settles, not per keystroke.
   const summary = settled

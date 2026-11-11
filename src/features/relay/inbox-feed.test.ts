@@ -173,6 +173,23 @@ it("surfaces read denial without treating it as empty, then retries", async () =
   expect(h.session.inboxFeed.snapshot().status).toBe("ready");
 });
 
+it("marks a connectivity failure transient and clears it on retry", async () => {
+  const h = setup();
+  h.admit([h.viewer.pubkey]);
+  const work = h.session.inboxFeed.ensure();
+  (await take(h, 9)).reject(new TypeError("offline"));
+  await work;
+  expect(h.session.inboxFeed.snapshot()).toMatchObject({
+    status: "error",
+    transient: true,
+  });
+  const again = h.session.inboxFeed.refresh();
+  expect(h.session.inboxFeed.snapshot().transient).toBeUndefined();
+  (await take(h, 9)).resolve([]);
+  await again;
+  expect(h.session.inboxFeed.snapshot().status).toBe("ready");
+});
+
 async function discover(h: ReturnType<typeof setup>) {
   h.session.channels.ensureList();
   (await take(h, 39002)).resolve([

@@ -46,6 +46,7 @@ import {
   type ThreadView,
 } from "../relay/threads";
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
+import { useRecoverableRead } from "../relay/RecoveryNotice";
 import { rowProfileIds } from "../relay/membership";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
 import {
@@ -213,6 +214,8 @@ function ThreadHeader({
 }
 type SelectionFailure = {
   unavailable: boolean;
+  /** A connectivity failure: recovery retries it and reports it. */
+  transient?: boolean;
   pending: boolean;
   retry(): void;
 };
@@ -233,7 +236,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   const current = useRef<Opening | undefined>(undefined);
   const [opening, setOpening] = useState<Opening>();
   const [error, setError] = useState<string>();
-  const [failure, setFailure] = useState<{ unavailable: boolean }>();
+  const [failure, setFailure] = useState<{
+    unavailable: boolean;
+    transient?: boolean;
+  }>();
   // Retry keeps its control mounted and focused until the new attempt settles.
   const [pending, setPending] = useState(false);
   const retrying = useRef(false);
@@ -276,7 +282,10 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
       setError(undefined);
       setFailure(undefined);
     }
-    const settle = (next?: { unavailable: boolean }, message?: string) => {
+    const settle = (
+      next?: { unavailable: boolean; transient?: boolean },
+      message?: string,
+    ) => {
       retrying.current = false;
       setPending(false);
       setFailure(next);
@@ -323,7 +332,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           return;
         }
         if (result !== "different") {
-          settle({ unavailable: result === "unavailable" });
+          settle({
+            unavailable: result === "unavailable",
+            // A connectivity failure is recovery's to retry and report.
+            ...(result === "offline" && { transient: true }),
+          });
           navigation?.complete({
             status: "failed",
             reason: result === "unavailable" ? "not-found" : "unavailable",
@@ -1732,15 +1745,49 @@ function ThreadMessages({
     captureOlderAnchor(element);
     void view.loadMore();
   };
+  // Opening a thread selects its message by itself. While the relay is
+  // unreachable that failure joins session recovery, whose notice is the one
+  // report, so neither its message nor its Try again shows.
+  const selection = useRecoverableRead(
+    session.recovery,
+    selectionFailure?.transient
+      ? {
+          status: selectionFailure.pending ? "loading" : "error",
+          error: "offline",
+          transient: true,
+        }
+      : {},
+    () => selectionFailure?.retry(),
+  );
   const selectionNotice =
-    selectionFailure && !snapshot.error ? selectionFailure : undefined;
+    selectionFailure && !snapshot.error && !selection.quiet
+      ? selectionFailure
+      : undefined;
   const showOlderPageStatus =
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
+  const retryThread = () => {
+    if (showOlderPageStatus) {
+      if (scroller.current) captureOlderAnchor(scroller.current);
+      void view.loadMore();
+    } else void view.refresh();
+  };
+  // Opening a thread starts its read by itself. While the relay is
+  // unreachable the recovery notice is the one report, and recovery retries
+  // this read, so neither its error nor its Try again shows.
+  const { quiet } = useRecoverableRead(
+    session.recovery,
+    {
+      status: snapshot.status,
+      error: snapshot.error,
+      transient: snapshot.transient,
+    },
+    retryThread,
+  );
   const targetUnavailable =
     snapshot.targetStatus === "unavailable" && !selectionNotice;
-  const historyError = !!snapshot.error && !showOlderPageStatus;
+  const historyError = !!snapshot.error && !showOlderPageStatus && !quiet;
   const focusArchivedHistory = useCallback(() => {
     const history = scroller.current;
     if (
@@ -1758,12 +1805,6 @@ function ThreadMessages({
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
       : undefined;
-  const retryThread = () => {
-    if (showOlderPageStatus) {
-      if (scroller.current) captureOlderAnchor(scroller.current);
-      void view.loadMore();
-    } else void view.refresh();
-  };
   return (
     <MessageEditScope>
       <Reading
@@ -1917,7 +1958,7 @@ function ThreadMessages({
                 ? { onOpenMediaReview: openRootMedia }
                 : {})}
             />
-          ) : snapshot.status !== "loading" ? (
+          ) : snapshot.status !== "loading" && !quiet ? (
             targetUnavailable ? (
               // One notice, with its recovery beside it, when nothing loaded.
               <div className={styles.threadNotice}>
@@ -1933,7 +1974,7 @@ function ThreadMessages({
             )
           ) : null}
           <ol>
-            {showOlderPageStatus && snapshot.error && (
+            {showOlderPageStatus && snapshot.error && !quiet && (
               <li className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
@@ -1972,7 +2013,8 @@ function ThreadMessages({
               to check the destination.
             </p>
           )}
-        {positioning || (snapshot.status === "loading" && !rows.length) ? (
+        {positioning ||
+        ((snapshot.status === "loading" || quiet) && !rows.length) ? (
           <ThreadLoading />
         ) : null}
         {selectionNotice && (

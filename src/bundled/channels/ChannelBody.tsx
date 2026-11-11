@@ -6,7 +6,10 @@ import {
 import type { ChannelTimelineProps } from "../../features/messages/ChannelTimeline";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelWindow } from "../../features/relay/react";
-import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
+import {
+  useRecoverableRead,
+  useRecoveryOwns,
+} from "../../features/relay/RecoveryNotice";
 import { headRecovering } from "../../features/relay/live-recovery";
 import { clientMetrics } from "../../features/developer/client-metrics";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -56,6 +59,17 @@ export const ChannelBody = memo(function ChannelBody({
   const headRecovers = useRecoveryOwns(queries, (live) =>
     headRecovering(live, channelId),
   );
+  // A first read that failed for connectivity joins session recovery, which
+  // retries it on its own, so nothing here offers Retry or repeats the reason.
+  const { quiet } = useRecoverableRead(
+    queries.recovery,
+    {
+      status: window.status,
+      error: window.error,
+      transient: window.transient === true,
+    },
+    () => queries.channels.ensure(channelId),
+  );
   const newest = window.rows.at(-1)?.id;
   const settled = window.status === "ready" || window.status === "error";
   useEffect(() => {
@@ -92,9 +106,14 @@ export const ChannelBody = memo(function ChannelBody({
         presented: true,
       });
   }, [cached, navigation, window.status]);
-  // While recovery retries this timeline's head read, its notice is the one
-  // report, after the quiet delay; the empty timeline waits.
-  if (window.status === "error" && !window.rows.length && !headRecovers)
+  // While recovery retries this timeline's read, its notice is the one report,
+  // after the quiet delay; the empty timeline waits, loading.
+  if (
+    window.status === "error" &&
+    !window.rows.length &&
+    !headRecovers &&
+    !quiet
+  )
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}

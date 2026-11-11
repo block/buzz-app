@@ -1,4 +1,5 @@
 import { useProfileGeneration } from "../../features/relay/react";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import {
   AnimatePresence,
   motion,
@@ -173,8 +174,10 @@ function useLandingDefinitions(
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
     let paused = false;
+    // Every failure that paused discovery was a connectivity failure.
+    let pausedTransient = false;
     let purgeGeneration = 0;
-    let state = { snapshots, paused, purgeGeneration };
+    let state = { snapshots, paused, pausedTransient, purgeGeneration };
     let channelIds: readonly string[] = [];
     const queued = new Map<string, boolean>();
     const listeners = new Set<() => void>();
@@ -190,7 +193,7 @@ function useLandingDefinitions(
     // discovery finishes. All other views are disposed; at most two are live.
     let retained: Read | undefined;
     const emit = () => {
-      state = { snapshots, paused, purgeGeneration };
+      state = { snapshots, paused, pausedTransient, purgeGeneration };
       for (const listener of listeners) listener();
     };
     const release = (read: Read | undefined) => {
@@ -202,6 +205,7 @@ function useLandingDefinitions(
       purgeGeneration++;
       invalidated = true;
       paused = false;
+      pausedTransient = false;
       queued.clear();
       const previous = active;
       active = undefined;
@@ -250,6 +254,7 @@ function useLandingDefinitions(
       }
     };
     const pause = (owned: Read, snapshot: DefinitionsSnapshot) => {
+      pausedTransient = (!paused || pausedTransient) && !!snapshot.transient;
       paused = true;
       for (const id of owned.ids) queued.set(id, false);
       if (active) {
@@ -369,12 +374,16 @@ function useLandingDefinitions(
       },
       retry() {
         paused = false;
+        pausedTransient = false;
         readNext();
         emit();
       },
       refresh(ids = channelIds, afterPending = false) {
         invalidated = false;
-        if (!afterPending) paused = false;
+        if (!afterPending) {
+          paused = false;
+          pausedTransient = false;
+        }
         for (const id of ids)
           if (channelIds.includes(id)) queued.set(id, false);
         // A pending read already satisfies refresh; never cancel and repeat it.
@@ -392,7 +401,8 @@ function useLandingDefinitions(
         retained = undefined;
         snapshots = {};
         paused = false;
-        state = { snapshots, paused, purgeGeneration };
+        pausedTransient = false;
+        state = { snapshots, paused, pausedTransient, purgeGeneration };
       },
     };
   }, [capability]);
@@ -437,6 +447,7 @@ function useLandingDefinitions(
   return {
     ...useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot),
     refresh: store.refresh,
+    retry: store.retry,
   };
 }
 
@@ -878,6 +889,7 @@ function WorkflowCard({
         key={createdRun ?? ""}
         capability={capability}
         workflow={history}
+        recovery={session.recovery}
       />
     </section>
   );
@@ -1419,7 +1431,14 @@ export function WorkflowLanding({
         `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}${operation.action === "delete" ? `/${operation.delivery}/${!!operation.error}` : ""}`,
     )
     .join(":");
-  const { snapshots, paused, purgeGeneration, refresh } = useLandingDefinitions(
+  const {
+    snapshots,
+    paused,
+    pausedTransient,
+    purgeGeneration,
+    refresh,
+    retry,
+  } = useLandingDefinitions(
     capability,
     channels,
     refreshRequest,
@@ -1491,6 +1510,18 @@ export function WorkflowLanding({
     (channel) =>
       !snapshots[channel.id] || snapshots[channel.id]?.status === "loading",
   );
+  // A connectivity failure that paused discovery belongs to the app's one
+  // recovery notice, which retries it; only other failures show Retry here.
+  const { quiet } = useRecoverableRead(
+    session?.recovery,
+    {
+      status: paused ? "error" : reading ? "loading" : "ready",
+      error: paused ? "Workflow discovery paused" : undefined,
+      transient: pausedTransient,
+    },
+    retry,
+  );
+  const showPaused = paused && !quiet;
   const items = visible.flatMap(
     (channel) => filteredSnapshots[channel.id]?.data.items ?? [],
   );
@@ -1821,14 +1852,14 @@ export function WorkflowLanding({
         className="workflow-page-status text-body-sm text-secondary"
         role="status"
       >
-        {paused
+        {showPaused
           ? "Workflow discovery paused. Some channels could not be checked. Loaded workflows are still shown."
-          : reading
+          : reading || paused
             ? "Reading workflows…"
             : cleared
               ? "Workflow data cleared or unavailable. Refresh to check access."
               : null}
-        {paused && (
+        {showPaused && (
           <Button
             size="sm"
             onClick={() => setRetryRequest((request) => request + 1)}

@@ -902,7 +902,7 @@ it("hides the owner's starting agents only in a complete personal chat", () => {
   }
 });
 
-it("offline, says older messages can be loaded once Buzz reconnects instead of offering an inert Load older", () => {
+it("offline, offers no inert Load older and no reconnect copy; the app-level notice covers it", () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
   vi.stubGlobal(
@@ -953,11 +953,11 @@ it("offline, says older messages can be loaded once Buzz reconnects instead of o
   const waiting = "You can load older messages once Buzz reconnects.";
   try {
     const view = render(timeline(offline));
-    expect(screen.getByText(waiting)).toBeVisible();
+    expect(screen.queryByText(waiting)).toBeNull();
     expect(screen.queryByRole("button", { name: /older messages/ })).toBeNull();
     // Solo chats page on scroll, which reads nothing offline either.
     view.rerender(timeline(offline, "scroll"));
-    expect(screen.getByText(waiting)).toBeVisible();
+    expect(screen.queryByText(waiting)).toBeNull();
     // The connected session replaces it without remounting the timeline.
     const history = screen.getByRole("region", {
       name: "Channel message history",

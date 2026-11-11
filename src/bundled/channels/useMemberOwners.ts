@@ -2,6 +2,7 @@ import { useProfileGeneration } from "../../features/relay/react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { attestedOwner } from "../../features/agents/owner-attestation";
 import { type EventData, newer } from "../../features/relay/events";
+import { isRetryableRead } from "../../features/relay/read-retry";
 import type {
   EventViewSnapshot,
   RelaySession,
@@ -122,6 +123,7 @@ export function useMemberOwners(
     attempt: number;
     busy: boolean;
     failed: boolean;
+    error?: unknown;
   }>();
   const currentNames =
     names?.session === session &&
@@ -152,7 +154,7 @@ export function useMemberOwners(
               failed: false,
             });
         },
-        () => {
+        (error: unknown) => {
           if (active)
             setNames({
               session,
@@ -160,6 +162,7 @@ export function useMemberOwners(
               attempt,
               busy: false,
               failed: true,
+              error,
             });
         },
       );
@@ -167,18 +170,35 @@ export function useMemberOwners(
       active = false;
     };
   }, [session, ownerKeys, attempt, profileGeneration]);
+  const busy =
+    !!keys &&
+    (view === undefined ||
+      (!!view && (events.status === "idle" || events.status === "loading")) ||
+      [...latest].some(([key, event]) => verified.get(key)?.id !== event.id) ||
+      (!!ownerKeys && (!currentNames || currentNames.busy)));
+  const failed =
+    !!keys &&
+    (view === null || events.status === "error" || !!currentNames?.failed);
+  const viewFailed = events.status === "error";
   return {
     owners,
-    busy:
-      !!keys &&
-      (view === undefined ||
-        (!!view && (events.status === "idle" || events.status === "loading")) ||
-        [...latest].some(
-          ([key, event]) => verified.get(key)?.id !== event.id,
-        ) ||
-        (!!ownerKeys && (!currentNames || currentNames.busy))),
-    failed:
-      !!keys &&
-      (view === null || events.status === "error" || !!currentNames?.failed),
+    busy,
+    failed,
+    /** The failure's kind, for a surface that hands connectivity failures to
+     * session recovery: the observed view's, else the owner names'. */
+    read: {
+      status:
+        viewFailed || currentNames?.failed
+          ? "error"
+          : busy
+            ? "loading"
+            : "ready",
+      error: viewFailed ? events.error : currentNames?.error,
+      transient: viewFailed
+        ? events.transient
+        : currentNames?.failed
+          ? isRetryableRead(currentNames.error)
+          : undefined,
+    },
   };
 }

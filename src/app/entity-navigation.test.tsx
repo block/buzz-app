@@ -578,21 +578,16 @@ it("reopens a visit that timed out while connecting once the connection is live"
   try {
     const { current, online } = offlineMessagesFixture();
     await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
-    // The visit deadline ends the wait with an honest, recoverable card.
+    // The visit deadline ends the wait; the connection keeps retrying.
     await act(() => vi.advanceTimersByTimeAsync(15_000));
     expect(current.navigation.snapshot()).toMatchObject({
       status: "failed",
       reason: "timeout",
     });
-    expect(
-      await screen.findByRole("heading", { name: "Can’t connect" }),
-    ).toBeVisible();
-    // Messages is what failed, so the way out leads elsewhere.
-    expect(screen.queryByRole("button", { name: "Go to Messages" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Open Settings" })).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Try again" }).dataset.variant,
-    ).toBe("prominent");
+    // The connection retries by itself and the app's one notice reports it,
+    // so the page keeps loading instead of showing its own "Can’t connect".
+    expect(screen.queryByText(pageFailure)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     online();
     await act(() => vi.advanceTimersByTimeAsync(31_000));
     await waitFor(() =>
@@ -609,7 +604,7 @@ it("does not reopen a failed visit after the user has left it", async () => {
     const { current, online } = offlineMessagesFixture();
     await waitFor(() => expect(current.relay.snapshot().status).toBe("error"));
     await act(() => vi.advanceTimersByTimeAsync(15_000));
-    await screen.findByRole("heading", { name: "Can’t connect" });
+    expect(screen.queryByText(pageFailure)).toBeNull();
     const failed = current.navigation.snapshot().entry.id;
     act(() => {
       void current.navigation.open({
@@ -701,7 +696,7 @@ it("keeps Messages on screen when only the linked message fails to open", async 
   expect(screen.getByRole("region", { name: "Channels" })).toBeVisible();
   expect(screen.queryByText(pageFailure)).toBeNull();
 });
-it("keeps a failed message read in place until its own Retry succeeds", async () => {
+it("fills in a failed message read by itself, with no Retry of its own", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -728,7 +723,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
     message(author, "alpha", "Back again", 1_700_000_100),
     bounds(author, "alpha", "head", { has_more: false, next_cursor: null }),
   ];
-  // Two failed history reads within one live connection, then recovery.
+  // Two failed history reads within one live connection, then success.
   let failures = 2;
   vi.stubGlobal(
     "fetch",
@@ -777,20 +772,18 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   );
   const generation = current.relay.snapshot().generation;
   expect(screen.queryByText(pageFailure)).toBeNull();
-  // The page keeps its visit's authority, so the timeline's own Retry works.
+  // The page keeps its visit's authority. A connectivity failure offers no
+  // Retry of its own: session recovery reads again and the window fills in.
   expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
-  const timeline = () =>
-    document.querySelector('[data-channel-timeline="alpha"]');
-  while (!timeline()) {
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Retry messages" }),
-    );
-    await waitFor(() =>
+  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
+  await waitFor(
+    () =>
       expect(
-        timeline() ?? screen.queryByRole("button", { name: "Retry messages" }),
-      ).not.toBeNull(),
-    );
-  }
+        current.relay.snapshot().session.channels.window("alpha").status,
+      ).toBe("ready"),
+    { timeout: 20_000 },
+  );
+  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
   // Rows need real layout to paint; the recovered window is the observable here.
   expect(
     current.relay
@@ -803,7 +796,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
   expect(failures).toBe(0);
   expect(current.relay.snapshot().generation).toBe(generation);
   expect(screen.queryByText(pageFailure)).toBeNull();
-});
+}, 30_000);
 it("offers to join a code-less link's community, or opens it once joined", async () => {
   const queue = [
     "buzz://add-community?relay=wss%3A%2F%2Fother.example%2F&name=other",

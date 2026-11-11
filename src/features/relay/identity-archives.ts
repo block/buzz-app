@@ -1,4 +1,4 @@
-import { retryRead } from "./read-retry";
+import { isRetryableRead, retryRead } from "./read-retry";
 import { getEventHash } from "nostr-tools";
 import { authTagOwner, withinTimeBounds } from "../agents/owner-attestation";
 import { byteSize } from "./budget";
@@ -18,6 +18,9 @@ export type IdentityArchiveSnapshot = Readonly<{
   createdAt?: number;
   readAt?: number;
   error?: string;
+  /** Set with an error that a later read can fix (a connectivity failure; see
+   * isRetryableRead). An invalid or stale snapshot is not. */
+  transient?: true;
 }>;
 export type IdentityArchives = ReturnType<
   typeof createIdentityArchives
@@ -88,7 +91,7 @@ export function createIdentityArchives(
     pending = completion;
     // Rereads keep the last known archives until the new snapshot replaces
     // them, so a known-archived identity never briefly looks live.
-    const { error: _, ...known } = snapshot;
+    const { error: _, transient: __, ...known } = snapshot;
     publish({ ...known, status: "loading" });
     void (async () => {
       try {
@@ -145,13 +148,14 @@ export function createIdentityArchives(
           createdAt: event.created_at,
           readAt: Date.now(),
         });
-      } catch {
+      } catch (error) {
         if (!closed && !owned.signal.aborted)
           publish({
             ...snapshot,
             status: "error",
             error:
               "Archive visibility is unknown. Retry to obtain a valid current relay snapshot (2 MiB limit).",
+            ...(isRetryableRead(error) ? { transient: true as const } : {}),
           });
       } finally {
         if (controller === owned) {
@@ -276,7 +280,7 @@ export function createIdentityArchives(
   /** After a reconnect: the next ensure() rereads, and until it replaces them
    * the last known archives stay known. */
   function stale() {
-    const { error: _, ...known } = snapshot;
+    const { error: _, transient: __, ...known } = snapshot;
     publish({ ...known, status: stop() });
   }
   return {

@@ -4,6 +4,7 @@ import type { Profile } from "../relay/contracts";
 import { peopleOrder } from "../profiles/people-order";
 import { matchPerson } from "../search/person-match";
 import { typedPublicKey } from "../../shared/identity/public-key";
+import { isRetryableRead } from "../relay/read-retry";
 import {
   searchDebounce,
   SEARCH_DEBOUNCE_MS,
@@ -20,6 +21,8 @@ type PeopleState = {
   hasMore: boolean;
   loading: boolean;
   error: string;
+  /** `error` is a connectivity failure (see isRetryableRead). */
+  transient?: boolean;
   /** The picker visit whose reads produced this entry. */
   visit?: object;
 };
@@ -91,7 +94,12 @@ export function usePeople(session: RelaySession, query: string) {
     ) {
       if (owned.loading || owned.controller.signal.aborted) return;
       owned.loading = true;
-      setState((current) => ({ ...current, loading: true, error: "" }));
+      setState((current) => ({
+        ...current,
+        loading: true,
+        error: "",
+        transient: false,
+      }));
       try {
         const result = await session.directMessages.people(
           query,
@@ -139,6 +147,7 @@ export function usePeople(session: RelaySession, query: string) {
               reason instanceof Error
                 ? reason.message
                 : "Could not load people.",
+            transient: isRetryableRead(reason),
           }));
         }
       } finally {
@@ -193,6 +202,7 @@ export function usePeople(session: RelaySession, query: string) {
     people: visible.people,
     loading: visible.loading || (visible.hasMore && !visible.error),
     error: visible.error,
+    transient: !!visible.error && !!visible.transient,
     hasMore: visible.hasMore,
     /** Text too short to search, so people not yet read may still match. */
     tooShort:

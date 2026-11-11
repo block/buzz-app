@@ -1,6 +1,7 @@
 import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
 import { visibleTeams } from "../../features/agents/visible-teams";
 import { splitPartition } from "../../features/relay/partition";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import {
   useContext,
   useCallback,
@@ -20,7 +21,12 @@ import type { RelaySession } from "../../features/relay/session";
 import { mentionMatch } from "./mention-ranking";
 import { typedPublicKey } from "../../shared/identity/public-key";
 
-const empty = { status: "unavailable", entries: [] } as const;
+const empty = {
+  status: "unavailable",
+  entries: [],
+  error: undefined,
+  transient: undefined,
+} as const;
 type Catalog = Pick<
   ReturnType<NonNullable<RelaySession["channelKit"]>["snapshot"]>,
   "entries"
@@ -77,6 +83,17 @@ export function useTeamMentions(
   useEffect(() => {
     if (open) kit?.ensure();
   }, [kit, open]);
+  // The legacy catalog is a passive load; a connectivity failure is the
+  // recovery notice's to report, not this list's.
+  const { quiet } = useRecoverableRead(
+    session.recovery,
+    {
+      status: open ? catalog.status : "ready",
+      error: catalog.error,
+      transient: catalog.transient,
+    },
+    () => void kit?.refresh(),
+  );
   // readSaved is a live read at acceptance, not another subscribed store.
   const teams = useMemo(() => {
     // The service owns local persistence and confirmed synced copies. Neither
@@ -276,10 +293,10 @@ export function useTeamMentions(
       status:
         open && (catalog.status === "idle" || catalog.status === "loading")
           ? "Loading legacy teams…"
-          : open && catalog.status === "error"
+          : open && catalog.status === "error" && !quiet
             ? "Could not load legacy teams. Retry to refresh."
             : undefined,
-      canRetry: open && catalog.status === "error",
+      canRetry: open && catalog.status === "error" && !quiet,
       retry: () => void kit?.refresh(),
     };
   }, [
@@ -297,5 +314,6 @@ export function useTeamMentions(
     hasTeams,
     readSaved,
     owner,
+    quiet,
   ]);
 }

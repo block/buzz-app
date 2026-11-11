@@ -584,6 +584,8 @@ export function createChannelStore(
       rows,
       hasNewer: state.ceiling !== undefined || undefined,
     };
+    // `transient` describes the error set with it; a new error says it again.
+    if ("error" in patch && !("transient" in patch)) delete next.transient;
     if (
       Object.entries(next).every(
         ([key, value]) => value === state.snapshot[key as keyof ChannelWindow],
@@ -1125,15 +1127,27 @@ export function createChannelStore(
         denyChannel(state.channelId, error);
         return;
       }
+      // Say when a retry can clear the failure, so the timeline can leave it to
+      // session recovery: an older page, or a first read with nothing to show.
+      // A failed head revalidation under shown rows belongs to live catch-up.
+      const transient = isTransientFailure(error)
+        ? { transient: true as const }
+        : {};
       setWindow(
         state,
         cursor || state.snapshot.rows.length
-          ? { loadingOlder: false, error: describe(error), freshness: "cached" }
+          ? {
+              loadingOlder: false,
+              error: describe(error),
+              freshness: "cached",
+              ...(cursor ? transient : {}),
+            }
           : {
               status: "error",
               rows: EMPTY_ROWS,
               loadingOlder: false,
               error: describe(error),
+              ...transient,
             },
       );
     } finally {
@@ -2108,7 +2122,13 @@ export function createChannelStore(
       } else {
         // Failed names do not discard successful membership authority.
         if (!readingRoster) applyDiscovery([]);
-        setList({ ...list, status: "error", error: describe(error) });
+        const { transient: _previous, ...kept } = list;
+        setList({
+          ...kept,
+          status: "error",
+          error: describe(error),
+          ...(isTransientFailure(error) ? { transient: true as const } : {}),
+        });
       }
     } finally {
       // Failure or interruption has not fulfilled the writer requirement, even
@@ -4417,6 +4437,9 @@ export function createChannelStore(
             status: retained.snapshot.rows.length ? "ready" : "error",
             freshness: "cached",
             error: describe(error),
+            ...(!retained.snapshot.rows.length && isTransientFailure(error)
+              ? { transient: true as const }
+              : {}),
           });
         throw error;
       } finally {
@@ -4432,6 +4455,9 @@ export function createChannelStore(
         status: state.snapshot.rows.length ? "ready" : "error",
         freshness: "cached",
         error: describe(error),
+        ...(!state.snapshot.rows.length && isTransientFailure(error)
+          ? { transient: true as const }
+          : {}),
       });
     },
     /** The stream re-established a channel whose replay was continuous: it

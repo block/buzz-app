@@ -35,6 +35,8 @@ export type DmVisibility = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   hidden: readonly string[];
   error?: string;
+  /** The failure is a connectivity failure that session recovery retries. */
+  transient?: true;
 }>;
 export interface ChannelLifecycleCapability {
   readonly available: boolean;
@@ -325,9 +327,10 @@ export function createChannelLifecycle({
       ]);
       refreshSignal = signal;
       emit({ status: "loading", hidden: snapshot.hidden });
-      // Exhausted errors omit `transient`, so session recovery cannot restart
-      // them. A read retired by another channel's access change (`cancelled`)
-      // retries within the same budget.
+      // An exhausted connectivity failure is flagged `transient`: session
+      // recovery retries it and the sidebar shows no error of its own. A read
+      // retired by another channel's access change (`cancelled`) retries
+      // within the same budget.
       const operation = retryRead(
         async () => {
           await owned({ caller: signal }, readVisibility);
@@ -348,6 +351,9 @@ export function createChannelLifecycle({
                 ? {
                     error:
                       error instanceof Error ? error.message : String(error),
+                    ...(isTransientFailure(error)
+                      ? { transient: true as const }
+                      : {}),
                   }
                 : {}),
             });

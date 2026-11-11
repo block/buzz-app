@@ -1,4 +1,5 @@
 import { useProfileGeneration } from "../../features/relay/react";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import { TeamMentionAvatars } from "./TeamMentionAvatars";
 import {
   PopoverRoot,
@@ -91,6 +92,51 @@ export function MentionPicker({
     search,
     model,
     open && !disabled && !!selectTeam,
+  );
+  // An open chooser's loads are passive: a connectivity failure is the recovery
+  // notice's to report. Each read hides its own error and Retry, joins session
+  // recovery, and fills in when the relay answers.
+  const watching = open && !disabled;
+  const agentsRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: !watching
+        ? "ready"
+        : agents.error
+          ? agents.pending
+            ? "loading"
+            : "error"
+          : agents.status,
+      error: agents.error,
+      transient: agents.transient,
+    },
+    // Recovery retries the inventory read that failed, whichever source the
+    // picker's Retry button covers for this chooser.
+    () => void session.agentChoices.refresh(),
+  );
+  const archivesRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: watching ? model.archives.status : "ready",
+      error: model.archives.error,
+      transient: model.archives.transient,
+    },
+    () => void session.archives?.refresh(),
+  );
+  const directoryRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: !watching
+        ? "ready"
+        : model.directory.error
+          ? "error"
+          : model.directory.loading
+            ? "loading"
+            : "ready",
+      error: model.directory.passive ? model.directory.error : undefined,
+      transient: model.directory.transient,
+    },
+    model.directory.retry,
   );
   const parentAdmission = !!channel && channel.channelType !== "solo";
   const members =
@@ -325,7 +371,7 @@ export function MentionPicker({
             {model.directory.loading && (
               <p role="status">Searching community…</p>
             )}
-            {model.directory.error && (
+            {model.directory.error && !directoryRead.quiet && (
               <>
                 <p role="status">{model.directory.error}</p>
                 <Button type="button" onClick={model.directory.retry}>
@@ -336,19 +382,20 @@ export function MentionPicker({
             {agents.status === "loading" && !candidates.length && (
               <p role="status">Loading agents…</p>
             )}
-            {(agents.status === "error" || !!agents.error) && (
-              <Button
-                type="button"
-                onClick={() =>
-                  void session.agentChoices.refresh(
-                    !!inviteAgents || teams.includeLegacy,
-                  )
-                }
-              >
-                Retry agent list
-              </Button>
-            )}
-            {model.archives.status === "error" && (
+            {(agents.status === "error" || !!agents.error) &&
+              !agentsRead.quiet && (
+                <Button
+                  type="button"
+                  onClick={() =>
+                    void session.agentChoices.refresh(
+                      !!inviteAgents || teams.includeLegacy,
+                    )
+                  }
+                >
+                  Retry agent list
+                </Button>
+              )}
+            {model.archives.status === "error" && !archivesRead.quiet && (
               <Button
                 type="button"
                 onClick={() => void session.archives?.refresh()}

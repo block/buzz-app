@@ -1,4 +1,7 @@
 import { useProfileGeneration } from "../../features/relay/react";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
+import type { RelayRecovery } from "../../features/relay/recovery";
+import { isRetryableRead } from "../../features/relay/read-retry";
 import Markdown from "react-markdown";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
 import { profileKey } from "../../features/profiles/target";
@@ -128,9 +131,12 @@ export function TodosPanel({
   context,
   close,
   active,
+  recovery,
   onOpenLink = () => false,
 }: {
   canvas: ChannelCanvas;
+  /** Session recovery, which retries a connectivity failure of a read. */
+  recovery?: RelayRecovery | undefined;
   people: TodoPeople;
   context: ChannelPanelContext;
   close(): void;
@@ -166,6 +172,9 @@ export function TodosPanel({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"load" | "save">();
   const [error, setError] = useState("");
+  // The last failed load, kept apart from `error`: a connectivity failure
+  // belongs to the app's recovery notice, not to this panel.
+  const [loadFailure, setLoadFailure] = useState<{ reason: unknown }>();
   const [conflict, setConflict] = useState(false);
   const [confirmRefresh, setConfirmRefresh] = useState(false);
   const refreshRef = useRef<HTMLButtonElement>(null);
@@ -234,6 +243,7 @@ export function TodosPanel({
       const generation = ++operation.current;
       setBusy("load");
       setError("");
+      setLoadFailure(undefined);
       try {
         const head = await canvas.read(context.channelId);
         if (!active() || generation !== operation.current) return;
@@ -260,13 +270,23 @@ export function TodosPanel({
             base: head?.id ?? null,
           });
       } catch (reason) {
-        if (active() && generation === operation.current)
-          setError(String(reason));
+        if (active() && generation === operation.current) {
+          setLoadFailure({ reason });
+          if (!isRetryableRead(reason)) setError(String(reason));
+        }
       } finally {
         if (active() && generation === operation.current) setBusy(undefined);
       }
     },
     [active, canvas, context.channelId, saved, savedDirty, update],
+  );
+  const { quiet: loadQuiet } = useRecoverableRead(
+    recovery,
+    {
+      status: busy === "load" ? "loading" : loadFailure ? "error" : "ready",
+      error: loadFailure?.reason,
+    },
+    () => void load(),
   );
   // The parent keys this editor by session and channel. No background reads or writes.
   useEffect(() => {
@@ -379,6 +399,15 @@ export function TodosPanel({
     .join(":");
   const [namesError, setNamesError] = useState(false);
   const [namesRetry, setNamesRetry] = useState(0);
+  const [namesFailure, setNamesFailure] = useState<{ reason: unknown }>();
+  const { quiet: namesQuiet } = useRecoverableRead(
+    recovery,
+    { status: namesFailure ? "error" : "ready", error: namesFailure?.reason },
+    () => setNamesRetry((value) => value + 1),
+  );
+  const { quiet: listQuiet } = useRecoverableRead(recovery, list, () =>
+    people.channels.refreshList?.(),
+  );
   const profileGeneration = useProfileGeneration(people.profiles);
   useEffect(() => {
     void namesRetry; // Explicit user retry reruns this owned read.
@@ -389,10 +418,16 @@ export function TodosPanel({
       .ensure(peopleKey ? peopleKey.split(":") : [], "background")
       .then(
         () => {
-          if (current && active()) setNamesError(false);
+          if (current && active()) {
+            setNamesError(false);
+            setNamesFailure(undefined);
+          }
         },
-        () => {
-          if (current && active()) setNamesError(true);
+        (reason) => {
+          if (current && active()) {
+            setNamesError(true);
+            setNamesFailure({ reason });
+          }
         },
       );
     return () => {
@@ -855,7 +890,9 @@ export function TodosPanel({
               )}
             </div>
           )}
-          {(namesError || list.error || !members) && (
+          {((namesError && !namesQuiet) ||
+            (list.error && !listQuiet) ||
+            (!members && !listQuiet)) && (
             <div className="text-caption text-secondary">
               {!members || list.error
                 ? "Channel members unavailable or out of date."
@@ -885,7 +922,9 @@ export function TodosPanel({
           )}
           {!loaded ? (
             <p role="status" className="text-body-sm text-secondary">
-              {busy ? "Loading todos…" : "Couldn’t load todos. Try Refresh."}
+              {busy || loadQuiet
+                ? "Loading todos…"
+                : "Couldn’t load todos. Try Refresh."}
             </p>
           ) : (
             !parseError && (

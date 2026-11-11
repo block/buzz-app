@@ -26,6 +26,7 @@ import { StatusDisplay } from "../../features/user-status/StatusDisplay";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import { ProfilePublicMetadata } from "./ProfilePublicMetadata";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
@@ -398,6 +399,7 @@ function ProfileDetails({
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
+  const [failure, setFailure] = useState<unknown>();
   const [attempt, retry] = useState(0);
   // Retry stays mounted and focusable while its own read is pending.
   const [retrying, setRetrying] = useState(false);
@@ -469,6 +471,7 @@ function ProfileDetails({
     // let success hand its focus to the stable region as an explicit retry does.
     if (document.activeElement === retryButton.current) setRetrying(true);
     setStatus("loading");
+    setFailure(undefined);
     void session.profiles.ensure([pubkey]).then(
       () => {
         if (!active) return;
@@ -478,8 +481,9 @@ function ProfileDetails({
         setStatus("ready");
         setRetrying(false);
       },
-      () => {
+      (error: unknown) => {
         if (!active) return;
+        setFailure(error);
         setStatus("error");
         setRetrying(false);
       },
@@ -498,6 +502,24 @@ function ProfileDetails({
     knownAgent ? pubkey : undefined,
     attempt,
   );
+  // Opening the panel starts these reads by itself. While the relay is
+  // unreachable the recovery notice is the one report: recovery retries each
+  // read, so the panel shows neither its error nor Retry profile.
+  const profileRead = useRecoverableRead(
+    session.recovery,
+    { status, error: failure },
+    () => retry((value) => value + 1),
+  );
+  const ownerRead = useRecoverableRead(
+    session.recovery,
+    {
+      status: ownership.status,
+      error: ownership.error,
+      transient: ownership.transient,
+    },
+    ownership.refresh,
+  );
+  const shown = status === "error" && profileRead.quiet ? "loading" : status;
   const verifiedOwner = ownership.owner;
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
@@ -770,20 +792,20 @@ function ProfileDetails({
                   <ProfilePublicMetadata nip05={profile?.nip05} />
                   {/* A verified overlay can exist while its kind-0 read failed. */}
                   {(!profile ||
-                    (profile.verified && (status === "error" || retrying))) &&
-                    (status === "loading" ? (
+                    (profile.verified && (shown === "error" || retrying))) &&
+                    (shown === "loading" ? (
                       <p role="status">Loading profile…</p>
                     ) : (
-                      <p role={status === "error" ? "alert" : undefined}>
-                        {status === "error"
+                      <p role={shown === "error" ? "alert" : undefined}>
+                        {shown === "error"
                           ? "Could not load this profile."
                           : "No profile metadata is available in this community."}
                       </p>
                     ))}
-                  {((!profile && status !== "loading") ||
-                    (profile?.verified && status === "error") ||
+                  {((!profile && shown !== "loading") ||
+                    (profile?.verified && shown === "error") ||
                     retrying ||
-                    ownership.failed) && (
+                    (ownership.failed && !ownerRead.quiet)) && (
                     <Button
                       ref={retryButton}
                       size="compact"

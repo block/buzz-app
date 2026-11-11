@@ -245,8 +245,25 @@ it("publishes settled readiness even for empty activity and failure without chan
   take(wire.pending).reject(new Error("offline"));
   await rejected;
   expect(activity.status()).toBe("error");
+  expect(activity.transient()).toBe(false);
   activity.clear();
   expect(activity.status()).toBe("idle");
+  activity.dispose();
+});
+
+it("flags a connectivity failure as transient so session recovery owns the retry", async () => {
+  const wire = deferredReader();
+  const activity = createChannelActivity(wire.read);
+  const failure = activity.refresh(["quiet"]);
+  const rejected = expect(failure).rejects.toThrow("Load failed");
+  take(wire.pending).reject(new TypeError("Load failed"));
+  await rejected;
+  expect(activity.status()).toBe("error");
+  expect(activity.transient()).toBe(true);
+  const again = activity.refresh(["quiet"]);
+  take(wire.pending).resolve([]);
+  await again;
+  expect(activity.transient()).toBe(false);
   activity.dispose();
 });
 

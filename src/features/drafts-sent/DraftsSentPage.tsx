@@ -15,6 +15,7 @@ import { PanelFrame } from "../panels/PanelFrame";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
 import { messageAuthor } from "../../features/relay/fold";
 import type { Navigation } from "../../features/navigation/controller";
 import { useIdentityNames } from "../../features/identity-names/react";
@@ -234,6 +235,11 @@ function ScopedPage({
   const [notice, setNotice] = useState<string>();
   const searchInput = useRef<HTMLInputElement>(null);
   const { sent, refresh: refreshSent } = useSent(session, viewer);
+  // A connectivity failure belongs to the app's recovery notice, which retries
+  // the read on its own; only other failures show this page's Retry.
+  const { quiet: sentQuiet } = useRecoverableRead(session.recovery, sent, () =>
+    refreshSent.current(),
+  );
 
   const byId = useMemo(
     () => new Map(channels.map((channel) => [channel.id, channel])),
@@ -475,7 +481,7 @@ function ScopedPage({
     matches(text(row), row.place.title, search),
   );
   const sentLoading =
-    (sent.status === "loading" || sent.status === "idle") &&
+    (sent.status === "loading" || sent.status === "idle" || sentQuiet) &&
     !sent.events.length;
 
   async function open(entry: Entry, draft: boolean) {
@@ -832,7 +838,7 @@ function ScopedPage({
           <div className={styles.draftList}>
             {view === "sent" && searchField}
             <div className={styles.section}>
-              {sent.status === "error" && (
+              {sent.status === "error" && !sentQuiet && (
                 <div
                   role="alert"
                   className={`${styles.notice} ${styles.sectionCopy}`}

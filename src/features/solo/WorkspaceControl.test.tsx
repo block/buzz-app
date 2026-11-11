@@ -72,3 +72,26 @@ it("keeps project recovery reachable after preferences fail", async () => {
   );
   expect(refresh).toHaveBeenCalledOnce();
 });
+
+it("offers no workspaces Retry for a connectivity failure; recovery retries it", async () => {
+  const refresh = vi.fn(async () => {});
+  const session = {
+    soloPreferences: {
+      snapshot: () => ({
+        status: "error",
+        error: "Relay request failed (503)",
+        transient: true,
+      }),
+      subscribe: () => () => {},
+      assign: vi.fn(async () => {}),
+      refresh,
+    },
+  } as unknown as RelaySession;
+  const user = userEvent.setup();
+  render(<WorkspaceControl session={session} channelId="chat" />);
+  await user.click(screen.getByRole("button", { name: "Add workspace" }));
+  await screen.findByRole("menuitemradio", { name: "No workspace" });
+  expect(
+    screen.queryByRole("menuitem", { name: "Retry workspaces" }),
+  ).not.toBeInTheDocument();
+});

@@ -1013,3 +1013,88 @@ it("mounts the already-cached community thumbnail immediately while the profile 
     owner.dispose();
   }
 });
+
+it("shares a time zone only when chosen and saved, and keeps other fields", async () => {
+  const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  expect(share).not.toBeChecked();
+  // The device zone is offered, not shared.
+  const zone = screen.getByRole("combobox", { name: "Time zone" });
+  expect(zone).toHaveTextContent(device.replaceAll("_", " "));
+
+  const name = screen.getByLabelText("Display name");
+  await user.type(name, " edited");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+  expect(publish.mock.lastCall?.[2]).toEqual({
+    website: "https://example.test",
+  });
+  await screen.findByText("Profile updated");
+
+  await user.click(share);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+  expect(publish.mock.lastCall?.[2]).toEqual({
+    website: "https://example.test",
+    tz: device,
+  });
+});
+
+it("clears a shared time zone on save", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test", tz: "Asia/Kolkata" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  await waitFor(() => expect(share).toBeChecked());
+  expect(screen.getByRole("combobox", { name: "Time zone" })).toHaveTextContent(
+    "Asia/Kolkata",
+  );
+  await user.click(share);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Community name", picture: "", about: "" },
+      { website: "https://example.test" },
+    ),
+  );
+  expect(await screen.findByText("Profile updated")).toBeVisible();
+  expect(share).not.toBeChecked();
+});

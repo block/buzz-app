@@ -31,8 +31,19 @@ import {
 import * as communityApi from "../features/communities/api";
 import type { Membership } from "../features/communities/service";
 import { communityName } from "../features/communities/names";
+import { profileTimeZone } from "../features/profiles/local-time";
+import { TimeZoneField } from "../features/profiles/TimeZoneField";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
+
+/** The profile content with `tz` shared as chosen, or removed. */
+function withTimeZone(
+  existing: Record<string, unknown>,
+  tz: string | undefined,
+): Record<string, unknown> {
+  const { tz: _previous, ...rest } = existing;
+  return tz ? { ...rest, tz } : rest;
+}
 
 function selectedProfileSession(
   communities: Communities,
@@ -124,6 +135,8 @@ export function ProfileSettings({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
+  // Unset until the time zone is edited; null clears the shared zone.
+  const [tzDraft, setTzDraft] = useState<string | null>();
   const latestPersisted = useRef<PersonalProfile>(client.profile);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -145,6 +158,7 @@ export function ProfileSettings({
     if (previousScope.current === profileScope) return;
     previousScope.current = profileScope;
     setDraft(null);
+    setTzDraft(undefined);
     setLoaded(cachedProfile(selectedProfileSession(communities, communityId)));
     setLoadStatus(communityId ? "idle" : "ready");
     setSaved(false);
@@ -238,7 +252,14 @@ export function ProfileSettings({
     ? { ...(draft ?? persisted), name: persisted.name }
     : (draft ?? persisted);
   const profile = previewReady ? edited : { name: "", picture: "", about: "" };
-  const hasChanges = draft !== null && !profilesEqual(edited, persisted);
+  const persistedTz =
+    community && loaded?.exists
+      ? profileTimeZone(loaded.existing.tz)
+      : undefined;
+  const tz = tzDraft === undefined ? persistedTz : (tzDraft ?? undefined);
+  const tzChanged = tzDraft !== undefined && tz !== persistedTz;
+  const hasChanges =
+    (draft !== null && !profilesEqual(edited, persisted)) || tzChanged;
   // A dispatched save continues after Settings closes, so it is not
   // discardable. Before then (the fresh read), closing would drop the edit.
   const discardable = hasChanges && !dispatched;
@@ -380,13 +401,17 @@ export function ProfileSettings({
                           await communityApi.publishProfile(
                             community.id,
                             next,
-                            latest.existing,
+                            tzChanged
+                              ? withTimeZone(latest.existing, tz)
+                              : latest.existing,
                           );
                           // Once dispatched, finish on this session even if Settings closes.
                           const confirmed = await inspect(community.id);
                           if (
                             !confirmed.exists ||
-                            !profilesEqual(confirmed.profile, next)
+                            !profilesEqual(confirmed.profile, next) ||
+                            (tzChanged &&
+                              profileTimeZone(confirmed.existing.tz) !== tz)
                           )
                             throw new Error(
                               "Your profile change is not current. Your edits are retained; save again to retry.",
@@ -402,6 +427,7 @@ export function ProfileSettings({
                             ),
                           );
                         setDraft(null);
+                        setTzDraft(undefined);
                         setSaved(true);
                       } catch (reason) {
                         if (mounted.current)
@@ -430,6 +456,17 @@ export function ProfileSettings({
                       setError("");
                     }}
                   />
+                  {community && (
+                    <TimeZoneField
+                      value={tz}
+                      disabled={saving || !previewReady}
+                      onChange={(next) => {
+                        setTzDraft(next ?? null);
+                        setSaved(false);
+                        setError("");
+                      }}
+                    />
+                  )}
                   {error && (
                     <p role="alert" className="error">
                       {error}
@@ -445,6 +482,7 @@ export function ProfileSettings({
                         disabled={saving || uploading}
                         onClick={() => {
                           setDraft(null);
+                          setTzDraft(undefined);
                           setSaved(false);
                           setError("");
                         }}

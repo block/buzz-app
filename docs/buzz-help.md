@@ -269,6 +269,11 @@ mention anyone. Explicit agent watches on that room can still receive them.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
+- To show your local time, open Settings → **Profile** in a community, check
+  **Show my local time on my profile**, pick a time zone (this device's is
+  suggested) and save. Nothing is shared until you save; uncheck it and save to
+  stop. People who shared a time zone show their local time, and how far ahead
+  or behind you they are, on their profile and its preview.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile
   shows the issuer and verification time; cached verification has no check.

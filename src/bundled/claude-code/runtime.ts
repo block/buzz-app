@@ -24,7 +24,7 @@ import {
 } from "../../features/agents/agent-config";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import type { TranscriptTurn } from "../../features/agents/activity-transcript";
-import type { AgentReads } from "../../features/agents/reads";
+import { ownerDm, type AgentReads } from "../../features/agents/reads";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type {
   Agent,
@@ -1336,6 +1336,7 @@ export class ClaudeRuntime {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
         dm,
+        ...(ownerDm(summary, agent.pubkey, owner) ? { ownerDm: true } : {}),
       },
       ...(thread ? { thread } : {}),
       context: unseen,

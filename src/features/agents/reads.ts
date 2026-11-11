@@ -28,6 +28,21 @@ export type ChannelFacts = Readonly<{
   starting?: true;
 }>;
 
+/** Whether `facts` is a DM only the agent and its owner are in, the one DM
+ * an agent answers in. */
+export function ownerDm(
+  facts: ChannelFacts | undefined,
+  agent: string,
+  owner: string | undefined,
+) {
+  return (
+    facts?.dm === true &&
+    !!owner &&
+    facts.members.includes(owner) &&
+    facts.members.every((member) => member === agent || member === owner)
+  );
+}
+
 export type AgentReads = Readonly<{
   /** The connection these reads go through. A new one, even to the same
    * community, may read as someone else, so nothing read through an old one

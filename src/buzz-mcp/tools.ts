@@ -1571,9 +1571,13 @@ async function post(
   extra: readonly string[][] = [],
 ) {
   const metadata = await tools.metadata(channel);
-  if (metadata && tag(metadata, "t") === "dm")
+  if (
+    metadata &&
+    tag(metadata, "t") === "dm" &&
+    !(await tools.ownerDm(channel))
+  )
     throw new Error(
-      "Agents don't post in DMs. Start a Solo chat instead: channel_create with solo true and the people as members; your owner is added too.",
+      "Agents only post in a DM with just their owner. Start a Solo chat instead: channel_create with solo true and the people as members; your owner is added too.",
     );
   const files = await tools.attach(list(args.files));
   const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
@@ -1670,6 +1674,17 @@ class Tools {
     return (list?.tags ?? [])
       .filter((t) => t[0] === "p" && t[1])
       .map((t) => ({ pubkey: t[1] as string, role: t[3] || "member" }));
+  }
+
+  /** Whether only the agent and its owner are in `channel`. */
+  async ownerDm(channel: string) {
+    const owner = this.client.owner;
+    const members = (await this.roster(channel)).map(({ pubkey }) => pubkey);
+    return (
+      !!owner &&
+      members.includes(owner) &&
+      members.every((key) => key === owner || key === this.client.pubkey)
+    );
   }
 
   /** The channel's metadata now, if the agent can see it. */

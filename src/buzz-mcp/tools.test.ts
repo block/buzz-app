@@ -1880,13 +1880,35 @@ it("starts no Solo chat without its owner", async () => {
   expect(published).toEqual([]);
 });
 
-it("has no DM tool, and posts nothing in a DM", async () => {
+it("has no DM tool, and posts in no DM but one with only its owner", async () => {
   const dm = "dm-channel";
+  const withOwner = "owner-dm";
   const { client, published, state } = relay();
   state.push(
     event({
       kind: 39000,
       tags: [["d", dm], ["t", "dm"], ["private"]],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", dm],
+        ["p", me],
+        ["p", alice],
+        ["p", boss],
+      ],
+    }),
+    event({
+      kind: 39000,
+      tags: [["d", withOwner], ["t", "dm"], ["private"]],
+    }),
+    event({
+      kind: 39002,
+      tags: [
+        ["d", withOwner],
+        ["p", me],
+        ["p", boss],
+      ],
     }),
   );
   expect(TOOLS.some((tool) => tool.name === "dm")).toBe(false);
@@ -1894,7 +1916,7 @@ it("has no DM tool, and posts nothing in a DM", async () => {
     "No tool dm",
   );
   const refusal =
-    "Agents don't post in DMs. Start a Solo chat instead: channel_create with solo true and the people as members; your owner is added too.";
+    "Agents only post in a DM with just their owner. Start a Solo chat instead: channel_create with solo true and the people as members; your owner is added too.";
   await expect(
     callTool(client, { channel: dm }, "send", {
       text: "hi",
@@ -1928,6 +1950,18 @@ it("has no DM tool, and posts nothing in a DM", async () => {
       audience: "everyone",
     }),
   ).resolves.toBe(`sent ${"e".repeat(64)}`);
+  await expect(
+    callTool(client, { channel: withOwner }, "send", {
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).resolves.toMatch(/^sent /);
+  await expect(
+    callTool({ ...client, owner: undefined }, { channel: withOwner }, "send", {
+      text: "hi",
+      audience: "everyone",
+    }),
+  ).rejects.toThrow(refusal);
 });
 
 it("creates no Solo chat when a member refuses, and says what it cannot confirm", async () => {

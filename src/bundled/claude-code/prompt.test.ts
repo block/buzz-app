@@ -367,6 +367,17 @@ it("says earlier context is already in the session when none is new", () => {
   // Agents never post in a DM, so it sends the reply to a Solo chat.
   expect(prompt).toContain(`IMPORTANT: ${DM_PROMPT}`);
   expect(prompt).not.toContain("pass `reply:");
+  // A DM with only its owner is the one it answers in.
+  const owner = turnPrompt({
+    agent,
+    event: event("3", "and another thing"),
+    channel: { id: "dm", dm: true, ownerDm: true },
+    scope: "thread",
+    context: [],
+    total: 5,
+  });
+  expect(owner).not.toContain(DM_PROMPT);
+  expect(owner).toContain(`pass \`reply: "${event("3", "").id}"\` to \`send\``);
 });
 
 it("shows a DM's recent messages as conversation context", () => {

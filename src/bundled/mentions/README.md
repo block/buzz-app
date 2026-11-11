@@ -261,8 +261,11 @@ the same or a longer name blocks them too. Since an outside choice's longer
 name never blocks a member's exact name, it cannot be typed out past one of
 these characters or Space: with a member `Wes`, `@Wes Smith` mentions Wes,
 followed by the text ` Smith`, even while `Wes Smith` outside the channel is
-listed, and a member `Pat O` takes `@Pat O'Brien` the same way. The user picks
-such a choice from the list instead. One that continues the member's name with
+listed, and a member `Pat O` takes `@Pat O'Brien` the same way. This holds
+for the agents the client offers outside the channel (section 1, items 2 and
+3) as for directory results: with a member agent `Claude` and the viewer's
+offered `Claude Code`, `@Claude Code` mentions Claude. The user picks such a
+choice from the list instead. One that continues the member's name with
 another character, such as `Wes-Smith`, can still be typed in full. Where
 Space may hold a pending mention, so may this character, kept after the chip.
 A selected or pending mention ends at a name boundary: the next character that
@@ -280,14 +283,14 @@ already declined is not pending: a trailing space or punctuation, a multi-word
 query that continues no name, a saved team with the same or a longer name, or
 a known choice whose name continues the query and blocks it whatever else
 arrives (a loaded member `Mira Example` for `mira`) keeps Space a normal
-space. An outside choice's longer name declines Space only once every
-member's name is known or known to be absent: until then a member may still
-have the exact name, which an outside name does not block. The next word may
-complete the longer name (`@mira Example ` selects the member), which a chip
-that ended the query could not. A pending name that, once the full choice set
-is known, only longer known names keep from selecting
-(`Mira Example`, found by the directory search for `mira` after the chip was
-held) MAY instead extend over the words typed after the chip when they spell
+space. The next word may complete the longer name (`@mira Example ` selects
+the member), which a chip that ended the query could not. An outside choice's
+longer name declines Space only once every member's name is known or known to
+be absent: until then a member may still have the exact name, which an outside
+name does not block. A pending name that, once the full choice set is known,
+only longer known names keep from selecting (`Mira Example`, found by the
+directory search for `mira` after the chip was held, while no member is named
+`mira`) MAY instead extend over the words typed after the chip when they spell
 one of those names up to a name boundary (`@mira Example hi` becomes a pending
 `@mira Example` with ` hi` outside it), taking the longest name the words
 complete, as Space would have needed all of it typed; this section then applies

@@ -3917,6 +3917,73 @@ it("Space keeps a member's name when the directory finds a longer outside name",
     h.dispose();
   }
 });
+it("Space keeps a member agent's name beside the viewer's longer agent name offered outside a stream", async () => {
+  const test = setup();
+  // The viewer's agents: Claude is in the stream, Claude Code is not.
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      { pubkey: test.member, name: "Claude" },
+      { pubkey: test.key, name: "Claude Code" },
+    ],
+  }));
+  await library.queries.refresh();
+  test.profiles.set(test.member, { name: "Claude" });
+  let finish!: (page: DirectoryPage) => void;
+  const people = vi.fn(
+    () =>
+      new Promise<DirectoryPage>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const session = {
+    ...test.session,
+    // Can add members, so the stream offers Claude Code (section 1).
+    outbox: { supports: () => true },
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+    directMessages: { ...test.session.directMessages, people },
+  } as unknown as RelaySession;
+  const publish = vi.fn();
+  const result = () =>
+    publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const offered = () => result()?.items.find((item) => item.id === test.key);
+  const view = render(
+    <MentionCompletion
+      session={session}
+      scope="space-test"
+      channelId="parent"
+      observation={{ revision: 1, text: "@claude", start: 7, end: 7 }}
+      query={{ start: 0, end: 7, query: "claude" }}
+      publish={publish}
+    />,
+  );
+  try {
+    await waitFor(() => expect(offered()?.detail).toBe("Not in channel"));
+    await waitFor(() =>
+      expect(people).toHaveBeenCalledWith("claude", 1, expect.anything()),
+    );
+    // Local, yet outside the channel: Claude Code no more blocks the member
+    // than a directory name does, so `@Claude Code` mentions Claude.
+    expect(result()?.spaceId).toBe(test.member);
+    expect(
+      result()
+        ?.items.find((item) => item.id === test.member)
+        ?.canSelect?.(" "),
+    ).toBe(true);
+    // Picking the row is how to add and mention Claude Code.
+    expect(offered()?.canSelect?.("Enter")).toBe(true);
+    expect(offered()?.canSelect?.(" ")).toBe(false);
+  } finally {
+    await act(async () => finish?.({ people: [], hasMore: false }));
+    view.unmount();
+    library.dispose();
+    test.library.dispose();
+  }
+});
 it.each([
   {
     page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: false },

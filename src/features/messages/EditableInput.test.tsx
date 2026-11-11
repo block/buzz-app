@@ -36,6 +36,7 @@ import {
 } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
 import { setMessageAutocorrectPreference } from "./autocorrect-preference";
+import { setMessageMarkupPreference } from "./markup-preference";
 import { profileMentionParts } from "./profile-mentions";
 import {
   serializeNode,
@@ -582,6 +583,48 @@ it("converts typed **Hello** on the closing delimiter, keeps later typing plain 
   act(() => h.input.reset(saved));
   expect(h.input.querySelector("strong")).toHaveTextContent("Hello");
   expect(h.markdown()).toBe("**Hello**");
+});
+
+describe("with Format messages with markup on", () => {
+  beforeEach(() => act(() => setMessageMarkupPreference(true)));
+  afterEach(() => {
+    act(() => setMessageMarkupPreference(false));
+    localStorage.removeItem("buzz-message-markup.v1");
+  });
+  const formatted = "strong, em, del, s, code, pre, ul, ol, blockquote";
+
+  it.each([
+    "**bold** and *it* _also_ ~~gone~~ `code`",
+    "```\nconst x = 1;\n```",
+    "~~~\nx\n~~~",
+    "- one\n- two",
+    "* star",
+    "1. first",
+    "> quote",
+  ])("keeps typed %j as raw text and sends it as typed", async (typed) => {
+    const h = mount();
+    await h.user.keyboard(typed.replaceAll("\n", "{Shift>}{Enter}{/Shift}"));
+    expect(h.input.querySelector(formatted)).toBeNull();
+    expect(h.input).toHaveValue(typed);
+    expect(h.markdown()).toBe(typed);
+  });
+
+  it("keeps delimiters typed into an existing draft, as when editing a sent message, raw", async () => {
+    const h = mount("Sent text");
+    await h.user.keyboard(" **now**");
+    expect(h.input.querySelector(formatted)).toBeNull();
+    expect(h.markdown()).toBe("Sent text **now**");
+  });
+
+  it("follows the choice live: turning it off converts the next delimiter again", async () => {
+    const h = mount();
+    await h.user.keyboard("**raw** ");
+    act(() => setMessageMarkupPreference(false));
+    await h.user.keyboard("**bold**");
+    expect(h.input.querySelectorAll("strong")).toHaveLength(1);
+    expect(h.input.querySelector("strong")).toHaveTextContent("bold");
+    expect(h.markdown()).toBe("**raw** **bold**");
+  });
 });
 
 it("one undo after a typed code span restores the closing backtick too", async () => {

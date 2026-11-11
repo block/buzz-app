@@ -19,6 +19,7 @@ import type { RelayData } from "../../features/relay/service";
 import type {
   ChannelLauncherProps,
   PanelContext,
+  PanelProps,
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
@@ -81,11 +82,14 @@ it.each(["buzz.profiles/profile", "example.profiles/enriched"])(
       revision: "1",
       title: "Profile",
       matches: () => true,
-      component: ({ target }) => (
-        <section aria-label="Profile reader">
-          <input aria-label="Profile draft" />
-          <output>{target}</output>
-        </section>
+      component: Object.assign(
+        ({ target }: PanelProps) => (
+          <section aria-label="Profile reader">
+            <input aria-label="Profile draft" />
+            <output>{target}</output>
+          </section>
+        ),
+        { profileHistory: true },
       ),
     };
     const available = [panel];
@@ -550,7 +554,15 @@ it.each([
       viewer: "viewer",
       channels: { list: () => ({ channels }) },
     } as unknown as RelaySession;
-    const panel = { key, title: "Content" } as RegisteredPanel;
+    const panel = {
+      key,
+      id: "content",
+      pluginId: "example.profiles",
+      revision: "1",
+      matches: () => true,
+      title: "Content",
+      component: Object.assign(() => null, { profileHistory: true }),
+    } as RegisteredPanel;
     const available = [panel];
     const panels = {
       snapshot: () => available,
@@ -2201,7 +2213,15 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
 });
 
 it("keeps contextual, unrelated and malformed plugin targets out of profile history", () => {
-  const panel = { key: "example.profiles/enriched" } as RegisteredPanel;
+  const panel = {
+    key: "example.profiles/enriched",
+    id: "enriched",
+    pluginId: "example.profiles",
+    revision: "1",
+    title: "Profile",
+    matches: () => true,
+    component: Object.assign(() => null, { profileHistory: true }),
+  } as RegisteredPanel;
   const entry = {
     panel,
     channelId: "alpha",
@@ -2232,4 +2252,23 @@ it("keeps contextual, unrelated and malformed plugin targets out of profile hist
       target: profileActivityViewTarget("a".repeat(64)) ?? "",
     }),
   ).toBe(true);
+});
+
+it("does not treat an unmarked catch-all as a native profile history reader", () => {
+  const panel = {
+    key: "example/catch-all",
+    id: "catch-all",
+    pluginId: "example",
+    revision: "1",
+    title: "Catch all",
+    matches: () => true,
+    component: () => null,
+  } as RegisteredPanel;
+  expect(
+    historyPanel({
+      panel,
+      channelId: "alpha",
+      target: `buzz:agent-profile:${"a".repeat(64)}`,
+    }),
+  ).toBe(false);
 });

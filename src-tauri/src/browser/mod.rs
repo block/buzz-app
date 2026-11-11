@@ -5,7 +5,7 @@ mod platform;
 mod policy;
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -314,13 +314,21 @@ struct Handoff {
     open: Box<dyn Fn(&str) -> bool>,
     approvals: Rc<RefCell<Approvals>>,
     snapshot: Rc<RefCell<BrowserSnapshot>>,
+    // The guest's own URL, set once the guest exists. The shared snapshot
+    // misses a page's own history changes, such as pushState.
+    location: OnceCell<Box<dyn Fn() -> Option<String>>>,
 }
 
 impl Handoff {
     /// The page the guest shows, when it is on `app`: only the app being
     /// opened hands off its own portal pages.
     fn shown(&self, app: &str) -> Option<Url> {
-        let current = Url::parse(&self.snapshot.borrow().url).ok()?;
+        let current = self
+            .location
+            .get()
+            .and_then(|location| location())
+            .unwrap_or_else(|| self.snapshot.borrow().url.clone());
+        let current = Url::parse(&current).ok()?;
         (current.host_str() == Url::parse(app).ok()?.host_str()).then_some(current)
     }
 
@@ -448,6 +456,7 @@ fn build_contents(
         }),
         approvals: approvals.clone(),
         snapshot: snapshot.clone(),
+        location: OnceCell::new(),
     });
     let navigation_handoff = handoff.clone();
     // No URL is loaded until native permission handlers replace Wry's defaults.
@@ -486,6 +495,7 @@ fn build_contents(
         })
         .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny);
     let guest = platform::build_guest(builder, &host.window())?;
+    let _ = handoff.location.set(platform::location(&guest));
     let permissions = platform::deny_permissions(&guest)?;
     let navigation = platform::observe_navigation(&guest)?;
     let browser = BrowserSession {
@@ -828,6 +838,7 @@ mod handoff_tests {
                 loading: true,
                 ..BrowserSnapshot::default()
             })),
+            location: OnceCell::new(),
         };
         (handoff, opened)
     }
@@ -877,6 +888,26 @@ mod handoff_tests {
         handoff.approvals.borrow_mut().reset();
         assert!(handoff.intercept(&format!("{GATE}?app=a.apps.builderlab.xyz")));
         assert_eq!(opened.borrow().len(), 2);
+    }
+
+    #[test]
+    fn coming_back_returns_to_the_route_the_app_moved_to_itself() {
+        let (handoff, opened) = handoff();
+        // The app changed its route with pushState; no page load reported it.
+        let _ = handoff.location.set(Box::new(|| {
+            Some("https://a.apps.builderlab.xyz/reports/43".into())
+        }));
+        let github = format!("{CONNECT}?extension=github&app=a.apps.builderlab.xyz");
+        assert!(handoff.intercept(&github));
+        assert_eq!(*opened.borrow(), std::slice::from_ref(&github));
+        assert_eq!(
+            handoff
+                .approvals
+                .borrow_mut()
+                .take_return()
+                .map(|next| next.app),
+            Some("https://a.apps.builderlab.xyz/reports/43".into())
+        );
     }
 
     #[test]

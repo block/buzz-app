@@ -30,12 +30,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
 import type { ConversationExtensions } from "../conversation/contracts";
-import {
-  CodeActions,
-  CodeBlock,
-  codeLanguage,
-  observeTableOverflow,
-} from "../markdown/code-blocks";
+import { CodeFence, observeTableOverflow } from "../markdown/code-blocks";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, linkPart, messageParts } from "../relay/emoji";
@@ -767,30 +762,15 @@ function PreparedMessageMarkdown({
         <span {...props}>{children}</span>
       );
     },
-    pre: ({ node, children, ...props }) => {
-      const code = labelText(children).replace(/\n$/, "");
-      const plain = (
-        <pre {...props}>
-          {children}
-          {interactive && (
-            <CodeActions code={code} className={styles.codeActions} />
-          )}
-        </pre>
-      );
-      const language = codeLanguage(node);
-      // Previews are not interactive, so they keep the plain code.
-      return interactive && language && extensions?.codeBlocks ? (
-        <CodeBlock
-          registry={extensions.codeBlocks}
-          language={language}
-          code={code}
-          fallback={plain}
-          classes={MESSAGE_CODE_CLASSES}
-        />
-      ) : (
-        plain
-      );
-    },
+    // Previews are not interactive, so they keep the plain code.
+    pre: (props) => (
+      <CodeFence
+        {...props}
+        copy={interactive}
+        registry={interactive ? extensions?.codeBlocks : undefined}
+        classes={MESSAGE_CODE_CLASSES}
+      />
+    ),
   };
 
   const markdown = (

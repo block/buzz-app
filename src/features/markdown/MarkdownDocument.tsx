@@ -7,12 +7,7 @@ import type {
 import { MessageLink } from "../conversation/MessageLink";
 import { labelText } from "../messages/label-text";
 import type { RelaySession } from "../relay/session";
-import {
-  CodeActions,
-  CodeBlock,
-  codeLanguage,
-  observeTableOverflow,
-} from "./code-blocks";
+import { CodeFence, observeTableOverflow } from "./code-blocks";
 import type { MarkdownProfile } from "./profiles";
 import styles from "./Markdown.module.css";
 
@@ -68,26 +63,9 @@ export const sharedComponents: Components = {
   },
   img: ({ alt }) =>
     alt ? <span className={styles.imageAlt}>{alt}</span> : null,
-  pre: function SharedCode({ node, children, ...props }) {
+  pre: function SharedCode(props) {
     const { codeBlocks, copy } = useContext(CapabilitiesContext);
-    const code = labelText(children).replace(/\n$/, "");
-    const plain = (
-      <pre {...props}>
-        {children}
-        {copy && <CodeActions code={code} />}
-      </pre>
-    );
-    const language = codeLanguage(node);
-    return language && codeBlocks ? (
-      <CodeBlock
-        registry={codeBlocks}
-        language={language}
-        code={code}
-        fallback={plain}
-      />
-    ) : (
-      plain
-    );
+    return <CodeFence {...props} copy={copy} registry={codeBlocks} />;
   },
   table: ({ node: _node, ...props }) => (
     <table ref={observeTableOverflow} {...props} />

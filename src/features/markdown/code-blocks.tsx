@@ -1,5 +1,11 @@
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import type { ExtraProps } from "react-markdown";
+import { labelText } from "../messages/label-text";
 import { CopyIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -65,6 +71,43 @@ export function codeLanguage(pre: ExtraProps["node"]) {
         .find((name) => name.startsWith("language-"))
         ?.slice("language-".length)
     : undefined;
+}
+
+/** A fenced block's `pre`: the plain code with an optional copy action, or,
+ * when a registry is given and the fence names a language, a plugin's
+ * presentation with the plain code as its fallback. */
+export function CodeFence({
+  node,
+  children,
+  copy,
+  registry,
+  classes = defaultClasses,
+  ...props
+}: ComponentProps<"pre"> &
+  ExtraProps & {
+    copy: boolean | undefined;
+    registry: ContributionReader<CodeBlockRenderer> | undefined;
+    classes?: CodeClasses | undefined;
+  }) {
+  const code = labelText(children).replace(/\n$/, "");
+  const plain = (
+    <pre {...props}>
+      {children}
+      {copy && <CodeActions code={code} className={classes.actions} />}
+    </pre>
+  );
+  const language = codeLanguage(node);
+  return language && registry ? (
+    <CodeBlock
+      registry={registry}
+      language={language}
+      code={code}
+      fallback={plain}
+      classes={classes}
+    />
+  ) : (
+    plain
+  );
 }
 
 /** A plugin presents the block and may add an action; the host keeps the frame,

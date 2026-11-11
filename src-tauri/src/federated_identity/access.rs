@@ -175,21 +175,67 @@ pub(crate) async fn federated_identity_request(
     }
     // Only the account the caller started under may answer: a session
     // replaced since then refuses instead of acting for the new account.
-    let token = host
-        .with_session(|token, current, _| (current == session).then(|| token.clone()))
-        .ok_or("Sign in to your community first")?
-        .ok_or("Federated session changed")?;
+    let (auth, current) = host
+        .authorization()
+        .ok_or("Sign in to your community first")?;
+    if current != session {
+        return Err("Federated session changed".into());
+    }
     // A refusal here (including 401) belongs to this call only. Only the
     // adapter's session and assertion routes decide that the session ended,
     // so a 401 asks the session route once.
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let response = forward(destination, &token, request, home.as_deref()).await?;
+    let response = if auth.key.is_some() {
+        forward_bound(destination, &auth, request).await?
+    } else {
+        forward(destination, &auth.token, request, home.as_deref()).await?
+    };
     // Only the adapter's session route ends the session; an Apps refusal is
     // checked there too.
     if response.status == 401 {
         host.recheck(&session).await;
     }
     Ok(response)
+}
+async fn forward_bound(
+    destination: url::Url,
+    auth: &super::SessionAuthorization,
+    request: Request,
+) -> Result<crate::host_request::HostResponse, String> {
+    let base = auth.config.api_base_path.trim_end_matches('/');
+    let allowed = match request.method.as_str() {
+        "GET" => destination.path() == format!("{base}/v1/auth/me"),
+        "POST" => {
+            ["current", "challenge", "verify", "delete"]
+                .iter()
+                .any(|action| {
+                    destination.path() == format!("{base}/v1/buzz/nostr-identities/{action}")
+                })
+                || destination.path() == format!("{base}/v1/buzz/nsec-backups/status")
+        }
+        _ => false,
+    };
+    if !allowed || request.apps || request.upload.is_some() {
+        return Err("This operation does not support a device-bound session".into());
+    }
+    let method =
+        reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|_| "Invalid API method")?;
+    let mut native = super::protocol::client()?.request(method.clone(), destination.clone());
+    for (name, value) in &request.headers {
+        native = native.header(name, value);
+    }
+    let signed = auth
+        .authorize(native, method.as_str(), &destination)?
+        .build()
+        .map_err(|_| "Invalid API request")?;
+    crate::host_request::send_request(
+        destination,
+        method,
+        signed.headers().clone(),
+        request.body,
+        crate::host_request::request_deadline(request.timeout_ms)?,
+    )
+    .await
 }
 async fn forward(
     destination: url::Url,
@@ -349,6 +395,7 @@ fn check_headers(request: &Request) -> Result<(), String> {
         if matches!(
             name.as_str(),
             "authorization"
+                | "dpop"
                 | "nostr-authorization"
                 | "nostr-federated-identity"
                 | "x-bb-session-credential"

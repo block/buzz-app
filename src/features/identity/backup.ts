@@ -46,6 +46,7 @@ export type BackupStatus = Readonly<
         kind:
           | "busy"
           | "signed_out"
+          | "reauthentication_required"
           | "not_offered"
           | "other_key_linked"
           | "invalid_service"

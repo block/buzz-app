@@ -891,7 +891,6 @@ impl AgentTokens {
                 .issuer_auth(key, endpoint.as_str(), body.as_bytes())
                 .and_then(nostr)
         };
-        proof().map_err(|_| "invalid-proof")?;
         #[derive(Deserialize)]
         struct Issued {
             assertion: String,
@@ -899,16 +898,14 @@ impl AgentTokens {
             expires_at: u64,
         }
         let client = protocol::client()?;
-        let issued: Issued = protocol::json(|| {
-            let request = client
+        let issued: Issued = protocol::json_signed(|| async {
+            let proof = proof().map_err(|_| Failure::from("invalid-proof"))?;
+            Ok(client
                 .post(endpoint.clone())
                 .bearer_auth(&grant.token)
                 .header("Content-Type", "application/json")
-                .body(body.clone());
-            match proof() {
-                Ok(proof) => request.header("Nostr-Authorization", proof),
-                Err(_) => request,
-            }
+                .body(body.clone())
+                .header("Nostr-Authorization", proof))
         })
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
@@ -1114,37 +1111,30 @@ impl AgentTokens {
     async fn enroll(&self, agent: &AppAgent, key: &Secret) -> Result<Grant, Error> {
         let identity = &self.0.identity;
         let account = self.signed_in().ok_or(SIGN_IN)?;
-        let (form, revision, endpoint) = identity
-            .with_session(|token, revision, config| {
-                let form = url::form_urlencoded::Serializer::new(String::new())
-                    .append_pair(
-                        "grant_type",
-                        "urn:ietf:params:oauth:grant-type:token-exchange",
-                    )
-                    .append_pair("subject_token", token)
-                    .append_pair(
-                        "subject_token_type",
-                        "urn:builderlab:params:oauth:token-type:bb-session",
-                    )
-                    .append_pair("requested_token_type", GRANT_TOKEN_TYPE)
-                    .append_pair("agent_pubkey", &agent.pubkey)
-                    .append_pair("runtime", "local")
-                    .append_pair("owner_attestation", &agent.auth)
-                    .finish();
-                (
-                    Zeroizing::new(form),
-                    revision.to_owned(),
-                    config.endpoint(GRANT_PATH),
-                )
-            })
-            .ok_or(SIGN_IN)?;
+        let (auth, revision) = identity.authorization().ok_or(SIGN_IN)?;
+        let endpoint = auth.config.endpoint(GRANT_PATH);
+        let form = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair(
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            )
+            .append_pair("subject_token", auth.token.as_str())
+            .append_pair(
+                "subject_token_type",
+                "urn:builderlab:params:oauth:token-type:bb-session",
+            )
+            .append_pair("requested_token_type", GRANT_TOKEN_TYPE)
+            .append_pair("agent_pubkey", &agent.pubkey)
+            .append_pair("runtime", "local")
+            .append_pair("owner_attestation", &agent.auth)
+            .finish();
+        let form = Zeroizing::new(form);
         if form.len() > 8192 {
             return Err("This agent's enrollment is too large".into());
         }
         let cancel = identity.cancellation_for(&revision)?;
         // Each attempt is signed anew: the issuer refuses a replayed proof.
         let proof = || nostr(agent.issuer_auth(key, endpoint.as_str(), form.as_bytes())?);
-        proof()?;
         let client = protocol::client()?;
         #[derive(Deserialize)]
         struct Enrolled {
@@ -1154,15 +1144,16 @@ impl AgentTokens {
             nostr_owner_pubkey: String,
             nip_fi_issuer: String,
         }
-        let request = protocol::json::<Enrolled>(|| {
-            let request = client
-                .post(endpoint.clone())
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(form.as_bytes().to_vec());
-            match proof() {
-                Ok(proof) => request.header("Nostr-Agent-Proof", proof),
-                Err(_) => request,
-            }
+        let request = protocol::json_signed::<Enrolled, _>(|| async {
+            let proof = proof().map_err(|_| Failure::from("invalid-proof"))?;
+            Ok(auth.owner_proof(
+                client
+                    .post(endpoint.clone())
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(form.as_bytes().to_vec())
+                    .header("Nostr-Agent-Proof", proof),
+                &endpoint,
+            )?)
         });
         let enrolled = tokio::select! {
             () = cancel.cancelled() => return Err(CHANGED.into()),

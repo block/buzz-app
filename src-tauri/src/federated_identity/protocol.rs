@@ -78,12 +78,23 @@ async fn body(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>, Fai
 pub(crate) async fn json<T: DeserializeOwned>(
     request: impl Fn() -> RequestBuilder,
 ) -> Result<T, Failure> {
+    json_signed(|| async { Ok(request()) }).await
+}
+
+/// Construct and sign each network attempt, including a retry after a truncated success body.
+/// Signing failure stops the operation before any unsigned request can be sent.
+pub(crate) async fn json_signed<
+    T: DeserializeOwned,
+    F: std::future::Future<Output = Result<RequestBuilder, Failure>>,
+>(
+    request: impl Fn() -> F,
+) -> Result<T, Failure> {
     // One total deadline includes bounded retry and Retry-After. Refusals and
     // invalid success bodies do not retry; no browser is launched here.
     let terminal_headers = std::sync::atomic::AtomicBool::new(false);
     tokio::time::timeout(DEADLINE, async {
         for attempt in 0..3u64 {
-            let response = request().send().await;
+            let response = request().await?.send().await;
             let retry = match response {
                 Err(_) => Some(None),
                 Ok(response) => {
@@ -135,6 +146,11 @@ pub(crate) async fn json<T: DeserializeOwned>(
                             Some("binding_mismatch") => "binding-mismatch",
                             Some("authorization_denied") => "authorization-denied",
                             Some("invalid_proof") => "invalid-proof",
+                            Some("invalid_dpop_proof") => "invalid-dpop-proof",
+                            Some("invalid_grant") if status.as_u16() == 400 => "sign-in-again",
+                            Some("fresh_authentication_required") => {
+                                "fresh-authentication-required"
+                            }
                             // Only the token route's 401: the grant itself is gone.
                             Some("invalid_grant") if status.as_u16() == 401 => "grant-refused",
                             _ if session_denied => "reauthentication-required",
@@ -225,6 +241,22 @@ mod tests {
         let count = requests.load(Ordering::SeqCst);
         server.abort();
         (count, result)
+    }
+
+    #[tokio::test]
+    async fn sensitive_action_freshness_denial_preserves_the_existing_session() {
+        let (url, server) = super::super::tests::adapter_with_status(vec![(
+            401,
+            serde_json::json!({"error":"fresh_authentication_required"}),
+        )])
+        .await;
+        let client = client().unwrap();
+        let failure = json::<serde_json::Value>(|| client.get(&url))
+            .await
+            .unwrap_err();
+        assert_eq!(failure.code, "fresh-authentication-required");
+        assert!(!failure.session_denied);
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 
     #[tokio::test]

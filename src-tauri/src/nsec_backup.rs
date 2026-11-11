@@ -67,6 +67,7 @@ struct Restore {
     candidates: Vec<Candidate>,
     current: Option<String>,
     credential: Option<Zeroizing<String>>,
+    authorization: Option<crate::federated_identity::SessionAuthorization>,
     subject: Option<String>,
     installing: bool,
 }
@@ -129,6 +130,7 @@ enum Waiting {
 enum Failure {
     Busy,
     SignedOut,
+    ReauthenticationRequired,
     NotOffered,
     OtherKeyLinked,
     InvalidService,
@@ -212,6 +214,8 @@ impl From<ReadError> for Stop {
 fn classify(error: buzz_nsec_backup::Error, upload: bool) -> Failure {
     use buzz_nsec_backup::Error::*;
     match error {
+        FreshAuthenticationRequired => Failure::ReauthenticationRequired,
+        InvalidProof => Failure::Refused,
         HttpStatus(401) => Failure::SignedOut,
         HttpStatus(403) if upload => Failure::OtherKeyLinked,
         HttpStatus(403 | 404) => Failure::NotOffered,
@@ -488,28 +492,29 @@ impl NsecBackupHost {
         }
     }
     fn federated_current(&self, revision: &str) -> bool {
+        self.federated.as_ref().is_some_and(|fi| {
+            fi.authorization()
+                .is_some_and(|(_, current)| current == revision)
+        })
+    }
+    fn authorization(
+        &self,
+        revision: &str,
+    ) -> std::result::Result<crate::federated_identity::SessionAuthorization, Stop> {
         self.federated
             .as_ref()
-            .is_some_and(|fi| fi.with_session(|_, current, _| current == revision) == Some(true))
-    }
-    /// The session's FI token, resolved now; `None` once the revision retired.
-    fn token(&self, revision: &str) -> Option<Zeroizing<String>> {
-        self.federated
-            .as_ref()?
-            .with_session(|token, current, _| (current == revision).then(|| token.clone()))
-            .flatten()
+            .and_then(|fi| fi.authorization())
+            .filter(|(_, current)| current == revision)
+            .map(|(auth, _)| auth)
+            .ok_or(Stop::Failed(Failure::SignedOut))
     }
     fn api(&self, revision: &str, root: &str) -> std::result::Result<Api, Stop> {
-        let token = self
-            .token(revision)
-            .ok_or(Stop::Failed(Failure::SignedOut))?;
-        Api::bearer(root, &token).map_err(|_| Stop::Failed(Failure::Unreachable))
+        Api::authorized(root, self.authorization(revision)?)
+            .map_err(|_| Stop::Failed(Failure::Unreachable))
     }
     fn client(&self, revision: &str, root: &str) -> std::result::Result<Client, Stop> {
-        let token = self
-            .token(revision)
-            .ok_or(Stop::Failed(Failure::SignedOut))?;
-        Client::bearer(root, &token).map_err(|error| Stop::Failed(classify(error, false)))
+        backup_client(root, self.authorization(revision)?)
+            .map_err(|error| Stop::Failed(classify(error, false)))
     }
     fn retry(&self, identity: IdentityHost) -> Option<u64> {
         // Only a handed-over session can be retried.
@@ -755,6 +760,13 @@ impl NsecBackupHost {
         getrandom::fill(random.as_mut()).map_err(|_| RETRY)?;
         let verifier = Zeroizing::new(URL_SAFE_NO_PAD.encode(random.as_ref()));
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let bound = self
+            .federated
+            .as_ref()
+            .map(|fi| fi.recovery_login(&config.service_url))
+            .transpose()
+            .map_err(|_| RETRY)?
+            .flatten();
         let mut login =
             url::Url::parse(&format!("{}/v1/auth/login", config.service_url)).map_err(|_| RETRY)?;
         login
@@ -763,6 +775,9 @@ impl NsecBackupHost {
             .append_pair("product", "buzz")
             .append_pair("code_challenge", &challenge)
             .append_pair("code_challenge_method", "S256");
+        if let Some(bound) = &bound {
+            login = bound.start(&challenge);
+        }
         let mut state = self.state.lock().map_err(|_| RETRY)?;
         if state.closed || state.restore_epoch != epoch {
             return Err(CANCELED.into());
@@ -770,19 +785,24 @@ impl NsecBackupHost {
         if state.restore.is_some() {
             return Err("A restore is already in progress".into());
         }
-        let oauth = callback.begin(
-            RESTORE_CALLBACK_OWNER,
-            OAuthRequest {
-                authorization_url: login.into(),
-                callback_path: format!("/callback/{}", uuid::Uuid::new_v4()),
-                use_state: true,
-            },
-            |url| {
-                app.opener()
-                    .open_url(url, None::<&str>)
-                    .map_err(|_| RETRY.to_owned())
-            },
-        )?;
+        let open = |url: &str| {
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|_| RETRY.to_owned())
+        };
+        let oauth = if bound.is_some() {
+            callback.begin_federated(RESTORE_CALLBACK_OWNER, login.to_string(), open, None)?
+        } else {
+            callback.begin(
+                RESTORE_CALLBACK_OWNER,
+                OAuthRequest {
+                    authorization_url: login.into(),
+                    callback_path: format!("/callback/{}", uuid::Uuid::new_v4()),
+                    use_state: true,
+                },
+                open,
+            )?
+        };
         let id = uuid::Uuid::new_v4().to_string();
         let (send, receive) = oneshot::channel();
         let admission = Arc::new(Mutex::new(true));
@@ -799,6 +819,7 @@ impl NsecBackupHost {
                     oauth_id,
                     oauth.callback_url,
                     verifier,
+                    bound,
                 )
                 .await;
             let _ = send.send(result);
@@ -813,11 +834,13 @@ impl NsecBackupHost {
             candidates: Vec::new(),
             current: None,
             credential: None,
+            authorization: None,
             subject: None,
             installing: false,
         });
         Ok(RestoreStarted { attempt: id })
     }
+    #[allow(clippy::too_many_arguments)]
     async fn recover(
         &self,
         epoch: u64,
@@ -826,6 +849,7 @@ impl NsecBackupHost {
         oauth_id: String,
         redirect: String,
         verifier: Zeroizing<String>,
+        bound: Option<crate::federated_identity::RecoveryLogin>,
     ) -> Result<RestoreResult> {
         let parameters = callback.wait(&oauth_id).await.map_err(|_| RETRY)?;
         self.valid_restore(epoch)?;
@@ -845,13 +869,37 @@ impl NsecBackupHost {
             return Err(RETRY.into());
         }
         let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
-        let credential = Api::exchange(&config.service_url, code, &verifier, &redirect).await?;
-        let api = Api::new(&config.service_url, &credential)?;
+        let authorization = match bound {
+            Some(bound) => Some(bound.exchange(code, &verifier).await.map_err(|error| {
+                if error == "fresh-authentication-required" {
+                    "Sign in again to restore your identity."
+                } else {
+                    RETRY
+                }
+            })?),
+            None => None,
+        };
+        let credential = if authorization.is_some() {
+            None
+        } else {
+            Some(Api::exchange(&config.service_url, code, &verifier, &redirect).await?)
+        };
+        let api = match &authorization {
+            Some(auth) => Api::authorized(&config.service_url, auth.clone())?,
+            None => Api::new(&config.service_url, credential.as_ref().ok_or(RETRY)?)?,
+        };
         let account = api.me().await?;
         self.valid_restore(epoch)?;
         let current = api.current().await?;
-        let client = Client::new(&config.service_url, &credential).map_err(|_| RETRY)?;
+        let client = match &authorization {
+            Some(auth) => backup_client(&config.service_url, auth.clone()),
+            None => Client::new(&config.service_url, credential.as_ref().ok_or(RETRY)?),
+        }
+        .map_err(|_| RETRY)?;
         let recovered = client.recover().await.map_err(|error| match error {
+            buzz_nsec_backup::Error::FreshAuthenticationRequired => {
+                "Sign in again to restore your identity.".to_owned()
+            }
             buzz_nsec_backup::Error::HttpStatus(404) => UNAVAILABLE.to_owned(),
             // Not a private org, or no Buzz user role: no retry changes it.
             buzz_nsec_backup::Error::HttpStatus(403) => REFUSED.to_owned(),
@@ -880,7 +928,8 @@ impl NsecBackupHost {
             .ok_or(CANCELED)?;
         attempt.candidates = candidates;
         attempt.current = current;
-        attempt.credential = Some(credential);
+        attempt.credential = credential;
+        attempt.authorization = authorization;
         attempt.subject = Some(account.subject);
         Ok(summary)
     }
@@ -907,7 +956,7 @@ impl NsecBackupHost {
         }
     }
     async fn install(&self, identity: IdentityHost, id: &str, handle: &str) -> Result<String> {
-        let (pubkey, backup_id, credential, subject, current, admission, epoch) = {
+        let (pubkey, backup_id, credential, authorization, subject, current, admission, epoch) = {
             let mut state = self.state.lock().map_err(|_| CANCELED)?;
             if state.closed {
                 return Err(CANCELED.into());
@@ -923,13 +972,18 @@ impl NsecBackupHost {
                 .iter()
                 .find(|key| key.handle == handle)
                 .ok_or("Choose an identity to restore")?;
-            let credential = attempt.credential.clone().ok_or(CANCELED)?;
+            let credential = attempt.credential.clone();
+            let authorization = attempt.authorization.clone();
+            if credential.is_none() && authorization.is_none() {
+                return Err(CANCELED.into());
+            }
             let subject = attempt.subject.clone().ok_or(CANCELED)?;
             attempt.installing = true;
             (
                 key.pubkey.clone(),
                 key.backup_id.clone(),
                 credential,
+                authorization,
                 subject,
                 attempt.current.clone(),
                 attempt.admission.clone(),
@@ -938,7 +992,10 @@ impl NsecBackupHost {
         };
         let result = async {
             let config = self.config.as_ref().as_ref().ok_or(UNAVAILABLE)?;
-            let api = Api::new(&config.service_url, &credential)?;
+            let api = match authorization {
+                Some(auth) => Api::authorized(&config.service_url, auth)?,
+                None => Api::new(&config.service_url, credential.as_ref().ok_or(CANCELED)?)?,
+            };
             if api.current().await? != current {
                 return Err("Your account identity changed. Sign in again.".into());
             }
@@ -1091,11 +1148,27 @@ fn credential<'de, D: serde::Deserializer<'de>>(
     }
     Ok(value)
 }
+fn backup_client(
+    root: &str,
+    auth: crate::federated_identity::SessionAuthorization,
+) -> std::result::Result<Client, buzz_nsec_backup::Error> {
+    if let Some(token) = auth.bearer_token() {
+        return Client::bearer(root, token);
+    }
+    Client::authorized(
+        root,
+        Arc::new(move |request, method, url| {
+            auth.authorize(request, method, url)
+                .map_err(|_| buzz_nsec_backup::Error::InvalidProof)
+        }),
+    )
+}
 struct Api {
     http: reqwest::Client,
     root: String,
     header: reqwest::header::HeaderName,
     credential: reqwest::header::HeaderValue,
+    authorization: Option<crate::federated_identity::SessionAuthorization>,
 }
 impl Api {
     fn new(root: &str, credential: &str) -> Result<Self> {
@@ -1113,6 +1186,17 @@ impl Api {
             &Zeroizing::new(format!("Bearer {token}")),
         )
     }
+    fn authorized(
+        root: &str,
+        auth: crate::federated_identity::SessionAuthorization,
+    ) -> Result<Self> {
+        if let Some(token) = auth.bearer_token() {
+            return Self::bearer(root, token);
+        }
+        let mut api = Self::bearer(root, "unused")?;
+        api.authorization = Some(auth);
+        Ok(api)
+    }
     fn build(root: &str, header: reqwest::header::HeaderName, credential: &str) -> Result<Self> {
         let mut value = reqwest::header::HeaderValue::from_str(credential).map_err(|_| RETRY)?;
         value.set_sensitive(true);
@@ -1121,6 +1205,7 @@ impl Api {
             root: root.to_owned(),
             header,
             credential: value,
+            authorization: None,
         })
     }
     fn http(root: &str) -> Result<reqwest::Client> {
@@ -1169,22 +1254,44 @@ impl Api {
         path: &str,
         post: bool,
     ) -> std::result::Result<Zeroizing<Vec<u8>>, ReadError> {
-        let url = format!("{}{path}", self.root);
+        let url = url::Url::parse(&format!("{}{path}", self.root)).map_err(|_| RETRY)?;
         let request = if post {
             self.http
-                .post(url)
+                .post(url.clone())
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body("{}")
         } else {
-            self.http.get(url)
+            self.http.get(url.clone())
         };
-        let response = request
-            .header(&self.header, &self.credential)
-            .send()
-            .await
-            .map_err(|_| RETRY)?;
+        let request = match &self.authorization {
+            Some(auth) => auth
+                .authorize(request, if post { "POST" } else { "GET" }, &url)
+                .map_err(|_| RETRY)?,
+            None => request.header(&self.header, &self.credential),
+        };
+        let response = request.send().await.map_err(|_| RETRY)?;
         match response.status() {
-            reqwest::StatusCode::UNAUTHORIZED => return Err(ReadError::SignedOut),
+            reqwest::StatusCode::UNAUTHORIZED => {
+                if self.authorization.is_some() {
+                    let mut response = response;
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = response.chunk().await.map_err(|_| RETRY)? {
+                        if chunk.len() > 4096 - bytes.len() {
+                            return Err(ReadError::Other);
+                        }
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    let value: serde_json::Value =
+                        serde_json::from_slice(&bytes).unwrap_or_default();
+                    if !matches!(
+                        value.get("error").and_then(|value| value.as_str()),
+                        Some("session_required" | "session_expired")
+                    ) {
+                        return Err(ReadError::Other);
+                    }
+                }
+                return Err(ReadError::SignedOut);
+            }
             reqwest::StatusCode::FORBIDDEN => return Err(ReadError::NotOffered),
             _ => {}
         }

@@ -32,6 +32,12 @@ export const BACKUP_FAILURES = {
   interrupted: retry("The backup was interrupted."),
   timeout: retry("Builderlab is taking too long to confirm your backup."),
   signed_out: { cause: SIGNED_OUT, message: SIGNED_OUT, retryable: false },
+  reauthentication_required: {
+    cause: "Sign in again to back up your key.",
+    message:
+      "Sign in again to back up your key. Your current session is still usable.",
+    retryable: false,
+  },
   not_offered: {
     message: "Builderlab doesn’t offer key backup for this account yet.",
     retryable: false,

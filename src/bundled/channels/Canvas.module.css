@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 .panel {
   height: 100%;
   min-height: 0;
@@ -26,6 +28,15 @@
 }
 .markdown > * + * {
   margin-block-start: var(--space-4);
+}
+.markdown h1 {
+  @apply text-heading;
+}
+.markdown h2 {
+  @apply text-body-lg font-medium;
+}
+.markdown :where(h3, h4, h5, h6) {
+  @apply text-label;
 }
 .markdown pre {
   overflow: auto;

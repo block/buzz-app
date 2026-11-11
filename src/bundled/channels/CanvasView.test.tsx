@@ -307,6 +307,29 @@ it("never runs raw HTML, inline images or unsafe links", () => {
   ]);
 });
 
+it("hides HTML comments and renders headings", () => {
+  const { container } = render(
+    <CanvasMarkdown
+      openLink={() => true}
+      content={[
+        "## Dashboard",
+        "",
+        "### Status",
+        "<!-- What belongs in this tile. -->",
+        "Phase: Build <!-- inline note --> on track",
+      ].join("\n")}
+    />,
+  );
+  expect(
+    screen.getByRole("heading", { level: 2, name: "Dashboard" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { level: 3, name: "Status" }),
+  ).toBeInTheDocument();
+  expect(container).not.toHaveTextContent("<!--");
+  expect(container).toHaveTextContent("Phase: Build on track");
+});
+
 it("renders every Canvas within the save limit", () => {
   const largest = "x".repeat(LIVE_CANVAS_BYTES);
   expect(renderable(largest)).toBe(true);

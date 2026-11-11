@@ -6,8 +6,26 @@ import { safeLinkUrl } from "../relay/message-content";
 import type { RelaySession } from "../relay/session";
 import { labelText } from "./label-text";
 
+type Tree = { type: string; value?: string; children?: Tree[] };
+
+/** Drops `<!-- comments -->`, which Markdown leaves unseen; other raw HTML still shows as text. */
+function remarkDropComments() {
+  const drop = (node: Tree) => {
+    if (!node.children) return;
+    node.children = node.children.filter(
+      (child) =>
+        !(
+          child.type === "html" &&
+          /^<!--[\s\S]*-->$/.test(child.value?.trim() ?? "")
+        ),
+    );
+    node.children.forEach(drop);
+  };
+  return drop;
+}
+
 /** The remark plugins `SafeMarkdown` renders with; guards parse with the same. */
-export const safeMarkdownPlugins = [remarkGfm];
+export const safeMarkdownPlugins = [remarkGfm, remarkDropComments];
 
 /**
  * A Markdown document with the link and image trust rules shared by Notes and

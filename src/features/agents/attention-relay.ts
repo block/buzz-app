@@ -668,14 +668,20 @@ export async function publishAll(
   // A record it can't read under a slug this device holds, whose head the
   // owner confirmed pruning: delete that head first (a changed one is
   // refused), so the add below restores this device's value over it.
-  const replaced = Object.keys(attention).filter((slug) => {
-    const confirmed = options.prune?.[slug];
-    return (
-      !!before.skipped[slug] &&
-      confirmed !== undefined &&
-      before.heads[slug]?.id === confirmed
-    );
-  });
+  const replaced = Object.keys(attention)
+    .filter((slug) => {
+      const confirmed = options.prune?.[slug];
+      return (
+        !!before.skipped[slug] &&
+        confirmed !== undefined &&
+        before.heads[slug]?.id === confirmed
+      );
+    })
+    // Removed watches go before removed Interests, as below.
+    .sort((a, b) => {
+      const ia = a.startsWith("interest/");
+      return ia !== b.startsWith("interest/") ? (ia ? 1 : -1) : a < b ? -1 : 1;
+    });
   if (replaced.length) {
     await publishChanges(
       io,

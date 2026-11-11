@@ -18926,6 +18926,43 @@ it("never writes a move over a community record it can't read", async () => {
   expect(f.service.find(bot)?.attentionStorage).toBe("relay");
 });
 
+it("replaces confirmed unreadable records watches first", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+      "watch/chat": {
+        slug: "watch/chat",
+        value: chat["watch/chat"] as AttentionValue,
+        modifiedAt: 1,
+      },
+    },
+  });
+  for (const slug of ["interest/default", "watch/chat"])
+    await f.seed(slug, {
+      type: "interest",
+      instructions: "",
+    } as AttentionValue);
+  const shown = await f.service.migrateAttention(bot);
+  expect(shown.skipped).toEqual(["interest/default", "watch/chat"]);
+  await expect(
+    f.service.migrateAttention(bot, { prune: shown.heads }),
+  ).resolves.toMatchObject({ migrated: true, skipped: [] });
+  const tag = (event: RelayEvent | undefined, name: string) =>
+    event?.tags.find((t) => t[0] === name)?.[1];
+  expect(
+    f.ownerWrites
+      .filter((event) => tag(event, "op") === "delete")
+      .map((event) => tag(event, "d")),
+  ).toEqual([
+    await attentionD(f.home, "watch/chat"),
+    await attentionD(f.home, "interest/default"),
+  ]);
+});
+
 it("creates no attention channel where the relay has no artifact sync", async () => {
   const f = await relayAttentionSetup({
     noSync: true,

@@ -5,7 +5,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { chooseDefaultAgent } from "../../features/solo/default-agent";
-import { checkinHourly, memory, withFeature } from "./features";
+import { checkinHourly, inbox, memory, withFeature } from "./features";
 import {
   formerWithSettings,
   rememberNewBestie,
@@ -299,20 +299,21 @@ it("starts no further save once stopped while a timer save is pending", async ()
   warn.mockRestore();
 });
 
-it("turns memory on for a local agent made Bestie here, unless it has it", async () => {
+it("turns memory on but leaves Inbox off for a local agent made Bestie here", async () => {
   const { relay } = community();
   const { agents, save } = host([ada, bea]);
   await rememberNewBestie(relay, agents, ada.pubkey);
   expect(save).not.toHaveBeenCalled();
+  save.mockClear();
   await rememberNewBestie(relay, agents, bea.pubkey);
-  expect(save).toHaveBeenCalledWith(bea.key, {
+  expect(save).toHaveBeenCalledExactlyOnceWith(bea.key, {
     config: { instructions: withFeature("", memory, true) },
   });
   // A remote agent, or one in another community, is left alone.
   save.mockClear();
   await rememberNewBestie(relay, agents, "9".repeat(64));
   expect(save).not.toHaveBeenCalled();
-  // Nor is one whose section was edited by hand: no second section.
+  // Nor is an edited feature replaced by a second section.
   const edited = host([
     {
       ...bea,
@@ -326,6 +327,39 @@ it("turns memory on for a local agent made Bestie here, unless it has it", async
   ]);
   await rememberNewBestie(relay, edited.agents, bea.pubkey);
   expect(edited.save).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["off after reselection", withFeature("Be brief.", memory, true)],
+  ["already on", withFeature("Be brief.", inbox, true)],
+  [
+    "custom section content",
+    withFeature("Be brief.", inbox, true).replace(
+      "# Inbox access",
+      "# My Inbox rules\nOnly read it when I ask.",
+    ),
+  ],
+  [
+    "edited marker",
+    withFeature("Be brief.", inbox, true).replace(
+      "<!-- /buzz:bestie/inbox -->",
+      "<!-- /buzz:bestie/inbox-->",
+    ),
+  ],
+])("preserves Inbox %s when made Bestie again", async (_, instructions) => {
+  const { relay } = community();
+  const { agents, save } = host([agent("b", instructions)]);
+  await rememberNewBestie(relay, agents, bea.pubkey);
+  const expected = withFeature(instructions, memory, true);
+  expect(agents.snapshot().agents[0]?.config).toEqual({
+    instructions: expected,
+  });
+  save.mockClear();
+  await rememberNewBestie(relay, agents, bea.pubkey);
+  expect(save).not.toHaveBeenCalled();
+  expect(agents.snapshot().agents[0]?.config).toEqual({
+    instructions: expected,
+  });
 });
 
 it("turns memory on for no remote agent made Bestie, as its instructions aren't here", async () => {

@@ -196,6 +196,51 @@ it.each([false, true])(
   },
 );
 
+it("lists only the owner-delegated Inbox projection", async () => {
+  const { client } = fake();
+  client.inbox = vi.fn<NonNullable<BuzzClient["inbox"]>>(async () => ({
+    items: [
+      {
+        id: "chan:message",
+        channelId: "chan",
+        target: { kind: "channel", channelId: "chan" },
+        messageId: "message",
+        latestMessageId: "message",
+        messageIds: ["message"],
+        authorId: alice,
+        preview: "Private update",
+        createdAt: 123,
+        mentioned: true,
+        messages: [],
+        thread: false,
+        unreadCount: 1,
+        manual: false,
+        readThrough: [],
+      },
+    ],
+  }));
+  const context = { channel: "owner-dm", wholeChannel: true };
+  const listed = await callTool(client, context, "inbox", {
+    channel: "forged-public-channel",
+  });
+  expect(client.inbox).toHaveBeenCalledExactlyOnceWith(context);
+  expect(JSON.parse(listed as string)).toEqual([
+    expect.objectContaining({
+      author: alice,
+      preview: "Private update",
+      link: "buzz://message?channel=chan&id=message",
+    }),
+  ]);
+  expect(client.query).not.toHaveBeenCalled();
+});
+
+it("refuses Inbox access when the owner did not delegate it", async () => {
+  const { client } = fake();
+  await expect(callTool(client, {}, "inbox", {})).rejects.toThrow(
+    "has not allowed Inbox access",
+  );
+});
+
 const members = event({
   kind: 39002,
   tags: [

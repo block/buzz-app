@@ -203,7 +203,7 @@ export function PrivateChannels({
     );
   const remove = (channels: readonly ChannelSummary[]) =>
     run(channels, false, (id) => removeMember(session, id, bestie));
-  const name = former ?? "Bestie";
+  const name = former ?? "your Bestie";
   const removable = joined.filter((channel) => !channel.cached);
   const adding = addable.some((channel) => busy.has(channel.id));
   // A failure stops showing once the channel is as the change wanted anyway.
@@ -213,16 +213,8 @@ export function PrivateChannels({
   );
 
   return (
-    <div ref={section} className="contents">
-      <InlineHeader
-        id={headingId}
-        title={`Private channels ${name} can read`}
-        subtitle={
-          former
-            ? "Leaving it in a channel is fine: it reads along as a guest and can't post there."
-            : "Bestie already reads every public channel. In a channel you add it to, it reads along as a guest and can't post there."
-        }
-      />
+    <div ref={section} className="grid gap-3">
+      <InlineHeader id={headingId} title="Private channels" level={4} />
       <SettingsGroup>
         {joined.map((channel) => (
           <PreferenceRow
@@ -246,7 +238,7 @@ export function PrivateChannels({
             title="Couldn't load your private channels"
             subtitle={
               list.error ??
-              `${name} may be in channels that aren't shown here. Try again.`
+              `${former ?? "Your Bestie"} may be in channels that aren't shown here. Try again.`
             }
             trailing={(label) => (
               <Button
@@ -261,7 +253,7 @@ export function PrivateChannels({
         ) : list.coverage === "partial" ? (
           <PreferenceRow
             title="Only some of your private channels are loaded"
-            subtitle={`${name} may be in channels that aren't shown here.`}
+            subtitle={`${former ?? "Your Bestie"} may be in channels that aren't shown here.`}
           />
         ) : list.status !== "ready" ? (
           !joined.length && (
@@ -274,7 +266,7 @@ export function PrivateChannels({
           ) : (
             <PreferenceRow
               title="Not in any of your private channels yet"
-              subtitle="Add Bestie to the ones you want it to catch you up on."
+              subtitle="Add your Bestie to the channels you want it to catch you up on."
             />
           ))
         )}
@@ -328,10 +320,10 @@ export function PrivateChannels({
                   )}
                 />
                 <PreferenceRow
-                  title="Add to all my private channels"
+                  title="Add to all your private channels"
                   subtitle={
                     complete
-                      ? `${addable.length} ${addable.length === 1 ? "channel" : "channels"} without Bestie. Each channel's members see that you added it.`
+                      ? `${addable.length} ${addable.length === 1 ? "channel" : "channels"} you can add your Bestie to now. This doesn't include future channels. Each channel's members see that you added it.`
                       : "Available once all your private channels have loaded."
                   }
                   trailing={(label) => (
@@ -361,7 +353,7 @@ export function PrivateChannels({
       {removing && (
         <AlertDialog
           title={`Remove ${name} from #${removing.name}?`}
-          description={`${name} stops reading this channel. Its members see that you removed it.`}
+          description="Removing it ends its membership in this channel. Members see that you removed it."
           initialFocus={cancelRemove}
           onClose={() => setRemoving(undefined)}
           actions={
@@ -388,11 +380,11 @@ export function PrivateChannels({
       )}
       {confirming && (
         <AlertDialog
-          title={`${former ? `Remove ${name} from` : "Add Bestie to"} ${confirming.length} private ${confirming.length === 1 ? "channel" : "channels"}?`}
+          title={`${former ? `Remove ${name} from` : "Add your Bestie to"} ${confirming.length} private ${confirming.length === 1 ? "channel" : "channels"}?`}
           description={
             former
               ? `Members of each channel will see that you removed ${name}.`
-              : "Members of each channel will see that you added Bestie."
+              : "Members of each channel will see that you added your Bestie."
           }
           initialFocus={former ? undefined : proceed}
           onClose={() => setConfirming(undefined)}

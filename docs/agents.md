@@ -102,6 +102,48 @@ authorize every carried file for the signing agent; an owner's access does not
 grant the agent private-media access, and denial never causes an automatic retry
 with files stripped.
 
+## Bestie Inbox access
+
+The optional run-only `AgentHandle.inbox(context)` delegates the owner's bounded
+notification projection to the account's current local Bestie. Inbox starts off
+until the owner enables it; choosing or reselecting a Bestie preserves its saved
+Inbox preference. A former Bestie's switch is a retained preference, not active
+access. Settings and authorization share the marked-section policy in
+`bestie-features.ts`: incomplete or damaged markers deny access; edits inside
+complete sections remain enabled. This is not separate per-use consent.
+
+The tool passes the runtime's conversation context separately from model
+arguments. Before reading notifications and again before release, the service
+freshly reads exact relay-authored metadata and membership with strong consistency.
+Only an explicitly private DM or private Solo chat containing exactly the owner
+and Bestie qualifies. Missing context, ordinary channels, public/group contexts,
+and unavailable or ambiguous evidence deny access. A newer observed membership or
+privacy change beats an older allowed response. Each phase also strongly reads
+the account choice, then rechecks the saved feature and current owner session.
+Outside-run plugin handles and standalone command connections have no Inbox
+capability. These checks are bounded evidence, not an atomic relay transaction.
+
+The service requires a ready, complete channel discovery snapshot before loading
+notifications and checks it again before release. While discovery is pending,
+failed or partial, a call starts or retries the existing discovery read and returns
+a retryable error without reading notifications. Items require observed, ready
+unread evidence and a ready Inbox feed with no unresolved edit/deletion targets.
+Stale, failed, loading or retired evidence returns a retryable error, never a
+successful partial/empty list. Loading, failed or stale remote read-marker sync
+also withholds results, even when a local unread action has changed the publication
+status. The next call retries outstanding remote marker observation and
+notification read errors through the existing owners. Valid local-only and pending
+publication states remain usable; remote reconciliation is not required on every
+host. The captured runner lifetime is checked after the read, so retirement or
+retype cannot release a late result. The MCP client also checks a supplied
+cancellation signal before and after the read; ordinary Interrupt does not supply
+a per-turn fence in every harness.
+
+Inbox grants no channel membership, history access or posting rights. Read-context
+eligibility is enforced; non-disclosure elsewhere and not copying Inbox content to
+memory remain prompt rules, not output confinement. Already returned tool data can
+remain in harness history. No posting preview/approval workflow is added.
+
 ## External app authorization
 
 The build flag `BUZZ_EXTERNAL_MCP_COMMUNITIES` lists the allowed community

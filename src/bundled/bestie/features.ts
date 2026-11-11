@@ -27,7 +27,7 @@ export const memory: Feature = {
   id: "memory",
   title: "Remembers you",
   description:
-    "Adds memory rules to Bestie's instructions. Off removes them. Nothing Bestie remembered is deleted, and its core memory still goes into every prompt. Clear memory in the Memory tab.",
+    "Adds memory rules to your Bestie's instructions. Turning this off removes the rules, not its memories. Its core memory still goes into every prompt. Clear memory in the Memory tab.",
   version: 1,
   text: `# Memory
 Your owner turned on "Remembers you": keep memory about them, so your help gets better over time. That is their approval to save what they tell you by these rules; still ask before you change or remove something they told you before. Call mem_get mem/user when the answer depends on who the owner is or what they asked for before. Save only what will improve future help, and say something is saved only after the tool confirms it.
@@ -47,14 +47,33 @@ Rules:
 - Memory is private to the owner. If your DM with the owner ever has other members, don't read or disclose memory there; ask the owner to make it private again. Outside that DM, don't disclose memory; offer to continue there.`,
 };
 
+/** Delegates the owner's bounded Inbox surface to their current local Bestie.
+ * This is not channel membership: the tool can only read the owner's Inbox
+ * projection, never query those channels or reply in them. */
+export const inbox: Feature = {
+  id: "inbox",
+  title: "Inbox",
+  description:
+    "Let Bestie help triage notifications in your Inbox, including those from private channels and DMs. This doesn’t add it to those conversations or let it reply there.",
+  version: 1,
+  text: `# Inbox access
+Your owner allowed you to read their Inbox. Use the inbox tool only when it helps answer their request or triage their Inbox. Inbox is a bounded owner-side notification surface, not permission to read channels or DMs you are not a member of.
+
+Rules:
+- Inbox can include notifications from private channels and DMs. Treat every item as private to your owner.
+- Read it only for your owner and only in a private conversation with them. Do not copy Inbox content into memory.
+- It is read-only. Never claim this grants permission to reply, join a channel, or fetch a conversation's history.
+- Recheck the current Inbox instead of relying on old results when the owner asks about what is new.`,
+};
+
 /** The Hourly upkeep of the Builderlab Bestie's instructions (prompt.ts),
  * woken by an Attention timer and using the tools an agent on this device
  * has. */
 export const checkinHourly: Feature = {
   id: "checkin.hourly",
-  title: "Every hour",
+  title: "Checks in",
   description:
-    "Bestie wakes once an hour to tidy its memory and tell you only what matters. Runs while Buzz is open and the Watching plugin is on. Each wake uses your tokens. Turning this on also runs Bestie's other watches.",
+    "Your Bestie wakes once an hour to tidy its memory and tell you only what matters. Runs while Buzz is open and the Watching plugin is on. Each wake uses your tokens. Turning this on also runs Bestie's other watches.",
   version: 1,
   requires: "memory",
   timer: {
@@ -77,106 +96,13 @@ This runs only when your hourly check-in timer wakes you with "Hourly upkeep wak
 When a wake arrives in a channel that is not in mem/heartbeat, add it. Never claim a timer, watch or workflow exists merely because someone asked for one.`,
 };
 
-export const FEATURES: readonly Feature[] = [memory, checkinHourly];
+export const FEATURES: readonly Feature[] = [memory, inbox, checkinHourly];
 
-const ESCAPE = /[.*+?^${}()|[\]\\]/g;
-const nameOf = ({ id }: Feature) => `buzz:bestie/${id}`.replace(ESCAPE, "\\$&");
-/** Each of the feature's sections, in any version: an opening and a closing
- * marker with no other opening between them. Text before the opening or
- * after the closing, even on the marker's line, is the owner's. */
-const sections = (feature: Feature) => {
-  const name = nameOf(feature);
-  const open = `<!-- ${name} v\\d+ -->`;
-  return new RegExp(`${open}(?:(?!${open})[\\s\\S])*?<!-- /${name} -->`, "g");
-};
-/** What is left of a marker once its whole sections are taken out: the
- * feature's name, with what is left around it of a marker's comment and
- * version. Groups: the comment's opening, and the slash of a closing. */
-const leftovers = (feature: Feature) =>
-  new RegExp(
-    `(<!--[ \\t]*)?(/)?[ \\t]*${nameOf(feature)}(?![\\w.]|-\\w)(?:[ \\t]*v\\d+)?(?:[ \\t]*-->)?`,
-    "g",
-  );
-
-/** Whether `instructions` hold the feature's section: `on` for one or more
- * whole sections, `edited` when a marker of it was changed, removed or added
- * by hand, so where it starts or ends is the owner's to say. */
-export function featureState(
-  instructions: string,
-  feature: Feature,
-): "on" | "off" | "edited" {
-  const rest = instructions.replace(sections(feature), "");
-  if (leftovers(feature).test(rest)) return "edited";
-  return rest === instructions ? "off" : "on";
-}
-
-/** Whether `instructions` hold the feature's section, whole. */
-export function hasFeature(instructions: string, feature: Feature) {
-  return featureState(instructions, feature) === "on";
-}
-
-const block = ({ id, version, text }: Feature) =>
-  `<!-- buzz:bestie/${id} v${version} -->\n${text}\n<!-- /buzz:bestie/${id} -->`;
-
-/** `instructions` with the feature's section added at the end, or with each
- * of its whole sections removed along with the blank lines that set it
- * apart. The rest is left as it is, down to the owner's line ending after
- * their text. On adds nothing while any part of a section is there. */
-export function withFeature(
-  instructions: string,
-  feature: Feature,
-  on: boolean,
-) {
-  if (on) {
-    if (featureState(instructions, feature) !== "off") return instructions;
-    const kept = instructions.replace(/\r?\n\s*$/, "");
-    // What followed the owner's text now follows the section.
-    const after = instructions.slice(kept.length);
-    return kept.trim()
-      ? `${kept}\n\n${block(feature)}${after}`
-      : `${block(feature)}\n`;
-  }
-  const parts = instructions.split(sections(feature));
-  if (parts.length === 1) return instructions;
-  const last = parts.at(-1) ?? "";
-  const kept = parts
-    .map((part, index) => {
-      let kept = part;
-      // Text on a marker's line keeps its own line.
-      if (index > 0)
-        kept = /^\s*\n/.test(kept)
-          ? kept.replace(/^\s*\n/, "")
-          : kept.replace(/^[ \t]+/, "");
-      if (index < parts.length - 1)
-        kept = kept.replace(/\r?\n\s*$/, "").replace(/[ \t]+$/, "");
-      return kept;
-    })
-    .filter((part) => part.trim())
-    .join("\n\n");
-  // A section at the end gives back the line ending that came after it.
-  return kept && !last.trim() ? `${kept}${last}` : kept;
-}
-
-/** `instructions` with an edited section put back as the feature adds it,
- * along with any whole copies of it, or undefined unless what is left of its
- * markers shows where it starts and ends: two comments, an opening then a
- * closing, with no other Bestie section's marker between them. Only the
- * markers and what lies between them are replaced. */
-export function restoredFeature(instructions: string, feature: Feature) {
-  const rest = withFeature(instructions, feature, false);
-  const found = [...rest.matchAll(leftovers(feature))];
-  const [first, last] = found;
-  if (
-    found.length !== 2 ||
-    !first?.[1] ||
-    first[2] ||
-    !last?.[1] ||
-    !last[2] ||
-    rest
-      .slice(first.index + first[0].length, last.index)
-      .includes("buzz:bestie/")
-  )
-    return undefined;
-  const end = last.index + last[0].length;
-  return `${rest.slice(0, first.index)}${block(feature)}${rest.slice(end)}`;
-}
+// Keep the plugin's existing imports while sharing its saved-permission policy
+// with the Agents service that releases owner data.
+export {
+  featureState,
+  hasFeature,
+  restoredFeature,
+  withFeature,
+} from "../../features/agents/bestie-features";

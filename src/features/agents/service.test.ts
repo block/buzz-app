@@ -4,6 +4,12 @@ import { completionTarget } from "../notifications/agent-completions";
 import { parseOpenTarget } from "../navigation/targets";
 import { createNativeSession } from "../../bundled/builderlab/session";
 import { offerBuilderlabDecisions } from "../../bundled/builderlab/decisions";
+import { inbox, withFeature } from "../../bundled/bestie/features";
+import { createRelaySession } from "../relay/session";
+import type { LiveCallbacks } from "../relay/live";
+import type { ReadStateHost } from "../relay/read-state-host";
+import { readJournal, type ReadJournal } from "../relay/read-state-storage";
+import { metadata, roster } from "../relay/testing";
 import { followUpQueue } from "../messages/follow-up-queue";
 import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices } from "./choices";
@@ -3356,6 +3362,853 @@ it("hands a plugin its own agents outside any run, while this copy runs them", a
   await vi.waitFor(() => expect(plugin.agents.handle(bot)).toBeDefined());
   await service.remove(bot);
   expect(plugin.agents.handle(bot)).toBeUndefined();
+});
+
+describe("delegated Inbox reads", () => {
+  async function inboxSetup(
+    discover = true,
+    maxDiscoveryBytes?: number,
+    readState?: ReadStateHost,
+  ) {
+    const finish = runnerGate();
+    const f = await setup({
+      answer: ({ workingUntil }) => workingUntil(finish.promise),
+    });
+    const relay = keypair();
+    const author = keypair();
+    const original = message(author, channel, "OLD BODY", 100, [["p", viewer]]);
+    const membership = roster(relay, channel, [viewer, bot, author.pubkey], 10);
+    const description = metadata(relay, channel, "Inbox source", 10);
+    const privateDm = "owner-bestie-inbox-dm";
+    let conversationMetadata = metadata(relay, privateDm, "Owner DM", 10, [
+      ["t", "dm"],
+      ["private"],
+      ["hidden"],
+    ]);
+    let conversationRoster = roster(relay, privateDm, [viewer, bot], 10);
+    const context = { channel: privateDm };
+    let selected: string | null = bot;
+    let live!: LiveCallbacks;
+    const healthyQuery = async (filters: readonly ReadFilter[]) =>
+      filters.flatMap((filter) =>
+        filter.kinds?.includes(39002)
+          ? filter["#d"]?.includes(privateDm)
+            ? [conversationRoster]
+            : [membership, conversationRoster]
+          : filter.kinds?.includes(39000)
+            ? filter["#d"]?.includes(privateDm)
+              ? [conversationMetadata]
+              : filter["#d"]?.includes(channel)
+                ? [description]
+                : [description, conversationMetadata]
+            : filter.kinds?.includes(9) &&
+                !filter["#e"] &&
+                !filter["#h"]?.includes(privateDm)
+              ? [original]
+              : [],
+      );
+    const contentQuery = vi.fn(healthyQuery);
+    const conversationQuery = vi.fn(healthyQuery);
+    const query = vi.fn(async (filters: readonly ReadFilter[]) =>
+      filters.some((filter) => filter["#d"]?.includes(privateDm))
+        ? conversationQuery(filters)
+        : contentQuery(filters),
+    );
+    const account = vi.fn(async () => selected);
+    let journal: ReadJournal | undefined;
+    const owner = createRelaySession(
+      {
+        viewer,
+        relayAuthor: relay.pubkey,
+        query,
+        media: () => undefined,
+        readMainAgent: account,
+        writeMainAgent: async () => {},
+        ...(readState ? { readState } : {}),
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      {
+        ...(maxDiscoveryBytes === undefined ? {} : { maxDiscoveryBytes }),
+        readStateFloor: () => 0,
+        readPublisherLock: async (_signal, work) => work(),
+        readStateStorage: {
+          async update(change) {
+            journal = readJournal(change(journal), viewer);
+            return journal;
+          },
+          close() {},
+        },
+      },
+    );
+    live.state({ status: "connected", routes: [] });
+    if (discover) {
+      owner.session.channels.ensureList();
+      await vi.waitFor(() => {
+        expect(owner.session.channels.list().status).toBe("ready");
+        expect(owner.session.channels.list().coverage).toBeUndefined();
+      });
+    }
+    query.mockClear();
+    contentQuery.mockClear();
+    conversationQuery.mockClear();
+    Object.assign(f.session, {
+      channels: owner.session.channels,
+      unread: owner.session.unread,
+      inboxFeed: owner.session.inboxFeed,
+      mainAgent: owner.session.mainAgent,
+      readRemote: owner.session.readRemote,
+      relayAuthor: relay.pubkey,
+    });
+    const instructions = withFeature("", inbox, true);
+    await f.service.create({
+      type: "example/echo",
+      name: "Echo",
+      config: { reply: "ok", instructions },
+    });
+    await vi.waitFor(() => expect(f.plugin.agents.handle(bot)).toBeDefined());
+    f.emit({
+      events: [
+        event("inbox-run", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+    const handle = f.run.mock.calls[0]?.[0].agent;
+    if (!handle?.inbox) throw new Error("Missing Inbox reader");
+    return {
+      ...f,
+      owner,
+      query: contentQuery,
+      allQueries: query,
+      conversationQuery,
+      healthyQuery,
+      context,
+      privateDm,
+      conversation: () => [conversationMetadata, conversationRoster] as const,
+      setConversation: (
+        meta: RelayEvent,
+        members: RelayEvent,
+        liveUpdate = false,
+      ) => {
+        conversationMetadata = meta;
+        conversationRoster = members;
+        if (liveUpdate) live.receive([meta, members]);
+      },
+      relay,
+      original,
+      instructions,
+      handle,
+      account,
+      author,
+      live,
+      readInbox: (
+        runtimeContext: { channel?: string } = context,
+        args: Readonly<Record<string, unknown>> = {},
+      ) =>
+        callTool(
+          appClient(handle, {
+            read: vi.fn(),
+            memories: async () => ({ entries: [], partial: false }),
+          }),
+          runtimeContext,
+          "inbox",
+          args,
+        ),
+      selectBestie: (pubkey: string | null) => {
+        selected = pubkey;
+      },
+      saveInstructions: (text: string) =>
+        f.service.save(bot, {
+          config: { reply: "ok", instructions: text },
+        }),
+      finishTurn: async () => {
+        finish.resolve();
+        await vi.waitFor(() =>
+          expect(f.activity.reader.work()[0]?.state).toBe("done"),
+        );
+      },
+      close: async () => {
+        finish.resolve();
+        owner.dispose();
+        await f.ctx.fiber.dispose();
+      },
+    };
+  }
+
+  it("offers Inbox only to a run, not an outside-run plugin handle", async () => {
+    const f = await inboxSetup();
+    try {
+      expect(f.plugin.agents.handle(bot)?.inbox).toBeUndefined();
+      expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+        "OLD BODY",
+      );
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each([
+    "missing",
+    "forged argument",
+    "ordinary private channel",
+    "public Solo",
+    "group DM",
+    "other person's DM",
+    "owner-only Solo",
+  ])("denies %s before notification reads", async (kind) => {
+    const f = await inboxSetup();
+    try {
+      let context: { channel?: string } = f.context;
+      let args = {};
+      if (kind === "missing" || kind === "forged argument") context = {};
+      if (kind === "forged argument")
+        args = { channel: f.privateDm, context: f.context };
+      const tags =
+        kind === "ordinary private channel"
+          ? [["t", "stream"], ["private"]]
+          : kind === "public Solo"
+            ? [["t", "stream"], ["t", "buzz.solo"], ["public"]]
+            : kind === "owner-only Solo"
+              ? [["t", "stream"], ["t", "buzz.solo"], ["private"]]
+              : [["t", "dm"], ["private"]];
+      f.setConversation(
+        metadata(f.relay, f.privateDm, "Conversation", 11, tags),
+        roster(
+          f.relay,
+          f.privateDm,
+          kind === "group DM"
+            ? [viewer, bot, other]
+            : kind === "other person's DM"
+              ? [other, bot]
+              : kind === "owner-only Solo"
+                ? [viewer]
+                : [viewer, bot],
+          11,
+        ),
+      );
+      await expect(f.readInbox(context, args)).rejects.toThrow(/Inbox/);
+      expect(
+        f.query.mock.calls.some(([filters]) =>
+          filters.some((filter) => filter.kinds?.includes(9)),
+        ),
+      ).toBe(false);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("allows a private owner-and-Bestie Solo chat and reads fresh signed evidence twice", async () => {
+    const f = await inboxSetup();
+    try {
+      f.setConversation(
+        metadata(f.relay, f.privateDm, "Solo", 11, [
+          ["t", "stream"],
+          ["t", "buzz.solo"],
+          ["private"],
+        ]),
+        roster(f.relay, f.privateDm, [viewer, bot], 11),
+      );
+      expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+        "OLD BODY",
+      );
+      const reads = f.allQueries.mock.calls.filter(([filters]) =>
+        filters.some((filter) => filter["#d"]?.includes(f.privateDm)),
+      );
+      expect(reads).toHaveLength(2);
+      for (const [filters] of reads)
+        expect(filters).toEqual(
+          [39000, 39002].map((kind) => ({
+            kinds: [kind],
+            authors: [f.relay.pubkey],
+            "#d": [f.privateDm],
+            consistency: "strong",
+            limit: 2,
+          })),
+        );
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each([
+    "missing metadata",
+    "missing roster",
+    "duplicate metadata",
+    "duplicate coordinate",
+    "contradictory privacy",
+    "unknown privacy",
+    "malformed member",
+    "read failure",
+  ])(
+    "denies %s instead of falling back to a cached private conversation",
+    async (kind) => {
+      const f = await inboxSetup();
+      try {
+        await f.readInbox();
+        const [meta, members] = f.conversation();
+        f.query.mockClear();
+        f.conversationQuery.mockImplementation(async () => {
+          if (kind === "read failure")
+            throw new Error("Conversation unavailable");
+          if (kind === "missing metadata") return [members];
+          if (kind === "missing roster") return [meta];
+          if (kind === "duplicate metadata") return [meta, meta, members];
+          const tags =
+            kind === "duplicate coordinate"
+              ? [...meta.tags, ["d", f.privateDm]]
+              : kind === "contradictory privacy"
+                ? [...meta.tags, ["public"]]
+                : kind === "unknown privacy"
+                  ? meta.tags.filter(([key]) => key !== "private")
+                  : meta.tags;
+          const altered = signed(f.relay, {
+            kind: 39000,
+            content: meta.content,
+            tags,
+            created_at: 12,
+          });
+          const roster =
+            kind === "malformed member"
+              ? signed(f.relay, {
+                  kind: 39002,
+                  content: "",
+                  tags: [...members.tags, ["p", "invalid"]],
+                  created_at: 12,
+                })
+              : members;
+          return [altered, roster];
+        });
+        await expect(f.readInbox()).rejects.toThrow();
+        expect(
+          f.query.mock.calls.some(([filters]) =>
+            filters.some((filter) => filter.kinds?.includes(9)),
+          ),
+        ).toBe(false);
+        f.conversationQuery.mockImplementation(f.healthyQuery);
+        f.setConversation(
+          metadata(f.relay, f.privateDm, "Recovered", 13, [
+            ["t", "dm"],
+            ["private"],
+          ]),
+          roster(f.relay, f.privateDm, [viewer, bot], 13),
+        );
+        expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+          "OLD BODY",
+        );
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it.each(["before notifications", "before release"])(
+    "rechecks Bestie choice after the conversation read %s",
+    async (phase) => {
+      const f = await inboxSetup();
+      const gate = runnerGate<RelayEvent[]>();
+      const started = runnerGate();
+      let calls = 0;
+      f.conversationQuery.mockImplementation(async (filters) => {
+        if (++calls === (phase === "before notifications" ? 1 : 2)) {
+          started.resolve();
+          return gate.promise;
+        }
+        return f.healthyQuery(filters);
+      });
+      try {
+        const pending = f.readInbox();
+        const rejected = expect(pending).rejects.toThrow(/Inbox/);
+        await started.promise;
+        f.selectBestie(sibling);
+        gate.resolve([...f.conversation()]);
+        await rejected;
+        if (phase === "before notifications")
+          expect(
+            f.query.mock.calls.some(([filters]) =>
+              filters.some((filter) => filter.kinds?.includes(9)),
+            ),
+          ).toBe(false);
+      } finally {
+        gate.resolve([]);
+        await f.close();
+      }
+    },
+  );
+
+  it("does not start notification reads if discovery becomes partial during conversation authorization", async () => {
+    const f = await inboxSetup(true, 4096);
+    const gate = runnerGate<RelayEvent[]>();
+    const started = runnerGate();
+    f.conversationQuery.mockImplementationOnce(async () => {
+      started.resolve();
+      return gate.promise;
+    });
+    try {
+      const pending = f.readInbox();
+      const rejected = expect(pending).rejects.toThrow(/Inbox.*retry/i);
+      await started.promise;
+      f.live.receive([
+        roster(f.relay, "overflow", [viewer, "e".repeat(5000)], 11),
+      ]);
+      gate.resolve([...f.conversation()]);
+      await rejected;
+      expect(
+        f.query.mock.calls.some(([filters]) =>
+          filters.some((filter) => filter.kinds?.includes(9)),
+        ),
+      ).toBe(false);
+    } finally {
+      gate.resolve([]);
+      await f.close();
+    }
+  });
+
+  it.each(["initial", "final"])(
+    "a newer live group roster beats an older allowed %s conversation response",
+    async (phase) => {
+      const f = await inboxSetup();
+      const gate = runnerGate<RelayEvent[]>();
+      const started = runnerGate();
+      let calls = 0;
+      f.conversationQuery.mockImplementation(async (filters) => {
+        if (++calls === (phase === "initial" ? 1 : 2)) {
+          started.resolve();
+          return gate.promise;
+        }
+        return f.healthyQuery(filters);
+      });
+      try {
+        const pending = f.readInbox();
+        const rejected = expect(pending).rejects.toThrow(/Inbox/);
+        await started.promise;
+        const old = [...f.conversation()];
+        f.live.receive([
+          roster(f.relay, f.privateDm, [viewer, bot, other], 12),
+        ]);
+        gate.resolve(old);
+        await rejected;
+      } finally {
+        gate.resolve([]);
+        await f.close();
+      }
+    },
+  );
+
+  it.each([
+    ["missing permission", ""],
+    ["missing end", "<!-- buzz:bestie/inbox v1 -->\nAllowed."],
+    [
+      "damaged end",
+      "<!-- buzz:bestie/inbox v1 -->\nAllowed.\n<!-- /buzz:bestie/inbox-->",
+    ],
+    [
+      "whole plus damaged copy",
+      `${withFeature("", inbox, true)}\n<!-- buzz:bestie/inbox v1 -->`,
+    ],
+  ])("denies %s without reading notification content", async (_name, text) => {
+    const f = await inboxSetup();
+    try {
+      await f.saveInstructions(text);
+      await expect(f.handle.inbox?.(f.context)).rejects.toThrow(/Inbox access/);
+      expect(f.query).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each(["held", "failed"])(
+    "rejects %s initial channel discovery, then returns the discovered notification",
+    async (stage) => {
+      const f = await inboxSetup(false);
+      const gate = runnerGate<RelayEvent[]>();
+      const started = runnerGate();
+      f.query.mockImplementation(async (filters) => {
+        if (filters[0]?.kinds?.includes(39002)) {
+          started.resolve();
+          if (stage === "failed") throw new Error("Roster unavailable");
+          return gate.promise;
+        }
+        return f.healthyQuery(filters);
+      });
+      f.owner.session.channels.ensureList();
+      try {
+        try {
+          await started.promise;
+          if (stage === "failed")
+            await vi.waitFor(() =>
+              expect(f.owner.session.channels.list().status).toBe("error"),
+            );
+          await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+          expect(
+            f.query.mock.calls.some(([filters]) =>
+              filters.some((filter) => filter.kinds?.includes(9)),
+            ),
+          ).toBe(false);
+        } finally {
+          f.query.mockImplementation(f.healthyQuery);
+          gate.resolve(await f.healthyQuery([{ kinds: [39002], limit: 100 }]));
+        }
+        f.owner.session.channels.ensureList();
+        await vi.waitFor(() => {
+          expect(f.owner.session.channels.list().status).toBe("ready");
+          expect(f.owner.session.channels.list().coverage).toBeUndefined();
+        });
+        expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+          "OLD BODY",
+        );
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "withholds an overflowing channel roster (during notification read: %s)",
+    async (duringRead) => {
+      const f = await inboxSetup(true, 4096);
+      const gate = runnerGate<RelayEvent[]>();
+      const started = runnerGate();
+      const overflow = () =>
+        f.live.receive([
+          roster(f.relay, "overflow", [viewer, "e".repeat(5000)], 11),
+        ]);
+      try {
+        f.query.mockImplementation(async (filters) => {
+          if (
+            duringRead
+              ? !!filters[0]?.["#e"]
+              : !!filters[0]?.kinds?.includes(39002)
+          ) {
+            started.resolve();
+            return gate.promise;
+          }
+          return f.healthyQuery(filters);
+        });
+        if (!duringRead) overflow();
+        const pending = f.readInbox();
+        const rejected = expect(pending).rejects.toThrow(/Inbox.*retry/i);
+        if (duringRead) {
+          await started.promise;
+          overflow();
+          gate.resolve([]);
+        }
+        await rejected;
+        await started.promise;
+        expect(f.owner.session.channels.list()).toMatchObject({
+          status: "ready",
+          coverage: "partial",
+        });
+        if (!duringRead)
+          expect(
+            f.query.mock.calls.some(([filters]) =>
+              filters.some((filter) => filter.kinds?.includes(9)),
+            ),
+          ).toBe(false);
+      } finally {
+        gate.resolve([]);
+        await f.close();
+      }
+    },
+  );
+
+  it("allows customized instructions and returns only reconciled edits and deletions", async () => {
+    const f = await inboxSetup();
+    try {
+      await f.saveInstructions(
+        f.instructions.replace("# Inbox access", "# My triage rules"),
+      );
+      const edited = signed(f.author, {
+        kind: 40003,
+        content: "CURRENT BODY",
+        created_at: 101,
+        tags: [
+          ["h", channel],
+          ["e", f.original.id],
+        ],
+      });
+      f.query.mockImplementation(async ([filter]) =>
+        filter?.["#e"]
+          ? filter.until === undefined
+            ? [edited]
+            : []
+          : [f.original],
+      );
+      const result = JSON.parse((await f.readInbox()) as string);
+      expect(result.map((item: { preview: string }) => item.preview)).toEqual([
+        "CURRENT BODY",
+      ]);
+      const deletion = signed(f.author, {
+        kind: 5,
+        content: "",
+        created_at: 102,
+        tags: [
+          ["h", channel],
+          ["e", f.original.id],
+        ],
+      });
+      f.query.mockImplementation(async ([filter]) =>
+        filter?.["#e"]
+          ? filter.until === undefined
+            ? [edited, deletion]
+            : []
+          : [f.original],
+      );
+      f.owner.session.inboxFeed.stale();
+      expect(JSON.parse((await f.readInbox()) as string)).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each(["unchanged", "local unread", "local unread after observation"])(
+    "retries failed read-marker sync with %s and applies the remote read frontier",
+    async (intent) => {
+      const marker = event("f", {
+        pubkey: viewer,
+        kind: 30078,
+        tags: [
+          ["d", `read-state:${"f".repeat(32)}`],
+          ["t", "read-state"],
+        ],
+        content: "host-encrypted read frontier",
+      });
+      const f = await inboxSetup(true, undefined, {
+        // Local manual unread does not publish a frontier on a sync-capable host.
+        sign: async () => {
+          throw new Error("Unexpected marker signing");
+        },
+        publish: async () => {
+          throw new Error("Unexpected marker publication");
+        },
+        decode: async (events) =>
+          events.map(({ id }) => ({
+            eventId: id,
+            blob: {
+              v: 1,
+              client_id: "other-device",
+              contexts: { [channel]: 100 },
+            },
+          })),
+      });
+      let fail = true;
+      let observed = false;
+      f.query.mockImplementation(async (filters) => {
+        if (filters[0]?.kinds?.includes(30078)) {
+          if (fail) throw new Error("Read-marker enumeration failed");
+          return observed ? [marker] : [];
+        }
+        return f.healthyQuery(filters);
+      });
+      const markerReads = () =>
+        f.query.mock.calls.filter(([filters]) =>
+          filters[0]?.kinds?.includes(30078),
+        ).length;
+      try {
+        if (intent === "local unread after observation") {
+          fail = false;
+          expect(
+            JSON.parse((await f.readInbox()) as string)[0]?.unread_count,
+          ).toBe(1);
+          expect(f.owner.session.unread.sync().completeness).toBe("bounded");
+          fail = true;
+          await f.owner.session.unread.retrySync();
+        }
+        await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+        expect(f.owner.session.unread.inbox()).toMatchObject({
+          status: "ready",
+          freshness: "observed",
+          items: [expect.objectContaining({ unreadCount: 1 })],
+        });
+        expect(f.owner.session.unread.sync()).toMatchObject({
+          status: "error",
+        });
+        if (intent !== "unchanged") {
+          await f.owner.session.unread.markUnreadLocal({
+            kind: "channel",
+            channelId: f.privateDm,
+          });
+          expect(f.owner.session.unread.sync().status).toBe("pending");
+          // A previously successful observation must not disguise a later failure either.
+          if (intent === "local unread after observation")
+            await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+        }
+        const before = markerReads();
+        fail = false;
+        observed = true;
+        const result = JSON.parse((await f.readInbox()) as string);
+        expect(markerReads()).toBe(before + 1);
+        expect(result).toEqual([
+          expect.objectContaining({ preview: "OLD BODY", unread_count: 0 }),
+        ]);
+        expect(f.owner.session.unread.sync().status).toBe("reconciled");
+        if (intent !== "unchanged") {
+          await f.owner.session.unread.markUnreadLocal({
+            kind: "channel",
+            channelId: f.privateDm,
+          });
+          expect(f.owner.session.unread.sync().status).toBe("pending");
+          const healthyReads = markerReads();
+          expect(
+            JSON.parse((await f.readInbox()) as string)[0]?.unread_count,
+          ).toBe(0);
+          expect(markerReads()).toBe(healthyReads);
+          expect(
+            f.owner.session.unread.snapshot({
+              kind: "channel",
+              channelId: f.privateDm,
+            }).manual,
+          ).toBe("local-only");
+        }
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it("recovers local-only Inbox after a connection gap without remote read markers", async () => {
+    const f = await inboxSetup();
+    try {
+      expect(JSON.parse((await f.readInbox()) as string)[0]?.unread_count).toBe(
+        1,
+      );
+      expect(f.owner.session.unread.sync()).toMatchObject({
+        capability: "unsupported",
+        status: "local",
+      });
+      f.live.state({ status: "retrying", routes: [] });
+      f.live.state({ status: "connected", routes: [] });
+      expect(JSON.parse((await f.readInbox()) as string)[0]?.unread_count).toBe(
+        1,
+      );
+      expect(
+        f.query.mock.calls.some(([filters]) =>
+          filters.some((filter) => filter.kinds?.includes(30078)),
+        ),
+      ).toBe(false);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it.each(["unchanged", "local unread"])(
+    "withholds observed notifications when read sync fails with %s during the final Bestie check",
+    async (intent) => {
+      const f = await inboxSetup(true, undefined, { decode: async () => [] });
+      const gate = runnerGate<string | null>();
+      const started = runnerGate();
+      try {
+        await f.readInbox();
+        f.account.mockResolvedValueOnce(bot).mockImplementationOnce(() => {
+          started.resolve();
+          return gate.promise;
+        });
+        const pending = f.readInbox();
+        const rejected = expect(pending).rejects.toThrow(/Inbox.*retry/i);
+        await started.promise;
+        f.query.mockImplementation(async (filters) => {
+          if (filters[0]?.kinds?.includes(30078))
+            throw new Error("Read-marker enumeration failed");
+          return f.healthyQuery(filters);
+        });
+        await f.owner.session.unread.retrySync();
+        expect(f.owner.session.unread.sync().status).toBe("error");
+        if (intent === "local unread") {
+          await f.owner.session.unread.markUnreadLocal({
+            kind: "channel",
+            channelId: f.privateDm,
+          });
+          expect(f.owner.session.unread.sync().status).toBe("local");
+        }
+        gate.resolve(bot);
+        await rejected;
+      } finally {
+        gate.resolve(bot);
+        await f.close();
+      }
+    },
+  );
+
+  it.each(["unread", "overlays"])(
+    "rejects a failed %s read instead of stale content, then retries",
+    async (stage) => {
+      const f = await inboxSetup();
+      try {
+        f.query.mockImplementation(async ([filter]) => {
+          if (stage === "overlays" ? !!filter?.["#e"] : !!filter?.["#h"])
+            throw new Error("Notification read failed");
+          return filter?.["#e"] ? [] : [f.original];
+        });
+        await expect(f.readInbox()).rejects.toThrow(/Inbox.*retry/i);
+        f.query.mockImplementation(async ([filter]) =>
+          filter?.["#e"] ? [] : [f.original],
+        );
+        expect(JSON.parse((await f.readInbox()) as string)[0]?.preview).toBe(
+          "OLD BODY",
+        );
+      } finally {
+        await f.close();
+      }
+    },
+  );
+
+  it.each([
+    "permission",
+    "Bestie choice",
+    "retype",
+    "stop",
+    "cache clear",
+    "disconnect",
+  ])("withholds a held read after %s changes", async (change) => {
+    const f = await inboxSetup();
+    if (change === "retype") await f.finishTurn();
+    const gate = runnerGate<RelayEvent[]>();
+    const started = runnerGate();
+    f.query.mockImplementation(async ([filter]) => {
+      if (filter?.["#e"]) {
+        started.resolve();
+        return gate.promise;
+      }
+      return [f.original];
+    });
+    const pending = f.handle.inbox?.(f.context);
+    const rejected = expect(pending).rejects.toThrow();
+    try {
+      await started.promise;
+      expect(f.owner.session.inboxFeed.snapshot().incomplete).toContain(
+        f.original.id,
+      );
+      if (change === "permission") await f.saveInstructions("");
+      if (change === "Bestie choice") f.selectBestie(sibling);
+      if (change === "retype") {
+        f.plugin.agents.register({
+          id: "replacement",
+          title: "Replacement",
+          defaults: () => ({ config: {} }),
+          run: vi.fn(),
+        });
+        await f.service.retype(bot, "example/replacement", {
+          config: { instructions: f.instructions },
+        });
+      }
+      if (change === "stop") await f.ctx.fiber.dispose();
+      if (change === "cache clear") await f.owner.clearCache();
+      if (change === "disconnect")
+        f.live.state({ status: "retrying", routes: [] });
+      gate.resolve([]);
+      await rejected;
+    } finally {
+      gate.resolve([]);
+      await f.close();
+    }
+  });
 });
 
 it("leaves a plugin's note for an agent's next turn in a channel, once, while this copy runs it", async () => {

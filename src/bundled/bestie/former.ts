@@ -365,8 +365,8 @@ export function stopFormerCheckIns(relay: RelayData, agents: ReconcileAgents) {
   };
 }
 
-/** Turns Remembers you on for a local agent this device just made Bestie,
- * unless its type can't take it or it already has it. */
+/** Turns memory on for a local agent this device just made Bestie. Inbox
+ * stays as chosen. A Bestie configured elsewhere keeps its existing choices. */
 export function rememberNewBestie(
   relay: RelayData,
   agents: ReconcileAgents,
@@ -380,12 +380,15 @@ export function rememberNewBestie(
         candidate.place === "here" &&
         inCommunity(candidate, relay.snapshot()),
     );
-  if (
-    !agent ||
-    cannotEdit(agents, agent) ||
+  if (!agent || cannotEdit(agents, agent)) return Promise.resolve();
+  return [memory].reduce(async (saved, feature) => {
+    await saved;
+    const current = agents
+      .snapshot()
+      .agents.find((each) => each.key === agent.key);
     // Never a second section, even beside one edited by hand.
-    featureState(instructionsOf(agent), memory) !== "off"
-  )
-    return Promise.resolve();
-  return saveFeature(agents, agent, memory, true);
+    if (!current || featureState(instructionsOf(current), feature) !== "off")
+      return;
+    await saveFeature(agents, current, feature, true);
+  }, Promise.resolve());
 }

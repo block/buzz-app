@@ -2,7 +2,7 @@
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memories } from "./client";
+import type { BuzzClient, Context, Memories } from "./client";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
@@ -207,6 +207,17 @@ export function appClient(
       check();
       options.remembered?.();
     },
+    ...(agent.inbox
+      ? {
+          inbox: async (context: Context) => {
+            check();
+            const result = await agent.inbox?.(context);
+            check();
+            if (!result) throw new Error("Inbox access is unavailable");
+            return result;
+          },
+        }
+      : {}),
     agentTypes: async () => {
       check();
       if (!agent.agentTypes)

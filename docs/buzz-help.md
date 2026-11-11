@@ -949,7 +949,30 @@ available rather than silently discarding it.
   Bestie choice unchanged; it does not delete a newly created agent. A hosted
   Bestie whose provider holds its instructions (Builderlab does) shows a
   **Bestie** tab where **Remembers you** edits them through the provider;
-  check-ins stay unavailable for hosted agents.
+  check-ins and Inbox access stay unavailable for hosted agents.
+- In your agent's **Bestie** tab, **Behavior** groups **Remembers you** and
+  **Checks in**. Check-ins need memory on and run once an hour while Buzz is open
+  and the Watching plugin is on. Each wake uses tokens.
+- In that tab, **What your Bestie can read** separates Inbox
+  access from private-channel membership. **Inbox** lets a local Bestie
+  help triage notifications, including those from private channels and DMs. It
+  does not join those conversations, grant their history, or allow replies there.
+  It starts off until you turn it on. Choosing a Bestie again preserves its
+  saved Inbox preference. A former Bestie's Inbox switch saves that preference,
+  but access stays inactive until it is your current Bestie. Reads are allowed
+  only in an explicitly private DM or Solo chat containing just you and Bestie.
+  Private-channel rows let you remove Bestie,
+  add it to one channel, or add it to all your currently eligible private
+  channels—not future ones. Added here, it joins as a guest and cannot post;
+  existing participants keep their roles. A channel owner or admin can change
+  its access to **Participating** to let it post. This panel does not add it to DMs.
+  Changing Inbox access does not change membership,
+  and removing channel membership does not turn off Inbox access.
+  If Inbox cannot finish checking notification updates or read markers, the tool
+  asks you to retry instead of returning an empty, partial or stale Inbox.
+  Inbox access does not add message approval before Bestie posts. Private read access is enforced;
+  its instructions also say to keep Inbox content private to you. That is not a
+  technical guarantee against later disclosure or retention in session history.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

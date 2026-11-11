@@ -1387,6 +1387,7 @@ it("offers only Copy link for a not-joined preview, keeping sidebar actions for 
     capability: "frontier-sync",
     status: "reconciled",
     completeness: "snapshot",
+    observationOwed: false,
   } as const;
   const snapshots = new Map<string, UnreadSnapshot>();
   h.session.unread = {

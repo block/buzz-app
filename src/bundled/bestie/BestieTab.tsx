@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { watchSlug } from "../../features/agents/attention";
 import type {
   Agent,
@@ -10,7 +10,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { BestieIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header } from "../../shared/design-system/ui/Header";
 import {
   MenuGroup,
   MenuGroupLabel,
@@ -25,6 +25,7 @@ import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPrefere
 import { bestieName, useBestieChoice } from "../agents/BestieChoice";
 import {
   FEATURES,
+  inbox,
   type Feature,
   featureState,
   restoredFeature,
@@ -191,6 +192,8 @@ function BestieTab({
     (choice) => choice.pubkey !== agent.pubkey,
   );
   const name = agent.name || "This agent";
+  const accessHeading = useId();
+  const behaviorHeading = useId();
   const switches = (features: readonly Feature[]) =>
     features.map((feature) => (
       <FeatureSwitch
@@ -213,7 +216,7 @@ function BestieTab({
         {former ? (
           <PreferenceRow
             icon={<BestieIcon size="1rem" />}
-            title={`${name} is no longer your Bestie. These are still on.`}
+            title={`${name} is no longer your Bestie. Manage its saved settings and channel access below.`}
             trailing={
               <Button
                 variant="outline"
@@ -224,7 +227,7 @@ function BestieTab({
                 }
                 onClick={() => bestie.make(agent.pubkey)}
               >
-                Make my Bestie again
+                Make your Bestie again
               </Button>
             }
           />
@@ -259,7 +262,7 @@ function BestieTab({
         {!former && bestie.remove && (
           <PreferenceRow
             title="Remove as Bestie"
-            subtitle="Have no Bestie until you make one again."
+            subtitle="Go without a Bestie until you choose one again."
             trailing={(label) => (
               <Button
                 variant="outline"
@@ -272,19 +275,30 @@ function BestieTab({
           />
         )}
       </SettingsGroup>
-      <InlineHeader title="Settings" />
-      <SettingsGroup>
-        {switches(FEATURES.filter((feature) => !feature.timer))}
-      </SettingsGroup>
-      <InlineHeader title="Check-ins" />
-      <SettingsGroup>
-        {switches(FEATURES.filter((feature) => feature.timer))}
-      </SettingsGroup>
-      <PrivateChannels
-        session={session}
-        bestie={agent.pubkey}
-        {...(former && { former: name })}
-      />
+      <section aria-labelledby={behaviorHeading} className="grid gap-3">
+        <Header id={behaviorHeading} title="Behavior" level={3} />
+        <SettingsGroup>
+          {switches(FEATURES.filter((feature) => feature !== inbox))}
+        </SettingsGroup>
+      </section>
+      <section aria-labelledby={accessHeading} className="grid gap-6">
+        <Header
+          level={3}
+          id={accessHeading}
+          title={former ? `What ${name} can read` : "What your Bestie can read"}
+          subtitle={
+            former
+              ? `${name} keeps access to these channels until you remove it. Its channel role determines whether it can post. Inbox access is separate from channel membership.`
+              : "Your Bestie can already access every public channel and discussion. Adding it to a private channel here gives it read-only access. To let it post or respond there, a channel owner or admin must change its access to Participating."
+          }
+        />
+        <SettingsGroup>{switches([inbox])}</SettingsGroup>
+        <PrivateChannels
+          session={session}
+          bestie={agent.pubkey}
+          {...(former && { former: name })}
+        />
+      </section>
       {bestie.view}
     </div>
   );
@@ -315,7 +329,10 @@ function FeatureSwitch({
   setSaving(saving: boolean): void;
 }) {
   const [error, setError] = useState<string>();
-  const problem = cannotEdit(agents, agent, feature);
+  const problem =
+    feature === inbox && agent.place !== "here"
+      ? "Not available with remote agents yet."
+      : cannotEdit(agents, agent, feature);
   if (problem)
     return <PreferenceRow title={feature.title} subtitle={problem} />;
   if (hosted && !hosted.loaded)
@@ -413,12 +430,14 @@ function FeatureSwitch({
               : // Paused on its own in the Attention tab, which can't resume a
                 // timer: saving it again here does.
                 checked && timer?.value.type === "timer" && !timer.value.enabled
-                ? `Paused in Attention. Turn ${feature.title} off and on again to restart it.`
+                ? "Paused in Attention. Turn check-ins off and on again to restart."
                 : // Attention reads off while no plugin shows it, as when the
                   // Watching plugin is off.
                   checked && feature.timer && !agent.attentionEnabled
                   ? "Paused: watches aren't running on this device. Turn on the Attention plugin."
-                  : feature.description
+                  : former && feature === inbox
+                    ? `Inactive while ${agent.name || "this agent"} is not your Bestie. This saves your preference for when you choose it again.`
+                    : feature.description
         }
         checked={checked}
         // One left on can still be turned off.
@@ -429,7 +448,7 @@ function FeatureSwitch({
           failed too, still runs: Remove takes it away. */}
       {timer && !checked && (
         <PreferenceRow
-          title={`${feature.title}'s timer is still saved`}
+          title="Check-in timer is still saved"
           subtitle="Its section in Instructions is missing, so it reads as off."
           trailing={(label) => (
             <Button

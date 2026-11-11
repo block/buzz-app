@@ -1,3 +1,9 @@
+import type { Context as ToolContext } from "../../buzz-mcp/client";
+import {
+  checkInboxConversation,
+  privateInboxConversation,
+} from "./inbox-conversation";
+import { hasFeature } from "./bestie-features";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
 import {
@@ -123,6 +129,7 @@ import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import type { InboxItem } from "../relay/inbox";
 import {
   parseSlug,
   type AttentionObject,
@@ -519,6 +526,10 @@ export type AgentHandle = Readonly<{
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
+  /** The owner's bounded Inbox only when it is delegated to this Bestie. */
+  inbox?(
+    context: ToolContext,
+  ): Promise<Readonly<{ items: readonly InboxItem[] }>>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
   templates(): readonly Readonly<{
@@ -2137,6 +2148,137 @@ export class AgentsService extends Service implements Agents {
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
       community: (agent) => this.bindingOf(agent),
+      inbox: async (agent, context) => {
+        const channel = context?.channel;
+        const relay = this.relay(agent.key);
+        const snapshot = relay?.snapshot();
+        const session = snapshot?.session;
+        const current = () => this.agent(agent.key);
+        const enabled = (candidate: Agent | undefined) => {
+          const instructions = (candidate?.config as { instructions?: unknown })
+            ?.instructions;
+          return (
+            candidate?.pubkey === agent.pubkey &&
+            candidate.owner === agent.owner &&
+            typeof instructions === "string" &&
+            hasFeature(instructions, { id: "inbox" })
+          );
+        };
+        if (
+          !relay ||
+          !snapshot ||
+          snapshot.status !== "ready" ||
+          snapshot.viewer !== agent.owner ||
+          !session?.mainAgent ||
+          !enabled(current())
+        )
+          throw new Error("Inbox access is unavailable");
+        const channels = session.channels.list();
+        if (channels.status !== "ready" || channels.coverage === "partial") {
+          if (channels.coverage === "partial") session.channels.refreshList?.();
+          else session.channels.ensureList();
+          throw new Error("Inbox is not ready. Please retry.");
+        }
+        await checkInboxConversation(
+          session,
+          channel,
+          agent.owner,
+          agent.pubkey,
+        );
+        // Account state is authoritative: an agent that ceased to be Bestie
+        // loses access immediately, even if its old instructions remain.
+        if (
+          (await session.mainAgent.read()) !== agent.pubkey ||
+          !enabled(current())
+        )
+          throw new Error(
+            "Your owner has not allowed Inbox access for this Bestie.",
+          );
+        const active = relay.snapshot();
+        if (
+          active.status !== "ready" ||
+          active.viewer !== agent.owner ||
+          active.session !== session ||
+          !enabled(current()) ||
+          !channel ||
+          !privateInboxConversation(session, channel, agent.owner, agent.pubkey)
+        )
+          throw new Error("Inbox access is unavailable");
+        const discovered = session.channels.list();
+        if (
+          discovered.status !== "ready" ||
+          discovered.coverage === "partial"
+        ) {
+          if (discovered.coverage === "partial")
+            session.channels.refreshList?.();
+          else session.channels.ensureList();
+          throw new Error("Inbox is not ready. Please retry.");
+        }
+        const unread = session.unread.inbox();
+        const feed = session.inboxFeed.snapshot();
+        const sync = session.unread.sync();
+        await Promise.all([
+          ...(sync.observationOwed ||
+          sync.status === "error" ||
+          (sync.status === "stale" && sync.capability !== "unsupported")
+            ? [session.unread.retrySync()]
+            : []),
+          unread.status === "error" || unread.freshness === "stale"
+            ? session.unread.refresh()
+            : session.unread.ensure(),
+          feed.status === "error"
+            ? session.inboxFeed.refresh()
+            : session.inboxFeed.ensure(),
+        ]);
+        await checkInboxConversation(
+          session,
+          channel,
+          agent.owner,
+          agent.pubkey,
+        );
+        if (
+          (await session.mainAgent.read()) !== agent.pubkey ||
+          !enabled(current())
+        )
+          throw new Error(
+            "Your owner has not allowed Inbox access for this Bestie.",
+          );
+        // A successful await can still leave failed or retired evidence. Never
+        // turn that into notification content, partial results, or an empty Inbox.
+        const live = relay.snapshot();
+        const roster = session.channels.list();
+        const result = session.unread.inbox();
+        const settled = session.inboxFeed.snapshot();
+        const readSync = session.unread.sync();
+        // Local-only hosts have no remote markers to refresh after a live gap.
+        // Their storage errors still block release, as do all remote sync gaps.
+        if (
+          !enabled(current()) ||
+          !channel ||
+          !privateInboxConversation(
+            session,
+            channel,
+            agent.owner,
+            agent.pubkey,
+          ) ||
+          live.status !== "ready" ||
+          live.viewer !== agent.owner ||
+          live.session !== session ||
+          roster.status !== "ready" ||
+          roster.coverage === "partial" ||
+          result.status !== "ready" ||
+          result.freshness !== "observed" ||
+          readSync.observationOwed ||
+          readSync.status === "loading" ||
+          readSync.status === "error" ||
+          (readSync.status === "stale" &&
+            readSync.capability !== "unsupported") ||
+          settled.status !== "ready" ||
+          settled.incomplete.length
+        )
+          throw new Error("Inbox is not ready. Please retry.");
+        return { items: result.items };
+      },
       resumeFollowUps: (agent, turns) => {
         const session = this.bindingOf(agent)?.session;
         if (session)

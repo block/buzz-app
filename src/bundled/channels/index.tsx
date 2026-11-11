@@ -87,7 +87,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
     matches: (message, session) =>
-      canStartLinkedChat(session, message.channelId) &&
+      canStartLinkedChat(session) &&
       (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
     component: ({ message, session }) => (
       <StartLinkedChat

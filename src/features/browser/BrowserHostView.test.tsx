@@ -103,6 +103,27 @@ it("attaches hidden-first guest bounds and detaches on close", async () => {
   );
 });
 
+it("opens its guest with the requested user agent", async () => {
+  const platform = fakePlatform();
+  render(
+    <BrowserHostView
+      url="https://example.com"
+      userAgent="Example/1.0"
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.attach).toHaveBeenLastCalledWith(
+      "https://example.com",
+      expect.any(Object),
+      undefined,
+      undefined,
+      "Example/1.0",
+    ),
+  );
+});
+
 it("detaches a late attach result and serializes its replacement", async () => {
   const first = deferred<string>();
   const platform = fakePlatform();
@@ -424,6 +445,7 @@ it("retries a failed evicted guest at its last page only on explicit Reload", as
       expect.any(Object),
       undefined,
       undefined,
+      undefined,
     ),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -456,6 +478,7 @@ it("retries a failed evicted guest at its last page only on explicit Reload", as
   expect(platform.attach).toHaveBeenLastCalledWith(
     "https://first.example/signed-in",
     expect.any(Object),
+    undefined,
     undefined,
     undefined,
   );
@@ -495,6 +518,40 @@ it("parks a kept-storage guest on unmount and adopts it when remounted", async (
   );
   expect(platform.attach).toHaveBeenCalledTimes(1);
   expect(platform.detach).not.toHaveBeenCalled();
+});
+
+it("does not adopt a parked guest for a different User-Agent", async () => {
+  const platform = fakePlatform();
+  const sessions = new BrowserSessions(platform);
+  const mount = (userAgent?: string) =>
+    render(
+      <BrowserHostView
+        url="https://app.example/"
+        storage="builderlab-apps"
+        {...(userAgent === undefined ? {} : { userAgent })}
+        platform={platform}
+        sessions={sessions}
+      />,
+    );
+  const first = mount("Agent/A");
+  await waitFor(() => expect(platform.setBounds).toHaveBeenCalled());
+  first.unmount();
+  await waitFor(() =>
+    expect(platform.setBounds).toHaveBeenLastCalledWith(
+      "session-1",
+      expect.any(Object),
+      false,
+    ),
+  );
+  mount();
+  await waitFor(() => expect(platform.attach).toHaveBeenCalledTimes(2));
+  expect(platform.attach).toHaveBeenLastCalledWith(
+    "https://app.example/",
+    expect.any(Object),
+    "builderlab-apps",
+    undefined,
+    undefined,
+  );
 });
 
 it("stays shown for a popup that does not reach over it", async () => {
@@ -1218,6 +1275,7 @@ it.each([false, true])(
       expect.any(Object),
       "viewer-test",
       builderlab,
+      undefined,
     );
     lifetime.abort();
   },
@@ -1300,6 +1358,7 @@ it("restores the last approved app after eviction instead of a later consent tic
     expect.any(Object),
     "viewer-test",
     builderlab,
+    undefined,
   );
   expect(canResumeUrl).toHaveBeenCalledWith(destination);
   expect(canResumeUrl).toHaveBeenCalledWith(consent);

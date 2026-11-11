@@ -76,6 +76,8 @@ export type ChatListItem = Readonly<{
   title: string;
   /** Stays listed past a workspace's cap, like the open or an unread chat. */
   pinned?: boolean;
+  /** Listed under Inactive, after the workspaces, instead of in its workspace. */
+  inactive?: boolean;
 }>;
 
 /** Each workspace lists its most recent chats; Show more adds a step. */
@@ -131,6 +133,7 @@ export function SoloWorkspaces({
   const rowHosts = useRef(new Map<string, WorkspaceRowsHost>());
   const collapsedKey = "solo:collapsed-projects";
   const expandedKey = "solo:expanded-projects";
+  const inactiveOpenKey = "solo:inactive-open";
   const snapshot = useSyncExternalStore(
     preferences.subscribe,
     preferences.snapshot,
@@ -171,6 +174,9 @@ export function SoloWorkspaces({
         : new Set([...current, ...ids]),
     );
   }, []);
+  const [inactiveOpen, setInactiveOpen] = useState(
+    () => readView<unknown>(scope, inactiveOpenKey, false) === true,
+  );
   const [sharing, setSharing] = useState<{
     id: string;
     visit: AbortSignal | undefined;
@@ -255,15 +261,26 @@ export function SoloWorkspaces({
       return next;
     });
   }, [draftProject, scope]);
+  const workspaceOf = (id: string) => {
+    const project = assigned[id];
+    return project && ids.has(project) ? project : "";
+  };
+  // A chat being renamed stays in its workspace until the editor closes.
+  const inactiveRows = chats.filter(
+    (item) => item.inactive && item.id !== renaming,
+  );
+  const listedChats = chats.filter(
+    (item) => !item.inactive || item.id === renaming,
+  );
   const projects = [
     ...groups.map((group) => ({
       ...group,
-      rows: chats.filter((item) => assigned[item.id] === group.id),
+      rows: listedChats.filter((item) => assigned[item.id] === group.id),
     })),
     {
       id: "",
       name: "Chats",
-      rows: chats.filter((item) => !ids.has(assigned[item.id] ?? "")),
+      rows: listedChats.filter((item) => !ids.has(assigned[item.id] ?? "")),
     },
   ];
   // A collapse request takes effect after the editor closes. Keep its draft and
@@ -389,12 +406,18 @@ export function SoloWorkspaces({
   const soloNeighborsRef = handoff?.soloNeighbors;
   useLayoutEffect(() => {
     if (!soloNeighborsRef) return;
-    const shown = visible.map((project) => ({
-      rows: project.rows,
-      shown: collapsed.includes(project.id)
-        ? []
-        : project.listed.map((item) => item.id),
-    }));
+    const shown = [
+      ...visible.map((project) => ({
+        rows: project.rows,
+        shown: collapsed.includes(project.id)
+          ? []
+          : project.listed.map((item) => item.id),
+      })),
+      {
+        rows: inactiveRows,
+        shown: inactiveOpen ? inactiveRows.map((item) => item.id) : [],
+      },
+    ];
     const neighbors = (id: string) =>
       soloNeighbors(shown, id).filter(
         (neighbor) => !pluginHiddenRows.current.has(neighbor),
@@ -427,11 +450,12 @@ export function SoloWorkspaces({
       if (item) setChatSettings({ item, visit: currentVisit.current });
     },
     rename: (id) => {
-      const project = projects.find((project) =>
-        project.rows.some((item) => item.id === id),
-      );
       const channel = channels.channels.find((channel) => channel.id === id);
-      if (!project || !canRename(project.id, channel)) return false;
+      if (
+        !chats.some((item) => item.id === id) ||
+        !canRename(workspaceOf(id), channel)
+      )
+        return false;
       setRenaming(id);
       return true;
     },
@@ -449,6 +473,41 @@ export function SoloWorkspaces({
   useLayoutEffect(() => {
     entryActions.current = actions;
   });
+  const row = (item: ChatListItem, projectId: string) => {
+    const channel = channels.channels.find((channel) => channel.id === item.id);
+    if (renaming === item.id)
+      return (
+        <SoloChatName
+          key={item.id}
+          session={session}
+          id={item.id}
+          title={item.title}
+          close={(focus) => {
+            setRenaming(undefined);
+            if (focus) setRowFocus(item.id);
+          }}
+        />
+      );
+    return (
+      <SoloChatEntry
+        key={item.id}
+        id={item.id}
+        title={item.title}
+        pinned={item.pinned}
+        projectKey={DROP + projectId}
+        sectionKey={projectId}
+        channel={channel}
+        renameable={canRename(projectId, channel)}
+        lifecycle={!!handoff}
+        session={session}
+        actions={entryActions}
+        renderChat={renderChat}
+        renderChatMenu={renderChatMenu}
+        sidebarRows={sidebarRows}
+        onHiddenChange={setRowHidden}
+      />
+    );
+  };
   const moves =
     snapshot.moves?.filter((move) =>
       chats.some((item) => item.id === move.channelId),
@@ -569,51 +628,17 @@ export function SoloWorkspaces({
           </ChatActionsMenu>
         )}
         {project.listed.map((item) => {
-          const channel = channels.channels.find(
-            (channel) => channel.id === item.id,
-          );
-          if (renaming === item.id)
-            return (
-              <SoloChatName
-                key={item.id}
-                session={session}
-                id={item.id}
-                title={item.title}
-                close={(focus) => {
-                  setRenaming(undefined);
-                  if (focus) setRowFocus(item.id);
-                }}
-              />
-            );
-          const row = (
-            <SoloChatEntry
-              key={item.id}
-              id={item.id}
-              title={item.title}
-              pinned={item.pinned}
-              projectKey={DROP + project.id}
-              sectionKey={project.id}
-              channel={channel}
-              renameable={canRename(project.id, channel)}
-              lifecycle={!!handoff}
-              session={session}
-              actions={entryActions}
-              renderChat={renderChat}
-              renderChatMenu={renderChatMenu}
-              sidebarRows={sidebarRows}
-              onHiddenChange={setRowHidden}
-            />
-          );
-          return compose && project.id ? (
+          const entry = row(item, project.id);
+          return compose && project.id && renaming !== item.id ? (
             <NavigationCard
               key={item.id}
               tone="tonal"
               className={styles.composedChat}
             >
-              {row}
+              {entry}
             </NavigationCard>
           ) : (
-            row
+            entry
           );
         })}
         {(project.hidden > 0 || project.foldable) && (
@@ -769,6 +794,46 @@ export function SoloWorkspaces({
               ordinary: entries.map((entry) => entry.ordinary),
             })
           : entries.map((entry) => entry.ordinary)}
+        {inactiveRows.length > 0 && (
+          <Collapsible.Root
+            className={`${styles.project} ${channelStyles.channelSection}`}
+            data-solo-inactive=""
+            open={inactiveOpen}
+            onOpenChange={(open) => {
+              setInactiveOpen(open);
+              writeView(scope, inactiveOpenKey, open);
+            }}
+            data-animate={animate || undefined}
+          >
+            <div data-solo-menu-id="solo-inactive">
+              <NavigationSectionHeading disclosure>
+                <Collapsible.Trigger
+                  type="button"
+                  className={styles.projectHeading}
+                  aria-expanded={inactiveOpen}
+                  onClick={(event) => setAnimate(event.detail > 0)}
+                >
+                  <FadingLabel className={channelStyles.sectionTitle}>
+                    Inactive for 72 hours
+                  </FadingLabel>
+                  <span className={styles.inactiveCount}>
+                    ({inactiveRows.length})
+                  </span>
+                  <span
+                    className={channelStyles.sectionChevron}
+                    aria-hidden="true"
+                    data-navigation-reveal=""
+                  >
+                    <CaretDownIcon size={15} strokeWidth={2.5} />
+                  </span>
+                </Collapsible.Trigger>
+              </NavigationSectionHeading>
+            </div>
+            <Collapsible.Panel className={styles.projectPanel}>
+              {inactiveRows.map((item) => row(item, workspaceOf(item.id)))}
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        )}
       </ChannelSidebarDnd>
       {converting && (
         <ConvertToChannel

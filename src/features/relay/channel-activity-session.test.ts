@@ -579,3 +579,32 @@ it("projects authoritative empty activity through later loading and failed refre
     h.owner.dispose();
   }
 });
+it("reads activity for retained channels while held and cancels after the last release", async () => {
+  const h = setup();
+  try {
+    await h.initial();
+    expect(h.activity).not.toHaveBeenCalled();
+    const alpha = (channel: { id: string }) => channel.id === "alpha";
+    const release = h.channels.retainActivity(alpha);
+    const second = h.channels.retainActivity(alpha);
+    expect(h.activity).toHaveBeenCalledOnce();
+    const reading = take(h.pending);
+    expect(reading.ids).toEqual(["alpha"]);
+    release();
+    release();
+    expect(reading.signal.aborted).toBe(false);
+    reading.resolve([message(h.peer, "alpha", "history", 60)]);
+    await flush();
+    expect(
+      h.channels.list().channels.find((c) => c.id === "alpha")?.lastActivityAt,
+    ).toBe(60);
+    second();
+    expect(h.channels.list().activityStatus).not.toBe("loading");
+    h.channels.retainActivity(alpha);
+    expect(h.activity).toHaveBeenCalledTimes(2);
+    await h.preferences.setSort("channels", "recent", []);
+    expect(h.pending.at(-1)?.ids).toEqual(["alpha", "beta"]);
+  } finally {
+    h.owner.dispose();
+  }
+});

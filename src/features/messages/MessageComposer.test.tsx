@@ -9273,6 +9273,7 @@ it.each([
       session: {
         ...h.session,
         channels: {
+          retainActivity: () => () => {},
           window: () => ({
             channelId: "channel",
             status: "idle",

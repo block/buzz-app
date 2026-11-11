@@ -442,6 +442,11 @@ revokes all of them, and a pairing unused for 30 days expires.
   work in that folder for the rest of the conversation. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
+- **Inactive for 72 hours** collects Solo chats with no messages in the last
+  72 hours, below the workspaces, with a count of the chats in it. It starts
+  collapsed and remembers whether you opened it. The open chat, a chat with a
+  working agent and unread chats stay in their workspace. A new message moves a
+  chat back.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by

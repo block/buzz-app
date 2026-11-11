@@ -244,13 +244,29 @@ export const test = base.extend({
       ["primary", new Map()],
       ["secondary", new Map()],
     ]);
+    // Solo folds chats quiet for 72 hours. Seeded 2023 times in a Solo chat
+    // move to the last day, keeping their order; later times are already current.
+    const soloShift = Math.floor(Date.now() / 1000) - 86400 - 1700000000;
     const sign = (
       kind,
       tags,
       content = "",
       key = relayKey,
       time = 1700000000,
-    ) => finalizeEvent({ kind, tags, content, created_at: time }, key);
+    ) =>
+      finalizeEvent(
+        {
+          kind,
+          tags,
+          content,
+          created_at:
+            time < 1750000000 &&
+            soloChannels.includes(tags.find(([name]) => name === "h")?.[1])
+              ? time + soloShift
+              : time,
+        },
+        key,
+      );
     const profiles = new Map(
       ["primary", "secondary"].map((community) => [
         community,

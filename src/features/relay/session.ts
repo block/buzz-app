@@ -1218,6 +1218,16 @@ export function createRelaySession(
         channels.queries.resolve?.(ids, { ...options, viewerLookup: true }) ??
         Promise.resolve(),
     }),
+    /** Loads the latest message time of the listed channels `include`
+     * accepts while held, as a Recent sort or Active filter does for all. */
+    retainActivity(include: (channel: ChannelSummary) => boolean) {
+      const demand = { include };
+      activityDemands.add(demand);
+      refreshChannelActivity();
+      return () => {
+        if (activityDemands.delete(demand)) refreshChannelActivity();
+      };
+    },
     list() {
       const snapshot = channels.queries.list();
       const activityRevision = channelActivity.revision();
@@ -3899,13 +3909,16 @@ export function createRelaySession(
     },
   });
   let activityRosterKey: string | undefined;
+  const activityDemands = new Set<{
+    include: (channel: ChannelSummary) => boolean;
+  }>();
   const refreshChannelActivity = () => {
     if (closed || !transport?.channelActivity) return;
     const preferences = sidebarPreferences.queries.snapshot().data;
-    if (
-      !Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) &&
-      !Object.values(preferences?.filters ?? {}).includes("active")
-    ) {
+    const all =
+      Object.values(preferences?.sort ?? {}).some(sidebarSortNeedsActivity) ||
+      Object.values(preferences?.filters ?? {}).includes("active");
+    if (!all && !activityDemands.size) {
       channelActivity.cancel();
       activityRosterKey = undefined;
       return;
@@ -3913,7 +3926,12 @@ export function createRelaySession(
     const roster = channels.queries.list();
     if (roster.status !== "ready") return;
     const ids = roster.channels
-      .filter((channel) => !channel.cached)
+      .filter(
+        (channel) =>
+          !channel.cached &&
+          (all ||
+            [...activityDemands].some((demand) => demand.include(channel))),
+      )
       .map((channel) => channel.id)
       .sort();
     const key = ids.join("\0");

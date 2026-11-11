@@ -383,3 +383,8 @@
     display: none;
   }
 }
+
+.inactiveCount {
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}

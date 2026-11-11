@@ -60,6 +60,7 @@ async function setup(
   ownership?: "own" | "other" | "invalid",
   visibility: "private" | "public" = "private",
   targetPicture?: string,
+  targetProfiled = true,
 ) {
   const viewer = keypair(),
     relay = keypair(),
@@ -97,10 +98,11 @@ async function setup(
   const ownerProfile = profile(owner, { name: "Owner" });
   let role: string | undefined =
     targetRole === "absent" ? undefined : targetRole;
+  let viewerRole = actor;
   let tick = 1700000000;
   let lag = false;
   const members = () => [
-    [viewer.pubkey, actor],
+    [viewer.pubkey, viewerRole],
     [owner.pubkey, "owner"],
     ...(role ? [[target.pubkey, role]] : []),
   ];
@@ -132,15 +134,20 @@ async function setup(
       ],
     }),
     viewerProfile,
-    targetProfile,
+    ...(targetProfiled ? [targetProfile] : []),
     ownerProfile,
   ];
   const publish = vi.fn(async (event: RelayEvent) => {
-    if (!lag)
+    const named = (pubkey: string) =>
+      event.tags.find(([tag, key]) => tag === "p" && key === pubkey)?.[2];
+    if (!lag) {
       role =
         event.kind === 9001
           ? undefined
-          : event.tags.find(([key]) => key === "role")?.[1];
+          : (named(target.pubkey) ??
+            event.tags.find(([key]) => key === "role")?.[1]);
+      viewerRole = named(viewer.pubkey) ?? viewerRole;
+    }
     tick++;
   });
   const write = vi.fn();
@@ -222,7 +229,9 @@ async function setup(
   if (roleRead || initialReads)
     await screen.findByRole("status", { name: "Loading members" });
   else
-    await screen.findByText(targetRole === "absent" ? "Carl (you)" : "Morgan");
+    await screen.findByText(
+      targetRole === "absent" || !targetProfiled ? "Carl (you)" : "Morgan",
+    );
   if (!initialReads)
     await vi.waitFor(() =>
       expect(session.memberAdministration.snapshot(id).status).toBe(
@@ -272,10 +281,49 @@ async function setup(
         name:
           name === "Remove from channel"
             ? `Remove ${targetAgent ? "agent" : "member"} from channel`
-            : `Change access to ${name === "Set to viewing only" ? "Viewing only" : name === "Set to participating" ? "Participating" : "Admin"}?`,
+            : name === "Transfer ownership"
+              ? "Transfer ownership to Morgan?"
+              : `Change access to ${name === "Set to viewing only" ? "Viewing only" : name === "Set to participating" ? "Participating" : "Admin"}?`,
       });
     },
   };
+}
+async function openTransferMenu({
+  actor = "owner",
+  role = "member",
+  agent = false,
+  profiled = true,
+}: {
+  actor?: "owner" | "admin";
+  role?: "member" | "bot";
+  agent?: boolean;
+  profiled?: boolean;
+} = {}) {
+  const t = await setup(
+    actor,
+    role,
+    true,
+    undefined,
+    agent,
+    undefined,
+    false,
+    true,
+    undefined,
+    undefined,
+    "private",
+    undefined,
+    profiled,
+  );
+  await t.user.click(
+    await vi.waitFor(() => {
+      const actions = document.querySelector<HTMLElement>(
+        `[data-member="${t.target.pubkey}"]`,
+      );
+      expect(actions).not.toBeNull();
+      return actions as HTMLElement;
+    }),
+  );
+  await screen.findByRole("menuitem", { name: "Remove from channel" });
 }
 it.each([
   ["owner", "member", true],
@@ -970,6 +1018,56 @@ it("keeps confirmation read-only when the verified target role changes", async (
   await screen.findByRole("searchbox");
 });
 
+it("transfers ownership from a Cancel-first confirmation and makes the viewer an admin", async () => {
+  const t = await setup();
+  const dialog = await t.choose("Transfer ownership");
+  expect(dialog).toHaveTextContent(
+    "Morgan becomes the owner of this channel and you'll become an admin. They can change your role, remove you or delete the channel. Only an owner can make you an owner again.",
+  );
+  await vi.waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus(),
+  );
+  await t.user.click(
+    within(dialog).getByRole("button", { name: "Transfer ownership" }),
+  );
+  await vi.waitFor(() =>
+    expect(t.session.memberAdministration.snapshot(id).operation?.status).toBe(
+      "confirmed",
+    ),
+  );
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.publish.mock.calls[0]?.[0].tags).toEqual([
+    ["h", id],
+    ["p", t.target.pubkey, "owner"],
+    ["p", t.viewer.pubkey, "admin"],
+  ]);
+  expect(
+    t.session.memberAdministration.snapshot(id).authority.roles,
+  ).toMatchObject({ [t.viewer.pubkey]: "admin", [t.target.pubkey]: "owner" });
+});
+it.each([
+  ["an admin", "admin", "member", false],
+  ["an agent", "owner", "member", true],
+  ["a bot", "owner", "bot", false],
+] as const)(
+  "offers no ownership transfer to %s",
+  async (_, actor, role, agent) => {
+    await openTransferMenu({ actor, role, agent });
+    expect(
+      screen.queryByRole("menuitem", { name: "Transfer ownership" }),
+    ).not.toBeInTheDocument();
+  },
+);
+it("disables ownership transfer with its reason for someone without a profile", async () => {
+  await openTransferMenu({ profiled: false });
+  const transfer = screen.getByRole("menuitem", { name: "Transfer ownership" });
+  expect(transfer).toHaveAttribute("aria-disabled", "true");
+  expect(transfer).toHaveAccessibleDescription(
+    "Ownership can only go to a person who has set up a profile.",
+  );
+});
 it("confirms removal and removes only the confirmed roster entry", async () => {
   const t = await setup();
   const membersDialog = screen.getByRole("dialog", { name: "Manage members" });
@@ -1706,7 +1804,7 @@ it.each(["ellipsis", "context", "keyboard", "context-key"])(
     }
     expect(
       (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-    ).toEqual(["View profile", "Remove from channel"]);
+    ).toEqual(["View profile", "Transfer ownership", "Remove from channel"]);
     expect(t.onOpenLink).not.toHaveBeenCalled();
     expect(t.publish).not.toHaveBeenCalled();
     await t.user.click(screen.getByRole("menuitem", { name: "View profile" }));

@@ -22,6 +22,8 @@ export type RemoteAgent = Readonly<{
   pubkey: string;
   status: "Active" | "Unattested" | "Revoked" | "Unknown";
   createdAt?: number;
+  /** The hosted agent that asked Builderlab for this one on its owner's behalf. */
+  requestedBy?: string;
   instructions?: string;
   modelId?: string;
   reasoningEffort?: string;
@@ -69,6 +71,7 @@ function modelSelectionStatus(
 }
 
 export const MAX_INSTRUCTIONS_LENGTH = 20_000;
+const REQUESTER_FIELD = "requested_by_agent_pubkey";
 const AGENT_NAME = /^[\w .-]{1,64}$/;
 const INVALID_NAME =
   "Use 1–64 letters, numbers, spaces, dots, hyphens or underscores for the agent name.";
@@ -702,12 +705,16 @@ export function createAgentClient(
         throw new Error("Builderlab returned an invalid agent list.");
       return agents.map((row) => {
         const createdAt = managementTimestamp(row.created_at);
+        const requester = row[REQUESTER_FIELD];
         return {
           id: row.agent_id,
           name: row.agent_name,
           pubkey: row.agent_pubkey,
           status: agentStatus(row.status),
           ...(createdAt === undefined ? {} : { createdAt }),
+          ...(typeof requester === "string" && /^[0-9a-f]{64}$/.test(requester)
+            ? { requestedBy: requester }
+            : {}),
           instructions: row.agent_instructions ?? "",
           ...(typeof row.model_id === "string"
             ? { modelId: row.model_id }

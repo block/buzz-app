@@ -139,6 +139,23 @@ it("lists the authenticated account through the configured native host", async (
     body: JSON.stringify({ include_instructions: true }),
   });
 });
+it.each([
+  ["ab".repeat(32), "ab".repeat(32)],
+  ["", undefined],
+  [null, undefined],
+  ["AB".repeat(32), undefined],
+  [7, undefined],
+])("lists the requesting agent %j as %j", async (sent, expected) => {
+  const h = await fixture();
+  vi.mocked(h.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agents: [{ ...row, status: 1, requested_by_agent_pubkey: sent }],
+    }),
+  );
+  const [listed] = await h.client.list(h.signal);
+  expect(listed?.requestedBy).toBe(expected);
+});
 it.each([{}, { agents: [] }])(
   "accepts an empty protobuf list %j",
   async (value) => {
@@ -189,6 +206,7 @@ it("normalizes optional creation dates from JSON without inventing dates", async
 });
 it.each([
   ["AGENT_STATUS_UNATTESTED", "Unattested"],
+  ["BEEKEEPER_AGENT_STATUS_UNATTESTED", "Unattested"],
   [1, "Unattested"],
   ["AGENT_STATUS_REVOKED", "Revoked"],
   [3, "Revoked"],

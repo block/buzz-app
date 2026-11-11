@@ -17,6 +17,7 @@ import { createNativeSession, nativeBuilderlab } from "./session";
 import { createAgentClient } from "./agents/client";
 import { startTurnStatusRecovery } from "./agents/turn-status";
 import { RemoteAgents } from "./agents/RemoteAgents";
+import { approveRequested, rejectRequested } from "./agents/approve";
 import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
@@ -322,6 +323,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
             openAgent={(pubkey) => {
               if (active() && ctx.agents.find(pubkey))
                 void ctx.navigation.open(agentTarget(pubkey));
+            }}
+            review={{
+              approve: (agent, instructions, signal) =>
+                approveRequested(
+                  agents,
+                  session,
+                  ctx.agents,
+                  agent,
+                  instructions,
+                  signal,
+                ),
+              reject: (agent, signal) =>
+                rejectRequested(agents, ctx.agents, agent, signal),
             }}
             showHeading={false}
             openAgents={() => {

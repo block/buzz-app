@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../../features/host/service";
@@ -286,4 +293,145 @@ it("uses saved avatars and opens saved rows independently of their action menus"
   expect(
     view.container.querySelector("img[src='https://example.com/helper.png']"),
   ).toBeNull();
+});
+
+const requester = { ...row, agent_id: "boss", agent_name: "Boss" };
+const requested = {
+  agent_id: "two",
+  agent_name: "Scout",
+  agent_pubkey: "cd".repeat(32),
+  status: 1,
+  requested_by_agent_pubkey: row.agent_pubkey,
+  agent_instructions: "Watch the build.",
+};
+async function requestedFixture() {
+  const h = await fixture();
+  h.request.mockResolvedValue(response([requester, requested]));
+  const review = {
+    approve: vi.fn(async (..._: unknown[]) => {}),
+    reject: vi.fn(async (..._: unknown[]) => {}),
+  };
+  render(
+    <ToastProvider>
+      <RemoteAgents {...h} active={() => true} review={review} />
+    </ToastProvider>,
+  );
+  await screen.findByText("Scout");
+  return { ...h, review };
+}
+
+async function reject(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Scout" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Reject" }));
+}
+
+it("offers approval only for a listed unattested agent another agent requested", async () => {
+  await requestedFixture();
+  const scout = screen.getByText("Scout").closest("li");
+  expect(scout).toHaveTextContent("Requested by Boss");
+  expect(
+    within(scout as HTMLElement).getByRole("button", { name: "Approve" }),
+  ).toBeVisible();
+  const boss = screen.getByText("Boss").closest("li");
+  expect(
+    within(boss as HTMLElement).queryByRole("button", { name: "Approve" }),
+  ).toBeNull();
+  cleanup();
+  const plain = await fixture();
+  plain.request.mockResolvedValue(
+    response([{ ...requested, requested_by_agent_pubkey: undefined }]),
+  );
+  render(
+    <RemoteAgents
+      {...plain}
+      active={() => true}
+      review={{ approve: vi.fn(), reject: vi.fn() }}
+    />,
+  );
+  await screen.findByText("Scout");
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.getByText(/Needs setup$/)).toBeVisible();
+});
+
+it("approves with the instructions the owner reviewed, then reloads the list", async () => {
+  const h = await requestedFixture();
+  const user = userEvent.setup();
+  const held = deferred<void>();
+  h.review.approve.mockReturnValueOnce(held.promise);
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  const dialog = await screen.findByRole("dialog", {
+    name: "Approve Scout?",
+  });
+  expect(dialog).toHaveTextContent("Requested by Boss");
+  const box = within(dialog).getByRole("textbox", { name: /Instructions/ });
+  expect(box).toHaveValue("Watch the build.");
+  await user.type(box, " Nightly.");
+  h.request.mockResolvedValue(response([requester]));
+  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(h.review.approve).toHaveBeenCalledTimes(1));
+  expect(h.review.approve).toHaveBeenCalledWith(
+    expect.objectContaining({ name: "Scout", pubkey: requested.agent_pubkey }),
+    "Watch the build. Nightly.",
+    expect.any(AbortSignal),
+  );
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  expect(box).toBeDisabled();
+  await act(async () => held.resolve());
+  await waitFor(() => expect(screen.queryByText("Scout")).toBeNull());
+  expect(h.request).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the approval open with its error until it succeeds", async () => {
+  const h = await requestedFixture();
+  const user = userEvent.setup();
+  h.review.approve.mockRejectedValueOnce(new Error("Provider down."));
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  const dialog = await screen.findByRole("dialog", { name: "Approve Scout?" });
+  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Provider down.",
+  );
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+  expect(h.request).toHaveBeenCalledTimes(1);
+  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(h.review.approve).toHaveBeenCalledTimes(2));
+});
+
+it("rejects only after confirmation, then reloads the list", async () => {
+  const h = await requestedFixture();
+  const user = userEvent.setup();
+  const held = deferred<void>();
+  h.review.reject.mockReturnValueOnce(held.promise);
+  await reject(user);
+  const dialog = await screen.findByRole("alertdialog", {
+    name: "Reject Scout?",
+  });
+  expect(h.review.reject).not.toHaveBeenCalled();
+  h.request.mockResolvedValue(response([requester]));
+  await user.click(within(dialog).getByRole("button", { name: "Reject" }));
+  await waitFor(() => expect(h.review.reject).toHaveBeenCalledTimes(1));
+  expect(h.review.reject).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "two" }),
+    expect.any(AbortSignal),
+  );
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await act(async () => held.resolve());
+  await waitFor(() => expect(screen.queryByText("Scout")).toBeNull());
+});
+
+it("shows a failed rejection and leaves the request listed", async () => {
+  const h = await requestedFixture();
+  const user = userEvent.setup();
+  h.review.reject.mockRejectedValueOnce(
+    new Error("Deletion was not confirmed."),
+  );
+  await reject(user);
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Reject" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Deletion was not confirmed.",
+  );
+  expect(screen.getByText("Scout")).toBeInTheDocument();
 });

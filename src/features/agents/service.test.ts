@@ -10343,6 +10343,61 @@ it("keeps a hosted agent whose setup failed, and finishes it without making anot
   expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
 });
 
+it("sets up a hosted agent its provider already holds, kept until setup succeeds", async () => {
+  const storage = memoryStorage();
+  const { service, plugin } = await setup({ storage });
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  const input = {
+    type: "example/cloud",
+    name: " Sky ",
+    pubkey: hostedKey,
+    config: { instructions: "Keep these." },
+  };
+  remote.activate.mockRejectedValueOnce(new Error("provider down"));
+  await expect(service.adopt(input)).rejects.toThrow("provider down");
+  expect(remote.provision).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)).toMatchObject({
+    place: "hosted",
+    unfinished: true,
+    name: "Sky",
+  });
+  const again = await setup({ storage });
+  again.plugin.agents.register(cloud().type);
+  await vi.waitFor(() =>
+    expect(again.service.find(hostedKey)?.unfinished).toBe(true),
+  );
+  const agent = await service.adopt(input);
+  expect(remote.provision).not.toHaveBeenCalled();
+  expect(remote.activate).toHaveBeenLastCalledWith({
+    pubkey: hostedKey,
+    name: "Sky",
+    community: "wss://relay.example.test",
+    auth: ["auth", viewer, "", "f".repeat(128)],
+    config: input.config,
+    signal: expect.any(AbortSignal),
+  });
+  expect(agent).toMatchObject({ pubkey: hostedKey, place: "hosted" });
+  expect(agent.unfinished).toBeUndefined();
+  expect(storage.getItem("buzz.agents.unfinished.v1")).not.toContain(hostedKey);
+});
+
+it("does not adopt an unknown type or a key that is already in use", async () => {
+  const { service, plugin } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await expect(
+    service.adopt({ type: "example/none", name: "Sky", pubkey: hostedKey }),
+  ).rejects.toThrow(/not available/);
+  await expect(
+    service.adopt({ type: "example/cloud", name: "Sky", pubkey: viewer }),
+  ).rejects.toThrow(/already in use/);
+  await expect(
+    service.adopt({ type: "example/cloud", name: "Sky", pubkey: "nope" }),
+  ).rejects.toThrow(/key/);
+  expect(remote.activate).not.toHaveBeenCalled();
+});
+
 it("retains hosted creation settings across restart and retries without provisioning another agent", async () => {
   const storage = memoryStorage();
   const first = await setup({ storage });

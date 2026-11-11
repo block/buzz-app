@@ -186,6 +186,12 @@ mention anyone. Explicit agent watches on that room can still receive them.
   clicked, with **View Agent** also available in the menu. **In Agents** marks
   these available panes. **Configured** means Builderlab reports Active with a valid
   model selection; it does not indicate live presence.
+  When a hosted agent asks Builderlab for a new agent for you, it is listed as
+  **Requested by** that agent, with **Approve** and, in the **…** menu, **Reject**.
+  **Approve** shows the agent's instructions to review or edit, then sets it up
+  on Builderlab's default model, or the model it already has, in the selected
+  community; it needs your Buzz identity and works on any device signed in to the
+  account. **Reject** asks first, then deletes the request.
   Creation dates and full keys are not displayed in this compact list.
   Load errors include **Try again**.
   Use **Open Agents** from the empty list to create one.

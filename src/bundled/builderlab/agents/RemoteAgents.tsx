@@ -27,6 +27,11 @@ import agentsHero from "../assets/agents-hero.png";
 import type { OverviewObserver } from "../overview";
 import type { BuilderlabSession } from "../session";
 import type { AgentClient, RemoteAgent } from "./client";
+import {
+  RequestedDialogs,
+  type RequestedDialog,
+  type RequestedReview,
+} from "./RequestedDialogs";
 
 export function RemoteAgents({
   client,
@@ -37,6 +42,7 @@ export function RemoteAgents({
   openAgents,
   savedAgents = [],
   openAgent,
+  review,
 }: {
   client: AgentClient;
   session: BuilderlabSession;
@@ -46,6 +52,7 @@ export function RemoteAgents({
   openAgents?: (() => void) | undefined;
   savedAgents?: readonly Pick<Agent, "pubkey" | "picture">[];
   openAgent?: ((pubkey: string) => void) | undefined;
+  review?: Omit<RequestedReview, "onSettled"> | undefined;
 }) {
   const login = useSyncExternalStore(session.subscribe, session.snapshot);
   useLayoutEffect(() => {
@@ -82,6 +89,7 @@ export function RemoteAgents({
       openAgents={openAgents}
       savedAgents={savedAgents}
       openAgent={openAgent}
+      review={review}
     />
   ) : (
     <AgentSection>
@@ -100,6 +108,7 @@ function AgentList({
   openAgents,
   savedAgents,
   openAgent,
+  review,
 }: {
   client: AgentClient;
   active(): boolean;
@@ -108,6 +117,7 @@ function AgentList({
   openAgents?: (() => void) | undefined;
   savedAgents: readonly Pick<Agent, "pubkey" | "picture">[];
   openAgent?: ((pubkey: string) => void) | undefined;
+  review?: Omit<RequestedReview, "onSettled"> | undefined;
 }) {
   const [agents, setAgents] = useState<readonly RemoteAgent[]>();
   const [error, setError] = useState<string>();
@@ -255,6 +265,18 @@ function AgentList({
                   ({ pubkey }) => pubkey === agent.pubkey,
                 )}
                 openAgent={openAgent}
+                review={
+                  review && agent.status === "Unattested" && agent.requestedBy
+                    ? {
+                        ...review,
+                        onSettled: () => refresh.current(),
+                      }
+                    : undefined
+                }
+                requester={
+                  agents.find(({ pubkey }) => pubkey === agent.requestedBy)
+                    ?.name ?? "an agent"
+                }
               />
             ))}
           </ul>
@@ -277,13 +299,18 @@ function AgentRow({
   active,
   saved,
   openAgent,
+  review,
+  requester,
 }: {
   agent: RemoteAgent;
   active(): boolean;
   saved?: Pick<Agent, "pubkey" | "picture"> | undefined;
   openAgent?: ((pubkey: string) => void) | undefined;
+  review: RequestedReview | undefined;
+  requester: string;
 }) {
   const notify = useToastNotification();
+  const [dialog, setDialog] = useState<RequestedDialog>();
   const state = agentState(agent);
   const copy = async () => {
     if (!active()) return;
@@ -316,42 +343,72 @@ function AgentRow({
             : undefined
         }
         detail={
-          <>
-            {agent.modelId ?? "No model selected"} · {state}
-          </>
+          review ? (
+            `Requested by ${requester}`
+          ) : (
+            <>
+              {agent.modelId ?? "No model selected"} · {state}
+            </>
+          )
         }
         status={saved ? "In Agents" : undefined}
         actions={
-          <MenuRoot>
-            <MenuTrigger
-              render={
-                <IconButton
-                  variant="bare"
-                  size="sm"
-                  shape="row-end"
-                  aria-label={`More actions for ${agent.name}`}
-                  icon={<DotsThreeIcon size={18} />}
-                />
-              }
-            />
-            <MenuPopup
-              align="end"
-              aria-label={`More actions for ${agent.name}`}
-            >
-              {saved && openAgent && (
-                <MenuItem
-                  onClick={() => {
-                    if (active()) openAgent(agent.pubkey);
-                  }}
-                >
-                  View Agent
-                </MenuItem>
-              )}
-              <MenuItem onClick={() => void copy()}>Copy key</MenuItem>
-            </MenuPopup>
-          </MenuRoot>
+          <>
+            {review && (
+              <Button
+                variant="prominent"
+                size="sm"
+                onClick={() => setDialog("approve")}
+              >
+                Approve
+              </Button>
+            )}
+            <MenuRoot>
+              <MenuTrigger
+                render={
+                  <IconButton
+                    variant="bare"
+                    size="sm"
+                    shape="row-end"
+                    aria-label={`More actions for ${agent.name}`}
+                    icon={<DotsThreeIcon size={18} />}
+                  />
+                }
+              />
+              <MenuPopup
+                align="end"
+                aria-label={`More actions for ${agent.name}`}
+              >
+                {saved && openAgent && (
+                  <MenuItem
+                    onClick={() => {
+                      if (active()) openAgent(agent.pubkey);
+                    }}
+                  >
+                    View Agent
+                  </MenuItem>
+                )}
+                <MenuItem onClick={() => void copy()}>Copy key</MenuItem>
+                {review && (
+                  <MenuItem onClick={() => setDialog("reject")}>
+                    Reject
+                  </MenuItem>
+                )}
+              </MenuPopup>
+            </MenuRoot>
+          </>
         }
       />
+      {review && (
+        <RequestedDialogs
+          agent={agent}
+          requester={requester}
+          review={review}
+          active={active}
+          dialog={dialog}
+          onDialog={setDialog}
+        />
+      )}
     </li>
   );
 }

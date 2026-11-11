@@ -335,6 +335,7 @@ function setup(
       return created;
     }),
     finish: vi.fn(async (_: string) => created),
+    adopt: vi.fn(async () => created),
     portable: vi.fn(discover),
     port: vi.fn(async () => ({ agent: created, notes: [] })),
     portTeam: vi.fn(

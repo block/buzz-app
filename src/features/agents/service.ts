@@ -1255,6 +1255,12 @@ export type NewAgent = Readonly<{
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
 }>;
+export type AdoptedAgent = Readonly<{
+  type: string;
+  name: string;
+  pubkey: string;
+  config?: unknown;
+}>;
 export type Agents = {
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
@@ -1395,6 +1401,9 @@ export type Agents = {
   ): Promise<void>;
   /** Continues an unfinished hosted agent's setup. */
   finish(pubkey: string): Promise<Agent>;
+  /** Sets up a hosted agent its provider already holds, such as one an agent
+   * requested for its owner, as `create` does one it just made. */
+  adopt(input: AdoptedAgent): Promise<Agent>;
   /** Identities earlier agent systems saved on this machine that are not
    * Agents yet, old Buzz's teams with all their members, and which of those
    * members are already in Yours. */
@@ -3685,14 +3694,37 @@ export class AgentsService extends Service implements Agents {
     config?: unknown,
   ) {
     const binding = this.selectedBinding();
-    const community = wssOf(binding.origin);
     const { pubkey, picture: made } = await remote.provision({
       name,
       ...(picture ? { picture } : {}),
-      community,
+      community: wssOf(binding.origin),
       ...(config !== undefined ? { config } : {}),
       signal: binding.controller.signal,
     });
+    return this.keep(binding, type, name, pubkey, made, config);
+  }
+
+  async adopt({ type, name, pubkey, config }: AdoptedAgent) {
+    if (!this.types().find((entry) => entry.key === type)?.remote)
+      throw new Error("That agent type is not available");
+    return this.keep(
+      this.selectedBinding(),
+      type,
+      name.trim(),
+      pubkey,
+      undefined,
+      config,
+    );
+  }
+
+  private async keep(
+    binding: Binding,
+    type: string,
+    name: string,
+    pubkey: unknown,
+    made: unknown,
+    config?: unknown,
+  ) {
     if (typeof pubkey !== "string" || !/^[0-9a-f]{64}$/.test(pubkey))
       throw new Error("The provider did not return the agent's key");
     if (
@@ -3712,7 +3744,7 @@ export class AgentsService extends Service implements Agents {
         pubkey,
         type,
         name,
-        relay: community,
+        relay: wssOf(binding.origin),
         owner: binding.viewer,
         ...(made ? { picture: made } : {}),
         ...(config !== undefined ? { config } : {}),

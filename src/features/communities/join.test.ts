@@ -70,6 +70,7 @@ afterEach(() => {
 
 it("journals the join before any remote effect, then accepts the policy, claims and reads", async () => {
   const journal = createJoinJournal(viewer);
+  const signal = new AbortController().signal;
   const admission = await admitCommunity({
     community,
     journal,
@@ -77,6 +78,7 @@ it("journals the join before any remote effect, then accepts the policy, claims 
     policy,
     consent,
     current: () => true,
+    signal,
   });
   expect(sequence).toEqual(["setItem", "accept-policy", "claim", "read"]);
   expect(communityRequest).toHaveBeenNthCalledWith(
@@ -84,11 +86,18 @@ it("journals the join before any remote effect, then accepts the policy, claims 
     community,
     "accept-policy",
     { code: "CODE", policy_version: "2026-10", age_confirmed: true },
+    signal,
   );
-  expect(communityRequest).toHaveBeenNthCalledWith(2, community, "claim", {
-    code: "CODE",
-    policy_receipt: "policy-receipt",
-  });
+  expect(communityRequest).toHaveBeenNthCalledWith(
+    2,
+    community,
+    "claim",
+    {
+      code: "CODE",
+      policy_receipt: "policy-receipt",
+    },
+    signal,
+  );
   expect(admission).toEqual({ found: none, entry: entries()[0] });
   expect(entries()).toEqual([{ id: expect.any(String), community }]);
 });
@@ -152,10 +161,15 @@ it("claims again when the pending join's read is denied, replacing its entry", a
   });
   expect(sequence).toEqual(["setItem", "read", "setItem", "claim", "read"]);
   expect(communityRequest).toHaveBeenCalledTimes(1);
-  expect(communityRequest).toHaveBeenCalledWith(community, "claim", {
-    code: "CODE",
-    policy_receipt: undefined,
-  });
+  expect(communityRequest).toHaveBeenCalledWith(
+    community,
+    "claim",
+    {
+      code: "CODE",
+      policy_receipt: undefined,
+    },
+    undefined,
+  );
   expect(admission?.entry?.id).not.toBe(pending.id);
   expect(entries()).toEqual([admission?.entry]);
 });

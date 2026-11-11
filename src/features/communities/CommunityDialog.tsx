@@ -101,10 +101,13 @@ export function CommunityDialog({
   const [error, setError] = useState(recovery.error);
   const mounted = useRef(true);
   const attempt = useRef<AbortController>(undefined);
+  const startedDestination = useRef(false);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      attempt.current?.abort();
+      startedDestination.current = false;
     };
   }, []);
   async function work(action: (signal: AbortSignal) => Promise<void>) {
@@ -150,7 +153,6 @@ export function CommunityDialog({
     )
       nameInput.current?.focus();
   }, [busy, step]);
-  const startedDestination = useRef(false);
   useEffect(() => {
     if (!submittedDestination || startedDestination.current || unavailable)
       return;
@@ -185,6 +187,7 @@ export function CommunityDialog({
     community: string,
     url: string,
     joinPolicy: JoinPolicy | null | undefined,
+    signal: AbortSignal,
     inviteCode = code,
   ) {
     const admission = await admitCommunity({
@@ -195,7 +198,8 @@ export function CommunityDialog({
       consent: accountConsents(federatedIdentity, url)
         ? ACCOUNT_CONSENT
         : { adult, agreed },
-      current,
+      current: (entry) => !signal.aborted && current(entry),
+      signal,
     });
     if (admission) showProfile(admission.found, admission.entry);
   }
@@ -260,25 +264,29 @@ export function CommunityDialog({
             // The account's consent leaves the access step nothing to ask
             // (no code is needed, or one is given), so Continue goes on to its
             // admission. A refusal is shown there, where a code can be entered.
-            await admit(next.id, next.url, value.policy, inviteCode).catch(
-              (reason: unknown) => {
-                if (current()) {
-                  setStep("access");
-                  if (
-                    value.membershipRequired === true &&
-                    readErrorKind(reason) === "denied"
-                  )
-                    setNeedsInvite(true);
-                }
-                throw reason;
-              },
-            );
+            await admit(
+              next.id,
+              next.url,
+              value.policy,
+              signal,
+              inviteCode,
+            ).catch((reason: unknown) => {
+              if (!signal.aborted && current()) {
+                setStep("access");
+                if (
+                  value.membershipRequired === true &&
+                  readErrorKind(reason) === "denied"
+                )
+                  setNeedsInvite(true);
+              }
+              throw reason;
+            });
           }
         }
       });
     } else if (step === "access") {
       if (!allowed || !destination) return;
-      await work(() => admit(id, destination.url, policy));
+      await work((signal) => admit(id, destination.url, policy, signal));
     } else {
       if (!profile.name.trim()) return;
       await work(async () => {

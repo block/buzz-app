@@ -2,6 +2,41 @@ use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
+#[tokio::test(start_paused = true)]
+async fn bounded_http_keeps_the_remaining_deadline() {
+    let started = tokio::time::Instant::now();
+    let request = bounded_http(Some(4_000), std::future::pending());
+    tokio::pin!(request);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(3_999), &mut request)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        request.await.err().unwrap(),
+        "Relay request could not be confirmed"
+    );
+    assert_eq!(started.elapsed(), Duration::from_secs(4));
+}
+
+#[tokio::test]
+async fn bounded_http_rejects_invalid_budgets_before_dispatch() {
+    for timeout in [0, 30_001, u64::MAX] {
+        let request = async { Err("request unexpectedly dispatched".to_owned()) };
+        assert_eq!(
+            bounded_http(Some(timeout), request).await.err().unwrap(),
+            "Invalid relay request timeout"
+        );
+    }
+    assert_eq!(
+        bounded_http(None, async { Ok(cancelled_read()) })
+            .await
+            .unwrap()
+            .status,
+        CANCELLED_READ
+    );
+}
+
 #[test]
 fn routes_cannot_retarget_credentials_or_expand_http_access() {
     for community in [

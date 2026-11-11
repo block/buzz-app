@@ -64,6 +64,8 @@ mention anyone. Explicit agent watches on that room can still receive them.
   and the community is one it hosts, Buzz skips the age and terms boxes,
   because your account setup already covered them, and **Continue** joins
   straight away.
+  If an invite claim is temporarily unavailable, Buzz tries once more after a
+  short delay. If that also fails, try again from the join screen.
   On Mac, the welcome entrance plays once per app storage profile; Reduce Motion
   skips it, and pressing a key finishes it immediately.
   The key-import field masks your key. Use the eye inside the field to reveal

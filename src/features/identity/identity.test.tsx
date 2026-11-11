@@ -3474,14 +3474,23 @@ function nativeRelay(
       return nativeSignatureChecks(args);
     if (command !== "relay_http")
       throw new Error(`Unexpected command ${command}`);
-    // A read's cancel id is fresh per request; calls record what was sent.
-    const { id: _, ...request } = args as {
+    // Check transport bookkeeping separately from the exact request sequence.
+    const {
+      id: _,
+      timeoutMs,
+      ...request
+    } = args as {
       community: string;
       path: string;
       method: string;
       body: string | null;
       id?: string;
+      timeoutMs?: number;
     };
+    if (request.path === "/api/invites/claim") {
+      expect(timeoutMs).toBeGreaterThan(0);
+      expect(timeoutMs).toBeLessThanOrEqual(25_000);
+    } else expect(timeoutMs).toBeUndefined();
     const body: unknown = request.body ? JSON.parse(request.body) : null;
     calls.push({ ...request, body });
     const answer = (status: number, value?: unknown) => ({

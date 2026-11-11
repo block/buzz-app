@@ -2,6 +2,7 @@ import { nativeIdentityEnabled } from "../identity/service";
 import { retryRead } from "../relay/read-retry";
 import { ReadError, transientStatus } from "../relay/errors";
 import { nativeCommunityRequest } from "./native-api";
+import { retryInviteClaim } from "./claim-retry";
 import { connectCommunityTransport, registerCommunity } from "./connection";
 import { settledRefusal, type SettledRefusal } from "./leave-protocol";
 import { registerBrokerCommunity } from "../relay/transport";
@@ -30,19 +31,21 @@ export async function communityRequest<T>(
   // Scoped HTTP reads need broker registration, not an acquired relay session.
   await registerBrokerCommunity(id, signal);
   signal.throwIfAborted();
-  const response = await fetch(
-    `/api/relay/${encodeURIComponent(id)}/${route}`,
-    {
-      ...(body === undefined
-        ? {}
-        : {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          }),
-      signal,
-    },
-  );
+  const options: RequestInit = {
+    ...(body === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+    signal,
+  };
+  const request = () =>
+    fetch(`/api/relay/${encodeURIComponent(id)}/${route}`, options);
+  const response = await (route === "claim"
+    ? retryInviteClaim(request, signal)
+    : request());
   const result = await response.json();
   if (!response.ok) {
     const message =

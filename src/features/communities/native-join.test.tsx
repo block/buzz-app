@@ -33,6 +33,7 @@ const calls: Array<{ path: string; body: unknown }> = [];
 let admitted: boolean;
 let profile: RelayEvent | undefined;
 let claim: () => Promise<void>;
+let claimUnavailable: boolean;
 let publish: () => Promise<void>;
 let readProfile: () => Promise<void>;
 let query: () => Promise<void>;
@@ -44,6 +45,7 @@ beforeEach(() => {
   calls.length = 0;
   requestedCommunity = community;
   claim = async () => {};
+  claimUnavailable = false;
   publish = async () => {};
   readProfile = async () => {};
   query = async () => {};
@@ -104,6 +106,7 @@ beforeEach(() => {
         return response({ receipt: "fixture-receipt" });
       case "/api/invites/claim":
         expect(journal().get(community)).toBeDefined();
+        if (claimUnavailable) return response({ error: "unavailable" }, 503);
         admitted = true;
         await claim();
         return response({ status: "joined" });
@@ -564,6 +567,25 @@ it("names a relay it couldn't reach while resuming an interrupted join", async (
     "Couldn’t reach native-join.test. Check the address, or try again.",
   );
   expect(journal().get(community)).toBeDefined();
+});
+
+it("does not retry an unavailable claim after the dialog unmounts", async () => {
+  const user = userEvent.setup();
+  const first = await open();
+  await start(user);
+  claimUnavailable = true;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(
+    calls.filter((call) => call.path === "/api/invites/claim"),
+  ).toHaveLength(1);
+  await first.stop();
+  await act(() => vi.advanceTimersByTimeAsync(30_000));
+  expect(
+    calls.filter((call) => call.path === "/api/invites/claim"),
+  ).toHaveLength(1);
+  expect(first.communities.snapshot().memberships).toEqual([]);
 });
 
 it("fences a late claim completion after the dialog is replaced", async () => {

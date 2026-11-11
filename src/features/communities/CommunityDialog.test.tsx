@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommunityDialog } from "./CommunityDialog";
 import { Context } from "@deepseek-ai/cordis";
@@ -571,6 +572,88 @@ async function signedInAccount() {
 
 const pastedInvite = "https://relay.example/invite/v2.abc";
 const openedInvite = { community: "https://relay.example", code: "v2.abc" };
+
+it("restarts a submitted lookup after Strict Mode cleans up its first attempt", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({});
+      if (route === "info")
+        return Response.json({
+          name: "Fixture",
+          membershipRequired: true,
+          policy: null,
+        });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  api.inspectProfile.mockRejectedValueOnce(
+    new Error("Relay read failed (403)"),
+  );
+  render(
+    <StrictMode>
+      <CommunityDialog
+        communities={lookupCommunities}
+        mode="join"
+        close={() => {}}
+        invite={openedInvite}
+        submittedDestination
+      />
+    </StrictMode>,
+  );
+  expect(await screen.findByLabelText("Invite code")).toHaveValue("v2.abc");
+  expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps the address editable when automatic admission is cancelled during retry", async () => {
+  let claims = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({});
+      if (route === "info")
+        return Response.json({
+          name: "Fixture",
+          membershipRequired: true,
+          policy: null,
+        });
+      if (route === "claim") {
+        claims++;
+        return Response.json({ error: "unavailable" }, { status: 503 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  api.inspectProfile.mockRejectedValueOnce(
+    new Error("Relay read failed (403)"),
+  );
+  render(
+    <CommunityDialog
+      communities={lookupCommunities}
+      federatedIdentity={await signedInAccount()}
+      mode="join"
+      close={() => {}}
+      invite={openedInvite}
+    />,
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(claims).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(screen.getByLabelText("Community URL")).toBeEnabled();
+    expect(screen.queryByLabelText("Invite code")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(claims).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it.each([
   ["an opened invite", "denied", undefined],

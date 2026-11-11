@@ -834,6 +834,7 @@ fn read_cancels() -> &'static Uploads {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri passes each IPC field as an argument.
 pub(crate) async fn relay_http(
     host: tauri::State<'_, IdentityHost>,
     fi: tauri::State<'_, FederatedIdentity>,
@@ -842,6 +843,7 @@ pub(crate) async fn relay_http(
     method: String,
     body: Option<String>,
     id: Option<String>,
+    timeout_ms: Option<u64>,
 ) -> Result<RelayResponse> {
     let url = request_url(&community, &path, &method)?;
     if body.as_ref().is_some_and(|b| b.len() > MAX_BODY)
@@ -887,7 +889,27 @@ pub(crate) async fn relay_http(
         method == "POST",
         MAX_RESPONSE,
     );
-    cancellable(id.as_deref(), &method, &path, request).await
+    cancellable(
+        id.as_deref(),
+        &method,
+        &path,
+        bounded_http(timeout_ms, request),
+    )
+    .await
+}
+
+/// Keep a caller's remaining budget across attempts, including signing and body reads.
+async fn bounded_http(
+    timeout_ms: Option<u64>,
+    request: impl std::future::Future<Output = Result<RelayResponse>>,
+) -> Result<RelayResponse> {
+    match timeout_ms {
+        None => request.await,
+        Some(ms @ 1..=30_000) => tokio::time::timeout(Duration::from_millis(ms), request)
+            .await
+            .map_err(|_| "Relay request could not be confirmed".to_owned())?,
+        Some(_) => Err("Invalid relay request timeout".into()),
+    }
 }
 
 /// Runs `request`, or for a read with an `id`, until `relay_http_cancel` names it.

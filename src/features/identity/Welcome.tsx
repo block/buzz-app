@@ -300,10 +300,12 @@ export function Welcome({
     [viewer],
   );
   const mounted = useRef(true);
+  const joining = useRef<AbortController>(undefined);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      joining.current?.abort();
     };
   }, []);
   /** The owner's fence: still shown, and `entry` still the journal's record. */
@@ -879,6 +881,9 @@ export function Welcome({
         codeError,
       });
     let admission: Admission | undefined;
+    joining.current?.abort();
+    const controller = new AbortController();
+    joining.current = controller;
     try {
       admission = await admitCommunity({
         community: found.url,
@@ -886,9 +891,11 @@ export function Welcome({
         code,
         policy: found.policy,
         consent,
-        current,
+        current: (entry) => !controller.signal.aborted && current(entry),
+        signal: controller.signal,
       });
     } catch (error) {
+      if (controller.signal.aborted) return;
       // A refused code (already its copy, from the owner; "Invalid invite
       // code" is the native route's for one it will not send) is the user's
       // to replace on the invite page; a relay that refuses the key needs one;

@@ -125,6 +125,7 @@ export async function nativeRelayRequest(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<Response> {
   const bounded = AbortSignal.any([
     ...(signal ? [signal] : []),
@@ -150,6 +151,7 @@ export async function nativeRelayRequest(
       method: body === undefined ? "GET" : "POST",
       body: body === undefined ? null : JSON.stringify(body),
       ...(id ? { id } : {}),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
     // The shared admission slot stays held until native work settles: at
     // once for a cancelled read, otherwise within its timeout.

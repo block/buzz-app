@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { communityDestination } from "./destination";
+import { retryInviteClaim } from "./claim-retry";
 import { avatarPictureError } from "../profiles/avatar-upload";
 import {
   connectNativeTransport,
@@ -22,6 +23,7 @@ export async function nativeCommunityRequest(
   body?: unknown,
   caller?: AbortSignal,
 ): Promise<unknown> {
+  const deadline = performance.now() + 25_000;
   const signal = AbortSignal.any([
     ...(caller ? [caller] : []),
     AbortSignal.timeout(25_000),
@@ -98,13 +100,20 @@ export async function nativeCommunityRequest(
             policy_version: input.policy_version,
             age_confirmed: input.age_confirmed === true,
           };
-    const result = await readResponse(
-      await nativeRelayRequest(
+    const request = () => {
+      const remaining = Math.ceil(deadline - performance.now());
+      if (remaining <= 0)
+        throw new DOMException("Request timed out", "TimeoutError");
+      return nativeRelayRequest(
         community,
         `/api/invites/${route}`,
         value,
         signal,
-      ),
+        route === "claim" ? remaining : undefined,
+      );
+    };
+    const result = await readResponse(
+      await (route === "claim" ? retryInviteClaim(request, signal) : request()),
     );
     if (
       route === "accept-policy" &&

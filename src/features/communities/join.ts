@@ -52,6 +52,7 @@ export async function admitCommunity({
   policy,
   consent,
   current,
+  signal,
 }: {
   community: string;
   journal?: JoinJournal | undefined;
@@ -59,6 +60,7 @@ export async function admitCommunity({
   policy?: JoinPolicy | null | undefined;
   consent: JoinConsent;
   current: Current;
+  signal?: AbortSignal | undefined;
 }): Promise<Admission | undefined> {
   const pending = journal?.get(community);
   if (pending) {
@@ -83,6 +85,7 @@ export async function admitCommunity({
               policy_version: policy.version,
               age_confirmed: consent.adult,
             },
+            signal,
           )
         ).receipt
       : undefined;
@@ -91,6 +94,7 @@ export async function admitCommunity({
       community,
       "claim",
       { code: code.trim(), policy_receipt: receipt },
+      signal,
     ).catch((reason: unknown) => {
       const known = claimRefusal(reason);
       throw known ? new Error(known) : reason;

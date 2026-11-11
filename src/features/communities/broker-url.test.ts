@@ -12,11 +12,13 @@ import { verifyEvent } from "nostr-tools";
 import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { connectBrokerTransport } from "../relay/transport";
 import { keypair } from "../relay/testing";
+import { communityRequest } from "./api";
 
 it("gates arbitrary destinations before discovery/signing and keeps every request bound to its canonical origin", async () => {
   const identity = keypair(),
     relay = keypair();
   const calls: { url: string; init: RequestInit | undefined }[] = [];
+  let failNextClaim = false;
   const sockets: string[] = [];
   const publications: { url: string; event: RelayEvent }[] = [];
   let traffic: LiveSubscription | undefined;
@@ -47,7 +49,13 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
       const body = JSON.parse(String(init.body));
       if (url.endsWith("/events"))
         return Response.json({ accepted: true, event_id: body.id });
-      if (url.endsWith("/claim")) return Response.json({ status: "joined" });
+      if (url.endsWith("/claim")) {
+        if (failNextClaim) {
+          failNextClaim = false;
+          return Response.json({ error: "unavailable" }, { status: 503 });
+        }
+        return Response.json({ status: "joined" });
+      }
       if (url.endsWith("/accept-policy"))
         return Response.json({ receipt: "fixture-receipt" });
       return Response.json([]);
@@ -155,13 +163,18 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
     vi.stubGlobal(
       "fetch",
       (input: string | URL | Request, init?: RequestInit) =>
-        nativeFetch(input, {
-          ...init,
-          headers: {
-            ...init?.headers,
-            ...(init?.method === "POST" ? { Origin: base } : {}),
+        nativeFetch(
+          typeof input === "string" && input.startsWith("/")
+            ? new URL(input, base)
+            : input,
+          {
+            ...init,
+            headers: {
+              ...init?.headers,
+              ...(init?.method === "POST" ? { Origin: base } : {}),
+            },
           },
-        }),
+        ),
     );
     const transportA = await connectBrokerTransport(
       base,
@@ -251,6 +264,34 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
     expect((await fetch(`${base}/api/relay/%E0%A4%A/session`)).status).toBe(
       400,
     );
+    const beforeRetry = calls.length;
+    failNextClaim = true;
+    const body = { code: "v2.retry", policy_receipt: "proof" };
+    expect(await communityRequest(b, "claim", body)).toEqual({
+      status: "joined",
+    });
+    const attempts = calls
+      .slice(beforeRetry)
+      .filter((call) => call.url.endsWith("/api/invites/claim"));
+    expect(attempts).toHaveLength(2);
+    const proofs = attempts.map((call) => {
+      expect(call.url).toBe(`${b}/api/invites/claim`);
+      expect(call.init?.body).toBe(JSON.stringify(body));
+      const authorization = new Headers(call.init?.headers).get(
+        "Authorization",
+      );
+      assert.exists(authorization);
+      const proof = JSON.parse(
+        Buffer.from(authorization.slice(6), "base64").toString(),
+      );
+      expect(verifyEvent(proof)).toBe(true);
+      expect(proof.pubkey).toBe(identity.pubkey);
+      return proof;
+    });
+    expect(proofs[0].id).not.toBe(proofs[1].id);
+    expect(
+      proofs[0].tags.find(([tag]: string[]) => tag === "nonce"),
+    ).not.toEqual(proofs[1].tags.find(([tag]: string[]) => tag === "nonce"));
   } finally {
     traffic?.dispose();
     vi.unstubAllGlobals();

@@ -1,5 +1,5 @@
 // The pull requests followed in the channels shown: each channel's current
-// `buzz.github.pull` and `buzz.github.hook` artifacts, kept current by NIP-AR
+// `github.pull` and `github.hook` artifacts, kept current by NIP-AR
 // sync. A card is trusted when the relay signed it, or the publisher of the
 // live hook it names did. Only the relay's cards speak for a pull request
 // anywhere it is linked; a publisher's shows only on its own announcement.

@@ -1,4 +1,4 @@
-// A channel follows a GitHub repository by holding a `buzz.github.hook`
+// A channel follows a GitHub repository by holding a `github.hook`
 // artifact. Either it holds the webhook's secret, which only the relay can
 // read, and the relay posts each pull request as GitHub reports it; or it
 // names its author as the publisher, whose own Buzz reads GitHub and posts
@@ -12,7 +12,7 @@ import {
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 
-export const HOOK_TYPE = "buzz.github.hook";
+export const HOOK_TYPE = "github.hook";
 /** What GitHub's webhook form calls the events the relay reads. */
 export const HOOK_EVENTS = [
   "Pull requests",

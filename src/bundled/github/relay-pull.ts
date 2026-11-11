@@ -1,4 +1,4 @@
-// A pull request a channel follows: its `buzz.github.pull` artifact, written
+// A pull request a channel follows: its `github.pull` artifact, written
 // by the relay from GitHub's webhooks or by the publisher its hook names, read
 // as the store's own state.
 import type { EventData } from "../../features/relay/events";
@@ -8,7 +8,7 @@ import { branchLink, type GitHubDetails } from "./data";
 import { keyOf, type PullState } from "./pull-states";
 import { parseGitHubReference } from "./references";
 
-export const PULL_TYPE = "buzz.github.pull";
+export const PULL_TYPE = "github.pull";
 const ARTIFACT_KIND = 45010;
 
 const STATES = ["open", "draft", "merged", "closed"] as const;

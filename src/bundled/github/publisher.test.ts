@@ -225,7 +225,7 @@ it("tags and announces a card as the relay does", () => {
     ["ar", "1"],
     ["d", "d1"],
     ["h", channel],
-    ["type", "buzz.github.pull"],
+    ["type", "github.pull"],
     ["title", "#7 · Fix @here"],
     ["op", "update"],
     ["r", url],
@@ -233,6 +233,8 @@ it("tags and announces a card as the relay does", () => {
     ["hook", "hook-d"],
     ["sha", "c0ffee"],
     ["state", "open"],
+    ["source", "github"],
+    ["status", "open"],
     ["root", "r"],
     ["prev", "p"],
   ]);
@@ -840,7 +842,7 @@ function runner(channels = [channel]) {
     tags: [
       ["d", "hook-d"],
       ["h", channel],
-      ["type", "buzz.github.hook"],
+      ["type", "github.hook"],
       ["repo", "block/buzz-app"],
       ["publisher", mike],
     ],
@@ -932,7 +934,7 @@ it("keeps a hook's cards from this device: card, announcement, root, then replie
       artifact: "current",
       kinds: [45010],
       "#h": [channel],
-      "#type": ["buzz.github.hook"],
+      "#type": ["github.hook"],
     },
   ]);
   await vi.waitFor(() => expect(run.sent).toHaveLength(1));

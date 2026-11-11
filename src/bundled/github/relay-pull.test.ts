@@ -50,7 +50,7 @@ const event = (
     ["ar", "1"],
     ["d", "e".repeat(8)],
     ["h", channel],
-    ["type", "buzz.github.pull"],
+    ["type", "github.pull"],
     ["title", "#7 · Add the card"],
     ["r", url],
     ["root", root],
@@ -90,7 +90,7 @@ it("ignores a revision that is not a well formed version 1 pull request", () => 
         ["type", type],
       ],
     });
-  expect(parseRecord(other("buzz.github.hook"), relay)).toBeUndefined();
+  expect(parseRecord(other("github.hook"), relay)).toBeUndefined();
   expect(parseRecord(event(content, { kind: 9 }), relay)).toBeUndefined();
   expect(
     parseRecord(event(content, { content: "not json" }), relay),

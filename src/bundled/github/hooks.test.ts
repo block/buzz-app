@@ -273,7 +273,7 @@ it("lists a hook only from a well formed hook artifact", () => {
       event({
         tags: [
           ["d", "hook-d"],
-          ["type", "buzz.github.pull"],
+          ["type", "github.pull"],
           ["repo", "block/buzz"],
         ],
       }),

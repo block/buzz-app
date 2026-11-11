@@ -1,6 +1,6 @@
-// Publishing from this device: for each `buzz.github.hook` that names the
+// Publishing from this device: for each `github.hook` that names the
 // viewer as its publisher, read the repository's pull requests with `gh` and
-// keep the same `buzz.github.pull` cards, announcements and thread replies the
+// keep the same `github.pull` cards, announcements and thread replies the
 // relay keeps for a webhook (block/buzz `api/github_hooks.rs`), signed by the
 // viewer. It runs only while this Buzz is open.
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -34,7 +34,7 @@ const DEVICE_KEY = "buzz.github.publisher.device";
 const PENDING_KEY = "buzz.github.publisher.pending";
 const OWN_KEY = "buzz.github.publisher.own";
 
-/** `buzz.github.pull` content v1, field for field as the relay writes it. */
+/** `github.pull` content v1, field for field as the relay writes it. */
 export type Pull = {
   version: 1;
   url: string;
@@ -394,6 +394,8 @@ export function cardTags(
     ["hook", hook],
     ["sha", pull.head_sha],
     ["state", pull.state],
+    ["source", "github"],
+    ["status", pull.state],
     ...(claim ? [["announcing", claim]] : []),
     ...(root ? [["root", root]] : []),
     ...(prev ? [["prev", prev]] : []),

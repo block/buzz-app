@@ -40,6 +40,7 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationSectionHeading } from "../../shared/design-system/ui/NavigationSection";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -204,7 +205,14 @@ export function SoloWorkspaces({
   if (renaming && !chats.some((chat) => chat.id === renaming))
     setRenaming(undefined);
   const [deleting, setDeleting] = useState<string>();
+  // The workspace whose Delete workspace is awaiting confirmation.
+  const [confirmDelete, setConfirmDelete] = useState<{
+    id: string;
+    name: string;
+  }>();
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const [projectError, setProjectError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const [readError, setReadError] = useState<{ id: string; message: string }>();
   const [animate, setAnimate] = useState(false);
   const [rowFocus, setRowFocus] = useState<string>();
@@ -257,6 +265,32 @@ export function SoloWorkspaces({
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
   const ids = new Set(groups.map((group) => group.id));
+  // A workspace deleted elsewhere takes its confirmation with it.
+  if (
+    confirmDelete &&
+    deleting !== confirmDelete.id &&
+    !ids.has(confirmDelete.id)
+  )
+    setConfirmDelete(undefined);
+  const closeDelete = () => {
+    setDeleteError("");
+    setConfirmDelete(undefined);
+  };
+  const deleteProject = (id: string) => {
+    setDeleting(id);
+    setDeleteError("");
+    void preferences
+      .removeSection(id)
+      .then(() => setConfirmDelete(undefined))
+      .catch((error: unknown) => {
+        setDeleteError(
+          error instanceof Error
+            ? error.message
+            : "Workspace could not be deleted. Try again.",
+        );
+      })
+      .finally(() => setDeleting(undefined));
+  };
   const activeDraft = drafts.find((draft) => draft.selected);
   const draftProject = activeDraft
     ? ids.has(activeDraft.projectId ?? "")
@@ -542,18 +576,10 @@ export function SoloWorkspaces({
                 renamingProject === project.id
               }
               onClick={() => {
-                setDeleting(project.id);
-                setProjectError("");
-                void preferences
-                  .removeSection(project.id)
-                  .catch((error: unknown) => {
-                    setProjectError(
-                      error instanceof Error
-                        ? error.message
-                        : "Workspace could not be deleted. Try again.",
-                    );
-                  })
-                  .finally(() => setDeleting(undefined));
+                const { id, name } = project;
+                setDeleteError("");
+                // Let the menu restore focus before opening confirmation.
+                requestAnimationFrame(() => setConfirmDelete({ id, name }));
               }}
             >
               Delete workspace
@@ -900,6 +926,52 @@ export function SoloWorkspaces({
             </Button>
           </div>
         ))}
+      {confirmDelete && (
+        <AlertDialog
+          // The current name, in case it's renamed on another device meanwhile.
+          title={`Delete ${groups.find((group) => group.id === confirmDelete.id)?.name ?? confirmDelete.name}?`}
+          description="Its chats move to Chats. Its instructions, folders and agents are cleared on all your devices. It can't be undone."
+          pending={deleting === confirmDelete.id}
+          initialFocus={cancelDelete}
+          // Back to the workspace's heading, or to Chats, which now holds its
+          // chats, once the workspace is gone.
+          finalFocus={() =>
+            document.querySelector<HTMLElement>(
+              `[data-solo-menu-id="project-${CSS.escape(confirmDelete.id)}"] button`,
+            ) ??
+            document.querySelector<HTMLElement>(
+              '[data-solo-menu-id="project-"] button',
+            ) ??
+            false
+          }
+          onClose={closeDelete}
+          actions={
+            <>
+              <Button
+                ref={cancelDelete}
+                disabled={deleting === confirmDelete.id}
+                onClick={closeDelete}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={deleting === confirmDelete.id}
+                disabled={!preferences.sectionRemovalWritable}
+                onClick={() => deleteProject(confirmDelete.id)}
+              >
+                Delete workspace
+              </Button>
+            </>
+          }
+        >
+          {deleteError && (
+            <p role="alert" className="m-0 text-body-sm text-danger">
+              {deleteError}
+            </p>
+          )}
+        </AlertDialog>
+      )}
       {settingsFor && (
         <WorkspaceSettings
           key={settingsFor.id}

@@ -215,8 +215,14 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           )
             return false;
           const copy = JSON.parse(json) as JsonValue;
-          if (!writeView(binding.scope, key, copy)) return false;
+          const previous = this.states.get(memoryKey);
+          // writeView notifies synchronously; a listener can accept a newer value.
           this.states.set(memoryKey, copy);
+          if (!writeView(binding.scope, key, copy)) {
+            if (previous === undefined) this.states.delete(memoryKey);
+            else this.states.set(memoryKey, previous);
+            return false;
+          }
           return true;
         } catch {
           return false;

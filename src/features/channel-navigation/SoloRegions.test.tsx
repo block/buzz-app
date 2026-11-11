@@ -480,10 +480,12 @@ it("retains the latest accepted subscriber write when storage becomes unavailabl
   const h = fixture();
   const source = await h.register();
   const state = source.handle.state(source.binding());
+  const nested = vi.fn(() => state.set("second"));
   const stop = state.subscribe(() => {
-    if (state.get() === "first") expect(state.set("second")).toBe(true);
+    if (state.get() === "first") nested();
   });
   expect(state.set("first")).toBe(true);
+  expect(nested).toHaveLastReturnedWith(true);
   expect(state.get()).toBe("second");
   stop();
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {

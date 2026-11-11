@@ -211,7 +211,10 @@ export function namedCandidates(
 export type SpaceEvidence = {
   /** Members or offered agents are still loading. */
   pending: boolean;
-  /** A member's name is neither known nor known to be absent. */
+  /**
+   * A member's name is neither known nor known to be absent, or the member
+   * list is still loading.
+   */
   missingNames: boolean | undefined;
   /** The directory search for this query settled with no more pages. */
   complete: boolean;

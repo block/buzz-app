@@ -263,10 +263,11 @@ these characters or Space: with a member `Wes`, `@Wes Smith` mentions Wes,
 followed by the text ` Smith`, even while `Wes Smith` outside the channel is
 listed, and a member `Pat O` takes `@Pat O'Brien` the same way. This holds
 for the agents the client offers outside the channel (section 1, items 2 and
-3) as for directory results: with a member agent `Claude` and the viewer's
-offered `Claude Code`, `@Claude Code` mentions Claude. The user picks such a
-choice from the list instead. One that continues the member's name with
-another character, such as `Wes-Smith`, can still be typed in full. Where
+3, or a Solo chat's own agent list) as for directory results: with a member
+agent `Claude` and the viewer's offered `Claude Code`, `@Claude Code` mentions
+Claude. The user picks such a choice from the list instead. One that
+continues the member's name with another character, such as `Wes-Smith`, can
+still be typed in full. Where
 Space may hold a pending mention, so may this character, kept after the chip.
 A selected or pending mention ends at a name boundary: the next character that
 is not a letter, mark, digit or underscore.

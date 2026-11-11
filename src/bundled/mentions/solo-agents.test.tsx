@@ -3984,6 +3984,59 @@ it("Space keeps a member agent's name beside the viewer's longer agent name offe
     test.library.dispose();
   }
 });
+it("Space keeps a member agent's name beside the viewer's longer agent name outside a Solo chat that invites agents", async () => {
+  const test = setup(false);
+  // The Solo chat's own agent list: Claude is in the chat, Claude Code is not.
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      { pubkey: test.member, name: "Claude" },
+      { pubkey: test.key, name: "Claude Code" },
+    ],
+  }));
+  await library.queries.refresh();
+  test.profiles.set(test.member, { name: "Claude" });
+  const session = {
+    ...test.session,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  };
+  const publish = vi.fn();
+  const result = () =>
+    publish.mock.lastCall?.[0] as CompletionResult | undefined;
+  const invited = () => result()?.items.find((item) => item.id === test.key);
+  const view = render(
+    <MentionCompletion
+      {...emptyCompletion}
+      session={session}
+      inviteAgents
+      observation={{ revision: 1, text: "@claude", start: 7, end: 7 }}
+      query={{ start: 0, end: 7, query: "claude" }}
+      publish={publish}
+    />,
+  );
+  try {
+    await waitFor(() => expect(invited()?.detail).toBe("Adds to chat"));
+    // The same rule as in a stream: an agent outside the chat does not block
+    // a member's exact name, so `@Claude Code` mentions Claude.
+    expect(result()?.spaceId).toBe(test.member);
+    expect(
+      result()
+        ?.items.find((item) => item.id === test.member)
+        ?.canSelect?.(" "),
+    ).toBe(true);
+    // Picking the row is how to mention Claude Code, which sending adds.
+    expect(invited()?.canSelect?.("Enter")).toBe(true);
+    expect(invited()?.canSelect?.(" ")).toBe(false);
+  } finally {
+    view.unmount();
+    library.dispose();
+    test.library.dispose();
+  }
+});
 it.each([
   {
     page: { people: [{ pubkey: outsideJose, name: "Jose" }], hasMore: false },

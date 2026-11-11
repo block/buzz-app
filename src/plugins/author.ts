@@ -81,6 +81,9 @@ export type {
   LinkRenderer,
   MessageRenderer,
   MessageAction,
+  MessageTextSelection,
+  SelectionPreview,
+  SelectionPreviewProps,
   TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";

@@ -56,6 +56,7 @@ import {
   turnPrompt,
 } from "../claude-code/prompt";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
+import { currentMessages } from "../../features/agent-harness/current-messages";
 import { ownerCanvas, readProject } from "../../features/agent-harness/project";
 import {
   type GooseProcess,
@@ -731,6 +732,8 @@ export class GooseRuntime {
         )
       : Promise.resolve(undefined);
     const threadRead = (thread || (resumed && !dm)) && !topLevel;
+    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
+    const signingAuthority = reads?.workflowAuthority();
     let earlier: readonly EventData[] = [];
     if (session && (thread || dm || topLevel || resumed))
       try {
@@ -743,7 +746,7 @@ export class GooseRuntime {
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
           { signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS) },
         );
-        earlier = events
+        const found = events
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
@@ -754,6 +757,16 @@ export class GooseRuntime {
               (resumed || item.created_at <= event.created_at),
           )
           .sort((a, b) => a.created_at - b.created_at);
+        earlier = await currentMessages(
+          channelId,
+          found,
+          (filters) =>
+            session.read(filters, {
+              signal: AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+            }),
+          reads,
+          signingAuthority,
+        );
       } catch (error) {
         console.warn("goose could not read the conversation", error);
       }
@@ -762,8 +775,6 @@ export class GooseRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const reads = ownerReads(this.relay(agent.key), agent.pubkey);
-    const signingAuthority = reads?.workflowAuthority();
     const [names, project] = await Promise.all([
       readAuthorNames(
         reads,

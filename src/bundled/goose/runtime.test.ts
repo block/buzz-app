@@ -10,7 +10,11 @@ import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
-import type { EventData, RelayEvent } from "../../features/relay/events";
+import type {
+  EventData,
+  ReadFilter,
+  RelayEvent,
+} from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
@@ -2328,4 +2332,63 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     ],
     expect.anything(),
   );
+});
+
+it("shows a new turn's history as the thread shows it now", async () => {
+  const root = message("1", "Plan", { created_at: 50, tags: [["h", channel]] });
+  const reply = (id: string, content: string, created_at: number) =>
+    message(id, content, {
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+  const note = reply("2", "Use the red palette", 60);
+  const dropped = reply("3", "Drop the staging tables", 65);
+  const change = (id: string, kind: number, target: EventData, content = "") =>
+    message(id, content, {
+      kind,
+      created_at: 70,
+      tags: [
+        ["h", channel],
+        ["e", target.id],
+      ],
+    });
+  const mention = message("6", "@Gander go", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const events = [
+    root,
+    note,
+    dropped,
+    change("4", 40003, note, "Use the blue palette"),
+    change("5", 5, dropped),
+    mention,
+  ];
+  const f = setup();
+  f.read.mockImplementation(async (filters?: readonly ReadFilter[]) =>
+    events.filter((event) =>
+      (filters ?? []).some(
+        (filter) =>
+          (!filter.kinds || filter.kinds.includes(event.kind)) &&
+          (filter.ids?.includes(event.id) ||
+            event.tags.some(
+              (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+            )),
+      ),
+    ),
+  );
+  await f.deliver(mention);
+  await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+  const text = f.goose()?.turns[0]?.text ?? "";
+  expect(text).toContain('"content":"Plan"');
+  expect(text).toContain("Use the blue palette");
+  expect(text).not.toContain("Use the red palette");
+  expect(text).not.toContain("Drop the staging tables");
 });

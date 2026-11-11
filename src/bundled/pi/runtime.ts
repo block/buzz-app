@@ -28,6 +28,7 @@ import {
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
+import { currentMessages } from "../../features/agent-harness/current-messages";
 import { readProject } from "../../features/agent-harness/project";
 import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
@@ -1283,6 +1284,7 @@ export class PiRuntime {
           canvas && owner ? () => canvas(channelId, owner) : undefined,
         )
       : Promise.resolve(undefined);
+    const signingAuthority = reads?.workflowAuthority();
     let earlier: readonly EventData[] = [];
     // A chat its owner is still creating has nothing earlier to read.
     if (reads && !summary?.starting && (thread || dm || topLevel))
@@ -1296,7 +1298,7 @@ export class PiRuntime {
             : [{ kinds: CHAT, "#h": [channelId], limit: CONTEXT_LIMIT + 1 }],
           AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
         );
-        earlier = events
+        const found = events
           .filter(
             (item) =>
               CHAT.includes(item.kind) &&
@@ -1307,6 +1309,17 @@ export class PiRuntime {
               item.created_at <= event.created_at,
           )
           .sort((a, b) => a.created_at - b.created_at);
+        earlier = await currentMessages(
+          channelId,
+          found,
+          (filters) =>
+            reads.read(
+              filters,
+              AbortSignal.timeout(CONVERSATION_READ_TIMEOUT_MS),
+            ),
+          reads,
+          signingAuthority,
+        );
       } catch (error) {
         console.warn("Pi could not read the conversation", error);
       }
@@ -1315,7 +1328,6 @@ export class PiRuntime {
       (item) =>
         item.created_at > seen && (!seen || item.pubkey !== agent.pubkey),
     );
-    const signingAuthority = reads?.workflowAuthority();
     const [names, project] = await Promise.all([
       readAuthorNames(
         reads,

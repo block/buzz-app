@@ -21,9 +21,11 @@ function Media({
     let live = true;
     setSrc(null);
     setBroken(false);
-    void loader.image(image).then((blob) => live && setSrc(blob));
+    const lease = loader.image(image);
+    void lease.src.then((blob) => live && setSrc(blob));
     return () => {
       live = false;
+      lease.release();
     };
   }, [loader, image]);
   if (!src || broken) return null;

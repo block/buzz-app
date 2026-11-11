@@ -10,7 +10,7 @@ const loader = (page: Page | null): Loader =>
   ({
     available: true,
     page: vi.fn(async () => page),
-    image: vi.fn(async () => null),
+    image: vi.fn(() => ({ src: Promise.resolve(null), release: vi.fn() })),
     stop: vi.fn(),
   }) as unknown as Loader;
 

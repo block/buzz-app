@@ -24,6 +24,11 @@ const IMAGE_TYPES = new Set([
 ]);
 
 type Reader = Pick<Host, "readPage" | "requestBytes">;
+type Held = { src: Promise<string | null>; users: number; kept: boolean };
+export type ImageLease = Readonly<{
+  src: Promise<string | null>;
+  release(): void;
+}>;
 
 /** Reads previews and their images through the host, at most `PARALLEL` at
  * once, checking every redirect hop with `previewable` before asking again.
@@ -33,7 +38,7 @@ export function createLoader(host: Reader | undefined) {
   const readPage = host?.readPage?.bind(host);
   const requestBytes = host?.requestBytes?.bind(host);
   const pages = new Map<string, Promise<Page | null>>();
-  const images = new Map<string, Promise<string | null>>();
+  const images = new Map<string, Held>();
   const waiting: (() => void)[] = [];
   let active = 0;
   let stopped = false;
@@ -92,7 +97,6 @@ export function createLoader(host: Reader | undefined) {
     key: string,
     keep: number,
     load: () => Promise<T | null>,
-    drop?: (value: T) => void,
   ) {
     const found = cache.get(key);
     if (found) {
@@ -105,13 +109,53 @@ export function createLoader(host: Reader | undefined) {
     void pending.then((value) => {
       if (value === null && cache.get(key) === pending) cache.delete(key);
     });
-    for (const [old, value] of cache) {
+    for (const old of cache.keys()) {
       if (cache.size <= keep) break;
       cache.delete(old);
-      if (drop) void value.then((v) => v !== null && drop(v));
     }
     return pending;
   }
+
+  const revoke = (held: Held) =>
+    void held.src.then((src) => src && URL.revokeObjectURL(src));
+  const revokeIfUnused = (held: Held) => {
+    if (!held.kept && held.users === 0) revoke(held);
+  };
+
+  const loadImage = (url: string) =>
+    follow(url, async (target) => {
+      if (!requestBytes) return null;
+      const reply = await requestBytes({
+        url: target.href,
+        maxBytes: MAX_IMAGE_BYTES,
+        timeoutMs: 8000,
+      });
+      const header = (name: string) =>
+        Object.entries(reply.headers).find(
+          ([key]) => key.toLowerCase() === name,
+        )?.[1];
+      if (reply.status >= 300 && reply.status < 400) {
+        const location = header("location");
+        return location ? { location } : null;
+      }
+      const type = (header("content-type") ?? "")
+        .split(";")[0]
+        ?.trim()
+        .toLowerCase();
+      if (
+        reply.status !== 200 ||
+        !reply.body.byteLength ||
+        !type ||
+        !IMAGE_TYPES.has(type) ||
+        stopped
+      )
+        return null;
+      return {
+        value: URL.createObjectURL(
+          new Blob([reply.body as BlobPart], { type }),
+        ),
+      };
+    }).catch(() => null);
 
   return {
     available: !!readPage,
@@ -128,52 +172,52 @@ export function createLoader(host: Reader | undefined) {
         }),
       );
     },
-    image(url: string): Promise<string | null> {
-      if (!requestBytes) return Promise.resolve(null);
-      return remember(
-        images,
-        url,
-        KEEP_IMAGES,
-        () =>
-          follow(url, async (target) => {
-            const reply = await requestBytes({
-              url: target.href,
-              maxBytes: MAX_IMAGE_BYTES,
-              timeoutMs: 8000,
-            });
-            const header = (name: string) =>
-              Object.entries(reply.headers).find(
-                ([key]) => key.toLowerCase() === name,
-              )?.[1];
-            if (reply.status >= 300 && reply.status < 400) {
-              const location = header("location");
-              return location ? { location } : null;
-            }
-            const type = (header("content-type") ?? "")
-              .split(";")[0]
-              ?.trim()
-              .toLowerCase();
-            if (
-              reply.status !== 200 ||
-              !reply.body.byteLength ||
-              !type ||
-              !IMAGE_TYPES.has(type) ||
-              stopped
-            )
-              return null;
-            return {
-              value: URL.createObjectURL(
-                new Blob([reply.body as BlobPart], { type }),
-              ),
-            };
-          }),
-        (src) => URL.revokeObjectURL(src),
-      );
+    /** A lease on the image's `blob:` URL. The cache keeps at most
+     * `KEEP_IMAGES` for reuse, but a URL is revoked only once it has left the
+     * cache and every lease on it is released. */
+    image(url: string): ImageLease {
+      if (!requestBytes || stopped)
+        return { src: Promise.resolve(null), release() {} };
+      let held = images.get(url);
+      if (held) {
+        images.delete(url);
+        images.set(url, held);
+      } else {
+        const entry: Held = { src: loadImage(url), users: 0, kept: true };
+        held = entry;
+        images.set(url, entry);
+        void entry.src.then((src) => {
+          if (src === null && images.get(url) === entry) {
+            images.delete(url);
+            entry.kept = false;
+          }
+        });
+        for (const [old, value] of images) {
+          if (images.size <= KEEP_IMAGES) break;
+          images.delete(old);
+          value.kept = false;
+          revokeIfUnused(value);
+        }
+      }
+      const leased = held;
+      leased.users++;
+      let released = false;
+      return {
+        src: leased.src,
+        release() {
+          if (released) return;
+          released = true;
+          leased.users--;
+          revokeIfUnused(leased);
+        },
+      };
     },
     stop() {
       stopped = true;
-      for (const value of images.values())
-        void value.then((src) => src && URL.revokeObjectURL(src));
+      for (const held of images.values()) {
+        held.kept = false;
+        revoke(held);
+      }
       images.clear();
       pages.clear();
       const released = waiting.splice(0);

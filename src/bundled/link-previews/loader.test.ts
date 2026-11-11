@@ -72,6 +72,45 @@ describe("createLoader", () => {
     expect((await loader.page("https://a.example.com/"))?.title).toBe("Back");
   });
 
+  it("revokes an evicted image only after every card using it lets go", async () => {
+    let made = 0;
+    const create = vi
+      .spyOn(URL, "createObjectURL")
+      .mockImplementation(() => `blob:test/${made++}`);
+    const revoke = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => {});
+    try {
+      const requestBytes = vi.fn(async () => ({
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+        body: new Uint8Array([1]),
+      }));
+      const loader = createLoader({ readPage: vi.fn(), requestBytes });
+      const shown = loader.image("https://img.example.com/0.png");
+      const others = Array.from({ length: 61 }, (_, i) =>
+        loader.image(`https://img.example.com/${i + 1}.png`),
+      );
+      for (const lease of others) lease.release();
+      const src = await shown.src;
+      await Promise.all(others.map((lease) => lease.src));
+      await Promise.resolve();
+      expect(src).toBe("blob:test/0");
+      expect(revoke).not.toHaveBeenCalledWith(src);
+      expect(revoke).toHaveBeenCalledWith("blob:test/1");
+      expect(revoke).not.toHaveBeenCalledWith("blob:test/61");
+      shown.release();
+      await Promise.resolve();
+      expect(revoke).toHaveBeenCalledWith(src);
+      loader.stop();
+      await Promise.resolve();
+      expect(revoke).toHaveBeenCalledWith("blob:test/61");
+    } finally {
+      create.mockRestore();
+      revoke.mockRestore();
+    }
+  });
+
   it("is unavailable without a page reader", async () => {
     const loader = createLoader(undefined);
     expect(loader.available).toBe(false);

@@ -1,6 +1,5 @@
 import { useEffect, useEffectEvent, type RefObject } from "react";
-import type { RelaySession } from "../relay/session";
-import type { ReadingHandle } from "../relay/unread";
+import type { ReadingHandle, UnreadCapability } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
 
 /** Shared document attention gate for reading and row visits. */
@@ -14,7 +13,9 @@ export function readingPositioned(element: HTMLElement | null) {
 }
 
 type Reading = {
-  session: RelaySession;
+  /** Only leases and sync capability are needed; a companion window supplies
+   * a proxy whose leases live in the main window. */
+  session: { unread: Pick<UnreadCapability, "reading" | "sync"> };
   channelId: string;
   latestMessageId?: string | undefined;
   /** The thread this list shows: its bottom catches up that thread, and its

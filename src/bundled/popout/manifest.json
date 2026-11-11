@@ -1,0 +1,10 @@
+{
+  "id": "buzz.popout",
+  "name": "Pop-out windows",
+  "apiVersion": 1,
+  "description": "Open a thread in its own window to keep following it while you work elsewhere.",
+  "discovery": {
+    "category": "communication",
+    "tags": ["messaging"]
+  }
+}

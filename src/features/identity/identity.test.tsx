@@ -9251,3 +9251,23 @@ it("a backup prompt closed while the account's key is read stays closed once the
   expect(commands()).not.toContain("nsec_backup_set_choice");
   identity.dispose();
 });
+
+it("names work elsewhere that signing out discards", async () => {
+  vi.mocked(invoke).mockResolvedValueOnce(viewer);
+  const identity = createIdentity();
+  await identity.ready;
+  vi.mocked(invoke).mockResolvedValueOnce(null);
+  render(
+    <SignOutDialog
+      identity={identity}
+      onClose={() => {}}
+      holds={["The pop-out window for “Design” has an unsent reply."]}
+    />,
+  );
+  const note = screen.getByRole("note");
+  expect(note).toHaveTextContent("Signing out also discards:");
+  expect(within(note).getByRole("listitem")).toHaveTextContent(
+    "The pop-out window for “Design” has an unsent reply.",
+  );
+  identity.dispose();
+});

@@ -2,6 +2,7 @@ import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
 import { readView, writeView } from "../../shared/view-state";
+import { lastEditableMessage } from "../messages/useMessageEdit";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -27,7 +28,41 @@ export function createHuddleComposerOwner(
   current: () => boolean,
   verified?: () => boolean,
   agents?: import("../agents/service").Agents,
+  /** Reply into this thread of `room` instead of posting to the room. */
+  thread?: string,
+  /** The messages this window currently shows: reactions are admitted only
+   * against them, from main's own view of their reaction events, and never
+   * while main still has a reaction operation in flight for the message. */
+  shown?: {
+    message(
+      id: string,
+    ): import("../relay/contracts").ChannelMessage | undefined;
+    reactionBusy(messageId: string): boolean;
+    retryOperation(id: string): boolean;
+    /** The projection version now, answered with each admission. */
+    version(): number;
+    root(): import("../relay/contracts").ChannelMessage | undefined;
+    /** Record an operation main admitted for this window. */
+    admit(
+      id: string,
+      messageId: string | undefined,
+      kind: 7 | 5 | 40003 | 9,
+    ): void;
+    /** The companion reconciled these terminal reports. */
+    acknowledge(ids: readonly string[]): void;
+    /** Verified agent-owner authority for a shown message, or none. */
+    authorization(
+      id: string,
+    ): import("../relay/messages").AgentOwnerAuthorization | undefined;
+    /** Hand a still-registered, still-matching action to the main window. */
+    handoff(messageId: string, key: string, revision: string): boolean;
+    /** Stop an agent's work this window shows as live; none once it ended. */
+    stopWork?(
+      key: string,
+    ): Promise<import("../popout/thread").StopOutcome> | undefined;
+  },
 ) {
+  const draftKey = thread ? `draft:${room}:thread:${thread}` : `draft:${room}`;
   async function modelChoices(pubkeys: readonly string[]) {
     const revision = modelRevision;
     if (
@@ -92,15 +127,24 @@ export function createHuddleComposerOwner(
       !(verified ? verified() : c.huddle && c.parentChannelId === parent)
     )
       throw new Error("This Huddle conversation is no longer available.");
+    // A Huddle room's roster is always in its summary; a pop-out frame (a
+    // channel thread or conversation) follows the main composer and trusts
+    // the relay's readOnly flag instead, as `verified` already admitted it.
     if (
       write &&
       (c.archived ||
         c.readOnly ||
         c.cached ||
         !session.viewer ||
-        !c.members?.includes(session.viewer))
+        (!thread && !shown && !c.members?.includes(session.viewer)))
     )
-      throw new Error("This Huddle conversation is read-only.");
+      throw new Error(
+        thread
+          ? "This thread is read-only."
+          : shown
+            ? "This conversation is read-only."
+            : "This Huddle conversation is read-only.",
+      );
   }
   const send = (response: ComposerResponse) => {
     if (!closed) channel.postMessage(response);
@@ -127,6 +171,7 @@ export function createHuddleComposerOwner(
     const roomMetadata = metadata();
     return {
       room,
+      thread,
       modelRevision,
       viewer: session.viewer,
       scope: session.scope,
@@ -150,6 +195,7 @@ export function createHuddleComposerOwner(
       media,
       tools: extensions?.tools.snapshot().map((t) => t.key) ?? [],
       completions: extensions?.completions?.snapshot().map((t) => t.key) ?? [],
+      links: extensions?.links?.snapshot().map((t) => t.key) ?? [],
     };
   }
   function publish() {
@@ -195,8 +241,11 @@ export function createHuddleComposerOwner(
       }
       case "models":
         return modelChoices(request.args);
-      case "send": {
+      case "send":
+      case "reply": {
         check(true);
+        if ((request.op === "reply") !== !!thread)
+          throw new Error("This composer targets a different conversation.");
         const { text, draft, mentions, references, attachments } = request.args;
         if (
           typeof draft !== "string" ||
@@ -266,27 +315,264 @@ export function createHuddleComposerOwner(
           )
             throw new Error("Agent model choices changed. Choose again.");
         }
+        const parent = request.op === "reply" ? request.args.parent : undefined;
+        if (parent !== undefined && !/^[0-9a-f]{64}$/.test(parent))
+          throw new Error("Invalid reply target.");
         check(true);
         signal.throwIfAborted();
-        const id = session.messages.send(
-          room,
-          text,
-          mentions,
-          files,
-          undefined,
-          references,
-          picks,
-        );
+        const id =
+          request.op === "reply" && thread
+            ? session.messages.reply(
+                room,
+                thread,
+                text,
+                mentions,
+                files,
+                parent ?? thread,
+                references,
+                picks,
+              )
+            : session.messages.send(
+                room,
+                text,
+                mentions,
+                files,
+                undefined,
+                references,
+                picks,
+              );
         // Admission owns the persisted draft too: closing the child before its
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it
         // keeps the remembered agents in memory (see seedMentions).
         const scope = session.scope;
-        const key = `draft:${room}`;
-        if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(scope, key, mentionDraft(""));
+        if (JSON.stringify(readView(scope, draftKey, null)) === draft)
+          writeView(scope, draftKey, mentionDraft(""));
         for (const file of files) release(file);
         return id;
+      }
+      case "react":
+      case "removeReactions":
+      case "deleteMessage":
+      case "edit":
+      case "sendToChannel":
+      case "markRead":
+      case "report": {
+        check(
+          request.op !== "markRead" &&
+            request.op !== "report" &&
+            request.op !== "deleteMessage",
+        );
+        // Pop-out frames (thread or conversation) admit against shown rows;
+        // the Huddle companion has no projection and offers none of these.
+        if (!shown)
+          throw new Error("This action is not available in a Huddle composer.");
+        const { messageId } = request.args;
+        const target =
+          typeof messageId === "string" && /^[0-9a-f]{64}$/.test(messageId)
+            ? shown.message(messageId)
+            : undefined;
+        if (!target || target.channelId !== room)
+          throw new Error("This message is not shown in this window.");
+        const admitted = (id: string, kind: 7 | 5 | 40003 | 9) => {
+          shown.admit(id, messageId, kind);
+          return { id, version: shown.version() };
+        };
+        const delivered =
+          !target.delivery || ["accepted", "seen"].includes(target.delivery);
+        const own = target.authorId === session.viewer;
+        switch (request.op) {
+          case "react": {
+            if (shown.reactionBusy(messageId))
+              throw new Error(
+                "A reaction on this message is still being sent.",
+              );
+            const { content, emoji } = request.args;
+            if (typeof content !== "string" || content.length > 512)
+              throw new Error("Invalid reaction.");
+            if (
+              emoji !== undefined &&
+              (typeof emoji !== "object" ||
+                !emoji ||
+                typeof emoji.shortcode !== "string" ||
+                typeof emoji.url !== "string" ||
+                emoji.shortcode.length > 64 ||
+                emoji.url.length > 8192)
+            )
+              throw new Error("Invalid custom emoji.");
+            return admitted(
+              session.messages.react(messageId, content, emoji),
+              7,
+            );
+          }
+          case "removeReactions": {
+            if (shown.reactionBusy(messageId))
+              throw new Error(
+                "A reaction on this message is still being sent.",
+              );
+            const ownEvents = new Set(
+              target.reactions.flatMap((group) =>
+                group.events
+                  .filter((event) => event.authorId === session.viewer)
+                  .map((event) => event.id),
+              ),
+            );
+            const ids = request.args.ids;
+            if (
+              !Array.isArray(ids) ||
+              !ids.length ||
+              ids.length > 100 ||
+              ids.some((id) => typeof id !== "string" || !ownEvents.has(id))
+            )
+              throw new Error("Only your own reactions can be removed here.");
+            return admitted(session.messages.remove(ids), 5);
+          }
+          case "deleteMessage": {
+            // Own messages, or an owned agent's with main's verified evidence
+            // read again now, after any wait; never from a projected flag.
+            // Deletion has its own write policy, as in main: a verified owner
+            // may delete in a channel that is read-only to a guest.
+            const proof = own ? undefined : shown.authorization(messageId);
+            const c = metadata();
+            if (
+              !c ||
+              c.archived ||
+              c.cached ||
+              (c.readOnly && !(c.viewerRole === "guest" && proof))
+            )
+              throw new Error("This thread is read-only.");
+            if ((!own && !proof) || !delivered || !session.outbox?.supports(5))
+              throw new Error("Only your own messages can be deleted here.");
+            return admitted(session.messages.remove([messageId], proof), 5);
+          }
+          case "edit": {
+            const { content, attachmentSourceId, baseline } = request.args;
+            if (
+              typeof content !== "string" ||
+              content.length > 65536 ||
+              typeof attachmentSourceId !== "string" ||
+              typeof baseline !== "string"
+            )
+              throw new Error("Invalid edit.");
+            if (!own || !delivered)
+              throw new Error("Only your own messages can be edited.");
+            // The same single-row predicate as the main menu, and the exact
+            // text the companion edited: a newer edit it has not seen wins.
+            if (!lastEditableMessage(session, [target]))
+              throw new Error("This message is no longer available to edit.");
+            if ((target.sourceContent ?? target.content) !== baseline)
+              throw new Error(
+                "This message changed while you were editing. Copy your changes, then cancel and reopen it.",
+              );
+            if (attachmentSourceId !== (target.attachmentSourceId ?? target.id))
+              throw new Error("This message's attachments changed.");
+            return admitted(
+              session.messages.edit(messageId, content, attachmentSourceId),
+              40003,
+            );
+          }
+          case "sendToChannel": {
+            if (
+              !own ||
+              !delivered ||
+              !target.threadRootId ||
+              target.agentEnvelope ||
+              target.diff ||
+              !session.outbox?.supports(9)
+            )
+              throw new Error(
+                "Only your own thread replies can be sent to the channel.",
+              );
+            return admitted(
+              session.messages.sendToChannel(target, shown.root()),
+              9,
+            );
+          }
+          case "markRead": {
+            if (typeof request.args.unread !== "boolean")
+              throw new Error("Invalid read state.");
+            // Manual unread is main's: it also fences this window's reading leases.
+            await (request.args.unread
+              ? session.unread.markMessageUnread(room, messageId)
+              : session.unread.markMessageRead(room, messageId));
+            return;
+          }
+          case "report": {
+            const { type, note } = request.args;
+            if (!session.messages.report)
+              throw new Error("Reports are unavailable on this connection.");
+            if (
+              typeof type !== "string" ||
+              typeof note !== "string" ||
+              note.length > 4096
+            )
+              throw new Error("Invalid report.");
+            await session.messages.report(
+              messageId,
+              type as import("../relay/messages").ReportType,
+              note,
+            );
+            return;
+          }
+        }
+        return;
+      }
+      case "follow": {
+        check();
+        if (!thread) throw new Error("Not a thread.");
+        if (typeof request.args.following !== "boolean")
+          throw new Error("Invalid follow state.");
+        session.unread.follow(room, thread, request.args.following);
+        return;
+      }
+      case "handoff": {
+        check();
+        const { messageId, key, revision } = request.args;
+        if (
+          !shown ||
+          typeof messageId !== "string" ||
+          !/^[0-9a-f]{64}$/.test(messageId) ||
+          typeof key !== "string" ||
+          key.length > 256 ||
+          typeof revision !== "string" ||
+          revision.length > 256 ||
+          !shown.handoff(messageId, key, revision)
+        )
+          throw new Error("This action is no longer available.");
+        return;
+      }
+      case "stop": {
+        check();
+        const key = request.args.key;
+        if (!shown?.stopWork || typeof key !== "string" || key.length > 512)
+          throw new Error("This work can’t be stopped from here.");
+        const run = shown.stopWork(key);
+        if (!run) throw new Error("This work has already finished.");
+        return await run;
+      }
+      case "acknowledgeOperations": {
+        const ids = request.args.ids;
+        if (
+          !shown ||
+          !Array.isArray(ids) ||
+          ids.length > 256 ||
+          ids.some((id) => typeof id !== "string" || !/^[0-9a-f]{64}$/.test(id))
+        )
+          throw new Error("Invalid acknowledgement.");
+        shown.acknowledge(ids);
+        return;
+      }
+      case "retryOperation": {
+        check(true);
+        const id = request.args.id;
+        if (
+          !shown ||
+          typeof id !== "string" ||
+          !/^[0-9a-f]{64}$/.test(id) ||
+          !shown.retryOperation(id)
+        )
+          throw new Error("This change can no longer be retried here.");
+        return;
       }
       case "release":
         release(request.args);
@@ -477,6 +763,7 @@ export function createHuddleComposerOwner(
     session.typing.subscribe(publish),
     extensions?.tools.subscribe(publish),
     extensions?.completions?.subscribe(publish),
+    extensions?.links?.subscribe(publish),
   ];
   return {
     token,

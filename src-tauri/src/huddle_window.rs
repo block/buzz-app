@@ -16,6 +16,9 @@ pub(crate) struct View {
     muted: bool,
     level: f32,
     dark: bool,
+    /// The main window's applied appearance (mode, accent, contrast, text scale).
+    #[serde(default)]
+    appearance: Option<Appearance>,
     participants: Vec<Person>,
     #[serde(default)]
     audio_settings: Option<AudioSettings>,
@@ -57,13 +60,14 @@ struct Discussion {
     has_more: bool,
     rows: Vec<DiscussionRow>,
 }
+/// One projected message. Shared with pop-out windows, which present the same rows.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DiscussionRow {
+pub(crate) struct DiscussionRow {
     id: String,
     author_id: String,
     channel_id: String,
-    attachments: Vec<DiscussionAttachment>,
+    pub(crate) attachments: Vec<DiscussionAttachment>,
     author: String,
     picture: Option<String>,
     #[serde(default)]
@@ -73,6 +77,9 @@ struct DiscussionRow {
     mentions: Vec<String>,
     #[serde(default)]
     mention_names: std::collections::BTreeMap<String, String>,
+    /// Labels main resolved for message links in `text`, by URL (pop-outs).
+    #[serde(default)]
+    pub(crate) link_labels: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     edited: bool,
     #[serde(default)]
@@ -81,22 +88,123 @@ struct DiscussionRow {
     mention_references: Vec<String>,
     time: u64,
     delivery: String,
+    /// Reaction groups, bounded; a pop-out shows and toggles them. Huddle
+    /// rows omit them.
+    #[serde(default)]
+    pub(crate) reactions: Vec<ReactionGroup>,
+    #[serde(default)]
+    reactions_limited: bool,
+    /// What the viewer may do to this message, decided by main (pop-outs).
+    #[serde(default)]
+    management: Option<Management>,
+    /// Edit baseline for messages the viewer may edit (pop-outs).
+    #[serde(default)]
+    editable: Option<Editable>,
+    /// The author is an agent, by profile hint (pop-outs).
+    #[serde(default)]
+    author_is_agent: bool,
+    /// Replies in this message's thread (pop-out conversation frames).
+    #[serde(default)]
+    reply_count: u32,
+    /// Relay-authored membership activity shown as a notice row (pop-outs).
+    #[serde(default)]
+    membership: Option<Membership>,
+    /// Plugin actions main would offer, for a labelled main-window handoff.
+    #[serde(default)]
+    actions: Vec<HandoffAction>,
+    /// Agents at work on this request, shown under the row (pop-outs).
+    #[serde(default)]
+    live: Vec<crate::popout_window::WorkingAgent>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Membership {
+    #[serde(rename = "type")]
+    kind: String,
+    actor: String,
+    target: String,
+}
+impl Membership {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        matches!(
+            self.kind.as_str(),
+            "member_joined" | "member_left" | "member_removed"
+        ) && hex(&self.actor)
+            && hex(&self.target)
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct HandoffAction {
+    key: String,
+    revision: String,
+    title: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct DiscussionAttachment {
+pub(crate) struct Management {
+    unread: bool,
+    can_edit: bool,
+    can_delete: bool,
+    can_send_to_channel: bool,
+    can_report: bool,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Editable {
+    source_content: String,
+    attachment_source_id: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionGroup {
+    content: String,
+    #[serde(default)]
+    emoji: Option<ReactionEmoji>,
+    events: Vec<ReactionEvent>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionEmoji {
+    shortcode: String,
+    url: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ReactionEvent {
+    id: String,
+    author_id: String,
+}
+impl ReactionGroup {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        // 64 code points of text, or a `:shortcode:` token; bytes bound both.
+        (self.content.chars().count() <= 66 && self.content.len() <= 512)
+            && self
+                .emoji
+                .as_ref()
+                .is_none_or(|e| e.shortcode.len() <= 64 && e.url.len() <= 8192)
+            && !self.events.is_empty()
+            && self.events.len() <= 128
+            && self.events.iter().all(|e| hex(&e.id) && hex(&e.author_id))
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DiscussionAttachment {
     url: String,
     kind: String,
     mime: Option<String>,
     size: Option<u64>,
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     duration: Option<f64>,
     voice_note: Option<bool>,
     waveform: Option<Vec<u8>>,
     dimensions: Option<AttachmentDimensions>,
     blurhash: Option<String>,
     preview_url: Option<String>,
-    source: Option<String>,
+    pub(crate) source: Option<String>,
     preview_source: Option<String>,
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -104,6 +212,40 @@ struct DiscussionAttachment {
 struct AttachmentDimensions {
     width: u32,
     height: u32,
+}
+impl DiscussionRow {
+    pub(crate) fn valid(&self) -> bool {
+        self.id.len() <= 128
+            && self.author_id.len() <= 128
+            && self.channel_id.len() <= 128
+            && self.attachments.iter().all(|a| a.valid())
+            && matches!(
+                self.delivery.as_str(),
+                "sending" | "accepted" | "unknown" | "failed" | "seen"
+            )
+            && self.author.len() <= 4096
+            && self.text.len() <= 65536
+            && self.picture.as_ref().is_none_or(|p| p.len() <= 8192)
+            && self.picture_url.as_ref().is_none_or(|p| p.len() <= 8192)
+            && self.reactions.len() <= 64
+            && self.reactions.iter().all(|r| r.valid())
+            && self.editable.as_ref().is_none_or(|e| {
+                e.source_content.len() <= 65536 && e.attachment_source_id.len() <= 128
+            })
+            && self.membership.as_ref().is_none_or(|m| m.valid())
+            && self.link_labels.len() <= 64
+            && self
+                .link_labels
+                .iter()
+                .all(|(url, label)| url.len() <= 8192 && label.len() <= 1000)
+            && self.live.len() <= 8
+            && self.live.iter().all(|w| w.valid())
+            && self.actions.len() <= 32
+            && self
+                .actions
+                .iter()
+                .all(|a| a.key.len() <= 256 && a.revision.len() <= 256 && a.title.len() <= 256)
+    }
 }
 impl DiscussionAttachment {
     fn valid(&self) -> bool {
@@ -121,6 +263,52 @@ impl DiscussionAttachment {
             && self
                 .duration
                 .is_none_or(|duration| duration.is_finite() && (0.0..=86400.0).contains(&duration))
+    }
+}
+/// Appearance attributes a companion mirrors onto its document; bounded tokens.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Appearance {
+    color_mode: String,
+    #[serde(default)]
+    accent: Option<String>,
+    #[serde(default)]
+    color_level: Option<String>,
+    #[serde(default)]
+    font_scale: Option<f32>,
+}
+impl Appearance {
+    fn light() -> Self {
+        Self::mode(false)
+    }
+    /// A bare appearance for a view that reports only `dark`; the one source
+    /// of the native background colours.
+    pub(crate) fn mode(dark: bool) -> Self {
+        Self {
+            color_mode: if dark { "dark" } else { "light" }.into(),
+            accent: None,
+            color_level: None,
+            font_scale: None,
+        }
+    }
+    /// The window's native background before its page paints: `--bg-app` of the
+    /// applied color mode (dark: `--neutral-2`; light: `--neutral-quiet-hover`),
+    /// so a dark window never flashes light while its document loads. Pinned to
+    /// the design-system tokens by a test in `popout_window.rs`.
+    pub(crate) fn background(&self) -> tauri::window::Color {
+        if self.color_mode == "dark" {
+            tauri::window::Color(0x10, 0x10, 0x10, 0xff)
+        } else {
+            tauri::window::Color(0xf1, 0xf1, 0xf2, 0xff)
+        }
+    }
+    pub(crate) fn valid(&self) -> bool {
+        let token =
+            |s: &String| s.len() <= 32 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        matches!(self.color_mode.as_str(), "light" | "dark")
+            && self.accent.as_ref().is_none_or(token)
+            && self.color_level.as_ref().is_none_or(token)
+            && self.font_scale.is_none_or(|f| (0.5..=4.0).contains(&f))
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -207,6 +395,7 @@ fn validate(view: &View) -> Result<()> {
         )
         || !view.level.is_finite()
         || !(0.0..=1.0).contains(&view.level)
+        || view.appearance.as_ref().is_some_and(|a| !a.valid())
         || view.participants.len() > 256
         || view.audio_settings.as_ref().is_some_and(|a| {
             a.inputs.len() > 128
@@ -226,20 +415,7 @@ fn validate(view: &View) -> Result<()> {
                 || !matches!(d.status.as_str(), "loading" | "ready" | "error")
                 || d.error.as_ref().is_some_and(|e| e.len() > 8192)
                 || d.rows.len() > 200
-                || d.rows.iter().any(|r| {
-                    r.id.len() > 128
-                        || r.author_id.len() > 128
-                        || r.channel_id.len() > 128
-                        || r.attachments.iter().any(|a| !a.valid())
-                        || !matches!(
-                            r.delivery.as_str(),
-                            "sending" | "accepted" | "unknown" | "failed" | "seen"
-                        )
-                        || r.author.len() > 4096
-                        || r.text.len() > 65536
-                        || r.picture.as_ref().is_some_and(|p| p.len() > 8192)
-                        || r.picture_url.as_ref().is_some_and(|p| p.len() > 8192)
-                })
+                || d.rows.iter().any(|r| !r.valid())
         })
         || view.participants.iter().any(|p| {
             !p.level.is_finite()
@@ -309,6 +485,11 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
     validate(&view)?;
     let incoming = view.phase == "incoming";
     let id = view.id.clone();
+    let background = view
+        .appearance
+        .as_ref()
+        .map(Appearance::background)
+        .unwrap_or_else(|| Appearance::light().background());
     let on_closed = closed_notice(actions.clone(), id.clone());
     {
         let mut slot = host.0.lock().map_err(|_| "Huddle window unavailable")?;
@@ -335,6 +516,7 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
         .min_inner_size(360.0, 400.0)
         .center()
         .disable_drag_drop_handler()
+        .background_color(background)
         .build()
         .map_err(|e| e.to_string())?,
     };
@@ -535,6 +717,7 @@ mod tests {
             muted: false,
             level: 0.0,
             dark: false,
+            appearance: None,
             participants: vec![],
             discussion: None,
             discussion_open: false,
@@ -626,11 +809,21 @@ mod tests {
                 text: "Hello".into(),
                 mentions: vec!["cd".repeat(32)],
                 mention_names: [("cd".repeat(32), "Taylor".into())].into(),
+                link_labels: Default::default(),
                 edited: false,
                 attachment_seams: vec![3],
                 mention_references: vec!["ef".repeat(32)],
                 time: 1,
                 delivery: "unknown".into(),
+                reactions: vec![],
+                reactions_limited: false,
+                management: None,
+                editable: None,
+                author_is_agent: false,
+                reply_count: 0,
+                membership: None,
+                actions: vec![],
+                live: vec![],
             }],
         });
         let encoded = serde_json::to_value(&presentation).unwrap();

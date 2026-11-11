@@ -1,4 +1,11 @@
 import { createNavigationController } from "../../features/navigation/controller";
+import type {
+  ComposerTool,
+  ConversationExtensions,
+  InlineRenderer,
+  TabAction,
+} from "../../features/conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import { createMemoryHistory } from "../../features/navigation/history";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
@@ -83,6 +90,7 @@ async function page(
   routed = false,
   appComponent?: RegisteredPanel["component"],
   soloPreferences?: RelaySession["soloPreferences"],
+  extensions?: ConversationExtensions,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -236,6 +244,7 @@ async function page(
           createNavigationController(createMemoryHistory()).navigation
         }
         navigation={navigation}
+        extensions={extensions}
       />
     </ToastProvider>,
   );
@@ -894,11 +903,40 @@ it.each(["side", "main"] as const)(
 
 it("gives a Solo chat's side tab its own header actions, opening it in the main view", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));
-  const h = await page("stream", {
-    open,
-    snapshot: () => visitSnapshot,
-    subscribe: () => () => {},
-  } as unknown as Navigation);
+  // A contributed conversation action reaches the side header too.
+  const run = vi.fn();
+  const noTools: readonly Contribution<ComposerTool>[] = [];
+  const noInline: readonly Contribution<InlineRenderer>[] = [];
+  const tabActionEntries = [
+    {
+      id: "open-window",
+      key: "popout/open-window",
+      pluginId: "popout",
+      revision: "1",
+      title: "Open in new window",
+      matches: () => true,
+      run: (target: { channelId: string }) => run(target.channelId),
+    },
+  ];
+  const h = await page(
+    "stream",
+    {
+      open,
+      snapshot: () => visitSnapshot,
+      subscribe: () => () => {},
+    } as unknown as Navigation,
+    false,
+    undefined,
+    undefined,
+    {
+      tools: { snapshot: () => noTools, subscribe: () => () => {} },
+      inline: { snapshot: () => noInline, subscribe: () => () => {} },
+      tabActions: {
+        snapshot: () => tabActionEntries,
+        subscribe: () => () => {},
+      },
+    },
+  );
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
   act(() =>
     tabs.result.current.setTabs((items) => [
@@ -922,6 +960,10 @@ it("gives a Solo chat's side tab its own header actions, opening it in the main 
   expect(
     menu.queryByRole("menuitem", { name: "Convert to channel" }),
   ).toBeNull();
+  const names = menu.getAllByRole("menuitem").map((item) => item.textContent);
+  expect(names.indexOf("Open in new window")).toBe(
+    names.indexOf("Copy link") + 1,
+  );
   await h.user.click(menu.getByRole("menuitem", { name: "Open in main view" }));
   await vi.waitFor(() =>
     expect(open).toHaveBeenLastCalledWith({
@@ -1193,4 +1235,92 @@ it("opens another conversation's tab in its channel, but not the current channel
       context: "channel",
     }),
   );
+});
+
+it("lists a plugin's tab action for the tabs it matches, with the exact target", async () => {
+  const run = vi.fn();
+  const noTools: readonly Contribution<ComposerTool>[] = [];
+  const noInline: readonly Contribution<InlineRenderer>[] = [];
+  type Entry = Contribution<TabAction>;
+  let entries: readonly Entry[] = [
+    {
+      key: "popout:open",
+      pluginId: "popout",
+      revision: "1",
+      id: "open",
+      title: "Open in new window",
+      matches: (target) => !!target.threadRootId,
+      run,
+    },
+  ];
+  const listeners = new Set<() => void>();
+  const tabActions = {
+    snapshot: () => entries,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  // A stable snapshot: the page's forward provider subscribes to navigation.
+  const navigationSnapshot = { entry: { id: "visit" }, attempt: {} };
+  const h = await page(
+    "stream",
+    {
+      open: vi.fn(async () => ({ status: "opened" as const })),
+      snapshot: () => navigationSnapshot,
+      subscribe: () => () => {},
+    } as unknown as Navigation,
+    false,
+    undefined,
+    undefined,
+    {
+      tools: { snapshot: () => noTools, subscribe: () => () => {} },
+      inline: { snapshot: () => noInline, subscribe: () => () => {} },
+      tabActions,
+    },
+  );
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "side");
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+  });
+  const menu = async (name: string) => {
+    await h.user.pointer({
+      target: await screen.findByRole("tab", { name }),
+      keys: "[MouseRight]",
+    });
+    return within(await screen.findByRole("menu"));
+  };
+  // A whole conversation is not a thread: the matcher hides the action.
+  expect(
+    (await menu("Beta")).queryByRole("menuitem", {
+      name: "Open in new window",
+    }),
+  ).not.toBeInTheDocument();
+  await h.user.keyboard("{Escape}");
+  await h.user.click(
+    (await menu("Thread · Alpha")).getByRole("menuitem", {
+      name: "Open in new window",
+    }),
+  );
+  expect(run).toHaveBeenCalledWith(
+    { channelId: "alpha", threadRootId: root },
+    h.session,
+  );
+  // Disabling the plugin removes its entry from the menu.
+  act(() => {
+    entries = [];
+    for (const listener of listeners) listener();
+  });
+  expect(
+    (await menu("Thread · Alpha")).queryByRole("menuitem", {
+      name: "Open in new window",
+    }),
+  ).not.toBeInTheDocument();
 });

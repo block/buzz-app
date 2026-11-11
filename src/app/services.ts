@@ -128,6 +128,8 @@ export function createServices() {
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,
     subscribe: communities.subscribe,
+    holdExit: communities.holdExit,
+    exitHolds: communities.exitHolds,
   });
   ctx.provide("knownCommunities", {
     snapshot: communities.snapshot,
@@ -192,14 +194,17 @@ export function createServices() {
         return inviteIntent.open(invite, viewer);
       inviteIntent.clear();
       // Select now, not in the navigation effect, so a link read in the
-      // meantime is not discarded as a community switch.
-      communities.select(id);
-      void navigation.open({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.channels",
-        pageId: "channels",
-        scope: { viewer, communityOrigin: invite.community },
+      // meantime is not discarded as a community switch. A held exit asks
+      // first and opens the link once confirmed.
+      communities.select(id, {
+        after: () =>
+          void navigation.open({
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.channels",
+            pageId: "channels",
+            scope: { viewer, communityOrigin: invite.community },
+          }),
       });
     },
   };

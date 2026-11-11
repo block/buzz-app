@@ -32,6 +32,7 @@ import type {
   LinkPreviewRenderer,
   MessageRenderer,
   MessageAction,
+  TabAction,
   ContributionReader,
   PageTabsProps,
 } from "./contracts";
@@ -47,6 +48,46 @@ export type ChatIconProps = Readonly<{
 export type ChatIcon = Readonly<{
   id: string;
   component: ComponentType<ChatIconProps>;
+  /** The same icon in data, for a host surface where the component cannot
+   * run (a pop-out window's header). Optional; without it such a surface
+   * shows the chat's default icon. */
+  describer?: ChatIconDescriber | undefined;
+}>;
+/** Icons a host can draw from a name alone; the design system's artwork. */
+export type ChatIconName =
+  | "chat"
+  | "git-pull-request"
+  | "git-merge"
+  | "circle-dashed"
+  | "x-circle"
+  | "check-circle"
+  | "issue";
+export type ChatIconDescription = Readonly<{
+  icon: ChatIconName;
+  /** A semantic colouring the host maps to its roles. */
+  tone?:
+    | "open"
+    | "pending"
+    | "failure"
+    | "draft"
+    | "closed"
+    | "merged"
+    | "unknown";
+  /** What the icon shows, for readers who can't see it. */
+  label: string;
+}>;
+export type ChatIconDescriber = Readonly<{
+  /** The chat's icon now, or none to keep the default. */
+  describe(
+    session: RelaySession,
+    channelId: string,
+  ): ChatIconDescription | undefined;
+  /** Notifies while subscribed when `describe` would answer differently. */
+  watch(
+    session: RelaySession,
+    channelId: string,
+    listener: () => void,
+  ): () => void;
 }>;
 
 export type ChatMenuProps = Readonly<{
@@ -82,6 +123,9 @@ export type Conversation = {
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  /** Conversation tab menu entries, after the host's own. */
+  tabActions: ContributionReader<TabAction>;
+  registerTabAction(action: TabAction): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
@@ -102,8 +146,12 @@ export type Conversation = {
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
   /** Shows `component` as each Solo chat's sidebar icon while the providing
-   * plugin runs. */
-  registerChatIcon(component: ComponentType<ChatIconProps>): void;
+   * plugin runs. `describer` lets a host draw the same icon where the
+   * component cannot run, such as a pop-out window's header. */
+  registerChatIcon(
+    component: ComponentType<ChatIconProps>,
+    describer?: ChatIconDescriber,
+  ): void;
   /** The host's date labels, so plugin text reads like the message rows. */
   format: {
     /** "9:05 AM", "Yesterday", "Monday", "Sat, Jun 20", "Jun 20, 2025";
@@ -168,6 +216,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
+  readonly tabActions;
+  private readonly tabActionEntries;
   private readonly tabEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
@@ -224,6 +274,12 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const tabActions = createContributions<TabAction>(ctx);
+    this.tabActionEntries = tabActions;
+    this.tabActions = {
+      snapshot: tabActions.snapshot,
+      subscribe: tabActions.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
@@ -275,10 +331,23 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("A chat menu needs a component");
     this.chatMenuEntries.register(this.ctx, { id: "chat-menu", component });
   }
-  registerChatIcon(component: ComponentType<ChatIconProps>) {
+  registerChatIcon(
+    component: ComponentType<ChatIconProps>,
+    describer?: ChatIconDescriber,
+  ) {
     if (typeof component !== "function")
       throw new Error("A chat icon needs a component");
-    this.chatIconEntries.register(this.ctx, { id: "chat-icon", component });
+    if (
+      describer !== undefined &&
+      (typeof describer.describe !== "function" ||
+        typeof describer.watch !== "function")
+    )
+      throw new Error("A chat icon describer needs describe and watch");
+    this.chatIconEntries.register(this.ctx, {
+      id: "chat-icon",
+      component,
+      ...(describer ? { describer } : {}),
+    });
   }
   registerMessageAction(value: MessageAction) {
     validate(value);
@@ -289,6 +358,18 @@ export class ConversationService extends Service implements Conversation {
     )
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
+  }
+  registerTabAction(value: TabAction) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      typeof value.matches !== "function" ||
+      typeof value.run !== "function"
+    )
+      throw new Error("A tab action needs an id, title, matcher and run");
+    this.tabActionEntries.register(this.ctx, value);
   }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);

@@ -1033,3 +1033,56 @@ it("hydrates native public identity without contacting the development broker", 
   expect(fetch).not.toHaveBeenCalled();
   expect(client.relay.snapshot().status).not.toBe("ready");
 });
+
+it("holds a community exit while a feature has unsaved work, until the shell decides", async () => {
+  const client = setup();
+  await flush();
+  client.joined({ id: "primary", name: "Primary" }, { name: "L", picture: "" });
+  await flush();
+  client.joined(
+    { id: "secondary", name: "Secondary" },
+    { name: "L", picture: "" },
+  );
+  await flush();
+  client.select("primary");
+  let holds: string[] = [];
+  const release = client.holdExit(() => holds);
+  const after = vi.fn();
+  // Nothing held: a selection proceeds and runs its continuation at once.
+  expect(client.select("secondary", { after })).toBe(true);
+  expect(after).toHaveBeenCalledTimes(1);
+  expect(client.snapshot().selected).toBe("secondary");
+  holds = ["A pop-out window has an unsent reply."];
+  // Re-selecting the current community discards nothing and never asks.
+  expect(client.select("secondary")).toBe(true);
+  expect(client.pendingSelection()).toBeUndefined();
+  const changed = vi.fn();
+  client.subscribe(changed);
+  expect(client.select("primary", { after })).toBe(false);
+  expect(client.snapshot().selected).toBe("secondary");
+  expect(client.pendingSelection()).toEqual({ id: "primary", holds });
+  expect(after).toHaveBeenCalledTimes(1);
+  expect(changed).toHaveBeenCalled();
+  client.cancelSelection();
+  expect(client.pendingSelection()).toBeUndefined();
+  expect(client.snapshot().selected).toBe("secondary");
+  expect(after).toHaveBeenCalledTimes(1);
+  expect(client.select(null, { after })).toBe(false);
+  expect(client.pendingSelection()?.id).toBeNull();
+  client.confirmSelection();
+  expect(client.snapshot().selected).toBeNull();
+  expect(after).toHaveBeenCalledTimes(2);
+  expect(client.pendingSelection()).toBeUndefined();
+  // A caller that already asked (the shell's departure guard) forces through.
+  expect(client.select("primary", { force: true })).toBe(true);
+  expect(client.snapshot().selected).toBe("primary");
+  // A throwing describer hides itself; a released one holds nothing.
+  const broken = client.holdExit(() => {
+    throw new Error("no");
+  });
+  expect(client.exitHolds()).toEqual(holds);
+  broken();
+  release();
+  expect(client.exitHolds()).toEqual([]);
+  expect(client.select("secondary")).toBe(true);
+});

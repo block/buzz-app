@@ -1,0 +1,628 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { CompanionWorking } from "../../features/companion/CompanionWorking";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
+import type { PopoutView } from "../../features/popout/window";
+import { PopoutWindowView } from "./PopoutWindowView";
+import { popoutThreadRoot } from ".";
+
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(cleanup);
+
+const row = (id: string, text: string) => ({
+  id,
+  author: "Ada",
+  authorId: "a".repeat(64),
+  channelId: "channel",
+  attachments: [],
+  picture: null,
+  text,
+  time: 1_700_000_000,
+  delivery: "seen" as const,
+});
+const view = (patch: Partial<PopoutView> = {}): PopoutView => ({
+  title: "Design",
+  scope: "https://relay.test:viewer",
+  dark: false,
+  status: "ready",
+  writable: false,
+  canLoadMore: false,
+  limited: false,
+  loadingOlder: false,
+  reading: undefined,
+  readingRevision: 0,
+  operations: [],
+  following: false,
+  isDm: false,
+  kind: "channel",
+  thread: true,
+  version: 1,
+  root: row("1".repeat(64), "Root message"),
+  replies: [row("2".repeat(64), "First reply")],
+  ...patch,
+});
+
+it("names what it shows, as Slack's pop-out does, and reports its guard", () => {
+  const act = vi.fn();
+  const { rerender } = render(<PopoutWindowView view={view()} act={act} />);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Thread #Design",
+  );
+  expect(screen.getByRole("img", { name: "Thread" })).toBeTruthy();
+  rerender(
+    <PopoutWindowView
+      view={view({ isDm: true, kind: "dm", title: "Ada" })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Thread Ada",
+  );
+  // A conversation frame shows the kind the tab strip would: the DM's
+  // person, the Solo bubble, a lock, or a hash — named for readers who can't
+  // see it. Only a hash conversation is written with `#`.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "dm",
+        title: "Ada",
+        picture: "http://buzz-media.localhost/ada",
+      })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Ada");
+  const dm = screen.getByRole("img", { name: "Direct message" });
+  expect(dm.querySelector("img")?.getAttribute("src")).toBe(
+    "http://buzz-media.localhost/ada",
+  );
+  rerender(
+    <PopoutWindowView
+      view={view({ thread: false, isDm: true, kind: "solo", title: "Plan" })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Solo chat" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Plan$/);
+  // A plugin's icon for the chat, drawn from its description with its tone.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "solo",
+        title: "Plan",
+        icon: {
+          icon: "git-pull-request",
+          tone: "failure",
+          label: "Pull request, open, checks failing",
+        },
+      })}
+      act={act}
+    />,
+  );
+  const pluginIcon = screen.getByRole("img", {
+    name: "Solo chat: Pull request, open, checks failing",
+  });
+  expect(pluginIcon.getAttribute("data-tone")).toBe("failure");
+  expect(pluginIcon.querySelector("svg")).toBeTruthy();
+  // An icon name this host doesn't know — even a prototype key — draws the
+  // chat default rather than failing the window.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "solo",
+        title: "Plan",
+        icon: { icon: "constructor" as never, label: "Unknown" },
+      })}
+      act={act}
+    />,
+  );
+  expect(
+    screen
+      .getByRole("img", { name: "Solo chat: Unknown" })
+      .querySelector("svg"),
+  ).toBeTruthy();
+  rerender(
+    <PopoutWindowView
+      view={view({ thread: false, kind: "private", title: "leads" })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("img", { name: "Private channel" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    /^leads$/,
+  );
+  rerender(<PopoutWindowView view={view({ thread: false })} act={act} />);
+  expect(screen.getByRole("img", { name: "Public channel" })).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "#Design",
+  );
+  rerender(<PopoutWindowView view={view()} act={act} />);
+  expect(screen.getByText("Root message")).toBeTruthy();
+  expect(screen.getByText("First reply")).toBeTruthy();
+  // The guard is reported natively from the start: nothing is held yet.
+  expect(act).toHaveBeenCalledWith("guard", "0");
+  expect(screen.getByText("This thread is read-only here.")).toBeTruthy();
+});
+
+it("asks before a guarded close and confirms through the owner", () => {
+  const act = vi.fn();
+  const { rerender } = render(<PopoutWindowView view={view()} act={act} />);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  rerender(<PopoutWindowView view={view({ closeRequested: 1 })} act={act} />);
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  rerender(<PopoutWindowView view={view({ closeRequested: 2 })} act={act} />);
+  fireEvent.click(screen.getByRole("button", { name: "Close window" }));
+  expect(act).toHaveBeenCalledWith("close");
+});
+
+it("goes read-only with a notice while the owner is away", () => {
+  render(
+    <PopoutWindowView
+      view={view({ detached: true, writable: true })}
+      act={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("status").textContent).toMatch(/reconnecting/);
+  expect(screen.queryByText("This thread is read-only here.")).toBeNull();
+});
+
+it("sends Buzz links to main and leaves web links to the OS opener", () => {
+  const act = vi.fn();
+  render(
+    <PopoutWindowView
+      view={view({
+        root: row(
+          "1".repeat(64),
+          "[Example](https://example.com) and buzz://channel/abc",
+        ),
+        replies: [],
+      })}
+      act={act}
+    />,
+  );
+  fireEvent.click(screen.getByRole("link", { name: "Example" }));
+  expect(act.mock.calls.filter((c) => c[0] === "openLink")).toEqual([]);
+  const buzz = screen
+    .getAllByRole("link")
+    .find((link) => link.getAttribute("href")?.startsWith("buzz:"));
+  if (buzz) {
+    fireEvent.click(buzz);
+    expect(act).toHaveBeenCalledWith(
+      "openLink",
+      expect.stringMatching(/^buzz:/),
+    );
+  }
+});
+
+it("offers the action only for delivered messages that have a thread", () => {
+  const base = {
+    id: "3".repeat(64),
+    channelId: "c",
+    authorId: "a".repeat(64),
+    createdAt: 1,
+    content: "",
+    attachments: [],
+    mentions: [],
+    reactions: [],
+    participants: [],
+  };
+  expect(popoutThreadRoot({ ...base, replyCount: 0 })).toBeUndefined();
+  expect(popoutThreadRoot({ ...base, replyCount: 2 })).toBe(base.id);
+  expect(
+    popoutThreadRoot({ ...base, replyCount: 0, threadRootId: "r".repeat(64) }),
+  ).toBe("r".repeat(64));
+  expect(
+    popoutThreadRoot({ ...base, replyCount: 2, delivery: "failed" }),
+  ).toBeUndefined();
+});
+
+it("shows projected reactions even before the bridge connects", () => {
+  render(
+    <PopoutWindowView
+      view={view({
+        root: {
+          ...row("1".repeat(64), "Root message"),
+          reactions: [
+            {
+              content: "👍",
+              events: [{ id: "9".repeat(64), authorId: "a".repeat(64) }],
+            },
+          ],
+        },
+        replies: [],
+      })}
+      act={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("👍")).toBeTruthy();
+});
+
+it("shows a conversation as a timeline with day dividers, drills into a row's thread in place and offers the way back", () => {
+  const act = vi.fn();
+  const day = 86_400;
+  const conversation = view({
+    thread: false,
+    root: undefined,
+    writable: true,
+    replies: [
+      { ...row("1".repeat(64), "Monday"), time: 1_700_000_000 },
+      {
+        ...row("2".repeat(64), "Tuesday, with a thread"),
+        time: 1_700_000_000 + day,
+        replyCount: 3,
+      },
+    ],
+  });
+  const { rerender } = render(
+    <PopoutWindowView view={conversation} act={act} />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "#Design",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Back to conversation" }),
+  ).toBeNull();
+  expect(screen.getByRole("log", { name: "Messages" })).toBeTruthy();
+  // One divider per day shown.
+  expect(document.querySelectorAll("[data-day]")).toHaveLength(2);
+  fireEvent.click(
+    screen.getByRole("button", { name: /View thread: 3 replies/ }),
+  );
+  expect(act).toHaveBeenCalledWith("openThread", "2".repeat(64));
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: true,
+        canGoBack: true,
+        root: row("2".repeat(64), "Tuesday, with a thread"),
+        replies: [],
+      })}
+      act={act}
+    />,
+  );
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Thread #Design",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back to conversation" }));
+  expect(act).toHaveBeenCalledWith("back");
+  // Reply from the conversation opens the row's thread, as main's channel
+  // view does, instead of replying in the conversation.
+  act.mockClear();
+  rerender(<PopoutWindowView view={conversation} act={act} />);
+  const replies = screen.getAllByRole("button", { name: "Reply" });
+  fireEvent.click(replies[0] as HTMLElement);
+  expect(act).toHaveBeenCalledWith("openThread", "1".repeat(64));
+  expect(screen.queryByText(/Replying to/)).toBeNull();
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: true,
+        canGoBack: true,
+        root: row("1".repeat(64), "Monday"),
+        replies: [],
+      })}
+      act={act}
+    />,
+  );
+  // No editor yet (the thread's composer connects to main asynchronously):
+  // focus rests on the thread's log, which the editor takes over on arrival.
+  expect(document.activeElement).toBe(
+    screen.getByRole("log", { name: "Thread messages" }),
+  );
+});
+
+it("shows membership activity as one notice per run and says who is typing or working, in main's words", () => {
+  const act = vi.fn();
+  const ada = "a".repeat(64);
+  const bob = "b".repeat(64);
+  const carol = "c".repeat(64);
+  const conversation = view({
+    thread: false,
+    root: undefined,
+    replies: [
+      row("1".repeat(64), "Hello"),
+      {
+        ...row("2".repeat(64), ""),
+        authorId: ada,
+        membership: { type: "member_joined", actor: carol, target: ada },
+        mentionNames: { [ada]: "Ada", [carol]: "Carol" },
+      },
+      {
+        ...row("3".repeat(64), ""),
+        authorId: bob,
+        membership: { type: "member_joined", actor: carol, target: bob },
+        mentionNames: { [bob]: "Bob", [carol]: "Carol" },
+      },
+      row("4".repeat(64), "Welcome"),
+    ],
+    typing: { humans: ["Ada", "Bob"], more: 1, agents: ["Echo"] },
+  });
+  render(<PopoutWindowView view={conversation} act={act} />);
+  expect(screen.getByText("Hello")).toBeTruthy();
+  expect(screen.getByText("Welcome")).toBeTruthy();
+  const notices = document.querySelectorAll("[data-membership-row]");
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.textContent).toMatch(/Carol/);
+  expect(notices[0]?.textContent).toMatch(/Ada/);
+  expect(notices[0]?.textContent).toMatch(/Bob/);
+  expect(
+    document.querySelector("[data-conversation-activity]")?.textContent,
+  ).toBe("Echo is working. Ada, Bob and 1 others are typing");
+});
+
+it("shows the member stack main's header shows and opens members in the main window", () => {
+  const act = vi.fn();
+  const { rerender } = render(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        members: {
+          count: 5,
+          solo: false,
+          preview: [
+            {
+              id: "a".repeat(64),
+              name: "Ada",
+              picture: "http://buzz-media.localhost/ada",
+            },
+            { id: "b".repeat(64), name: "Bob", picture: null },
+            { id: "c".repeat(64), name: "Cat", picture: null },
+          ],
+        },
+      })}
+      act={act}
+    />,
+  );
+  const members = screen.getByRole("button", {
+    name: "5 members of #Design; opens in the main window",
+  });
+  expect(
+    members.querySelector('img[src="http://buzz-media.localhost/ada"]'),
+  ).toBeTruthy();
+  expect(members).toHaveTextContent("+2");
+  fireEvent.click(members);
+  expect(act).toHaveBeenCalledWith("openMembers");
+  // The overflow is the whole count, however large.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        members: {
+          count: 1001,
+          solo: false,
+          preview: [{ id: "a".repeat(64), name: "Ada", picture: null }],
+        },
+      })}
+      act={act}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: /^1001 members of #Design/ }),
+  ).toHaveTextContent("+998");
+  // A Solo chat counts its agents; none known yet shows the agents glyph.
+  rerender(
+    <PopoutWindowView
+      view={view({
+        thread: false,
+        isDm: true,
+        kind: "solo",
+        title: "Plan",
+        members: { count: 0, solo: true, preview: [] },
+      })}
+      act={act}
+    />,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "0 agents in Plan; opens in the main window",
+    }),
+  ).toBeTruthy();
+  expect(screen.queryByText("+2")).toBeNull();
+});
+
+it("shows the agents at work as main's compact cue, with their rows and Stop in the Working now chooser, and names them for assistive technology", async () => {
+  const user = userEvent.setup();
+  const act = vi.fn();
+  const working = [
+    {
+      id: "3".repeat(64),
+      name: "Echo",
+      picture: null,
+      state: "working" as const,
+      step: "Reading src/app.ts",
+      status: "Reading src/app.ts",
+      activity: `buzz://profile/${"3".repeat(64)}/activity`,
+      stops: [{ key: "k1", label: "Stop Echo", lifecycle: true }],
+    },
+    {
+      id: "4".repeat(64),
+      name: "Foxtrot",
+      picture: null,
+      state: "waiting" as const,
+      step: "",
+      status: "Received · waiting to start",
+      stops: [],
+    },
+  ];
+  render(
+    <ToastProvider>
+      <PopoutWindowView
+        view={view({
+          thread: false,
+          typing: {
+            humans: ["Ada"],
+            more: 0,
+            agents: ["Echo", "Foxtrot"],
+            working,
+          },
+        })}
+        act={act}
+      />
+    </ToastProvider>,
+  );
+  // The preview groups every working agent; the status line keeps only the
+  // humans visibly and the whole sentence for assistive technology.
+  expect(screen.getByRole("img", { name: "Echo, Foxtrot" })).toBeTruthy();
+  const status = screen.getByRole("status", {
+    name: "Echo, Foxtrot are working. Ada is typing",
+  });
+  expect(status).toHaveTextContent(/^Ada is typing$/);
+  // Only the step shows until the cue opens main's chooser.
+  expect(
+    screen.queryByText("Only typing updates are reaching this app."),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Stop Echo" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Reading src/app.ts" }));
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
+  expect(within(dialog).getByText("Received · waiting to start")).toBeTruthy();
+  expect(
+    within(dialog).queryByRole("button", { name: /Stop Foxtrot/ }),
+  ).toBeNull();
+  // Stop is main's own state owner (`useWorkStops`): a refusal ends the
+  // attempt and is reported as a notice.
+  await user.click(within(dialog).getByRole("button", { name: "Stop Echo" }));
+  expect(
+    await screen.findByText(
+      "Couldn’t stop Echo. This window is no longer connected.",
+    ),
+  ).toBeTruthy();
+  expect(
+    within(dialog).getByRole("button", { name: "Stop Echo" }),
+  ).toHaveTextContent("Stop");
+  // Activity opens in main and closes the chooser.
+  await user.click(
+    within(dialog).getByRole("button", { name: "View Echo activity" }),
+  );
+  expect(act).toHaveBeenCalledWith(
+    "openLink",
+    `buzz://profile/${"3".repeat(64)}/activity`,
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Working now" })).toBeNull(),
+  );
+});
+
+it("keeps a hosted Stop pending only for main's retry window, then offers it again", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const stop = vi.fn(async () => ({ lifecycle: false, running: true }));
+    const working = [
+      {
+        id: "3".repeat(64),
+        name: "Echo",
+        picture: null,
+        state: "working" as const,
+        step: "",
+        status: "Working",
+        stops: [{ key: "hosted", label: "Stop Echo", lifecycle: false }],
+      },
+    ];
+    render(
+      <ToastProvider>
+        <CompanionWorking
+          working={working}
+          layout="timeline"
+          stop={stop}
+          openActivity={undefined}
+        />
+      </ToastProvider>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Activity: Echo working" }),
+    );
+    await screen.findByRole("dialog", { name: "Working now" });
+    fireEvent.click(screen.getByRole("button", { name: "Stop Echo" }));
+    expect(await screen.findByText("Stopping Echo")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
+      "Stopping…",
+    );
+    expect(stop).toHaveBeenCalledExactlyOnceWith("hosted");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_001);
+    });
+    expect(
+      await screen.findByText("Echo hasn’t stopped yet. Try again."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop Echo" })).toHaveTextContent(
+      /^Stop$/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("shows a request row's live work under that row with Stop, as main's row bubble does", async () => {
+  const act = vi.fn();
+  const live = [
+    {
+      id: "3".repeat(64),
+      name: "Echo",
+      picture: null,
+      state: "working" as const,
+      step: "Running a command",
+      status: "Running a command",
+      stops: [{ key: "row-stop", label: "Stop Echo", lifecycle: true }],
+    },
+  ];
+  render(
+    <ToastProvider>
+      <PopoutWindowView
+        view={view({
+          root: { ...row("1".repeat(64), "Please run it"), live },
+          replies: [row("2".repeat(64), "A reply")],
+          typing: undefined,
+        })}
+        act={act}
+      />
+    </ToastProvider>,
+  );
+  const request = screen.getByText("Please run it");
+  const bubble = screen.getByRole("img", { name: "Echo" });
+  // The bubble follows its request and precedes the next message.
+  expect(
+    request.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    bubble.compareDocumentPosition(screen.getByText("A reply")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  // The step is the cue into the chooser, as main's row bubble is.
+  fireEvent.click(screen.getByRole("button", { name: "Running a command" }));
+  const dialog = await screen.findByRole("dialog", { name: "Working now" });
+  // Stop without a connected owner reports its refusal, like the footer's.
+  fireEvent.click(within(dialog).getByRole("button", { name: "Stop Echo" }));
+  expect(
+    await screen.findByText(
+      "Couldn’t stop Echo. This window is no longer connected.",
+    ),
+  ).toBeTruthy();
+});

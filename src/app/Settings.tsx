@@ -664,6 +664,9 @@ function PluginDetails({
   );
 }
 
+const none: readonly string[] = [];
+const noHolds = () => none;
+
 export function Settings({
   agents,
   decisions,
@@ -760,6 +763,11 @@ export function Settings({
   const client = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
+  );
+  // Fixtures may supply a bare community inventory without exit holds.
+  const exitHolds = useSyncExternalStore(
+    communities.subscribe,
+    communities.exitHolds ?? noHolds,
   );
   const selectedCommunity = client.memberships.find(
     (membership) => membership.id === client.selected,
@@ -1523,6 +1531,7 @@ export function Settings({
                   )
                 : undefined
             }
+            exitHolds={exitHolds}
           />
         )}
         {selected === "security" && (

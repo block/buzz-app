@@ -131,15 +131,8 @@ fn restore_geometry_from<R: Runtime>(
     else {
         return Ok(());
     };
-    let monitors = window.available_monitors()?;
-    let areas: Vec<_> = monitors
-        .iter()
-        .map(|monitor| *monitor.work_area())
-        .collect();
-    let fallback = window
-        .primary_monitor()?
-        .or_else(|| monitors.first().cloned())
-        .map(|monitor| (*monitor.work_area(), monitor.scale_factor()));
+    let (monitors, fallback) = screens(window)?;
+    let areas: Vec<_> = monitors.iter().map(|(area, _)| *area).collect();
     if let Some(fallback) = fallback {
         // Only the client-to-frame origin offset is needed. Linux's initial
         // outer_size is not reliable until its first configure event.
@@ -167,6 +160,25 @@ fn restore_geometry_from<R: Runtime>(
         window.set_size(size)?;
     }
     Ok(())
+}
+
+/// Every monitor's work area and scale, and the primary (else first)
+/// monitor's as the fallback for an unreachable window.
+pub(crate) type Screens = (
+    Vec<(PhysicalRect<i32, u32>, f64)>,
+    Option<(PhysicalRect<i32, u32>, f64)>,
+);
+pub(crate) fn screens<R: Runtime>(window: &Window<R>) -> tauri::Result<Screens> {
+    let monitors = window.available_monitors()?;
+    let areas = monitors
+        .iter()
+        .map(|monitor| (*monitor.work_area(), monitor.scale_factor()))
+        .collect();
+    let fallback = window
+        .primary_monitor()?
+        .or_else(|| monitors.first().cloned())
+        .map(|monitor| (*monitor.work_area(), monitor.scale_factor()));
+    Ok((areas, fallback))
 }
 
 fn restore_request(
@@ -211,7 +223,7 @@ fn restore_request(
     )
 }
 
-fn reachable_client(
+pub(crate) fn reachable_client(
     mut client: PhysicalRect<i32, u32>,
     header_height: u32,
     areas: &[PhysicalRect<i32, u32>],

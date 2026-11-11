@@ -1267,6 +1267,7 @@ function ChannelWorkspace({
       channel.channelType === "solo" && (
         <SoloToolbar
           chatMenus={chatMenus}
+          tabActions={extensions?.tabActions}
           key={channel.id}
           session={queries}
           scope={scope}
@@ -2335,6 +2336,7 @@ function ChannelWorkspace({
               {current && solo ? (
                 <SoloHeading
                   chatMenus={chatMenus}
+                  tabActions={extensions?.tabActions}
                   key={`${current.id}:${navigation?.entryId ?? ""}`}
                   session={queries}
                   scope={scope}

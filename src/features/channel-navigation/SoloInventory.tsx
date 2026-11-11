@@ -50,13 +50,15 @@ import {
   MenuItem,
 } from "../../shared/design-system/ui/Menu";
 import creationStyles from "./SoloInventory.module.css";
+import { ConversationActionItems } from "./ConversationActionItems";
 import {
   DotsThreeIcon,
   ChatCircleIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import type { ContributionReader } from "../conversation/contracts";
+import type { ContributionReader, TabAction } from "../conversation/contracts";
+import type { Contribution } from "../../plugins/contributions";
 import type { ChatIcon, ChatMenu } from "../conversation/service";
 import type {
   RegisteredSidebarRows,
@@ -68,6 +70,8 @@ import styles from "../../bundled/channels/SoloWorkspaces.module.css";
 const noSubscription = () => () => {};
 const emptyRows: readonly RegisteredSidebarRows[] = [];
 const noSidebarRows = () => emptyRows;
+const noneActions: readonly Contribution<TabAction>[] = [];
+const noTabActions = () => noneActions;
 const chatIcon = (
   <span className={styles.conversationIcon} aria-hidden="true">
     <ChatCircleIcon size={16} />
@@ -83,6 +87,7 @@ export function SoloInventory({
   chatIcons,
   chatMenus,
   sidebarRows,
+  tabActions,
   renderContents,
 }: {
   session: RelaySession;
@@ -93,6 +98,8 @@ export function SoloInventory({
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
   sidebarRows?: SidebarRows | undefined;
+  /** Conversation actions a chat row offers in its menu; one may claim ⌘-click. */
+  tabActions?: ContributionReader<TabAction> | undefined;
   /** Places the conversations in a host that titles them; creation then
    * belongs to the host's own New menu, so only the standalone header has it. */
   renderContents?: (
@@ -154,6 +161,20 @@ export function SoloInventory({
   const menus = useSyncExternalStore(
     chatMenus?.subscribe ?? noSubscription,
     () => chatMenus?.snapshot(),
+  );
+  const conversationActions = useSyncExternalStore(
+    tabActions?.subscribe ?? noSubscription,
+    tabActions?.snapshot ?? noTabActions,
+  );
+  const offered = useCallback(
+    (channelId: string, action: Contribution<TabAction>) => {
+      try {
+        return action.matches({ channelId }, session);
+      } catch {
+        return false; // A failing contribution hides itself, not the menu.
+      }
+    },
+    [session],
   );
   const workingChannels = useMemo(
     () => new Set<string>(JSON.parse(workingIds)),
@@ -222,7 +243,20 @@ export function SoloInventory({
         selected={selected === item.id}
         working={workingChannels.has(item.id)}
         Icon={ChatIcon}
-        onSelect={() => void open(item.id)}
+        onSelect={() => {
+          // ⌘/Ctrl-click hands the row to the action claiming the gesture.
+          const event = window.event;
+          const claimed =
+            event instanceof MouseEvent && (event.metaKey || event.ctrlKey)
+              ? conversationActions.find(
+                  (action) =>
+                    action.gesture === "modifier-click" &&
+                    offered(item.id, action),
+                )
+              : undefined;
+          if (claimed) claimed.run({ channelId: item.id }, session);
+          else void open(item.id);
+        }}
         onRename={rename}
         onOpenThread={(thread) => openMessage(thread.channelId, thread.rootId)}
         onOpenMention={(mention) =>
@@ -244,14 +278,31 @@ export function SoloInventory({
       open,
       openMessage,
       openAgentActivity,
+      conversationActions,
+      offered,
     ],
   );
   const renderChatMenu = useCallback(
-    (channelId: string) =>
-      menus?.map(({ key, component: Menu }) => (
-        <Menu key={key} session={session} channelId={channelId} />
-      )),
+    (channelId: string) => (
+      <>
+        {menus?.map(({ key, component: Menu }) => (
+          <Menu key={key} session={session} channelId={channelId} />
+        ))}
+      </>
+    ),
     [menus, session],
+  );
+  // Contributed conversation actions sit after Copy link, where a channel
+  // row's menu puts them, so the same action is found in the same place.
+  const renderConversationActions = useCallback(
+    (channelId: string) => (
+      <ConversationActionItems
+        tabActions={tabActions}
+        session={session}
+        channelId={channelId}
+      />
+    ),
+    [session, tabActions],
   );
   const conversations = list.channels
     // Solo chats the viewer belongs to: their own and those shared with them.
@@ -372,6 +423,7 @@ export function SoloInventory({
             }))
         }
         renderChatMenu={renderChatMenu}
+        renderConversationActions={renderConversationActions}
         navigator={navigator}
         draft={
           draft && !draft.region

@@ -37,9 +37,13 @@ export function signOutFailure(reason: unknown) {
 export function SignOutDialog({
   identity,
   onClose,
+  holds = [],
 }: {
   identity: Identity;
   onClose(): void;
+  /** Work elsewhere that signing out discards, named so this confirmation
+   * covers it (a pop-out window's unsent reply, say). */
+  holds?: readonly string[] | undefined;
 }) {
   const [touched, setTouched] = useState(false);
   const [haveKey, setHaveKey] = useState(false);
@@ -94,6 +98,16 @@ export function SignOutDialog({
         </>
       }
     >
+      {holds.length > 0 && (
+        <div role="note" className="mb-4 text-body-sm text-secondary">
+          Signing out also discards:
+          <ul className="mt-1 list-disc pl-5">
+            {holds.map((hold) => (
+              <li key={hold}>{hold}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <PrivateKey identity={identity} onInteraction={() => setTouched(true)} />
       <div className="mt-6 flex flex-col gap-3">
         <Checkbox

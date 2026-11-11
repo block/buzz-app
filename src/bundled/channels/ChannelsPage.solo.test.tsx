@@ -16,6 +16,7 @@ import { ChatNotStarted } from "../../features/relay/channel-writes";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import { soloAccessRequests } from "../../features/solo/access-requests";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -50,6 +51,8 @@ composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   cleanup();
+  soloAccessRequests.clear();
+  tabActionEntries = [];
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
   vi.unstubAllGlobals();
@@ -58,7 +61,16 @@ const id = "11111111-1111-4111-8111-111111111111";
 const agent = "a".repeat(64);
 const empty: readonly never[] = [];
 const contribution = { snapshot: () => empty, subscribe: () => () => {} };
-const extensions = { tools: contribution, inline: contribution };
+// Contributed conversation actions a test may register; one stable array per
+// test, as an external-store snapshot must be.
+let tabActionEntries: readonly import("../../plugins/contributions").Contribution<
+  import("../../features/conversation/contracts").TabAction
+>[] = [];
+const extensions = {
+  tools: contribution,
+  inline: contribution,
+  tabActions: { snapshot: () => tabActionEntries, subscribe: () => () => {} },
+};
 function fixture({
   placed = true,
   type = "solo",
@@ -1316,6 +1328,39 @@ it("offers the header's chat actions from the sidebar row, plus inline Rename", 
   expect(await items("Actions for Planning")).toEqual(["Rename", ...header]);
 });
 
+it("offers a contributed conversation action in the header's Chat actions, right after Copy link", async () => {
+  const run = vi.fn();
+  tabActionEntries = [
+    {
+      id: "open-window",
+      key: "popout/open-window",
+      pluginId: "popout",
+      revision: "1",
+      title: "Open in new window",
+      icon: () => <svg data-testid="window-icon" aria-hidden="true" />,
+      matches: () => true,
+      run: (target) => run(target.channelId),
+    },
+  ];
+  const f = fixture();
+  f.mount();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Chat actions" }));
+  const menu = await screen.findByRole("menu", { name: "Chat actions" });
+  const item = await within(menu).findByRole("menuitem", {
+    name: "Open in new window",
+  });
+  expect(item).toContainElement(within(menu).getByTestId("window-icon"));
+  const names = within(menu)
+    .getAllByRole("menuitem")
+    .map((entry) => entry.textContent);
+  expect(names.indexOf("Open in new window")).toBe(
+    names.indexOf("Copy link") + 1,
+  );
+  await user.click(item);
+  expect(run).toHaveBeenCalledExactlyOnceWith(id);
+});
+
 it("runs the header's own chat actions and returns focus to Chat actions", async () => {
   const f = fixture();
   const assign = vi.fn(async () => {});
@@ -1651,4 +1696,33 @@ it("leaves Escape to a text field outside the composer", async () => {
   field.focus();
   expect(f.read.current?.available()).toBe(false);
   field.remove();
+});
+
+it("opens Share access when a pop-out window hands it to this chat's header, in this session only", async () => {
+  const f = fixture();
+  f.mount();
+  await screen.findByRole("button", { name: "Share access to Planning" });
+  const session = f.session as unknown as RelaySession;
+  // Another chat's request, or another session's, is not this header's.
+  act(() =>
+    soloAccessRequests.request({ session, scope: f.scope, channelId: "other" }),
+  );
+  expect(screen.queryByRole("dialog", { name: /Share access/ })).toBeNull();
+  act(() =>
+    soloAccessRequests.request({
+      session: {} as RelaySession,
+      scope: f.scope,
+      channelId: id,
+    }),
+  );
+  expect(screen.queryByRole("dialog", { name: /Share access/ })).toBeNull();
+  soloAccessRequests.clear();
+  act(() =>
+    soloAccessRequests.request({ session, scope: f.scope, channelId: id }),
+  );
+  expect(
+    await screen.findByRole("dialog", { name: /Share access/ }),
+  ).toBeInTheDocument();
+  // Taken: a later header for the same chat does not reopen it.
+  expect(soloAccessRequests.snapshot()).toBeUndefined();
 });

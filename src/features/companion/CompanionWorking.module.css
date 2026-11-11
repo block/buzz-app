@@ -1,0 +1,24 @@
+@reference "../../shared/styles/globals.css";
+
+.working {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: 0 var(--space-4) var(--space-2);
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.working > [data-agent-response-preview] {
+  width: min(100%, var(--timeline-measure, var(--buzz-message-width, 52rem)));
+}
+
+.stopAction {
+  align-self: center;
+  flex-shrink: 0;
+  padding: var(--space-1);
+}
+
+.stopIcon {
+  transform: rotate(22.5deg);
+}

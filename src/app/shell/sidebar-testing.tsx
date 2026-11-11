@@ -21,7 +21,10 @@ import { PrimarySidebar } from "./PrimarySidebar";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { SoloInventory } from "../../features/channel-navigation/SoloInventory";
 import { conversationTarget } from "../../features/channel-navigation/routes";
-import type { ContributionReader } from "../../features/conversation/contracts";
+import type {
+  ContributionReader,
+  TabAction,
+} from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 
@@ -47,6 +50,7 @@ export function fixture(
     federatedIdentity?: FederatedIdentity;
     sidebarScope?: SidebarScope;
     sidebarRows?: SidebarRows;
+    tabActions?: ContributionReader<TabAction>;
   } = {},
 ) {
   const owner = createRelaySession(host.transport ?? null);
@@ -246,6 +250,7 @@ export function fixture(
                   chatIcons={chatIcons}
                   chatMenus={chatMenus}
                   sidebarRows={host.sidebarRows}
+                  tabActions={host.tabActions}
                   sidebarScope={host.sidebarScope}
                   {...(host.federatedIdentity
                     ? { federatedIdentity: host.federatedIdentity }
@@ -265,6 +270,7 @@ export function fixture(
             chatIcons={chatIcons}
             chatMenus={chatMenus}
             sidebarRows={host.sidebarRows}
+            tabActions={host.tabActions}
           />
         )}
       </ChannelNavigationProvider>

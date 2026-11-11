@@ -50,9 +50,13 @@ export function SoloChatMenuItems({
   onLifecycle,
   onReadResult,
   children,
+  conversationActions,
 }: {
   /** Additional actions at the end of the first menu group. */
   children?: ReactNode;
+  /** Contributed conversation actions (Open in new window), after Copy link
+   * as in a channel row's menu. */
+  conversationActions?: ReactNode;
   session: RelaySession;
   channel: ChannelSummary;
   onShare(): void;
@@ -158,6 +162,7 @@ export function SoloChatMenuItems({
         </MenuItem>
       )}
       <ChannelCopyLinkMenuItem channelId={channel.id} />
+      {active && conversationActions}
       {active &&
         !regions.excluded.has(channel.id) &&
         onConvert &&

@@ -1,6 +1,13 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
+import type { ComposerSession } from "../messages/composer-session";
+
+/** What the reaction picker needs of a session; `RelaySession` satisfies it. */
+export type ReactionToolSession = ComposerSession & {
+  messages: ComposerSession["messages"] &
+    Pick<RelaySession["messages"], "react" | "reactionTarget">;
+};
 import type { EventData } from "../relay/events";
 import type { ComposerTool, ContributionReader } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
@@ -27,7 +34,7 @@ export function ReactionTool({
   ...props
 }: {
   registry: ContributionReader<ComposerTool>;
-  session: RelaySession;
+  session: ReactionToolSession;
   scope: string;
   messageId: string;
   disabled: boolean;
@@ -70,7 +77,7 @@ function OwnedReactionTool({
 }: {
   registry: ContributionReader<ComposerTool>;
   tool: Contribution<ComposerTool>;
-  session: RelaySession;
+  session: ReactionToolSession;
   scope: string;
   messageId: string;
   disabled: boolean;
@@ -136,7 +143,9 @@ export function ReactionDelivery({
   session,
   messageId,
 }: {
-  session: RelaySession;
+  session: Pick<ComposerSession, "outbox"> & {
+    messages: Pick<RelaySession["messages"], "reactionTarget">;
+  };
   messageId: string;
 }) {
   const outbox = session.outbox;

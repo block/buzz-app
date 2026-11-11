@@ -106,7 +106,9 @@ export type AttachmentRenderer = Readonly<{
   component: ComponentType<AttachmentRendererProps>;
 }>;
 export type ReactionToolProps = Readonly<{
-  session: RelaySession;
+  /** As `ComposerToolProps`: the emoji catalog and media, not a data owner.
+   * A pop-out window supplies a session whose operations run in main. */
+  session: ComposerSession;
   scope: string;
   disabled: boolean;
   /** Host-owned reaction intent; revoked when the tool or target is removed. */
@@ -274,10 +276,31 @@ export type MessageAction = Readonly<{
    */
   marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
 }>;
+/** A conversation shown in a host tab: a whole channel, DM or Solo chat, or
+ * one thread of it. */
+export type ConversationTabTarget = Readonly<{
+  channelId: string;
+  threadRootId?: string | undefined;
+}>;
+/** An entry in a conversation tab's menu, after the host's own actions. The
+ * host shows it while `matches` passes for that tab's target. The same entry
+ * appears in a conversation's sidebar row menu for the row's conversation. */
+export type TabAction = Readonly<{
+  id: string;
+  title: string;
+  /** Shown beside the title in a sidebar row's menu, as a message action's is. */
+  icon?: ComponentType;
+  matches(target: ConversationTabTarget, session: RelaySession): boolean;
+  run(target: ConversationTabTarget, session: RelaySession): void;
+  /** A ⌘/Ctrl-click on a conversation entry runs this action instead of
+   * opening the conversation in place (one action may claim the gesture). */
+  gesture?: "modifier-click";
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;
+  tabActions?: ContributionReader<TabAction>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

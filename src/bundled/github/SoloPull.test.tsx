@@ -12,6 +12,7 @@ import { apply } from "./index";
 import { setOpenGitHubLinksInBuzz } from "./link-preference";
 import type { SoloPull, SoloPulls } from "./solo-pull";
 import {
+  describeSoloPullIcon,
   SoloPullIcon,
   SoloPullLink,
   SoloPullMenu,
@@ -395,4 +396,57 @@ it("only mounts the PR shortcut for a Solo in the current community", () => {
   expect(
     screen.getByRole("button", { name: "Open linked pull request" }),
   ).toBeVisible();
+});
+
+it("describes the chat icon in data as the component draws it, for a host that cannot run it", () => {
+  expect(describeSoloPullIcon(undefined)).toBeUndefined();
+  expect(
+    describeSoloPullIcon({
+      url: pull,
+      state: { state: "open", checks: "failure", conflicts: true },
+    }),
+  ).toEqual({
+    icon: "git-pull-request",
+    tone: "failure",
+    label: "Pull request, open, checks failing, conflicts",
+  });
+  expect(
+    describeSoloPullIcon({ url: pull, state: { state: "merged" } }),
+  ).toEqual({
+    icon: "git-merge",
+    tone: "merged",
+    label: "Pull request, merged",
+  });
+  expect(describeSoloPullIcon({ url: pull, failed: true })).toEqual({
+    icon: "git-pull-request",
+    tone: "unknown",
+    label: "Pull request, unavailable",
+  });
+});
+
+it("registers the chat icon with a describer that reads and watches the Solo chat's pull request", () => {
+  let describer:
+    | import("../../features/conversation/service").ChatIconDescriber
+    | undefined;
+  const inject = vi.fn();
+  const relay = {
+    snapshot: () => ({ status: "idle" }),
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  apply({
+    host: {},
+    panels: { register: () => {} },
+    conversation: {
+      registerChatIcon: (_component: unknown, given: typeof describer) => {
+        describer = given;
+      },
+      registerChatMenu: () => {},
+      registerLink: () => {},
+    },
+    relay,
+    agents: { addTool: () => {}, relay: () => relay },
+    inject,
+  } as never);
+  expect(describer?.describe).toBeTypeOf("function");
+  expect(describer?.watch).toBeTypeOf("function");
 });

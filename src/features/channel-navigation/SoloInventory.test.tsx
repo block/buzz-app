@@ -843,3 +843,37 @@ it("shows plugin actions in the primary sidebar right-click menu", async () => {
     await screen.findByRole("menuitem", { name: "Unlink pull request" }),
   ).toBeVisible();
 });
+
+it("puts a contributed conversation action after Copy link, with its icon, as a channel row's menu does", async () => {
+  const run = vi.fn();
+  // One stable snapshot: the reader is read through useSyncExternalStore.
+  const actions = [
+    {
+      id: "open-window",
+      key: "popout/open-window",
+      pluginId: "popout",
+      revision: "1",
+      title: "Open in new window",
+      icon: () => <svg data-testid="window-icon" aria-hidden="true" />,
+      matches: () => true,
+      run: (target: { channelId: string }) => run(target.channelId),
+    },
+  ];
+  const tabActions = { snapshot: () => actions, subscribe: () => () => {} };
+  fixture(true, false, undefined, undefined, 0, undefined, undefined, {
+    tabActions,
+  });
+  fireEvent.keyDown(screen.getByRole("button", { name: /^Planning/ }), {
+    key: "ContextMenu",
+  });
+  const item = await screen.findByRole("menuitem", {
+    name: "Open in new window",
+  });
+  expect(item).toContainElement(screen.getByTestId("window-icon"));
+  const items = screen.getAllByRole("menuitem").map((m) => m.textContent);
+  expect(items.indexOf("Open in new window")).toBe(
+    items.indexOf("Copy link") + 1,
+  );
+  fireEvent.click(item);
+  expect(run).toHaveBeenCalledWith(id);
+});

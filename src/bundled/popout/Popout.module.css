@@ -1,0 +1,108 @@
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-standard);
+  flex-shrink: 0;
+}
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 1.25rem;
+  color: var(--text-secondary);
+}
+.members {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: var(--size-control-sm);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--text-standard);
+  cursor: pointer;
+}
+.members:hover {
+  background: var(--affordance-subtle-hover);
+}
+.members:active {
+  background: var(--affordance-subtle-pressed);
+}
+/* Plugin chat icon tones, as the sidebar colours them: open is success,
+   failing checks or conflicts danger, pending warning; the rest quiet. */
+.icon[data-tone="open"] {
+  color: var(--icon-success);
+}
+.icon[data-tone="failure"] {
+  color: var(--text-danger);
+}
+.icon[data-tone="pending"] {
+  color: var(--text-warning);
+}
+.icon[data-tone="merged"] {
+  color: var(--icon-categorical-purple);
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-heading);
+  line-height: var(--text-heading--line-height);
+  letter-spacing: var(--text-heading--letter-spacing);
+}
+.kind {
+  font-weight: var(--type-weight-medium);
+}
+.conversation {
+  margin-left: var(--space-2);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  font-weight: var(--type-weight-normal);
+  color: var(--text-secondary);
+}
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+}
+.notice {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+.composer {
+  flex-shrink: 0;
+}
+.replyContext {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+}
+
+.typing {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  color: var(--text-secondary);
+}

@@ -6,12 +6,15 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { ChannelLauncherProps } from "../../features/panels/service";
 import { useRelayConnection } from "../../features/relay/react";
-import type { ChatIconProps } from "../../features/conversation/service";
+import type {
+  ChatIconDescription,
+  ChatIconProps,
+} from "../../features/conversation/service";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { ownSolo } from "../../features/solo/labels";
-import { writeLink, type SoloPulls } from "./solo-pull";
+import { writeLink, type SoloPull, type SoloPulls } from "./solo-pull";
 import { describePull, pullTone, stateIcons } from "./pull-state-view";
 import styles from "./GitHub.module.css";
 import { useOpenGitHubLinksInBuzz } from "./link-preference";
@@ -103,6 +106,23 @@ export function SessionPullLauncher({
           })}
     />
   );
+}
+
+/** `SoloPullIcon` as a host draws it from data: the state's icon name, its
+ * tone and the words; none for a chat without a linked pull request. */
+export function describeSoloPullIcon(
+  pull: SoloPull | undefined,
+): ChatIconDescription | undefined {
+  if (!pull) return undefined;
+  const state = pull.state?.state ?? "open";
+  const icons: Record<typeof state, ChatIconDescription["icon"]> = {
+    open: "git-pull-request",
+    draft: "circle-dashed",
+    closed: "x-circle",
+    merged: "git-merge",
+  };
+  const icon = icons[state];
+  return { icon, tone: pullTone(pull), label: describePull(pull) };
 }
 
 function useSoloPull(pulls: SoloPulls, channelId: string) {

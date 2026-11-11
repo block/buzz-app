@@ -12,6 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { SoloTitle } from "../../features/solo/SoloPresentation";
+import { soloAccessRequests } from "../../features/solo/access-requests";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import identityStyles from "./ChannelHeaderIdentity.module.css";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
@@ -38,6 +39,7 @@ import {
   ChannelMembersDialog,
 } from "./ChannelMembersDialog";
 import { NewWorkspaceDialog, SoloChatMenuItems } from "./SoloChatMenu";
+import { ConversationActionItems } from "../../features/channel-navigation/ConversationActionItems";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { useSoloOwner } from "./ChatSharedMark";
 
@@ -46,6 +48,8 @@ const noSubscription = () => () => {};
 type SoloToolbarProps = {
   session: RelaySession;
   chatMenus?: Conversation["chatMenus"] | undefined;
+  /** Conversation actions (Open in new window), after Copy link as in the sidebar. */
+  tabActions?: Conversation["tabActions"] | undefined;
   scope: string;
   channel: ChannelSummary;
   navigator?: Navigation | undefined;
@@ -66,6 +70,25 @@ type SoloToolbarProps = {
 /** The header of a conversation shown with the Solo treatment. */
 export function SoloHeading(props: SoloToolbarProps) {
   const owner = useSoloOwner(props.session, props.channel);
+  // A pop-out window hands "Share access" to this header: the dialog lives
+  // here. The request is taken only by the header showing that chat in the
+  // session it was made from.
+  const [accessOpen, setAccessOpen] = useState(false);
+  const { session, scope, channel } = props;
+  const requested = useSyncExternalStore(
+    soloAccessRequests.subscribe,
+    soloAccessRequests.snapshot,
+  );
+  useEffect(() => {
+    // Only a request for this chat, from this session, is this header's.
+    if (
+      channel.archived ||
+      requested?.channelId !== channel.id ||
+      !soloAccessRequests.take(session, scope, channel.id)
+    )
+      return;
+    setAccessOpen(true);
+  }, [requested, session, scope, channel.id, channel.archived]);
   return props.channel.archived ? (
     <SoloTitle channel={props.channel}>
       <SoloToolbar {...props} />
@@ -81,6 +104,7 @@ export function SoloHeading(props: SoloToolbarProps) {
             owner={owner}
             navigator={props.navigator}
             signal={props.signal}
+            presentation={{ open: accessOpen, onOpenChange: setAccessOpen }}
           />
         }
         actions={<SoloToolbar {...props} membershipInHeader />}
@@ -93,6 +117,7 @@ export function SoloHeading(props: SoloToolbarProps) {
 export function SoloToolbar({
   session,
   chatMenus,
+  tabActions,
   scope,
   channel,
   navigator,
@@ -202,6 +227,15 @@ export function SoloToolbar({
                 onLifecycle(action, actionsTrigger.current ?? undefined)
               }
               onReadResult={setReadError}
+              conversationActions={
+                tabActions && (
+                  <ConversationActionItems
+                    tabActions={tabActions}
+                    session={session}
+                    channelId={channel.id}
+                  />
+                )
+              }
             >
               {menus
                 ?.slice()

@@ -1,0 +1,1595 @@
+//! Pop-out conversation windows: presentation-only companions of the main
+//! window, as the Huddle window is. Identity, relay, signing, the outbox and
+//! read state stay in main; each companion receives one bounded `View` and
+//! sends bounded actions back. A window is bound to one conversation target in
+//! one session incarnation; watch, action and download calls are checked
+//! against the caller's own label and binding.
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{
+    ipc::Channel, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, WebviewWindow,
+};
+
+use crate::huddle_window::DiscussionRow;
+
+type Result<T> = std::result::Result<T, String>;
+const PREFIX: &str = "popout-";
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Binding {
+    scope: String,
+    viewer: String,
+    channel_id: String,
+    /// The thread root; a whole conversation (S2) leaves it empty.
+    #[serde(default)]
+    thread_root_id: Option<String>,
+    /// Owner session incarnation. Actions from an earlier incarnation are
+    /// dropped: a reloaded main renderer never replays a stale send.
+    incarnation: u64,
+}
+impl Binding {
+    fn target(&self) -> (String, String, String, Option<String>) {
+        (
+            self.scope.clone(),
+            self.viewer.clone(),
+            self.channel_id.clone(),
+            self.thread_root_id.clone(),
+        )
+    }
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        self.scope.len() <= 4096
+            && !self.scope.is_empty()
+            && hex(&self.viewer)
+            && !self.channel_id.is_empty()
+            && self.channel_id.len() <= 256
+            && self.thread_root_id.as_deref().is_none_or(hex)
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct View {
+    title: String,
+    /// The owner's persistence scope, for message links the companion copies.
+    #[serde(default)]
+    scope: String,
+    dark: bool,
+    /// The main window's applied appearance (mode, accent, contrast, text scale).
+    #[serde(default)]
+    appearance: Option<crate::huddle_window::Appearance>,
+    status: String,
+    #[serde(default)]
+    error: Option<String>,
+    writable: bool,
+    can_load_more: bool,
+    limited: bool,
+    loading_older: bool,
+    /// Reading bridge token: main publishes reading intent for this window.
+    #[serde(default)]
+    reading: Option<String>,
+    reading_revision: u64,
+    #[serde(default)]
+    composer: Option<String>,
+    version: u64,
+    /// Native-owned: increments when the OS asked to close while the companion
+    /// holds unsaved work, so it can confirm. Never set by main.
+    #[serde(default)]
+    close_requested: u64,
+    /// Native-owned: the owner is gone (main reload); the companion shows its
+    /// cached rows read-only until main retires or re-adopts it.
+    #[serde(default)]
+    detached: bool,
+    #[serde(default)]
+    root: Option<DiscussionRow>,
+    replies: Vec<DiscussionRow>,
+    /// Main's outbox operations in this channel: reactions, removals, edits
+    /// and sent-to-channel copies, in every delivery state.
+    #[serde(default)]
+    operations: Vec<MainOperation>,
+    /// The viewer follows this thread.
+    #[serde(default)]
+    following: bool,
+    /// A DM or Solo chat: no `#`, no thread following offered.
+    #[serde(default)]
+    is_dm: bool,
+    /// What kind of conversation: `channel`, `private`, `dm` or `solo`.
+    #[serde(default = "default_kind")]
+    kind: String,
+    /// A DM's other person's picture (authorized media source).
+    #[serde(default)]
+    picture: Option<String>,
+    /// The conversation's members as main's header previews them.
+    #[serde(default)]
+    members: Option<Members>,
+    /// A plugin's icon for a Solo chat, in data.
+    #[serde(default)]
+    icon: Option<ChatIcon>,
+    /// A thread (root + replies) rather than a conversation timeline.
+    #[serde(default)]
+    thread: bool,
+    /// The frame was opened from the previous one; `back` returns there.
+    #[serde(default)]
+    can_go_back: bool,
+    /// People typing and agents working here, as names.
+    #[serde(default)]
+    typing: Option<Typing>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Typing {
+    humans: Vec<String>,
+    more: u32,
+    agents: Vec<String>,
+    /// Agents at work, as main's response preview presents them.
+    #[serde(default)]
+    working: Vec<WorkingAgent>,
+}
+impl Typing {
+    fn valid(&self) -> bool {
+        self.humans.len() <= 2
+            && self.agents.len() <= 8
+            && self
+                .humans
+                .iter()
+                .chain(&self.agents)
+                .all(|n| n.len() <= 1024)
+            && self.working.len() <= 8
+            && self.working.iter().all(|w| w.valid())
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkingAgent {
+    id: String,
+    name: String,
+    picture: Option<String>,
+    state: String,
+    step: String,
+    status: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    activity: Option<String>,
+    #[serde(default)]
+    stops: Vec<WorkStop>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkStop {
+    key: String,
+    label: String,
+    #[serde(default)]
+    lifecycle: bool,
+    #[serde(default)]
+    status: Option<String>,
+}
+impl WorkingAgent {
+    pub(crate) fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        hex(&self.id)
+            && self.name.len() <= 1024
+            && self.picture.as_ref().is_none_or(|p| p.len() <= 8192)
+            && matches!(self.state.as_str(), "waiting" | "working")
+            && self.step.len() <= 2048
+            && self.status.len() <= 4096
+            && self.scope.as_ref().is_none_or(|s| s.len() <= 4096)
+            && self.activity.as_ref().is_none_or(|a| a.len() <= 8192)
+            && self.stops.len() <= 8
+            && self.stops.iter().all(|s| {
+                s.key.len() <= 512
+                    && s.label.len() <= 4096
+                    && s.status.as_ref().is_none_or(|t| t.len() <= 4096)
+            })
+    }
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MainOperation {
+    id: String,
+    #[serde(default)]
+    message_id: Option<String>,
+    kind: u32,
+    delivery: String,
+    #[serde(default)]
+    error: Option<String>,
+}
+impl MainOperation {
+    fn valid(&self) -> bool {
+        let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+        hex(&self.id)
+            && self.message_id.as_deref().is_none_or(hex)
+            && matches!(self.kind, 7 | 5 | 40003 | 9)
+            && matches!(
+                self.delivery.as_str(),
+                "sending" | "accepted" | "unknown" | "failed" | "seen"
+            )
+            && self.error.as_ref().is_none_or(|e| e.len() <= 2048)
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum Action {
+    OpenLink,
+    OpenInMain,
+    /// Open the conversation's members/access in the main window.
+    OpenMembers,
+    /// Bring the main window forward after a handoff admitted through the
+    /// composer bridge; nothing is forwarded to main.
+    FocusMain,
+    /// A conversation window drills into one of its shown threads (text: root id).
+    OpenThread,
+    /// Return to the frame this one was opened from.
+    Back,
+    Older,
+    Retry,
+    RetryMessage,
+    DiscardMessage,
+    /// Companion holds unsaved/pending work (text "1") or not ("0"); native
+    /// close requests then ask before destroying the window.
+    Guard,
+    /// Companion confirmed a guarded close.
+    Close,
+    /// Native-owned: the window is gone. Text `kept` when it closed for
+    /// main's close rather than by the person's choice; the owner then lets
+    /// go of it but keeps it saved for the next start.
+    Closed,
+    /// Native-owned: the window was moved or resized; text is the outer
+    /// position and client size as JSON, sent once the user pauses.
+    Geometry,
+}
+#[derive(Clone, Serialize)]
+pub(crate) struct Control {
+    label: String,
+    incarnation: u64,
+    action: Action,
+    text: Option<String>,
+}
+struct Session {
+    binding: Binding,
+    view: View,
+    guarded: bool,
+    actions: Channel<Control>,
+    updates: Option<Channel<View>>,
+    /// The latest move/resize not yet reported to main.
+    moved: Option<Geometry>,
+    /// A report of `moved` is scheduled.
+    reporting: bool,
+    /// Main's close asked this guarded window to confirm; a discard it
+    /// confirms now is part of that close, not a close of its own.
+    closing_with_main: bool,
+    /// This window's destruction keeps it saved for the next start: its
+    /// `Closed` carries text `kept`.
+    kept: Arc<AtomicBool>,
+}
+/// Companion sessions by label, and whether the app is closing them all
+/// (exit, or main closing where that destroys the owner): those destructions
+/// are not user closes and are not reported as such.
+#[derive(Default)]
+pub(crate) struct Popouts(Mutex<HashMap<String, Session>>, Arc<AtomicBool>);
+
+/// A window's physical outer position and client size, as saved by main's
+/// owner and given back when the window is reopened after a restart.
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Debug)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Geometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+const COORDINATE_LIMIT: i32 = 1 << 24;
+impl Geometry {
+    fn valid(&self) -> bool {
+        self.x.abs() <= COORDINATE_LIMIT
+            && self.y.abs() <= COORDINATE_LIMIT
+            && (1..=COORDINATE_LIMIT as u32).contains(&self.width)
+            && (1..=COORDINATE_LIMIT as u32).contains(&self.height)
+    }
+}
+/// An automatic reopening: placed where it was when known, shown without
+/// taking focus from the window the person is using.
+#[derive(Clone, Copy, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Restore {
+    #[serde(default)]
+    geometry: Option<Geometry>,
+}
+const DEFAULT_SIZE: LogicalSize<f64> = LogicalSize::new(520.0, 640.0);
+const MIN_SIZE: LogicalSize<f64> = LogicalSize::new(360.0, 400.0);
+/// The companion's own drag/header strip, kept reachable like main's.
+const HEADER_LOGICAL: f64 = 48.0;
+/// How long after the last move/resize the geometry is reported.
+const GEOMETRY_SETTLE: Duration = Duration::from_millis(400);
+
+impl Popouts {
+    /// Downloads are limited to attachment sources in this window's own projection.
+    pub(crate) fn permits_download(&self, label: &str, source: &str, name: &str) -> bool {
+        self.0.lock().ok().is_some_and(|map| {
+            map.get(label).is_some_and(|session| {
+                session
+                    .view
+                    .root
+                    .iter()
+                    .chain(&session.view.replies)
+                    .flat_map(|row| &row.attachments)
+                    .any(|attachment| {
+                        attachment.source.as_deref() == Some(source)
+                            && attachment.name.as_deref().unwrap_or("") == name
+                    })
+            })
+        })
+    }
+}
+
+pub(crate) fn is_popout(label: &str) -> bool {
+    label.starts_with(PREFIX)
+}
+fn require_main<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Result<()> {
+    if window.label() == "main" {
+        Ok(())
+    } else {
+        Err("Only the main window owns pop-out windows".into())
+    }
+}
+fn require_popout<R: tauri::Runtime>(window: &WebviewWindow<R>) -> Result<String> {
+    if is_popout(window.label()) {
+        Ok(window.label().to_owned())
+    } else {
+        Err("Not a pop-out window".into())
+    }
+}
+impl View {
+    /// The OS title bar names what the window is, as Slack does: "Thread in
+    /// #channel" (a DM has no `#`).
+    /// Names the conversation and its kind where no icon can: "#design",
+    /// "Ada (DM)", "Planning (Solo chat)"; a thread frame says so first.
+    fn window_title(&self) -> String {
+        let conversation = match self.kind.as_str() {
+            "dm" => format!("{} (DM)", self.title),
+            "solo" => format!("{} (Solo chat)", self.title),
+            "private" => self.title.clone(),
+            _ => format!("#{}", self.title),
+        };
+        if self.thread {
+            format!("Thread in {conversation} — Buzz")
+        } else {
+            format!("{conversation} — Buzz")
+        }
+    }
+}
+fn default_kind() -> String {
+    "channel".into()
+}
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChatIcon {
+    icon: String,
+    #[serde(default)]
+    tone: Option<String>,
+    label: String,
+}
+impl ChatIcon {
+    fn valid(&self) -> bool {
+        let token = |s: &String| {
+            !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+        };
+        token(&self.icon) && self.tone.as_ref().is_none_or(token) && self.label.len() <= 4096
+    }
+}
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Members {
+    count: u64,
+    solo: bool,
+    preview: Vec<MemberPreview>,
+}
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MemberPreview {
+    id: String,
+    name: String,
+    picture: Option<String>,
+}
+impl Members {
+    fn valid(&self) -> bool {
+        self.count <= 1_000_000
+            && self.preview.len() <= 3
+            && self.preview.iter().all(|p| {
+                p.id.len() <= 128
+                    && p.name.len() <= 4096
+                    && p.picture.as_ref().is_none_or(|s| s.len() <= 8192)
+            })
+    }
+}
+fn validate(view: &View) -> Result<()> {
+    if view.title.len() > 4096
+        || !matches!(view.kind.as_str(), "channel" | "private" | "dm" | "solo")
+        || view.picture.as_ref().is_some_and(|p| p.len() > 8192)
+        || view.members.as_ref().is_some_and(|m| !m.valid())
+        || view.icon.as_ref().is_some_and(|i| !i.valid())
+        || view.scope.len() > 4096
+        || view.appearance.as_ref().is_some_and(|a| !a.valid())
+        || view.typing.as_ref().is_some_and(|t| !t.valid())
+        || view.error.as_ref().is_some_and(|e| e.len() > 8192)
+        || !matches!(view.status.as_str(), "loading" | "ready" | "error")
+        || [&view.composer, &view.reading].iter().any(|t| {
+            t.as_ref()
+                .is_some_and(|t| uuid::Uuid::parse_str(t).is_err())
+        })
+        || view.replies.len() > 500
+        || view.operations.len() > 64
+        || view.operations.iter().any(|op| !op.valid())
+        || view
+            .root
+            .iter()
+            .chain(&view.replies)
+            .any(|row| !row.valid())
+    {
+        return Err("Invalid pop-out presentation".into());
+    }
+    Ok(())
+}
+fn closed_notice(
+    actions: Channel<Control>,
+    label: String,
+    incarnation: u64,
+    closing_all: Arc<AtomicBool>,
+    kept: Arc<AtomicBool>,
+) -> impl Fn(&tauri::WindowEvent) + Send + Sync + 'static {
+    let actions = Mutex::new(Some(actions));
+    move |event| {
+        if !matches!(event, tauri::WindowEvent::Destroyed) {
+            return;
+        }
+        let Some(actions) = actions.lock().ok().and_then(|mut slot| slot.take()) else {
+            return;
+        };
+        // Exit destroys every companion with its owner: nothing to report, or
+        // nothing would reopen after a restart. A window closed for main's
+        // close while the owner lives on is reported as kept: the owner lets
+        // go of it but leaves it saved.
+        let report = (!closing_all.load(Ordering::SeqCst))
+            .then(|| kept.load(Ordering::SeqCst).then(|| "kept".to_owned()));
+        let label = label.clone();
+        // Channel send AND final drop evaluate JavaScript. Neither may reenter
+        // Wry while it destroys its window map under a mutable RefCell borrow.
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Some(text) = report {
+                let _ = actions.send(Control {
+                    label,
+                    incarnation,
+                    action: Action::Closed,
+                    text,
+                });
+            }
+            drop(actions);
+        });
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Opened {
+    label: String,
+    /// The target already had a window; it was focused and keeps its owner.
+    existing: bool,
+}
+
+/// Open or focus the window for a target. A binding that is already open keeps
+/// its current session; the caller then updates that label instead.
+#[tauri::command]
+pub(crate) async fn popout_window_open<R: tauri::Runtime>(
+    window: WebviewWindow<R>,
+    host: tauri::State<'_, Popouts>,
+    binding: Binding,
+    view: View,
+    actions: Channel<Control>,
+    restore: Option<Restore>,
+) -> Result<Opened> {
+    require_main(&window)?;
+    if !binding.valid() {
+        return Err("Invalid pop-out target".into());
+    }
+    validate(&view)?;
+    if restore.and_then(|r| r.geometry).is_some_and(|g| !g.valid()) {
+        return Err("Invalid pop-out placement".into());
+    }
+    // Painted before the page: a dark window opens dark, not white.
+    let background = view
+        .appearance
+        .as_ref()
+        .map(crate::huddle_window::Appearance::background)
+        .unwrap_or_else(|| crate::huddle_window::Appearance::mode(view.dark).background());
+    let app = window.app_handle();
+    let kept = Arc::new(AtomicBool::new(false));
+    let label = {
+        let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
+        if map.len() >= 16 {
+            return Err("Too many pop-out windows are open".into());
+        }
+        let target = binding.target();
+        if let Some((label, _)) = map.iter().find(|(_, s)| s.binding.target() == target) {
+            let label = label.clone();
+            if let Some(existing) = app.get_webview_window(&label) {
+                existing.show().map_err(|e| e.to_string())?;
+                existing.set_focus().map_err(|e| e.to_string())?;
+                return Ok(Opened {
+                    label,
+                    existing: true,
+                });
+            }
+            // The window is gone but its session lingered: replace it.
+            map.remove(&label);
+        }
+        let label = format!("{PREFIX}{}", uuid::Uuid::new_v4());
+        map.insert(
+            label.clone(),
+            Session {
+                binding: binding.clone(),
+                view: View {
+                    close_requested: 0,
+                    detached: false,
+                    ..view
+                },
+                guarded: false,
+                actions: actions.clone(),
+                updates: None,
+                moved: None,
+                reporting: false,
+                closing_with_main: false,
+                kept: kept.clone(),
+            },
+        );
+        label
+    };
+    let on_closed = closed_notice(
+        actions,
+        label.clone(),
+        binding.incarnation,
+        host.1.clone(),
+        kept,
+    );
+    // A restored window is created where it was and never takes focus:
+    // several may reopen at once while the person is already working. It is
+    // placed at creation because showing a hidden window later would make it
+    // key (tao's `set_visible` is `makeKeyAndOrderFront`); `focused(false)`
+    // on a visible window is a plain `orderFront`.
+    let frame = restore.and_then(|r| r.geometry).and_then(|geometry| {
+        restore_frame(&window.as_ref().window(), geometry)
+            .ok()
+            .flatten()
+    });
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("popout.html".into()))
+            .title("Buzz")
+            .min_inner_size(MIN_SIZE.width, MIN_SIZE.height)
+            .focused(restore.is_none())
+            .disable_drag_drop_handler()
+            .background_color(background);
+    builder = match frame {
+        Some((position, size)) => builder
+            .position(position.x, position.y)
+            .inner_size(size.width, size.height),
+        None => builder
+            .inner_size(DEFAULT_SIZE.width, DEFAULT_SIZE.height)
+            .center(),
+    };
+    let built = builder.build();
+    let companion = match built {
+        Ok(companion) => companion,
+        Err(error) => {
+            if let Ok(mut map) = host.0.lock() {
+                map.remove(&label);
+            }
+            return Err(error.to_string());
+        }
+    };
+    companion.on_window_event(on_closed);
+    if restore.is_none() {
+        companion.show().map_err(|e| e.to_string())?;
+        companion.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(Opened {
+        label,
+        existing: false,
+    })
+}
+
+/// Where a reopened window is created: as saved, or where it can be reached
+/// now, since the monitor layout or scale may have changed.
+fn restore_frame<R: tauri::Runtime>(
+    main: &tauri::Window<R>,
+    saved: Geometry,
+) -> tauri::Result<Option<(tauri::LogicalPosition<f64>, LogicalSize<f64>)>> {
+    let (monitors, fallback) = crate::window_state::screens(main)?;
+    let Some(fallback) = fallback else {
+        return Ok(None);
+    };
+    let areas: Vec<_> = monitors.iter().map(|(area, _)| *area).collect();
+    let scale_at = |position: PhysicalPosition<i32>| {
+        monitors
+            .iter()
+            .find(|(area, _)| {
+                position.x >= area.position.x
+                    && position.y >= area.position.y
+                    && i64::from(position.x)
+                        < i64::from(area.position.x) + i64::from(area.size.width)
+                    && i64::from(position.y)
+                        < i64::from(area.position.y) + i64::from(area.size.height)
+            })
+            .map_or(fallback.1, |(_, scale)| *scale)
+    };
+    let header_height =
+        (HEADER_LOGICAL * scale_at(PhysicalPosition::new(saved.x, saved.y))).ceil() as u32;
+    let (position, size, relocated) = placement(saved, header_height, &areas, fallback);
+    // The builder takes logical units at the scale of the screen the
+    // position lands on.
+    let scale = relocated.unwrap_or_else(|| scale_at(position));
+    Ok(Some((
+        position.to_logical::<f64>(scale),
+        size.to_logical::<f64>(scale),
+    )))
+}
+
+/// The outer position and client size to apply for a saved geometry, and the
+/// fallback monitor's scale when the window had to be relocated to it.
+/// The saved rectangle starts at the outer position, so its reachable strip
+/// is the title bar and the top of the header; no client offset applies, and
+/// main's `Overlay` title bar never has to stand in for the pop-out's default
+/// one. A relocated window lands with its title bar at the work area's top.
+fn placement(
+    saved: Geometry,
+    header_height: u32,
+    areas: &[PhysicalRect<i32, u32>],
+    (fallback, scale): (PhysicalRect<i32, u32>, f64),
+) -> (PhysicalPosition<i32>, PhysicalSize<u32>, Option<f64>) {
+    let frame = PhysicalRect {
+        position: PhysicalPosition::new(saved.x, saved.y),
+        size: PhysicalSize::new(saved.width, saved.height),
+    };
+    // Saved at a lower scale than the fallback's: below the minimum there,
+    // so the default size replaces it.
+    let min: PhysicalSize<u32> = MIN_SIZE.to_physical(scale);
+    let below = saved.width < min.width || saved.height < min.height;
+    let default = below.then(|| DEFAULT_SIZE.to_physical(scale));
+    let relocated =
+        crate::window_state::reachable_client(frame, header_height, areas, fallback, default);
+    let target = relocated.unwrap_or(frame);
+    (target.position, target.size, relocated.map(|_| scale))
+}
+
+/// A companion moved or resized: report its geometry to main's owner once the
+/// person pauses, so the window reopens there after a restart.
+pub(crate) fn geometry_changed<R: tauri::Runtime>(window: &tauri::Window<R>) {
+    if !is_popout(window.label()) {
+        return;
+    }
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    let geometry = Geometry {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    if !geometry.valid() {
+        return;
+    }
+    let Some(host) = window.try_state::<Popouts>() else {
+        return;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return;
+    };
+    let Some(session) = map.get_mut(window.label()) else {
+        return;
+    };
+    session.moved = Some(geometry);
+    if session.reporting {
+        return;
+    }
+    session.reporting = true;
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(GEOMETRY_SETTLE).await;
+        report_geometry(&app, &label);
+    });
+}
+fn report_geometry<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
+    let Some(host) = app.try_state::<Popouts>() else {
+        return;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return;
+    };
+    let Some(session) = map.get_mut(label) else {
+        return;
+    };
+    session.reporting = false;
+    let Some(geometry) = session.moved.take() else {
+        return;
+    };
+    if session.view.detached {
+        return;
+    }
+    let Ok(text) = serde_json::to_string(&geometry) else {
+        return;
+    };
+    let _ = session.actions.send(Control {
+        label: label.to_owned(),
+        incarnation: session.binding.incarnation,
+        action: Action::Geometry,
+        text: Some(text),
+    });
+}
+
+/// The app is closing every companion (exit, or main closing where that
+/// destroys the owner): their destruction is no longer a person's close.
+pub(crate) fn closing_all<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(host) = app.try_state::<Popouts>() {
+        host.1.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Replace a window's presentation; `None` retires the window.
+#[tauri::command]
+pub(crate) fn popout_window_update<R: tauri::Runtime>(
+    window: WebviewWindow<R>,
+    host: tauri::State<'_, Popouts>,
+    label: String,
+    view: Option<View>,
+) -> Result<()> {
+    require_main(&window)?;
+    if let Some(view) = &view {
+        validate(view)?;
+    }
+    let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
+    let Some(session) = map.get_mut(&label) else {
+        return Ok(());
+    };
+    if let Some(view) = view {
+        let next = View {
+            close_requested: session.view.close_requested,
+            detached: false,
+            ..view
+        };
+        if let Some(updates) = &session.updates {
+            let _ = updates.send(next.clone());
+        }
+        session.view = next;
+        if let Some(companion) = window.app_handle().get_webview_window(&label) {
+            let _ = companion.set_title(&session.view.window_title());
+        }
+    } else {
+        map.remove(&label);
+        drop(map);
+        if let Some(companion) = window.app_handle().get_webview_window(&label) {
+            companion.destroy().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// The main renderer is reloading or gone: every companion keeps its cached
+/// rows but can no longer act. Main retires or re-adopts them when it returns.
+pub(crate) fn detach_all<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(host) = app.try_state::<Popouts>() else {
+        return;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return;
+    };
+    for session in map.values_mut() {
+        if session.view.detached {
+            continue;
+        }
+        session.view.detached = true;
+        session.view.composer = None;
+        session.view.writable = false;
+        if let Some(updates) = &session.updates {
+            let _ = updates.send(session.view.clone());
+        }
+    }
+}
+
+/// Labels of windows opened before the main renderer reloaded.
+#[tauri::command]
+pub(crate) fn popout_window_detached<R: tauri::Runtime>(
+    window: WebviewWindow<R>,
+    host: tauri::State<'_, Popouts>,
+) -> Result<Vec<String>> {
+    require_main(&window)?;
+    let map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
+    Ok(map
+        .iter()
+        .filter(|(_, s)| s.view.detached)
+        .map(|(label, _)| label.clone())
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) fn popout_window_watch<R: tauri::Runtime>(
+    window: WebviewWindow<R>,
+    host: tauri::State<'_, Popouts>,
+    updates: Channel<View>,
+) -> Result<()> {
+    let label = require_popout(&window)?;
+    let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
+    let session = map
+        .get_mut(&label)
+        .ok_or("This pop-out window has closed")?;
+    updates
+        .send(session.view.clone())
+        .map_err(|e| e.to_string())?;
+    session.updates = Some(updates);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn popout_window_action<R: tauri::Runtime>(
+    window: WebviewWindow<R>,
+    host: tauri::State<'_, Popouts>,
+    action: Action,
+    text: Option<String>,
+) -> Result<()> {
+    let label = require_popout(&window)?;
+    match action {
+        Action::Closed | Action::Geometry => {
+            return Err("Window closure and placement are native-owned".into())
+        }
+        Action::RetryMessage | Action::DiscardMessage => {
+            if text
+                .as_ref()
+                .is_none_or(|t| t.trim().is_empty() || t.len() > 65536)
+            {
+                return Err("Invalid pop-out message".into());
+            }
+        }
+        Action::OpenLink => {
+            if text.as_ref().is_none_or(|url| {
+                !url.get(..5)
+                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case("buzz:"))
+                    || url.len() > 8192
+            }) {
+                return Err("Invalid pop-out link".into());
+            }
+        }
+        Action::Guard => {
+            if !matches!(text.as_deref(), Some("0") | Some("1")) {
+                return Err("Invalid pop-out guard".into());
+            }
+        }
+        Action::OpenThread => {
+            if !text
+                .as_deref()
+                .is_some_and(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            {
+                return Err("Invalid pop-out thread".into());
+            }
+        }
+        _ => {
+            if text.is_some() {
+                return Err("Unexpected pop-out message".into());
+            }
+        }
+    }
+    let app = window.app_handle();
+    let mut map = host.0.lock().map_err(|_| "Pop-out windows unavailable")?;
+    let session = map
+        .get_mut(&label)
+        .ok_or("This pop-out window has closed")?;
+    match action {
+        // Native keeps the close guard; main also hears it, so a voluntary
+        // community exit can name the window's unsent work before discarding it.
+        Action::Guard => session.guarded = text.as_deref() == Some("1"),
+        Action::Close => {
+            // A discard confirmed for main's close keeps the window saved;
+            // one confirmed for the window's own close does not.
+            if session.closing_with_main {
+                session.kept.store(true, Ordering::SeqCst);
+            }
+            drop(map);
+            if let Some(companion) = app.get_webview_window(&label) {
+                companion.destroy().map_err(|e| e.to_string())?;
+            }
+            return Ok(());
+        }
+        // All continue in the main window, which may be hidden on macOS.
+        Action::OpenInMain | Action::OpenMembers | Action::OpenLink | Action::FocusMain => {
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.show();
+                let _ = main.unminimize();
+                let _ = main.set_focus();
+            }
+            if action == Action::FocusMain {
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+    if session.view.detached {
+        return Err("Buzz is reconnecting. Try again from the main window.".into());
+    }
+    let incarnation = session.binding.incarnation;
+    session
+        .actions
+        .send(Control {
+            label,
+            incarnation,
+            action,
+            text,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// OS or menu close: an unguarded window closes; a guarded one asks its
+/// companion to confirm. Returns true when the close was intercepted.
+pub(crate) fn close_requested<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    api: &tauri::CloseRequestApi,
+) -> bool {
+    if !is_popout(window.label()) {
+        return false;
+    }
+    let Some(host) = window.try_state::<Popouts>() else {
+        return false;
+    };
+    if !host.intercept_close(window.label()) {
+        return false;
+    }
+    api.prevent_close();
+    true
+}
+impl Popouts {
+    /// A guarded window's close is intercepted: the companion is asked.
+    fn intercept_close(&self, label: &str) -> bool {
+        let Ok(mut map) = self.0.lock() else {
+            return false;
+        };
+        let Some(session) = map.get_mut(label) else {
+            return false;
+        };
+        if !session.guarded {
+            return false;
+        }
+        // The window's own close: Keep editing after main's close attempt
+        // must not leave a later genuine close classified as main's.
+        session.closing_with_main = false;
+        session.view.close_requested += 1;
+        if let Some(updates) = &session.updates {
+            let _ = updates.send(session.view.clone());
+        }
+        true
+    }
+}
+
+/// Main is closing where that destroys the owner (Linux, Windows): unguarded
+/// companions close with it; a companion holding unsaved work asks first and
+/// keeps main open until it is resolved. Returns true when main must stay.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub(crate) fn main_closing<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    api: &tauri::CloseRequestApi,
+) -> bool {
+    let Some(host) = app.try_state::<Popouts>() else {
+        return false;
+    };
+    let Ok(mut map) = host.0.lock() else {
+        return false;
+    };
+    let guarded: Vec<String> = map
+        .iter()
+        .filter(|(_, s)| s.guarded)
+        .map(|(label, _)| label.clone())
+        .collect();
+    if guarded.is_empty() {
+        // Nothing to ask: every companion closes with its owner.
+        host.1.store(true, Ordering::SeqCst);
+        for label in map.keys() {
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.destroy();
+            }
+        }
+        return false;
+    }
+    // Ask first; nothing else closes until main's close is accepted, so
+    // Keep editing leaves every window as it was.
+    for label in &guarded {
+        if let Some(session) = map.get_mut(label) {
+            session.closing_with_main = true;
+            session.view.close_requested += 1;
+            if let Some(updates) = &session.updates {
+                let _ = updates.send(session.view.clone());
+            }
+        }
+    }
+    api.prevent_close();
+    if let Some(window) = guarded
+        .first()
+        .and_then(|label| app.get_webview_window(label))
+    {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    true
+}
+
+/// Main is gone: no companion can act without its owner.
+pub(crate) fn main_destroyed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    closing_all(app);
+    let labels: Vec<String> = app
+        .try_state::<Popouts>()
+        .and_then(|host| host.0.lock().ok().map(|map| map.keys().cloned().collect()))
+        .unwrap_or_default();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.destroy();
+        }
+    }
+}
+
+/// Cmd+W with a pop-out focused closes that window through its guard.
+pub(crate) fn close_focused<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    let labels: Vec<String> = app
+        .try_state::<Popouts>()
+        .and_then(|host| host.0.lock().ok().map(|map| map.keys().cloned().collect()))
+        .unwrap_or_default();
+    for label in labels {
+        let Some(window) = app.get_webview_window(&label) else {
+            continue;
+        };
+        if window.is_focused().unwrap_or(false) {
+            let _ = window.close();
+            return true;
+        }
+    }
+    false
+}
+
+/// Window destroyed by any path: forget its session.
+pub(crate) fn destroyed<R: tauri::Runtime>(window: &tauri::Window<R>) {
+    if !is_popout(window.label()) {
+        return;
+    }
+    if let Some(host) = window.try_state::<Popouts>() {
+        if let Ok(mut map) = host.0.lock() {
+            map.remove(window.label());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn binding() -> Binding {
+        Binding {
+            scope: "wss://relay.example".into(),
+            viewer: "a".repeat(64),
+            channel_id: "channel-1".into(),
+            thread_root_id: Some("b".repeat(64)),
+            incarnation: 1,
+        }
+    }
+    fn view() -> View {
+        View {
+            title: "Design".into(),
+            scope: String::new(),
+            dark: false,
+            appearance: None,
+            status: "ready".into(),
+            error: None,
+            writable: true,
+            can_load_more: false,
+            limited: false,
+            loading_older: false,
+            reading: None,
+            reading_revision: 0,
+            composer: None,
+            version: 1,
+            close_requested: 0,
+            detached: false,
+            root: None,
+            replies: vec![],
+            operations: vec![],
+            following: false,
+            is_dm: false,
+            kind: "channel".into(),
+            picture: None,
+            members: None,
+            icon: None,
+            thread: true,
+            can_go_back: false,
+            typing: None,
+        }
+    }
+    #[test]
+    fn binding_requires_hex_identities_and_bounded_ids() {
+        assert!(binding().valid());
+        let mut b = binding();
+        b.viewer = "nothex".into();
+        assert!(!b.valid());
+        let mut b = binding();
+        b.thread_root_id = Some("short".into());
+        assert!(!b.valid());
+        let mut b = binding();
+        b.channel_id = "x".repeat(257);
+        assert!(!b.valid());
+        let mut b = binding();
+        b.thread_root_id = None;
+        assert!(b.valid());
+    }
+    #[test]
+    fn targets_ignore_incarnation_so_a_reloaded_owner_focuses_the_same_window() {
+        let mut later = binding();
+        later.incarnation = 7;
+        assert_eq!(binding().target(), later.target());
+    }
+    #[test]
+    fn presentation_is_bounded() {
+        assert!(validate(&view()).is_ok());
+        let mut v = view();
+        v.status = "weird".into();
+        assert!(validate(&v).is_err());
+        let mut v = view();
+        v.title = "x".repeat(4097);
+        assert!(validate(&v).is_err());
+        let mut v = view();
+        v.composer = Some("not-a-uuid".into());
+        assert!(validate(&v).is_err());
+        let decoded: View = serde_json::from_value(serde_json::to_value(view()).unwrap()).unwrap();
+        assert_eq!(decoded.title, "Design");
+    }
+    #[test]
+    fn reactions_are_bounded_per_row() {
+        let mut r = row("r1", "https://media/a", "a.pdf");
+        assert!(r.valid());
+        let group = |content: &str, n: usize| {
+            serde_json::from_value::<crate::huddle_window::ReactionGroup>(serde_json::json!({
+                "content": content, "emoji": null,
+                "events": (0..n).map(|i| serde_json::json!({
+                    "id": format!("{:0>64x}", i), "authorId": "a".repeat(64)
+                })).collect::<Vec<_>>()
+            }))
+            .unwrap()
+        };
+        r.reactions = vec![group("👍", 128), group(":party_blob:", 1)];
+        assert!(r.valid());
+        r.reactions = vec![group("👍", 129)];
+        assert!(!r.valid());
+        r.reactions = vec![group(&"x".repeat(67), 1)];
+        assert!(!r.valid());
+        r.reactions = (0..65).map(|_| group("👍", 1)).collect();
+        assert!(!r.valid());
+        r.reactions = vec![group("👍", 0)];
+        assert!(!r.valid());
+    }
+    #[test]
+    fn native_background_matches_the_applied_color_mode_tokens() {
+        let tokens = include_str!("../../src/shared/design-system/styles/tokens.css");
+        let hex = |c: tauri::window::Color| format!("#{:02x}{:02x}{:02x}", c.0, c.1, c.2);
+        let appearance = |mode: &str| -> crate::huddle_window::Appearance {
+            serde_json::from_value(serde_json::json!({ "colorMode": mode })).unwrap()
+        };
+        // Resolve `--bg-app` as the stylesheet does for each mode. Mode-paired
+        // tokens are declared twice in `tokens.css`: the light (`:root`) value
+        // first, the dark (`[data-color-mode="dark"]`) value second; the role
+        // block may alias a palette step that differs per mode.
+        let declared = |mode: &str, name: &str| -> String {
+            let needle = format!("{name}: ");
+            let mut found = tokens.match_indices(&needle).map(|(at, _)| {
+                let value = &tokens[at + needle.len()..];
+                value[..value.find(';').unwrap()].trim().to_string()
+            });
+            let light = found
+                .next()
+                .unwrap_or_else(|| panic!("{name} not declared"));
+            if mode == "dark" {
+                found
+                    .next()
+                    .unwrap_or_else(|| panic!("{name} has no dark value"))
+            } else {
+                light
+            }
+        };
+        let resolve = |mode: &str| -> String {
+            let mut value = declared(mode, "--bg-app");
+            while let Some(alias) = value.strip_prefix("var(").and_then(|v| v.strip_suffix(')')) {
+                value = declared(mode, alias);
+            }
+            value
+        };
+        assert_eq!(hex(appearance("dark").background()), resolve("dark"));
+        assert_eq!(hex(appearance("light").background()), resolve("light"));
+        assert_ne!(resolve("dark"), resolve("light"));
+    }
+    #[test]
+    fn link_labels_are_bounded_per_row() {
+        let mut r = row("r1", "https://media/a", "a.pdf");
+        let link = |n: usize| format!("buzz://message?channel=c&id={:0>64x}", n);
+        r.link_labels = (0..64)
+            .map(|i| (link(i), "Ada in #design".into()))
+            .collect();
+        assert!(r.valid());
+        r.link_labels = (0..65)
+            .map(|i| (link(i), "Ada in #design".into()))
+            .collect();
+        assert!(!r.valid());
+        r.link_labels = [(link(0), "x".repeat(1001))].into();
+        assert!(!r.valid());
+        r.link_labels = [("u".repeat(8193), "Ada in #design".into())].into();
+        assert!(!r.valid());
+        let decoded: DiscussionRow = serde_json::from_value(serde_json::json!({
+            "id": "r", "authorId": "a", "channelId": "c", "author": "Ada", "picture": null,
+            "text": "see", "time": 1, "delivery": "seen", "attachments": [],
+            "linkLabels": { "buzz://message?channel=c&id=1": "Ada in #design" }
+        }))
+        .unwrap();
+        assert_eq!(
+            decoded.link_labels["buzz://message?channel=c&id=1"],
+            "Ada in #design"
+        );
+    }
+    #[test]
+    fn labels_are_recognized_by_prefix() {
+        assert!(is_popout("popout-1234"));
+        assert!(!is_popout("main"));
+        assert!(!is_popout("huddle"));
+    }
+    fn row(id: &str, source: &str, name: &str) -> DiscussionRow {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "authorId": "a", "channelId": "channel", "author": "Ada",
+            "picture": null, "text": "see file", "time": 1, "delivery": "seen",
+            "attachments": [{
+                "url": "https://relay.example/media/1", "kind": "file", "mime": null,
+                "size": null, "name": name, "duration": null, "voiceNote": null,
+                "waveform": null, "dimensions": null, "blurhash": null,
+                "previewUrl": null, "source": source, "previewSource": null
+            }]
+        }))
+        .unwrap()
+    }
+    fn session(binding: Binding, view: View, guarded: bool) -> Session {
+        Session {
+            binding,
+            view,
+            guarded,
+            actions: Channel::new(|_| Ok(())),
+            updates: None,
+            moved: None,
+            reporting: false,
+            closing_with_main: false,
+            kept: Arc::default(),
+        }
+    }
+    #[test]
+    fn window_title_names_the_thread_and_its_conversation() {
+        let mut view = view();
+        view.title = "design".into();
+        view.thread = true;
+        assert_eq!(view.window_title(), "Thread in #design — Buzz");
+        view.is_dm = true;
+        view.kind = "dm".into();
+        view.title = "Ada".into();
+        assert_eq!(view.window_title(), "Thread in Ada (DM) — Buzz");
+        view.thread = false;
+        assert_eq!(view.window_title(), "Ada (DM) — Buzz");
+        view.kind = "solo".into();
+        view.title = "Planning".into();
+        assert_eq!(view.window_title(), "Planning (Solo chat) — Buzz");
+        view.is_dm = false;
+        view.kind = "private".into();
+        view.title = "leads".into();
+        assert_eq!(view.window_title(), "leads — Buzz");
+        view.kind = "channel".into();
+        view.title = "design".into();
+        assert_eq!(view.window_title(), "#design — Buzz");
+        // The kind is a closed set; a picture is bounded.
+        view.kind = "other".into();
+        assert!(validate(&view).is_err());
+        view.kind = "dm".into();
+        view.picture = Some("x".repeat(8193));
+        assert!(validate(&view).is_err());
+        view.picture = Some("http://buzz-media.localhost/avatar".into());
+        assert!(validate(&view).is_ok());
+        // Members: a bounded preview of at most three.
+        let person = |n: usize| MemberPreview {
+            id: format!("{n:0>64}"),
+            name: "Ada".into(),
+            picture: None,
+        };
+        view.members = Some(Members {
+            count: 12,
+            solo: false,
+            preview: (0..3).map(person).collect(),
+        });
+        assert!(validate(&view).is_ok());
+        view.members = Some(Members {
+            count: 12,
+            solo: false,
+            preview: (0..4).map(person).collect(),
+        });
+        assert!(validate(&view).is_err());
+        view.members = Some(Members {
+            count: 1_000_001,
+            solo: false,
+            preview: vec![],
+        });
+        assert!(validate(&view).is_err());
+        let action: Action = serde_json::from_str("\"openMembers\"").unwrap();
+        assert!(action == Action::OpenMembers);
+        // Working agents: bounded, hex-identified, closed state set.
+        let working = |n: usize, state: &str| -> Typing {
+            serde_json::from_value(serde_json::json!({
+                "humans": [], "more": 0, "agents": ["Echo"],
+                "working": (0..n).map(|i| serde_json::json!({
+                    "id": format!("{i:0>64}"), "name": "Echo", "picture": null,
+                    "state": state, "step": "Reading files", "status": "Reading files",
+                    "stops": [{ "key": "[\"a\",\"c\",\"m\"]", "label": "Stop Echo" }]
+                })).collect::<Vec<_>>()
+            }))
+            .unwrap()
+        };
+        view.members = None;
+        // A plugin chat icon is a bounded token with a label.
+        view.icon = Some(ChatIcon {
+            icon: "git-pull-request".into(),
+            tone: Some("open".into()),
+            label: "Pull request, open".into(),
+        });
+        assert!(validate(&view).is_ok());
+        view.icon = Some(ChatIcon {
+            icon: "<svg>".into(),
+            tone: None,
+            label: "x".into(),
+        });
+        assert!(validate(&view).is_err());
+        view.icon = None;
+        view.typing = Some(working(8, "working"));
+        assert!(validate(&view).is_ok());
+        view.typing = Some(working(9, "working"));
+        assert!(validate(&view).is_err());
+        view.typing = Some(working(1, "done"));
+        assert!(validate(&view).is_err());
+    }
+    #[test]
+    fn focus_main_is_a_companion_action_with_no_payload() {
+        let action: Action = serde_json::from_str("\"focusMain\"").unwrap();
+        assert!(action == Action::FocusMain);
+        assert_eq!(serde_json::to_string(&action).unwrap(), "\"focusMain\"");
+    }
+    #[test]
+    fn commands_are_gated_by_caller_label() {
+        let app = tauri::test::mock_builder()
+            .manage(Popouts::default())
+            .build(crate::app_context())
+            .unwrap();
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        let popout =
+            tauri::WebviewWindowBuilder::new(&app, "popout-a", tauri::WebviewUrl::default())
+                .build()
+                .unwrap();
+        let huddle = tauri::WebviewWindowBuilder::new(&app, "huddle", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+        assert!(require_main(&main).is_ok());
+        assert!(require_main(&popout).is_err());
+        assert_eq!(require_popout(&popout).unwrap(), "popout-a");
+        assert!(require_popout(&main).is_err());
+        assert!(require_popout(&huddle).is_err());
+    }
+    #[test]
+    fn downloads_are_isolated_to_the_calling_window_projection() {
+        let host = Popouts::default();
+        let mut a = view();
+        a.root = Some(row("r1", "https://media/a", "a.pdf"));
+        let mut b = view();
+        b.replies = vec![row("r2", "https://media/b", "b.pdf")];
+        {
+            let mut map = host.0.lock().unwrap();
+            map.insert("popout-a".into(), session(binding(), a, false));
+            map.insert("popout-b".into(), session(binding(), b, false));
+        }
+        assert!(host.permits_download("popout-a", "https://media/a", "a.pdf"));
+        assert!(!host.permits_download("popout-a", "https://media/b", "b.pdf"));
+        assert!(host.permits_download("popout-b", "https://media/b", "b.pdf"));
+        assert!(!host.permits_download("popout-b", "https://media/a", "a.pdf"));
+        assert!(!host.permits_download("popout-a", "https://media/a", "other.pdf"));
+        assert!(!host.permits_download("popout-zzz", "https://media/a", "a.pdf"));
+    }
+    #[test]
+    fn guarded_close_is_intercepted_and_asks_the_companion() {
+        let host = Popouts::default();
+        host.0
+            .lock()
+            .unwrap()
+            .insert("popout-a".into(), session(binding(), view(), true));
+        assert!(host.intercept_close("popout-a"));
+        assert_eq!(host.0.lock().unwrap()["popout-a"].view.close_requested, 1);
+        assert!(host.intercept_close("popout-a"));
+        assert_eq!(host.0.lock().unwrap()["popout-a"].view.close_requested, 2);
+        host.0.lock().unwrap().get_mut("popout-a").unwrap().guarded = false;
+        assert!(
+            !host.intercept_close("popout-a"),
+            "an unguarded close proceeds"
+        );
+        assert!(!host.intercept_close("popout-unknown"));
+    }
+    #[test]
+    fn companion_has_no_identity_relay_or_signing_authority() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/popout.json")).unwrap();
+        assert_eq!(capability["webviews"], serde_json::json!(["popout-*"]));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!([
+                "allow-popout-window-watch",
+                "allow-popout-window-action",
+                "allow-media-download",
+                "allow-clipboard-write-text",
+                { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }] }
+            ])
+        );
+    }
+    #[test]
+    fn destruction_sends_closed_off_the_event_thread_once() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+        let (sender, receiver) = mpsc::channel();
+        let actions = Channel::new(move |_| {
+            sender.send(thread::current().id()).unwrap();
+            Ok(())
+        });
+        let notice = closed_notice(
+            actions,
+            "popout-x".into(),
+            1,
+            Arc::default(),
+            Arc::default(),
+        );
+        notice(&tauri::WindowEvent::Destroyed);
+        notice(&tauri::WindowEvent::Destroyed);
+        let thread = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(thread, thread::current().id());
+        drop(notice);
+        assert!(receiver.recv().is_err());
+    }
+
+    #[test]
+    fn destruction_while_closing_all_is_silent_and_a_kept_window_reports_so_both_off_thread() {
+        use std::sync::mpsc;
+        use std::thread;
+        for (closing_all, kept) in [(true, false), (false, true)] {
+            let (sender, receiver) = mpsc::channel();
+            let actions = Channel::new(move |control: tauri::ipc::InvokeResponseBody| {
+                sender.send(control).unwrap();
+                Ok(())
+            });
+            // The Channel's final drop evaluates JavaScript for a native
+            // channel: it must leave the event thread even when nothing is
+            // sent. Observe it through a guard moved into the same closure.
+            let (dropped, on_drop) = mpsc::channel();
+            struct Guard(mpsc::Sender<thread::ThreadId>);
+            impl Drop for Guard {
+                fn drop(&mut self) {
+                    let _ = self.0.send(thread::current().id());
+                }
+            }
+            let guard = Guard(dropped);
+            let actions_with_guard = Channel::new(move |message| {
+                let _ = &guard;
+                actions.send(message)
+            });
+            let notice = closed_notice(
+                actions_with_guard,
+                "popout-x".into(),
+                1,
+                Arc::new(AtomicBool::new(closing_all)),
+                Arc::new(AtomicBool::new(kept)),
+            );
+            notice(&tauri::WindowEvent::Destroyed);
+            let drop_thread = on_drop.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_ne!(drop_thread, thread::current().id());
+            drop(notice);
+            if closing_all {
+                assert!(receiver.recv().is_err(), "exit reports nothing");
+            } else {
+                let sent = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+                let json = match sent {
+                    tauri::ipc::InvokeResponseBody::Json(json) => json,
+                    other => panic!("unexpected body: {other:?}"),
+                };
+                let control: serde_json::Value = serde_json::from_str(&json).unwrap();
+                assert_eq!(control["action"], "closed");
+                assert_eq!(control["text"], "kept");
+                assert!(receiver.recv().is_err());
+            }
+        }
+    }
+    #[test]
+    fn geometry_is_bounded_and_round_trips_as_main_saves_it() {
+        let g = Geometry {
+            x: -100,
+            y: 40,
+            width: 520,
+            height: 640,
+        };
+        assert!(g.valid());
+        assert!(!Geometry { width: 0, ..g }.valid());
+        assert!(!Geometry {
+            x: COORDINATE_LIMIT + 1,
+            ..g
+        }
+        .valid());
+        let decoded: Geometry = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(decoded, g);
+        assert!(
+            serde_json::from_str::<Geometry>(r#"{"x":1,"y":2,"width":3,"height":4,"z":5}"#)
+                .is_err()
+        );
+        let restore: Restore = serde_json::from_str("{}").unwrap();
+        assert!(restore.geometry.is_none());
+    }
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> PhysicalRect<i32, u32> {
+        PhysicalRect {
+            position: PhysicalPosition::new(x, y),
+            size: PhysicalSize::new(width, height),
+        }
+    }
+    #[test]
+    fn placement_keeps_a_reachable_window_and_recenters_one_on_a_removed_monitor() {
+        let laptop = rect(0, 0, 2880, 1800);
+        let external = rect(2880, -200, 2560, 1440);
+        let saved = Geometry {
+            x: 3000,
+            y: 100,
+            width: 1040,
+            height: 1280,
+        };
+        // Both monitors attached: as saved.
+        let (position, size, relocated) = placement(saved, 96, &[laptop, external], (laptop, 2.0));
+        assert_eq!((position.x, position.y), (3000, 100));
+        assert_eq!((size.width, size.height), (1040, 1280));
+        assert!(relocated.is_none());
+        // External unplugged: centered on the laptop with its title bar at the
+        // work area's top, size kept.
+        let (position, size, relocated) = placement(saved, 96, &[laptop], (laptop, 2.0));
+        assert_eq!((position.x, position.y), ((2880 - 1040) / 2, 0));
+        assert_eq!((size.width, size.height), (1040, 1280));
+        assert_eq!(relocated, Some(2.0));
+        // Flush with the top edge: kept. Above it, the title bar is out of
+        // reach, so it comes back to the top.
+        let flush = Geometry { y: 0, ..saved };
+        let (position, _, relocated) = placement(flush, 96, &[laptop, external], (laptop, 2.0));
+        assert_eq!((position.x, position.y), (3000, 0));
+        assert!(relocated.is_none());
+        let above = Geometry {
+            x: 100,
+            y: -1,
+            ..saved
+        };
+        let (position, _, relocated) = placement(above, 96, &[laptop], (laptop, 2.0));
+        assert_eq!((position.x, position.y), ((2880 - 1040) / 2, 0));
+        assert_eq!(relocated, Some(2.0));
+        // Saved at 1x, below the 2x minimum: the default size at 2x replaces it.
+        let small = Geometry {
+            x: 100,
+            y: 100,
+            width: 600,
+            height: 700,
+        };
+        let (_, size, relocated) = placement(small, 96, &[laptop], (laptop, 2.0));
+        assert_eq!((size.width, size.height), (1040, 1280));
+        assert_eq!(relocated, Some(2.0));
+    }
+}

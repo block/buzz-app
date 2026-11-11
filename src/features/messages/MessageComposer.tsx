@@ -1121,6 +1121,9 @@ function Composer({
   }
   const [error, setError] = useState<string>();
   const [pasteTooLong, setPasteTooLong] = useState(false);
+  // The limit counts the Markdown that sends, not the visible text.
+  const messageLength = useMemo(() => composerMarkdown(value).length, [value]);
+  const showLength = messageLength >= 16000 * 0.9 && !pasteTooLong;
   const [attachmentError, setAttachmentError] =
     useState<Readonly<{ title: string; description: string }>>();
   /** Nothing was attached, for this one reason. */
@@ -3475,7 +3478,11 @@ function Composer({
               emoji={emojiCatalog.entries}
               onPasteTooLong={() => setPasteTooLong(true)}
               aria-describedby={
-                pasteTooLong ? `${inputId}-paste-error` : undefined
+                pasteTooLong
+                  ? `${inputId}-paste-error`
+                  : showLength
+                    ? `${inputId}-length`
+                    : undefined
               }
               onDraftChange={(next) => {
                 setPasteTooLong(false);
@@ -3794,6 +3801,16 @@ function Composer({
         {!editing.target && compacting && (
           <p className={styles.composerStatus} role="status">
             Compacting session…
+          </p>
+        )}
+        {showLength && (
+          <p className="text-end text-body-sm text-subtle tabular-nums">
+            <span aria-hidden="true">
+              {messageLength.toLocaleString("en-US")}/16,000
+            </span>
+            <span id={`${inputId}-length`} className="sr-only">
+              {messageLength.toLocaleString("en-US")} of 16,000 characters
+            </span>
           </p>
         )}
         {pasteTooLong && (

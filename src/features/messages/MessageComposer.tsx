@@ -3236,7 +3236,11 @@ function Composer({
     return (
       <>
         {context}
-        <footer className={styles.composer} data-composer-surface="">
+        <footer
+          className={styles.composer}
+          data-composer-surface=""
+          data-shell-region="composer"
+        >
           This relay connection supports reading only.
         </footer>
       </>
@@ -3261,6 +3265,7 @@ function Composer({
         ref={form}
         className={styles.composer}
         data-composer-surface=""
+        data-shell-region="composer"
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}

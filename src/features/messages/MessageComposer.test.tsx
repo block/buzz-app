@@ -643,6 +643,16 @@ it("consumes a handled slash command without publishing it", async () => {
   expect(h.messages.send).toHaveBeenCalledWith("channel", "/shrug", [], []);
 });
 
+it("marks the composer for plugins that restyle the shell", () => {
+  const h = mount();
+  expect(
+    h.container.querySelectorAll('[data-shell-region="composer"]'),
+  ).toHaveLength(1);
+  expect(h.container.querySelector('[data-shell-region="composer"]')).toBe(
+    within(h.container).getByRole("form"),
+  );
+});
+
 it("keeps a slash command draft when its handler refuses", async () => {
   const h = mount({
     onCommand: async () => {
@@ -7314,6 +7324,12 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
       "This relay connection supports reading only.",
     ),
   ).toBeVisible();
+  // The notice stands in for the composer, so it keeps the composer's region.
+  expect(
+    within(thread.container).getByText(
+      "This relay connection supports reading only.",
+    ),
+  ).toHaveAttribute("data-shell-region", "composer");
 });
 
 it("subscribes to emoji changes and releases the subscription when unmounted", () => {

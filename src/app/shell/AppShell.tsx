@@ -299,6 +299,7 @@ function AppShellContent({
       </a>
       <header
         ref={header}
+        data-shell-region="top-bar"
         data-buzz-window-drag={
           macDesktop || hasIntegratedWindowControls() || undefined
         }
@@ -357,7 +358,11 @@ function AppShellContent({
       </header>
 
       <div className="shell-workspace">
-        <nav className="shell-side-dock" aria-label="Apps dock">
+        <nav
+          className="shell-side-dock"
+          aria-label="Apps dock"
+          data-shell-region="rail"
+        >
           <div className="shell-dock-pages">
             <PageNavigation
               pages={dockPages}
@@ -405,6 +410,7 @@ function AppShellContent({
               <div className="shell-content">
                 <div
                   id="shell-navigation"
+                  data-shell-region="sidebar"
                   hidden={!hasNavigation}
                   className="shell-navigation"
                   data-sidebar-collapsible={

@@ -8,15 +8,23 @@ export function PanelHeader({
   navigation,
   actions,
   variant = "default",
+  region,
 }: {
   title: ReactNode;
   icon?: ReactNode;
   navigation?: ReactNode;
   actions?: ReactNode;
   variant?: "default" | "compact" | "card";
+  /** Marks the app's main workspace header for plugin styling. */
+  region?: "main-header" | undefined;
 }) {
   return (
-    <header data-buzz-ui="" className="panel-header" data-variant={variant}>
+    <header
+      data-buzz-ui=""
+      className="panel-header"
+      data-variant={variant}
+      data-shell-region={region}
+    >
       {navigation}
       <div className="panel-header-title">
         {icon}

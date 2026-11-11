@@ -635,7 +635,11 @@ function OwnedCompletion({
                     )}
                   </span>
                   {channel && i === selectedIndex && (
-                    <span aria-hidden="true" className={styles.acceptKey}>
+                    <span
+                      aria-hidden="true"
+                      className={styles.acceptKey}
+                      data-completion-accept=""
+                    >
                       Enter
                     </span>
                   )}

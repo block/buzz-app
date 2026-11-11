@@ -2353,6 +2353,8 @@ function ChannelWorkspace({
                           channelId={current.id}
                           name={current.name}
                           access={memberAccess(current)}
+                          data-channel-type={current.channelType ?? "stream"}
+                          data-channel-name={current.name}
                           ref={membersHeaderTrigger}
                           aria-expanded={membersOpen}
                           onClick={(event) => openMembers(event.currentTarget)}

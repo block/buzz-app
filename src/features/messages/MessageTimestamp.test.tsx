@@ -155,6 +155,11 @@ it.each([
     expect(container.querySelector(`[data-day="${day}"]`)).toHaveTextContent(
       new RegExp(`^${label}$`),
     );
+    // The documented shell-region hook: one marker per divider, around its label.
+    expect(container.querySelectorAll("[data-day-divider]")).toHaveLength(1);
+    expect(container.querySelector("[data-day-divider]")).toContainElement(
+      container.querySelector(`[data-day="${day}"]`),
+    );
     expect(
       container.querySelector("[data-calendar-date]")?.closest("[aria-hidden]"),
     ).toHaveAttribute("aria-hidden", "true");

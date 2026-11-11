@@ -115,6 +115,9 @@ it.each([false, true])(
     initial.respond([root, reply]);
     expect(await screen.findByText("Alice")).toBeInTheDocument();
     expect(screen.getByText("Bob")).toBeInTheDocument();
+    // A plugin styles a thread through the documented shell region.
+    const timeline = document.querySelector("[data-message-scroller]");
+    expect(timeline).toHaveAttribute("data-shell-region", "timeline");
     await waitFor(() =>
       expect(
         wire.pending.filter(

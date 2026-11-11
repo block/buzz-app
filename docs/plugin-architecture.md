@@ -12,10 +12,11 @@ Every service below is a preview tied to the host version. Nothing is promised
 across versions yet, and the author types are `0.0.0-preview.1`.
 
 - **Steady:** the plugin envelope (manifest, `inject`/`apply`, `ctx.effect`
-  cleanup) and capability services: host grants, `addTool` (the tool's shape, not
-  the whole client passed to `call`), shortcuts, notifications, settings cards, and
-  navigation `open` for plugin pages, Home and Settings. Owning a whole page or
-  panel is steady, but placement is not.
+  cleanup), the [shell region](#shell-regions) markup hooks, and capability
+  services: host grants, `addTool` (the tool's shape, not the whole client passed
+  to `call`), shortcuts, notifications, settings cards, and navigation `open` for
+  plugin pages, Home and Settings. Owning a whole page or panel is steady, but
+  placement is not.
 - **Borderline:** decisions, and link and code-block renderers.
 - **Likely to break:** the relay session read model; conversation contributions;
   sidebar sections and rows, the Solo region and backdrops; agent hooks, execution
@@ -1526,6 +1527,66 @@ controls), `.shell-side-dock` (the app dock), `.shell-center-capsule` (centered 
 flow while `.shell-header` has `data-compact-pages`), `.shell-body`, and the
 outermost `.panel` elements inside it (nested panels are content). On macOS the
 native window controls sit in the header's leading inset, outside these roles.
+
+### Shell regions
+
+A plugin that restyles the whole app, such as a theme or a layout, needs to find
+the major parts of the shell without depending on hashed CSS-module class names,
+which change whenever a component is refactored. The host marks them with stable
+attributes. The contract is markup only: it has no API, registration or cleanup,
+costs nothing when no plugin reads it, and ships with every build.
+
+`data-shell-region` names a region of the shell:
+
+| Value | Region |
+| --- | --- |
+| `top-bar` | The window header row: history, search, launchers and window controls. |
+| `rail` | The apps dock beside the sidebar: page tabs, community switcher and profile. |
+| `sidebar` | The navigation column. Present but `hidden` when the page has no navigation, and `inert` while collapsed. |
+| `sidebar-header` | The strip above the list in a sidebar built on the shared sidebar frame (scope tabs and the creation action). Absent in a sidebar that has no such strip. |
+| `main` | A page's main workspace (the tabbed conversation or page pane). |
+| `main-header` | The header of `main`: its identity or tabs, and its actions. |
+| `side-pane` | A page's secondary tab pane, on pages that have one. It can be present but `hidden` while closed. |
+| `timeline` | A scrolling message list: a channel's, or a thread's. |
+| `composer` | The message composer, or the read-only notice that replaces it. |
+
+`timeline` and `composer` occur in `main` and may occur in `side-pane`, so a
+selector that targets one place scopes it, for example
+`[data-shell-region="side-pane"] [data-shell-region="timeline"]`. A Solo chat and
+its new-chat draft are the exception: they draw their own header and have no
+`main` or `main-header`, so their `timeline` and `composer` sit outside both.
+Every other value is a single region on screen. `sidebar-header` sits inside `sidebar` and
+`main-header` inside `main`. A region the page does not render has no element,
+and a collapsed or closed one can still be present with `hidden` or `inert`.
+
+Four per-element hooks complete the contract:
+
+- `data-channel-type` (`stream`, `forum`, `dm`, `solo` or `system`) and
+  `data-channel-name` (the display name) on the channel identity button inside
+  the channel workspace's `main-header`. A page other than a channel, and a
+  Solo chat's own header, do not carry them.
+- `data-channel-count` on a sidebar row's attention dot (`data-channel-priority`):
+  the observed number of unread mentions, or of unread messages in a DM. It is the
+  same observed, not exact, count the row's accessible name reports. The attribute
+  is absent when the count is zero, and wherever the dot itself is not drawn, which
+  includes a row showing thread activity instead and a muted row.
+- `data-day-divider` on each day divider in a timeline. Its date label carries
+  `data-day` (`YYYY-MM-DD`, the local day).
+- `data-completion-accept` on the Enter key hint of the selected row in the
+  channel completion list. The selected row of any completion list is the
+  `role="option"` with `aria-selected="true"`.
+
+The names and values above are stable for the plugin API's preview: renaming or
+removing one is a breaking change that updates this section, and a test fails if
+the host stops rendering one. New regions and hooks may be added, and unlisted
+values of `data-channel-type` may appear as channel kinds are added.
+
+What is not promised: the element type behind a region, its children, depth or
+order; class names and CSS-module hashes; every other `data-*` attribute, `id` and
+`aria-*` value, including `data-main-workspace` and `data-panel-workspace`, which
+the host uses for focus; whether a region is visible, collapsed or animating;
+and the layout around it. Read these hooks and style the region's own box, and
+expect to retest your styles against a new host version.
 
 ### Discovery metadata
 

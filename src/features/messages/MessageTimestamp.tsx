@@ -19,7 +19,7 @@ export function DayDivider({ createdAt }: { createdAt: number }) {
     .map((part) => String(part).padStart(2, "0"))
     .join("-");
   return (
-    <div className={styles.day}>
+    <div className={styles.day} data-day-divider="">
       <span className={styles.dayLabel}>
         {/* Decorative calendar artwork; the adjacent label owns the date.
             The numeral is HTML, not SVG <text>: Linux WebKit's SVG text cost

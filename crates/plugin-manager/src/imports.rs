@@ -23,6 +23,7 @@ const MAX_ENTRIES: usize = 20_000;
 const MAX_PLUGINS: usize = 32;
 const MAX_PREVIEW_BYTES: usize = 32 * 1024 * 1024;
 const MAX_REPO_BYTES: u64 = 256 * 1024 * 1024;
+const BLOBS_REFUSED: &str = "The repository host would not send the plugin files by object ID";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -912,22 +913,24 @@ impl Git {
             _ => Ok(()),
         }
     }
-    fn clone_tip(&mut self, clone_url: &str, reference: &str) -> Result<()> {
+    fn clone_tip(&mut self, clone_url: &str, reference: &str, blobs: bool) -> Result<()> {
         let mut args = vec![
             "clone",
             "--depth=1",
             "--single-branch",
             "--no-tags",
             "--no-checkout",
-            "--filter=blob:none",
             "--template=",
         ];
+        if !blobs {
+            args.push("--filter=blob:none");
+        }
         if !reference.is_empty() {
             args.extend(["--branch", reference]);
         }
         args.extend(["--", clone_url, "repository"]);
         self.run(&args, LIMIT)?;
-        self.promisor = true;
+        self.promisor = !blobs;
         Ok(())
     }
     /// Only `commit` and its trees, never blobs or history.
@@ -1004,10 +1007,12 @@ impl Git {
             ))
         }
     }
-    fn prefetch(&self, oids: &[&str]) {
-        if !self.promisor || oids.is_empty() {
-            return;
-        }
+    /// False when the host serves the tree but refuses its files by object ID, as protocol v0
+    /// hosts without `uploadpack.allowAnySHA1InWant` do.
+    fn blobs_reachable(&self, oids: &[&str]) -> bool {
+        !self.promisor || oids.is_empty() || self.prefetch(oids) || self.read_blob(oids[0]).is_ok()
+    }
+    fn prefetch(&self, oids: &[&str]) -> bool {
         let mut args = vec![
             "-C",
             "repository",
@@ -1022,7 +1027,7 @@ impl Git {
         args.extend(oids);
         // One request instead of one per file. Reading falls back to fetching each blob on
         // demand, so only the reads themselves report a refusal.
-        let _ = self.run(&args, LIMIT);
+        self.run(&args, LIMIT).is_ok()
     }
     fn read_plugins(
         &self,
@@ -1116,7 +1121,9 @@ impl Git {
             .collect();
         wanted.sort_unstable();
         wanted.dedup();
-        self.prefetch(&wanted);
+        if !self.blobs_reachable(&wanted) {
+            return Err(BLOBS_REFUSED.into());
+        }
         for parent in parents {
             let display = if parent.is_empty() {
                 "."
@@ -1363,28 +1370,54 @@ fn read_source(
     required: Option<RequiredCommit<'_>>,
 ) -> Result<PreparedImport> {
     let Some(required) = required else {
-        git.clone_tip(clone_url, reference)?;
-        let commit = git.tip()?;
-        return git.read_plugins(source.into(), &commit, scope);
+        return read_tip(git, source, clone_url, reference, scope, None);
     };
     let pinned = required.0.to_ascii_lowercase();
-    match git.fetch_commit(clone_url, &pinned) {
+    let refusal = match git.fetch_commit(clone_url, &pinned) {
         Ok(()) => {
             git.verify_reachable(&pinned, reference)?;
-            git.read_plugins(source.into(), &pinned, scope)
-        }
-        Err(refusal) => {
-            // Some hosts will not serve a commit by its ID. Their reference tip is the only
-            // commit they can prove, so it must be the pin.
-            git.reset()?;
-            git.clone_tip(clone_url, reference)?;
-            let tip = git.tip()?;
-            if tip != pinned {
-                return Err(format!(
-                    "The required commit {pinned} could not be fetched directly ({refusal}), so the reference was read at its tip, commit {tip}, which does not match. The reference has moved; ask whoever manages this recommendation to update it."
-                ));
+            match git.read_plugins(source.into(), &pinned, scope) {
+                Err(error) if error == BLOBS_REFUSED => error,
+                result => return result,
             }
-            git.read_plugins(source.into(), &tip, scope)
+        }
+        Err(refusal) => refusal,
+    };
+    // Some hosts will not serve a commit or its files by ID. Their reference tip is the only
+    // commit they can prove, so it must be the pin.
+    git.reset()?;
+    read_tip(
+        git,
+        source,
+        clone_url,
+        reference,
+        scope,
+        Some((&pinned, &refusal)),
+    )
+}
+fn read_tip(
+    git: &mut Git,
+    source: &str,
+    clone_url: &str,
+    reference: &str,
+    scope: Option<&str>,
+    pin: Option<(&str, &str)>,
+) -> Result<PreparedImport> {
+    let mut blobs = false;
+    loop {
+        git.clone_tip(clone_url, reference, blobs)?;
+        let tip = git.tip()?;
+        if let Some((pinned, refusal)) = pin.filter(|(pinned, _)| *pinned != tip) {
+            return Err(format!(
+                "The required commit {pinned} could not be fetched directly ({refusal}), so the reference was read at its tip, commit {tip}, which does not match. The reference has moved; ask whoever manages this recommendation to update it."
+            ));
+        }
+        match git.read_plugins(source.into(), &tip, scope) {
+            Err(error) if error == BLOBS_REFUSED && !blobs => {
+                git.reset()?;
+                blobs = true;
+            }
+            result => return result,
         }
     }
 }

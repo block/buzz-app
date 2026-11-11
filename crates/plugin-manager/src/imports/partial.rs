@@ -577,3 +577,38 @@ fn a_host_that_refuses_a_commit_by_its_id_falls_back_to_the_reference_tip() {
         }
     }
 }
+
+#[test]
+fn a_host_that_refuses_files_by_their_id_is_read_from_a_complete_tip_clone() {
+    let mut hosted = Hosted::new("sha1");
+    hosted.configure("uploadpack.allowAnySHA1InWant", "false");
+    let old = hosted.commit("main", &plugin_files("plugins/one", "example.one", "old"));
+    let tip = hosted.commit("main", &plugin_files("plugins/one", "example.one", "new"));
+    let v0 = || local_git(&[("protocol.version", "0")]);
+
+    let mut filtered = v0();
+    filtered.clone_tip(&hosted.url(), "main", false).unwrap();
+    let refused = filtered.read_plugins("fixture".into(), &tip, None).err();
+    assert_eq!(refused.as_deref(), Some(BLOBS_REFUSED));
+
+    for required in [None, Some(tip.as_str())] {
+        let prepared = acquire(
+            &mut v0(),
+            "fixture",
+            &hosted.url(),
+            "main",
+            Some("plugins/one"),
+            required.and_then(pin),
+        )
+        .unwrap();
+        assert_eq!(prepared.preview.commit.as_deref(), Some(tip.as_str()));
+        assert!(bytes(&prepared, "plugins/one").contains("// new"));
+    }
+    let error = acquire(&mut v0(), "fixture", &hosted.url(), "main", None, pin(&old))
+        .err()
+        .unwrap();
+    assert!(
+        error.contains(&format!("commit {tip}, which does not match")),
+        "{error}"
+    );
+}

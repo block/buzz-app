@@ -1,7 +1,10 @@
 //! Browser sign-in startup and loopback OAuth authorization-code responses.
 //! RFC 8252 §§7.3, 8.3, 8.4, 8.9; RFC 6749 §§4.1.2, 4.1.2.1; RFC 9700 §2.1.
 //! See this folder's README.md for ownership and limits.
+mod focus;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+pub(crate) use focus::capture as capture_browser;
+use focus::READABLE_DELAY;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -35,17 +38,17 @@ pub(crate) struct OAuthRequest {
     pub(crate) use_state: bool,
 }
 type CallbackResult = Result<OAuthCallback, String>;
-/// How long a generic callback page stays readable before it closes.
-const READABLE_DELAY: Duration = Duration::from_secs(3);
 struct Attempt {
     id: String,
     result: Option<oneshot::Receiver<CallbackResult>>,
     task: JoinHandle<()>,
     retain_result: bool,
+    focus: focus::FocusReturn,
 }
 impl Drop for Attempt {
     fn drop(&mut self) {
         self.task.abort();
+        self.focus.cancel(Some(&self.id));
     }
 }
 /// One pending attempt per owner, keyed by the caller's owner key.
@@ -71,7 +74,7 @@ impl OAuthCallbackHost {
         request: OAuthRequest,
         open: impl FnOnce(&str) -> Result<(), String>,
     ) -> Result<OAuthAttempt, String> {
-        self.begin_with_parameter(owner, request, "redirect_uri", open)
+        self.begin_with_parameter(owner, request, "redirect_uri", open, None)
     }
 
     /// NIP-FA binds its handoff secret instead of requiring echoed OAuth state.
@@ -81,6 +84,7 @@ impl OAuthCallbackHost {
         owner: &str,
         authorization_url: String,
         open: impl FnOnce(&str) -> Result<(), String>,
+        browser: Option<String>,
     ) -> Result<OAuthAttempt, String> {
         self.begin_with_parameter(
             owner,
@@ -91,6 +95,7 @@ impl OAuthCallbackHost {
             },
             "return_to",
             open,
+            browser,
         )
     }
 
@@ -100,6 +105,7 @@ impl OAuthCallbackHost {
         request: OAuthRequest,
         callback_parameter: &str,
         open: impl FnOnce(&str) -> Result<(), String>,
+        browser: Option<String>,
     ) -> Result<OAuthAttempt, String> {
         let mut authorization =
             url::Url::parse(&request.authorization_url).map_err(|_| "Invalid authorization URL")?;
@@ -129,10 +135,12 @@ impl OAuthCallbackHost {
             return Err("Invalid callback path".into());
         }
         let mut attempts = self.0.lock().map_err(|_| "Sign-in unavailable")?;
-        if attempts
-            .get(owner)
-            .is_some_and(|attempt| attempt.retain_result || !attempt.task.is_finished())
-        {
+        // A consumed handoff can be replaced while only its focus return remains.
+        if attempts.get(owner).is_some_and(|attempt| {
+            let returning =
+                attempt.result.is_none() && attempt.focus.deadline(&attempt.id).is_some();
+            !returning && (attempt.retain_result || !attempt.task.is_finished())
+        }) {
             return Err("An OAuth callback is already pending".into());
         }
         // Binding is synchronous so cancellation cannot overtake listener registration.
@@ -164,6 +172,10 @@ impl OAuthCallbackHost {
         };
         // Generic OAuth keeps Builderlab presentation and browser-close behavior.
         let builderlab = callback_parameter == "redirect_uri";
+        let id = uuid::Uuid::new_v4().to_string();
+        let focus = focus::FocusReturn::default();
+        focus.arm(&id, browser);
+        let completion = (focus.clone(), id.clone());
         let (send, receive) = oneshot::channel();
         let task = tokio::spawn(async move {
             let result = tokio::time::timeout(
@@ -178,9 +190,14 @@ impl OAuthCallbackHost {
             )
             .await
             .unwrap_or_else(|_| Err(TIMED_OUT.into()));
+            completion.0.received(
+                &completion.1,
+                result.as_ref().is_ok_and(|callback| {
+                    !callback.parameters.iter().any(|(name, _)| name == "error")
+                }),
+            );
             let _ = send.send(result);
         });
-        let id = uuid::Uuid::new_v4().to_string();
         attempts.insert(
             owner.to_owned(),
             Attempt {
@@ -190,6 +207,7 @@ impl OAuthCallbackHost {
                 // A native FI login retains its completed handoff until wait/cancel.
                 // Generic OAuth keeps its existing finished-task replacement rule.
                 retain_result: callback_parameter == "return_to",
+                focus,
             },
         );
         drop(attempts);
@@ -215,8 +233,32 @@ impl OAuthCallbackHost {
         let result = receiver
             .await
             .unwrap_or_else(|_| Err("Sign-in canceled.".into()));
-        self.cancel(id)?;
+        // The listener is finished, but a captured browser return survives
+        // until verification completes or its attempt guard is canceled.
+        let returning = self
+            .0
+            .lock()
+            .map_err(|_| "Sign-in unavailable")?
+            .values()
+            .find(|attempt| attempt.id == id)
+            .is_some_and(|attempt| attempt.focus.deadline(id).is_some());
+        if result.is_err() || !returning {
+            self.cancel(id)?;
+        }
         result
+    }
+
+    pub(crate) async fn complete<R: tauri::Runtime>(&self, app: tauri::AppHandle<R>, id: String) {
+        let focus = self.0.lock().ok().and_then(|attempts| {
+            attempts
+                .values()
+                .find(|attempt| attempt.id == id)
+                .map(|attempt| attempt.focus.clone())
+        });
+        if let Some(focus) = focus {
+            focus.complete(app, id.clone()).await;
+        }
+        let _ = self.cancel(&id);
     }
 
     pub(crate) fn cancel(&self, id: &str) -> Result<(), String> {
@@ -350,6 +392,13 @@ fn parse_callback(
     )
 }
 
+fn inline_csp_hash(source: &str) -> String {
+    // HTML parsing normalizes CRLF and lone CR before CSP hashes inline text.
+    // include_str! preserves checkout line endings, including Windows CRLF.
+    let source = source.replace("\r\n", "\n").replace('\r', "\n");
+    base64::engine::general_purpose::STANDARD.encode(Sha256::digest(source.as_bytes()))
+}
+
 async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: bool) {
     // All copy comes from the fixed responses above, never from callback values.
     let heading = match status {
@@ -362,22 +411,14 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
         "{{font}}",
         &base64::engine::general_purpose::STANDARD.encode(include_bytes!("inter-latin.woff2")),
     );
-    let style_hash =
-        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(style.as_bytes()));
+    let style_hash = inline_csp_hash(&style);
     let mut policy = format!("default-src 'none'; img-src data:; font-src data:; style-src 'sha256-{style_hash}'; base-uri 'none'; frame-ancestors 'none'");
-    let (script, artwork) = if builderlab {
-        let script = include_str!("page.js");
-        let script_hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script));
-        policy.push_str(&format!("; script-src 'sha256-{script_hash}'"));
-        let artwork =
-            base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
-        (
-            format!("<script>{script}</script>"),
-            include_str!("artwork.html").replace("{{artwork}}", &artwork),
-        )
-    } else {
-        (String::new(), String::new())
-    };
+    let script = include_str!("page.js");
+    let script_hash = inline_csp_hash(script);
+    policy.push_str(&format!("; script-src 'sha256-{script_hash}'"));
+    let script = format!("<script>{script}</script>");
+    let artwork = base64::engine::general_purpose::STANDARD.encode(include_bytes!("cubes.webp"));
+    let artwork = include_str!("artwork.html").replace("{{artwork}}", &artwork);
     let provider = if builderlab { "Builderlab" } else { "Buzz" };
     let mark = if builderlab {
         include_str!("../../../public/builderlab-mark.svg")
@@ -391,25 +432,11 @@ async fn reply(stream: &mut TcpStream, status: u16, message: &str, builderlab: b
         .replace("{{label}}", label);
     // Replace whole HTML comments so the template remains valid on its own.
     let body = include_str!("page.html")
-        .replace(
-            "<!-- {{pageBrand}} -->",
-            if builderlab { &brand } else { "" },
-        )
-        .replace(
-            "<!-- {{cardBrand}} -->",
-            if builderlab { "" } else { &brand },
-        )
+        .replace("<!-- {{pageBrand}} -->", &brand)
         .replace("<!-- {{style}} -->", &format!("<style>{style}</style>"))
         .replace("<!-- {{script}} -->", &script)
         .replace("<!-- {{artwork}} -->", &artwork)
-        .replace(
-            "<!-- {{closeHint}} -->",
-            if builderlab {
-                include_str!("close-hint.html")
-            } else {
-                ""
-            },
-        )
+        .replace("<!-- {{closeHint}} -->", include_str!("close-hint.html"))
         .replace("{{provider}}", provider)
         .replace("{{complete}}", if status == 200 { "true" } else { "false" })
         .replace("{{closeDelay}}", &READABLE_DELAY.as_secs().to_string())

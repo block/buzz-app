@@ -20,6 +20,7 @@
   background: transparent;
 }
 .feed {
+  --message-hover-inset: var(--space-panel-inset);
   --timeline-measure: var(--buzz-message-width, 52rem);
 
   flex: 1;
@@ -46,6 +47,7 @@
 /* Narrow conversations keep the shared compact inset beside the app dock. */
 @container messages (max-width: 30rem) {
   .feed {
+    --message-hover-inset: var(--space-4);
     padding-inline: var(--space-4);
   }
 }
@@ -100,6 +102,10 @@
   letter-spacing: var(--text-caption--letter-spacing);
   color: var(--text-subtle);
   gap: var(--space-2);
+}
+.edge[data-intro] {
+  flex-direction: column;
+  align-items: stretch;
 }
 .edge[data-history-space] {
   min-height: calc(var(--size-control) + var(--space-4));
@@ -157,8 +163,10 @@
   padding: calc(var(--space-3) + var(--space-half)) 0 var(--space-half);
 }
 :where(html[data-message-density="compact"]) .message {
-  /* With the space-half end padding, groups start 12px apart. */
-  padding-top: calc(var(--space-2) + var(--space-half));
+  isolation: isolate;
+  gap: var(--space-5);
+  /* Keep the 12px group rhythm centered around each message. */
+  padding-block: calc(var(--space-1) + var(--space-half));
 }
 .message[data-layout="thread"],
 .message[data-layout="continuation"] {
@@ -173,6 +181,16 @@
 /* Timeline continuations keep the full-size avatar column's text alignment. */
 .feed .message[data-layout="continuation"] {
   gap: var(--space-3);
+}
+:where(html[data-message-density="compact"])
+  .message:is([data-layout="thread"], [data-layout="continuation"]) {
+  gap: var(--space-5);
+  padding-block: calc(var(--space-1) + var(--space-half));
+}
+:where(html[data-message-density="compact"])
+  .feed
+  .message[data-layout="continuation"] {
+  gap: var(--space-5);
 }
 .nestedAvatar {
   display: grid;
@@ -262,7 +280,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   overflow-wrap: anywhere;
 }
 .text {
-  white-space: normal;
+  white-space: pre-wrap;
 }
 .text[data-single-emoji] {
   --inline-emoji-size: var(--size-emoji-display);
@@ -291,6 +309,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 .reactions[data-populated] {
   padding: var(--space-half);
 }
+:where(html[data-message-density="compact"]) .reactions[data-populated] {
+  padding: var(--space-1) var(--space-half);
+}
 .reactions:empty {
   margin-top: 0;
 }
@@ -318,14 +339,12 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }
-/* Your reactions keep their tint and ring after the pointer leaves. */
+/* Your reactions take the other bubble's fill: yours on a received message,
+   the received one inside your bubble. */
 .reactionItem[data-mine] {
   background: var(--reaction-self-surface, var(--affordance-reaction-self));
-  box-shadow: inset 0 0 0 1px
-    var(--reaction-self-border, var(--border-reaction-self));
 }
-/* Forced colors drop the shadow and replace the tint, so a system-color
-   outline keeps the same inset ring. */
+/* Forced colors replace the tint, so a system-color ring keeps it marked. */
 @media (forced-colors: active) {
   .reactionItem[data-mine] {
     outline: 1px solid Highlight;
@@ -349,6 +368,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionItem [data-reaction] {
   color: var(--reaction-ink, var(--text-standard));
+}
+.reactionItem[data-mine] [data-reaction] {
+  color: var(--reaction-self-ink, var(--text-reaction-self));
 }
 @media (hover: hover) and (pointer: fine) and (
     prefers-reduced-motion: no-preference
@@ -779,6 +801,29 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .composer .composerInput [data-placeholder]::before {
   color: var(--text-metadata);
 }
+/* Stands in for the editor's text placeholder, and shows only while it would. */
+.channelPlaceholder {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: var(--space-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+  pointer-events: none;
+}
+.channelPlaceholder::before {
+  content: attr(data-lead) " ";
+}
+.channelPlaceholder::after {
+  content: attr(data-name);
+}
+.composerInput:has(> .channelPlaceholder) [data-placeholder]::before {
+  visibility: hidden;
+}
+.composerInput:not(:has([data-placeholder])) > .channelPlaceholder {
+  display: none;
+}
 .composerActions {
   display: flex;
   flex-wrap: wrap;
@@ -890,6 +935,13 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   border-radius: 50%;
   background: var(--text-standard);
 }
+.threadDraft {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-subtle);
+}
 .threadWorking {
   margin-inline-start: var(--space-1);
   display: inline-flex;
@@ -945,6 +997,7 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 }
 
 .threadHistory {
+  --message-hover-inset: var(--space-4);
   --timeline-measure: var(--buzz-message-width, 52rem);
   position: relative;
   flex: 1;
@@ -968,6 +1021,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 /* Compact gives conversations the window's full width, as list layouts do. */
 :where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
   --timeline-measure: 100%;
+  --message-hover-start-inset: var(--space-3);
+  padding-inline-start: var(--space-3);
 }
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */
@@ -1828,7 +1883,8 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
   letter-spacing: var(--text-body-sm--letter-spacing);
   overflow-wrap: normal;
   scrollbar-width: thin;
-  white-space: nowrap;
+  /* Columns don't wrap; authored spaces stay, as in the rest of the body. */
+  white-space: pre;
 }
 /* Measured overflow chooses the scrollbar in style; see MessageMarkdown. */
 .text table[data-overflow="true"] {
@@ -1900,6 +1956,8 @@ html[data-keyboard-navigation] .text pre code:focus-visible {
 }
 .text:not(p) > .edited {
   display: block;
+  /* Its leading space separates an inline marker; here it would indent. */
+  white-space: normal;
 }
 .text:not(p) > :has(+ .edited:last-child) {
   margin-bottom: var(--space-1);
@@ -3050,6 +3108,24 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: 0;
 }
 @media (hover: hover) and (pointer: fine) {
+  :where(html[data-message-density="compact"])
+    .message:not(.messageHighlight):is(
+      :hover,
+      [data-actions-revealed]
+    )::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline: calc(-1 * var(--message-hover-inset, 0px));
+    inset-inline-start: calc(
+      -1 *
+      var(--message-hover-start-inset, var(--message-hover-inset, 0px))
+    );
+    z-index: -1;
+    pointer-events: none;
+    background: var(--affordance-subtle-hover);
+    opacity: 0.5;
+  }
   /* An arrival cue replaces hover on its bubble rather than stacking on it. */
   .message[data-actions-revealed]:not(.messageHighlight)
     > .messageBody
@@ -3102,10 +3178,30 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   right: calc(100% + var(--space-1));
   display: flex;
 }
-/* A flat list's avatar starts its group beside the byline. */
+/* A flat list's avatar centres on the byline and first message line. */
 :where(html[data-message-density="compact"]) .message .messageAvatar {
-  top: 0;
+  top: calc(var(--text-message) * var(--text-message--line-height));
+  translate: 0 -50%;
   bottom: auto;
+  right: calc(100% + var(--space-2) + var(--space-half));
+}
+.continuationTime {
+  @apply text-caption;
+  position: absolute;
+  inset-inline-end: calc(100% + var(--space-2) + var(--space-half));
+  inset-block-start: calc(
+    (
+      var(--text-message) *
+      var(--text-message--line-height) -
+      var(--text-caption) *
+      var(--text-caption--line-height)
+    ) /
+    2
+  );
+  width: max-content;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 .message[data-viewer-message] .messageAvatar {
   right: auto;
@@ -3125,14 +3221,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .messageBubble .text [data-mention-kind] {
   font-weight: var(--type-weight-medium);
   padding-inline: var(--space-1h);
-}
-/* Align the leading sigil with prose; its capsule paints into the gutter.
-   The renderer marks actual paragraph starts, not merely first elements. */
-.messageBubble
-  > .text
-  > p[data-leading-mention]
-  > [data-mention-kind]:first-child {
-  margin-inline-start: calc(-1 * var(--space-1h));
 }
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
@@ -3193,7 +3281,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --reaction-surface: var(--affordance-reaction-own);
   --reaction-ink: var(--text-message-own);
   --reaction-self-surface: var(--affordance-reaction-self-own);
-  --reaction-self-border: var(--border-reaction-self-own);
+  --reaction-self-ink: var(--text-reaction-self-own);
   /* State icons inside the bubble take their -own pair: the link ink at Buzzin’. */
   --message-icon-subtle: var(--icon-subtle-own);
   --message-metadata: var(--text-metadata-own);
@@ -3259,8 +3347,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-block: var(--space-2);
 }
 :where(html[data-message-density="compact"]) .message[data-layout="timeline"] {
-  /* Groups start 12px apart, as thread rows do. */
-  padding-block: var(--space-2) var(--space-1);
+  /* Keep the 12px group rhythm centered around a single-line message. */
+  padding-block: calc(var(--space-1) + var(--space-half));
 }
 .message[data-stack-next] {
   padding-bottom: 0;
@@ -3322,6 +3410,31 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   .message
   :is(.byline, .delivery, .sentFromThread) {
   padding-inline-start: 0;
+}
+:where(html[data-message-density="compact"]) .message .byline {
+  @apply text-message;
+}
+:where(html[data-message-density="compact"]) .message .byline time {
+  @apply text-caption;
+}
+:where(html[data-message-density="compact"]) .message .continuationTime {
+  opacity: 0;
+  pointer-events: none;
+}
+:where(html[data-message-density="compact"])
+  .message:is(:hover, :focus-within, [data-actions-revealed])
+  .continuationTime {
+  opacity: 1;
+  pointer-events: auto;
+}
+:where(html[data-message-density="compact"]) .message .author {
+  font-weight: var(--type-weight-medium);
+}
+:where(html[data-message-density="compact"])
+  .messageBubble
+  .text
+  [data-mention-kind] {
+  padding-inline-start: var(--space-half);
 }
 :where(html[data-message-density="compact"])
   .message
@@ -3460,11 +3573,8 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin-inline: auto;
   padding-block: var(--space-half) 0;
 }
-.failureNotice {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-1);
+:where(html[data-message-density="compact"]) .audienceRow {
+  padding-block: calc(var(--space-1) + var(--space-half));
 }
 .audienceRow[data-layout="timeline"],
 .feed .audienceRow[data-layout="continuation"] {
@@ -3498,6 +3608,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   font-weight: var(--type-weight-regular);
   text-align: start;
+}
+:where(html[data-message-density="compact"]) .audienceLine {
+  padding-inline: var(--space-2);
 }
 html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   outline: 2px solid var(--border-focus);
@@ -3670,6 +3783,12 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   font-weight: var(--text-message--font-weight);
 }
 
+:where(html[data-message-density="compact"])
+  .message[data-agent-response-preview]
+  .messageBubble {
+  border-radius: calc(var(--radius-chip) - var(--space-1));
+}
+
 .messageHighlight > .messageBody > .messageContent .messageBubble {
   isolation: isolate;
 }
@@ -3804,7 +3923,7 @@ html[data-keyboard-navigation]
   --reaction-surface: initial;
   --reaction-ink: initial;
   --reaction-self-surface: initial;
-  --reaction-self-border: initial;
+  --reaction-self-ink: initial;
   /* An edited marker there sits on the panel too. */
   --message-metadata: initial;
 }
@@ -3948,6 +4067,12 @@ html[data-keyboard-navigation] .activityExpansion {
   width: 2rem;
   height: 2rem;
 }
+:where(html[data-message-density="compact"])
+  .message[data-layout]
+  .agentAvatarGroup {
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+}
 .agentAvatarGroupItem {
   position: absolute;
   inset: 0;
@@ -4027,13 +4152,45 @@ html[data-keyboard-navigation] .activityExpansion {
 }
 
 /* The painted bubble and its interactive area must have the same bounds. */
-.messageBubble:has(> .activityBubbleTrigger) {
+.messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
   padding: 0;
 }
-.messageBubble > .activityBubbleTrigger {
+:where(html[data-message-density="compact"])
+  .message[data-agent-response-preview]
+  .messageBubble:has(> :is(.activityBubbleTrigger, .activityBubbleControls)) {
+  @apply text-caption;
+  border-radius: var(--radius-capsule);
+  background: var(--reaction-surface, var(--affordance-reaction));
+  box-shadow: none;
+}
+.messageBubble > .activityBubbleTrigger,
+.activityBubbleControls > .activityBubbleTrigger {
   width: 100%;
   padding: var(--space-2) var(--space-4);
   border-radius: inherit;
+}
+:where(html[data-message-density="compact"])
+  .messageBubble
+  > .activityBubbleTrigger,
+:where(html[data-message-density="compact"])
+  .activityBubbleControls
+  > .activityBubbleTrigger {
+  min-height: calc(var(--space-6) + var(--space-half));
+  padding: calc(var(--space-1) + var(--space-half) / 2)
+    calc(var(--space-1h) + var(--space-half) / 2);
+}
+
+.activityBubbleControls {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  border-radius: inherit;
+}
+.activityBubbleControls > .activityBubbleTrigger {
+  min-width: 0;
+  flex: 1;
+  align-self: stretch;
 }
 
 /* Activity interactions paint their shared bubble, never a second pill inside it. */

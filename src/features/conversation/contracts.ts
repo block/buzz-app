@@ -140,6 +140,26 @@ export type LinkRenderer = Readonly<{
   className?: string | undefined;
   component: ComponentType<{ url: string }>;
 }>;
+export type LinkPreviewProps = Readonly<{
+  url: string;
+  /** The host's id for the message the link is in. */
+  messageId: string;
+  /** Opens `url` through the host, as clicking the link does. False once the
+   * contribution or message retires. */
+  open(): boolean;
+}>;
+/** A card below a message for one of its links. The lowest `order` among
+ * matches draws it, so a plugin can claim its own URLs ahead of the default
+ * web card; a component that renders nothing leaves the link without a card.
+ * Links written `<url>`, in code, or naming an attachment get no card. */
+export type LinkPreviewRenderer = Readonly<{
+  id: string;
+  title: string;
+  matches(url: string): boolean;
+  /** Claim strength when several renderers match a URL; see `MatchOrder`. */
+  order?: MatchOrder | undefined;
+  component: ComponentType<LinkPreviewProps>;
+}>;
 /** Presentation for a fenced code block, chosen by its info-string language.
  * The host retains the frame and copy action; failure or removal restores the code. */
 export type CodeBlockRenderer = Readonly<{
@@ -253,6 +273,7 @@ export type ConversationExtensions = Readonly<{
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
+  linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
 }>;
 

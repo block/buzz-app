@@ -4,7 +4,16 @@ import type { ConversationHostServices } from "../conversation/ConversationHost"
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "../messages/composer-testing";
 
-import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  assert,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { npubEncode } from "nostr-tools/nip19";
 import {
   act,
   cleanup,
@@ -840,14 +849,32 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(recipient()).toHaveAttribute("readonly");
+  // The eighth pick keeps the list open and swaps it for the limit, since
+  // "8 people selected" alone doesn't say eight is the most.
+  expect(recipient()).toHaveFocus();
+  expect(recipient()).toHaveAttribute("aria-expanded", "true");
+  expect(recipient()).toHaveAttribute("placeholder", "8 people selected");
+  expect(
+    screen.getByText("You can message up to 8 people at once."),
+  ).toHaveAttribute("role", "status");
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
   await t.user.keyboard("{Tab}");
   expect(screen.getByRole("textbox")).toHaveFocus();
   await t.user.click(recipient());
+  expect(
+    await screen.findByText("You can message up to 8 people at once."),
+  ).toHaveAttribute("role", "status");
   await t.user.keyboard("{Enter}");
   expect(
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(t.directMessages.open).not.toHaveBeenCalled();
+  await t.user.keyboard("{Backspace}");
+  expect(
+    screen.getAllByRole("button", { name: /^Remove Person/ }),
+  ).toHaveLength(7);
+  expect(recipient()).not.toHaveAttribute("readonly");
+  expect(await screen.findAllByRole("option")).not.toHaveLength(0);
 });
 
 it("shows selected recipient artwork without opening or sending, and updates it on removal", async () => {
@@ -924,6 +951,73 @@ it("matches an exact public key without exposing short key substrings", async ()
     );
   }
 });
+
+describe.each([
+  ["a complete", true],
+  ["an incomplete", false],
+])("in %s directory", (_directory, complete) => {
+  const avery = { pubkey: "a".repeat(64), name: "Avery" };
+  it.each([
+    ["hex key", avery.pubkey],
+    ["npub", npubEncode(avery.pubkey)],
+    ["nostr: npub", `nostr:${npubEncode(avery.pubkey)}`],
+  ])("finds the person named by a pasted %s", async (_case, key) => {
+    const t = setup();
+    // A complete directory matches typed text locally; an incomplete one
+    // sends it to the relay.
+    t.directMessages.people.mockImplementation(async (query, page) => {
+      if (!query && complete)
+        return { people: [...people, avery], hasMore: false };
+      if (!query)
+        return page === 1 ? { people, hasMore: true } : new Promise(() => {});
+      return { people: complete ? [] : [avery], hasMore: false };
+    });
+    t.mount();
+    await screen.findByRole("option", { name: "Person 1" });
+    await t.user.click(recipient());
+    await t.user.paste(key);
+    expect(await screen.findByRole("option", { name: "Avery" })).toBeVisible();
+    expect(screen.queryByText("No matching people.")).toBeNull();
+  });
+});
+
+it.each([
+  ["hex key", (key: string) => key],
+  ["npub", (key: string) => npubEncode(key)],
+  ["nostr: npub", (key: string) => `nostr:${npubEncode(key)}`],
+])(
+  "finds a local agent the directory has no profile for by its pasted %s",
+  async (_case, form) => {
+    const t = setup();
+    const owner = "f".repeat(64);
+    const local = {
+      pubkey: "c".repeat(64),
+      name: "Local helper",
+      relayUrl: "https://relay.example",
+      owner,
+    };
+    const otherCommunity = {
+      pubkey: "e".repeat(64),
+      name: "Other community agent",
+      relayUrl: "https://elsewhere.example",
+      owner,
+    };
+    t.updateControl({ status: "ready", agents: [local, otherCommunity] });
+    t.mount();
+    await screen.findByRole("option", { name: "Person 1" });
+    await t.user.click(recipient());
+    await t.user.paste(form(local.pubkey));
+    expect(
+      await screen.findByRole("option", { name: "Local helper, Agent" }),
+    ).toBeVisible();
+    await t.user.clear(recipient());
+    await t.user.paste(form(otherCommunity.pubkey));
+    await screen.findByText("No matching people.");
+    expect(
+      screen.queryByRole("option", { name: "Other community agent, Agent" }),
+    ).not.toBeInTheDocument();
+  },
+);
 
 it("matches names from the start of a word, like mentions", async () => {
   const t = setup();

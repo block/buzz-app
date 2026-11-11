@@ -1,14 +1,24 @@
-import type { MessageWidth } from "../shared/theme/service";
+import type { MessageDensity, MessageWidth } from "../shared/theme/service";
 import styles from "./AppearancePreview.module.css";
 
 /** Decorative app sketch using the same semantic colors as the live interface. */
 export function AppearancePreview({
   messageWidth,
+  density,
+  embedded = false,
 }: {
   messageWidth: MessageWidth;
+  density: MessageDensity;
+  /** Join the preview to the related preference group. */
+  embedded?: boolean;
 }) {
+  const effectiveWidth = density === "compact" ? "wide" : messageWidth;
   return (
-    <figure className={styles.preview} aria-label="Appearance preview">
+    <figure
+      className={styles.preview}
+      data-embedded={embedded || undefined}
+      aria-label="Appearance preview"
+    >
       <div className={styles.scene} inert aria-hidden="true">
         <div className={styles.sidebar}>
           <div className={styles.workspace}>
@@ -31,7 +41,8 @@ export function AppearancePreview({
           </div>
           <div
             className={styles.messageColumn}
-            data-message-width={messageWidth}
+            data-message-width={effectiveWidth}
+            data-message-density={density}
           >
             <div className={styles.messages}>
               <div className={styles.received}>
@@ -56,7 +67,9 @@ export function AppearancePreview({
       </div>
       <figcaption className="sr-only">
         Illustrated preview of your current mode, accent, contrast, and{" "}
-        {messageWidth} message width.
+        {density === "compact"
+          ? "Compact flat-list messages use the full conversation width."
+          : `Default bubble messages at ${messageWidth} width.`}
       </figcaption>
     </figure>
   );

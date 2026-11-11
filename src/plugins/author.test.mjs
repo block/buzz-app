@@ -40,6 +40,8 @@ export const manifest: PluginManifest = {
     commands: [{ id: "status", program: "example-cli", args: ["status"], maxOutputBytes: 65536 }],
     networkOrigins: ["https://api.example.com"],
     managedFiles: true,
+    publicImages: true,
+    publicPages: true,
   },
 };
 const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
@@ -203,7 +205,7 @@ export function apply(ctx: Context) {
     // @ts-expect-error A page icon is a data URL string.
     icon: 1,
   });
-  for (const placement of ["sidebar", "topbar", "toolbar"] as const)
+  for (const placement of ["sidebar", "dock", "topbar", "toolbar"] as const)
     ctx.pages.register({ id: placement, title: placement, component: () => null, primary: true, placement });
   ctx.pages.register({
     id: "bad-placement", title: "Bad placement", component: () => null,
@@ -234,6 +236,7 @@ export function apply(ctx: Context) {
     questions: { bad: { type: "freeform", instructions: "x" } },
   });
   void ctx.decisions.backend();
+  ctx.decisions.retireProvider("retired");
   // @ts-expect-error Only Settings chooses the backend.
   ctx.decisions.setBackend("typesafe");
 }

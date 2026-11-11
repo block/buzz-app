@@ -1,11 +1,12 @@
 import {
   exactName,
   extendsName,
-  matchPerson,
+  matchTier,
   nameStarts,
   normalizeName,
   startKey,
 } from "../../features/search/person-match";
+import { typedPublicKey } from "../../shared/identity/public-key";
 import type { mentionCandidates } from "./mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
@@ -14,12 +15,22 @@ export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
 };
 const normalized = normalizeName;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+// `needle` is already normalized, so its code points are the folded query.
 const nameMatch = (text: string, needle: string) =>
-  needle ? (matchPerson(text, needle)?.tier ?? Infinity) : 0;
+  needle ? (matchTier(text, [...needle]) ?? Infinity) : 0;
 const aliasMatch = (choice: MentionChoice, needle: string) =>
   Math.min(...choice.aliases.map((name) => nameMatch(name, needle)));
-/** `mentionMatch` for an already normalized, non-empty needle. */
-function labelMatch(choice: MentionChoice, needle: string) {
+/**
+ * `mentionMatch` for an already normalized, non-empty needle and the query's
+ * `typedPublicKey`.
+ */
+function labelMatch(
+  choice: MentionChoice,
+  needle: string,
+  key: string | undefined,
+) {
+  // An exact public key is not a name: it matches only its owner.
+  if (key !== undefined) return choice.recipient.pubkey === key ? 0 : Infinity;
   // No known name means the displayed label is only an identity fallback.
   if (!choice.aliases.length) return Infinity;
   // Rank what the user sees before other real names for the same identity.
@@ -29,21 +40,28 @@ function labelMatch(choice: MentionChoice, needle: string) {
 }
 export function mentionMatch(choice: MentionChoice, query: string) {
   const needle = normalized(query);
-  return needle ? labelMatch(choice, needle) : 0;
+  return needle ? labelMatch(choice, needle, typedPublicKey(query)) : 0;
 }
 // One sorted index of name starts per immutable choice list. Choices with a
 // name too long to index are always kept for ranking to match directly.
 const indexes = new WeakMap<
   readonly MentionChoice[],
-  { starts: string[]; owners: number[]; unindexed: number[] }
+  {
+    starts: string[];
+    owners: number[];
+    unindexed: number[];
+    /** The last query and its matches: one keystroke asks several times. */
+    last?: { needle: string; matches: readonly MentionChoice[] };
+  }
 >();
 /**
  * The choices, in their given order, with a label or alias that the query can
- * match: a superset of every choice that `rankMentions` or `exactMention` keeps
- * for this query, and every choice with a name that starts with the query,
- * which the Space check for longer names relies on. A binary search of the
- * list's name index finds them, so a keystroke costs O(log n + matches)
- * instead of a scan of every choice.
+ * match, or, for an exact public key, the choice with that key: a superset of
+ * every choice that `rankMentions` or `exactMention` keeps for this query, and
+ * every choice with a name that starts with the query, which the Space check
+ * for longer names relies on. A binary search of the list's name index finds
+ * them, so a keystroke costs O(log n + matches) instead of a scan of every
+ * choice.
  */
 export function matchingMentions(
   choices: readonly MentionChoice[],
@@ -51,6 +69,10 @@ export function matchingMentions(
 ): readonly MentionChoice[] {
   const needle = startKey(normalized(query));
   if (!needle) return choices;
+  const key = typedPublicKey(query);
+  // The name index holds no keys.
+  if (key !== undefined)
+    return choices.filter((c) => c.recipient.pubkey === key);
   let index = indexes.get(choices);
   if (!index) {
     const entries: { start: string; owner: number }[] = [];
@@ -72,6 +94,7 @@ export function matchingMentions(
     };
     indexes.set(choices, index);
   }
+  if (index.last?.needle === needle) return index.last.matches;
   let low = 0;
   let high = index.starts.length;
   while (low < high) {
@@ -82,9 +105,11 @@ export function matchingMentions(
   const found = new Set<number>(index.unindexed);
   for (let i = low; index.starts[i]?.startsWith(needle); i += 1)
     found.add(index.owners[i] ?? 0);
-  return [...found]
+  const matches = [...found]
     .sort((a, b) => a - b)
     .flatMap((owner) => choices[owner] ?? []);
+  index.last = { needle, matches };
+  return matches;
 }
 type Ranked = {
   c: MentionChoice;
@@ -150,9 +175,10 @@ export function rankMentions(
   limit = Infinity,
 ) {
   const needle = normalized(query);
+  const key = typedPublicKey(query);
   const keyed: Ranked[] = [];
   for (const c of choices) {
-    const match = needle ? labelMatch(c, needle) : 0;
+    const match = needle ? labelMatch(c, needle, key) : 0;
     if (!Number.isFinite(match)) continue;
     const tier = [
       c.member ? 0 : 1,
@@ -197,6 +223,8 @@ export function continuingNames(
   choices: readonly MentionChoice[],
   query: string,
 ) {
+  // No name continues an exact public key.
+  if (typedPublicKey(query) !== undefined) return [];
   const needle = normalized(query);
   const names = new Map<string, string>();
   // No name continues an empty query; skip folding every name at a bare `@`.
@@ -227,14 +255,18 @@ export const continuedMention = (
 /**
  * Space is intent only for one exact key across the full, uncapped choice set.
  * Every choice can continue the name (`continuedMention`); only choices
- * `among` can equal it.
+ * `among` can equal it. An exact public key names only its owner.
  */
 export const exactMention = (
   choices: readonly MentionChoice[],
   query: string,
   among: (choice: MentionChoice) => boolean = () => true,
-) =>
-  continuedMention(choices, query)
+) => {
+  const key = typedPublicKey(query);
+  if (key !== undefined)
+    return choices.find((c) => c.recipient.pubkey === key && among(c))
+      ?.recipient.pubkey;
+  return continuedMention(choices, query)
     ? undefined
     : exactName(
         choices,
@@ -243,3 +275,4 @@ export const exactMention = (
         (c) => c.aliases.length > 0 && among(c),
         () => [],
       )?.recipient.pubkey;
+};

@@ -1,9 +1,10 @@
 //! Managed plugin sources: a JSON policy that an external tool writes next to the
 //! profile folders. It only recommends sources; every install still goes through
-//! the Git import and its access review.
+//! the owner's review of the Git or URL import.
 use crate::{
-    err, imports::repository_url, is_reserved, valid_id, validate_candidate_path, Catalog,
-    InstallSource, Result,
+    err,
+    imports::{plugin_url, repository_url, valid_sha256},
+    is_reserved, valid_id, validate_candidate_path, Catalog, InstallSource, Result,
 };
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -11,13 +12,16 @@ use std::{
     collections::HashSet,
     ffi::OsString,
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 pub const FILE_NAME: &str = "managed-plugins.json";
 pub const PATH_ENV: &str = "BUZZ_MANAGED_PLUGINS";
-const MAX_BYTES: u64 = 256 * 1024;
+/// Where the packager publishes its policy; the desktop keeps the last usable copy.
+pub const PACKAGED_URL: &str = env!("BUZZ_BUILD_MANAGED_PLUGINS_URL");
+const PACKAGED_FILE_PREFIX: &str = "packaged-managed-plugins";
+pub const MAX_BYTES: u64 = 256 * 1024;
 const MAX_PLUGINS: usize = 64;
 const MAX_PROBLEMS: usize = 16;
 const MAX_SOURCE_CHARS: usize = 80;
@@ -26,10 +30,21 @@ const MAX_SOURCE_CHARS: usize = 80;
 #[serde(rename_all = "camelCase")]
 pub struct ManagedPlugin {
     pub id: String,
-    pub repository: String,
-    pub reference: String,
-    pub commit: String,
-    pub path: String,
+    #[serde(flatten)]
+    pub source: ManagedSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum ManagedSource {
+    Git {
+        repository: String,
+        reference: String,
+        commit: String,
+        path: String,
+    },
+    /// A single plugin artifact; its SHA-256 is both the pin and the installed revision.
+    Url { url: String, sha256: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -37,9 +52,9 @@ pub struct ManagedPlugin {
 pub enum ManagedState {
     /// Not installed: the user can review and install it.
     Missing,
-    /// Installed from this repository at the pinned commit and path.
+    /// Installed from this repository at the pinned commit and path, or at the pinned SHA-256.
     Current,
-    /// Installed from this repository, but not at the pinned commit or path.
+    /// Installed from this repository, or from a URL, but not at the pinned version.
     Outdated,
     /// Installed from a folder, an unrecorded source, another repository or with Buzz itself.
     Other,
@@ -67,6 +82,10 @@ pub enum Managed {
     Absent,
     /// The file as a whole cannot be used; nothing is recommended.
     Invalid { path: String, reason: String },
+    /// The build names a packaged policy that Buzz has not fetched yet.
+    Loading { url: String },
+    /// The packaged policy could not be fetched and there is no earlier copy.
+    Unavailable { url: String, reason: String },
     /// Usable entries, plus a report for each one that was ignored.
     Ready {
         path: String,
@@ -136,6 +155,84 @@ pub fn status(path: Result<PathBuf>, catalog: &Catalog) -> Managed {
             reason,
         },
     }
+}
+
+/// Where the last good copy of the policy at `url` is kept, so a copy from another
+/// URL is never shown for this one.
+pub fn packaged_file_name(url: &str) -> String {
+    format!(
+        "{PACKAGED_FILE_PREFIX}-{}.json",
+        &crate::hash(url.as_bytes())[..16]
+    )
+}
+
+/// The outcome of the latest attempt to fetch the packaged policy.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum PackagedFetch {
+    #[default]
+    Pending,
+    Fetched,
+    Failed(String),
+}
+
+/// The file's status, or the last fetched packaged policy when the file is absent
+/// and `BUZZ_MANAGED_PLUGINS` does not name one. `packaged` is `None` when the
+/// build has no packaged policy URL.
+pub fn effective(
+    home: &Path,
+    env: Option<OsString>,
+    packaged: Option<(&str, &PackagedFetch)>,
+    catalog: &Catalog,
+) -> Managed {
+    let explicit = env.as_ref().is_some_and(|value| !value.is_empty());
+    match (status(path(home, env), catalog), packaged) {
+        (Managed::Absent, Some((url, fetch))) if !explicit => {
+            match (
+                status(Ok(home.join(packaged_file_name(url))), catalog),
+                fetch,
+            ) {
+                (Managed::Absent, PackagedFetch::Failed(reason)) => Managed::Unavailable {
+                    url: url.into(),
+                    reason: reason.clone(),
+                },
+                (Managed::Absent, _) => Managed::Loading { url: url.into() },
+                (managed, _) => managed,
+            }
+        }
+        (managed, _) => managed,
+    }
+}
+
+/// Keeps `bytes` as the packaged policy from `url` if Buzz can use it; otherwise the
+/// last good copy stays. A usable policy replaces copies kept for other URLs.
+/// Returns whether the stored copy changed.
+pub fn store_packaged(home: &Path, url: &str, bytes: &[u8]) -> Result<bool> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err("Managed plugin policy exceeds 256 KiB".into());
+    }
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| "Managed plugin policy must be UTF-8".to_owned())?;
+    parse(text)?;
+    let name = packaged_file_name(url);
+    let path = home.join(&name);
+    let changed = !fs::read(&path).is_ok_and(|current| current == bytes);
+    if changed {
+        fs::create_dir_all(home).map_err(err)?;
+        let mut file = tempfile::NamedTempFile::new_in(home).map_err(err)?;
+        file.write_all(bytes).map_err(err)?;
+        file.persist(&path).map_err(|e| err(e.error))?;
+    }
+    for stale in fs::read_dir(home).map_err(err)?.flatten() {
+        let stale_name = stale.file_name();
+        let stale_name = stale_name.to_string_lossy();
+        if stale_name != name
+            && stale_name.starts_with(PACKAGED_FILE_PREFIX)
+            && stale_name.ends_with(".json")
+        {
+            let _ = fs::remove_file(stale.path());
+        }
+    }
+    Ok(changed)
 }
 
 /// Reads a small policy file. `None` when it does not exist; `label` names it in errors.
@@ -245,33 +342,42 @@ fn entry_plugin(entry: Value) -> Result<ManagedPlugin> {
     if is_reserved(&id) {
         return Err(format!("{id:?} is included with Buzz"));
     }
-    let repository = repository_url(&text(&mut entry, "repository")?)?;
-    let reference = text(&mut entry, "reference")?;
-    if !valid_reference(&reference) {
-        return Err("reference must be a branch or tag name".into());
-    }
-    let commit = text(&mut entry, "commit")?.to_ascii_lowercase();
-    if !valid_commit(&commit) {
-        return Err("commit must be a full 40 or 64 digit hexadecimal object ID".into());
-    }
-    let path = match entry.remove("path") {
-        None => ".".to_owned(),
-        Some(Value::String(path)) => {
-            canonical_path(&path)?;
-            path
+    let source = if entry.contains_key("url") {
+        let url = plugin_url(&text(&mut entry, "url")?)?;
+        let sha256 = text(&mut entry, "sha256")?.to_ascii_lowercase();
+        if !valid_sha256(&sha256) {
+            return Err("sha256 must be 64 hexadecimal digits".into());
         }
-        Some(_) => return Err("path must be a string".into()),
+        ManagedSource::Url { url, sha256 }
+    } else {
+        let repository = repository_url(&text(&mut entry, "repository")?)?;
+        let reference = text(&mut entry, "reference")?;
+        if !valid_reference(&reference) {
+            return Err("reference must be a branch or tag name".into());
+        }
+        let commit = text(&mut entry, "commit")?.to_ascii_lowercase();
+        if !valid_commit(&commit) {
+            return Err("commit must be a full 40 or 64 digit hexadecimal object ID".into());
+        }
+        let path = match entry.remove("path") {
+            None => ".".to_owned(),
+            Some(Value::String(path)) => {
+                canonical_path(&path)?;
+                path
+            }
+            Some(_) => return Err("path must be a string".into()),
+        };
+        ManagedSource::Git {
+            repository,
+            reference,
+            commit,
+            path,
+        }
     };
     if let Some(unknown) = entry.keys().next() {
         return Err(format!("unknown field {unknown:?}"));
     }
-    Ok(ManagedPlugin {
-        id,
-        repository,
-        reference,
-        commit,
-        path,
-    })
+    Ok(ManagedPlugin { id, source })
 }
 
 fn canonical_path(path: &str) -> Result<()> {
@@ -376,16 +482,28 @@ fn state(plugin: &ManagedPlugin, catalog: &Catalog) -> ManagedState {
     else {
         return ManagedState::Missing;
     };
-    match &installed.update_source {
-        Some(InstallSource::Git(source))
-            if installed.source == "external"
-                && same_repository(&source.repository, &plugin.repository) =>
-        {
+    if installed.source != "external" {
+        return ManagedState::Other;
+    }
+    match (&plugin.source, &installed.update_source) {
+        (ManagedSource::Url { sha256, .. }, _) if installed.revision == *sha256 => {
+            ManagedState::Current
+        }
+        (ManagedSource::Url { .. }, Some(InstallSource::Url(_))) => ManagedState::Outdated,
+        (
+            ManagedSource::Git {
+                repository,
+                commit,
+                path,
+                ..
+            },
+            Some(InstallSource::Git(source)),
+        ) if same_repository(&source.repository, repository) => {
             let pinned = source
                 .commit
                 .as_deref()
-                .is_some_and(|commit| commit.eq_ignore_ascii_case(&plugin.commit));
-            if pinned && source.path == plugin.path {
+                .is_some_and(|installed| installed.eq_ignore_ascii_case(commit));
+            if pinned && source.path == *path {
                 ManagedState::Current
             } else {
                 ManagedState::Outdated
@@ -402,6 +520,7 @@ mod tests {
     use std::fs;
 
     const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+    const REPO: &str = "https://github.com/acme/plugins";
 
     fn entry(id: &str) -> String {
         format!(
@@ -449,6 +568,18 @@ mod tests {
             commit: commit.map(Into::into),
         }))
     }
+    fn git_fields(plugin: &ManagedPlugin) -> (&str, &str, &str, &str) {
+        let ManagedSource::Git {
+            repository,
+            reference,
+            commit,
+            path,
+        } = &plugin.source
+        else {
+            panic!("expected a Git entry");
+        };
+        (repository, reference, commit, path)
+    }
     fn catalog(plugins: Vec<PluginInfo>) -> Catalog {
         Catalog {
             profile: "test".into(),
@@ -471,14 +602,14 @@ mod tests {
         assert_eq!(parsed.source, "Acme IT");
         assert!(parsed.problems.is_empty());
         assert_eq!(parsed.plugins.len(), 2);
-        let first = &parsed.plugins[0];
-        assert_eq!(first.repository, "https://github.com/acme/plugins");
-        assert_eq!(first.commit, COMMIT);
-        assert_eq!(first.path, ".");
-        assert_eq!(parsed.plugins[1].path, "dist/acme.two");
+        let (repository, _, commit, path) = git_fields(&parsed.plugins[0]);
+        assert_eq!(repository, "https://github.com/acme/plugins");
+        assert_eq!(commit, COMMIT);
+        assert_eq!(path, ".");
+        assert_eq!(git_fields(&parsed.plugins[1]).3, "dist/acme.two");
         let sha256 = "a".repeat(64);
-        let long = policy(&[entry("acme.three").replace(COMMIT, &sha256)]);
-        assert_eq!(parse(&long).unwrap().plugins[0].commit, sha256);
+        let long = parse(&policy(&[entry("acme.three").replace(COMMIT, &sha256)])).unwrap();
+        assert_eq!(git_fields(&long.plugins[0]).2, sha256);
     }
 
     #[test]
@@ -570,7 +701,7 @@ mod tests {
                 &format!(r#""path":{}"#, serde_json::to_string(path).unwrap()),
             );
             let parsed = parse(&policy(&[text])).unwrap();
-            assert_eq!(parsed.plugins[0].path, path);
+            assert_eq!(git_fields(&parsed.plugins[0]).3, path);
         }
     }
 
@@ -605,6 +736,86 @@ mod tests {
         let parsed = parse(&policy(&[text])).unwrap();
         assert!(parsed.plugins.is_empty());
         assert_eq!(parsed.problems.len(), 1);
+    }
+
+    #[test]
+    fn parses_url_entries_and_rejects_unpinned_or_unsafe_ones() {
+        let digest = "AB".repeat(32);
+        let good = format!(
+            r#"{{"id":"acme.url","url":"https://cdn.example.com/acme.url.json","sha256":"{digest}"}}"#
+        );
+        let parsed = parse(&policy(std::slice::from_ref(&good))).unwrap();
+        assert!(parsed.problems.is_empty());
+        assert_eq!(
+            parsed.plugins[0].source,
+            ManagedSource::Url {
+                url: "https://cdn.example.com/acme.url.json".into(),
+                sha256: digest.to_ascii_lowercase(),
+            }
+        );
+        let json = serde_json::to_value(&parsed.plugins[0]).unwrap();
+        assert_eq!(json["url"], "https://cdn.example.com/acme.url.json");
+        assert!(json.get("repository").is_none());
+        for bad in [
+            good.replace("https://", "http://"),
+            good.replace("https://", "https://user:pw@"),
+            good.replace(".json", ".json?token=1"),
+            good.replace(&digest, "abc"),
+            good.replace(&format!(r#","sha256":"{digest}""#), ""),
+            good.replace("}", r#","reference":"v1"}"#),
+        ] {
+            let parsed = parse(&policy(std::slice::from_ref(&bad))).unwrap();
+            assert!(parsed.plugins.is_empty(), "{bad} was accepted");
+            assert_eq!(parsed.problems.len(), 1);
+        }
+    }
+
+    #[test]
+    fn url_entries_are_current_by_revision() {
+        let digest = "b".repeat(64);
+        let plugin = ManagedPlugin {
+            id: "acme.url".into(),
+            source: ManagedSource::Url {
+                url: "https://cdn.example.com/acme.url.json".into(),
+                sha256: digest.clone(),
+            },
+        };
+        let url = |sha256: &str| {
+            Some(InstallSource::Url(crate::UrlSource {
+                url: "https://cdn.example.com/old.json".into(),
+                sha256: sha256.into(),
+            }))
+        };
+        let at = |revision: &str, source, origin| {
+            let mut info = installed("acme.url", source, origin);
+            info.revision = revision.into();
+            catalog(vec![info])
+        };
+        assert_eq!(state(&plugin, &catalog(vec![])), ManagedState::Missing);
+        assert_eq!(
+            state(&plugin, &at(&digest, url(&digest), "external")),
+            ManagedState::Current
+        );
+        assert_eq!(
+            state(
+                &plugin,
+                &at(&digest, git(REPO, Some(COMMIT), "."), "external")
+            ),
+            ManagedState::Current
+        );
+        let old = "c".repeat(64);
+        assert_eq!(
+            state(&plugin, &at(&old, url(&old), "external")),
+            ManagedState::Outdated
+        );
+        assert_eq!(
+            state(&plugin, &at(&old, git(REPO, Some(COMMIT), "."), "external")),
+            ManagedState::Other
+        );
+        assert_eq!(
+            state(&plugin, &at(&digest, url(&digest), "bundled")),
+            ManagedState::Other
+        );
     }
 
     #[test]
@@ -690,7 +901,7 @@ mod tests {
         let second = entry("acme.one").replace("v1", "v2");
         let parsed = parse(&policy(&[first, second])).unwrap();
         assert_eq!(parsed.plugins.len(), 1);
-        assert_eq!(parsed.plugins[0].reference, "v1");
+        assert_eq!(git_fields(&parsed.plugins[0]).1, "v1");
         assert!(parsed.problems[0].contains("more than once"));
 
         let many: Vec<String> = (0..MAX_PLUGINS + 3)
@@ -824,6 +1035,159 @@ mod tests {
             plugins.iter().map(|entry| entry.state).collect::<Vec<_>>(),
             [Missing, Current, Outdated, Outdated, Outdated, Other, Other, Other]
         );
+    }
+
+    #[test]
+    fn falls_back_to_the_stored_packaged_policy_only_without_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(FILE_NAME);
+        let empty = catalog(vec![]);
+        let url = "https://plugins.example/policy.json";
+        let stored = dir.path().join(packaged_file_name(url));
+        let fetched = Some((url, &PackagedFetch::Fetched));
+        assert_eq!(effective(dir.path(), None, None, &empty), Managed::Absent);
+
+        fs::write(&stored, policy(&[entry("acme.packaged")])).unwrap();
+        assert_eq!(effective(dir.path(), None, None, &empty), Managed::Absent);
+        let Managed::Ready { path, plugins, .. } = effective(dir.path(), None, fetched, &empty)
+        else {
+            panic!("expected the packaged policy");
+        };
+        assert_eq!(path, stored.display().to_string());
+        assert_eq!(plugins[0].plugin.id, "acme.packaged");
+        assert_eq!(plugins[0].state, ManagedState::Missing);
+        assert_eq!(
+            effective(dir.path(), Some("".into()), fetched, &empty),
+            effective(dir.path(), None, fetched, &empty)
+        );
+
+        fs::write(&file, policy(&[entry("acme.file")])).unwrap();
+        let Managed::Ready { plugins, .. } = effective(dir.path(), None, fetched, &empty) else {
+            panic!("expected the file");
+        };
+        assert_eq!(plugins[0].plugin.id, "acme.file");
+        fs::write(&file, "{").unwrap();
+        assert!(matches!(
+            effective(dir.path(), None, fetched, &empty),
+            Managed::Invalid { path, .. } if path == file.display().to_string()
+        ));
+
+        #[cfg(unix)]
+        {
+            let missing = dir.path().join("missing.json");
+            assert_eq!(
+                effective(dir.path(), Some(missing.into()), fetched, &empty),
+                Managed::Absent
+            );
+        }
+    }
+
+    #[test]
+    fn reports_a_packaged_policy_that_has_not_arrived() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = catalog(vec![]);
+        let url = "https://plugins.example/policy.json";
+        let failed = PackagedFetch::Failed("HTTP 503".into());
+        assert_eq!(
+            effective(
+                dir.path(),
+                None,
+                Some((url, &PackagedFetch::Pending)),
+                &empty
+            ),
+            Managed::Loading { url: url.into() }
+        );
+        assert_eq!(
+            effective(dir.path(), None, Some((url, &failed)), &empty),
+            Managed::Unavailable {
+                url: url.into(),
+                reason: "HTTP 503".into()
+            }
+        );
+        let json = serde_json::to_value(effective(dir.path(), None, Some((url, &failed)), &empty))
+            .unwrap();
+        assert_eq!(json["status"], "unavailable");
+        assert_eq!(json["url"], url);
+
+        fs::write(
+            dir.path().join(packaged_file_name(url)),
+            policy(&[entry("acme.kept")]),
+        )
+        .unwrap();
+        let Managed::Ready { plugins, .. } =
+            effective(dir.path(), None, Some((url, &failed)), &empty)
+        else {
+            panic!("a failed refresh keeps the last good copy");
+        };
+        assert_eq!(plugins[0].plugin.id, "acme.kept");
+
+        fs::write(dir.path().join(FILE_NAME), policy(&[])).unwrap();
+        assert!(matches!(
+            effective(dir.path(), None, Some((url, &failed)), &empty),
+            Managed::Ready { .. }
+        ));
+    }
+
+    #[test]
+    fn stores_only_usable_packaged_policies() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("app");
+        let url = "https://plugins.example/policy.json";
+        let stored = home.join(packaged_file_name(url));
+        let good = policy(&[entry("acme.one")]);
+        assert_eq!(store_packaged(&home, url, good.as_bytes()), Ok(true));
+        assert_eq!(fs::read_to_string(&stored).unwrap(), good);
+        assert_eq!(store_packaged(&home, url, good.as_bytes()), Ok(false));
+
+        let oversized = format!("{good}{}", " ".repeat(MAX_BYTES as usize));
+        for bad in [
+            b"{".as_slice(),
+            br#"{"version":2,"source":"Acme IT","plugins":[]}"#,
+            &[0xff, 0xfe],
+            oversized.as_bytes(),
+        ] {
+            assert!(store_packaged(&home, url, bad).is_err());
+            assert_eq!(fs::read_to_string(&stored).unwrap(), good);
+        }
+
+        let next = policy(&[entry("acme.two")]);
+        assert_eq!(store_packaged(&home, url, next.as_bytes()), Ok(true));
+        assert_eq!(fs::read_to_string(&stored).unwrap(), next);
+        assert_eq!(fs::read_dir(&home).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn keeps_each_packaged_copy_for_its_own_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let empty = catalog(vec![]);
+        let (old_url, new_url) = (
+            "https://plugins.example/old.json",
+            "https://plugins.example/new.json",
+        );
+        assert_ne!(packaged_file_name(old_url), packaged_file_name(new_url));
+        fs::write(home.join("packaged-managed-plugins.json"), policy(&[])).unwrap();
+        store_packaged(home, old_url, policy(&[entry("acme.old")]).as_bytes()).unwrap();
+        assert!(!home.join("packaged-managed-plugins.json").exists());
+
+        let failed = PackagedFetch::Failed("HTTP 404".into());
+        assert_eq!(
+            effective(home, None, Some((new_url, &failed)), &empty),
+            Managed::Unavailable {
+                url: new_url.into(),
+                reason: "HTTP 404".into()
+            }
+        );
+        assert!(home.join(packaged_file_name(old_url)).exists());
+
+        store_packaged(home, new_url, policy(&[entry("acme.new")]).as_bytes()).unwrap();
+        assert!(!home.join(packaged_file_name(old_url)).exists());
+        let Managed::Ready { plugins, .. } =
+            effective(home, None, Some((new_url, &PackagedFetch::Fetched)), &empty)
+        else {
+            panic!("expected the new URL's copy");
+        };
+        assert_eq!(plugins[0].plugin.id, "acme.new");
     }
 
     #[test]

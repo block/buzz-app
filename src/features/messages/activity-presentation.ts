@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
-import { requestWork } from "../agents/request-work";
+import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
 import { activityRuns } from "./activity-groups";
 
@@ -16,18 +16,31 @@ type ActivityRun = {
   followingMessage: ChannelMessage | undefined;
 };
 export type ActivityPresentation = ActivityRun & {
+  /** Retires the live treatment only; coordination history remains readable. */
+  retired: boolean;
+  outcomes: Pick<
+    ReturnType<typeof requestWork>[number],
+    "agent" | "state" | "reason"
+  >[];
   /** Only the latest update run for an agent/request owns live work and Stop. */
   liveParticipants: string[];
-  /** Display policy only; a public reply is not lifecycle completion. */
-  hidden: boolean;
-  retained?: boolean;
+  /** Agents whose current work or outcome this group can actually present. */
+  presentedParticipants: string[];
+  /** Agents whose current work this group presents as their working cue. */
+  workingParticipants: string[];
   working: boolean;
+  /** Latest recorded update belonging to a participant still working here. */
+  workingUpdate: ChannelMessage | undefined;
   standalone: boolean;
 };
 export type ActivityRowPresentation = {
   requestId: string | undefined;
   active: boolean;
   ownsLive: boolean;
+  /** A newer message follows this row's run, so the conversation keeps its cue. */
+  followed?: boolean;
+  /** Keep a failure's author visible in history shared with other agents. */
+  showAuthor?: boolean;
   container: "history" | "bubble" | "standalone";
 };
 const noSubscribe = () => () => {};
@@ -77,12 +90,34 @@ export function useChannelActivitySnapshot(
   return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
 }
 
+/** Requests whose local run published each row: exact causal evidence that
+ * the root-flattened reply link of a thread reply cannot carry. */
+function publishedRequests(
+  rows: readonly ChannelMessage[],
+  snapshot: Snapshot | undefined,
+) {
+  const local = snapshot?.local ?? [];
+  const published = new Map<string, string>();
+  if (!local.length) return published;
+  for (const row of rows) {
+    const work = local.find(
+      (entry) =>
+        entry.agent === row.authorId &&
+        entry.channelId === row.channelId &&
+        entry.publishedMessageIds?.includes(row.id),
+    );
+    if (work) published.set(row.id, work.messageId);
+  }
+  return published;
+}
+
 /** Status belongs to the triggering request, never to all work in its thread. */
 function activityStatus(
   group: ActivityRun,
   snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   requests: ReadonlyMap<string, string>,
+  causes: ReadonlyMap<string, string>,
 ) {
   const { latest, participants, followingMessage: response, requestId } = group;
   const followedByReply =
@@ -98,49 +133,64 @@ function activityStatus(
       // the coordinator having authored a message in this activity run.
       ((response.agentEnvelope || agents?.has(response.authorId)) &&
         latest.mentions.includes(response.authorId)));
-  // Only signed immediate reply links and activity IDs bind lifecycle evidence.
-  // The preceding human message/thread root is useful for layout, not proof
-  // that these updates came from that request's turn.
+  // Only causal evidence, signed immediate reply links and activity IDs bind
+  // lifecycle evidence. The preceding human message/thread root is useful for
+  // layout, not proof that these updates came from that request's turn.
   const work = snapshot
     ? participants.flatMap((agent) => {
         const ids = group.history
           .filter((row) => row.authorId === agent)
-          .flatMap((row) => [
-            row.id,
-            ...(row.replyParentId ? [row.replyParentId] : []),
-          ]);
+          .flatMap((row) => {
+            const link = causes.get(row.id) ?? row.replyParentId;
+            return [row.id, ...(link ? [link] : [])];
+          });
         return requestWork(snapshot, latest.channelId, ids).filter(
           (entry) => entry.agent === agent,
         );
       })
     : [];
-  const settled = (entry: (typeof work)[number]) =>
-    ["done", "ended", "superseded", "stopped"].includes(entry.state);
   // A layout-associated request may prove ongoing work, but cannot prove
   // completion for an unlinked update. Keep those two evidence paths separate.
   const pending =
     snapshot && requestId
       ? requestWork(snapshot, latest.channelId, requestId).filter(
-          (entry) => participants.includes(entry.agent) && !settled(entry),
+          (entry) =>
+            participants.includes(entry.agent) && !isSettledWork(entry),
         )
       : [];
   const complete = participants.every((agent) =>
-    work.some((entry) => entry.agent === agent && settled(entry)),
+    work.some((entry) => entry.agent === agent && isSettledWork(entry)),
   );
   // Known pending, failed or uncertain work wins over the historical fallback.
-  // Without lifecycle evidence, a related public reply only retires the display.
-  const hidden =
-    !pending.length && (complete || (!!followedByReply && work.every(settled)));
+  // Without lifecycle evidence, a related public reply only retires the live treatment.
+  const retired =
+    !pending.length &&
+    (complete || (!!followedByReply && work.every(isSettledWork)));
   const working = new Set(
     [...work, ...pending]
       .filter((entry) => entry.working)
       .map((entry) => entry.agent),
   );
-  return {
-    hidden,
-    working,
-    publicReply: followedByReply ? response : undefined,
-  };
+  const known = new Map(
+    [...work, ...pending].map((entry) => [entry.agent, entry]),
+  );
+  const outcomes: ActivityPresentation["outcomes"] = [...known.values()].filter(
+    (entry) => !entry.dismissed && ["error", "stopped"].includes(entry.state),
+  );
+  // The signed failure message remains evidence after live lifecycle data expires.
+  for (const row of group.history)
+    if (
+      row.notice === "execution-failure" &&
+      !row.edited &&
+      !row.attachments.length &&
+      (!known.has(row.authorId) || known.get(row.authorId)?.state === "unknown")
+    )
+      outcomes.push({
+        agent: row.authorId,
+        state: "error",
+        reason: row.content,
+      });
+  return { retired, working, outcomes };
 }
 
 /** Shared projection for timeline and thread; hosts own scrolling and disclosure state. */
@@ -149,7 +199,10 @@ export function activityPresentation(
   snapshot: Snapshot | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
-  pinnedIds?: ReadonlyMap<string, number>,
+  canAbsorbFailure: (failure: ChannelMessage) => boolean = () => true,
+  /** The whole loaded conversation, when rows are one displayed level of it:
+   * a signed claim may name a request loaded at another level. */
+  loaded: readonly ChannelMessage[] = rows,
 ) {
   const following = new Map(
     rows.map((row, index) => [row.id, rows[index + 1]]),
@@ -157,36 +210,63 @@ export function activityPresentation(
   const preceding = new Map(
     rows.map((row, index) => [row.id, rows[index - 1]]),
   );
+  // Each agent row's exact request: its publishing run, else a signed claim
+  // naming a loaded human request in the same conversation.
+  const causes = publishedRequests(rows, snapshot);
   const requests = new Map<string, string>();
   if (rootId) requests.set(rootId, rootId);
   const representedAgents = new Map<string, string[]>();
   // Each request's latest public reply row per agent.
   const publicReplies = new Map<string, Map<string, string>>();
-  const activityAuthors = new Set(
-    rows
-      .filter((row) => row.audience === "agents" || row.agentEnvelope)
-      .map((row) => row.authorId),
+  const authorsOf = (list: readonly ChannelMessage[]) =>
+    new Set(
+      list
+        .filter((row) => row.audience === "agents" || row.agentEnvelope)
+        .map((row) => row.authorId),
+    );
+  const activityAuthors = authorsOf(rows);
+  const isAgent = (row: ChannelMessage) =>
+    activityAuthors.has(row.authorId) || agents?.has(row.authorId);
+  const isRequest = (row: ChannelMessage) =>
+    row.audience !== "agents" &&
+    !isAgent(row) &&
+    !row.membership &&
+    !!agents &&
+    !agents.has(row.authorId);
+  // Indexed up front: a skewed clock can order a claim before its request.
+  // An author is an agent if loaded evidence anywhere shows it acting as one.
+  const loadedAuthors = loaded === rows ? activityAuthors : authorsOf(loaded);
+  const humanRequests = new Map(
+    loaded
+      .filter((row) => isRequest(row) && !loadedAuthors.has(row.authorId))
+      .map((row) => [row.id, row]),
   );
   let request = rootId;
   for (const row of rows) {
-    const isAgent =
-      activityAuthors.has(row.authorId) || agents?.has(row.authorId);
+    const isAgentRow = isAgent(row);
+    if (isRequest(row)) request = row.id;
+    const claimed = row.request && humanRequests.get(row.request);
     if (
-      row.audience !== "agents" &&
-      !isAgent &&
-      !row.membership &&
-      agents &&
-      !agents.has(row.authorId)
+      isAgentRow &&
+      claimed &&
+      !causes.has(row.id) &&
+      claimed.channelId === row.channelId &&
+      // The same thread, the thread's own root, or both top-level.
+      (claimed.threadRootId === row.threadRootId ||
+        claimed.id === row.threadRootId)
     )
-      request = row.id;
+      causes.set(row.id, claimed.id);
     // A thread root is a scope, not necessarily the latest triggering request.
-    // Preserve explicit reply links; otherwise follow the preceding request.
-    const parentRequest = row.replyParentId
-      ? (requests.get(row.replyParentId) ?? row.replyParentId)
-      : undefined;
-    const rowRequest = isAgent ? (parentRequest ?? request) : request;
+    // Prefer causal evidence, then explicit reply links; otherwise follow the
+    // preceding request.
+    const parentRequest =
+      causes.get(row.id) ??
+      (row.replyParentId
+        ? (requests.get(row.replyParentId) ?? row.replyParentId)
+        : undefined);
+    const rowRequest = isAgentRow ? (parentRequest ?? request) : request;
     if (rowRequest) requests.set(row.id, rowRequest);
-    if (rowRequest && !row.membership && isAgent) {
+    if (rowRequest && !row.membership && isAgentRow) {
       const represented = representedAgents.get(rowRequest) ?? [];
       if (!represented.includes(row.authorId)) represented.push(row.authorId);
       representedAgents.set(rowRequest, represented);
@@ -218,7 +298,24 @@ export function activityPresentation(
   );
   const bubbleAnchors = new Set<string>();
   const byRow = new Map<string, ActivityRowPresentation>();
-  for (const history of activityRuns(rows, requests)) {
+  for (const run of activityRuns(rows, requests)) {
+    const end = run.at(-1);
+    const failure = end && following.get(end.id);
+    const history =
+      failure?.notice === "execution-failure" &&
+      !failure.edited &&
+      !failure.attachments.length &&
+      failure.replyParentId &&
+      canAbsorbFailure(failure) &&
+      end &&
+      run.some((row) => row.authorId === failure.authorId) &&
+      failure.channelId === end.channelId &&
+      failure.threadRootId === end.threadRootId &&
+      new Date(failure.createdAt * 1000).toDateString() ===
+        new Date(end.createdAt * 1000).toDateString() &&
+      requests.get(failure.id) === requests.get(end.id)
+        ? [...run, failure]
+        : run;
     const first = history[0];
     const latest = history.at(-1);
     if (!first || !latest) continue;
@@ -238,26 +335,22 @@ export function activityPresentation(
       requestId: requests.get(first.id) ?? first.threadRootId,
       followingMessage: following.get(latest.id),
     };
-    const { hidden, working, publicReply } = activityStatus(
+    const { retired, working, outcomes } = activityStatus(
       group,
       snapshot,
       agents,
       requests,
+      causes,
     );
-    const retained = hidden && group.ids.some((id) => pinnedIds?.has(id));
-    const before = preceding.get(first.id);
-    const anchor =
-      hidden && !retained && publicReply?.authorId === first.authorId
-        ? publicReply
-        : before;
+    const anchor = preceding.get(first.id);
     const standalone =
       !anchor ||
       !!anchor.membership ||
       anchor.audience === "agents" ||
       anchor.authorId !== first.authorId ||
       anchor.threadRootId !== first.threadRootId ||
-      (anchor === before && !continuesMessageGroup(anchor, first));
-    if (!standalone && !hidden && before) bubbleAnchors.add(before.id);
+      !continuesMessageGroup(anchor, first);
+    if (!standalone && anchor) bubbleAnchors.add(anchor.id);
     const lastByAgent = new Map(history.map((row) => [row.authorId, row.id]));
     for (const row of history) {
       const last = lastByAgent.get(row.authorId) === row.id;
@@ -270,22 +363,37 @@ export function activityPresentation(
         ownsLive:
           last &&
           liveParticipants.includes(row.authorId) &&
-          !hidden &&
+          !retired &&
           (working.has(row.authorId) || !group.followingMessage),
-        container:
-          row.id === first.id && standalone
-            ? "standalone"
-            : !hidden || standalone
-              ? "bubble"
-              : "history",
+        followed: !!group.followingMessage,
+        container: row.id === first.id && standalone ? "standalone" : "bubble",
+        showAuthor:
+          participants.length > 1 && row.notice === "execution-failure",
       });
     }
     groups.push({
       ...group,
+      retired,
       liveParticipants,
-      hidden,
-      retained,
+      outcomes: outcomes.filter((entry) =>
+        liveParticipants.includes(entry.agent),
+      ),
+      presentedParticipants: liveParticipants.filter(
+        (agent) =>
+          working.has(agent) || outcomes.some((entry) => entry.agent === agent),
+      ),
+      workingParticipants: liveParticipants.filter((agent) =>
+        working.has(agent),
+      ),
       working: liveParticipants.some((agent) => working.has(agent)),
+      workingUpdate: history
+        .filter(
+          (row) =>
+            row.audience === "agents" &&
+            liveParticipants.includes(row.authorId) &&
+            working.has(row.authorId),
+        )
+        .at(-1),
       standalone,
     });
   }
@@ -303,57 +411,16 @@ export function useActivityPresentation(
   activity: Activity | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
-  pinnedIds?: ReadonlyMap<string, number>,
 ) {
   const channels = useMemo(
     () => new Set(rows.map((row) => row.channelId)),
     [rows],
   );
   const snapshot = useChannelActivitySnapshot(activity, channels);
-  const projection = useMemo(
+  return useMemo(
     () => activityPresentation(rows, snapshot, agents, rootId),
     [rows, snapshot, agents, rootId],
   );
-  const prior = useRef(new Map<string, ActivityPresentation>());
-  const groups = useMemo(() => {
-    const groups = projection.groups.map((group) => {
-      const key = group.ids[0] ?? "";
-      const previous = prior.current.get(key);
-      // Retain the same contained tree, not merely its individual message IDs:
-      // report dialogs and their pending submissions belong to that tree.
-      return previous &&
-        group.hidden &&
-        group.ids.some((id) => pinnedIds?.has(id))
-        ? {
-            ...previous,
-            hidden: true,
-            liveParticipants: group.liveParticipants,
-            working: group.working,
-            retained: true,
-            followingMessage: group.followingMessage,
-          }
-        : group;
-    });
-    prior.current = new Map(groups.map((group) => [group.ids[0] ?? "", group]));
-    return groups;
-  }, [projection, pinnedIds]);
-  return { ...projection, groups };
-}
-
-/** Retired updates stay in Activity; hiding is not a claim of successful completion. */
-export function activityDisplayRows<T extends ChannelMessage>(
-  rows: readonly T[],
-  groups: readonly ActivityPresentation[],
-  revealedId?: string,
-): readonly T[] {
-  const hiddenIds = new Set(
-    groups
-      .filter((group) => group.hidden && !group.retained)
-      .flatMap((group) => group.ids),
-  );
-  return hiddenIds.size
-    ? rows.filter((row) => row.id === revealedId || !hiddenIds.has(row.id))
-    : rows;
 }
 
 /** Each activity projection allocates fresh row values. Reuse the previous ones
@@ -378,6 +445,8 @@ export function useStableRowActivity() {
           prior.requestId === next.requestId &&
           prior.active === next.active &&
           prior.ownsLive === next.ownsLive &&
+          prior.followed === next.followed &&
+          prior.showAuthor === next.showAuthor &&
           prior.container === container
         )
           return prior;

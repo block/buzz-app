@@ -69,7 +69,7 @@ it.each(["binding-mismatch", "authorization-denied"])(
 );
 
 const memberships = [
-  { id: "wss://buzz.block.builderlab.xyz", name: "Block" },
+  { id: "wss://buzz.acme.builderlab.xyz", name: "Acme" },
   { id: "wss://will.communities.buzz.xyz", name: "will" },
   { id: "wss://kalvin.communities.buzz.xyz", name: "kalvin" },
 ];
@@ -114,7 +114,9 @@ it.each(["binding-mismatch", "authorization-denied"])(
     expect(alert).not.toHaveTextContent("Builderlab hosting");
     // The others on that server, never the refusing one or another server's.
     expect(
-      screen.getByText("Switching accounts also affects: will."),
+      screen.getByText(
+        "will also uses this account. Switching may change your access there.",
+      ),
     ).toBeVisible();
     await userEvent
       .setup()

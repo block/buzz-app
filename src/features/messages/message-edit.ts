@@ -1,10 +1,11 @@
 import {
-  definitionRanges,
   projectMarkdownAttachments,
+  scanMarkdown,
 } from "../relay/message-content";
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { npubEncode } from "nostr-tools/nip19";
+import { literalRanges } from "./markdown-preparation";
 import type { MentionRecipient } from "./mention-draft";
 import { profileMentionParts } from "./profile-mentions";
 
@@ -18,9 +19,12 @@ export function profileMentionLink(label: string, target: string) {
   return `[${text}](${target})`;
 }
 
-/** Picker selection during an edit becomes the same link as a preserved mention. */
-export const editMentionText = ({ pubkey, name }: MentionRecipient) =>
-  `${profileMentionLink(`@${name}`, `nostr:${npubEncode(pubkey)}`)} `;
+/** Picker selection during an edit becomes the same link as a preserved
+ * mention, followed by the key that ended the name or a space. */
+export const editMentionText = (
+  { pubkey, name }: MentionRecipient,
+  after = " ",
+) => `${profileMentionLink(`@${name}`, `nostr:${npubEncode(pubkey)}`)}${after}`;
 
 /** Keep attachment Markdown and turn already-bound names into explicit identities.
  * Edited legacy prose remains unbound; the editor never invents recipients. */
@@ -31,15 +35,15 @@ export function messageEditText(
 ) {
   const { attachmentSeams: _seams, ...source } = row;
   const content = row.sourceContent ?? row.content;
-  // A link inside a reference definition would become part of its URL.
-  const definitions = definitionRanges(content);
+  const ranges = literalRanges(scanMarkdown(content).tree, true);
   let offset = 0;
+  let next = 0;
   return profileMentionParts({ ...source, content }, profiles, agents)
     .map(({ text, target }) => {
       const start = offset;
       offset += text.length;
-      return target &&
-        !definitions.some((range) => start < range.end && offset > range.start)
+      while ((ranges[next]?.end ?? Infinity) <= start) next++;
+      return target && (ranges[next]?.start ?? Infinity) >= offset
         ? profileMentionLink(text, target)
         : text;
     })

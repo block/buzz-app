@@ -3,7 +3,12 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
 // The tools never see the key itself.
 import type { GitAuth } from "../features/agents/native";
-import type { AgentAttention } from "../features/agents/service";
+import type {
+  AgentAttention,
+  AgentReadout,
+  TeamReadout,
+  TeamUpdateInput,
+} from "../features/agents/service";
 import type { AgentPlugins } from "../plugins/requests";
 import type { SettingState } from "../shared/device-settings";
 
@@ -80,6 +85,10 @@ export type Memory = Readonly<{
 }>;
 
 export interface BuzzClient {
+  /** The host's cancellation signal for this call. Keep this signal across
+   * waits; a later turn cannot restore a canceled call. Hosts without request
+   * cancellation omit it. */
+  readonly signal?: AbortSignal;
   protect?(action: ProtectionAction): Promise<void>;
   /** The runtime reviews each tool call itself before Buzz dispatches it. */
   readonly nativeToolGate?: true;
@@ -93,6 +102,7 @@ export interface BuzzClient {
     input: Readonly<{
       type: string;
       name: string;
+      instructions?: string;
       /** Uploads the picture once the request is valid: its URL. */
       picture?: () => Promise<string>;
     }>,
@@ -106,6 +116,11 @@ export interface BuzzClient {
       /** Uploads the picture once the request is valid: its URL. */
       picture?: () => Promise<string>;
     }>,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  readAgents?(agent?: string): Promise<AgentReadout | readonly AgentReadout[]>;
+  readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
+  updateTeam?(
+    input: TeamUpdateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, where the host has them: read directly, changed
    * by owner-confirmed request. */
@@ -126,6 +141,8 @@ export interface BuzzClient {
   readonly signingAuthority?: string | undefined;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;
+  /** Latest live attachment state, read as this agent from a primary snapshot. */
+  effectiveEdit?(id: string, channel: string): Promise<BuzzEvent>;
   /** Finds profiles whose `name` or `display_name` matches `query`, best
    * match first. `undefined` when the community has no profile name search;
    * NIP-50 search, which matches the whole profile, is the fallback. */

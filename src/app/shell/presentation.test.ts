@@ -6,7 +6,12 @@ import {
   ChatsCircleIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
-import { pagePlacement, orderPages, pagePresentation } from "./presentation";
+import {
+  navigationOwner,
+  pagePlacement,
+  orderPages,
+  pagePresentation,
+} from "./presentation";
 
 function page(key: string, title: string, icon?: string): RegisteredPage {
   const separator = key.indexOf("/");
@@ -132,6 +137,79 @@ test.each([undefined, "toolbar"] as const)(
         primary: true,
         ...(placement ? { placement } : {}),
       }),
-    ).toBe("topbar");
+    ).toBe("dock");
   },
 );
+
+test.each([undefined, "dock"] as const)(
+  "bundled Activity is a Messages sidebar row regardless of registered %s placement",
+  (placement) => {
+    expect(
+      pagePlacement({
+        ...inbox,
+        primary: true,
+        ...(placement ? { placement } : {}),
+      }),
+    ).toBe("sidebar");
+  },
+);
+
+test.each([
+  [undefined, "sidebar"],
+  ["sidebar", "sidebar"],
+  ["dock", "dock"],
+  // Pre-dock names stay accepted and resolve to the dock.
+  ["topbar", "dock"],
+  ["toolbar", "dock"],
+] as const)("a plugin's %s placement resolves to %s", (placement, expected) => {
+  expect(
+    pagePlacement({
+      ...page("example.plugin/main", "Plugin"),
+      primary: true,
+      ...(placement ? { placement } : {}),
+    }),
+  ).toBe(expected);
+});
+
+describe("navigation owner", () => {
+  const primary = (
+    key: string,
+    fields: Partial<RegisteredPage> = {},
+  ): RegisteredPage => ({ ...page(key, key), primary: true, ...fields });
+  const listed = [
+    primary("example.sidebar/main"),
+    primary("example.listed/main", { placement: "sidebar" }),
+    primary("example.own-sidebar/main", { sidebar: () => null }),
+  ];
+  const entries = [
+    primary(messages.key),
+    ...listed,
+    primary("example.header/main", { placement: "topbar" }),
+    primary("example.tools/main", { placement: "toolbar" }),
+    primary("example.linked/main", { primary: false, placement: "sidebar" }),
+  ];
+  test.each([
+    // Every external page listed in the Messages sidebar keeps Messages
+    // selected, including one that supplies its own sidebar.
+    ["example.sidebar/main", messages.key],
+    ["example.listed/main", messages.key],
+    ["example.own-sidebar/main", messages.key],
+    // External dock apps own themselves.
+    ["example.header/main", "example.header/main"],
+    ["example.tools/main", "example.tools/main"],
+    // Destinations without a navigation entry select nothing in the dock.
+    ["example.linked/main", "example.linked/main"],
+    ["settings", "settings"],
+    ["missing/page", "missing/page"],
+  ])("%s belongs to %s", (selected, owner) => {
+    expect(navigationOwner(entries, selected)).toBe(owner);
+  });
+  // Without Messages there is no app to keep selected.
+  test.each(listed.map(({ key }) => key))(
+    "%s owns itself when Messages is absent",
+    (selected) => {
+      const pages = entries.filter((page) => page.key !== messages.key);
+      expect(navigationOwner(pages, selected)).toBe(selected);
+    },
+  );
+});

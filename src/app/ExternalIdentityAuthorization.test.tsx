@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ExternalIdentityAuthorization } from "./ExternalIdentityAuthorization";
 import { IdentitySettings } from "./IdentitySettings";
+import { SecuritySettings } from "./SecuritySettings";
 import type { Identity } from "../features/identity/service";
 import { npubEncode } from "nostr-tools/nip19";
 
@@ -13,6 +14,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
   Channel: class {},
+}));
+vi.mock("../features/credential-pairing/service", () => ({
+  listPairedTools: async () => [],
+  onPairingEvents: () => () => {},
+  revokePairedTool: vi.fn(),
 }));
 async function approve(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Authorize identity" }));
@@ -200,6 +206,7 @@ const settingsIdentity = () =>
       snapshot: () => undefined,
       subscribe: () => () => {},
       ready: async () => ({ builderlab: false }),
+      refresh: async () => ({ builderlab: false }),
     },
     exportKey: vi.fn(),
     wipeRefusal: async () => "Erasing is unavailable in this test",
@@ -207,22 +214,18 @@ const settingsIdentity = () =>
 
 it("clears the real settings form when the displayed owner changes", async () => {
   const user = userEvent.setup();
-  const identity = settingsIdentity();
-  const view = render(<IdentitySettings viewer={viewer} identity={identity} />);
+  const view = render(<SecuritySettings viewer={viewer} />);
   await user.type(screen.getByLabelText("Application public key (hex)"), agent);
   await approve(user);
   expect(await screen.findByLabelText("Ownership proof")).toHaveValue(
     JSON.stringify(tag),
   );
-  view.rerender(
-    <IdentitySettings viewer={"12".repeat(32)} identity={identity} />,
-  );
+  view.rerender(<SecuritySettings viewer={"12".repeat(32)} />);
   expect(screen.queryByLabelText("Ownership proof")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Application public key (hex)")).toHaveValue("");
-  expect(identity.exportKey).not.toHaveBeenCalled();
 });
 
-it("discards an in-flight signer result when settings opens Sign out", async () => {
+it("discards an in-flight signer result when leaving Security to remove the key in Identity", async () => {
   let complete!: (result: unknown) => void;
   vi.mocked(invoke)
     .mockResolvedValueOnce(viewer)
@@ -233,14 +236,20 @@ it("discards an in-flight signer result when settings opens Sign out", async () 
         }),
     );
   const user = userEvent.setup();
-  render(<IdentitySettings viewer={viewer} identity={settingsIdentity()} />);
+  const view = render(<SecuritySettings viewer={viewer} />);
   await user.type(screen.getByLabelText("Application public key (hex)"), agent);
   await approve(user);
   await waitFor(() => expect(complete).toBeTypeOf("function"));
-  await user.click(screen.getByRole("button", { name: "Sign out of Buzz" }));
+  view.rerender(
+    <IdentitySettings viewer={viewer} identity={settingsIdentity()} />,
+  );
+  await user.click(screen.getByRole("button", { name: "More options" }));
+  await user.click(screen.getByRole("button", { name: "Remove from device" }));
   await act(async () => complete(tag));
   expect(
-    screen.getByRole("alertdialog", { name: "Sign out of Buzz?" }),
+    screen.getByRole("alertdialog", {
+      name: "Remove your key from this device?",
+    }),
   ).toBeInTheDocument();
   expect(screen.queryByLabelText("Ownership proof")).not.toBeInTheDocument();
   expect(

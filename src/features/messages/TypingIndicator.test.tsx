@@ -19,7 +19,10 @@ import {
 } from "../profiles/target";
 import { ActivityIndicatorPresentation } from "../conversation/typing-presentation";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
-import { activityPresentation } from "./activity-presentation";
+import {
+  activityPresentation,
+  useActivityPresentation,
+} from "./activity-presentation";
 import type { ChannelMessage } from "../relay/contracts";
 import { TypingIndicator } from "./TypingIndicator";
 
@@ -747,7 +750,7 @@ it.each([
   { team: false, local: true },
   { team: true, local: true },
 ])(
-  "hands live signals to visible activity and restores dots when it leaves (team=$team, local=$local)",
+  "keeps dots alongside visible activity and after it leaves (team=$team, local=$local)",
   ({ team, local }) => {
     const f = fixture();
     const row: ChannelMessage = {
@@ -774,7 +777,7 @@ it.each([
       new Set([agent]),
     ).groups[0];
     if (!group) throw new Error("Missing activity group");
-    const renderFlow = (show: boolean) => (
+    const renderFlow = (show: boolean, previousAuthor = agent) => (
       <ActivityIndicatorPresentation>
         {show && (
           <ActivityGroupPreview
@@ -786,7 +789,11 @@ it.each([
             onToggle={() => {}}
           />
         )}
-        <TypingIndicator session={f.session} channelId="channel" />
+        <TypingIndicator
+          session={f.session}
+          channelId="channel"
+          previousAuthor={previousAuthor}
+        />
       </ActivityIndicatorPresentation>
     );
     const pulses = [
@@ -813,17 +820,27 @@ it.each([
     ).toBeVisible();
     view.rerender(renderFlow(true));
     expect(
-      screen.queryByRole("button", { name: /Activity: .*working/ }),
-    ).toBeNull();
+      screen.getByRole("button", { name: /Activity: .*working/ }),
+    ).toBeVisible();
     expect(
       screen.getByText(
         team ? `${agent.slice(0, 10)}: Checking the fix` : "Checking the fix",
       ),
     ).toHaveAttribute("data-active", "true");
+    // Recorded ownership does not make the indicator adjacent to its author.
+    view.rerender(renderFlow(true, human));
+    const tail = view.container.querySelector<HTMLElement>(
+      "[data-conversation-activity]",
+    );
+    if (!tail) throw new Error("Missing conversation activity");
+    expect(within(tail).getByText("Agent", { exact: true })).toBeVisible();
+    view.rerender(renderFlow(true));
     if (!local) {
       f.update([...pulses, entry(agent, secondRoot)]);
       expect(
-        screen.getByRole("button", { name: "Activity: Agent working" }),
+        screen.getByRole("button", {
+          name: team ? "Activity: 2 agents working" : "Activity: Agent working",
+        }),
       ).toBeVisible();
       expect(
         screen.getByText(
@@ -1007,9 +1024,50 @@ it("announces split human and agent activity once from the composer", () => {
   );
 });
 
-it("keeps one live indicator when a public progress reply follows working activity", () => {
+it.each([false, true])(
+  "opens the conversation for a rootless plugin wake (stoppable=%s)",
+  async (stoppable) => {
+    const f = fixture();
+    const user = userEvent.setup();
+    const open = vi.fn(() => true);
+    f.update([], {
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          messageId: "f".repeat(64),
+          threadRootId: "f".repeat(64),
+          syntheticMessage: true,
+          soloChat: true,
+          state: "working",
+          startedAt: 1,
+          ...(stoppable ? { stoppable: true } : {}),
+        },
+      ],
+    });
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        canOpenActivity={() => false}
+        openActivity={open}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    await user.click(screen.getByRole("button", { name: /Open .* for Agent/ }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      "buzz://channel/channel",
+      undefined,
+    );
+  },
+);
+
+it("keeps dots beside a local tool step", () => {
   const f = fixture();
-  f.update([{ pubkey: agent, channelId: "channel" }], {
+  f.update([], {
     local: [
       {
         scope: "test",
@@ -1019,30 +1077,141 @@ it("keeps one live indicator when a public progress reply follows working activi
         threadRootId: root,
         state: "working",
         startedAt: 1,
+        step: { tool: "Read", target: "notes.txt" },
       },
     ],
   });
-  const row: ChannelMessage = {
-    id: "step",
+  render(
+    <TypingIndicator
+      session={f.session}
+      channelId="channel"
+      threadRootId={root}
+      inFlow
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: "Reading notes.txt" });
+  expect(trigger).toHaveTextContent("Reading notes.txt");
+  expect(trigger.querySelector('[data-state="working"]')).not.toBeNull();
+});
+
+it.each([undefined, root])(
+  "lets history presenting a request's work be its one working cue, keeping other requests' cues, in scope %s",
+  (threadRootId) => {
+    const f = fixture();
+    const work = {
+      scope: "test",
+      agent,
+      channelId: "channel",
+      messageId: root,
+      threadRootId: root,
+      state: "working" as const,
+      startedAt: 1,
+    };
+    f.update([], { local: [work] });
+    const row: ChannelMessage = {
+      id: "step",
+      channelId: "channel",
+      authorId: agent,
+      audience: "agents",
+      ...(threadRootId ? { threadRootId } : {}),
+      replyParentId: root,
+      createdAt: 100,
+      content: "Checking the fix",
+      mentions: [],
+      attachments: [],
+      reactions: [],
+      participants: [],
+      replyCount: 0,
+    };
+    const { audience: _audience, ...reply } = row;
+    const replied = [row, { ...reply, id: "reply", content: "Still checking" }];
+    const agents = new Set([agent]);
+    function History({ followed }: { followed: boolean }) {
+      const group = useActivityPresentation(
+        followed ? replied : [row],
+        f.session.agentActivity,
+        agents,
+      ).groups[0];
+      if (!group) throw new Error("Missing activity group");
+      return (
+        <ActivityGroupPreview
+          session={f.session}
+          group={group}
+          profiles={new Map()}
+          media={() => undefined}
+          expanded={false}
+          onToggle={() => {}}
+        />
+      );
+    }
+    const preview = (mounted: boolean, followed = false) => (
+      <ActivityIndicatorPresentation>
+        {mounted && <History followed={followed} />}
+        <TypingIndicator
+          session={f.session}
+          channelId="channel"
+          threadRootId={threadRootId}
+          inFlow
+        />
+      </ActivityIndicatorPresentation>
+    );
+    const cue = () =>
+      screen.queryByRole("button", { name: /Activity: .*working/ });
+    const dots = () => document.querySelectorAll('[data-state="working"]');
+    const view = render(preview(true));
+    expect(screen.getByText("Checking the fix")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(cue()).toBeNull();
+    expect(dots()).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    ).toContainElement(dots()[0] as HTMLElement);
+    // The same agent's other request here has no presentation of its own.
+    f.update([], {
+      local: [work, { ...work, messageId: "follow-up", startedAt: 2 }],
+    });
+    expect(cue()).toBeVisible();
+    f.update([], { local: [work] });
+    expect(cue()).toBeNull();
+    // Without mounted history, the conversation shows the work again.
+    view.rerender(preview(false));
+    expect(cue()).toBeVisible();
+    view.rerender(preview(true));
+    expect(cue()).toBeNull();
+    // A newer message below the history leaves its dots out of view of the
+    // conversation's end, so the conversation shows the work there too.
+    view.rerender(preview(true, true));
+    expect(cue()).toBeVisible();
+    view.rerender(preview(true));
+    expect(cue()).toBeNull();
+    f.update([], { local: [{ ...work, state: "done" }] });
+    expect(cue()).toBeNull();
+    expect(dots()).toHaveLength(0);
+  },
+);
+
+it("keeps a new request's thinking signal separate from old activity in the same thread", () => {
+  const f = fixture();
+  const old: ChannelMessage = {
+    id: "old-step",
     channelId: "channel",
     authorId: agent,
     audience: "agents",
-    replyParentId: root,
-    createdAt: 100,
-    content: "Checking the fix",
+    threadRootId: root,
+    replyParentId: "old-request",
+    createdAt: 1,
+    content: "Yesterday's work",
     mentions: [],
     attachments: [],
     reactions: [],
     participants: [],
     replyCount: 0,
   };
-  const { audience: _audience, ...reply } = row;
-  const group = activityPresentation(
-    [row, { ...reply, id: "reply", content: "Still checking" }],
-    f.session.agentActivity.snapshot(),
-    new Set([agent]),
-  ).groups[0];
-  if (!group) throw new Error("Missing activity group");
+  const group = activityPresentation([old], undefined, new Set([agent]), root)
+    .groups[0];
+  if (!group) throw new Error("Missing old activity group");
   render(
     <ActivityIndicatorPresentation>
       <ActivityGroupPreview
@@ -1053,16 +1222,98 @@ it("keeps one live indicator when a public progress reply follows working activi
         expanded={false}
         onToggle={() => {}}
       />
-      <TypingIndicator session={f.session} channelId="channel" />
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        threadRootId={root}
+        inFlow
+      />
     </ActivityIndicatorPresentation>,
   );
-  expect(screen.getByText("Checking the fix")).toHaveAttribute(
-    "data-active",
-    "true",
-  );
+  const waiting = {
+    scope: "test",
+    agent,
+    channelId: "channel",
+    messageId: "new-request",
+    threadRootId: root,
+    state: "waiting" as const,
+    startedAt: 2,
+  };
+  f.update([], { local: [waiting] });
   expect(
-    screen.queryByRole("button", { name: /Activity: .*working/ }),
-  ).toBeNull();
+    screen
+      .getByRole("button", { name: "Activity: Agent working" })
+      .querySelector('[data-state="waiting"]'),
+  ).not.toBeNull();
+  expect(screen.getByText(old.content)).not.toHaveAttribute("data-active");
+  f.update([], {
+    local: [{ ...waiting, state: "working", step: { tool: "Thinking" } }],
+  });
+  const thinking = screen.getByRole("button", {
+    name: "Thinking",
+  });
+  expect(thinking.querySelector('[data-state="working"]')).not.toBeNull();
+  expect(screen.getByText(old.content)).not.toHaveAttribute("data-active");
+  f.update([], { local: [{ ...waiting, state: "done" }] });
+  expect(screen.queryByRole("button", { name: "Thinking" })).toBeNull();
+  expect(screen.getByRole("status")).toBeEmptyDOMElement();
+});
+
+it("keeps one agent's simultaneous thread indicators independent", () => {
+  const f = fixture();
+  const first = {
+    scope: "test",
+    agent,
+    channelId: "channel",
+    messageId: "first-request",
+    threadRootId: root,
+    state: "working" as const,
+    startedAt: 1,
+    step: { tool: "Thinking" },
+  };
+  const second = {
+    ...first,
+    messageId: "second-request",
+    threadRootId: secondRoot,
+    step: { tool: "Read", target: "notes.txt" },
+  };
+  f.update([], { local: [first, second] });
+  render(
+    <ActivityIndicatorPresentation>
+      <section aria-label="First thread">
+        <TypingIndicator
+          session={f.session}
+          channelId="channel"
+          threadRootId={root}
+          inFlow
+        />
+      </section>
+      <section aria-label="Second thread">
+        <TypingIndicator
+          session={f.session}
+          channelId="channel"
+          threadRootId={secondRoot}
+          inFlow
+        />
+      </section>
+    </ActivityIndicatorPresentation>,
+  );
+  const one = within(screen.getByRole("region", { name: "First thread" }));
+  const two = within(screen.getByRole("region", { name: "Second thread" }));
+  expect(one.getByRole("button", { name: "Thinking" })).toBeVisible();
+  expect(one.queryByText("Reading notes.txt")).toBeNull();
+  expect(two.getByRole("button", { name: "Reading notes.txt" })).toBeVisible();
+  expect(two.queryByText("Thinking")).toBeNull();
+  f.update([], { local: [{ ...first, state: "done" }, second] });
+  expect(one.queryByRole("button")).toBeNull();
+  expect(two.getByRole("button", { name: "Reading notes.txt" })).toBeVisible();
+  f.update([], {
+    local: [
+      { ...first, state: "done" },
+      { ...second, state: "done" },
+    ],
+  });
+  expect(two.queryByRole("button")).toBeNull();
 });
 
 it("does not re-render for activity updates that leave its agents unchanged", () => {

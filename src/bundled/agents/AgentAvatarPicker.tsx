@@ -310,7 +310,7 @@ export function AgentAvatarPicker({
                     alt=""
                     fallback={lastAvatar.label}
                     size="fill"
-                    shape="circle"
+                    shape="squircle"
                   />
                 ),
               },
@@ -373,7 +373,7 @@ export function AgentAvatarPicker({
                   alt="Uploading avatar"
                   fallback={name}
                   size="fill"
-                  shape="circle"
+                  shape="squircle"
                 />
                 <span className={styles.uploadCancel}>
                   <IconButton
@@ -435,13 +435,18 @@ export function AgentAvatarPicker({
                   render={
                     <SurfaceButton
                       className={styles.emojiAvatarButton}
-                      style={{ backgroundColor: color }}
                       aria-label="Choose emoji"
                       disabled={locked}
                     />
                   }
                 >
-                  <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                  <span
+                    data-avatar-shape="squircle"
+                    className={styles.emojiAvatarArtwork}
+                    style={{ backgroundColor: color }}
+                  >
+                    <EmojiSwap emoji={emoji} animate={animateEmoji} />
+                  </span>
                 </PopoverTrigger>
                 <PopoverPopup
                   aria-label="Choose emoji"
@@ -476,7 +481,7 @@ export function AgentAvatarPicker({
                 alt="Selected avatar"
                 fallback={name}
                 size="fill"
-                shape="circle"
+                shape="squircle"
               />
             )}
           </div>

@@ -242,6 +242,44 @@ it("rejects a link renderer order that is neither a number nor a function", asyn
   expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("active");
 });
 
+it("registers link previews and withdraws them with their plugin", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      const base = { id: "preview", title: "Preview", matches: () => true };
+      for (const order of [null, "100", {}, true]) {
+        expect(() =>
+          ctx.conversation.registerLinkPreview({
+            ...base,
+            order,
+            component: Component,
+          } as never),
+        ).toThrow("order");
+      }
+      expect(() =>
+        ctx.conversation.registerLinkPreview({
+          ...base,
+          matches: undefined,
+          component: Component,
+        } as never),
+      ).toThrow("matcher");
+      ctx.conversation.registerLinkPreview({
+        ...base,
+        order: 100,
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.linkPreviews.snapshot()).toHaveLength(1),
+  );
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.linkPreviews.snapshot()).toHaveLength(0),
+  );
+});
+
 it("rejects an attachment renderer order that is neither a number nor a function", async () => {
   const h = harness({
     inject: ["conversation"],

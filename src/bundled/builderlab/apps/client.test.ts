@@ -415,12 +415,20 @@ it("passes a conflicting community change through unchanged", async () => {
 
 it("deploys to the sign-in's own tenant", () => {
   expect(controlPlane("https://app.builderlabstaging.xyz")).toBe(BASE);
-  expect(controlPlane("https://block.builderlab.xyz/")).toBe(
-    "https://compose-ctrl.block.builderlab.xyz",
-  );
-  expect(controlPlane("https://block.builderlabstaging.xyz")).toBe(
-    "https://compose-ctrl.block.builderlabstaging.xyz",
-  );
+  expect(
+    controlPlane(
+      "https://login.example/",
+      "https://login.example",
+      "https://ctrl.example",
+    ),
+  ).toBe("https://ctrl.example");
+  expect(
+    controlPlane(
+      "https://other.example",
+      "https://login.example",
+      "https://ctrl.example",
+    ),
+  ).toBeUndefined();
   expect(controlPlane("https://app.builderlab.xyz")).toBe(
     "https://compose-ctrl.builderlab.xyz",
   );
@@ -431,7 +439,7 @@ it("deploys to the sign-in's own tenant", () => {
 it("recognizes deployed app hosts across tenants", () => {
   for (const url of [
     "https://tiny-counter--bpsites.apps.builderlab.xyz/",
-    "https://demo--bpsites.apps.block.builderlab.xyz/",
+    "https://demo--bpsites.apps.example-tenant.builderlab.xyz/",
     "https://demo--bpsites.apps.builderlabstaging.xyz/path?x=1",
     "https://demo--workspace.apps.acme.builderlab.xyz/",
     "https://demo--workspace.apps.acme.builderlabstaging.xyz/",
@@ -452,11 +460,11 @@ it("rejects URLs outside the deployed app hostname shapes", () => {
     "https://demo--bpsites.apps.builderlab.xyz.example.org/",
     "https://evilapps.builderlab.xyz/",
     "https://user:pass@demo--bpsites.apps.builderlab.xyz/",
-    "http://demo.apps.block.builderlab.xyz/",
-    "https://apps.block.builderlab.xyz/",
-    "https://demo.apps.block.builderlab.xyz.example.org/",
-    "https://evilapps.block.builderlab.xyz/",
-    "https://user:pass@demo.apps.block.builderlab.xyz/",
+    "http://demo.apps.example-tenant.builderlab.xyz/",
+    "https://apps.example-tenant.builderlab.xyz/",
+    "https://demo.apps.example-tenant.builderlab.xyz.example.org/",
+    "https://evilapps.example-tenant.builderlab.xyz/",
+    "https://user:pass@demo.apps.example-tenant.builderlab.xyz/",
     "http://demo.apps.acme.builderlabstaging.xyz/",
     "https://user@demo.apps.acme.builderlab.xyz/",
     "https://:pass@demo.apps.acme.builderlabstaging.xyz/",
@@ -472,8 +480,7 @@ it("rejects URLs outside the deployed app hostname shapes", () => {
     "https://apps.demo.acme.builderlabstaging.xyz/",
     "https://demo.acme.builderlab.xyz/",
     "https://demo.apps.builderlab.example/",
-    "https://demo.apps.acme.blockstaging.build/",
-    "https://demo.apps.blockstaging.build/",
+    "https://demo.apps.acme.builderlab.example/",
     "https://demo.apps..builderlab.xyz/",
     "https://demo.apps.-acme.builderlab.xyz/",
     "https://demo.apps.acme-.builderlabstaging.xyz/",

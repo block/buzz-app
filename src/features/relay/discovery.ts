@@ -245,6 +245,10 @@ export class DiscoveryState {
   rosterVersions(): ReadonlyMap<string, RelayEvent> {
     return new Map(this.rosters);
   }
+  /** Channels whose signed metadata is retained, joined or not. */
+  metadataIds(): string[] {
+    return [...this.metadata.keys()];
+  }
   retain(
     ids: ReadonlySet<string>,
     started: ReadonlyMap<string, RelayEvent>,

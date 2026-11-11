@@ -151,6 +151,9 @@ export type SessionsOptions = Readonly<{
     title?: string,
     conversation?: string,
   ): void;
+  /** The tags a session opens with, for the conversation it opens for:
+   * none for a one-off turn. */
+  tags?(conversation?: string): Readonly<Record<string, string>>;
   /** Called when a conversation's session opens, is sent a message, or
    * closes. */
   onChange?(): void;
@@ -207,6 +210,14 @@ export class AgentSessions {
   }
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.session.working;
+  }
+  /** Whether the work conversation or one-off turn `key`'s session runs now
+   * still runs, unstopped and in that session, when asked later. */
+  current(key: string): () => boolean {
+    const serving = () => (this.live.get(key) ?? this.once.get(key))?.session;
+    const session = serving();
+    const current = session?.current();
+    return () => !!current?.() && serving() === session;
   }
   /** The harness session serving a conversation or one-off turn, and the
    * process it lives in. */
@@ -566,8 +577,10 @@ export class AgentSessions {
     const slot: Slot = { idle: () => false, evict: async () => undefined };
     const room = pool.take(slot);
     let opened: AcpSession | undefined;
+    const tags = this.options.tags?.(this.once.has(key) ? undefined : key);
     const start = () =>
       process.open({
+        ...(tags ? { tags } : {}),
         onSession: (session) => (opened = session),
         cwd,
         systemPrompt: launch.systemPrompt,

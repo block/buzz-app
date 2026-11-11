@@ -106,6 +106,12 @@ See the [capability contract](../src/features/workflows/types.ts).
   configuration (the editor's Run now is unavailable while the draft has
   unsaved changes), and on-demand run/trace history in
   20-row pages with the relay's exact `(before,beforeId)` cursor.
+- Archived channels: the relay accepts saves and runs there, but every run
+  fails. Their group and Recently updated rows say Archived. Run now and
+  turning a workflow on are unavailable in rows, details and the editor, whose
+  Save is blocked only while the draft is enabled; turning off and Delete stay
+  available. New workflow omits them; the landing keeps them so an open editor
+  keeps its draft.
 - No approval UI, lifecycle negotiation, plugin command-replay API or JSON
   trigger inputs.
 
@@ -254,6 +260,16 @@ and the rendered output. Legacy `p` tags route mentions but do not authorize the
 Workflows created and maintained under an owned agent's own key remain owned by
 that agent and can wake agents with the same proven human owner. This does not
 grant an agent permission to edit a workflow owned by a different signing identity.
+
+Builds can withhold this delegation per community. In communities listed by
+`BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES`, no message carrying a `buzz:workflow` tag
+authorizes a local agent request, whatever its signer, owner or mention tags, in
+bundled or plugin harnesses. Workflow messages there stay visible but do not start
+or steer local Claude, Codex, Goose or Pi agents, including for owner-created
+static templates and scheduled workflows. Each build lists its own restricted
+communities; communities it does not list keep the delegation above. The restriction
+does not prevent workflow output from influencing a later authorized turn. See
+[configuration](configuration.md#workflow-restriction-community-flag).
 
 Cached-only startup intentionally shows the actual signer until a live connection
 establishes explicit relay authority. Saved operator-contact `relayAuthor` is not

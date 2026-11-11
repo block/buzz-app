@@ -17,11 +17,13 @@ import { SoloDraft } from "../../features/solo/SoloDraft";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { historyPanel, useConversationTabs } from "./useConversationTabs";
+import { focusDock, useCoveredByDock } from "./useCoveredByDock";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useReturnHighlight } from "../../features/messages/use-return-highlight";
+import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import {
   entryPane,
@@ -39,6 +41,7 @@ import {
 import { WorkspaceControl } from "../../features/solo/WorkspaceControl";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import type { CommunityMembership } from "../moderation/membership";
+import { useFirstChannel } from "./first-channel";
 import { SoloHeading, SoloToolbar, useSoloMoveRecovery } from "./SoloHeading";
 import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
@@ -67,6 +70,7 @@ import { placeExactOpening } from "../../features/conversation/exact-opening";
 import { flushSync } from "react-dom";
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -84,6 +88,7 @@ import {
   GearIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
+import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -108,6 +113,7 @@ import {
   ConversationComposer,
 } from "../../features/conversation/Conversation";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
+import { OpenCommunitySwitcher } from "../../features/communities/CommunityPicker";
 import type {
   Attachment,
   ChannelSummary,
@@ -164,11 +170,20 @@ export function ChannelsPage({
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const openSwitcher = useContext(OpenCommunitySwitcher);
   const sessionNavigation = navigation?.forSession(relay, session);
   // An opening visit's deadline bounds Connecting; once it has settled, a
   // retrying connection is a failure that keeps trying, not a connection.
-  // Each attempt republishes the connection, so reading it here stays current.
-  const visitSettled = navigator.snapshot().status !== "opening";
+  // Only that case reads the visit, so only it follows the visit settling.
+  const settled = () =>
+    session.status === "error" &&
+    session.retrying &&
+    navigator.snapshot().status !== "opening";
+  const visitSettled = useSyncExternalStore(
+    navigator.subscribe,
+    settled,
+    settled,
+  );
   const presentedSession = useRef<
     | {
         scope: typeof session.scope;
@@ -228,25 +243,22 @@ export function ChannelsPage({
               </div>
               <h1>Your channels, one conversation.</h1>
               <p>
-                Use the community picker in the top bar to choose or add a
-                community. Your profile and settings work without a community.
+                Choose a community to see its channels, or join one. Your
+                profile and settings work without a community.
               </p>
+              {openSwitcher && (
+                <Button type="button" variant="primary" onClick={openSwitcher}>
+                  Choose a community
+                </Button>
+              )}
             </div>
           ) : session.status === "error" && session.denied ? (
-            <div role="alert" className={styles.failed}>
+            // The community refused this account. Its notice, on every page,
+            // says what fixes it and offers that; this only says why it's empty.
+            <div className={styles.failed}>
               <EmptyState
                 icon={<LockIcon />}
-                title="You don’t have access to this"
-                description="It belongs to another account or a community you haven’t joined."
-                action={
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => relay.retry()}
-                  >
-                    Try again
-                  </Button>
-                }
+                title={communityRefusalTitle(session.refusal)}
               />
             </div>
           ) : session.status === "error" &&
@@ -380,6 +392,7 @@ function ChannelWorkspace({
   );
   const list = useChannelRoster(queries.channels);
   const initialList = useRef(list);
+  useFirstChannel({ scope, cached, queries, list, membership });
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     // Initial channel discovery cancels in-flight reads as it settles access.
@@ -733,7 +746,7 @@ function ChannelWorkspace({
     "messages",
     navigator,
   );
-  const { settings, setSettings, retireMenuEntries } = tabState;
+  const { settings, setSettings } = tabState;
   useEffect(() => {
     if (!currentId || composingMessage || draft) return;
     // Retire this visit's reveal intent without discarding a new-DM handoff.
@@ -790,13 +803,14 @@ function ChannelWorkspace({
         if (trigger?.isConnected) trigger.focus({ preventScroll: true });
       },
       completed() {
+        const shown = new Set(handoff?.soloNeighbors.current?.(channel.id));
         // Unarchive restores the open chat; every other action leaves it.
         if (action !== "unarchive" && !origin?.aborted && navigator)
           void navigator.open(
             soloSuccessor(
               scope,
               queries.channels.list().channels,
-              neighbors,
+              neighbors.filter((id) => shown.has(id)),
               channel.id,
             ),
           );
@@ -994,6 +1008,60 @@ function ChannelWorkspace({
       threadPane,
     ],
   );
+  // Open in channel also shows the thread's root in the timeline, reading
+  // older pages to find it. The thread keeps focus; Members covers both.
+  // The target alone decides, so the list is held from the visit's start.
+  // Like exact opening, it waits for a live session: cached rows decide
+  // nothing, so they stay shown, and the seek runs beside them on connecting.
+  const contextRoot =
+    !cached &&
+    current &&
+    !current.cached &&
+    !membersRequested &&
+    !exact?.inTimeline &&
+    navigation?.target.kind === "conversation" &&
+    navigation.target.context === "channel"
+      ? requestedThread
+      : undefined;
+  // Each visit seeks again, Back and Forward included: the channel may have
+  // dropped the older pages an earlier visit read.
+  const contextVisit = useRef({ navigation, request: 0 });
+  if (contextVisit.current.navigation !== navigation)
+    contextVisit.current = {
+      navigation,
+      request: contextVisit.current.request + 1,
+    };
+  const contextInTimeline = useMessageOpening(
+    queries.channels,
+    currentId ?? "",
+    contextRoot,
+    contextVisit.current.request,
+  );
+  const contextRouted = !!routedThread;
+  const contextSignal = navigation?.signal;
+  const contextTarget = useMemo(
+    () =>
+      contextRouted && contextRoot && contextInTimeline && contextSignal
+        ? {
+            messageId: contextRoot,
+            signal: contextSignal,
+            focus: false as const,
+          }
+        : undefined,
+    [contextRouted, contextRoot, contextInTimeline, contextSignal],
+  );
+  // The channel whose list has shown since it opened. Hold only until then,
+  // so the list mounts once, at the root; a later attempt, as when Members
+  // closes, seeks with the list in place and reveals the root there.
+  const [listed, setListed] = useState<string>();
+  const contextHolding =
+    !!contextRoot && contextInTimeline === undefined && listed !== current?.id;
+  const listing =
+    listed === current?.id ||
+    (!contextHolding && contentReadyChannel === current?.id)
+      ? current?.id
+      : undefined;
+  if (listing !== listed) setListed(listing);
   const conversationIcon = (item: (typeof channels)[number]) => {
     const person = item.participants?.[0];
     return (
@@ -1093,6 +1161,9 @@ function ChannelWorkspace({
     target: string;
     id: string;
     pane: "main" | "side";
+    /** The side pane's visibility to restore: a kept tab shows, and a
+     * launcher's side panel keeps the visibility it had before the close. */
+    paneOpen: boolean;
   }>(undefined);
   const dismissContent = (
     visits: readonly string[],
@@ -1124,6 +1195,8 @@ function ChannelWorkspace({
         target: targetKey(fallback),
         id: keep,
         pane,
+        paneOpen:
+          !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
       };
     }
     navigator.dismiss(visits, fallback);
@@ -1143,6 +1216,24 @@ function ChannelWorkspace({
         target: targetKey(fallback),
       };
   };
+  const [mediaReview, setMediaReview] = useState<{
+    channelId: string;
+    channelName: string;
+    messageId: string;
+    attachment: Attachment;
+    initialAttachments?: readonly Attachment[] | undefined;
+    initialTime: number;
+    hasComments: boolean;
+    entryId?: string | undefined;
+  }>();
+  // The current destination may be an authorized public preview, which is
+  // intentionally absent from the joined-channel list.
+  const showingMediaReview = current?.archived
+    ? undefined
+    : mediaReviewForDestination(mediaReview, current?.id, navigation?.entryId);
+  useEffect(() => {
+    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
+  }, [mediaReview, showingMediaReview]);
   const secondary = useConversationTabs({
     state: tabState,
     relay,
@@ -1175,6 +1266,13 @@ function ChannelWorkspace({
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
     mainPane: !solo,
+    // Side thread tabs leave during an image or video review; this is what
+    // hands the thread draft back from the viewer. The viewer's comment
+    // composer reads the thread's saved draft when it mounts, and a thread
+    // composer reads a draft only when it mounts, so a side thread kept
+    // mounted under the hidden dock would still show the text the viewer
+    // replaced. Main-pane threads keep their place and state, as before.
+    hostPanes: showingMediaReview ? ["main"] : undefined,
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
@@ -1184,11 +1282,16 @@ function ChannelWorkspace({
       );
       const keptTab = tabState.tabs.find((tab) => tab.id === keep);
       const keptEntry = remaining[0];
+      // A launcher's side panel outlives the tabs, as when its last tab
+      // closes. The return keeps the pane as it was, shown or hidden, even
+      // when the channel visit it lands on had saved an open pane.
       const pane = keptTab
         ? tabPane(keptTab)
         : keptEntry
           ? entryPane(tabState.mainEntries, keptEntry)
-          : "main";
+          : tabState.sidePanel
+            ? "side"
+            : "main";
       const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
       const visits = [
@@ -1328,7 +1431,11 @@ function ChannelWorkspace({
             ?.querySelector<HTMLElement>(
               '[role="tab"][data-tab-value="conversation"], [data-workspace-identity] button',
             ) ?? (solo ? historyContainer.current : settingsTrigger.current);
-        target?.focus({ preventScroll: true });
+        // A dock that outlives the close, as a launcher's side panel does,
+        // still covers that target, so the dock takes focus instead.
+        const cover = target?.closest("[inert]");
+        if (cover) focusDock(cover.parentElement);
+        else target?.focus({ preventScroll: true });
       }
     }
     // A pane whose selected tab closed refocuses its new selection; the kept
@@ -1428,7 +1535,7 @@ function ChannelWorkspace({
           if (kept.pane === "main") tabState.selectMain(kept.id);
           else {
             tabState.select(kept.id);
-            tabState.setPaneOpen(true);
+            tabState.setPaneOpen(kept.paneOpen);
           }
           focusKept.current = kept.id;
         }
@@ -1494,11 +1601,6 @@ function ChannelWorkspace({
     panels,
     panelTrigger,
   ]);
-  // Menu panels belong to one visit. Retire only this visit's keyed entries.
-  useEffect(() => {
-    if (!currentId) return;
-    return () => retireMenuEntries();
-  }, [currentId, retireMenuEntries]);
   const mounted = useRef(false);
   const channel = useRef(current?.id);
   useLayoutEffect(() => {
@@ -1591,24 +1693,6 @@ function ChannelWorkspace({
     [secondary.openLinkedThread],
   );
   const mediaReviewTrigger = useRef<HTMLElement | null>(null);
-  const [mediaReview, setMediaReview] = useState<{
-    channelId: string;
-    channelName: string;
-    messageId: string;
-    attachment: Attachment;
-    initialAttachments?: readonly Attachment[] | undefined;
-    initialTime: number;
-    hasComments: boolean;
-    entryId?: string | undefined;
-  }>();
-  // The current destination may be an authorized public preview, which is
-  // intentionally absent from the joined-channel list.
-  const showingMediaReview = current?.archived
-    ? undefined
-    : mediaReviewForDestination(mediaReview, current?.id, navigation?.entryId);
-  useEffect(() => {
-    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
-  }, [mediaReview, showingMediaReview]);
   // Timeline rows are memoized; their callbacks read the shown destination at
   // call time so a new navigation request does not rerender every row.
   const destination = useRef({ current, navigation });
@@ -1625,7 +1709,6 @@ function ChannelWorkspace({
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
-      setSettings(undefined);
       mediaReviewTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -1641,7 +1724,7 @@ function ChannelWorkspace({
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
-    [setSettings],
+    [],
   );
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
@@ -1810,6 +1893,11 @@ function ChannelWorkspace({
     companion ? COMPANION_SPLIT.defaultWidth : undefined,
     companion ? COMPANION_SPLIT.min : undefined,
   );
+  const docked = !!showingPanel && !showingMediaReview;
+  // A floating dock covers the conversation, even the strip beside a card:
+  // keep focus, typing, reading and assistive technology out of it.
+  const conversation = useRef<HTMLElement>(null);
+  const covered = useCoveredByDock(split.ref, conversation, docked);
   // A routed thread can mount behind a collapsed pane, where it cannot take
   // focus, or already be selected, so its pane does not move focus. Once its
   // tab shows, hand it focus nothing else took.
@@ -1969,6 +2057,8 @@ function ChannelWorkspace({
             navigation={
               !requestedMessage || exact?.inTimeline ? navigation : undefined
             }
+            holding={contextHolding}
+            inlineTarget={contextTarget}
             onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
@@ -2106,9 +2196,12 @@ function ChannelWorkspace({
       )}
       <Panel
         as="article"
+        ref={conversation}
         aria-label="Conversation"
         data-overlay-boundary=""
         data-solo-focus-pane={solo ? "" : undefined}
+        inert={covered}
+        aria-hidden={covered || undefined}
       >
         <div
           className={`${styles.conversation}${solo ? ` ${styles.soloConversation}` : ""}`}
@@ -2427,14 +2520,16 @@ function ChannelWorkspace({
         {secondary.announcement}
       </p>
       <PanelDock
-        open={!!showingPanel && !showingMediaReview}
+        open={docked}
         keepMounted={
-          tabState.entries.length > 0 || (!!hasPanel && !tabState.paneOpen)
+          tabState.entries.length > 0 ||
+          (!!hasPanel && !tabState.paneOpen) ||
+          (!!hasPanel && !!showingMediaReview)
         }
         className={styles.panelStack}
         resizeHandle={split.handle}
       >
-        {hasPanel && !showingMediaReview && (
+        {hasPanel && (
           <>
             {hasChannelPanel && (settings || secondary.items.length > 0) && (
               <div

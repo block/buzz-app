@@ -70,9 +70,11 @@ describe.each(preferences)("%s", (key, preference) => {
   });
 });
 
-it("isolates unsaved choices and ignores unrelated storage events", () => {
+it("isolates unsaved choices and their save errors, and ignores unrelated storage events", () => {
   const edit = renderHook(editKeyPreference.usePreference);
   const send = renderHook(sendKeyPreference.usePreference);
+  const editError = renderHook(editKeyPreference.useSaveError);
+  const sendError = renderHook(sendKeyPreference.useSaveError);
   vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
     throw new Error("full");
   });
@@ -84,10 +86,13 @@ it("isolates unsaved choices and ignores unrelated storage events", () => {
   });
   expect(edit.result.current).toBe(true);
   expect(send.result.current).toBe(true);
+  expect(editError.result.current).toMatch(/could not be saved/);
+  expect(sendError.result.current).toBeNull();
   act(() => {
     window.dispatchEvent(new StorageEvent("storage", { key: "unrelated" }));
   });
   expect(edit.result.current).toBe(true);
+  expect(editError.result.current).toMatch(/could not be saved/);
   act(() => {
     window.dispatchEvent(
       new StorageEvent("storage", { key: "buzz-send-with-mod-enter.v1" }),
@@ -100,5 +105,6 @@ it("isolates unsaved choices and ignores unrelated storage events", () => {
     );
   });
   expect(edit.result.current).toBe(false);
+  expect(editError.result.current).toBeNull();
   expect(send.result.current).toBe(true);
 });

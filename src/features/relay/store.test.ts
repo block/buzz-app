@@ -788,6 +788,52 @@ it.each([
     owner.dispose();
   }
 });
+it("does not rewrite the profile mirror when only cache hits reorder it", async () => {
+  const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const writeProfiles = vi.fn(async (_: readonly unknown[]) => {});
+  const bob = keypair();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const owner = createRelaySession(scripted.transport, {
+    persistence: {
+      read: async () => [],
+      readStartup: async () => undefined,
+      writeStartup: async () => {},
+      readProfiles: async () => [],
+      writeProfiles,
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close: () => {},
+    },
+    prepared: true,
+  });
+  const profiles = owner.session.profiles;
+  const load = async (ids: string[], events: RelayEvent[]) => {
+    const ensuring = profiles.ensure(ids, "foreground");
+    await vi.waitFor(() => expect(scripted.pending).not.toHaveLength(0), {
+      interval: 1,
+    });
+    scripted.next().respond(events);
+    await ensuring;
+    await vi.advanceTimersByTimeAsync(1000);
+  };
+  try {
+    await owner.restore();
+    await load([alice.pubkey], [profile(alice, { name: "Alice" })]);
+    await load([bob.pubkey], [profile(bob, { name: "Bob" })]);
+    expect(writeProfiles).toHaveBeenLastCalledWith(
+      expect.arrayContaining([expect.anything(), expect.anything()]),
+    );
+    writeProfiles.mockClear();
+    // A hit reorders the cache; an unanswered name notifies without a new profile.
+    await load([alice.pubkey, keypair().pubkey], []);
+    expect(writeProfiles).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+    owner.dispose();
+  }
+});
 it.each(["idle", "loading", "error"] as const)(
   "rejects a roster refresh without reading while the list is %s",
   async (status) => {

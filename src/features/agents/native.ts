@@ -4,6 +4,8 @@ import type {
 } from "../agent-protection/service";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { eventsDto, type RelayEvent } from "../relay/events";
+import { effectiveEditDto, effectiveEditFilter } from "../relay/effective-edit";
+import { importedEmojiPicture } from "./import-picture";
 
 /** A plugin agent's identity in one community as native custody reports it;
  * never the key. The saved identities are the agent list: one for each
@@ -188,6 +190,11 @@ export type AgentsNative = {
   publish(member: Membership, event: AgentEventTemplate): Promise<RelayEvent>;
   /** Reads the membership's community as the agent: one to eight filters. */
   query(member: Membership, filters: readonly object[]): Promise<RelayEvent[]>;
+  effectiveEdit(
+    member: Membership,
+    id: string,
+    channel: string,
+  ): Promise<RelayEvent>;
   /** Finds profiles by `name` or `display_name` in the agent's community, as
    * the agent, best match first. `undefined` when the community has no
    * profile name search. */
@@ -232,14 +239,29 @@ export const nativeAgents = (): AgentsNative | undefined =>
         create: (destination, owner, agentType, name) =>
           invoke("app_agent_create", { destination, owner, agentType, name }),
         portable: () => invoke("app_agent_portable"),
-        port: (source, pubkey, destination, owner, agentType) =>
-          invoke("app_agent_port", {
+        port: async (source, pubkey, destination, owner, agentType) => {
+          // Preparation is optional; native reports a skipped picture if it fails.
+          let convertedPicture: Awaited<
+            ReturnType<typeof importedEmojiPicture>
+          >;
+          try {
+            const found = await invoke<PortableAgents>("app_agent_portable");
+            const picture = found.agents.find(
+              (agent) => agent.source === source && agent.pubkey === pubkey,
+            )?.picture;
+            convertedPicture = await importedEmojiPicture(picture);
+          } catch {
+            // A picture failure must not prevent taking over the identity.
+          }
+          return invoke("app_agent_port", {
             source,
             pubkey,
             destination,
             owner,
             agentType,
-          }),
+            convertedPicture,
+          });
+        },
         protectionDefaults: (owner) =>
           invoke("app_agent_protection_defaults", { owner }),
         setProtectionDefaults: (owner, revision, provider, policy) =>
@@ -292,6 +314,16 @@ export const nativeAgents = (): AgentsNative | undefined =>
         query: async ({ pubkey, relay }, filters) =>
           eventsDto(
             await invoke("app_agent_query", { pubkey, relay, filters }),
+          ),
+        effectiveEdit: async ({ pubkey, relay }, id, channel) =>
+          effectiveEditDto(
+            await invoke("app_agent_query", {
+              pubkey,
+              relay,
+              filters: effectiveEditFilter(id, channel),
+            }),
+            id,
+            channel,
           ),
         searchProfiles: async ({ pubkey, relay }, query, limit) => {
           const found = await invoke("app_agent_search_profiles", {

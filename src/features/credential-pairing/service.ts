@@ -26,17 +26,36 @@ export type PairedTool = {
 export const answerPairing = (id: string, approve: boolean) =>
   invoke<void>("credential_pair_answer", { id, approve });
 
+/** Tells native code the communities saved here, so a tool pairs only for
+ * one of them. */
+export const setPairingCommunities = (communities: readonly string[]) =>
+  invoke<void>("credential_pairing_communities", {
+    communities: communities.flatMap((id) => {
+      try {
+        return [communityDestination(id).url];
+      } catch {
+        return [];
+      }
+    }),
+  });
+/** Tells native a prompt began or stopped listening; while none listens,
+ * native refuses pairing at once instead of asking nobody. */
+export const setPairingPrompt = (mounted: boolean) =>
+  invoke<void>("credential_pair_prompt", { mounted });
+
 export const listPairedTools = () =>
   invoke<PairedTool[]>("credential_pairings_list");
 
 export const revokePairedTool = (id: string) =>
   invoke<void>("credential_pairing_revoke", { id });
 
-/** Calls `on` for each change; returns a function that stops listening. */
+/** Calls `on` for each change, and `ready` once every listener is in place;
+ * returns a function that stops listening. */
 export function onPairingEvents(on: {
   request?(request: PairRequest): void;
   closed?(id: string): void;
   changed?(): void;
+  ready?(): void;
 }) {
   const stops = [
     on.request &&
@@ -51,46 +70,11 @@ export function onPairingEvents(on: {
   ];
   // Without the native event channel there is nothing to approve or list.
   const listening = stops.map((stop) => stop?.catch(() => undefined));
+  void Promise.all(stops).then(
+    () => on.ready?.(),
+    () => undefined,
+  );
   return () => {
     for (const stop of listening) void stop?.then((unlisten) => unlisten?.());
   };
-}
-
-/** A relay URL compared whole, as native code binds it: lowercase host, no
- * default port, `/` for an empty path, path and query kept; `wss` read as
- * `https` and `ws` as `http`. `null` for anything else. */
-function comparable(raw: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(raw.trim());
-  } catch {
-    return null;
-  }
-  const scheme = {
-    "wss:": "https:",
-    "https:": "https:",
-    "ws:": "http:",
-    "http:": "http:",
-  }[url.protocol];
-  if (!scheme || url.username || url.password || url.hash) return null;
-  if (url.hostname.endsWith(".")) url.hostname = url.hostname.slice(0, -1);
-  return `${scheme}//${url.host}${url.pathname}${url.search}`;
-}
-
-/** Whether `relay` is one of these saved communities, compared as whole
- * URLs, so `wss://host/team/` is not the community `wss://host`. A tool may
- * only pair for a community the person already uses here. */
-export function isSavedCommunity(
-  relay: string,
-  communities: readonly string[],
-) {
-  const requested = comparable(relay);
-  if (requested === null) return false;
-  return communities.some((id) => {
-    try {
-      return comparable(communityDestination(id).url) === requested;
-    } catch {
-      return false;
-    }
-  });
 }

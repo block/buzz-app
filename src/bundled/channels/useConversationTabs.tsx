@@ -27,6 +27,10 @@ import {
   InfoIcon,
 } from "../../shared/design-system/icons";
 import { parseBuzzLink } from "../../features/navigation/buzz-links";
+import {
+  profileActivityViewKey,
+  profilePanelKey,
+} from "../../features/profiles/target";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { dmLabel } from "../inbox/dm-label";
 import { ConversationTab } from "./ConversationTab";
@@ -54,6 +58,8 @@ import tabStyles from "./ChannelTabs.module.css";
 export const historyPanel = (entry: PanelOpening) =>
   !entry.channelContext &&
   (entry.panel.key === "buzz.profiles/profile" ||
+    !!profilePanelKey(entry.target) ||
+    !!profileActivityViewKey(entry.target) ||
     entry.panel.key === "buzz.github/object");
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */

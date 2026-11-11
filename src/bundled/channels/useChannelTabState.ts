@@ -123,9 +123,7 @@ const empty: State = {
 };
 /** A version inspector changes the address within one profile, not its tab. */
 export const panelContentTarget = (entry: PanelOpening) =>
-  entry.panel.key === "buzz.profiles/profile" &&
-  profileHistoryActive(entry.target) &&
-  profilePanelKey(entry.target)
+  profileHistoryActive(entry.target) && profilePanelKey(entry.target)
     ? (entry.target.split("#")[0] as string)
     : entry.target;
 export const panelTabId = (entry: PanelOpening) =>

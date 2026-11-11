@@ -127,6 +127,7 @@ Add `"host"` to `inject`, then:
 ## UI
 
 - Prefer host classes and tokens over custom chrome: `className="ui-card"` for a card surface, `var(--space-panel-inset)` and `var(--space-2)` for spacing, `shell-sidebar-default` for a page-sidebar root. Plain `h1`, `h2`, `h3`, `p` and `button` get host default styling. Use inline styles for layout; separate CSS is not supported.
+- A panel that specializes a canonical profile target inherits profile Back/Forward and explicit Close behavior in conversation tabs. Match the existing profile address rather than inventing a separate history store; contextual channel panels retain their own behavior.
 - The host already supplies the shell, navigation, active state, error boundaries and (for panels and Settings) the outer surface, header or content column. Do not add your own page frame, header-level navigation, overlays, global stylesheet, theme or reset. Page content owns its interior padding and scrolling. Panels sit inside a host card: render only the body.
 - Avoid fixed widths; the page may be narrow. Use `width: "100%"`, flex and wrapping. Colors: use host tokens (`var(--...)`) rather than hard-coded values so light and dark themes both work.
 

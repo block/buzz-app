@@ -1,3 +1,4 @@
+import { viewerMember } from "../relay/membership";
 import type { Communities } from "../communities/service";
 import type { RelaySession } from "../relay/session";
 import { communityDestination } from "../communities/destination";
@@ -94,7 +95,7 @@ export function bindUnreadIndicator(
             (channel) =>
               !channel.huddle &&
               !channel.metadataPending &&
-              channel.members?.includes(viewer) &&
+              viewerMember(channel, viewer) &&
               (!gates ||
                 !scope ||
                 gates.allows({

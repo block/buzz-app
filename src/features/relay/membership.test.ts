@@ -15,7 +15,7 @@ import {
 import type { LiveCallbacks } from "./live";
 import type { ReadFilter } from "./events";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { rowProfileIds } from "./membership";
+import { rowProfileIds, viewerMember } from "./membership";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -500,4 +500,30 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
   } finally {
     owner.dispose();
   }
+});
+
+it("uses viewer membership without a peer roster and rejects stale or foreign viewer evidence", () => {
+  const membership = { pubkey: viewer.pubkey, joined: true };
+  expect(viewerMember({ viewerMembership: membership }, viewer.pubkey)).toBe(
+    true,
+  );
+  expect(viewerMember({ viewerMembership: membership }, pinky.pubkey)).toBe(
+    false,
+  );
+  expect(viewerMember({ viewerMembership: membership }, undefined)).toBe(false);
+  expect(viewerMember(undefined, viewer.pubkey)).toBe(false);
+  const retained = { members: [viewer.pubkey] };
+  expect(viewerMember(retained, viewer.pubkey)).toBe(true);
+  expect(
+    viewerMember(
+      { ...retained, viewerMembership: { ...membership, joined: false } },
+      viewer.pubkey,
+    ),
+  ).toBe(false);
+  expect(
+    viewerMember(
+      { ...retained, viewerMembership: { pubkey: pinky.pubkey, joined: true } },
+      viewer.pubkey,
+    ),
+  ).toBe(false);
 });

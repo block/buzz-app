@@ -215,9 +215,9 @@ set of choices when all of these are true:
   name does not continue the query when that same choice also has an alias or
   label equal to it: an agent known as both `Example` and `Example Agent` is one
   identity, not a namesake of itself, so `example` selects it. When a member
-  has an alias or label equal to the query, only members' names count here:
-  an outside choice's longer name never keeps a member's name from selecting
-  (`Honey Bee` outside the channel does not block a member `Honey`).
+  with aliases has an alias or label equal to the query, only members' names
+  count here: an outside choice's longer name never keeps a member's name from
+  selecting (`Honey Bee` outside the channel does not block a member `Honey`).
 
 An exact public key (Terms) is the exact name of the choice with that key, even
 one with no aliases, and of no other choice, and no name continues it: a key

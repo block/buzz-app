@@ -199,7 +199,7 @@ async function take(git: Git, checkout: Checkout): Promise<string> {
     if (head) await git([...at, "read-tree", "-m", head], { env });
     seeded.add(gitDir);
   }
-  await dropIgnored(git, at, env);
+  await reconcileIgnored(git, at, gitDir, env);
   const changed = split0(
     await git(
       [
@@ -234,11 +234,13 @@ async function take(git: Git, checkout: Checkout): Promise<string> {
   return (await git([...at, "write-tree"], { env })).trim();
 }
 
-/** Takes out of the private index what an ignore rule now covers, unless git
- * tracks it: `add --all` keeps updating any file the index already holds. */
-async function dropIgnored(
+/** Keeps the private index's ignored files to those git tracks: takes out
+ * what an ignore rule now covers, and puts in what was force-added since,
+ * since `add --all` only updates ignored files the index already holds. */
+async function reconcileIgnored(
   git: Git,
   at: string[],
+  gitDir: string,
   env: Record<string, string>,
 ) {
   const list = [
@@ -248,20 +250,29 @@ async function dropIgnored(
     "--ignored",
     "--exclude-standard",
   ];
-  const ignored = split0(
-    await git([...at, ...list], { env, limit: MAX_LIST_BYTES }),
-  );
-  if (!ignored.length) return;
-  const read = (extra: string[]) =>
-    git([...at, ...list, ...extra], { limit: MAX_LIST_BYTES });
-  const tracked = new Set(
-    split0(await read(["--with-tree=HEAD"]).catch(() => read([]))),
-  );
-  const gone = ignored.filter((path) => !tracked.has(path));
+  const read = (extra: string[], options: { env?: Record<string, string> }) =>
+    git([...at, ...list, ...extra], { ...options, limit: MAX_LIST_BYTES });
+  const [held, tracked] = await Promise.all([
+    read([], { env }).then((text) => new Set(split0(text))),
+    read(["--with-tree=HEAD"], {})
+      .catch(() => read([], {}))
+      .then((text) => new Set(split0(text))),
+  ]);
+  const gone = [...held].filter((path) => !tracked.has(path));
   if (gone.length)
     await git([...at, "update-index", "--force-remove", "-z", "--stdin"], {
       env,
       input: `${gone.join("\0")}\0`,
+    });
+  const missing = [...tracked].filter((path) => !held.has(path));
+  if (!missing.length) return;
+  const large = new Set(await largeFiles(git, at, gitDir, missing));
+  const added = missing.filter((path) => !large.has(path));
+  if (added.length)
+    await git([...at, "update-index", "--add", "--remove", "-z", "--stdin"], {
+      env,
+      input: `${added.join("\0")}\0`,
+      timeout: 120_000,
     });
 }
 

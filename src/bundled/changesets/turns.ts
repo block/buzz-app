@@ -227,17 +227,24 @@ export function createTurns(git: Git, storage: Storage = localStorage) {
   }
 
   async function addedWorktrees(record: Turn) {
-    const known = new Set(record.checkouts.map((checkout) => checkout.dir));
-    const repos = [...known].slice(0, 10);
+    const key = (checkout: Checkout) => `${checkout.dir}\0${checkout.prefix}`;
+    const known = new Set(record.checkouts.map(key));
+    const origins = record.checkouts.slice(0, 10);
     const found = (
       await Promise.all(
-        repos.map((dir) => checkoutsOf(git, dir).catch(() => [])),
+        origins.map((origin) =>
+          checkoutsOf(git, origin.dir).then(
+            (list) =>
+              list.map((checkout) => ({ ...checkout, prefix: origin.prefix })),
+            () => [],
+          ),
+        ),
       )
     ).flat();
     const added: TurnCheckout[] = [];
     for (const checkout of found) {
-      if (known.has(checkout.dir) || added.length >= NEW_WORKTREES) continue;
-      known.add(checkout.dir);
+      if (known.has(key(checkout)) || added.length >= NEW_WORKTREES) continue;
+      known.add(key(checkout));
       const before = await startingTree(git, checkout.dir).catch(
         () => undefined,
       );

@@ -147,6 +147,18 @@ describe("snapshot and changedFiles", () => {
     );
   });
 
+  it("captures an ignored file once git tracks it", async () => {
+    const dir = repo({ ".gitignore": "*.gen\n", "a.txt": "x\n" });
+    const c = here(dir);
+    write(dir, "out.gen", "g\n");
+    const before = await snapshot(git, c);
+    sh(dir, "add", "-f", "out.gen");
+    sh(dir, "commit", "-q", "-m", "track it");
+    const after = await snapshot(git, c);
+    const files = await changedFiles(git, c, before, after);
+    expect(files.map((f) => f.path)).toEqual(["out.gen"]);
+  });
+
   it("covers only the folder a chat opened, when it is inside the repository", async () => {
     const dir = repo({ "pkg/a.txt": "x\n", "other/b.txt": "y\n" });
     const c: Checkout = { dir, prefix: "pkg/", label: "pkg" };

@@ -514,6 +514,32 @@ describe("worktrees and slow baselines", () => {
     expect(turn.checkouts[0]?.files).toBe(0);
   });
 
+  it("keeps a new worktree to the folder the chat opened", async () => {
+    const dir = repo({ "pkg/a.txt": "x\n", "other/b.txt": "y\n" });
+    canvases.set(
+      "c",
+      workspaceCanvas({ folders: [join(dir, "pkg")], canvas: "" }),
+    );
+    const w = world();
+    const turns = createTurns(w.git, storage());
+    turns.watch(w.session, "https://relay.example");
+    w.set("A", "req", "working");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(1));
+    const side = `${dir}-side`;
+    sh(dir, "worktree", "add", "-q", "-b", "side", side);
+    writeFileSync(join(side, "pkg/a.txt"), "x2\n");
+    writeFileSync(join(side, "other/b.txt"), "y2\n");
+    w.set("A", "req", "done");
+    await vi.waitFor(() => expect(w.snapshots()).toBe(3));
+    turns.claim(reply("m1", NOW()));
+    await vi.waitFor(() => expect(turns.cardsFor("m1")).toHaveLength(1));
+    const turn = only(turns.cardsFor("m1"));
+    const index = turn.checkouts.findIndex((c) => c.dir === side);
+    expect(turn.checkouts[index]?.prefix).toBe("pkg/");
+    const files = await turns.summary(turn.id, index);
+    expect(files.map((f) => f.path)).toEqual(["pkg/a.txt"]);
+  });
+
   it("marks a card whose first snapshot was slow", async () => {
     const dir = repo();
     canvases.set("c", workspaceCanvas({ folders: [dir], canvas: "" }));

@@ -156,6 +156,12 @@ export type PluginUpdateCapability = Readonly<{
   subscribeQueue(id: string, listener: () => void): () => void;
   /** Stops queued/unopened reviews; an already-confirmed operation is not undone. */
   cancelQueue(id: string): boolean;
+  /**
+   * `retired` only when this host process saw that exact provider lifetime end
+   * with no queued, reviewing, or confirmed operation left; otherwise `unknown`.
+   * Missing on older hosts. Says nothing about the outcome of an earlier request.
+   */
+  getOwnerStatus?(ownerId: PluginUpdateOwnerId): "retired" | "unknown";
 }>;
 
 function freezeSnapshot(snapshot: PluginUpdateSnapshot): PluginUpdateSnapshot {
@@ -244,6 +250,7 @@ export const updateSourceKey = (source: GitUpdateSource) =>
 
 const MAX_RETAINED_UPDATE_QUEUES = 50;
 const MAX_RETAINED_UPDATE_REQUESTS = 1024;
+const MAX_RETAINED_UPDATE_OWNERS = 16;
 
 function uniqueQueueTokens(tokens: readonly PluginUpdateToken[]) {
   return [...new Set(tokens)];
@@ -260,6 +267,7 @@ export function createPluginUpdates(
   ) => Promise<{ repository: string; token: string } | null>,
 ) {
   const ownerId = crypto.randomUUID() as PluginUpdateOwnerId;
+  const lifetime = { ownerId, retired: false };
   let updates: readonly PluginUpdate[] = [];
   let closed = false;
   let pending: Promise<number | undefined> | undefined;
@@ -286,6 +294,8 @@ export function createPluginUpdates(
     const release = releaseActiveReview;
     releaseActiveReview = undefined;
     release?.();
+    // A confirmed operation keeps its review, and so this lifetime, open past dispose.
+    if (closed && !activeReview) lifetime.retired = true;
   };
   const key = (update: PluginUpdate) =>
     `${update.id}:${updateSourceKey(update.source)}:${update.candidate?.revision ?? update.error}`;
@@ -949,6 +959,7 @@ export function createPluginUpdates(
   return {
     snapshot: () => updates,
     capability,
+    lifetime: lifetime as Readonly<typeof lifetime>,
     forCaller(callerId: string): PluginUpdateCapability {
       return {
         ...capability,
@@ -1019,8 +1030,16 @@ export function createPluginUpdateCapabilityBridge() {
     candidates: Object.freeze([]),
     errors: Object.freeze([]),
   });
-  let provider: Pick<PluginUpdates, "capability" | "forCaller"> | undefined;
+  let provider:
+    | Pick<PluginUpdates, "capability" | "forCaller" | "lifetime">
+    | undefined;
   let unsubscribeProvider: (() => void) | undefined;
+  // Keep lifetime records, not providers, so replaced providers can be collected.
+  const lifetimes = new Map<PluginUpdateOwnerId, PluginUpdates["lifetime"]>();
+  const getOwnerStatus = (ownerId: PluginUpdateOwnerId) =>
+    lifetimes.get(ownerId)?.retired
+      ? ("retired" as const)
+      : ("unknown" as const);
   const listeners = new Set<() => void>();
   const notify = () => {
     notifySafely(listeners);
@@ -1054,6 +1073,7 @@ export function createPluginUpdateCapabilityBridge() {
         });
       },
       cancelQueue: (id) => resolve()?.cancelQueue(id) ?? false,
+      getOwnerStatus,
     };
     return capability;
   };
@@ -1066,6 +1086,11 @@ export function createPluginUpdateCapabilityBridge() {
     register(next: NonNullable<typeof provider>) {
       unsubscribeProvider?.();
       provider = next;
+      lifetimes.delete(next.lifetime.ownerId);
+      lifetimes.set(next.lifetime.ownerId, next.lifetime);
+      // An evicted lifetime becomes unknown, never retired.
+      for (const id of lifetimes.keys())
+        if (lifetimes.size > MAX_RETAINED_UPDATE_OWNERS) lifetimes.delete(id);
       unsubscribeProvider = next.capability.subscribe(notify);
       notify();
       return () => {

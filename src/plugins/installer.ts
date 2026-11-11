@@ -476,6 +476,8 @@ export function createPluginInstallerService(
         getQueueRequest: updates.getQueueRequest,
         getQueue: updates.getQueue,
         cancelQueue: updates.cancelQueue,
+        getOwnerStatus: (ownerId) =>
+          updates.getOwnerStatus?.(ownerId) ?? "unknown",
         subscribe(listener) {
           const stop = caller.effect(() => updates.subscribe(listener));
           return () => void stop();

@@ -421,6 +421,58 @@ it("isolates request identities by plugin and replays after that caller remounts
   }
 });
 
+it("reports an old provider retired to plugins only after its confirmed update releases the shared review", async () => {
+  const f = await setupUpdates();
+  const replacement = createPluginUpdates(f.manager as never, async () => null);
+  let stopReplacement = () => {};
+  try {
+    const market = (await f.as("example.market")).updates;
+    const other = (await f.as("example.other")).updates;
+    const ownerId = market?.ownerId;
+    if (!market || !other || !ownerId) throw new Error("Expected updates");
+    const queue = market.queueUpdates([f.token]);
+    const review = f.updates.startNextReview(f.requests.tryHoldReview);
+    if (!queue || !review) throw new Error("Expected an open update review");
+    expect(f.updates.beginOperation(queue.id, review.token)).toBeDefined();
+
+    stopReplacement = f.requests.registerUpdates(replacement);
+    f.unregister();
+    f.updates.dispose();
+    expect(market.ownerId).toBe(replacement.capability.ownerId);
+    expect(market.getOwnerStatus?.(ownerId)).toBe("unknown");
+    expect(f.requests.tryHoldReview()).toBeUndefined();
+    await expect(
+      f.core.submit(base, { id: "example.market", lifetime: () => () => {} }),
+    ).resolves.toBe("unavailable");
+    await replacement.check();
+    const next = replacement.capability.getSnapshot().candidates[0]?.token;
+    if (!next) throw new Error("Expected a replacement candidate");
+    expect(market.queueUpdates([next])).toBeDefined();
+    expect(
+      replacement.startNextReview(f.requests.tryHoldReview),
+    ).toBeUndefined();
+
+    expect(f.updates.finishReview(queue.id, review.token, "updated")).toBe(
+      true,
+    );
+    expect(market.getOwnerStatus?.(ownerId)).toBe("retired");
+    expect(other.getOwnerStatus?.(ownerId)).toBe("retired");
+    await f.fibers[0]?.dispose();
+    const remounted = (await f.as("example.market")).updates;
+    expect(remounted?.getOwnerStatus?.(ownerId)).toBe("retired");
+    const replacementId = replacement.capability.ownerId;
+    if (!replacementId) throw new Error("Expected a replacement identity");
+    expect(remounted?.getOwnerStatus?.(replacementId)).toBe("unknown");
+    expect(replacement.startNextReview(f.requests.tryHoldReview)).toBeDefined();
+  } finally {
+    stopReplacement();
+    replacement.dispose();
+    f.unregister();
+    f.updates.dispose();
+    await Promise.all(f.fibers.map((fiber) => fiber.dispose()));
+  }
+});
+
 it("bounds sequential plugin refreshes without throttling host-forced checks", async () => {
   vi.useFakeTimers();
   const f = await setupUpdates();

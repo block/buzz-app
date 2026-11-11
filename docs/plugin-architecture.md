@@ -462,6 +462,7 @@ type PluginUpdateCapability = {
   getQueue(id: string): PluginUpdateQueueSnapshot | undefined;
   subscribeQueue(id: string, listener: () => void): () => void;
   cancelQueue(id: string): boolean;
+  getOwnerStatus?(ownerId: PluginUpdateOwnerId): "retired" | "unknown"; // missing on older hosts
 };
 ```
 
@@ -545,6 +546,23 @@ replacement or host restart, so old identities then resolve as `unknown` and
 this contract does not provide cross-restart idempotency. An absent capability
 or an `unavailable` snapshot is not evidence that a prior ambiguous submission
 was rejected. A refresh does not resolve an earlier ambiguous submission.
+
+`getOwnerStatus(ownerId)` tells a caller whether a provider lifetime it captured
+earlier is over. It reports `retired` only after this host process saw that exact
+provider disposed with no queued or reviewing item and no confirmed operation
+left, so that lifetime can no longer open a review or install anything. A
+confirmed update keeps its provider unretired until the operation finishes and
+releases the shared review. Everything else is `unknown`: any provider not yet
+disposed, whether current, replaced or unregistered; an ID this host never
+registered; a lifetime older than the 16 most recently registered lifetimes; and
+any ID after a host restart. It is a point-in-time read: retirement does not
+notify subscribers. Feature-check the method; an older host without it gives no
+retirement evidence. `retired` does not say
+what happened to an earlier request: a `getQueueRequest()` result of `unknown`
+stays unknown, and retirement is not evidence of rejection, cancellation,
+installation or activation. It only means no review or operation from that
+lifetime remains, so any new submission goes through the current provider and
+the normal explicit review.
 
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the

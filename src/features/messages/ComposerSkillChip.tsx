@@ -30,10 +30,11 @@ export function ComposerSkillChip({
     <PopoverRoot>
       <PopoverTrigger
         ref={trigger}
-        className={`${styles.resource} ${styles.skillChip}`}
+        data-buzz-ui=""
+        className="inline-chip"
         aria-label={composerTokenName(token)}
       >
-        {token.label}
+        <span className="inline-chip-label">{token.label}</span>
       </PopoverTrigger>
       <PopoverPopup
         ref={popup}

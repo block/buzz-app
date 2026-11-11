@@ -154,9 +154,9 @@ it("writes a skill chip as `$name` and shows the name alone", () => {
     expect(f.input.insertToken(skill, { start: 4, end: 7 })).toBe(true);
   });
   expect(f.input).toHaveValue("Use $review ");
-  expect(screen.getByRole("img", { name: "Skill review" })).toHaveTextContent(
-    /^review$/,
-  );
+  expect(
+    screen.getByRole("button", { name: "Skill review" }),
+  ).toHaveTextContent(/^review$/);
   expect(chips(f.draft())).toEqual([{ token: skill, start: 4, end: 11 }]);
 });
 

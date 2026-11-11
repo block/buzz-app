@@ -8447,8 +8447,9 @@ const anotherKeyOnDevice = (
       return { seq: 1, pass: 0, builderlab: true, status: "idle" };
     if (command === "nsec_backup_confirmed") return confirmed;
     if (command === "sign_out") return signedOut();
-    // Replace's copy of a device key with no backup.
+    // Replace's copy of a device key with no backup, through the host clipboard.
     if (command === "identity_export") return key;
+    if (command === "clipboard_write_text") return undefined;
     throw new Error(`Unexpected command ${command}`);
   });
 const AFTER_RESTART = "buzz.sign-in-after-restart.v1";
@@ -8651,7 +8652,12 @@ it("Replace waits until a device key with no backup is copied and the user has i
   expect(await replaceDialog()).toHaveTextContent(MAYBE_NOT_BACKED_UP);
   expect(replaceKeyButton()).toBeDisabled();
   await copyDeviceKey(user);
-  expect(await navigator.clipboard.readText()).toBe(key);
+  // The host writes the key and clears it after a minute.
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "clipboard_write_text"),
+  ).toEqual([["clipboard_write_text", { text: key, clearAfterSecs: 60 }]]);
   expect(signOuts()).toEqual([]);
   await user.click(screen.getByRole("button", { name: "Replace" }));
   await waitFor(() =>

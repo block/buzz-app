@@ -102,19 +102,21 @@ function mount(initial: MentionDraft | string, maxLength = 16000) {
   return { input, view, draft: () => draft };
 }
 
-it("replaces an open query with one chip: named, separate from recipients, one undo step, and restored from a saved draft", () => {
+it("replaces an open query with one chip: named by its label, written as its text, separate from recipients, one undo step, and restored from a saved draft", () => {
   const f = mount("Use @no");
   const start = f.input.value.indexOf("@no");
   act(() => {
     expect(f.input.insertToken(folder, { start, end: start + 3 })).toBe(true);
   });
-  expect(f.input).toHaveValue("Use @notes ");
+  expect(f.input).toHaveValue(`Use ${folder.id} `);
   expect(f.input).toHaveFocus();
-  expect(f.input.selectionStart).toBe("Use @notes ".length);
+  expect(f.input.selectionStart).toBe(`Use ${folder.id} `.length);
   expect(screen.getByRole("img", { name: "Folder @notes" })).toHaveTextContent(
     "@notes",
   );
-  expect(chips(f.draft())).toEqual([{ token: folder, start, end: start + 6 }]);
+  expect(chips(f.draft())).toEqual([
+    { token: folder, start, end: start + folder.id.length },
+  ]);
   expect(f.draft().recipients).toEqual([]);
   // Plugins see MentionDraft; chips stay in the host-owned document.
   expect(Object.keys(f.draft()).sort()).toEqual([
@@ -126,16 +128,36 @@ it("replaces an open query with one chip: named, separate from recipients, one u
   expect(f.input).toHaveValue("Use @no");
   expect(chips(f.draft())).toEqual([]);
   act(() => f.input.undo(true));
-  expect(f.input).toHaveValue("Use @notes ");
+  expect(f.input).toHaveValue(`Use ${folder.id} `);
   const saved = mentionDraft(JSON.parse(JSON.stringify(f.draft())));
-  expect(chips(saved)).toEqual([{ token: folder, start, end: start + 6 }]);
+  expect(chips(saved)).toEqual([
+    { token: folder, start, end: start + folder.id.length },
+  ]);
   f.view.unmount();
   const restored = mount(saved);
-  expect(restored.input).toHaveValue("Use @notes ");
+  expect(restored.input).toHaveValue(`Use ${folder.id} `);
   expect(
     screen.getByRole("img", { name: "Folder @notes" }),
   ).toBeInTheDocument();
   expect(chips(restored.draft()).map((span) => span.token)).toEqual([folder]);
+});
+
+it("writes a skill chip as `$name` and shows the name alone", () => {
+  const skill: ComposerToken = {
+    kind: "skill",
+    id: "/example/skills/review/SKILL.md",
+    label: "review",
+    target: "a".repeat(64),
+  };
+  const f = mount("Use /re");
+  act(() => {
+    expect(f.input.insertToken(skill, { start: 4, end: 7 })).toBe(true);
+  });
+  expect(f.input).toHaveValue("Use $review ");
+  expect(screen.getByRole("img", { name: "Skill review" })).toHaveTextContent(
+    /^review$/,
+  );
+  expect(chips(f.draft())).toEqual([{ token: skill, start: 4, end: 11 }]);
 });
 
 it("refuses an unknown kind, a stale or literal range, and edits beyond the chip or length bounds", () => {
@@ -153,7 +175,7 @@ it("refuses an unknown kind, a stale or literal range, and edits beyond the chip
     expect(f.input.insertToken(folder, { start: 1, end: 4 })).toBe(false);
     expect(
       f.input.insertToken(
-        { ...folder, label: "@a-label-too-long-to-fit" },
+        { ...folder, id: "/a-path-too-long-to-fit" },
         { start: open, end: open + 3 },
       ),
     ).toBe(false);
@@ -170,22 +192,19 @@ it("refuses an unknown kind, a stale or literal range, and edits beyond the chip
     for (let i = 0; i < 32; i++)
       expect(
         many.input.insertToken(
-          { ...folder, id: `/f${i}`, label: "@f" },
+          { ...folder, id: `/${i.toString(36)}` },
           { start: i * 3, end: i * 3 + 1 },
         ),
       ).toBe(true);
     expect(
-      many.input.insertToken(
-        { ...folder, id: "/f33", label: "@f" },
-        { start: 96, end: 97 },
-      ),
+      many.input.insertToken({ ...folder, id: "/w" }, { start: 96, end: 97 }),
     ).toBe(false);
   });
   expect(chips(many.draft())).toHaveLength(32);
 });
 
-it("copies a chip as its label text, never as a link its label resembles", () => {
-  const link = { ...folder, label: "https://example.com" };
+it("copies a chip as its text, never as a link its text resembles", () => {
+  const link = { ...folder, id: "https://example.com" };
   const f = mount("x");
   act(() => {
     f.input.insertToken(link, { start: 0, end: 1 });
@@ -199,8 +218,11 @@ it("copies a chip as its label text, never as a link its label resembles", () =>
 });
 
 it("restores a chip only from chip data its snapshot keeps", () => {
-  const token = (attrs: object, rest: object[] = []) => ({
-    text: "@notes",
+  const token = (
+    attrs: Readonly<{ source: string; [key: string]: unknown }>,
+    rest: object[] = [],
+  ) => ({
+    text: attrs.source,
     recipients: [],
     document: {
       version: 1,
@@ -215,22 +237,28 @@ it("restores a chip only from chip data its snapshot keeps", () => {
       },
     },
   });
-  const valid = mentionDraft(token({ source: "@notes", semantic: folder }));
+  const valid = mentionDraft(token({ source: folder.id, semantic: folder }));
   expect(chips(valid).map((span) => span.token)).toEqual([folder]);
   for (const attrs of [
-    { source: "@notes", semantic: { ...folder, kind: "nexus.unknown" } },
+    { source: folder.id, semantic: { ...folder, kind: "nexus.unknown" } },
     { source: "@other", semantic: folder },
+    // The label is what the chip shows, not the text it stands for.
+    { source: folder.label, semantic: folder },
     {
-      source: "@notes",
+      source: folder.id,
       semantic: folder,
       recipient: { pubkey: "a".repeat(64), name: "notes" },
     },
     {
-      source: "@notes",
+      source: folder.id,
       semantic: folder,
       resource: { uri: "buzz://channel/c", label: "@notes" },
     },
-    { source: "@notes", semantic: folder, pending: { id: "p", name: "notes" } },
+    {
+      source: folder.id,
+      semantic: folder,
+      pending: { id: "p", name: "notes" },
+    },
   ]) {
     expect(chips(mentionDraft(token(attrs)))).toEqual([]);
   }
@@ -238,7 +266,7 @@ it("restores a chip only from chip data its snapshot keeps", () => {
   expect(
     chips(
       mentionDraft(
-        token({ source: "@notes", semantic: folder }, [{ type: "text" }]),
+        token({ source: folder.id, semantic: folder }, [{ type: "text" }]),
       ),
     ),
   ).toEqual([]);

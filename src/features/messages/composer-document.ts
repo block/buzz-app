@@ -13,7 +13,11 @@ import type {
   PendingMention,
 } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
-import { composerToken, type ComposerToken } from "./composer-token";
+import {
+  composerToken,
+  composerTokenText,
+  type ComposerToken,
+} from "./composer-token";
 
 /** The document owns editable marks and exact source tokens. Unimplemented
  * Markdown stays source text, never round-trips through an HTML serializer. */
@@ -245,7 +249,10 @@ export function readComposerDocument(
         return node.type.create(
           {
             ...node.attrs,
-            semantic: semantic?.label === node.attrs.source ? semantic : null,
+            semantic:
+              semantic && composerTokenText(semantic) === node.attrs.source
+                ? semantic
+                : null,
             recipient:
               node.attrs.recipient && valid(node.attrs.recipient)
                 ? node.attrs.recipient
@@ -599,7 +606,7 @@ function read(value: unknown): EditorNode | undefined {
         const token = composerToken(node.attrs.semantic);
         if (
           !token ||
-          token.label !== node.attrs.source ||
+          composerTokenText(token) !== node.attrs.source ||
           ("recipient" in node.attrs && node.attrs.recipient) ||
           ("resource" in node.attrs && node.attrs.resource) ||
           ("pending" in node.attrs && node.attrs.pending)

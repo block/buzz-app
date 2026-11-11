@@ -14503,14 +14503,15 @@ it("inserts a bundled provider's chip as one atom and keeps it unsent until chip
     } as unknown as CompletionResult);
   });
   fireEvent.keyDown(h.input(), { key: "Enter" });
-  expect(h.input()).toHaveValue("Use @notes ");
+  // The chip's text is the folder's path; the chip shows its label.
+  expect(h.input()).toHaveValue("Use /notes ");
   expect(
     within(h.input()).getByRole("img", { name: "Folder @notes" }),
-  ).toBeVisible();
+  ).toHaveTextContent(/^@notes$/);
   h.submit();
   expect(screen.getByText(/cannot send/)).toBeVisible();
   expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("Use @notes ");
+  expect(h.input()).toHaveValue("Use /notes ");
 });
 
 /** A mention provider the test publishes for, over the real `@` syntax. */

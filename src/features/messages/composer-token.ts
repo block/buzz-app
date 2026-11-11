@@ -50,6 +50,13 @@ export function composerToken(value: unknown): ComposerToken | undefined {
   }
 }
 
+/** The text a chip stands for in the draft and the sent message; the chip
+ * itself shows its label. An agent invokes a skill as `$name` and opens a
+ * folder by its path. */
+export function composerTokenText(token: ComposerToken) {
+  return token.kind === "skill" ? `$${token.label}` : token.id;
+}
+
 export function composerTokenName(token: ComposerToken) {
   return `${token.kind === "folder" ? "Folder" : "Skill"} ${token.label}`;
 }

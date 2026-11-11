@@ -53,6 +53,7 @@ import type { ComposerResource } from "../conversation/contracts";
 import {
   composerToken,
   composerTokenName,
+  composerTokenText,
   type ComposerToken,
 } from "./composer-token";
 import {
@@ -1182,7 +1183,7 @@ export function EditableInput({
         to,
         Fragment.fromArray([
           composerSchema.nodes.token.create({
-            source: token.label,
+            source: composerTokenText(token),
             semantic: token,
           }),
           composerSchema.text(" "),
@@ -2645,11 +2646,12 @@ export function EditableInput({
           // Host-owned artwork: restore never depends on the providing plugin.
           host.semantic ? (
             <span
-              className={styles.resource}
+              data-buzz-ui=""
+              className="inline-chip"
               role="img"
               aria-label={composerTokenName(host.semantic)}
             >
-              {host.semantic.label}
+              <span className="inline-chip-label">{host.semantic.label}</span>
             </span>
           ) : host.pending ? (
             <InlineChip

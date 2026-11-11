@@ -378,6 +378,18 @@ export type AgentAddedTab = Readonly<{
   subscribe?: (listener: () => void) => () => void;
 }>;
 export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
+/** Standing instructions a plugin gives every turn of every agent this copy
+ * of the app runs, or of those `when` accepts, while the plugin is on. */
+export type AgentInstructions = Readonly<{
+  id: string;
+  /** Sent with every turn, so keep it short. */
+  text: string;
+  /** Whether the agent's turns get them; absent, every agent's do. Asked as
+   * each turn's prompt is built. A `when` that throws leaves out only these. */
+  when?: (agent: Agent) => boolean;
+}>;
+/** Instructions for one turn, with the plugin that gave them. */
+export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
@@ -564,6 +576,8 @@ export type AgentHandle = Readonly<{
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
+  /** The instructions plugins give the agent's turns now, in a stable order. */
+  instructions?(): readonly TurnInstructions[];
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -1346,6 +1360,10 @@ export type Agents = {
   addTool(tool: AddedTool): void;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Adds standing instructions to every turn of the agents this copy of the
+   * app runs, or of those `when` accepts, while the plugin is on. Each turn
+   * shows them in a `<plugin-instructions>` section that names the plugin. */
+  addInstructions(instructions: AgentInstructions): void;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -1929,6 +1947,7 @@ export class AgentsService extends Service implements Agents {
   private readonly tabContributions;
   private readonly attentionControls;
   private readonly addedTools;
+  private readonly addedInstructions;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
   private readonly attentionSources;
@@ -2064,6 +2083,7 @@ export class AgentsService extends Service implements Agents {
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
@@ -2463,6 +2483,7 @@ export class AgentsService extends Service implements Agents {
         }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      instructions: (agent) => this.turnInstructions(agent),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -2883,6 +2904,34 @@ export class AgentsService extends Service implements Agents {
       this.toolNames.add(tool.name);
       return () => this.toolNames.delete(tool.name);
     });
+  }
+  addInstructions(instructions: AgentInstructions) {
+    if (
+      !/^[a-z0-9][a-z0-9._-]*$/.test(instructions.id ?? "") ||
+      typeof instructions.text !== "string" ||
+      !instructions.text.trim() ||
+      (instructions.when !== undefined &&
+        typeof instructions.when !== "function")
+    )
+      throw new Error("Agent instructions need an id and text");
+    this.addedInstructions.register(this.ctx, instructions);
+  }
+  /** The instructions active plugins give this agent's turns now, ordered by
+   * plugin and id so the order plugins start in does not change a prompt. */
+  private turnInstructions(agent: Agent): readonly TurnInstructions[] {
+    const current = this.agent(agent.key) ?? agent;
+    return this.addedInstructions
+      .snapshot()
+      .filter((entry) => {
+        try {
+          return !entry.when || entry.when(current);
+        } catch (error) {
+          console.warn("Agent instructions failed to match", entry.key, error);
+          return false;
+        }
+      })
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map((entry) => ({ plugin: entry.pluginId, text: entry.text }));
   }
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
     const plugin = this.ctx.pluginOwner?.id;

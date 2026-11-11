@@ -823,6 +823,45 @@ it("ends a turn's prompt with the notes plugins left for it in its channel", asy
   expect(notes).toHaveBeenCalledWith(channel, mention.id);
 });
 
+it("ends every turn's prompt with plugins' instructions, before the attention note", async () => {
+  const mention = message("2", "@Claude go on", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, agent } = setup([mention]);
+  Object.assign(agent, {
+    instructions: () => [
+      { plugin: "acme.dibs", text: "Run dibs_check before a fix." },
+    ],
+  });
+  await deliver({ type: "mention", event: mention });
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(prompt).toMatch(
+    /\n\n<plugin-instructions plugin="acme\.dibs">\nRun dibs_check before a fix\.\n<\/plugin-instructions>\n\n<attention>/,
+  );
+});
+
+it("gives a timer's one-off turn plugins' instructions once", async () => {
+  const { deliver, claudes, agent } = setup();
+  Object.assign(agent, {
+    instructions: () => [
+      { plugin: "acme.dibs", text: "Run dibs_check before a fix." },
+    ],
+  });
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const prompt =
+    claudes().find((process) => process.prompts.length)?.prompts[0] ?? "";
+  expect(
+    prompt.match(/<plugin-instructions plugin="acme\.dibs">/g),
+  ).toHaveLength(1);
+  expect(prompt).toMatch(/<\/plugin-instructions>\n\n<attention>/);
+});
+
 it("keeps the notes of a turn Claude never started for the next, ahead of newer ones", async () => {
   const mention = message("2", "@Claude go on", {
     tags: [

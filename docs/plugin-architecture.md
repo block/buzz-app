@@ -909,6 +909,21 @@ activity. The signal is a live object, not part of saved tool arguments or
 session archives. `BuzzClient` from `@buzz/author` declares this property;
 `AddedToolContext` keeps only the conversation destination.
 
+A plugin, bundled or installed, can give standing instructions to every turn
+of the agents this copy of the app runs with
+`ctx.agents.addInstructions({ id, text, when? })`. Each turn, whatever its
+harness, ends with a `<plugin-instructions plugin="…">` section for each
+plugin's instructions, before the attention note; a watch's or timer's own
+turn has them too. The base prompt tells the agent to follow them as it
+follows its own instructions, below the base prompt and the owner's requests.
+An optional `when(agent)`, asked as each turn's prompt is built, limits them
+to the agents it returns true for; a `when` that throws leaves out only its
+own. Sections are ordered by plugin and id. The text is sent with every turn,
+so keep it short; text that changes from turn to turn belongs in a note
+(`ctx.agents.note`). They are removed when the plugin is turned off or its
+scope ends. A harness's own prompt hooks (`registerHook`) can add context too,
+but only for that harness and only as its native hook allows.
+
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
 [the authoring guide](plugin-authoring-guide.md), bundled with the app.

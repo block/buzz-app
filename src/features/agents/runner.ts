@@ -517,6 +517,10 @@ export type RunnerHost = {
   plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
+  /** The instructions plugins give the agent's turns now. */
+  instructions?(
+    agent: Agent,
+  ): ReturnType<NonNullable<AgentHandle["instructions"]>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
   soloWorkspaces?(agent: Agent): SoloWorkspaces | undefined;
@@ -3011,6 +3015,7 @@ export class AgentRunners {
           },
         }),
         templates: () => this.host.templates(agent),
+        instructions: () => this.host.instructions?.(agent) ?? [],
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),

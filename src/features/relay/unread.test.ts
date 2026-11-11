@@ -5963,6 +5963,7 @@ it("opening a channel quiets its row while its messages and threads stay unread"
   expect(h.snapshot().row).toEqual({
     observedCount: 1,
     attentionCount: 1,
+    mentionCount: 0,
     threadCount: 1,
   });
 });
@@ -6039,7 +6040,12 @@ it.each([
         [`seen:msg:${mention.id}`]: seen,
       }),
     );
-    const quiet = { observedCount: 0, attentionCount: 0, threadCount: 0 };
+    const quiet = {
+      observedCount: 0,
+      attentionCount: 0,
+      mentionCount: 0,
+      threadCount: 0,
+    };
     expect(h.snapshot().row).toEqual(quiet);
     // An ordinary message at the cut stays quiet: only a timestamp says so.
     h.emit([message(h.alice, "room", "late ordinary", delivered)]);
@@ -6051,7 +6057,7 @@ it.each([
     ]);
     expect(h.snapshot()).toMatchObject({
       attentionCount: 2,
-      row: { observedCount: 1, attentionCount: 1 },
+      row: { observedCount: 1, attentionCount: 1, mentionCount: 1 },
     });
     // Receipts stay on this device: only the channel cut is published.
     expect(Object.keys(h.journal()?.own ?? {})).toEqual(["seen:room"]);

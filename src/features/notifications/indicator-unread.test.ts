@@ -9,6 +9,7 @@ import type {
 } from "../relay/sidebar-preferences";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { bindUnreadIndicator, type IndicatorGates } from "./indicator-unread";
+import type { BadgeActivity } from "./preferences";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -118,6 +119,131 @@ function setup(
   };
 }
 const target = { kind: "channel", channelId: "room" } as const;
+
+function badgePolicy(initial: BadgeActivity = "mentions-and-dms") {
+  let activity = initial;
+  const listeners = new Set<() => void>();
+  return {
+    allows: () => true,
+    badgeActivity: () => activity,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    select(next: BadgeActivity) {
+      activity = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+it("filters ordinary posts and followed replies, and immediately reprojects preference changes", async () => {
+  const h = setup();
+  h.grant();
+  const policy = badgePolicy("all");
+  h.bind(policy);
+  h.emit([message(h.peer, "room", "ordinary", 11)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  policy.select("mentions-and-dms");
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  const root = message(h.viewer, "room", "my thread", 12);
+  h.emit([
+    root,
+    message(h.peer, "room", "reply", 13, [["e", root.id, "", "reply"]]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  expect(h.session.unread.snapshot(target).attentionCount).toBe(1);
+  h.emit([
+    message(h.peer, "room", "reply sent to channel", 14, [
+      ["e", root.id, "", "reply"],
+      ["broadcast", "1"],
+    ]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  await h.session.unread.markUnreadLocal(target);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  policy.select("all");
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  expect(h.query).not.toHaveBeenCalled();
+});
+
+it.each(["post", "reply"])(
+  "projects an unread %s mention and follows row visibility and reading",
+  async (kind) => {
+    const h = setup();
+    h.grant();
+    h.bind(badgePolicy());
+    const root = message(h.peer, "room", "root", 11);
+    const tags = [["p", h.viewer.pubkey]];
+    if (kind !== "post") tags.push(["e", root.id, "", "reply"]);
+    const mention = message(h.peer, "room", "mention", 12, tags);
+    h.emit([root, mention]);
+    expect(h.project).toHaveBeenLastCalledWith(true);
+    expect(h.session.unread.snapshot(target).mentionCount).toBe(1);
+    await h.session.unread.enterChannel("room");
+    expect(h.project).toHaveBeenLastCalledWith(false);
+    expect(h.session.unread.snapshot(target).mentionCount).toBe(1);
+    expect(h.session.unread.snapshot(target).row?.mentionCount).toBe(0);
+    h.session.unread.leaveChannel("room");
+    const newer = message(h.peer, "room", "later mention", 13, tags);
+    h.emit([newer]);
+    expect(h.project).toHaveBeenLastCalledWith(true);
+    await h.session.unread.markChannelRead("room");
+    expect(h.project).toHaveBeenLastCalledWith(false);
+    expect(h.query).not.toHaveBeenCalled();
+  },
+);
+
+it("includes DMs without requiring a mention, but excludes ordinary Solo activity", async () => {
+  const h = setup();
+  h.emit([
+    roster(h.relay, "solo", [h.viewer.pubkey], 10),
+    metadata(h.relay, "solo", "Solo", 10, [["t", "solo"]]),
+    message(h.peer, "solo", "agent completion", 11),
+    roster(h.relay, "dm", [h.viewer.pubkey, h.peer.pubkey], 10),
+    metadata(h.relay, "dm", "DM", 10, [["t", "dm"]]),
+  ]);
+  h.bind(badgePolicy());
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  const direct = message(h.peer, "dm", "direct message", 12);
+  h.emit([direct]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  await h.session.unread.markThrough(
+    { kind: "channel", channelId: "dm" },
+    direct.id,
+  );
+  expect(h.project).toHaveBeenLastCalledWith(false);
+});
+
+it("retains mute, access and agent-audience exclusions in mentions-and-DMs mode", async () => {
+  const h = setup({
+    decode: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    write: async ({ muted }) => (muted ? ["room"] : []),
+  });
+  h.grant();
+  await h.session.sidebarPreferences.ensure();
+  h.bind(badgePolicy());
+  h.emit([
+    message(h.peer, "room", "coordination", 11, [
+      ["p", h.viewer.pubkey],
+      ["audience", "agents"],
+    ]),
+  ]);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  h.emit([message(h.peer, "room", "mention", 12, [["p", h.viewer.pubkey]])]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  await h.session.sidebarPreferences.setMute("room", true);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  await h.session.sidebarPreferences.setMute("room", false);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  h.emit([roster(h.relay, "room", [], 13)]);
+  expect(h.project).toHaveBeenLastCalledWith(false);
+});
 it("starts clear for unknown evidence; projects arrivals and explicit read clearing without new reads", async () => {
   const h = setup();
   h.grant();

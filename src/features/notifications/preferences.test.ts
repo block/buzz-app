@@ -17,6 +17,22 @@ it("values saved before per-category sounds restore with the defaults", () => {
   );
 });
 
+it("keeps existing badge behavior and restores a separately chosen badge filter", () => {
+  expect(parsePreferences(stored).badgeActivity).toBe("all");
+  const preferences = parsePreferences({
+    ...stored,
+    enabled: false,
+    badgeActivity: "mentions-and-dms",
+  });
+  expect(parsePreferences(JSON.parse(JSON.stringify(preferences)))).toEqual(
+    preferences,
+  );
+  expect(preferences.enabled).toBe(false);
+  expect(() =>
+    parsePreferences({ ...stored, badgeActivity: "unknown" }),
+  ).toThrow("Invalid badge activity");
+});
+
 it.each([
   { mention: "ping", direct: "unison", thread: "doop", agent: "doodone" },
   {

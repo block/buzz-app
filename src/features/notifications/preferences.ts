@@ -13,18 +13,21 @@ export const NOTIFICATION_CATEGORIES = [
   "agent",
 ] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+export type BadgeActivity = "all" | "mentions-and-dms";
 export type NotificationPreferences = Readonly<{
   enabled: boolean;
   notifyWhileViewing: boolean;
   sound: boolean;
   sounds: CategorySounds;
   categories: Readonly<Record<string, boolean>>;
+  badgeActivity: BadgeActivity;
 }>;
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
   Object.freeze({
     enabled: true,
     notifyWhileViewing: false,
     sound: true,
+    badgeActivity: "all",
     sounds: DEFAULT_CATEGORY_SOUNDS,
     categories: Object.freeze({
       mention: true,
@@ -57,6 +60,12 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     throw new Error("Invalid notification preferences");
   const value = raw as Record<string, unknown>;
   if (
+    value.badgeActivity !== undefined &&
+    value.badgeActivity !== "all" &&
+    value.badgeActivity !== "mentions-and-dms"
+  )
+    throw new Error("Invalid badge activity");
+  if (
     typeof value.enabled !== "boolean" ||
     typeof value.notifyWhileViewing !== "boolean" ||
     typeof value.sound !== "boolean" ||
@@ -80,6 +89,7 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     notifyWhileViewing: value.notifyWhileViewing,
     sound: value.sound as boolean,
     sounds: parseSounds(value.sounds),
+    badgeActivity: value.badgeActivity ?? "all",
     categories: Object.freeze(Object.fromEntries(categories)),
   });
 }

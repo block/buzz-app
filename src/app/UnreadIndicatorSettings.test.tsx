@@ -33,11 +33,53 @@ function setup(initial: IndicatorPermission) {
     set: vi.fn(async () => {}),
   });
   cleanups.push(dock.dispose);
-  render(<UnreadIndicatorSettings indicator={dock} />, {
-    wrapper: ToastProvider,
-  });
+  render(
+    <UnreadIndicatorSettings
+      indicator={dock}
+      badgeActivity="all"
+      onBadgeActivityChange={() => {}}
+    />,
+    {
+      wrapper: ToastProvider,
+    },
+  );
   return { permission, dock };
 }
+it("offers badge activity independently of system permission", async () => {
+  const dock = createUnreadIndicator({
+    permission: async () => "denied",
+    set: async () => {},
+  });
+  cleanups.push(dock.dispose);
+  const change = vi.fn();
+  const view = render(
+    <UnreadIndicatorSettings
+      indicator={dock}
+      badgeActivity="all"
+      onBadgeActivityChange={change}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await act(() => dock.refresh());
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("combobox", { name: "Badge activity" }));
+  await user.click(
+    screen.getByRole("option", { name: "Mentions and direct messages" }),
+  );
+  expect(change).toHaveBeenCalledExactlyOnceWith("mentions-and-dms");
+  view.rerender(
+    <UnreadIndicatorSettings
+      indicator={dock}
+      badgeActivity="mentions-and-dms"
+      onBadgeActivityChange={change}
+    />,
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Badge activity" }),
+  ).toHaveTextContent("Mentions and direct messages");
+  expect(dock.snapshot().permission).toBe("denied");
+});
+
 it("requests permission only through the explicit Settings button and updates status", async () => {
   const h = setup("default");
   await act(() => h.dock.refresh());
@@ -115,7 +157,9 @@ it("shows no dead permission actions when Dock badges are unavailable", async ()
   expect(
     screen.getByText(/Dock badges require a bundled macOS app/),
   ).toBeInTheDocument();
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Check Dock permission" }),
+  ).not.toBeInTheDocument();
   expect(h.permission.mock.calls).toEqual([[false]]);
 });
 
@@ -142,7 +186,11 @@ it.each([
     const indicator = createUnreadIndicator();
     cleanups.push(indicator.dispose);
     const { container } = render(
-      <UnreadIndicatorSettings indicator={indicator} />,
+      <UnreadIndicatorSettings
+        indicator={indicator}
+        badgeActivity="all"
+        onBadgeActivityChange={() => {}}
+      />,
     );
     await act(async () => {
       indicator.setUnread(true);
@@ -162,9 +210,16 @@ it("shows a Dock write error and retries through the existing permission check",
     set,
   });
   cleanups.push(indicator.dispose);
-  render(<UnreadIndicatorSettings indicator={indicator} />, {
-    wrapper: ToastProvider,
-  });
+  render(
+    <UnreadIndicatorSettings
+      indicator={indicator}
+      badgeActivity="all"
+      onBadgeActivityChange={() => {}}
+    />,
+    {
+      wrapper: ToastProvider,
+    },
+  );
   await act(() => indicator.refresh());
   set.mockRejectedValueOnce(new Error("Dock unavailable"));
   await act(async () => {

@@ -5,12 +5,18 @@ import { useSyncExternalStore } from "react";
 import type { UnreadIndicator } from "../features/notifications/indicator";
 import { Button } from "../shared/design-system/ui/Button";
 import { usePermissionCheck } from "./usePermissionCheck";
+import { Select } from "../shared/design-system/ui/Select";
+import type { BadgeActivity } from "../features/notifications/preferences";
 
 export function UnreadIndicatorSettings({
   indicator,
+  badgeActivity,
+  onBadgeActivityChange,
   active = true,
 }: {
   indicator: UnreadIndicator;
+  badgeActivity: BadgeActivity;
+  onBadgeActivityChange(activity: BadgeActivity): void;
   active?: boolean;
 }) {
   const state = useSyncExternalStore(indicator.subscribe, indicator.snapshot);
@@ -19,6 +25,28 @@ export function UnreadIndicatorSettings({
   return (
     <div className="space-y-3">
       <InlineHeader title="Dock unread badge" />
+      <SettingsGroup>
+        <Select
+          label="Badge activity"
+          variant="preference"
+          value={badgeActivity}
+          groups={[
+            {
+              label: "",
+              options: [
+                { value: "all", label: "All unread activity" },
+                {
+                  value: "mentions-and-dms",
+                  label: "Mentions and direct messages",
+                },
+              ],
+            },
+          ]}
+          onValueChange={(value) =>
+            onBadgeActivityChange(value as BadgeActivity)
+          }
+        />
+      </SettingsGroup>
       <SettingsGroup layout="form">
         <p className="text-body-sm text-subtle">
           {state.permission === "unavailable"

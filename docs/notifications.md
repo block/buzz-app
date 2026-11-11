@@ -205,7 +205,13 @@ removing its retained unread evidence, so unmuting can restore the dot. The dot
 stays clear while mute preferences are unresolved. Personal space,
 account/session changes, access loss and host disposal clear or recompute the
 indicator. Disabling Channels does not stop host ownership. Desktop alert
-preferences do not alter this unread indicator.
+preferences do not alter this unread indicator. The separate **Badge activity**
+choice in Settings → Notifications defaults to **All unread activity**. Choose
+**Mentions and direct messages** to omit ordinary channel posts, replies without
+a mention, and Solo activity without a mention. Viewer mentions still qualify, including mentions in replies. Replies sent
+to the channel do not qualify without a mention. Existing channel mutes, row-seen
+state and read/access checks continue to apply. This account-local choice takes
+effect immediately and does not change desktop alerts or sidebar unread state.
 
 One ordered host writer calls a main-window-only command using Tauri's standard
 `set_badge_label` API. macOS draws the badge; no custom artwork is supplied.

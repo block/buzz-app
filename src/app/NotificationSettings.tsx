@@ -294,6 +294,10 @@ export function NotificationSettings({
         </section>
         <UnreadIndicatorSettings
           indicator={notifications.indicator}
+          badgeActivity={preferences.badgeActivity}
+          onBadgeActivityChange={(badgeActivity) =>
+            notifications.updatePreferences({ badgeActivity })
+          }
           active={active}
         />
         {active && state.preferencesError && (

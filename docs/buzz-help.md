@@ -536,6 +536,12 @@ revokes all of them, and a pairing unused for 30 days expires.
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
   their avatar previews. Muted activity does not light the macOS Dock unread dot.
   Muting does not mark messages or threads as read.
+- **Dock badge activity**: on macOS, Settings → Notifications → Dock unread badge
+  lets you choose **All unread activity** or **Mentions and direct messages**.
+  The latter omits ordinary posts and replies without a mention. It keeps
+  mentions (including mentions in replies) and DMs,
+  subject to existing mutes and read state. Desktop alerts and sidebar unread
+  markers are unchanged.
 - **Hidden DMs**: **Close conversation** and **Hide conversation** take a DM out
   of the sidebar without leaving it. To find one again, start a **New message**
   to exactly the same people. Its earlier messages appear before you send,

@@ -53,6 +53,8 @@ export type UnreadSnapshot = Readonly<{
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
+  /** Unread viewer mentions; absent when not supplied by the host. */
+  mentionCount?: number | null;
   coverage: "unknown" | "observed";
   freshness: "unknown" | "observed" | "stale";
   manual: "none" | "local-only" | "remote";
@@ -64,6 +66,7 @@ export type UnreadSnapshot = Readonly<{
   row?: Readonly<{
     observedCount: number;
     attentionCount: number;
+    mentionCount?: number;
     /** Threads with unread replies the row still shows. */
     threadCount: number;
   }>;
@@ -1064,6 +1067,7 @@ export function createUnread({
         target,
         observedCount: null,
         attentionCount: null,
+        mentionCount: null,
         coverage: "unknown",
         freshness: "unknown",
         manual: "none",
@@ -1072,8 +1076,10 @@ export function createUnread({
     const state = reads.state();
     let count = 0,
       attention = 0,
+      mentions = 0,
       rowCount = 0,
-      rowAttention = 0;
+      rowAttention = 0,
+      rowMentions = 0;
     const rowThreads = new Set<string>();
     const dm = isDm(target.channelId);
     indexEvidence();
@@ -1092,6 +1098,7 @@ export function createUnread({
       if (!isUnread(entry, state, dm)) continue;
       count++;
       if (priority(entry, dm)) attention++;
+      if (entry.mentioned) mentions++;
       if (
         target.kind === "channel" &&
         (!entry.parentId || entry.broadcast) &&
@@ -1105,6 +1112,7 @@ export function createUnread({
         continue;
       rowCount++;
       if (priority(entry, dm)) rowAttention++;
+      if (entry.mentioned) rowMentions++;
       if (entry.rootId && activityEvidence(entry)) rowThreads.add(entry.rootId);
     }
     const manual = reads.localUnread(key)
@@ -1140,6 +1148,7 @@ export function createUnread({
         : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
+      mentionCount: evidence ? mentions : null,
       coverage: evidence ? "observed" : "unknown",
       freshness,
       manual,
@@ -1149,6 +1158,7 @@ export function createUnread({
             row: Object.freeze({
               observedCount: rowCount,
               attentionCount: rowAttention,
+              mentionCount: rowMentions,
               threadCount: rowThreads.size,
             }),
           }
@@ -1162,8 +1172,10 @@ export function createUnread({
     a.sampling === b.sampling &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
+    a.mentionCount === b.mentionCount &&
     a.row?.observedCount === b.row?.observedCount &&
     a.row?.attentionCount === b.row?.attentionCount &&
+    a.row?.mentionCount === b.row?.mentionCount &&
     a.row?.threadCount === b.row?.threadCount &&
     a.coverage === b.coverage &&
     a.freshness === b.freshness &&

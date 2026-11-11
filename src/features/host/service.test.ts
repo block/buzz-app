@@ -1003,6 +1003,34 @@ it("returns a non-text body view without a clone, accepts empty bodies and never
   }
 });
 
+it("reads a public page's preview through its own command and validates the timeout first", async () => {
+  const { fiber, host } = await oncePlugin();
+  const page = { status: 200, preview: { title: "Example" } };
+  vi.mocked(invoke).mockResolvedValueOnce(page);
+  try {
+    await expect(
+      host.readPage?.("https://example.test/", { timeoutMs: 5000 }),
+    ).resolves.toEqual(page);
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      [
+        "plugin_host_read_page",
+        {
+          id: "example.plugin",
+          revision: "abc",
+          url: "https://example.test/",
+          timeoutMs: 5000,
+        },
+      ],
+    ]);
+    for (const timeoutMs of [0, 1.5, 30001])
+      await expect(
+        host.readPage?.("https://example.test/", { timeoutMs }),
+      ).rejects.toThrow("Invalid page request");
+    expect(invoke).toHaveBeenCalledTimes(1);
+  } finally {
+    await fiber.dispose();
+  }
+});
 it("refuses fallback arrays and corrupted frames before returning any bytes", async () => {
   const { fiber, host } = await oncePlugin();
   const wrongLength = byteFrame();
@@ -1616,4 +1644,57 @@ it("preserves requestOnce owner-first errors and matches upload owner wording", 
     }),
   ).rejects.toThrow(ownerError);
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it("keeps an asynchronous streamed message together with queued writes", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(7);
+  const process = await plugin.host.spawn?.("agent");
+  if (!process?.writeStream) throw new Error("Missing streaming process");
+  const pieces: string[] = [];
+  vi.mocked(invoke).mockImplementation(async (_command, args) => {
+    pieces.push((args as { data: string }).data);
+  });
+  let release!: () => void;
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  const stream = process.writeStream(
+    (async function* () {
+      yield "first";
+      await held;
+      yield "last\n";
+    })(),
+  );
+  const next = process.write("next\n");
+  await vi.waitFor(() => expect(pieces).toEqual(["first"]));
+  release();
+  await Promise.all([stream, next]);
+  expect(pieces).toEqual(["first", "last\n", "next\n"]);
+});
+
+it("stops a process after a failed streamed frame and rejects queued writes", async () => {
+  const { plugin } = pluginContext();
+  vi.mocked(invoke).mockResolvedValueOnce(7);
+  const process = await plugin.host.spawn?.("agent");
+  if (!process?.writeStream) throw new Error("Missing streaming process");
+  const pieces: string[] = [];
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_host_process_write")
+      pieces.push((args as { data: string }).data);
+  });
+  const failed = process.writeStream(
+    (async function* () {
+      yield "partial";
+      throw new Error("read failed");
+    })(),
+  );
+  const next = process.write("next\n");
+  await expect(failed).rejects.toThrow("read failed");
+  await expect(next).rejects.toThrow("read failed");
+  expect(pieces).toEqual(["partial"]);
+  expect(invoke).toHaveBeenCalledWith(
+    "plugin_host_process_kill",
+    expect.objectContaining({ handle: 7 }),
+  );
 });

@@ -427,37 +427,54 @@ it("defaults to platform storage using the bundled manifests", async () => {
   expect(values.get("buzzodz.plugins.v1")).toContain('"example":false');
 });
 
-it("installs a selected preview through the management boundary, rejecting overlap and stale polls", async () => {
-  const install = deferred();
-  const imports = {
-    checkFolder: vi.fn(async () => "updated"),
-    previewFolder: vi.fn(async () => null),
-    folder: vi.fn(async () => null),
-    files: vi.fn(async () => null),
-    git: vi.fn(async () => null),
-    url: vi.fn(async () => null),
-    checkGit: vi.fn(async () => null),
-    discard: vi.fn(async () => {}),
-    install: vi.fn(() => install.promise),
-  };
-  const { plugins, installation } = harness({ imports });
-  await vi.advanceTimersByTimeAsync(0);
-  expect(plugins.imports).toBe(imports);
-  const poll = deferred();
-  vi.mocked(installation.getCatalog).mockReturnValueOnce(poll.promise);
-  await vi.advanceTimersByTimeAsync(1000);
-  const first = plugins.installImport("preview", "nested/dist");
-  expect(await plugins.installImport("other", "wrong")).toBe(false);
-  expect(imports.install).toHaveBeenCalledExactlyOnceWith(
-    "preview",
-    "nested/dist",
-  );
-  install.resolve(ready(false));
-  expect(await first).toBe(true);
-  poll.resolve(ready());
-  await vi.advanceTimersByTimeAsync(0);
-  expect(plugins.snapshot().configuration).toEqual(ready(false));
-});
+it.each(["resolve", "reject"] as const)(
+  "retains a confirmed import past its watchdog until it %ss, rejecting overlap and stale polls",
+  async (settlement) => {
+    const install = deferred();
+    const imports = {
+      checkFolder: vi.fn(async () => "updated"),
+      previewFolder: vi.fn(async () => null),
+      folder: vi.fn(async () => null),
+      files: vi.fn(async () => null),
+      git: vi.fn(async () => null),
+      url: vi.fn(async () => null),
+      checkGit: vi.fn(async () => null),
+      discard: vi.fn(async () => {}),
+      install: vi.fn(() => install.promise),
+    };
+    const { plugins, installation } = harness({ imports });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(plugins.imports).toBe(imports);
+    const poll = deferred();
+    vi.mocked(installation.getCatalog).mockReturnValueOnce(poll.promise);
+    await vi.advanceTimersByTimeAsync(1000);
+    const first = plugins.installImport("preview", "nested/dist");
+    const returned = vi.fn();
+    void first.then(returned);
+    expect(await plugins.installImport("other", "wrong")).toBe(false);
+    expect(imports.install).toHaveBeenCalledExactlyOnceWith(
+      "preview",
+      "nested/dist",
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(plugins.snapshot().error).toContain("10 seconds");
+    expect(plugins.snapshot().busy).toBe(true);
+    expect(returned).not.toHaveBeenCalled();
+    expect(await plugins.installImport("other", "wrong")).toBe(false);
+    if (settlement === "resolve") install.resolve(ready(false));
+    else install.reject(new Error("Late native failure"));
+    expect(await first).toBe(settlement === "resolve");
+    expect(plugins.snapshot().busy).toBe(false);
+    expect(plugins.snapshot().error).toBe(
+      settlement === "resolve" ? null : "Error: Late native failure",
+    );
+    poll.resolve(ready());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(plugins.snapshot().configuration).toEqual(
+      ready(settlement !== "resolve"),
+    );
+  },
+);
 
 it("reloads through the management boundary, rejecting overlap and stale polls", async () => {
   const reload = deferred();

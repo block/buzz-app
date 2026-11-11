@@ -15,6 +15,7 @@ mod pairing;
 mod qr;
 #[cfg(unix)]
 mod quit_signal;
+mod sharing;
 use browser::{
     browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
     browser_set_media_suspended, browser_status,
@@ -74,6 +75,7 @@ mod reshow;
 
 mod notifications;
 mod os_idle;
+mod packaged_plugins;
 mod plugin_url;
 mod repositories_folder;
 mod window_controls;
@@ -129,8 +131,8 @@ use host_process::{
     plugin_host_process_tool_credential, plugin_host_process_write, HostProcesses,
 };
 use host_request::{
-    plugin_host_call_context, plugin_host_request, plugin_host_request_bytes, plugin_host_upload,
-    plugin_host_upload_bytes_once, HostCalls,
+    plugin_host_call_context, plugin_host_read_page, plugin_host_request,
+    plugin_host_request_bytes, plugin_host_upload, plugin_host_upload_bytes_once, HostCalls,
 };
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
@@ -625,6 +627,16 @@ async fn plugin_catalog(
     })
     .await
 }
+/// Fetches the packaged plugin policy now, for a Retry in Settings, then reads the catalog.
+#[tauri::command]
+async fn plugin_managed_refresh(
+    manager: tauri::State<'_, PluginManager>,
+) -> Result<InstallationResult, String> {
+    if let Ok(m) = &manager.0 {
+        packaged_plugins::refresh(m).await;
+    }
+    plugin_catalog(manager).await
+}
 #[tauri::command]
 async fn plugin_change(
     manager: tauri::State<'_, PluginManager>,
@@ -703,6 +715,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_deny,
         pairing::pairing_cancel,
         qr::qr_code,
+        sharing::share_image,
         identity_restore,
         identity_import,
         identity_legacy_available,
@@ -715,6 +728,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         identity_sign_builderlab_binding,
         federated_identity::federated_identity_snapshot,
         federated_identity::federated_identity_servers,
+        federated_identity::federated_identity_requires,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,
         federated_identity::federated_identity_sign_out,
@@ -778,6 +792,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_import_install,
         plugin_import_discard,
         plugin_catalog,
+        plugin_managed_refresh,
         plugin_change,
         plugin_reload,
         plugin_module,
@@ -786,6 +801,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_call_context,
         plugin_host_request,
         plugin_host_request_bytes,
+        plugin_host_read_page,
         plugin_host_upload_bytes_once,
         plugin_host_save_bytes,
         plugin_host_delete_managed_file,
@@ -996,6 +1012,9 @@ pub fn run() {
                 }
             }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            if let Ok(manager) = &app.state::<PluginManager>().0 {
+                packaged_plugins::spawn(manager.clone());
+            }
             deep_links::setup(app.handle());
             mesh_compute::setup(app.handle());
             app.manage(relay::Spools::new(
@@ -1326,19 +1345,23 @@ mod tests {
     async fn a_url_download_holds_the_import_slot_until_it_settles() {
         let imports = super::Imports::default();
         let (release, gate) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let (started, downloading) = tokio::sync::oneshot::channel();
         let first = tokio::spawn(super::import_url(
             imports.clone(),
             "https://plugins.example.org/a.json".into(),
             "ab".repeat(32),
-            async move { gate.await.map_err(|e| e.to_string()) },
+            // The download runs inside the slot, so its start shows the slot
+            // is held. Polling the slot instead could take it at the moment the
+            // download tried to, and the download would then fail as busy.
+            async move {
+                let _ = started.send(());
+                gate.await.map_err(|e| e.to_string())
+            },
         ));
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while imports.0.try_lock().is_ok() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("the download never took the import slot");
+        tokio::time::timeout(std::time::Duration::from_secs(5), downloading)
+            .await
+            .expect("the download never took the import slot")
+            .expect("the import ended without starting its download");
         let second = super::prepare_import(imports.clone(), || Ok(None)).await;
         assert_eq!(
             second.err().as_deref(),

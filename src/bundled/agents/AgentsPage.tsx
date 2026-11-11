@@ -1038,6 +1038,8 @@ type InventoryProps = {
   newAgent: ReactNode;
   /** The agent explicitly saved as this community's Bestie. */
   bestie?: string | undefined;
+  celebratingBestie?: string | undefined;
+  onBestieCelebrated?: ((pubkey: string) => void) | undefined;
   onMakeBestie?: ((pubkey: string) => void) | undefined;
   /** Asks before saving no Bestie; absent where none can be saved. */
   onRemoveBestie?: ((pubkey: string, name: string) => void) | undefined;
@@ -1054,14 +1056,27 @@ function DefaultAgentInventory({
   scope,
   ...props
 }: InventoryProps & { session: RelaySession; scope: string }) {
+  const [celebration, setCelebration] = useState<{
+    scope: string;
+    pubkey: string;
+  }>();
   // Keep Morgan's automatic fallback/adoption behavior active even though the
-  // Bestie pill names only the explicit account-saved choice.
+  // Bestie star marks only the explicit account-saved choice.
   useDefaultAgent(session, scope);
   // A remote agent is asked about before it is made Bestie.
   const bestie = useBestieChoice(
     session,
     scope,
     (pubkey) => props.agents.find((agent) => agent.pubkey === pubkey)?.place,
+    (pubkey) => {
+      // Celebrate only this successful choice, never account restoration or sync.
+      if (
+        document.visibilityState === "visible" &&
+        !document.documentElement.hasAttribute("data-keyboard-navigation") &&
+        !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      )
+        setCelebration({ scope, pubkey });
+    },
   );
   return (
     <>
@@ -1071,6 +1086,16 @@ function DefaultAgentInventory({
         scope={scope}
         session={session}
         bestie={bestie.saved}
+        celebratingBestie={
+          celebration?.scope === scope ? celebration.pubkey : undefined
+        }
+        onBestieCelebrated={(pubkey) =>
+          setCelebration((current) =>
+            current?.pubkey === pubkey && current.scope === scope
+              ? undefined
+              : current,
+          )
+        }
         defaultChoices={
           new Set(bestie.choices.selectable.map((agent) => agent.pubkey))
         }
@@ -1192,6 +1217,8 @@ function InventoryGrid({
   busy,
   newAgent,
   bestie,
+  celebratingBestie,
+  onBestieCelebrated,
   defaultChoices,
   onMakeBestie,
   onRemoveBestie,
@@ -1268,7 +1295,11 @@ function InventoryGrid({
                 enabled={!!scope}
               >
                 <InventoryCard
-                  tag={isBestie ? "Bestie" : undefined}
+                  isBestie={isBestie}
+                  celebrateBestie={
+                    isBestie && celebratingBestie === agent.pubkey
+                  }
+                  onBestieCelebrated={() => onBestieCelebrated?.(agent.pubkey)}
                   bestie={
                     onMakeBestie
                       ? {

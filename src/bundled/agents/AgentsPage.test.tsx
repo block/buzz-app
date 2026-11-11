@@ -5398,6 +5398,7 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
     name: "Ada, Bestie",
   });
   expect(adaCard).toBeVisible();
+  expect(view.container.querySelector("[data-celebrating]")).toBeNull();
 
   const beaCard = screen.getByRole("gridcell", { name: "Bea" });
   await user.click(
@@ -5412,7 +5413,9 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
   await user.click(
     within(confirmation).getByRole("button", { name: "Switch to Bea" }),
   );
+  expect(view.container.querySelector("[data-celebrating]")).toBeNull();
   await act(async () => writes[0]?.(new Error("offline")));
+  expect(view.container.querySelector("[data-celebrating]")).toBeNull();
   expect(within(confirmation).getByRole("alert")).toHaveTextContent(
     "Your bestie couldn't be saved to your account. Try again.",
   );
@@ -5451,6 +5454,18 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
   expect(
     await screen.findByRole("gridcell", { name: "Bea, Bestie" }),
   ).toBeVisible();
+  const badge = view.container.querySelector("[data-celebrating]");
+  expect(badge).not.toBeNull();
+  const star = badge?.querySelector("svg");
+  if (!star?.parentElement) throw new Error("Missing celebrating star");
+  // React uses the prefixed animation event in jsdom (no AnimationEvent).
+  fireEvent(star, new Event("webkitAnimationEnd", { bubbles: true }));
+  expect(badge).toHaveAttribute("data-celebrating");
+  fireEvent(
+    star.parentElement,
+    new Event("webkitAnimationEnd", { bubbles: true }),
+  );
+  expect(view.container.querySelector("[data-celebrating]")).toBeNull();
 });
 
 it("retries a failed replacement in the same dialog after an earlier Bestie save", async () => {

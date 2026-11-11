@@ -522,8 +522,6 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
-  /** Owner reads for a run of the agent, where this build enables them. */
-  ownerAccess?(agent: Agent): AgentHandle["ownerAccess"];
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -540,6 +538,7 @@ export type RunnerHost = {
         | "release"
         | "publish"
         | "query"
+        | "effectiveEdit"
         | "searchProfiles"
         | "upload"
         | "media"
@@ -2476,15 +2475,25 @@ export class AgentRunners {
   }
 
   private showWork(runner: Runner, job: Job) {
-    if (job.work || job.trigger.type !== "mention") return;
+    if (
+      job.work ||
+      (job.trigger.type !== "mention" && job.trigger.type !== "plugin")
+    )
+      return;
+    const trigger = job.trigger;
     const agent = this.host.agent(runner.key);
     const scope = agent && this.host.scope(agent);
-    const event = job.trigger.event;
+    const event =
+      trigger.type === "mention" ? trigger.event : wakeAnchor(trigger);
     const channelId =
       job.channelId ?? event.tags.find(([key]) => key === "h")?.[1];
     if (!scope || !channelId) return;
     const threadRootId = threadReference(event)?.rootId;
     const channel = this.host.channel(agent, event);
+    const thread =
+      threadRootId &&
+      (trigger.type === "mention" ||
+        (channel?.channelType !== "solo" && channel?.channelType !== "dm"));
     const soloChat =
       channel?.channelType === "solo" &&
       !channel.cached &&
@@ -2497,16 +2506,19 @@ export class AgentRunners {
         agent: runner.member.pubkey,
         channelId,
         messageId: event.id,
+        ...(trigger.type === "plugin" ? { syntheticMessage: true } : {}),
         threadRootId: threadRootId ?? event.id,
-        ...(threadRootId ? { thread: true } : {}),
+        ...(thread ? { thread: true } : {}),
         ...(soloChat ? { soloChat: true } : {}),
         ...(soloChat && conversationName ? { conversationName } : {}),
       },
-      // Retry queues the same mention again. It was seen when first heard,
-      // so it is not marked again; its run saves it as working as any does.
+      // A resumed mention must not reuse its resume marker on retry.
       () =>
         void this.enqueue(runner, {
-          trigger: { type: "mention", event },
+          trigger:
+            trigger.type === "mention"
+              ? { type: "mention", event: trigger.event }
+              : trigger,
           ...(job.channelId ? { channelId: job.channelId } : {}),
         }),
     );
@@ -2840,12 +2852,6 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
-    // Only a bundled harness's run: an installed harness plugin is not trusted
-    // with its owner's access.
-    const ownerAccess =
-      run && runner.type?.revision === "bundled"
-        ? this.host.ownerAccess?.(agent)
-        : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -2896,6 +2902,10 @@ export class AgentRunners {
         query: async (filters: readonly object[]) => {
           lifetime.throwIfAborted();
           return this.require().query(agent, filters);
+        },
+        effectiveEdit: async (id: string, channel: string) => {
+          lifetime.throwIfAborted();
+          return this.require().effectiveEdit(agent, id, channel);
         },
         searchProfiles: async (query: string, limit: number) => {
           lifetime.throwIfAborted();
@@ -2955,7 +2965,6 @@ export class AgentRunners {
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),
-        ...(ownerAccess && { ownerAccess }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

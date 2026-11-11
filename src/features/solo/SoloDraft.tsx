@@ -59,6 +59,12 @@ import {
 import type { ConversationExtensions } from "../conversation/contracts";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
 import type { PageNavigation } from "../navigation/service";
+import {
+  regionDraftKey,
+  regionStartKey,
+  soloNavigationFor,
+} from "../channel-navigation/solo-navigation";
+import { useSoloNavigation } from "../channel-navigation/solo-navigation-react";
 import styles from "./Solo.module.css";
 
 /** Starting a new chat from a project starts it in that project, even when an
@@ -161,6 +167,8 @@ const openNewChats = new Set<{
 /** The prompt last given back to each New chat, as saved, so a later refusal
  * that finds it still there can say so. */
 const restoredPrompts = new Map<string, string>();
+const REGION_UNAVAILABLE =
+  "This chat's plugin is unavailable. Your draft is saved.";
 
 export function SoloDraft({
   session,
@@ -174,7 +182,10 @@ export function SoloDraft({
   linkedId,
   source,
   visit,
+  region,
 }: {
+  /** The Solo region whose source opened this draft; its chat gets that label. */
+  region?: string | undefined;
   /** The visit presenting this draft, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   linkedId?: string | undefined;
@@ -195,11 +206,13 @@ export function SoloDraft({
     | undefined;
   projectId?: string | undefined;
 }) {
-  const draftKey = linkedId
-    ? linkedDraftKey(linkedId)
-    : projectId
-      ? `solo:project:${projectId}`
-      : "solo";
+  const draftKey = region
+    ? regionDraftKey(region, projectId)
+    : linkedId
+      ? linkedDraftKey(linkedId)
+      : projectId
+        ? `solo:project:${projectId}`
+        : "solo";
   const notify = useToastNotification();
   // Before the composer reads it: a named agent replaces a saved draft that
   // only tags another agent, since that tag was the earlier default.
@@ -288,7 +301,19 @@ export function SoloDraft({
       openNewChats.delete(chat);
     };
   }, [scope, draftKey, settingsOpen]);
-  const available = session.channelWrites.available;
+  // Re-reads the region's owner as its source starts and stops.
+  useSoloNavigation(session);
+  const owner = region
+    ? soloNavigationFor(session)?.draftRegion(region)
+    : undefined;
+  const draftAgent = owner?.source.draftAgent;
+  const ownerBinding = owner?.binding;
+  const agentFilter = useCallback(
+    (pubkey: string) =>
+      !draftAgent || !ownerBinding || draftAgent(ownerBinding, pubkey),
+    [draftAgent, ownerBinding],
+  );
+  const available = session.channelWrites.available && (!region || !!owner);
   const [channelId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -397,35 +422,76 @@ export function SoloDraft({
             "Solo chats can only use your available agents. Check mentions and workspace defaults.",
           );
       }
+      // Read at Send: the region's source may have stopped since.
+      const regionOwner = () => {
+        const current = region
+          ? soloNavigationFor(session)?.draftRegion(region)
+          : undefined;
+        if (region && !current) throw new Error(REGION_UNAVAILABLE);
+        return current;
+      };
+      const eligible = regionOwner();
+      const accepts = eligible?.source.draftAgent;
+      if (
+        eligible &&
+        accepts &&
+        members.some((key) => !accepts(eligible.binding, key))
+      )
+        throw new Error(
+          "This chat's plugin can't use one of these agents. Choose another agent.",
+        );
       // Finish uploads before anything is created, so a failed file blocks
       // the start instead of leaving an empty chat behind.
       const uploaded = await files.prepareForSend(new AbortController().signal);
       if (!mounted.current) return;
+      regionOwner();
+      // The region's source finds how its chat started, even after a restart.
+      const startKey = region ? regionStartKey(channelId) : undefined;
+      if (
+        startKey &&
+        !writeView(scope, startKey, {
+          region,
+          ...(project ? { workspace: project } : {}),
+        })
+      )
+        throw new Error(
+          "This chat couldn't be saved on this device. Your draft is kept.",
+        );
       const attached = files.snapshot();
       // The chat lists at once, in its workspace, and its message goes out
       // behind the create, so the agents start on it without waiting for the
       // relay. Its Canvas is saved once the chat exists; until then local
       // agents read it from the start.
-      if (setup?.projectId)
+      // A region files its own chats.
+      if (setup?.projectId && !region)
         void session.soloPreferences
           .assign(channelId, setup.projectId)
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),
           );
-      const { ready } = session.channelWrites.start(
-        channelId,
-        name,
-        members,
-        ttlSeconds,
-        named,
-        setup?.canvas
-          ? {
-              canvas: setup.canvas,
-              apply: () =>
-                session.canvas.save(channelId, setup.canvas, undefined),
-            }
-          : undefined,
-      );
+      let starting: ReturnType<typeof session.channelWrites.start>;
+      try {
+        starting = session.channelWrites.start(
+          channelId,
+          name,
+          members,
+          ttlSeconds,
+          named,
+          setup?.canvas
+            ? {
+                canvas: setup.canvas,
+                apply: () =>
+                  session.canvas.save(channelId, setup.canvas, undefined),
+              }
+            : undefined,
+          // Unguarded, so a restart can retry it like any New chat.
+          ...(region ? [{ labels: [region] }] : []),
+        );
+      } catch (reason) {
+        if (startKey) writeView(scope, startKey, null);
+        throw reason;
+      }
+      const { ready } = starting;
       // Observe admission immediately, even while local persistence awaits ownership.
       void ready.catch(() => {});
       const firstPicks: MentionPicks = Object.fromEntries(
@@ -530,6 +596,7 @@ export function SoloDraft({
       // messages' own Retry.
       void ready.catch((reason: unknown) => {
         if (!(reason instanceof ChatNotStarted)) return;
+        if (startKey) writeView(scope, startKey, null);
         let restoring = false;
         let restored = false;
         let prepared: { before: string | null; written: string } | undefined;
@@ -697,6 +764,7 @@ export function SoloDraft({
         channelName="this chat"
         label="Message your agents"
         inviteAgents
+        agentFilter={draftAgent ? agentFilter : undefined}
         defaultMention={defaultAgent}
         requireMention
         trailingTool={
@@ -742,8 +810,9 @@ export function SoloDraft({
       />
       {!available && (
         <p className={styles.availability} role="status">
-          Solo preferences or channel creation are unavailable. Your draft is
-          saved.
+          {region && !owner
+            ? REGION_UNAVAILABLE
+            : "Solo preferences or channel creation are unavailable. Your draft is saved."}
         </p>
       )}
       {error && <p role="alert">{error}</p>}

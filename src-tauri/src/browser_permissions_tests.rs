@@ -74,6 +74,7 @@ fn native_command_permissions_isolate_webviews() {
     let application_commands = [
         "federated_identity_snapshot",
         "federated_identity_servers",
+        "federated_identity_requires",
         "federated_identity_sign_in",
         "federated_identity_cancel_sign_in",
         "federated_identity_sign_out",
@@ -155,6 +156,7 @@ fn native_command_permissions_isolate_webviews() {
         "plugin_import_install",
         "plugin_import_discard",
         "plugin_catalog",
+        "plugin_managed_refresh",
         "plugin_change",
         "plugin_reload",
         "plugin_module",

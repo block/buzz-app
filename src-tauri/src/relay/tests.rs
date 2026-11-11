@@ -739,7 +739,11 @@ fn isolated_agent_ipc_probe() {
     assert_eq!(resolved["relayUrl"], "wss://relay.test");
     #[cfg(unix)]
     {
-        let library = invoke("relay_agent_library", serde_json::json!({})).unwrap();
+        let library = invoke(
+            "relay_agent_library",
+            serde_json::json!({"community":"https://relay.test"}),
+        )
+        .unwrap();
         assert_eq!(
             library,
             serde_json::json!({"definitions": [], "identities": []})
@@ -750,20 +754,47 @@ fn isolated_agent_ipc_probe() {
             .unwrap()
             .join("agents/identities.json");
         assert!(path.starts_with(std::env::var("HOME").unwrap()));
-        let saved = serde_json::json!([{
-            "pubkey": "a".repeat(64), "relay": "wss://relay.test", "owner": public,
-            "auth": "private attestation", "type": "plugin/agent", "name": "Current agent",
-            "picture": "https://images.example/current.png"
-        }])
+        let saved = serde_json::json!([
+            {
+                "pubkey": "a".repeat(64), "relay": "wss://elsewhere.test", "owner": public,
+                "auth": "private attestation", "type": "plugin/agent", "name": "Elsewhere"
+            },
+            {
+                "pubkey": "b".repeat(64), "relay": "wss://relay.test", "owner": "c".repeat(64),
+                "auth": "private attestation", "type": "plugin/agent", "name": "Other account"
+            },
+            {
+                "pubkey": "a".repeat(64), "relay": "wss://relay.test", "owner": public,
+                "auth": "private attestation", "type": "plugin/agent", "name": "Current agent",
+                "picture": "https://images.example/current.png"
+            }
+        ])
         .to_string();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &saved).unwrap();
         assert_eq!(
-            invoke("relay_agent_library", serde_json::json!({})).unwrap(),
+            invoke(
+                "relay_agent_library",
+                serde_json::json!({"community":"https://relay.test"})
+            )
+            .unwrap(),
             serde_json::json!({"definitions": [], "identities": [{
                 "pubkey": "a".repeat(64), "name": "Current agent", "avatar": "https://images.example/current.png"
             }]})
         );
+        assert_eq!(
+            invoke(
+                "relay_agent_library",
+                serde_json::json!({"community":"https://new.test"})
+            )
+            .unwrap(),
+            serde_json::json!({"definitions": [], "identities": []})
+        );
+        assert!(invoke(
+            "relay_agent_library",
+            serde_json::json!({"community":"https://relay.test/path"})
+        )
+        .is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
         std::fs::remove_file(&path).unwrap();
         assert!(app

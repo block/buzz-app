@@ -37,7 +37,11 @@ export type SoloRegionSource = Readonly<{
   read(binding: SoloRegionBinding): SoloRegionSnapshot;
   component: ComponentType<SoloRegionProps>;
   actions?: (binding: SoloRegionBinding) => readonly SoloRegionAction[];
+  /** Agents a draft from `openDraft` may address. Without it, any available agent. */
+  draftAgent?(binding: SoloRegionBinding, pubkey: string): boolean;
 }>;
+/** How a chat this device sent from `openDraft` was started. */
+export type SoloDraftStart = Readonly<{ workspace?: string }>;
 export type SoloChatInput = Readonly<{
   channelId: string;
   title: string;
@@ -47,6 +51,18 @@ export type SoloChatInput = Readonly<{
 }>;
 export type SoloRegionHandle = Readonly<{
   label: string;
+  /** Open New chat for this region. Its first send creates the chat with this
+   * region's label; until then it is only a draft. */
+  openDraft(
+    binding: SoloRegionBinding,
+    input?: Readonly<{ workspace?: string }>,
+  ): void;
+  /** This device's record of a chat started from `openDraft`, kept until `forget`. */
+  started(
+    binding: SoloRegionBinding,
+    channelId: string,
+  ): SoloDraftStart | undefined;
+  forget(binding: SoloRegionBinding, channelId: string): void;
   createChat(binding: SoloRegionBinding, input: SoloChatInput): Promise<void>;
   classify(binding: SoloRegionBinding, channelId: string): Promise<void>;
 }>;
@@ -120,7 +136,26 @@ export type SoloDisclosureProps = Readonly<{
 }>;
 export type SoloNavigation = Readonly<{
   version: 2;
+  workspaces: SoloWorkspaces;
   registerSource(source: SoloRegionSource): SoloRegionHandle;
+}>;
+
+export type SoloWorkspaceSnapshot = Readonly<{
+  status: "loading" | "ready" | "unavailable";
+  workspaces: readonly Readonly<{ id: string; name: string }>[];
+  canCreate: boolean;
+  error?: string;
+}>;
+/** Personal Solo workspaces. Region task filing stays with the region owner. */
+export type SoloWorkspaces = Readonly<{
+  snapshot(binding: SoloRegionBinding): SoloWorkspaceSnapshot;
+  subscribe(binding: SoloRegionBinding, listener: () => void): () => void;
+  refresh(binding: SoloRegionBinding): Promise<void>;
+  /** Retain the same id/name after an uncertain outcome; refresh before retrying. */
+  create(
+    binding: SoloRegionBinding,
+    input: Readonly<{ id: string; name: string }>,
+  ): Promise<void>;
 }>;
 
 declare module "@deepseek-ai/cordis" {

@@ -74,9 +74,6 @@ import * as typesafe from "./typesafe";
 import pluginDevelopmentManifest from "./plugin-development/manifest.json";
 import * as pluginDevelopment from "./plugin-development";
 
-import relayNotesManifest from "./relay-notes/manifest.json";
-import * as relayNotes from "./relay-notes";
-
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
   module: codex,
@@ -93,11 +90,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     // Opt-in: it reads community membership in the background once enabled.
-    enabledByDefault: false,
-  },
-  {
-    manifest: { ...relayNotesManifest, apiVersion: 1 },
-    module: relayNotes,
     enabledByDefault: false,
   },
   {

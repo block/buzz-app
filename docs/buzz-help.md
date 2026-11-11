@@ -1125,6 +1125,12 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   **Update** review showing access changes and any change to the branch or tag
   later updates follow, and the plugin keeps its enabled or disabled state.
   Other links to an installed plugin offer **Open in Buzz**.
+- **Notes reader** is no longer bundled. When available in the Marketplace,
+  install it on desktop to restore the **Shared notes** page, including after an
+  upgrade that previously had the reader enabled. The install review controls
+  whether it is enabled; the old bundled choice is not carried over. Browser installations
+  cannot load external plugins. Existing shared notes and the agents' built-in
+  `notes_get`, `notes_set`, and `notes_rm` tools remain available without the reader.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved

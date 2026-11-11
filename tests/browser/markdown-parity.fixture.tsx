@@ -1,5 +1,8 @@
 // Message bodies, received and own, with every Markdown element and a plugin
 // code block, for comparing computed styles before and after a change.
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/inter/wght-italic.css";
+import "@fontsource/jetbrains-mono/400.css";
 import { createRoot } from "react-dom/client";
 import type { ConversationExtensions } from "../../src/features/conversation/contracts";
 import { MessageMarkdown } from "../../src/features/messages/MessageMarkdown";

@@ -671,7 +671,7 @@ const COMPONENTS: Components = {
   // A README's own images load, as on the repository's host.
   img: ({ node: _node, alt, ...props }) => <img alt={alt ?? ""} {...props} />,
 };
-function Body({
+export function Body({
   text,
   open,
   scope,

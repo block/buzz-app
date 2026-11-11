@@ -12,6 +12,10 @@ import { watchPageErrors } from "./page-errors.mjs";
 const EXPECTED = fileURLToPath(
   new URL("./markdown-parity.expected.json", import.meta.url),
 );
+// Each element's box within its bubble, from the same code and fixture.
+const BOXES = fileURLToPath(
+  new URL("./markdown-parity.boxes.json", import.meta.url),
+);
 const PROPERTIES = [
   "font-size",
   "line-height",
@@ -100,6 +104,37 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+async function measureBoxes(page) {
+  return page.evaluate((elements) => {
+    const round = (value) => Math.round(value * 100) / 100;
+    return Object.fromEntries(
+      ["received", "own"].map((side) => {
+        const bubble = document.querySelector(`[data-side="${side}"]`);
+        const origin = bubble.getBoundingClientRect();
+        return [
+          side,
+          Object.fromEntries(
+            Object.entries(elements).map(([name, selector]) => {
+              const box = bubble
+                .querySelector(selector)
+                .getBoundingClientRect();
+              return [
+                name,
+                {
+                  x: round(box.x - origin.x),
+                  y: round(box.y - origin.y),
+                  width: round(box.width),
+                  height: round(box.height),
+                },
+              ];
+            }),
+          ),
+        ];
+      }),
+    );
+  }, ELEMENTS);
+}
+
 async function measure(page) {
   return page.evaluate(
     ({ elements, properties }) => {
@@ -136,11 +171,14 @@ test("message Markdown keeps its computed styles", async ({
   test.skip(browserName !== "chromium", "The baseline is Chromium's.");
   const errors = watchPageErrors(page);
   const observed = {};
+  const boxes = {};
   for (const density of ["default", "compact"]) {
     await page.goto(`${url}?density=${density}`);
     await expect(page.locator("figure").first()).toBeVisible();
     await page.mouse.move(0, 0);
+    await page.evaluate(() => document.fonts.ready);
     observed[density] = await measure(page);
+    boxes[density] = await measureBoxes(page);
     // The pinned copy action shows on hover and on keyboard focus.
     const pre = page.locator('[data-side="received"] pre').first();
     await pre.hover();
@@ -153,8 +191,11 @@ test("message Markdown keeps its computed styles", async ({
       .locator("[aria-label='Copy code block']")
       .evaluate((button) => getComputedStyle(button.parentElement).opacity);
   }
-  if (process.env.BUZZ_MARKDOWN_PARITY_CAPTURE === "1")
+  if (process.env.BUZZ_MARKDOWN_PARITY_CAPTURE === "1") {
     await writeFile(EXPECTED, `${JSON.stringify(observed, null, 2)}\n`);
+    await writeFile(BOXES, `${JSON.stringify(boxes, null, 2)}\n`);
+  }
   expect(observed).toEqual(JSON.parse(await readFile(EXPECTED, "utf8")));
+  expect(boxes).toEqual(JSON.parse(await readFile(BOXES, "utf8")));
   expect(errors.unexplained()).toEqual([]);
 });

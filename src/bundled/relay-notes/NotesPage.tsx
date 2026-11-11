@@ -979,7 +979,7 @@ function NoteTime({ note }: { note: EventData }) {
   );
 }
 
-function NoteBody({
+export function NoteBody({
   note,
   session,
   openLink,

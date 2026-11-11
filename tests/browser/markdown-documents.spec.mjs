@@ -55,68 +55,159 @@ const role = (page, name) =>
     return size;
   }, name);
 
+// Each screen's roles for the sample's `#`, `##` and `###` headings; `null`:
+// the screen drops it.
+const ROLES = {
+  canvas: ["title", "heading", "body-lg"],
+  notes: ["title", "heading", "body-lg"],
+  repo: ["title", "heading", "body-lg"],
+  github: ["title", "heading", "body-lg"],
+  memory: ["heading", "body-lg", "label"],
+  transcript: ["heading", "body-lg", "label"],
+  // It drops the title and nests sections under the pane's own heading.
+  "plugin-readme": [null, "label", "label"],
+  attention: ["label", "label-sm", "label-sm"],
+};
+// Screens whose code blocks offer copy.
+const COPY = [
+  "canvas",
+  "notes",
+  "repo",
+  "memory",
+  "transcript",
+  "plugin-readme",
+];
+const CODE = "const value = 1;";
+
+/** Opens the memory and transcript disclosures that hold the sample. */
+async function expand(page) {
+  await page
+    .locator('[data-screen="memory"]')
+    .getByRole("button", { name: "core" })
+    .click();
+  await page
+    .locator('[data-screen="plugin-readme"]')
+    .getByRole("button", { name: "View more" })
+    .click();
+  const replies = page.locator(
+    '[data-screen="transcript"] details:not([open]) > summary',
+  );
+  while ((await replies.count()) > 0) await replies.first().click();
+}
+
 // Layout and interaction: jsdom resolves neither type roles nor hover.
-test("document screens share heading roles, list markers and code frames", async ({
+test("document screens keep their roles, elements and code actions in their hosts", async ({
   page,
   browserName,
 }) => {
   test.skip(browserName !== "chromium", "Screenshots are Chromium's.");
   const errors = watchPageErrors(page);
+  await page.addInitScript(() => {
+    window.copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text) => {
+          window.copied.push(text);
+        },
+      },
+    });
+  });
   await mkdir(SHOTS, { recursive: true });
   for (const mode of ["light", "dark"])
     for (const width of [360, 1100])
-      for (const size of ["default", "larger"]) {
+      for (const scale of ["1", "1.5"]) {
         await page.setViewportSize({ width: width + 32, height: 900 });
-        await page.goto(`${url}?mode=${mode}&width=${width}&size=${size}`);
-        const canvas = page.locator('[data-screen="canvas"]');
-        await expect(canvas.getByRole("heading", { level: 1 })).toBeVisible();
-        const label = `${mode} ${width}px ${size}`;
-        const styles = await canvas.evaluate((section) => {
-          const read = (selector, name) =>
-            getComputedStyle(section.querySelector(selector)).getPropertyValue(
-              name,
-            );
-          return {
-            h1: read("h1", "font-size"),
-            h2: read("h2", "font-size"),
-            nested: read("ul ul", "list-style-type"),
-            deepest: read("ul ul ul", "list-style-type"),
-            ordered: read("ol", "list-style-type"),
-            frame: read("pre", "border-top-width"),
-            chip: read(":not(pre) > code", "background-color"),
-            header: read("th", "background-color"),
-          };
+        await page.goto(`${url}?mode=${mode}&width=${width}&scale=${scale}`);
+        await page.evaluate(() => document.fonts.ready);
+        await expand(page);
+        // Copy toasts would stack over the next screen's code.
+        await page.addStyleTag({
+          content: '[aria-label="App notifications"] { pointer-events: none; }',
         });
-        expect(styles.h1, label).toBe(await role(page, "title"));
-        expect(styles.h2, label).toBe(await role(page, "heading"));
-        expect(styles, label).toMatchObject({
-          nested: "circle",
-          deepest: "square",
-          ordered: "decimal",
-          frame: "1px",
-        });
-        expect(styles.chip, label).not.toBe("rgba(0, 0, 0, 0)");
-        expect(styles.header, label).not.toBe("rgba(0, 0, 0, 0)");
-        // Attention keeps label roles for its headings.
-        const attention = page.locator('[data-screen="attention"]');
+        const label = `${mode} ${width}px ×${scale}`;
         expect(
-          await attention
-            .locator("h1")
-            .evaluate((h) => getComputedStyle(h).fontSize),
+          await page.evaluate(() =>
+            [...document.fonts].some(
+              (face) =>
+                face.family.includes("Inter") && face.status === "loaded",
+            ),
+          ),
           label,
-        ).toBe(await role(page, "label"));
-        // Copy: on pointer hover and on keyboard focus.
-        const pre = canvas.locator("pre");
-        const copy = pre.getByRole("button", { name: "Copy code block" });
-        // `toBeVisible` passes at opacity 0, so read the actions' opacity.
-        const actions = copy.locator("..");
-        await pre.hover();
-        await expect(actions).toHaveCSS("opacity", "1");
-        await page.mouse.move(0, 0);
-        await expect(actions).toHaveCSS("opacity", "0");
-        await copy.focus();
-        await expect(copy).toBeFocused();
-        await expect(actions).toHaveCSS("opacity", "1");
+        ).toBe(true);
+        for (const [screen, roles] of Object.entries(ROLES)) {
+          const section = page.locator(`[data-screen="${screen}"]`);
+          const where = `${screen} ${label}`;
+          await expect(section.getByText("Section").first()).toBeVisible();
+          const read = await section.evaluate((section) => {
+            const find = (text) =>
+              [...section.querySelectorAll("h1, h2, h3, h4, h5, h6")].find(
+                (node) => node.textContent === text,
+              );
+            const body = find("Section").parentElement;
+            const style = (node, name) =>
+              node ? getComputedStyle(node).getPropertyValue(name) : null;
+            return {
+              headings: [
+                style(find("Title"), "font-size"),
+                style(find("Section"), "font-size"),
+                style(find("Topic"), "font-size"),
+              ],
+              elements: ["del", "blockquote", "hr", "table", "ol", "pre"].every(
+                (tag) => body.querySelector(tag),
+              ),
+              checkbox: Boolean(body.querySelector('input[type="checkbox"]')),
+              nested: style(body.querySelector("ul ul"), "list-style-type"),
+              frame: style(body.querySelector("pre"), "border-top-width"),
+              chip: style(
+                body.querySelector(":not(pre) > code"),
+                "background-color",
+              ),
+              header: style(body.querySelector("th"), "background-color"),
+              display: getComputedStyle(body).display,
+            };
+          });
+          for (const [index, name] of roles.entries())
+            expect(
+              read.headings[index],
+              `${where} ${"#".repeat(index + 1)}`,
+            ).toBe(name ? await role(page, name) : null);
+          expect(read, where).toMatchObject({
+            elements: true,
+            checkbox: true,
+            frame: "1px",
+          });
+          expect(read.chip, where).not.toBe("rgba(0, 0, 0, 0)");
+          expect(read.header, where).not.toBe("rgba(0, 0, 0, 0)");
+          if (screen === "attention") expect(read.display, where).toBe("grid");
+          if (["canvas", "notes", "repo", "github"].includes(screen))
+            expect(read.nested, where).toBe("circle");
+        }
+        // Copy: the actions show on hover and on keyboard focus, and both a
+        // click and the keyboard copy the code exactly.
+        for (const screen of COPY) {
+          const where = `${screen} ${label}`;
+          const pre = page
+            .locator(`[data-screen="${screen}"] pre`)
+            .filter({ hasText: CODE });
+          const copy = pre.getByRole("button", { name: "Copy code block" });
+          const actions = copy.locator("..");
+          await page.evaluate(() => {
+            window.copied = [];
+          });
+          await pre.scrollIntoViewIfNeeded();
+          await pre.hover();
+          await expect(actions, where).toHaveCSS("opacity", "1");
+          await copy.click();
+          await page.mouse.move(0, 0);
+          await copy.blur();
+          await expect(actions, where).toHaveCSS("opacity", "0");
+          await copy.focus();
+          await expect(actions, where).toHaveCSS("opacity", "1");
+          await page.keyboard.press("Enter");
+          await expect
+            .poll(() => page.evaluate(() => window.copied), { message: where })
+            .toEqual([CODE, CODE]);
+        }
         // A line that cannot wrap scrolls inside its block, not the Canvas.
         const host = await page
           .locator('[data-screen="canvas-host"]')
@@ -138,10 +229,25 @@ test("document screens share heading roles, list markers and code frames", async
           await source.evaluate((code) => code.scrollWidth <= code.clientWidth),
           label,
         ).toBe(true);
-        await page.screenshot({
-          path: `${SHOTS}${mode}-${width}-${size}.png`,
-          fullPage: true,
-        });
+        // A long transcript reply scrolls under a 24rem block, frame included.
+        const long = await page
+          .locator('[data-screen="transcript"] pre')
+          .filter({ hasText: "59 xxx" })
+          .evaluate((pre) => ({
+            outer: pre.getBoundingClientRect().height,
+            rem: Number.parseFloat(
+              getComputedStyle(document.documentElement).fontSize,
+            ),
+            scrolls:
+              pre.querySelector("code").scrollHeight >
+              pre.querySelector("code").clientHeight,
+          }));
+        expect(long.outer, label).toBe(24 * long.rem);
+        expect(long.scrolls, label).toBe(true);
+        for (const screen of Object.keys(ROLES))
+          await page.locator(`[data-screen="${screen}"]`).screenshot({
+            path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
+          });
       }
   expect(errors.unexplained()).toEqual([]);
 });

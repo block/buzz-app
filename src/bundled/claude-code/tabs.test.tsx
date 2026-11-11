@@ -3023,3 +3023,53 @@ it("places separate conflict choices beside their fields and shows the competing
     base: { settings: "s0", instructions: "i0" },
   });
 });
+
+it("follows the recommended setup in Settings until a manual choice", async () => {
+  // A synthetic candidate Claude lists.
+  vi.stubEnv(
+    "VITE_BUZZ_RECOMMENDED_AGENT",
+    JSON.stringify([
+      {
+        harness: "claude-code",
+        model: "sonnet",
+        effort: "high",
+        label: "Model S",
+      },
+    ]),
+  );
+  // Whether Claude offers a candidate is index.test.ts's concern.
+  vi.spyOn(ClaudeSetup.prototype, "offers").mockResolvedValue(true);
+  try {
+    const Settings = tab(installed().type, 0);
+    const save = vi.fn(async () => undefined);
+    render(
+      <Settings
+        agent={agent({ ...DEFAULT_CONFIG, preset: "recommended" } as Config)}
+        save={save}
+      />,
+    );
+    const aiSettings = screen.getByRole("combobox", { name: "AI settings" });
+    expect(aiSettings).toHaveTextContent("Automatic");
+    expect(await screen.findByText("Model S · High")).toBeInTheDocument();
+    // The model rows wait for Manual.
+    const thinking = () => screen.getByRole("combobox", { name: "Thinking" });
+    expect(
+      screen.queryByRole("combobox", { name: "Thinking" }),
+    ).not.toBeInTheDocument();
+    await choose("AI settings", "Manual");
+    expect(thinking().closest("[inert]")).toBeNull();
+    // Manual starts from what Automatic ran on.
+    expect(thinking()).toHaveTextContent("High");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+    expect(save).toHaveBeenCalledWith(
+      {
+        ...DEFAULT_CONFIG,
+        model: "sonnet",
+        effort: "high",
+      },
+      expect.anything(),
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});

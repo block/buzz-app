@@ -1031,6 +1031,7 @@ export function AgentsPage({
             changeTab("yours");
             build(agent.pubkey);
           }}
+          openSettings={openSettings}
         />
       )}
       {card && (

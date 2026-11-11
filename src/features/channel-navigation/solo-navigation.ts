@@ -1,6 +1,11 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { JsonValue } from "../navigation/targets";
@@ -149,8 +154,6 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   presentation(source: RegisteredSoloSource, binding: SoloRegionBinding) {
     const active = () =>
       sameBinding(this.binding, binding) && this.sources().includes(source);
-    const key = `solo-region-state:${binding.viewer}:${source.key}`;
-    const memoryKey = `${binding.scope}/${key}`;
     return {
       revealRequests: {
         subscribe: (listener: (channelId: string) => void) => {
@@ -172,19 +175,39 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           return stop;
         },
       },
-      state: {
-        get: () => {
-          const saved = viewRevision(binding.scope, key);
-          if (saved === undefined && this.states.has(memoryKey))
+      state: this.regionState(source, binding),
+    };
+  }
+  private regionState(
+    source: RegisteredSoloSource,
+    binding: SoloRegionBinding,
+  ) {
+    binding = Object.freeze({ ...binding });
+    const active = () =>
+      sameBinding(this.binding, binding) && this.sources().includes(source);
+    const key = `solo-region-state:${binding.viewer}:${source.key}`;
+    const memoryKey = `${binding.scope}/${key}`;
+    const current = () => {
+      if (!active()) throw new Error("This Solo region binding has ended");
+    };
+    return {
+      get: () => {
+        current();
+        const saved = viewRevision(binding.scope, key);
+        if (saved === undefined) {
+          if (this.states.has(memoryKey))
             return structuredClone(this.states.get(memoryKey));
-          try {
-            return saved ? (JSON.parse(saved) as JsonValue) : undefined;
-          } catch {
-            return undefined;
-          }
-        },
-        set: (value: JsonValue) => {
-          if (!active()) return false;
+          throw new Error("Solo region storage is unavailable");
+        }
+        try {
+          return saved === null ? undefined : (JSON.parse(saved) as JsonValue);
+        } catch {
+          throw new Error("Solo region state is invalid");
+        }
+      },
+      set: (value: JsonValue) => {
+        if (!active()) return false;
+        try {
           const json = JSON.stringify(value);
           if (
             json === undefined ||
@@ -195,7 +218,30 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           if (!writeView(binding.scope, key, copy)) return false;
           this.states.set(memoryKey, copy);
           return true;
-        },
+        } catch {
+          return false;
+        }
+      },
+      subscribe: (listener: () => void) => {
+        current();
+        const signal = this.runtimes.get(source)?.controller.signal;
+        if (!signal || signal.aborted)
+          throw new Error("This Solo region binding has ended");
+        const stopView = subscribeView(binding.scope, (changedKey) => {
+          if (active() && (changedKey === undefined || changedKey === key)) {
+            try {
+              listener();
+            } catch {
+              /* A source listener cannot reject an accepted storage write. */
+            }
+          }
+        });
+        const stop = () => {
+          stopView();
+          signal.removeEventListener("abort", stop);
+        };
+        signal.addEventListener("abort", stop, { once: true });
+        return stop;
       },
     };
   }
@@ -455,6 +501,14 @@ export class SoloNavigationService extends Service implements SoloNavigation {
     this.contributions.register(this.ctx, { ...source, identity });
     return Object.freeze({
       label,
+      state(binding) {
+        current(binding);
+        const registered = host
+          .sources()
+          .find((entry) => entry.identity === identity);
+        if (!registered) throw new Error("This Solo region binding has ended");
+        return host.regionState(registered, binding);
+      },
       openDraft(binding, input = {}) {
         current(binding);
         const { workspace } = input;

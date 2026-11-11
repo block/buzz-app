@@ -70,6 +70,8 @@ export type SoloChatInput = Readonly<{
 }>;
 export type SoloRegionHandle = Readonly<{
   label: string;
+  /** The same device state as component props, available before mount. */
+  state(binding: SoloRegionBinding): SoloRegionProps["state"];
   /** Open New chat for this region. Its first send creates the chat with this
    * region's label; until then it is only a draft. With `lead`, the chat starts
    * as the workspace's lead while the draft still targets that workspace. */
@@ -97,6 +99,7 @@ export type SoloRegionProps = Readonly<{
   state: Readonly<{
     get(): JsonValue | undefined;
     set(value: JsonValue): boolean;
+    subscribe(listener: () => void): () => void;
   }>;
   ui: Readonly<{
     Conversation: ComponentType<SoloConversationProps>;

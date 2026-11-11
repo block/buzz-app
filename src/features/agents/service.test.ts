@@ -3417,6 +3417,11 @@ it("gives plugins' instructions to every turn of the agents they choose, until t
         when: (agent) => agent.name === "Other",
       });
       plugin.agents.addInstructions({
+        id: "async",
+        text: "Never either.",
+        when: (async () => true) as never,
+      });
+      plugin.agents.addInstructions({
         id: "broken",
         text: "Never.",
         when: () => {

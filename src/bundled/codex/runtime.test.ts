@@ -2103,6 +2103,25 @@ it("ends a turn's input with the notes plugins left for it in its channel", asyn
   expect(notes).toHaveBeenCalledOnce();
   expect(notes).toHaveBeenCalledWith("channel", root);
 });
+it("ends a turn's input with plugins' instructions, once", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  await f.runtime.run({
+    ...delivery,
+    agent: {
+      ...delivery.agent,
+      instructions: () => [{ plugin: "acme.dibs", text: "Run dibs_check." }],
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  const text = params.input[0]?.text ?? "";
+  expect(text.match(/<plugin-instructions /g)).toHaveLength(1);
+  expect(text).toMatch(
+    /<\/buzz-event>\n\n<plugin-instructions plugin="acme\.dibs">\nRun dibs_check\.\n<\/plugin-instructions>/,
+  );
+});
+
 it("hands a turn the notes plugins left while it was being prepared", async () => {
   const f = fixture();
   const delivery = f.delivery("@Codex go on");

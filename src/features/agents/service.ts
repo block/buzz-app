@@ -2924,7 +2924,8 @@ export class AgentsService extends Service implements Agents {
       .snapshot()
       .filter((entry) => {
         try {
-          return !entry.when || entry.when(current);
+          // Only true admits them: an async `when` gives a Promise.
+          return !entry.when || entry.when(current) === true;
         } catch (error) {
           console.warn("Agent instructions failed to match", entry.key, error);
           return false;

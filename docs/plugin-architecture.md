@@ -2613,15 +2613,16 @@ does not fetch metadata or infer a service from names in paths or query strings.
 Its `order` is a function: recognised services and Buzz entities claim the default
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
-It does not fetch titles. The bundled GitHub plugin contributes a pull request
-and issue renderer at a lower `order` for github.com pull request and issue
-URLs: the same label with the pull request's state (open, draft, merged,
+It does not fetch titles. The bundled GitHub plugin contributes a renderer at a
+lower `order` for github.com repository, pull request, issue and commit URLs.
+For pull requests and issues it shows the same label with the pull request's state (open, draft, merged,
 closed) or the issue's (open, closed as completed, closed as not planned) as a
 coloured icon, read with the person's `gh` sign-in or the public API and kept
 current while shown. A pasted pull request or issue URL is labelled
 `repo#number`, then `repo#number · title` once its title is read with that
-state; an authored label stays. Repositories and commits, and every
-pull request and issue link when that plugin is disabled, keep the Links
+state. A pasted repository URL is labelled `owner/repo` and a commit URL
+`repo@sha`, without reading anything; an authored label stays. Other GitHub
+pages, and every GitHub link when that plugin is disabled, keep the Links
 presentation. If the renderer fails, the link shows as a plain link.
 Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their

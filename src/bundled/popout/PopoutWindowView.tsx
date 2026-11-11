@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -72,9 +73,23 @@ export function PopoutWindowView({
     | { action: "openThread"; rootId: string; intent?: "reply" }
     | { action: "back" }
   >();
-  // Reply from a conversation opens the thread and, once it shows, its
-  // composer takes focus — main's Reply from a channel does the same.
-  const focusOnThread = useRef(false);
+  // Reply from a conversation opens the thread and its editor takes focus
+  // once it is ready — main's Reply from a channel does the same. The ref
+  // is `MessageComposer.autoFocus`'s owner: the element focused when Reply
+  // was chosen; the composer focuses only while that is still so (or focus
+  // is on nothing), and clears the handoff itself.
+  const replyFocus = useRef<HTMLElement | null>(null);
+  const replyPending = useRef(false);
+  useLayoutEffect(() => {
+    // Once the thread frame shows, focus rests on its message log and that is
+    // the owner the editor compares to when it connects; a Reply control that
+    // kept focus would read as an open popup and refuse the handoff.
+    if (!view.thread || !replyPending.current) return;
+    replyPending.current = false;
+    log.current?.focus({ preventScroll: true });
+    replyFocus.current =
+      (document.activeElement as HTMLElement | null) ?? document.body;
+  }, [view.thread]);
   const navigate = (
     next:
       | { action: "openThread"; rootId: string; intent?: "reply" }
@@ -85,15 +100,15 @@ export function PopoutWindowView({
       return;
     }
     if (next.action === "openThread") {
-      focusOnThread.current = next.intent === "reply";
+      replyPending.current = next.intent === "reply";
+      replyFocus.current = null;
       act("openThread", next.rootId);
-    } else act("back");
+    } else {
+      replyPending.current = false;
+      replyFocus.current = null;
+      act("back");
+    }
   };
-  useEffect(() => {
-    if (!view.thread || !focusOnThread.current) return;
-    focusOnThread.current = false;
-    focusConversation();
-  });
   const rows = useMemo(
     () => (view.root ? [view.root, ...view.replies] : view.replies),
     [view.root, view.replies],
@@ -176,6 +191,7 @@ export function PopoutWindowView({
       session: operationsSession,
       // Voice notes record here; main uploads them like any attachment.
       capture: true,
+      autoFocus: view.thread ? replyFocus : undefined,
       onCapturing: setCapturing,
     },
   );
@@ -663,9 +679,14 @@ export function PopoutWindowView({
                     const next = pendingNavigation;
                     setPendingNavigation(undefined);
                     if (next.action === "openThread") {
-                      focusOnThread.current = next.intent === "reply";
+                      replyPending.current = next.intent === "reply";
+                      replyFocus.current = null;
                       act("openThread", next.rootId);
-                    } else act("back");
+                    } else {
+                      replyPending.current = false;
+                      replyFocus.current = null;
+                      act("back");
+                    }
                   }}
                 >
                   Discard and continue

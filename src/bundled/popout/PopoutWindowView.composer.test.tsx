@@ -431,3 +431,48 @@ it("labels links as main does: its enabled link renderer, channel names from its
     ).toBe("design"),
   );
 });
+
+it("focuses the thread's editor once it connects after Reply from a conversation window", async () => {
+  const h = harness();
+  // The thread frame's own composer owner, as the window owner creates it.
+  const threadOwner = createHuddleComposerOwner(
+    h.session,
+    h.room,
+    h.room,
+    undefined,
+    () => true,
+    () => true,
+    undefined,
+    "1".repeat(64),
+  );
+  cleanup.push(() => threadOwner.dispose());
+  const act = vi.fn();
+  const conversation = {
+    ...view(h),
+    thread: false,
+    root: undefined,
+    composer: undefined,
+    replies: [{ ...(view(h).root as NonNullable<PopoutView["root"]>) }],
+  };
+  const mounted = render(<PopoutWindowView view={conversation} act={act} />);
+  fireEvent.click(
+    (await screen.findAllByRole("button", { name: "Reply" }))[0] as HTMLElement,
+  );
+  expect(act).toHaveBeenCalledWith("openThread", "1".repeat(64));
+  // Main re-points the window at the thread; its editor connects later.
+  mounted.rerender(
+    <PopoutWindowView
+      view={{
+        ...view(h),
+        thread: true,
+        canGoBack: true,
+        composer: threadOwner.token,
+      }}
+      act={act}
+    />,
+  );
+  const editor = await screen.findByRole("textbox", {
+    name: "Reply to thread",
+  });
+  await waitFor(() => expect(document.activeElement).toBe(editor));
+});

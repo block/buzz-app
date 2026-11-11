@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  type RefObject,
 } from "react";
 import { createHuddleComposerClient } from "../../features/huddle/composer-client";
 import {
@@ -80,6 +81,10 @@ export type CompanionComposerPresentation = {
   capture?: boolean | undefined;
   /** Told while a voice note is being captured in this editor. */
   onCapturing?: ((capturing: boolean) => void) | undefined;
+  /** Focus the editor once it is ready, as `MessageComposer.autoFocus` with
+   * an owner ref does: the element focused when the intent formed, cancelled
+   * by a focus move meanwhile (pop-out windows: Reply from a conversation). */
+  autoFocus?: RefObject<HTMLElement | null> | undefined;
 };
 export type CompanionComposerClient = ReturnType<
   typeof createHuddleComposerClient
@@ -216,6 +221,7 @@ function ConnectedComposer({
         replyContext={presentation?.replyContext}
         onHeld={onHeld ? setEditorHeld : undefined}
         onCapturing={presentation?.onCapturing}
+        autoFocus={presentation?.autoFocus ?? false}
         disabled={!data.writable}
         editMessages={presentation?.editMessages ?? noEdits}
       />

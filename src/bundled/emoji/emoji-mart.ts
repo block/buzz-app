@@ -25,7 +25,27 @@ const categoryIcons = {
   flags: { svg: pickerIcons.flag },
   custom: { svg: pickerIcons.asterisk },
   "buzz-custom": { svg: pickerIcons.asterisk },
+  "buzz-favorites": { svg: pickerIcons.star },
 };
+/**
+ * Category order with the shared `categories` prop: Mart keeps custom
+ * categories at the end by default, and favorites belong next to Frequent
+ * where the crowded community palette is easiest to escape from. Unknown or
+ * empty entries (including an empty Favorites) are dropped by Mart itself.
+ */
+const categoryOrder = [
+  "frequent",
+  "buzz-favorites",
+  "people",
+  "nature",
+  "foods",
+  "activity",
+  "places",
+  "objects",
+  "symbols",
+  "flags",
+  "buzz-custom",
+];
 let active: (() => void) | undefined;
 export type EmojiSearchSelection = {
   emoji: string | undefined;
@@ -48,6 +68,7 @@ export function mountEmojiMart({
   searchSelection,
   searchChange,
   entries,
+  favorites,
   media,
   select,
   close,
@@ -63,6 +84,8 @@ export function mountEmojiMart({
   searchSelection: { current: EmojiSearchSelection | undefined };
   searchChange(value: string): void;
   entries: readonly CustomEmoji[];
+  /** The scope's favorite shortcodes; favorites render as the first category. */
+  favorites: readonly string[];
   media(url: string): string | undefined;
   select(value: string, customEmoji?: string): void;
   close(): void;
@@ -70,6 +93,16 @@ export function mountEmojiMart({
   active?.();
   let disposed = false;
   const values = new Map<string, { literal: string; shortcode: string }>();
+  const byShortcode = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      keywords: string[];
+      search: string;
+      skins: { src: string; shortcodes: string }[];
+    }
+  >();
   const emojis = entries.flatMap(({ shortcode, url }) => {
     const src = media(url);
     if (!src) return [];
@@ -82,17 +115,46 @@ export function mountEmojiMart({
       ...name.replace(/(\w)-/, "$1 ").split(/[\s|,]+/),
       ...name.split(/[-_]+/),
     ]);
-    return [
-      {
-        id,
-        name: literal,
-        keywords: [shortcode],
-        // Supplying search/shortcodes prevents Mart from exposing its scoped ID.
-        search: `,${terms.join(",")}`,
-        skins: [{ src, shortcodes: literal }],
-      },
-    ];
+    const emoji = {
+      id,
+      name: literal,
+      keywords: [shortcode],
+      // Supplying search/shortcodes prevents Mart from exposing its scoped ID.
+      search: `,${terms.join(",")}`,
+      skins: [{ src, shortcodes: literal }],
+    };
+    byShortcode.set(shortcode, emoji);
+    return [emoji];
   });
+  const favoritesEmojis = favorites.flatMap((shortcode) => {
+    const emoji = byShortcode.get(shortcode);
+    return emoji ? [emoji] : [];
+  });
+  // Each custom category carries its icon up front: Mart otherwise links a
+  // second custom category to the first as its render `target`, which both
+  // categories then publish as their DOM data-id.
+  const customCategories = [
+    ...(favoritesEmojis.length
+      ? [
+          {
+            id: "buzz-favorites",
+            name: "Favorites",
+            icon: { svg: pickerIcons.star },
+            emojis: favoritesEmojis,
+          },
+        ]
+      : []),
+    ...(emojis.length
+      ? [
+          {
+            id: "buzz-custom",
+            name: "Custom",
+            icon: { svg: pickerIcons.asterisk },
+            emojis,
+          },
+        ]
+      : []),
+  ];
   // Restore Mart's default Frequent row if storage contains a poisoned empty map.
   try {
     if (localStorage.getItem("emoji-mart.frequently") === "{}") {
@@ -102,11 +164,29 @@ export function mountEmojiMart({
   } catch {
     /* Like Mart, selection works without localStorage. */
   }
+  // Mart's props.custom path registers palette categories through the shared
+  // Data.categories/OriginalCategories reference on the first init, but a
+  // later init rebuilds categories from an originalCategories copy that no
+  // longer tracks custom entries — so the `categories` ordering filter would
+  // drop them. Re-register the palette ourselves on every remount.
+  const paletteIds = new Set(["buzz-favorites", "buzz-custom"]);
+  const withoutPalette = (categories: { id: string }[]) =>
+    categories.filter((category) => !paletteIds.has(category.id));
+  const remount = !!Data;
+  if (remount) {
+    Data.categories = withoutPalette(Data.categories);
+    Data.originalCategories = withoutPalette(Data.originalCategories);
+    for (const category of customCategories) {
+      Data.categories.push(category);
+      Data.originalCategories.push(category);
+    }
+    for (const emoji of customCategories.flatMap((c) => c.emojis))
+      Data.emojis[emoji.id] = emoji;
+  }
   const picker = new Picker({
     data,
-    custom: emojis.length
-      ? [{ id: "buzz-custom", name: "Custom", emojis }]
-      : [],
+    custom: remount ? [] : customCategories.length ? customCategories : [],
+    categories: categoryOrder,
     autoFocus: false,
     categoryIcons,
     emojiButtonSize,
@@ -545,11 +625,13 @@ export function mountEmojiMart({
     picker.remove(); // unregisters Mart's document listeners and observers
     for (const id of values.keys()) delete Data?.emojis[id];
     if (Data) {
+      const custom = new Set(["buzz-custom", "buzz-favorites"]);
+      const byCustom = (c: { id: string }) => custom.has(c.id);
       Data.categories = Data.categories.filter(
-        (c: { id: string }) => c.id !== "buzz-custom",
+        (c: { id: string }) => !byCustom(c),
       );
       Data.originalCategories = Data.originalCategories.filter(
-        (c: { id: string }) => c.id !== "buzz-custom",
+        (c: { id: string }) => !byCustom(c),
       );
     }
     SearchIndex.search = martSearch;

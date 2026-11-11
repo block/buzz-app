@@ -1,14 +1,21 @@
 import { createShortcutBindings } from "../../features/shortcuts/preferences";
 import { matches } from "../../features/shortcuts/bindings";
 import type { GifShortcut } from "./gif-shortcut";
+import { useFavoriteEmoji, toggleFavoriteEmoji } from "./emoji-favorites";
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  MenuRoot,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
+import {
   type RefObject,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -108,6 +115,14 @@ export function EmojiPicker({
   );
   // Remount Emoji Mart for catalog contents, not for status-only publishes.
   const entries = catalog.status === "ready" ? catalog.entries : NO_ENTRIES;
+  const favorites = useFavoriteEmoji(scope);
+  // Right-clicking a palette emoji opens a one-item menu at the pointer.
+  const [emojiMenu, setEmojiMenu] = useState<{
+    shortcode: string;
+    favorite: boolean;
+    x: number;
+    y: number;
+  }>();
   useLayoutEffect(() => {
     if (!open) return;
     const origin = externalTrigger?.ref.current ?? controls.current;
@@ -246,6 +261,7 @@ export function EmojiPicker({
             search.current = value;
           },
           entries,
+          favorites,
           media: session.media,
           select: (value) => {
             onInsert.current(value);
@@ -274,6 +290,7 @@ export function EmojiPicker({
     session,
     scope,
     entries,
+    favorites,
     attempt,
     perLine,
     scale,
@@ -281,6 +298,41 @@ export function EmojiPicker({
     host,
     colorMode,
   ]);
+  useEffect(() => {
+    if (!host) return;
+    // Mart renders emoji as shadow-root buttons titled with their `:shortcode:`
+    // literal; the native catalog uses names, so a palette hit is unambiguous.
+    const literal = /^:([a-z0-9_-]{1,64}):$/i;
+    const onContextMenu = (event: MouseEvent) => {
+      if (event.defaultPrevented) return;
+      const button = event
+        .composedPath()
+        .find(
+          (node): node is HTMLButtonElement =>
+            node instanceof HTMLButtonElement && literal.test(node.title),
+        );
+      if (!button) return;
+      const shortcode = literal.exec(button.title)?.[1]?.toLowerCase();
+      if (!shortcode || !entries.some((e) => e.shortcode === shortcode)) return;
+      event.preventDefault();
+      setEmojiMenu({
+        shortcode,
+        favorite: favorites.includes(shortcode),
+        x: event.clientX,
+        y: event.clientY,
+      });
+    };
+    host.addEventListener("contextmenu", onContextMenu);
+    return () => host.removeEventListener("contextmenu", onContextMenu);
+  }, [host, entries, favorites]);
+  const emojiMenuAnchor = useMemo(
+    () =>
+      emojiMenu && {
+        getBoundingClientRect: () =>
+          new DOMRect(emojiMenu.x, emojiMenu.y, 0, 0),
+      },
+    [emojiMenu],
+  );
   const emojiContent = (
     <div className={styles.emojiMart}>
       <div ref={setHost} tabIndex={-1} />
@@ -449,10 +501,33 @@ export function EmojiPicker({
           if (gifs !== true && gifAvailability?.community === community)
             setGifAvailability(undefined);
           setGifDiscoveryRequested(true);
-        }
+        } else setEmojiMenu(undefined);
       }}
     >
       {controlsView}
+      <MenuRoot
+        modal={false}
+        open={!!emojiMenu}
+        onOpenChange={(next) => {
+          if (!next) setEmojiMenu(undefined);
+        }}
+      >
+        {emojiMenu && (
+          <MenuPopup
+            size="compact"
+            anchor={emojiMenuAnchor}
+            finalFocus={() => host ?? false}
+          >
+            <MenuItem
+              onClick={() => toggleFavoriteEmoji(scope, emojiMenu.shortcode)}
+            >
+              {emojiMenu.favorite
+                ? "Remove from favorites"
+                : "Add to favorites"}
+            </MenuItem>
+          </MenuPopup>
+        )}
+      </MenuRoot>
     </PopoverRoot>
   );
 }

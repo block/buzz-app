@@ -34,6 +34,7 @@ it("adds fuzzy shortcode matches after Mart's own results", async () => {
       shortcode,
       url: `https://a.test/${shortcode}.png`,
     })),
+    favorites: [],
     media: (url) => url,
     select() {},
     close() {},
@@ -80,4 +81,109 @@ it("adds fuzzy shortcode matches after Mart's own results", async () => {
     dispose();
   }
   expect(SearchIndex.search).toBe(martSearch);
+});
+
+it("groups favorited palette emoji into a Favorites category before Custom", async () => {
+  for (const name of ["ResizeObserver", "IntersectionObserver"])
+    vi.stubGlobal(
+      name,
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  const host = document.body.appendChild(document.createElement("div"));
+  const entries = ["bufo-pray", "bufo-thumbs-up"].map((shortcode) => ({
+    shortcode,
+    url: `https://a.test/${shortcode}.png`,
+  }));
+  const dispose = mountEmojiMart({
+    host,
+    autoFocus: false,
+    scope: "fixture",
+    perLine: 8,
+    emojiSize: 24,
+    emojiButtonSize: 36,
+    search: "",
+    searchSelection: { current: undefined },
+    searchChange() {},
+    entries,
+    favorites: ["bufo-thumbs-up", "gone", "bufo-pray"],
+    media: (url) => url,
+    select() {},
+    close() {},
+  });
+  try {
+    const root = () => host.querySelector("em-emoji-picker")?.shadowRoot;
+    await vi.waitFor(() =>
+      expect(
+        root()?.querySelector('#nav button[aria-label="Favorites"]'),
+      ).toBeTruthy(),
+    );
+    const martRoot = () => {
+      const shadow = root();
+      if (!shadow) throw new Error("Mart has not mounted");
+      return shadow;
+    };
+    // A favorite that left the palette is skipped, not shown empty.
+    const labels = [...martRoot().querySelectorAll("#nav button")].map(
+      (button) => button.getAttribute("aria-label"),
+    );
+    expect(labels).toContain("Favorites");
+    expect(labels).toContain("Custom");
+    expect(labels.indexOf("Favorites")).toBeLessThan(labels.indexOf("Custom"));
+    const favoritesCategory = martRoot().querySelector(
+      '.category[data-id="buzz-favorites"]',
+    );
+    // Custom stays addressable as its own category even alongside Favorites.
+    const customCategory = martRoot().querySelector(
+      '.category[data-id="buzz-custom"]',
+    );
+    expect(favoritesCategory).toBeTruthy();
+    expect(customCategory).toBeTruthy();
+    if (!favoritesCategory || !customCategory) return;
+    expect(
+      [...favoritesCategory.querySelectorAll("img")].map((img) => img.src),
+    ).toEqual([
+      "https://a.test/bufo-thumbs-up.png",
+      "https://a.test/bufo-pray.png",
+    ]);
+    expect(
+      martRoot().querySelectorAll('.category[data-id="buzz-favorites"]'),
+    ).toHaveLength(1);
+  } finally {
+    dispose();
+  }
+  // A remount without favorites still shows the palette: the remount
+  // registration path must not drop custom categories when none are favorited.
+  const remounted = mountEmojiMart({
+    host,
+    autoFocus: false,
+    scope: "fixture",
+    perLine: 8,
+    emojiSize: 24,
+    emojiButtonSize: 36,
+    search: "",
+    searchSelection: { current: undefined },
+    searchChange() {},
+    entries,
+    favorites: [],
+    media: (url) => url,
+    select() {},
+    close() {},
+  });
+  try {
+    const root = () => host.querySelector("em-emoji-picker")?.shadowRoot;
+    await vi.waitFor(() =>
+      expect(
+        root()?.querySelector('#nav button[aria-label="Custom"]'),
+      ).toBeTruthy(),
+    );
+    expect(
+      root()?.querySelector('#nav button[aria-label="Favorites"]'),
+    ).toBeNull();
+  } finally {
+    remounted();
+  }
 });

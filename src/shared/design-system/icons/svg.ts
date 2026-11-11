@@ -9,6 +9,7 @@ import lightbulb from "@tabler/icons/outline/bulb.svg?raw";
 import shapes from "@tabler/icons/outline/category.svg?raw";
 import flag from "@tabler/icons/outline/flag.svg?raw";
 import asterisk from "@tabler/icons/outline/asterisk.svg?raw";
+import star from "@tabler/icons/outline/star.svg?raw";
 import x from "@tabler/icons/outline/x.svg?raw";
 
 import magnifying_glass from "@tabler/icons/outline/search.svg?raw";
@@ -26,4 +27,5 @@ export const pickerIcons = {
   shapes: shapes,
   flag: flag,
   asterisk: asterisk,
+  star: star,
 };

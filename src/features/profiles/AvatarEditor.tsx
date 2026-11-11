@@ -955,6 +955,7 @@ export function AvatarEmojiPicker({
             search.current = value;
           },
           entries: [],
+          favorites: [],
           media: () => undefined,
           select: (value) => callback.current(value),
           close() {},

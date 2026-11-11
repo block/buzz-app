@@ -160,7 +160,8 @@ it("desktop settings expose app-owned sounds and collapse them when alerts are d
   expect(html).toContain("@Mentions");
   expect(html).toContain("Thread replies");
   expect(html).toContain("Solo chat completions");
-  expect(html.match(/role="combobox"/g)).toHaveLength(4);
+  expect(html.match(/role="combobox"/g)).toHaveLength(5);
+  expect(html).toContain('aria-label="Badge activity"');
   expect(html).not.toContain("Preview flutter");
   expect(html).not.toContain("Permission granted");
   expect(html).toContain("Check permission");
@@ -177,7 +178,8 @@ it("desktop settings expose app-owned sounds and collapse them when alerts are d
   );
   expect(disabled).toContain('aria-label="Desktop alerts"');
   expect(disabled).not.toContain('aria-label="Sound"');
-  expect(disabled).not.toContain('role="combobox"');
+  expect(disabled.match(/role="combobox"/g)).toHaveLength(1);
+  expect(disabled).toContain('aria-label="Badge activity"');
   expect(disabled).not.toContain("Notify while viewing");
 });
 

@@ -2395,8 +2395,33 @@ pub(crate) async fn media_lift_subject(
     Ok(tauri::ipc::Response::new(png))
 }
 
+/// The relay URL and saved name of an attachment this window may download.
+/// The Huddle window may only name attachments its main owner supplied.
+pub(crate) fn download_request<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    webview: &tauri::Webview<R>,
+    source: &str,
+    name: &str,
+) -> Result<(Url, String)> {
+    use tauri::Manager as _;
+    let allowed = match webview.label() {
+        "main" => true,
+        "huddle" => app
+            .try_state::<crate::huddle_window::HuddleWindow>()
+            .is_some_and(|host| host.permits_download(source, name)),
+        _ => false,
+    };
+    if !allowed {
+        return Err("This attachment is no longer available in this window".into());
+    }
+    let url = download_target(source).ok_or("Invalid media URL")?;
+    let filename = download_name(name, &url).to_owned();
+    Ok((url, filename))
+}
+
 /// Persist an authenticated bounded response without replacing an existing file.
-/// The host, not the webview, owns the save path and collision policy.
+/// The host, not the webview, owns the save path and collision policy, and
+/// records the path so the attachment can open its saved copy.
 #[tauri::command]
 pub(crate) async fn media_download<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -2407,23 +2432,16 @@ pub(crate) async fn media_download<R: tauri::Runtime>(
     name: String,
 ) -> Result<()> {
     use tauri::Manager as _;
-    let allowed = match webview.label() {
-        "main" => true,
-        "huddle" => app
-            .try_state::<crate::huddle_window::HuddleWindow>()
-            .is_some_and(|host| host.permits_download(&source, &name)),
-        _ => false,
-    };
-    if !allowed {
-        return Err("This attachment is no longer available in this window".into());
-    }
-    let url = download_target(&source).ok_or("Invalid media URL")?;
+    let (url, filename) = download_request(&app, &webview, &source, &name)?;
+    let key = crate::saved_downloads::key(&url, &filename);
     let directory = app
         .path()
         .download_dir()
         .map_err(|_| "Downloads unavailable")?;
-    save_media(host.inner(), Some(fi.inner()), url, directory, &name).await?;
-    Ok(())
+    let path = save_media(host.inner(), Some(fi.inner()), url, directory, &name).await?;
+    tauri::async_runtime::spawn_blocking(move || crate::saved_downloads::recorded(&app, key, path))
+        .await
+        .map_err(|_| "Media download interrupted".to_owned())
 }
 
 /// Fetches relay media `url` as `buzz-media` serves it and saves it to

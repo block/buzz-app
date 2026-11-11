@@ -768,6 +768,8 @@ mod tests {
                 "allow-huddle-window-watch",
                 "allow-huddle-window-action",
                 "allow-media-download",
+                "allow-media-download-status",
+                "allow-media-download-open",
                 "allow-clipboard-write-text",
                 { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }] }
             ])

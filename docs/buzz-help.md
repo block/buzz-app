@@ -102,6 +102,10 @@ if that desktop app is up and running.
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my
   draft** or **Load saved draft**.
+- **File downloads.** In the desktop app, a file card
+  downloads to Downloads once and then opens that copy; right-click it to
+  **Show in Finder** (or **Show in folder**) or **Download again**. If the
+  saved file is moved, deleted or edited, the card offers **Download** again.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.

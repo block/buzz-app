@@ -63,6 +63,32 @@ aborting it closes its live and parked guests, including a guest whose attach
 finishes after cancellation.
 Normal website views retain the storage behavior above.
 
+## Website zones
+
+A build may divide websites into internal and external zones with
+[`BUZZ_BUILD_BROWSER_INTERNAL_HOSTS`](configuration.md#supported-inputs-and-surfaces):
+comma-separated domains, each with its subdomains, such as
+`example.org,corp.example`. Unset, as in OSS builds, nothing below applies.
+
+Each view is pinned to the zone of the first website it opens and stays there
+for its whole session, so a view never reaches both. A website outside the zone
+is refused like any other invalid address: typed, followed by a link, redirected
+to, or framed. On macOS a WebKit content rule list also blocks the session's
+requests outside its zone, including images, scripts, `fetch`, WebSockets and
+frames, so a page cannot send data across with them. Content rules do not see
+WebRTC or WebTransport, so zoned views turn both off. A view loads nothing until
+its limits apply; if WebKit lacks the switches for them or cannot compile the
+rules within five seconds, the view does not open. Other platforms refuse zoned
+views, since they could not block those requests.
+
+Zones limit where a view's content can reach, not which plugin may open one:
+plugin JavaScript is trusted, and opening a view in the other zone is a new
+session pinned there. Matching is by host name: an IP address or a name outside
+the listed domains is external, and a trailing root dot (`example.org.`) names
+the same host. An external name that resolves to an internal address is still
+external. An internal site that signs people in on another domain needs that
+domain listed too, or the view refuses the redirect.
+
 ## Native ownership
 
 The controls are ordinary trusted React UI in Buzz's main webview. Website content is a separate raw Wry child view positioned over the panel's website viewport, created without a Tauri IPC handler, custom protocols or host initialization scripts. It uses a nonpersistent data store, or the named persistent store described above. The main window's content-security policy is unchanged.

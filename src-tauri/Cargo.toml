@@ -92,6 +92,8 @@ tokio-rustls = { version = "0.26", default-features = false }
 # For the build_config test, which compiles build.rs.
 tauri-build = { version = "2.7.2", features = [] }
 dotenvy = "0.15"
+# For checking Buzz Browser's website-zone content rules.
+regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["user"] }
@@ -108,7 +110,7 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSS
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSObject", "NSThread", "NSBundle", "NSString", "NSURL", "NSError", "NSUserDefaults", "NSFormatter", "NSDateFormatter", "NSLocale", "NSProcessInfo", "NSData", "NSProgress", "NSURLRequest", "NSURLResponse", "NSURLError", "NSNotification", "NSOperation", "block2"] }
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["UNError", "UNUserNotificationCenter", "UNNotificationSettings", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "block2"] }
 
-objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore", "WKDownload", "WKDownloadDelegate", "WKNavigation", "WKNavigationDelegate"] }
+objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-app-kit", "block2", "WKWebView", "WKUIDelegate", "WKFrameInfo", "WKSecurityOrigin", "WKWebViewConfiguration", "WKWebsiteDataStore", "WKHTTPCookieStore", "WKDownload", "WKDownloadDelegate", "WKNavigation", "WKNavigationDelegate", "WKContentRuleList", "WKContentRuleListStore", "WKUserContentController"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "=0.39.1"

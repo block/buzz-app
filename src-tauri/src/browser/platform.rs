@@ -262,6 +262,76 @@ mod macos {
         Ok(receiver)
     }
 
+    /// Compiles WebKit content rules and adds them to the guest. The receiver reports
+    /// once they apply to the guest's requests, or why they could not.
+    pub fn install_content_rules(
+        guest: &WebView,
+        rules: &str,
+    ) -> Result<super::RulesInstalled, String> {
+        use objc2_web_kit::{WKContentRuleList, WKContentRuleListStore};
+        use sha2::Digest;
+        let mtm = MainThreadMarker::new().ok_or("Buzz Browser must run on the main thread")?;
+        disable_peer_traffic(guest)?;
+        let store = unsafe { WKContentRuleListStore::defaultStore(mtm) }
+            .ok_or("Buzz Browser website limits are unavailable")?;
+        let controller = unsafe { guest.webview().configuration().userContentController() };
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
+        let complete =
+            block2::RcBlock::new(move |list: *mut WKContentRuleList, error: *mut NSError| {
+                // WebKit calls this on the main thread, where the controller lives.
+                let result = match unsafe { list.as_ref() } {
+                    Some(list) if error.is_null() => {
+                        unsafe { controller.addContentRuleList(list) };
+                        Ok(())
+                    }
+                    _ => Err("Buzz Browser could not apply its website limits".to_string()),
+                };
+                let _ = sender.try_send(result);
+            });
+        // The store keeps compiled lists by name; one per zone's rules is enough.
+        let identifier = format!("buzz-browser-zone-{:x}", sha2::Sha256::digest(rules));
+        unsafe {
+            store.compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler(
+                Some(&NSString::from_str(&identifier)),
+                Some(&NSString::from_str(rules)),
+                Some(&complete),
+            );
+        }
+        Ok(receiver)
+    }
+
+    /// WebRTC and WebTransport send UDP that content rules never see, so a zoned
+    /// session turns both off. WebKit exposes them only as private feature flags;
+    /// without those flags the session cannot be limited and does not open.
+    fn disable_peer_traffic(guest: &WebView) -> Result<(), String> {
+        use objc2::runtime::AnyClass;
+        let unavailable = || "Buzz Browser could not apply its website limits".to_string();
+        let class = AnyClass::get(c"WKPreferences").ok_or_else(unavailable)?;
+        let preferences: Retained<AnyObject> =
+            unsafe { msg_send![&*guest.webview().configuration(), preferences] };
+        let setter = sel!(_setEnabled:forFeature:);
+        if class.class_method(sel!(_features)).is_none() || !preferences.class().responds_to(setter)
+        {
+            return Err(unavailable());
+        }
+        let features: Retained<AnyObject> = unsafe { msg_send![class, _features] };
+        let count: usize = unsafe { msg_send![&*features, count] };
+        // Every WebKit has WebRTC; WebTransport is missing from older ones.
+        let mut peer_connection = false;
+        for index in 0..count {
+            let feature: Retained<AnyObject> =
+                unsafe { msg_send![&*features, objectAtIndex: index] };
+            let key: Retained<NSString> = unsafe { msg_send![&*feature, key] };
+            let key = key.to_string();
+            if key == "PeerConnectionEnabled" || key == "WebTransportEnabled" {
+                let _: () =
+                    unsafe { msg_send![&*preferences, _setEnabled: false, forFeature: &*feature] };
+                peer_connection |= key == "PeerConnectionEnabled";
+            }
+        }
+        peer_connection.then_some(()).ok_or_else(unavailable)
+    }
+
     pub fn loading(guest: &WebView) -> bool {
         unsafe { guest.webview().isLoading() }
     }
@@ -461,9 +531,21 @@ pub(super) fn resize_guest(
 
 #[cfg(target_os = "macos")]
 pub(super) use macos::{
-    back, current_url, deny_permissions, focused, forward, install_builderlab_cookie, load,
-    loading, observe_navigation, set_media_suspended,
+    back, current_url, deny_permissions, focused, forward, install_builderlab_cookie,
+    install_content_rules, load, loading, observe_navigation, set_media_suspended,
 };
+
+/// Reports whether a session's website-zone rules apply to its requests.
+pub(super) type RulesInstalled = tokio::sync::mpsc::Receiver<Result<(), String>>;
+
+/// Without request blocking a zoned session could still reach the other zone, so refuse it.
+#[cfg(not(target_os = "macos"))]
+pub(super) fn install_content_rules(
+    _guest: &WebView,
+    _rules: &str,
+) -> Result<RulesInstalled, String> {
+    Err("Buzz Browser website limits are supported only on macOS".into())
+}
 #[cfg(target_os = "macos")]
 pub(super) type Permissions = objc2::rc::Retained<macos::PermissionDelegate>;
 #[cfg(target_os = "macos")]

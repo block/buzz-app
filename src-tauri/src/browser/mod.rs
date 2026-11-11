@@ -322,9 +322,11 @@ fn build_contents(
     bounds: BrowserBounds,
     storage: Option<&str>,
     defer_navigation: bool,
-) -> Result<BrowserSession, String> {
-    let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
+) -> Result<(BrowserSession, Option<platform::RulesInstalled>), String> {
+    let mut policy = NavigationPolicy::new(app.config().build.dev_url.clone());
     let target = policy.validate(target)?;
+    policy.pin(&target);
+    let content_rules = policy.content_rules();
     bounds.validate()?;
     let storage = storage.map(storage_identifier).transpose()?;
     let host = app
@@ -393,6 +395,10 @@ fn build_contents(
     let guest = platform::build_guest(builder, &host.window())?;
     let permissions = platform::deny_permissions(&guest)?;
     let navigation = platform::observe_navigation(&guest)?;
+    // A zoned session loads nothing until its rules apply; browser_attach waits for them.
+    let rules = content_rules
+        .map(|rules| platform::install_content_rules(&guest, &rules))
+        .transpose()?;
     let browser = BrowserSession {
         instance: uuid::Uuid::new_v4().to_string(),
         host,
@@ -405,10 +411,10 @@ fn build_contents(
         media_suspended: Cell::new(false),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
-    if !defer_navigation {
+    if !defer_navigation && rules.is_none() {
         browser.navigate(target.as_str(), false)?;
     }
-    Ok(browser)
+    Ok((browser, rules))
 }
 
 #[tauri::command]
@@ -427,9 +433,10 @@ pub async fn browser_attach(
         None => None,
     };
     let handle = app.clone();
-    let (session_id, pending) = on_main_thread(&app, move || {
+    let first = url.clone();
+    let (session_id, pending, rules) = on_main_thread(&app, move || {
         with_current_document(&DOCUMENT_GENERATION, generation, || {
-            let browser =
+            let (browser, rules) =
                 build_contents(&handle, &url, bounds, storage.as_deref(), defer_navigation)?;
             let pending = bootstrap
                 .as_ref()
@@ -442,10 +449,39 @@ pub async fn browser_attach(
                 let excess = browsers.len().saturating_sub(MAX_GUESTS);
                 browsers.drain(..excess);
             });
-            Ok((session_id, pending))
+            Ok((session_id, pending, rules))
         })
     })
     .await?;
+    if let Some(mut rules) = rules {
+        let installed = tokio::time::timeout(std::time::Duration::from_secs(5), rules.recv()).await;
+        let id = session_id.clone();
+        on_main_thread(&app, move || {
+            // Fail closed: without its rules the session never loads a page.
+            let result = match installed {
+                Ok(Some(Ok(()))) => with_current_document(&DOCUMENT_GENERATION, generation, || {
+                    with_browser(&id, |browser| {
+                        if defer_navigation {
+                            Ok(())
+                        } else {
+                            browser.navigate(&first, false)
+                        }
+                    })
+                }),
+                Ok(Some(Err(error))) => Err(error),
+                _ => Err("Buzz Browser could not apply its website limits".into()),
+            };
+            if result.is_err() {
+                BROWSERS.with(|browsers| {
+                    browsers
+                        .borrow_mut()
+                        .retain(|browser| browser.instance != id)
+                });
+            }
+            result
+        })
+        .await?;
+    }
     if let Some(mut pending) = pending {
         let installed =
             tokio::time::timeout(std::time::Duration::from_secs(5), pending.recv()).await;

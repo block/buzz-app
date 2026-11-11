@@ -19,6 +19,7 @@ fn main() {
     configure_nsec_backup();
     configure_federated_identity();
     configure_enterprise_auth();
+    configure_browser_internal_hosts();
     // Release builds enable the updater only when both values are supplied; its
     // `plugins.updater` config comes from the same values via `tauri build --config`.
     println!("cargo:rerun-if-env-changed=BUZZ_UPDATER_PUBLIC_KEY");
@@ -314,6 +315,45 @@ fn configure_enterprise_auth() {
     }
 }
 
+/// Domains Buzz Browser treats as internal (see docs/browser.md#website-zones). A
+/// mistyped entry would leave its websites unprotected, so the build refuses it.
+fn configure_browser_internal_hosts() {
+    const KEY: &str = "BUZZ_BUILD_BROWSER_INTERNAL_HOSTS";
+    println!("cargo:rerun-if-env-changed={KEY}");
+    if let Ok(value) = std::env::var(KEY) {
+        let hosts = browser_internal_hosts(&value).unwrap_or_else(|error| panic!("{KEY}: {error}"));
+        println!("cargo:rustc-env={KEY}={hosts}");
+    }
+}
+
+/// The comma-separated domains in `value`, each checked to be a plain domain name.
+fn browser_internal_hosts(value: &str) -> Result<String, String> {
+    let hosts: Vec<_> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .collect();
+    for host in &hosts {
+        let labels_valid = host.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        });
+        // URL parsing reads a name ending in a number as an IP address, which is never internal.
+        let last = host.rsplit('.').next().unwrap_or_default();
+        let ip_like = last.bytes().all(|byte| byte.is_ascii_digit()) || last.starts_with("0x");
+        if !labels_valid || !host.contains('.') || ip_like {
+            return Err(format!(
+                "{host:?} is not a lowercase domain name such as example.org"
+            ));
+        }
+    }
+    Ok(hosts.join(","))
+}
+
 const FEDERATED_IDENTITY: &str = "BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG";
 
 fn configure_federated_identity() {
@@ -386,6 +426,29 @@ mod tests {
             let servers = super::federated_identity_servers(&local, env);
             let ids: Vec<_> = servers.iter().map(|config| config.id.as_str()).collect();
             assert_eq!(ids, fi, "{mode}");
+        }
+    }
+
+    #[test]
+    fn browser_internal_hosts_are_plain_domain_names() {
+        assert_eq!(
+            super::browser_internal_hosts(" example.org, corp.example ,").as_deref(),
+            Ok("example.org,corp.example")
+        );
+        assert_eq!(super::browser_internal_hosts("").as_deref(), Ok(""));
+        for invalid in [
+            "*.example.org",
+            ".example.org",
+            "example.org.",
+            "Example.org",
+            "localhost",
+            "example.org/path",
+            "https://example.org",
+            "-a.example.org",
+            "10.0.0.1",
+            "corp.0x7f",
+        ] {
+            assert!(super::browser_internal_hosts(invalid).is_err(), "{invalid}");
         }
     }
 }

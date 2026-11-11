@@ -2,14 +2,97 @@ use url::Url;
 
 const MAXIMUM_URL_BYTES: usize = 2048;
 
+/// `BUZZ_BUILD_BROWSER_INTERNAL_HOSTS`: comma-separated domains this build treats as
+/// internal, each with its subdomains. Empty (the default) leaves websites unzoned.
+const INTERNAL_HOSTS: &str = match option_env!("BUZZ_BUILD_BROWSER_INTERNAL_HOSTS") {
+    Some(hosts) => hosts,
+    None => "",
+};
+
+/// Which side of the build's internal hosts a zoned session is pinned to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Zone {
+    Internal,
+    External,
+}
+
 #[derive(Clone)]
 pub(super) struct NavigationPolicy {
     development_url: Option<Url>,
+    internal_hosts: Vec<String>,
+    /// Set by `pin` when the build has internal hosts; never changes afterwards.
+    zone: Option<Zone>,
 }
 
 impl NavigationPolicy {
     pub(super) fn new(development_url: Option<Url>) -> Self {
-        Self { development_url }
+        Self::with_internal_hosts(development_url, INTERNAL_HOSTS)
+    }
+
+    /// `internal_hosts` is comma-separated, as build.rs validated it.
+    fn with_internal_hosts(development_url: Option<Url>, internal_hosts: &str) -> Self {
+        Self {
+            development_url,
+            internal_hosts: internal_hosts
+                .split(',')
+                .filter(|host| !host.is_empty())
+                .map(String::from)
+                .collect(),
+            zone: None,
+        }
+    }
+
+    /// Pins the session to `first`'s zone, when the build divides websites into
+    /// zones. Every later navigation and, on macOS, every request stays in it.
+    pub(super) fn pin(&mut self, first: &Url) {
+        if !self.internal_hosts.is_empty() {
+            self.zone = Some(self.zone_of(first));
+        }
+    }
+
+    fn zone_of(&self, url: &Url) -> Zone {
+        // `console.example.` names the same host as `console.example`.
+        let host = url.host_str().unwrap_or_default().trim_end_matches('.');
+        let internal = self.internal_hosts.iter().any(|domain| {
+            host == domain
+                || host
+                    .strip_suffix(domain.as_str())
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+        });
+        if internal {
+            Zone::Internal
+        } else {
+            Zone::External
+        }
+    }
+
+    /// WebKit content rules that block the pinned session's requests outside its
+    /// zone, so a page cannot reach the other zone with fetch, images or frames.
+    pub(super) fn content_rules(&self) -> Option<String> {
+        let zone = self.zone?;
+        let block = |filter: &str| serde_json::json!({ "trigger": { "url-filter": filter }, "action": { "type": "block" } });
+        let allow = |filter: &str| {
+            serde_json::json!({
+                "trigger": { "url-filter": filter },
+                "action": { "type": "ignore-previous-rules" },
+            })
+        };
+        // The scheme, optional user info, optional subdomains, the domain, and an
+        // optional root dot and port, then the path.
+        let internal = self.internal_hosts.iter().map(|domain| {
+            format!(
+                "^[^:]+://([^/?#@]*@)?([^/?#@:]*\\.)?{}\\.?(:[0-9]*)?/",
+                domain.replace('.', "\\.")
+            )
+        });
+        let rules: Vec<_> = match zone {
+            Zone::External => internal.map(|filter| block(&filter)).collect(),
+            Zone::Internal => std::iter::once(block(".*"))
+                .chain(internal.map(|filter| allow(&filter)))
+                .chain(["^data:", "^blob:", "^about:"].map(allow))
+                .collect(),
+        };
+        Some(serde_json::Value::from(rules).to_string())
     }
 
     pub(super) fn validate(&self, target: &str) -> Result<Url, String> {
@@ -37,7 +120,13 @@ impl NavigationPolicy {
         if url.as_str().len() > MAXIMUM_URL_BYTES {
             return Err("Browser URLs cannot exceed 2048 bytes after URL encoding".into());
         }
-        Ok(url)
+        match self.zone {
+            Some(zone) if self.zone_of(&url) != zone => Err(match zone {
+                Zone::Internal => "This view opens only internal websites".into(),
+                Zone::External => "This view cannot open internal websites".into(),
+            }),
+            _ => Ok(url),
+        }
     }
 
     /// The http address to load when `url` fails over https, if this policy permits it.
@@ -320,5 +409,113 @@ mod tests {
             }
         );
         assert_eq!(bounds.clip(1200.0, 800.0).unwrap(), bounds);
+    }
+
+    fn pinned(first: &str) -> NavigationPolicy {
+        let mut policy = NavigationPolicy::with_internal_hosts(None, "example.org,corp.example");
+        policy.pin(&Url::parse(first).unwrap());
+        policy
+    }
+
+    #[test]
+    fn unzoned_builds_keep_every_website() {
+        let mut policy = NavigationPolicy::with_internal_hosts(None, "");
+        policy.pin(&Url::parse("https://example.org/").unwrap());
+        assert!(policy.validate("https://example.org/").is_ok());
+        assert!(policy.validate("https://example.com/").is_ok());
+        assert_eq!(policy.content_rules(), None);
+    }
+
+    #[test]
+    fn a_session_stays_in_its_first_websites_zone() {
+        let internal = pinned("https://console.example.org/a");
+        let external = pinned("https://example.com/");
+        for target in [
+            "https://example.org/",
+            "https://CONSOLE.Example.org:8443/x",
+            "https://a.b.corp.example/",
+            "https://console.example.org./",
+        ] {
+            assert!(internal.validate(target).is_ok(), "{target}");
+            assert_eq!(
+                external.validate(target).unwrap_err(),
+                "This view cannot open internal websites",
+                "{target}"
+            );
+        }
+        for target in [
+            "https://example.com/",
+            "https://notexample.org/",
+            "https://example.org.example.com/",
+            "https://example.organic/",
+            "http://127.0.0.1:5123/",
+        ] {
+            assert!(external.validate(target).is_ok(), "{target}");
+            assert_eq!(
+                internal.validate(target).unwrap_err(),
+                "This view opens only internal websites",
+                "{target}"
+            );
+        }
+        // The http fallback is a navigation like any other.
+        let url = Url::parse("https://console.example.org/").unwrap();
+        assert!(internal.http_fallback(&url).is_some());
+        assert!(external.http_fallback(&url).is_none());
+    }
+
+    /// Whether WebKit would block `url` under `rules`. url-filter patterns are
+    /// case-insensitive by default; the rules use only syntax common to both dialects.
+    fn blocked(rules: &str, url: &str) -> bool {
+        let rules: Vec<serde_json::Value> = serde_json::from_str(rules).unwrap();
+        rules.iter().fold(false, |blocked, rule| {
+            let filter = rule["trigger"]["url-filter"].as_str().unwrap();
+            let matches = regex::RegexBuilder::new(filter)
+                .case_insensitive(true)
+                .build()
+                .unwrap()
+                .is_match(url);
+            match (matches, rule["action"]["type"].as_str().unwrap()) {
+                (true, "block") => true,
+                (true, "ignore-previous-rules") => false,
+                _ => blocked,
+            }
+        })
+    }
+
+    #[test]
+    fn content_rules_block_requests_to_the_other_zone() {
+        let internal = pinned("https://console.example.org/")
+            .content_rules()
+            .unwrap();
+        let external = pinned("https://example.com/").content_rules().unwrap();
+        for url in [
+            "https://example.org/",
+            "https://a.b.example.org:8443/x?y",
+            "wss://console.example.org/socket",
+            "https://console.example.org./",
+            "https://user@console.example.org/",
+            "https://user:secret@console.corp.example/",
+        ] {
+            assert!(!blocked(&internal, url), "{url}");
+            assert!(blocked(&external, url), "{url}");
+        }
+        for url in [
+            "https://example.com/",
+            "https://evilexample.org/",
+            "https://example.org.example.com/",
+            "https://console.example.org@example.com/",
+            "https://console.example.org:443@example.com/",
+            "https://example.com/?next=https://console.example.org/",
+            "https://example.com/#console.example.org/",
+        ] {
+            assert!(blocked(&internal, url), "{url}");
+            assert!(!blocked(&external, url), "{url}");
+        }
+        for url in [
+            "data:image/png;base64,AA==",
+            "blob:https://console.example.org/1",
+        ] {
+            assert!(!blocked(&internal, url), "{url}");
+        }
     }
 }

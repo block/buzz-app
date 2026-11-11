@@ -30,6 +30,7 @@ import {
   useMessageKeyActions,
 } from "./MessageManagement";
 import { createRelaySession } from "../relay/session";
+import { followUpRecovery } from "./follow-up-storage";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import {
   PublishRejected,
@@ -1343,6 +1344,110 @@ it("leaves an unconfirmed send whose recovery another surface owns to that surfa
   expect(
     screen.queryByRole("menuitem", { name: "Remove from this device" }),
   ).toBeNull();
+});
+
+it("removes an unconfirmed Solo follow-up only once its queue no longer holds it", async () => {
+  vi.stubGlobal("navigator", {
+    ...navigator,
+    locks: {
+      request: (_name: string, run: () => unknown) => Promise.resolve(run()),
+    },
+  });
+  let saved: readonly OutgoingEvent[] = [];
+  const viewer = keypair();
+  const at = Math.floor(Date.now() / 1000) - 3600;
+  const restore = (text: string, value: string) => {
+    const sent = message(viewer, "room", text, at);
+    const { sig: _, ...event } = sent;
+    return {
+      event,
+      signed: sent,
+      delivery: "unknown" as const,
+      recovery: followUpRecovery(value),
+    };
+  };
+  const orphan = restore("Released follow-up", "released");
+  const queued = restore("Queued follow-up", "queued");
+  const restored = deferred<readonly OutgoingEvent[]>();
+  const h = await fixture(
+    true,
+    false,
+    false,
+    false,
+    false,
+    undefined,
+    false,
+    undefined,
+    "member",
+    {
+      viewer,
+      outboxStorage: {
+        load: () => restored.promise,
+        save(records) {
+          saved = records;
+        },
+      },
+    },
+  );
+  // The queue still holds this record, so it owns that send's recovery.
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([h.owner.session.scope, "follow-up:queued"])}`,
+    "{}",
+  );
+  fireEvent.keyDown(await screen.findByRole("menu"), { key: "Escape" });
+  restored.resolve([orphan, queued]);
+  await act(async () => h.owner.session.outbox?.ready());
+  const open = async (text: string) => {
+    const row = (await screen.findByText(text)).parentElement;
+    assert.exists(row);
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Message actions" }),
+    );
+    await screen.findByRole("menu");
+  };
+  await open("Queued follow-up");
+  expect(
+    screen.queryByRole("menuitem", { name: "Remove from this device" }),
+  ).toBeNull();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await open("Released follow-up");
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Remove from this device" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Remove message from this device?",
+  });
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Remove" }));
+  await waitFor(() =>
+    expect(screen.queryByText("Released follow-up")).toBeNull(),
+  );
+  expect(saved.map((item) => item.event.id)).toEqual([queued.event.id]);
+  expect(h.publications).toHaveLength(0);
+});
+
+it("keeps an unconfirmed send whose recovery is claimed while removal is being confirmed", async () => {
+  const h = await fixture();
+  const id = await unsent(h, new Error("Connection lost"), "unknown");
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Remove from this device" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Remove message from this device?",
+  });
+  await act(async () =>
+    h.owner.session.outbox?.recover(id, {
+      key: "new-message:fixture",
+      value: "{}",
+    }),
+  );
+  fireEvent.click(within(confirmation).getByRole("button", { name: "Remove" }));
+  expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
+    "This message’s delivery changed.",
+  );
+  expect(
+    h.owner.session.outbox?.snapshot().map((item) => item.event.id),
+  ).toEqual([id]);
 });
 
 it("keeps an unconfirmed send that a retry confirms while removal is being confirmed", async () => {

@@ -176,9 +176,6 @@ appTest.describe("app delivery removal", () => {
         await expect(confirmation).toContainText(
           "If it was delivered, it stays in the conversation.",
         );
-        await confirmation.screenshot({
-          path: appTest.info().outputPath(`remove-${lost.get(text).id}.png`),
-        });
         await confirmation.getByRole("button", { name: "Remove" }).click();
         await expect(confirmation).toHaveCount(0);
         await expect(row(text)).toHaveCount(0);

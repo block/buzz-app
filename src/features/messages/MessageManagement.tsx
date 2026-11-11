@@ -28,6 +28,7 @@ import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
+import { followUpQueue } from "./follow-up-queue";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
 import { lastEditableMessage } from "./useMessageEdit";
@@ -205,6 +206,19 @@ export function useMessageKeyActions(session: RelaySession) {
 /** A failed or unconfirmed send is still this device's outbox intent. */
 const unsent = (row: ChannelMessage) =>
   row.delivery === "failed" || row.delivery === "unknown";
+
+/** An unconfirmed send may be discarded here only when no caller still owns its
+ * recovery: a Solo follow-up's queue releases it once its record is gone. */
+const discardable = (
+  session: RelaySession,
+  row: ChannelMessage,
+  item: OutgoingEvent | undefined,
+) =>
+  item?.event.id === row.id &&
+  item.delivery === row.delivery &&
+  (row.delivery === "failed" ||
+    !item.recovery ||
+    followUpQueue(session).discardable(item));
 
 /** Recovery stays outside virtualized rows; each conversation has one edit destination. */
 export function MessageManagement({
@@ -543,8 +557,11 @@ function UnsentMessageItems({
     row.membership ||
     row.diff ||
     (row.delivery === "unknown" &&
-      management.operations.find((item) => item.event.id === row.id)
-        ?.recovery !== undefined)
+      !discardable(
+        session,
+        row,
+        management.operations.find((item) => item.event.id === row.id),
+      ))
   )
     return null;
   const remove = () =>
@@ -756,21 +773,17 @@ function DeleteMessageDialog({
         );
       if (local) {
         // dismiss() leaves a send that is retrying alone, without an error.
-        if (
-          !session.outbox
-            ?.snapshot()
-            .some(
-              (item) =>
-                item.event.id === row.id &&
-                item.delivery === row.delivery &&
-                (!unconfirmed || !item.recovery),
-            )
-        )
+        const item = session.outbox
+          ?.snapshot()
+          .find((item) => item.event.id === row.id);
+        if (!session.outbox || !discardable(session, row, item))
           throw new Error(
             "This message’s delivery changed. Cancel to see its current status.",
           );
         setDiscarding(true);
-        await session.outbox.dismiss(row.id);
+        await (unconfirmed && item?.recovery
+          ? followUpQueue(session).discard(row.id)
+          : session.outbox.dismiss(row.id));
         close();
       } else if (operationId) {
         session.outbox?.retry(operationId);
@@ -797,7 +810,7 @@ function DeleteMessageDialog({
       initialFocus={cancelAction}
       description={
         unconfirmed
-          ? "Buzz couldn’t confirm whether this message was delivered. Removing it stops this device from sending it. If it was delivered, it stays in the conversation."
+          ? "Buzz couldn’t confirm whether this message was delivered. Removing it stops this device from sending it. If it was delivered, it stays in the conversation. This cannot be undone."
           : local
             ? "This message wasn’t sent. Deleting it removes it from this device. This cannot be undone."
             : "This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."

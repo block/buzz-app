@@ -2231,13 +2231,13 @@ it("keeps native rename and selection with a source-owned destination", async ()
     ),
   });
   const view = mount(h);
-  const row = screen.getByRole("button", { name: "Owned", exact: true });
+  const row = screen.getByRole("button", { name: "Owned" });
   expect(row).toHaveAttribute("aria-current", "page");
   fireEvent.click(row);
   expect(open).toHaveBeenCalledOnce();
   expect(view.open).not.toHaveBeenCalled();
   fireEvent.doubleClick(row);
   expect(
-    await screen.findByRole("textbox", { name: "Chat name", exact: true }),
+    await screen.findByRole("textbox", { name: "Chat name" }),
   ).toBeInTheDocument();
 });

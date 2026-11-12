@@ -115,6 +115,11 @@ it.each([
     recoveryHint: gitOutputRecoveryHint,
   },
   {
+    error: `${gitSizeRefusalMessages.output} (repository access rule example-org, agent socket plugin-test)`,
+    reference: "",
+    recoveryHint: gitOutputRecoveryHint,
+  },
+  {
     error: gitSizeRefusalMessages.repository,
     reference: "",
     recoveryHint: gitRepositoryRecoveryHint,
@@ -136,6 +141,11 @@ it.each([
   },
   {
     error: `extensions/large${gitSizeRefusalMessages.scopedFileCountSuffix}`,
+    reference: "release/stable",
+    recoveryHint: gitScopedFileCountHint,
+  },
+  {
+    error: `extensions/large${gitSizeRefusalMessages.scopedFileCountSuffix} (repository access rule example-org, agent socket plugin-test)`,
     reference: "release/stable",
     recoveryHint: gitScopedFileCountHint,
   },

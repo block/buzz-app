@@ -85,11 +85,15 @@ function errorMessage(reason: unknown) {
 }
 
 function gitSizeRecoveryHint(message: string) {
-  const exactHint = gitSizeRecoveryHints.get(message);
+  const hintMessage = message.replace(
+    / \(repository access rule .+, agent socket .+\)$/,
+    "",
+  );
+  const exactHint = gitSizeRecoveryHints.get(hintMessage);
   if (exactHint) return exactHint;
   if (
-    message.length > scopedFileCountRefusalSuffix.length &&
-    message.endsWith(scopedFileCountRefusalSuffix)
+    hintMessage.length > scopedFileCountRefusalSuffix.length &&
+    hintMessage.endsWith(scopedFileCountRefusalSuffix)
   ) {
     return "Choose Back, enter a smaller folder path in Folder, then try again.";
   }

@@ -118,7 +118,7 @@ type NewMessageBoundaryBaseline = {
   scope: string;
   channelId: string;
   revision?: number;
-  messageIds: ReadonlySet<string>;
+  messageIds: ReadonlySet<string> | undefined;
   attention: Map<string, Pick<MessageAttention, "unread" | "forced"> | null>;
 };
 // Inline message seeks can unmount the timeline without ending its channel visit.
@@ -416,10 +416,22 @@ function Timeline({
       ...(ownsMessageVisit && messageVisit?.active
         ? { revision: messageVisit.entryReadRevision }
         : {}),
-      messageIds: messageVisit?.entryMessageIds ?? new Set(),
+      messageIds: messageVisit ? messageVisit.entryMessageIds : new Set(),
       attention: new Map(messageVisit?.entryAttention),
     };
   const baseline = boundaryBaseline.current;
+  // A visit that began on an unloaded window, or on rows awaiting the head
+  // read that verifies them, captured no entry rows. Its first verified page
+  // is what the reader enters on, so those rows are its entry membership;
+  // whatever arrives after that page is not. Entry history stays incomplete,
+  // so the oldest-unread and read-row checks below still apply.
+  if (
+    !baseline.messageIds &&
+    window.status === "ready" &&
+    window.freshness === "verified" &&
+    !window.refreshing
+  )
+    baseline.messageIds = new Set(window.rows.map((row) => row.id));
   const entryAttention =
     boundaryPending &&
     ownsMessageVisit &&
@@ -430,7 +442,7 @@ function Timeline({
             (row) =>
               // Backdated live arrivals and older pages must neither define
               // nor erase the entry boundary, so only entry rows are classified.
-              baseline.messageIds.has(row.id) &&
+              baseline.messageIds?.has(row.id) &&
               !row.membership &&
               !row.huddle &&
               row.audience !== "agents" &&
@@ -484,7 +496,7 @@ function Timeline({
           ? { ready: false, awaitingRepair: true }
           : { ready: true };
       const oldest = unreadSnapshot.oldestUnreadId;
-      if (!oldest || !baseline.messageIds.has(oldest)) return { ready: true };
+      if (!oldest || !baseline.messageIds?.has(oldest)) return { ready: true };
     }
     if (!chronologicalRows.length) return { ready: noUnreadEvidence };
     // A repair batch that fills its limit can stop inside the window, leaving

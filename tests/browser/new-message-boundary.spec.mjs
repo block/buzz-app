@@ -200,8 +200,10 @@ appTest(
       });
     await expect(separator(page)).toHaveCount(0);
 
-    // Cold entry has no proven membership. Re-enter loaded history while
-    // read sync stays unavailable, so recovery can exercise divider insertion.
+    // A visit that began before the window loaded counts as incomplete
+    // history, which cannot place the line above the first row. Re-enter the
+    // loaded history while read sync stays unavailable, so recovery can
+    // exercise divider insertion.
     await page.getByRole("button", { name: /^Beta/ }).click();
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
@@ -651,6 +653,123 @@ appTest.describe("history longer than one page", () => {
       await expect(
         history(page).locator(`[data-message-id="${seeded.at(-1).id}"]`),
       ).toBeVisible();
+    },
+  );
+});
+
+// Only the real store starts a visit without a verified page: a channel not
+// opened since the app loaded has no window, opening three others evicts one,
+// and the channel selected at launch shows rows saved before the reload.
+// Component tests are handed their windows, so they cannot show which of
+// those a visit really begins on.
+appTest.describe("a visit that begins before its first verified page", () => {
+  appTest.use({
+    channelIds: ["alpha", "beta", "gamma", "delta", "epsilon"],
+    channelNames: { gamma: "Gamma", delta: "Delta", epsilon: "Epsilon" },
+    historyCounts: { alpha: 15, beta: 15, gamma: 5, delta: 5, epsilon: 5 },
+  });
+  const go = async (page, name) => {
+    await page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
+    await expect(
+      page.getByRole("textbox", { name: `Message #${name}`, exact: true }),
+    ).toBeVisible();
+  };
+  // Read to the bottom: the channel catch-up read covers every seeded row.
+  const read = async (page, app, name) => {
+    const channel = name.toLowerCase();
+    await reachEdge(page, 1);
+    await page
+      .getByRole("textbox", { name: `Message #${name}`, exact: true })
+      .focus();
+    await expect
+      .poll(
+        async () =>
+          (await readJournal(page))?.state.frontiers[`activity:${channel}`] ??
+          0,
+      )
+      .toBeGreaterThanOrEqual(
+        app.histories.get(`primary/${channel}`).at(-1).created_at,
+      );
+  };
+  const arrive = (app, channel, deliver) =>
+    [1, 2, 3].map((index) =>
+      app.append("primary", channel, `Later message ${index}`, deliver, false),
+    );
+  const unreadIn = (page, channel, arrivals) =>
+    page.evaluate(
+      ([channel, ids]) => {
+        const { unread, channels } = window.fixtureRelay.snapshot().session;
+        const history = channels.window(channel);
+        return {
+          unread: ids.every((id) => unread.attention(channel, id).unread),
+          status: history.status,
+          rows: history.rows.length,
+        };
+      },
+      [channel, arrivals.map((event) => event.id)],
+    );
+  // Three unread arrivals in Beta, whose window holds no rows to show them.
+  const arriveUnloaded = async (page, app) => {
+    const arrivals = arrive(app, "beta", true);
+    await expect
+      .poll(() => unreadIn(page, "beta", arrivals))
+      .toEqual({ unread: true, status: "idle", rows: 0 });
+    return arrivals;
+  };
+  const expectBoundaryAt = async (page, arrivals) => {
+    await settle(page);
+    await expect(separator(page)).toHaveCount(1);
+    expect(await messageAfter(separator(page))).toBe(arrivals[0].id);
+  };
+
+  appTest(
+    "marks new messages in a channel first opened this session",
+    async ({ page, app }) => {
+      await open(page, app);
+      await go(page, "Beta");
+      await read(page, app, "Beta");
+      await go(page, "Alpha");
+      await settle(page);
+      // A full reload is a new app session: no window is loaded yet.
+      await open(page, app);
+      const arrivals = await arriveUnloaded(page, app);
+
+      await go(page, "Beta");
+      await expectBoundaryAt(page, arrivals);
+    },
+  );
+
+  appTest(
+    "marks new messages after three other channels were opened",
+    async ({ page, app }) => {
+      await open(page, app);
+      await go(page, "Beta");
+      await read(page, app, "Beta");
+      for (const name of ["Gamma", "Delta", "Epsilon"]) {
+        await go(page, name);
+        await settle(page);
+      }
+      const arrivals = await arriveUnloaded(page, app);
+
+      await go(page, "Beta");
+      await expectBoundaryAt(page, arrivals);
+    },
+  );
+
+  appTest(
+    "marks messages that arrived while the app was closed in the channel selected at launch",
+    async ({ page, app }) => {
+      await open(page, app);
+      await read(page, app, "Alpha");
+      await settle(page);
+      // Undelivered: the relay keeps them, but this session never sees them.
+      const arrivals = arrive(app, "alpha", false);
+
+      await open(page, app);
+      await expect
+        .poll(() => unreadIn(page, "alpha", arrivals))
+        .toEqual({ unread: true, status: "ready", rows: 18 });
+      await expectBoundaryAt(page, arrivals);
     },
   );
 });

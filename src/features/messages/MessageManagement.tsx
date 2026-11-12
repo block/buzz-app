@@ -109,7 +109,8 @@ type MessageVisit = Readonly<{
   session: RelaySession;
   channelId: string | undefined;
   token: object;
-  entryMessageIds: ReadonlySet<string>;
+  /** Unset when the window showed no verified page: the first one defines them. */
+  entryMessageIds: ReadonlySet<string> | undefined;
   entryHistoryComplete: boolean;
   entryReadRevision: number;
   entryAttention: ReadonlyMap<
@@ -314,7 +315,14 @@ export function MessageManagement({
       session,
       channelId,
       visitChannelId,
-      entryMessageIds: new Set(rows.map((row) => row.id)),
+      // A window first opened this session or evicted since has no rows yet,
+      // and one restored from disk, or whose stream dropped, shows rows its
+      // head read has not verified. Either set would rule out every message
+      // that arrived while the channel was not being followed.
+      entryMessageIds:
+        window?.status === "ready" && window.freshness === "verified"
+          ? new Set(rows.map((row) => row.id))
+          : undefined,
       entryHistoryComplete:
         window?.status === "ready" &&
         window.freshness === "verified" &&

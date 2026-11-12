@@ -60,7 +60,11 @@ export function documentPlugin(ctx) {
             href: "buzz://plugin?id=example.documents&document=reference",
           },
         ],
-        children: h(ctx.conversation.ui.Markdown, { session, content }),
+        children: h(ctx.conversation.ui.Markdown, {
+          session,
+          content,
+          scale: "document",
+        }),
       }),
       h("p", { role: "status" }, `Saved ${saved}`),
     );

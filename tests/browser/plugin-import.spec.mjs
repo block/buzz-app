@@ -2384,10 +2384,11 @@ test("installed documents reuse host Markdown, workspace tabs and persisted spli
   });
   await richEditor.press("!");
   await reader.getByRole("button", { name: "Read Guide", exact: true }).click();
-  const body = reader.getByRole("region", {
-    name: "Document content",
-    exact: true,
-  });
+  // The shared renderer owns the read-mode wrapper; the hidden editor is its sibling.
+  const body = reader
+    .getByRole("region", { name: "Document content", exact: true })
+    .locator(":scope > div:not([hidden])");
+  await expect(body).toHaveCount(1);
   await expect(body.locator(":scope > blockquote p")).toHaveText([
     "First point",
     "Second point",

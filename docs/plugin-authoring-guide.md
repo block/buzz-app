@@ -150,7 +150,8 @@ existing toolbar slot. The host supplies the controls and link dialog, so do not
 wrap those in another modal or reproduce their chrome. Optional `destinations`
 are loaded choices for the existing link dialog; their URLs still pass the host
 link validator. Typing `[[` opens that dialog only when `destinations` is nonempty;
-without choices, brackets are ordinary text. Read-mode `children` can render `conversation.ui.Markdown`.
+without choices, brackets are ordinary text. Read-mode `children` can render `conversation.ui.Markdown` with `scale: "document"`
+for the shared document heading hierarchy.
 Supported formatting loads into the editor; unsupported syntax remains editable
 literal source, including verbatim line breaks through both clipboard flavors.
 Switching to `source: true` exposes the controlled Markdown value.

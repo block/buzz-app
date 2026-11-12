@@ -19,6 +19,7 @@ import { useMessageSelectionCopy } from "./selection-copy";
 import { SelectionQuote } from "./SelectionQuote";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
+import { useExpandNestedRepliesPreference } from "./nested-replies-preference";
 import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -224,6 +225,7 @@ type ThreadPlace = {
   anchor?: { id: string; top: number; ancestors: readonly string[] };
 };
 const THREAD_PLACE = "thread";
+const noToggles: ReadonlySet<string> = new Set();
 /** Reader lifetime follows the open thread; navigation owns only a reveal request. */
 function RetainedThreadPanel(props: ThreadPanelProps) {
   type Opening = {
@@ -680,7 +682,35 @@ function ThreadMessages({
     const first = group?.[0]?.id;
     if (first) setExpandedActivity((current) => new Set([...current, first]));
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  // Branches the reader toggled away from the default. Changing the default
+  // starts every branch over from it.
+  const { enabled: expandAll } = useExpandNestedRepliesPreference();
+  const [toggles, setToggles] = useState<{
+    expandAll: boolean;
+    ids: ReadonlySet<string>;
+  }>(() => ({ expandAll, ids: new Set() }));
+  if (toggles.expandAll !== expandAll)
+    setToggles({ expandAll, ids: noToggles });
+  const toggled = toggles.expandAll === expandAll ? toggles.ids : noToggles;
+  const isOpen = useCallback(
+    (id: string) => toggled.has(id) !== expandAll,
+    [toggled, expandAll],
+  );
+  const setBranches = useCallback(
+    (ids: readonly string[], open: boolean) =>
+      setToggles((current) => {
+        const base = current.expandAll === expandAll ? current.ids : noToggles;
+        const toggle = open !== expandAll;
+        if (ids.every((id) => base.has(id) === toggle)) return current;
+        const next = new Set(base);
+        for (const id of ids) {
+          if (toggle) next.add(id);
+          else next.delete(id);
+        }
+        return { expandAll, ids: next };
+      }),
+    [expandAll],
+  );
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
@@ -871,12 +901,8 @@ function ThreadMessages({
     const added = tree
       .ancestors(anchor.id)
       .filter((id) => !anchor.ancestors.includes(id));
-    if (added.length)
-      setExpanded((current) => {
-        if (added.every((id) => current.has(id))) return current;
-        return new Set([...current, ...added]);
-      });
-  }, [tree, snapshot.status]);
+    if (added.length) setBranches(added, true);
+  }, [tree, snapshot.status, setBranches]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -892,12 +918,8 @@ function ThreadMessages({
       .ancestors(messageId)
       .filter((id) => !revealedAncestors.current.ids.has(id));
     for (const id of ancestors) revealedAncestors.current.ids.add(id);
-    if (ancestors.length)
-      setExpanded((current) => {
-        if (ancestors.every((id) => current.has(id))) return current;
-        return new Set([...current, ...ancestors]);
-      });
-  }, [tree, messageId, navigation, revealRequest]);
+    if (ancestors.length) setBranches(ancestors, true);
+  }, [tree, messageId, navigation, revealRequest, setBranches]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
@@ -1246,10 +1268,10 @@ function ThreadMessages({
     ) {
       const { anchor } = navigation.position(THREAD_PLACE) as ThreadPlace;
       const closed = anchor
-        ? tree.ancestors(anchor.id).filter((id) => !expanded.has(id))
+        ? tree.ancestors(anchor.id).filter((id) => !isOpen(id))
         : [];
       if (closed.length) {
-        setExpanded((current) => new Set([...current, ...closed]));
+        setBranches(closed, true);
         return;
       }
       const row =
@@ -1287,7 +1309,7 @@ function ThreadMessages({
       const added = tree
         .ancestors(anchor.id)
         .filter((id) => !anchor.ancestors.includes(id));
-      if (added.every((id) => expanded.has(id))) {
+      if (added.every(isOpen)) {
         const row = [
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
@@ -1349,7 +1371,8 @@ function ThreadMessages({
     revealed,
     selectedOffset,
     tree,
-    expanded,
+    isOpen,
+    setBranches,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end
@@ -1403,7 +1426,7 @@ function ThreadMessages({
       captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  }, [sent, snapshot.replies, isOpen, captureResizePosition]);
   // Parent commits already position history, exact targets and own sends. Save
   // their result; only child-only reflow and viewport resizing need correction.
   useLayoutEffect(() => {
@@ -1534,8 +1557,7 @@ function ThreadMessages({
       const currentDay = new Date(row.createdAt * 1000).toDateString();
       const day = previousDay !== currentDay;
       previousDay = currentDay;
-      previousReply =
-        children?.length && !expanded.has(row.id) ? undefined : row;
+      previousReply = children?.length && !isOpen(row.id) ? undefined : row;
       previousParent = parent;
       const descendants = branchReplies.get(row.id) ?? [];
       const unreadCount = descendants.filter(
@@ -1681,25 +1703,20 @@ function ThreadMessages({
               />
             }
             depth={depth}
-            open={expanded.has(row.id)}
+            open={isOpen(row.id)}
             onExpand={() => {
               follow.current = false;
               targetAnchor.current = undefined;
-              setExpanded((current) => new Set([...current, row.id]));
+              setBranches([row.id], true);
             }}
             collapseLabel={`Collapse ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
             onCollapse={() => {
               follow.current = false;
               targetAnchor.current = undefined;
-              setExpanded(
-                (current) =>
-                  new Set([...current].filter((id) => id !== row.id)),
-              );
+              setBranches([row.id], false);
             }}
           >
-            {expanded.has(row.id) && (
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
-            )}
+            {isOpen(row.id) && <ol>{renderReplies(row.id, depth + 1)}</ol>}
           </ReplyBranch>
         </li>
       );
@@ -2110,13 +2127,9 @@ function ThreadMessages({
             positioned.current = true;
             follow.current = !selectedParent;
             if (selectedParent)
-              setExpanded(
-                (current) =>
-                  new Set([
-                    ...current,
-                    selectedParent.id,
-                    ...tree.ancestors(selectedParent.id),
-                  ]),
+              setBranches(
+                [selectedParent.id, ...tree.ancestors(selectedParent.id)],
+                true,
               );
             // A background send may publish after the user picked a new target.
             setReplyParent((current) =>

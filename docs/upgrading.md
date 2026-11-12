@@ -14,7 +14,9 @@ macOS, Windows and Linux.
 
 The old app's updater does not deliver the new app, so this is a fresh install.
 
-## What's new: plugins
+## What's new
+
+### Plugins
 
 Buzz is now built on plugins, so anyone can make it work the way they want. The
 core of the app is made of plugins too:
@@ -27,7 +29,7 @@ core of the app is made of plugins too:
 Plugins you add use the same building blocks, so they can go as far as the
 built-in ones.
 
-## What's new: remote agents
+### Remote agents
 
 A remote agent runs on a hosted machine instead of your computer, so it keeps
 working when Buzz is closed or your laptop is off. It cannot open files on your

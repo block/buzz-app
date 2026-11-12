@@ -165,7 +165,7 @@ export function ClaudeSettings({
           open
           visit
           title="Connect Claude"
-          description={KEY_ONCE}
+          description="Create an API key at console.anthropic.com and paste it below."
           headerGap="compact"
           preventClose={saving}
           onOpenChange={(open) => !open && setConnecting(false)}

@@ -12,7 +12,6 @@ import {
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { KEY_ONCE } from "./auth";
 import type { Spawn } from "./claude";
 import { ClaudeSettings } from "./ClaudeSettings";
 import { ClaudeSetup } from "./setup";
@@ -134,7 +133,9 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   let add = await connectKey(user);
   expect(
     screen.getByRole("dialog", { name: "Connect Claude" }),
-  ).toHaveAccessibleDescription(KEY_ONCE);
+  ).toHaveAccessibleDescription(
+    "Create an API key at console.anthropic.com and paste it below.",
+  );
   expect(add).toHaveAccessibleDescription(
     "Your key will be stored securely on this computer.",
   );

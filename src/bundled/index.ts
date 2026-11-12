@@ -58,6 +58,8 @@ import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
+import changesetsManifest from "./changesets/manifest.json";
+import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
@@ -244,6 +246,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...piManifest, apiVersion: 1 },
     module: pi,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...changesetsManifest, apiVersion: 1 },
+    module: changesets,
     enabledByDefault: false,
   },
   {

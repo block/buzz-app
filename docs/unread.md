@@ -474,6 +474,25 @@ still require retained evidence of their own.
 
 ## Captured explicit reads
 
+`markCapturedMessagesRead(messageIds)` is an optional explicit operation for a
+caller that already captured verified message IDs. It records only the eligible
+per-message reads in that set: it does not expand to replies or descendants,
+advance a channel/thread prefix, or include later arrivals. After the saved
+action succeeds, only those IDs' visit-local forced-unread overlays are cleared;
+the shared message-force hint and independent channel, root, and thread marks
+remain. If local read-state retention would need to raise its device-wide floor
+for these marks, or cannot retain a selected message's receipt under the durable
+coverage rules, the save rejects unchanged with `CapturedReadWouldWidenError` or
+`CapturedReadNotRetainedError`. The selected local unread overlays remain in
+place on either rejection. A full journal and reserve can make an exact read
+remain unavailable: another accepted read may move the floor without restoring
+capacity, so retrying is not guaranteed to succeed. Callers must not silently
+retry unrelated reads or substitute a broader channel/thread read. If a caller
+offers a broader read as an alternative, it must be a separate explicit user
+choice. A newer shared message-force hint can also fence a save, so retry the
+same explicit set only after preserving that newer intent. Older hosts may omit
+this capability, so callers must check it before invoking it.
+
 `prepareChannelRead(channelId, rootId?)` captures the channel's existing
 prefix/time cut and owned local-mark keys once. Invoke its returned function to
 save or retry that same intent; a retry does not capture later arrivals or a
@@ -511,9 +530,27 @@ marker tuples or change automatic observation.
 Capture requires initialized read-state storage (`await unread.ensure()` before
 preparation). A failed capture rejects every invocation of that operation rather
 than moving the snapshot to save time; prepare again after readiness/recovery.
-Storage failures retain the cut for retry. Access revoke/regrant, cache clear or
-session disposal invalidate captured intent. The thread operation additionally
-requires its captured message evidence to remain valid.
+Storage failures retain the cut for retry. Access revoke/regrant, cache clear,
+or session disposal invalidate captured intent; leaving the channel invalidates
+only Undo, not the saved read. The thread operation additionally requires its
+captured message evidence to remain valid.
+
+An individual saved explicit-read result may expose an optional `undo` only when
+that action cleared saved local-unread journal markers and cleared no
+forced-message marker or covered overlay. The handle is also withheld if a force
+mark for covered messages is queued while the read saves. Undo restores only the
+local-unread journal markers that exact saved action removed, in a new storage
+transaction; it does not restore overlays or rewind or publish a read frontier.
+The handle is conditional on the exact saved journal revision and the
+operation's access/lifecycle evidence. Its revision guard covers the whole
+journal: any later save that advances the revision, including an unrelated
+marker or quiet read-state save, makes the handle stale; bookkeeping saves that
+leave the revision unchanged do not. This whole-journal expiry is deliberately
+conservative rather than per-target. `markAllChannelsRead()` omits its
+per-channel handles because later saves in the sweep expire earlier ones. The
+thread operation also depends on its captured message evidence. A failed undo
+save can be retried with the same handle; duplicate or stale attempts reject.
+Consumers must tolerate hosts that do not provide `undo`.
 
 ## Explicit clearing matrix
 
@@ -605,10 +642,14 @@ mark: a reply finds its channel from its own event, but finds its thread only wh
 root is loaded. Older desktop and mobile clients ignore `activity:`, so they show the
 ordinary top-level messages it covers as unread. This is accepted; it never makes a
 read in those clients unread here.
-Marks without retained evidence are kept, and nothing is dropped while any override
-exists. Reading an already covered message saves nothing. Only frontier-only hints can
-be pruned; older messages may look unread again. No synthetic channel prefix is
-introduced to fit.
+Marks without retained evidence are kept while journal capacity permits. Overrides
+protect inherited channel/thread frontiers; message and row hints may still be
+evicted under pressure. Reading an already covered message saves nothing. Only
+frontier-only hints can be pruned; older messages may look unread again. No synthetic
+channel prefix is introduced to fit. Exact captured-message reads reject the whole
+save if any selected message would be absent from retained journal/reserve state and
+above the existing local floor; their caller leaves the selected unread overlays
+unchanged on rejection.
 The automatic activity keys share these bounded-hint limits. Older clients can
 preserve/republish them but do not interpret their catch-up meaning; mixed-version
 sidebar behavior is not identical. No storage migration is required.

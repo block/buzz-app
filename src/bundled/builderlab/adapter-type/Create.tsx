@@ -16,6 +16,7 @@ import { SettingsGroup } from "../../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../../shared/InlineReference.module.css";
 import {
   type AgentClient,
+  MAX_INSTRUCTIONS_LENGTH,
   type RemoteAgentModelCatalog,
   validInstructions,
 } from "../agents/client";
@@ -259,6 +260,7 @@ export function createCreationFields(
     return (
       <AgentInstructions
         creation
+        description={`Up to ${MAX_INSTRUCTIONS_LENGTH.toLocaleString("en-US")} characters.`}
         value={draft.instructions}
         disabled={disabled}
         onChange={(instructions) => onChange({ ...draft, instructions })}

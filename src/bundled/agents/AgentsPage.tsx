@@ -1085,7 +1085,9 @@ function DefaultAgentInventory({
         key={scope}
         scope={scope}
         session={session}
-        bestie={bestie.saved}
+        // The saved store notifies before the success callback enables motion.
+        // Do not mount the new badge in that intermediate render.
+        bestie={bestie.saved === bestie.savingBestie ? undefined : bestie.saved}
         celebratingBestie={
           celebration?.scope === scope ? celebration.pubkey : undefined
         }

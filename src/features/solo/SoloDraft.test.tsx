@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
+import {
+  MESSAGE_TOKENS_TAG,
+  signedMessageTokenTags,
+} from "../messages/message-tokens";
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
 import { projectTemplateId } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
+import { mentionDraft } from "../messages/mention-draft";
+import {
+  projectComposerDocument,
+  readComposerDocument,
+} from "../messages/composer-document";
 import {
   act,
   cleanup,
@@ -40,6 +49,8 @@ import { AgentsContext } from "../agents/react";
 import type { Agents } from "../agents/service";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
+import { ChannelCompletion } from "../../bundled/channels/ChannelCompletion";
+import { channelQuery } from "../../bundled/channels/channel-query";
 import type { ComposerCompletion } from "../conversation/contracts";
 import type { Contribution } from "../../plugins/contributions";
 
@@ -1577,6 +1588,83 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
   } finally {
     storage.mockRestore();
   }
+});
+
+it("`#` chooses New chat's workspace without leaving text, and Send files the chat there", async () => {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const completions: readonly Contribution<ComposerCompletion>[] = [
+    {
+      id: "channel-typeahead",
+      key: "buzz.channels/channel-typeahead",
+      pluginId: "buzz.channels",
+      revision: "1",
+      title: "Channel",
+      match: ({ text, start }) => channelQuery(text, start),
+      component: ChannelCompletion,
+    },
+  ];
+  // Named, as relay channels are; a joined stream follows the workspace rows.
+  const list = f.session.channels.list;
+  let named: { source: unknown; value: ReturnType<typeof list> } | undefined;
+  const team = {
+    id: "team",
+    name: "other-team",
+    channelType: "stream" as const,
+    members: [f.session.viewer ?? ""],
+  };
+  Object.assign(f.session.channels, {
+    list: () => {
+      const source = list();
+      if (named?.source !== source)
+        named = {
+          source,
+          value: {
+            ...source,
+            channels: [
+              ...source.channels.map((channel) =>
+                Object.assign({ name: "" }, channel),
+              ),
+              team,
+            ],
+          },
+        };
+      return named.value;
+    },
+  });
+  render(
+    <SoloDraft
+      session={f.session}
+      scope="hash-workspace"
+      onStarted={started}
+      extensions={{
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => completions, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  await user.type(input, "Plan #oth");
+  const row = await screen.findByRole("option", { name: /Other/ });
+  expect(
+    screen.getAllByRole("option").map((option) => option.textContent),
+  ).toEqual(["OtherWorkspaceEnter", "other-team"]);
+  expect(row).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Enter}");
+  expect(input).toHaveValue("Plan ");
+  expect(
+    screen.getByRole("button", { name: "Workspace: Other" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("option")).toBeNull();
+  await user.type(input, "it");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(f.assign).toHaveBeenCalledWith(expect.any(String), "other");
+  expect(f.messages.send.mock.calls[0]?.[1]).not.toContain("#");
 });
 
 it("inherits the project's defaults for two consecutive new chats", async () => {
@@ -3691,4 +3779,88 @@ it("a refused region start forgets its link and gives its prompt and files back 
   expect(screen.getByRole("textbox")).toHaveTextContent("Plan the launch");
   expect(screen.getByRole("button", { name: "Remove notes.txt" })).toBeTruthy();
   expect(readView("test", "solo:new-draft", null)).toBeNull();
+});
+it("a region lead draft starts its workspace's lead only while it still targets that workspace", async () => {
+  const test = await projectSetup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  regionNavigation.set({ source: {}, binding: regionBinding });
+  const key = regionDraftKey(REGION, "work");
+  const view = () => (
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      projectId="work"
+      region={REGION}
+      lead
+      onStarted={onStarted}
+    />
+  );
+  writeView("test", `${key}:new-draft`, taggedDraft("Lead the launch"));
+  const first = render(view());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  const lead = test.channelWrites.create.mock.calls[0]?.[0] ?? "";
+  expect(readView("test", regionStartKey(lead), null)).toEqual({
+    region: REGION,
+    workspace: "work",
+    lead: true,
+  });
+  first.unmount();
+  writeView("test", `${key}:new-draft`, taggedDraft("Just a task"));
+  render(view());
+  await user.click(screen.getByRole("button", { name: "Workspace: Work" }));
+  await user.click(await screen.findByRole("menuitemradio", { name: "Other" }));
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledTimes(2));
+  const task = test.channelWrites.create.mock.calls[1]?.[0] ?? "";
+  expect(readView("test", regionStartKey(task), null)).toEqual({
+    region: REGION,
+    workspace: "other",
+  });
+});
+it("starts a New chat from a saved folder chip and signs the chip into its first message", async () => {
+  const f = setup(),
+    started = vi.fn();
+  const chip = { kind: "folder", id: "/repo", label: "@repo" };
+  // The relay writer reads the chips the draft is signing as it sends.
+  let signed: string[][] = [];
+  f.messages.send.mockImplementation(() => {
+    signed = signedMessageTokenTags();
+    return "e".repeat(64);
+  });
+  const own = projectComposerDocument(
+    readComposerDocument(mentionDraft(taggedDraft("Fix ")), []),
+  ).draft;
+  const doc = own.document?.content as {
+    content: { content: unknown[] }[];
+  };
+  const [paragraph] = doc.content;
+  assert.exists(paragraph);
+  writeView("test", "solo:new-draft", {
+    ...own,
+    document: {
+      version: 1,
+      content: {
+        ...doc,
+        content: [
+          {
+            ...paragraph,
+            content: [
+              ...paragraph.content,
+              { type: "token", attrs: { source: "/repo", semantic: chip } },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  render(<SoloDraft session={f.session} scope="test" onStarted={started} />);
+  expect(screen.getByRole("img", { name: "Folder @repo" })).toBeVisible();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(started).toHaveBeenCalledOnce());
+  expect(f.messages.send.mock.calls[0]?.[1]).toBe("@Member agent Fix /repo");
+  expect(signed).toEqual([[MESSAGE_TOKENS_TAG, JSON.stringify([chip])]]);
 });

@@ -877,6 +877,99 @@ it("opens a checked connection address separately without replacing or removing 
   }
 });
 
+it("shows a sign-in refusal at the access step once, with its sign-in", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
+      if (route === "claim")
+        return Response.json(
+          { error: "Federated sign-in is required" },
+          { status: 401 },
+        );
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Local", picture: "" },
+    }),
+  } as unknown as Communities;
+  const h = federatedFixture();
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={h.service}
+      mode="join"
+      close={() => {}}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Invite code")).toHaveValue("v2.abc");
+  // Continue at the access step claims the invite, which is refused.
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
+    await screen.findByText(
+      "This community requires builderlab.example sign-in.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByLabelText("Invite code")).toHaveValue("v2.abc");
+  expect(
+    screen.getByRole("button", { name: "Sign in with builderlab.example" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Federated sign-in is required")).toBeNull();
+});
+
+it("keeps an explained access refusal hidden after Not now dismisses its switch", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
+      if (route === "claim")
+        return Response.json(
+          { error: "authorization-denied" },
+          { status: 403 },
+        );
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Local", picture: "" },
+    }),
+  } as unknown as Communities;
+  const h = federatedFixture();
+  await h.service.signIn();
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={h.service}
+      mode="join"
+      close={() => {}}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  // The signed-in account consents, so Continue claims the invite at once.
+  await user.click(await screen.findByRole("button", { name: "Not now" }));
+  expect(screen.queryByRole("button", { name: "Switch account" })).toBeNull();
+  // Dismissing the explanation dismisses the refusal: its raw text stays hidden.
+  expect(screen.queryByText(/authorization-denied/)).toBeNull();
+});
+
 it("offers federated sign-in when joining refuses for it, then lets Continue run the current step", async () => {
   const user = userEvent.setup();
   let refuse = true;
@@ -921,6 +1014,8 @@ it("offers federated sign-in when joining refuses for it, then lets Continue run
       "This community requires builderlab.example sign-in.",
     ),
   ).toBeVisible();
+  // The explanation replaces the field's raw error.
+  expect(screen.queryByText("Federated sign-in is required")).toBeNull();
   const signIn = await screen.findByRole("button", {
     name: "Sign in with builderlab.example",
   });

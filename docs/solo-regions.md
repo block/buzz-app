@@ -48,6 +48,22 @@ unmount, disposal, and registration. It accepts at most 16 KiB. A failed or stal
 write returns false and does not update the memory value. Sources must keep their
 own accepted state unchanged when a write fails.
 
+`handle.state(binding)` returns `get()`, `set(value)`, and
+`subscribe(listener)` for this same record. It works before the component mounts.
+The component's `state` has the same methods. `get()` returns `undefined` when
+the record is absent and preserves JSON `null`. It throws when the binding ends,
+the saved JSON is invalid, or storage is unavailable without an accepted memory
+value. `set()` returns false for a stale binding, an invalid value, an oversized
+value, or a failed storage write. Writes replace the whole record; the last write
+wins. This is device state, with no relay read or write.
+
+Subscribers receive local writes and matching storage events from other windows.
+The listener reads the current value with `get()`; it receives no initial call.
+Unrelated keys do not notify it. The returned function ends the subscription.
+Binding abort and source disposal also remove it. `state(binding)` and
+`subscribe()` throw for an ended binding. Source disposal preserves saved bytes.
+Plugins must require a host release with `handle.state` before they use this API.
+
 `openDraft` opens the host's New chat editor for the region, optionally in a
 workspace, with its own draft, files, model, and effort. Send works like an
 ordinary New chat: the create goes out unguarded with the region label before
@@ -56,6 +72,9 @@ the first message, so the Outbox retries both after a restart. A source's
 source is not running and ready. Before the create, the host saves on this
 device how the chat started; `started` returns it to that region's source until
 `forget`. Sources reconcile their own records from it by channel ID.
+With `lead`, a workspace draft's start also records that the chat leads that
+workspace, but only while the draft still targets it. The host does not store
+Leads; the source saves the Lead in its own records.
 
 Host reveal listeners receive live intent only. A pending request is kept only
 for a late source subscriber and ends when navigation leaves or the connection

@@ -1182,6 +1182,7 @@ mod tests {
             Arc::new(Memory::default()),
             vec![peer.clone()],
             None,
+            None,
         );
         let identity = IdentityHost::fixture();
         peer.discovered("wss://peer.example", true);

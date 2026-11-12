@@ -125,6 +125,11 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
   text-underline-offset: 2px;
   cursor: text;
 }
+/* The location follows its popover's title or description. */
+.skillLocation {
+  margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
+}
 
 .input blockquote {
   margin: 0;

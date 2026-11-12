@@ -5,6 +5,7 @@ import {
   createPluginUpdateCapabilityBridge,
   type PluginUpdateCapability,
 } from "./updates";
+import type { PluginInfo } from "./types";
 
 export type GitPluginInstallSource = Readonly<{
   repository: string;
@@ -31,6 +32,13 @@ export type PluginInstallOutcome =
   | "cancelled"
   | "unavailable";
 type PluginInstallationStatus = "installed" | "absent" | "unavailable";
+type PluginInstallationSourceKind =
+  | "git"
+  | "url"
+  | "folder"
+  | "bundled"
+  | "absent"
+  | "unavailable";
 export type PluginInstaller = Readonly<{
   /** The source kinds `requestInstall` accepts. Missing on hosts that accept only Git. */
   sources?: readonly ("git" | "url")[];
@@ -41,6 +49,12 @@ export type PluginInstaller = Readonly<{
    * enabled state or install source. Returns unavailable until the catalog is ready.
    */
   getInstallationStatus(id: string): PluginInstallationStatus;
+  /**
+   * Returns only the saved source kind. Returns unavailable before catalog
+   * readiness, for duplicate IDs, or for unknown source metadata; absent means
+   * the ready catalog does not contain the manifest ID.
+   */
+  getInstallationSource?(id: string): PluginInstallationSourceKind;
   /** Listen for status changes; call getInstallationStatus after subscribing for the current status. */
   subscribeInstallationStatus(
     id: string,
@@ -129,6 +143,31 @@ function relativePath(value: unknown) {
   )
     ? value
     : null;
+}
+
+function relativeFolderPath(value: unknown, root: string) {
+  if (value === ".") return value;
+  if (typeof value !== "string" || !value || value.includes("\0")) return null;
+
+  const windowsRoot =
+    /^[A-Za-z]:[\\/]/.test(root) || /^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(root);
+  if (windowsRoot ? /^[\\/]|^[A-Za-z]:/.test(value) : value.startsWith("/"))
+    return null;
+
+  const segments = value.split(windowsRoot ? /[\\/]+/ : /\/+/);
+  return segments.some((segment) => segment === "..") ||
+    !segments.some((segment) => segment !== "" && segment !== ".")
+    ? null
+    : value;
+}
+
+function isAbsoluteFolderRoot(value: string) {
+  return (
+    !value.includes("\0") &&
+    (value.startsWith("/") ||
+      /^[A-Za-z]:[\\/]/.test(value) ||
+      /^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(value))
+  );
 }
 
 const pluginId = /^[a-z][a-z0-9.-]{0,127}$/;
@@ -363,6 +402,79 @@ type InstallHost = Readonly<{
 const invalidSource =
   "A plugin install request needs either an HTTPS, SSH or scp-style Git repository, a branch or tag, and optionally a relative folder and a commit; or a plugin id, an HTTPS artifact url and its sha256";
 
+function savedGitRepository(value: string) {
+  // Native imports save normalized URLs with broader SSH usernames than requests allow.
+  // Keep legacy scp metadata readable without changing request admission.
+  if (!value.includes("://")) return gitRepository(value) !== null;
+  if (/[\s\p{Cc}]/u.test(value) || value.includes("?") || value.includes("#"))
+    return false;
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "ssh:") &&
+      !!url.hostname &&
+      !url.hostname.startsWith("-") &&
+      !url.username.startsWith("-") &&
+      !url.password &&
+      (url.protocol !== "https:" || !url.username) &&
+      url.pathname.replaceAll("/", "") !== "" &&
+      !githubTree(url.hostname, url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function savedInstallationSourceKind(
+  plugin: PluginInfo,
+): PluginInstallationSourceKind {
+  if (plugin.source === "bundled") return "bundled";
+  if (plugin.source !== "external") return "unavailable";
+
+  const savedSource: unknown = plugin.updateSource;
+  if (
+    !savedSource ||
+    typeof savedSource !== "object" ||
+    Array.isArray(savedSource)
+  )
+    return "unavailable";
+  const source = savedSource as Record<string, unknown>;
+  const keys = Object.keys(source);
+  const hasOnlyKeys = (...allowed: string[]) =>
+    keys.every((key) => allowed.includes(key));
+  if (
+    hasOnlyKeys("repository", "reference", "path", "commit") &&
+    typeof source.repository === "string" &&
+    savedGitRepository(source.repository) &&
+    typeof source.reference === "string" &&
+    (source.reference === "" || gitReference(source.reference) !== null) &&
+    typeof source.path === "string" &&
+    // Native Git discovery records UTF-8 folders with POSIX separators.
+    relativeFolderPath(source.path, "/") !== null &&
+    (source.commit === undefined ||
+      (typeof source.commit === "string" &&
+        commit.test(source.commit.toLowerCase())))
+  )
+    return "git";
+  if (
+    hasOnlyKeys("url", "sha256") &&
+    typeof source.url === "string" &&
+    pluginArtifactUrl(source.url) !== null &&
+    typeof source.sha256 === "string" &&
+    sha256.test(source.sha256.toLowerCase())
+  )
+    return "url";
+  if (
+    hasOnlyKeys("root", "path") &&
+    typeof source.root === "string" &&
+    isAbsoluteFolderRoot(source.root) &&
+    typeof source.path === "string" &&
+    relativeFolderPath(source.path, source.root) !== null
+  )
+    return "folder";
+  return "unavailable";
+}
+
 export function createPluginInstallCore({
   plugins,
   requests,
@@ -377,6 +489,18 @@ export function createPluginInstallCore({
       ? "installed"
       : "absent";
   };
+  const getInstallationSource = (id: string): PluginInstallationSourceKind => {
+    const { configuration } = plugins.snapshot();
+    if (configuration.status !== "ready") return "unavailable";
+    let plugin: PluginInfo | undefined;
+    for (const candidate of configuration.catalog.plugins) {
+      if (candidate.manifest.id !== id) continue;
+      if (plugin) return "unavailable";
+      plugin = candidate;
+    }
+    if (!plugin) return "absent";
+    return savedInstallationSourceKind(plugin);
+  };
 
   return {
     holdReview: requests.holdReview,
@@ -384,6 +508,7 @@ export function createPluginInstallCore({
     updatesFor: requests.updatesFor,
     registerUpdates: requests.registerUpdates,
     getInstallationStatus,
+    getInstallationSource,
     subscribeInstallationStatus(
       id: string,
       listener: (status: PluginInstallationStatus) => void,
@@ -476,6 +601,8 @@ export function createPluginInstallerService(
         getQueueRequest: updates.getQueueRequest,
         getQueue: updates.getQueue,
         cancelQueue: updates.cancelQueue,
+        getOwnerStatus: (ownerId) =>
+          updates.getOwnerStatus?.(ownerId) ?? "unknown",
         subscribe(listener) {
           const stop = caller.effect(() => updates.subscribe(listener));
           return () => void stop();
@@ -514,6 +641,10 @@ export function createPluginInstallerService(
 
     getInstallationStatus(id: string): PluginInstallationStatus {
       return host.core.getInstallationStatus(id);
+    }
+
+    getInstallationSource(id: string): PluginInstallationSourceKind {
+      return host.core.getInstallationSource(id);
     }
 
     subscribeInstallationStatus(

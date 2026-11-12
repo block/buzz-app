@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { MESSAGE_TOKENS_TAG, signedMessageTokenTags } from "./message-tokens";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { ConversationService } from "../conversation/service";
@@ -51,6 +52,7 @@ import type {
   InlineRenderer,
 } from "../conversation/contracts";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
+import { bundledContribution } from "../../plugins/provenance";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import type { MentionRecipient } from "./mention-draft";
@@ -14463,6 +14465,63 @@ it("guards automatic recipient changes using the current draft prose", () => {
   expect(h.input().value).toContain("Written draft");
   h.fill(" \n ");
   act(() => expect(replace?.([second])).toBe(true));
+});
+
+it("inserts a bundled provider's chip as one atom and signs it into the sent message", async () => {
+  const publishes: ComposerCompletionProps["publish"][] = [];
+  function Completion({ publish }: ComposerCompletionProps) {
+    useLayoutEffect(() => {
+      publishes.push(publish);
+    }, [publish]);
+    return null;
+  }
+  const provider: Contribution<ComposerCompletion> = {
+    id: "folders",
+    key: "buzz.mentions/folders",
+    pluginId: "buzz.mentions",
+    revision: "bundled",
+    title: "Folder",
+    match: ({ text, start }) => mentionQuery(text, start),
+    component: Completion,
+  };
+  bundledContribution(provider);
+  const providers = [provider];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount();
+  h.retarget({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: { snapshot: () => providers, subscribe: () => () => {} },
+    },
+  });
+  h.fill("Use @no");
+  const folder = { kind: "folder", id: "/notes", label: "@notes" };
+  act(() => {
+    publishes.at(-1)?.({
+      items: [{ id: "notes", label: "notes", edit: { token: folder } }],
+    } as unknown as CompletionResult);
+  });
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  // The chip's text is the folder's path; the chip shows its label.
+  expect(h.input()).toHaveValue("Use /notes ");
+  expect(
+    within(h.input()).getByRole("img", { name: "Folder @notes" }),
+  ).toHaveTextContent(/^@notes$/);
+  // The relay writer reads the chips the composer is signing as it sends.
+  let signed: string[][] = [];
+  h.messages.send.mockImplementation(() => {
+    signed = signedMessageTokenTags();
+    return "channel-id";
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  // The chip sends its text, the folder's path, in place of its label.
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe("Use /notes ");
+  expect(signed).toEqual([[MESSAGE_TOKENS_TAG, JSON.stringify([folder])]]);
+  // Nothing is left for a later, unrelated send.
+  expect(signedMessageTokenTags()).toEqual([]);
 });
 
 /** A mention provider the test publishes for, over the real `@` syntax. */

@@ -11,7 +11,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { type ReactNode, useCallback, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { SoloRegions } from "./SoloRegions";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
 import { conversationTarget, soloDraftTarget } from "./routes";
@@ -361,6 +367,133 @@ it("keeps header actions and every owned channel reachable through body failure 
   );
   expect(screen.getByRole("button", { name: "Owned" })).toBeVisible();
   expect(screen.queryByText("Must stay outside")).not.toBeInTheDocument();
+});
+
+it("shares state before mount and notifies mounted and headless consumers", async () => {
+  const h = fixture();
+  let props: SoloRegionProps | undefined;
+  function StateBody(value: SoloRegionProps) {
+    props = value;
+    const [state, setState] = useState(() => value.state.get());
+    useEffect(
+      () => value.state.subscribe(() => setState(value.state.get())),
+      [value.state],
+    );
+    return <output aria-label="Saved filter">{JSON.stringify(state)}</output>;
+  }
+  const source = await h.register({ component: StateBody });
+  const state = source.handle.state(source.binding());
+  expect(state.get()).toBeUndefined();
+  const listener = vi.fn(() => state.get());
+  const stop = state.subscribe(listener);
+  expect(state.set({ filter: "running" })).toBe(true);
+  expect(listener).toHaveLastReturnedWith({ filter: "running" });
+  const view = mount(h);
+  expect(screen.getByLabelText("Saved filter")).toHaveTextContent('"running"');
+  act(() => {
+    state.set({ filter: "all-active" });
+  });
+  expect(screen.getByLabelText("Saved filter")).toHaveTextContent(
+    '"all-active"',
+  );
+  act(() => {
+    props?.state.set({ filter: "needs-you" });
+  });
+  expect(listener).toHaveLastReturnedWith({ filter: "needs-you" });
+  view.unmount();
+  stop();
+  listener.mockClear();
+  expect(state.set(null)).toBe(true);
+  expect(listener).not.toHaveBeenCalled();
+  expect(state.get()).toBeNull();
+});
+
+it("scopes storage notifications and removes subscriptions when a binding or source ends", async () => {
+  const h = fixture();
+  const source = await h.register();
+  const binding = source.binding();
+  const state = source.handle.state(binding);
+  const listener = vi.fn();
+  const remove = vi.spyOn(window, "removeEventListener");
+  state.subscribe(listener);
+  const storageKey = `buzz-view.v1:${JSON.stringify([h.scope, `solo-region-state:${binding.viewer}:example/work`])}`;
+  localStorage.setItem(storageKey, JSON.stringify({ filter: "running" }));
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      key: `buzz-view.v1:${JSON.stringify([h.scope, "other"])}`,
+      storageArea: localStorage,
+    }),
+  );
+  expect(listener).not.toHaveBeenCalled();
+  window.dispatchEvent(
+    new StorageEvent("storage", { key: storageKey, storageArea: localStorage }),
+  );
+  expect(listener).toHaveBeenCalledOnce();
+  expect(state.get()).toEqual({ filter: "running" });
+  h.reconnect();
+  expect(remove).toHaveBeenCalledWith("storage", expect.any(Function));
+  expect(() => state.get()).toThrow("ended");
+  expect(state.set(null)).toBe(false);
+  expect(() => state.subscribe(listener)).toThrow("ended");
+  expect(() => source.handle.state(binding)).toThrow("ended");
+  listener.mockClear();
+  const next = source.handle.state(source.binding());
+  next.subscribe(listener);
+  await source.fiber.dispose();
+  window.dispatchEvent(
+    new StorageEvent("storage", { key: storageKey, storageArea: localStorage }),
+  );
+  expect(listener).not.toHaveBeenCalled();
+  expect(() => next.get()).toThrow("ended");
+  const replacement = await h.register();
+  expect(replacement.handle.state(replacement.binding()).get()).toEqual({
+    filter: "running",
+  });
+});
+
+it("distinguishes missing state from unavailable storage and rejects invalid or oversized writes", async () => {
+  const h = fixture();
+  const source = await h.register();
+  const state = source.handle.state(source.binding());
+  expect(state.get()).toBeUndefined();
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("denied");
+  });
+  expect(() => state.get()).toThrow("unavailable");
+  read.mockRestore();
+  expect(state.set({ huge: "é".repeat(8192) })).toBe(false);
+  const circular: { self?: unknown } = {};
+  circular.self = circular;
+  expect(state.set(circular as never)).toBe(false);
+  expect(state.get()).toBeUndefined();
+  const listener = vi.fn();
+  state.subscribe(listener);
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("full");
+  });
+  expect(state.set({ filter: "running" })).toBe(false);
+  expect(listener).not.toHaveBeenCalled();
+  expect(state.get()).toBeUndefined();
+});
+
+it("retains the latest accepted subscriber write when storage becomes unavailable", async () => {
+  const h = fixture();
+  const source = await h.register();
+  const state = source.handle.state(source.binding());
+  const nested = vi.fn(() => state.set("second"));
+  const stop = state.subscribe(() => {
+    if (state.get() === "first") nested();
+  });
+  expect(state.set("first")).toBe(true);
+  expect(nested).toHaveLastReturnedWith(true);
+  expect(state.get()).toBe("second");
+  stop();
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    throw new Error("denied");
+  });
+  expect(state.get()).toBe("second");
+  expect(state.set("rejected")).toBe(false);
+  expect(state.get()).toBe("second");
 });
 
 it("retains accepted presentation state across unmount, disposal and re-registration and refuses stale or failed writes", async () => {

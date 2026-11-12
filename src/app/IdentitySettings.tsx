@@ -170,9 +170,6 @@ export function IdentitySettings({
   const management = candidate?.pubkey === viewer ? candidate : undefined;
   const checking = !!identity && !management;
   const managed = management?.policy === "organization-managed";
-  const backupConfirmed =
-    !!management &&
-    (management.initialBackupConfirmed || status?.status === "complete");
   const accountBackup = useBackedUpKey(
     viewer,
     identity,
@@ -180,6 +177,12 @@ export function IdentitySettings({
     offered,
     status?.status === "complete",
   );
+  // A receipt or finished pass confirms this key's backup unless the account
+  // read succeeded and showed another key linked and backed up there.
+  const backupConfirmed =
+    !!management &&
+    (management.initialBackupConfirmed || status?.status === "complete") &&
+    (!accountBackup.key || accountBackup.key === viewer);
   const provider = useSyncExternalStore(
     federatedIdentity?.subscribe ?? emptySubscribe,
     federatedIdentity?.snapshot ?? emptySnapshot,
@@ -187,6 +190,11 @@ export function IdentitySettings({
   const backupLocation = provider?.authority
     ? serverName(provider.authority)
     : "Builderlab";
+  // The receipt counts for any account: only a finished pass for this account,
+  // or this account's read of this key, makes the backup this account's.
+  const backupAccount = `${
+    status?.status === "complete" || accountBackup.key === viewer ? "your" : "a"
+  } ${backupLocation} account`;
   useEffect(() => {
     if (keyScope.current !== viewer) setSigningOut(false);
     keyScope.current = viewer;
@@ -293,15 +301,17 @@ export function IdentitySettings({
                     ? "pending"
                     : status.status === "running"
                       ? "running"
-                      : status.status === "failed" || accountBackup.failed
-                        ? "attention"
-                        : backupConfirmed
-                          ? "confirmed"
+                      : // A confirmed backup stays confirmed through a
+                        // re-check or account read that did not finish.
+                        backupConfirmed
+                        ? "confirmed"
+                        : status.status === "failed" || accountBackup.failed
+                          ? "attention"
                           : managed
                             ? "attention"
                             : "pending"
               }
-              backupLocation={backupLocation}
+              backupAccount={backupAccount}
               onCopy={() => void copyIdentity(npub, "Buzz ID")}
             >
               {(active, badgeAction) => (
@@ -323,15 +333,9 @@ export function IdentitySettings({
                             <p className="text-label-sm">Your private key</p>
                             <p className="text-body-sm text-secondary">
                               This key is stored securely on this device.
-                              {status?.builderlab &&
-                                backupConfirmed &&
-                                !accountBackup.failed && (
-                                  <>
-                                    {" "}
-                                    A backup is saved with your {backupLocation}{" "}
-                                    account.
-                                  </>
-                                )}
+                              {status?.builderlab && backupConfirmed && (
+                                <> A backup is saved with {backupAccount}.</>
+                              )}
                             </p>
                             <p className="text-body-sm text-secondary">
                               Save a copy from the private key menu to use this
@@ -373,6 +377,7 @@ export function IdentitySettings({
                           statusError={checking && policyError}
                           identity={identity}
                           offered={offered}
+                          confirmed={backupConfirmed}
                           openBuilderlab={openBuilderlab}
                           accountError={accountBackup.failed}
                           accountPending={accountBackup.pending}
@@ -1011,6 +1016,7 @@ function BackupRecovery({
   statusError,
   identity,
   offered,
+  confirmed,
   openBuilderlab,
   accountError,
   accountPending,
@@ -1024,6 +1030,8 @@ function BackupRecovery({
   statusError: boolean;
   identity: Identity;
   offered: boolean;
+  /** The page's backup confirmation, as the badge shows it. */
+  confirmed: boolean;
   openBuilderlab: (() => void) | undefined;
   accountError: boolean;
   accountPending: boolean;
@@ -1057,8 +1065,8 @@ function BackupRecovery({
       current.current = false;
     };
   }, []);
-  const confirmed =
-    management?.initialBackupConfirmed || status?.status === "complete";
+  // A confirmed key's backup is not in question when the account read fails.
+  const accountProblem = accountError && !confirmed;
   const running = !!management && status?.status === "running";
   // A new native status retires a failed-start message from an earlier pass.
   const failure = failedAt !== undefined && failedAt === status?.seq;
@@ -1066,7 +1074,7 @@ function BackupRecovery({
     status?.status === "failed" ? BACKUP_FAILURES[status.kind] : undefined;
   const feedback = waiting
     ? "Back up this key to Builderlab"
-    : statusError || accountError
+    : statusError || accountProblem
       ? "Backup status unknown"
       : status?.status === "waiting"
         ? status.reason === "no_session"
@@ -1078,12 +1086,27 @@ function BackupRecovery({
             "",
           );
   // These are the two waits whose next step is on Builderlab's Settings page.
+  const onBuilderlab =
+    (status?.status === "waiting" && status.reason === "not_linked") ||
+    (status?.status === "failed" && status.kind === "other_key_linked");
   const at =
-    openBuilderlab &&
-    ((status?.status === "waiting" && status.reason === "not_linked") ||
-      (status?.status === "failed" && status.kind === "other_key_linked"))
+    openBuilderlab && onBuilderlab
       ? (feedback?.indexOf("Builderlab") ?? -1)
       : -1;
+  // Retry backup is offered only where another attempt can change the answer:
+  // after the fix on Builderlab's page, or for a failure that may clear. With
+  // no session, a sign-in on this page hands native one, which starts its own
+  // pass; a refusal answers the same way again. An ended sign-in keeps Retry:
+  // its session can still be live here, with no sign-in control to offer.
+  const retryable =
+    statusError ||
+    accountProblem ||
+    onBuilderlab ||
+    (status?.status === "failed" && status.kind === "signed_out") ||
+    !(
+      (status?.status === "waiting" && status.reason === "no_session") ||
+      (status?.status === "failed" && !BACKUP_FAILURES[status.kind].retryable)
+    );
   async function retry() {
     if (pending.current || running) return;
     pending.current = true;
@@ -1111,18 +1134,20 @@ function BackupRecovery({
       if (current.current) setStarting(false);
     }
   }
+  // A confirmed backup needs no recovery: a failed re-check leaves it backed up.
   const recovery =
     !!management &&
+    !confirmed &&
     (offered || management.policy === "organization-managed") &&
     (status?.status === "failed" ||
       (status?.status === "waiting" && !needsConsent) ||
-      (management.policy === "organization-managed" && !confirmed));
-  const busy = starting || running || (accountError && accountPending);
+      management.policy === "organization-managed");
+  const busy = starting || running || (accountProblem && accountPending);
   if (
     !waiting &&
     !asking &&
     !statusError &&
-    !accountError &&
+    !accountProblem &&
     !recovery &&
     !busy &&
     !failure
@@ -1132,11 +1157,11 @@ function BackupRecovery({
     <div className={styles.keyNotice}>
       {(waiting ||
         statusError ||
-        accountError ||
+        accountProblem ||
         (!confirmed && problem) ||
-        status?.status === "waiting") && (
+        (!confirmed && status?.status === "waiting")) && (
         <p
-          role={statusError || accountError ? "status" : undefined}
+          role={statusError || accountProblem ? "status" : undefined}
           className="m-0 text-center text-caption text-subtle"
         >
           {feedback && at >= 0 ? (
@@ -1169,14 +1194,16 @@ function BackupRecovery({
           Back up key
         </Button>
       ) : (
-        <Button
-          loading={busy}
-          loadingAppearance="disabled"
-          disabled={busy}
-          onClick={() => void retry()}
-        >
-          Retry backup
-        </Button>
+        (busy || retryable) && (
+          <Button
+            loading={busy}
+            loadingAppearance="disabled"
+            disabled={busy}
+            onClick={() => void retry()}
+          >
+            Retry backup
+          </Button>
+        )
       )}
       {asking && (
         <BackupPrompt

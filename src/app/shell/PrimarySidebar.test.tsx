@@ -529,7 +529,7 @@ it.each([["New", "New workspace"]])(
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
     await user.type(
       within(dialog).getByRole("textbox", { name: "Name" }),
-      "Planning",
+      "Planning-team",
     );
     try {
       await user.click(within(dialog).getByRole("button", { name: "Create" }));
@@ -642,7 +642,7 @@ it("header channel creation expands the saved destination without changing other
   });
   await user.type(
     within(dialog).getByRole("textbox", { name: "Name" }),
-    "Planning",
+    "Planning-team",
   );
   await user.click(
     within(dialog).getByRole("button", { name: /^Create channel$/ }),
@@ -739,7 +739,7 @@ it("does not reveal or open a channel when its creation completes in a replaced 
   });
   await user.type(
     within(dialog).getByRole("textbox", { name: "Name" }),
-    "Planning",
+    "Planning-team",
   );
   try {
     await user.click(
@@ -1273,7 +1273,7 @@ it.each(["New"])(
       });
       await user.type(
         within(dialog).getByRole("textbox", { name: "Name" }),
-        "Planning",
+        "Planning-team",
       );
       await user.click(within(dialog).getByRole("button", { name: "Create" }));
       await waitFor(() => expect(select).toHaveBeenCalledOnce());

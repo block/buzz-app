@@ -1147,7 +1147,7 @@ it.each(["Laptop", "Channels", "Starred"])(
             .querySelector(".buzz-dialog-step [data-sidebar-group-icon]"),
         ).toHaveTextContent("💻");
       fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
-        target: { value: "New laptop channel" },
+        target: { value: "New laptop channel-team" },
       });
       fireEvent.click(
         within(screen.getByRole("dialog", { name: title })).getByRole(
@@ -1159,7 +1159,7 @@ it.each(["Laptop", "Channels", "Starred"])(
       );
       await waitFor(() =>
         expect(create).toHaveBeenCalledWith({
-          name: "New laptop channel",
+          name: "New laptop channel-team",
           visibility: "open",
           ...(fromGroup || fromStarred
             ? {

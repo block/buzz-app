@@ -38,6 +38,8 @@ import {
 } from "../../features/relay/channel-details-protocol";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
+import { namingGuidelinesUrl, namingRulesApply } from "./channel-naming-policy";
+import { channelNameTips, similarChannelName } from "./channel-name-tips";
 import styles from "./CreateChannelDialog.module.css";
 
 export type CreateChannelInput = ChannelCreationInput;
@@ -225,7 +227,31 @@ function OpenCreateChannelDialog({
     description,
     visibility: privateChannel ? "private" : "public",
   });
-  const invalid = Object.values(errors).some(Boolean) || unresolved;
+  const namingRules = namingRulesApply(session.relayUrl);
+  const guidelinesUrl = namingRules ? namingGuidelinesUrl() : undefined;
+  const { tips, blockers } = namingRules
+    ? channelNameTips({
+        name: normalizedName,
+        temporary: lifetime === "temporary",
+        description,
+      })
+    : { tips: [], blockers: [] };
+  const similar = namingRules
+    ? similarChannelName(normalizedName, roster.channels)
+    : undefined;
+  // Non-breaking hyphens keep "-help" and "proj-" from wrapping mid-word.
+  const noWrap = (text: string) =>
+    text
+      .replace(/(^|[\s(])-(?=[a-z])/g, "$1\u2011")
+      .replace(/(proj|tmp)-/g, "$1\u2011");
+  const hintText = blockers.length
+    ? noWrap(`To create: ${blockers.join(" ")}`)
+    : similar
+      ? `A channel named #${similar} already exists. Join it instead?`
+      : tips[0];
+  const hygieneBlocked = blockers.length > 0;
+  const invalid =
+    Object.values(errors).some(Boolean) || unresolved || hygieneBlocked;
 
   const dirty =
     name !== "" ||
@@ -447,6 +473,23 @@ function OpenCreateChannelDialog({
             inputRef={input}
             value={name}
             error={name ? errors.name : undefined}
+            hint={
+              hintText && (
+                <>
+                  {hintText}{" "}
+                  {guidelinesUrl && (
+                    <a
+                      href={guidelinesUrl}
+                      tabIndex={-1}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Why these rules?
+                    </a>
+                  )}
+                </>
+              )
+            }
             onChange={(value) => {
               setName(value);
               setError("");

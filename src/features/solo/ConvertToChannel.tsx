@@ -1,3 +1,6 @@
+import { namingRulesApply } from "../../bundled/channels/channel-naming-policy";
+import { channelNameTips } from "../../bundled/channels/channel-name-tips";
+import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import {
   useCallback,
@@ -112,6 +115,15 @@ export function ConvertToChannel({
     sameLabels(conversionAttempt.draft.labels, withoutSolo(base.labels))
   );
   const eligible = !!base?.canEdit && soloLabels(base.labels);
+  // The channel keeps this chat's name, so it follows the channel naming rules.
+  const nameBlockers =
+    base && namingRulesApply(session.relayUrl)
+      ? channelNameTips({
+          name: canonicalDetailsName(base.name),
+          temporary: !!base.ttlSeconds,
+          description: base.description ?? "",
+        }).blockers
+      : [];
   // Another details surface may have confirmed the same publication and retired
   // its receipt. Require fresh exact intent evidence, not absence of an attempt.
   const confirmedElsewhere = !!(
@@ -335,6 +347,7 @@ export function ConvertToChannel({
                 !!receipt?.running ||
                 !!attempt ||
                 !eligible ||
+                nameBlockers.length > 0 ||
                 !!signal?.aborted
               }
               onClick={() => void run("convert")}
@@ -373,6 +386,11 @@ export function ConvertToChannel({
       {!base && !error && <p role="status">Loading chat details…</p>}
       {base && !base.canEdit && !canFinish && (
         <p role="status">You don’t have permission to convert this chat.</p>
+      )}
+      {eligible && !attempt && !converted && nameBlockers.length > 0 && (
+        <p role="status">
+          To convert, rename this chat first: {nameBlockers.join(" ")}
+        </p>
       )}
       {base?.canEdit && !eligible && !matchingAttempt && !canFinish && (
         <p role="status">Only a Solo chat can be converted.</p>

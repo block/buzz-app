@@ -27,6 +27,7 @@ const setupProps = () => ({
   groupsReady: true,
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   cleanup();
   vi.restoreAllMocks();
   localStorage.clear();
@@ -71,7 +72,10 @@ it("shows description immediately with Name focused and creates an ongoing open 
   expect(
     screen.queryByRole("button", { name: "Cancel" }),
   ).not.toBeInTheDocument();
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "  launch  ");
+  await user.type(
+    screen.getByRole("textbox", { name: "Name" }),
+    "launch-team  ",
+  );
   await user.tab();
   expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus();
   await user.type(
@@ -81,7 +85,7 @@ it("shows description immediately with Name focused and creates an ongoing open 
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledWith({
-      name: "launch",
+      name: "launch-team",
       description: "Release planning",
       visibility: "open",
     }),
@@ -103,7 +107,7 @@ it("creates a private temporary channel and reports a rejected request", async (
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops-team");
   await user.click(screen.getByRole("radio", { name: /Temporary/ }));
   await user.click(screen.getByText("Private", { selector: "label" }));
   await user.click(screen.getByRole("button", { name: "Continue" }));
@@ -112,7 +116,7 @@ it("creates a private temporary channel and reports a rejected request", async (
     "Creation rejected",
   );
   expect(onCreate).toHaveBeenCalledWith({
-    name: "ops",
+    name: "ops-team",
     visibility: "private",
     ttlSeconds: 604800,
   });
@@ -141,7 +145,7 @@ it("keeps an editable draft after a failed creation, retries it, and forgets it 
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops-team");
   await user.type(
     screen.getByRole("textbox", { name: "Description" }),
     "Incident response",
@@ -155,7 +159,7 @@ it("keeps an editable draft after a failed creation, retries it, and forgets it 
     "Creation rejected",
   );
   expect(screen.getByRole("textbox", { name: "Name" })).toBeEnabled();
-  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("ops");
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("ops-team");
   expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
     "Incident response",
   );
@@ -166,7 +170,7 @@ it("keeps an editable draft after a failed creation, retries it, and forgets it 
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   const request = {
-    name: "ops",
+    name: "ops-team",
     description: "Incident response",
     visibility: "private",
     ttlSeconds: 604800,
@@ -197,7 +201,7 @@ it("blocks edits during creation without applying disabled control styles", asyn
   );
   const name = screen.getByRole("textbox", { name: "Name" });
   const privateSwitch = screen.getByRole("switch", { name: "Private" });
-  await user.type(name, "launch");
+  await user.type(name, "launch-team");
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   const form = document.getElementById("create-channel-form");
   await waitFor(() => expect(form).toHaveAttribute("inert"));
@@ -225,8 +229,8 @@ it("blocks edits during creation without applying disabled control styles", asyn
 });
 
 it.each([
-  ["\u0085# \u0085#Release\u0085", "Release"],
-  ["\ufeffRelease\ufeff", "\ufeffRelease\ufeff"],
+  ["\u0085# \u0085#Release-team\u0085", "Release-team"],
+  ["\ufeffRelease-team\ufeff", "\ufeffRelease-team\ufeff"],
 ])(
   "passes the relay-canonical name for %j to creation",
   async (value, expected) => {
@@ -265,7 +269,7 @@ it("caps the description at 1,000 characters", async () => {
       onCreate={async () => {}}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "notes");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "notes-team");
   const description = screen.getByRole("textbox", { name: "Description" });
   fireEvent.change(description, { target: { value: "x".repeat(1001) } });
   expect(description).toHaveValue("x".repeat(1000));
@@ -290,7 +294,10 @@ it("steps the temporary duration, preserves it across Ongoing, and submits only 
   expect(
     screen.getByRole("radio", { name: "Temporary" }),
   ).toHaveAccessibleDescription("Archives without activity.");
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "Short lived");
+  await user.type(
+    screen.getByRole("textbox", { name: "Name" }),
+    "Short lived-team",
+  );
   await user.click(screen.getByRole("radio", { name: "Temporary" }));
   await waitFor(() =>
     expect(
@@ -339,7 +346,7 @@ it("steps the temporary duration, preserves it across Ongoing, and submits only 
   expect(onCreate).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-    name: "Short lived",
+    name: "Short lived-team",
     visibility: "open",
     ttlSeconds: 86400,
   });
@@ -357,7 +364,7 @@ it("confirms both privacy directions in the same modal and preserves the entire 
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft-team");
   await user.type(
     screen.getByRole("textbox", { name: "Description" }),
     "Keep this",
@@ -410,7 +417,7 @@ it("confirms both privacy directions in the same modal and preserves the entire 
         String(initialPrivate),
       );
       expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
-        "Draft",
+        "Draft-team",
       );
       expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
         "Keep this",
@@ -431,7 +438,7 @@ it("confirms both privacy directions in the same modal and preserves the entire 
   }
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-    name: "Draft",
+    name: "Draft-team",
     description: "Keep this",
     visibility: "open",
     ttlSeconds: 1209600,
@@ -447,7 +454,7 @@ it("discards the unsaved privacy step and draft when creation closes and reopens
     onCreate: vi.fn(async () => {}),
   };
   const view = render(<CreateChannelDialog {...props} />);
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft-team");
   await user.click(screen.getByRole("switch", { name: "Private" }));
   view.rerender(<CreateChannelDialog {...props} open={false} />);
   view.rerender(<CreateChannelDialog {...props} />);
@@ -495,13 +502,16 @@ it.each(["work", "", "starred"])(
           .getByRole("dialog")
           .querySelector(".buzz-dialog-step [data-sidebar-group-icon]"),
       ).toHaveTextContent("📚");
-    await user.type(screen.getByRole("textbox", { name: "Name" }), "Notes");
+    await user.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Notes-team",
+    );
     await user.click(screen.getByRole("switch", { name: "Private" }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
     await user.click(screen.getByRole("button", { name: "Create channel" }));
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-      name: "Notes",
+      name: "Notes-team",
       visibility: "private",
       ...(initialGroup
         ? {
@@ -532,7 +542,10 @@ it.each([true, false])(
       groupsReady,
     };
     const view = render(<CreateChannelDialog {...props} destinations={[]} />);
-    await user.type(screen.getByRole("textbox", { name: "Name" }), "Notes");
+    await user.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Notes-team",
+    );
     await user.click(screen.getByRole("button", { name: "Create channel" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       groupsReady
@@ -587,7 +600,10 @@ it.each(["backdrop", "Escape", "Close"])(
     await dismiss();
     expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
     onOpenChange.mockClear();
-    await user.type(screen.getByRole("textbox", { name: "Name" }), "Draft");
+    await user.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Draft-team",
+    );
     const dialog = screen.getByRole("dialog");
     for (const back of ["Keep editing", "Escape", "backdrop", "Close"]) {
       await dismiss();
@@ -610,7 +626,7 @@ it.each(["backdrop", "Escape", "Close"])(
         );
       expect(dialog).toHaveAccessibleName("Create a channel");
       expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
-        "Draft",
+        "Draft-team",
       );
       expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
       expect(onOpenChange).not.toHaveBeenCalled();
@@ -636,7 +652,10 @@ it.each(["Name", "Description", "Private", "Temporary"])(
       />,
     );
     if (field === "Name" || field === "Description")
-      await user.type(screen.getByRole("textbox", { name: field }), "draft");
+      await user.type(
+        screen.getByRole("textbox", { name: field }),
+        "draft-team",
+      );
     else if (field === "Temporary")
       await user.click(screen.getByRole("radio", { name: field }));
     else {
@@ -776,14 +795,14 @@ it("starts a channel from a template with its agents and teams' agents here and 
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
   expect(screen.getByText("Adds Bo, Ada · Starts the Canvas")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledWith({
-      name: "launch",
+      name: "launch-team",
       visibility: "open",
       setup: {
         agents: [bo, ada],
@@ -820,7 +839,7 @@ it.each([
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch-team");
   expect(choices.ensure).not.toHaveBeenCalledWith(false, true);
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
@@ -838,7 +857,7 @@ it.each([
   await user.click(create);
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-      name: "launch",
+      name: "launch-team",
       visibility: "open",
       setup: {
         agents: [bo, ada],
@@ -867,7 +886,7 @@ it("holds creation from a template that names only agents until they are checked
       onCreate={async () => {}}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "pair");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "pair-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Pair" }));
   expect(
@@ -895,7 +914,7 @@ it("reports a failed agent list and creates without the template only on request
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
   expect(screen.getByRole("alert")).toHaveTextContent(
@@ -914,7 +933,7 @@ it("reports a failed agent list and creates without the template only on request
   await user.click(create);
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-      name: "launch",
+      name: "launch-team",
       visibility: "open",
     }),
   );
@@ -951,7 +970,7 @@ it("retries a failed archive read without dropping the template", async () => {
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
   const create = screen.getByRole("button", { name: "Create channel" });
@@ -987,13 +1006,15 @@ it("retries a failed archive read without dropping the template", async () => {
   expect(screen.getByRole("combobox", { name: "Template" })).toHaveTextContent(
     "Launch",
   );
-  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("launch");
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "launch-team",
+  );
   expect(screen.getByText("Adds Bo, Ada · Starts the Canvas")).toBeVisible();
   expect(create).toBeEnabled();
   await user.click(create);
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledExactlyOnceWith({
-      name: "launch",
+      name: "launch-team",
       visibility: "open",
       setup: {
         agents: [bo, ada],
@@ -1029,7 +1050,7 @@ it("leaves an archived team member out of the template's agents", async () => {
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "launch-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Launch" }));
   expect(screen.getByText("Adds Ada · Starts the Canvas")).toBeVisible();
@@ -1068,7 +1089,7 @@ it("creates a plain channel from a template whose members are all elsewhere once
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "plain");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "plain-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Core only" }));
   expect(
@@ -1079,7 +1100,7 @@ it("creates a plain channel from a template whose members are all elsewhere once
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledWith({
-      name: "plain",
+      name: "plain-team",
       visibility: "open",
       // Kept so a retry still matches once the template resolves differently.
       setup: {
@@ -1123,7 +1144,7 @@ it("creates a plain channel from a template that adds nothing here", async () =>
       onCreate={onCreate}
     />,
   );
-  await user.type(screen.getByRole("textbox", { name: "Name" }), "plain");
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "plain-team");
   await user.click(screen.getByRole("combobox", { name: "Template" }));
   await user.click(await screen.findByRole("option", { name: "Empty" }));
   expect(
@@ -1134,7 +1155,7 @@ it("creates a plain channel from a template that adds nothing here", async () =>
   await user.click(screen.getByRole("button", { name: "Create channel" }));
   await waitFor(() =>
     expect(onCreate).toHaveBeenCalledWith({
-      name: "plain",
+      name: "plain-team",
       visibility: "open",
       // Kept so a retry still matches once the template resolves differently.
       setup: {
@@ -1145,4 +1166,39 @@ it("creates a plain channel from a template that adds nothing here", async () =>
       },
     }),
   );
+});
+
+it("applies the naming rules and guidelines link only in a listed community", async () => {
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_COMMUNITIES", "https://relay.example");
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
+  const user = userEvent.setup();
+  const block = {
+    ...store.session,
+    relayUrl: "wss://relay.example",
+  };
+  const { unmount } = render(
+    <CreateChannelDialog
+      {...setupProps()}
+      session={block}
+      open
+      onOpenChange={() => {}}
+      onCreate={vi.fn(async () => {})}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeDisabled();
+  expect(screen.getByRole("link", { name: "Why these rules?" })).toBeVisible();
+  unmount();
+  render(
+    <CreateChannelDialog
+      {...setupProps()}
+      session={{ ...store.session, relayUrl: "wss://other.example" }}
+      open
+      onOpenChange={() => {}}
+      onCreate={vi.fn(async () => {})}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeEnabled();
+  expect(screen.queryByRole("link", { name: "Why these rules?" })).toBeNull();
 });

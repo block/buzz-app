@@ -2955,6 +2955,69 @@ it("does not rebuild unrelated plugin rows when a row menu opens or closes", asy
   ).toEqual([]);
 });
 
+it("lists rows a labelled contribution hides in their section's Filter menu and tells it which row is open", async () => {
+  const user = userEvent.setup();
+  const seen = new Map<string, boolean>();
+  const registry = rowRegistry({
+    version: 1,
+    id: "quiet",
+    hiddenLabel: "Quiet",
+    render: (row, Default) => {
+      seen.set(row.id, row.selected);
+      return row.id === "beta" && !row.selected ? null : Default;
+    },
+  });
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    available: true,
+  });
+  await preferences.queries.ensure();
+  const h = fixture(
+    preferences.queries,
+    "ready",
+    undefined,
+    undefined,
+    registry,
+  );
+  const mounted = render(h.view("alpha"));
+  await screen.findByRole("button", { name: "alpha" });
+  expect(screen.queryByRole("button", { name: "beta" })).toBeNull();
+  expect(seen.get("alpha")).toBe(true);
+  expect(seen.get("gamma")).toBe(false);
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  const group = await screen.findByRole("group", { name: "Quiet" });
+  expect(
+    within(group)
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent),
+  ).toEqual([expect.stringContaining("beta")]);
+  fireEvent.click(within(group).getByRole("menuitem", { name: /beta/ }));
+  expect(h.navigator.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "conversation", channelId: "beta" }),
+  );
+  mounted.rerender(h.view("beta"));
+  await screen.findByRole("button", { name: "beta" });
+  expect(seen.get("beta")).toBe(true);
+  act(() => registry.disable());
+  mounted.rerender(h.view("alpha"));
+  await screen.findByRole("button", { name: "beta" });
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Channels" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  await screen.findByRole("menuitemradio", { name: "All" });
+  expect(screen.queryByRole("group", { name: "Quiet" })).toBeNull();
+  preferences.dispose();
+});
+
 it("decorates live host rows and closes menus only when their row is hidden", async () => {
   const registry = rowRegistry({
     version: 1,

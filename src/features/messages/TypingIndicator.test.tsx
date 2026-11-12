@@ -39,6 +39,7 @@ import {
   entry,
   type Snapshot,
 } from "./typing-indicator-testing";
+import { shimmers } from "./activity-line-testing";
 // Transcript requests live in a module-level map; each test starts clean.
 afterEach(() => {
   for (const pubkey of [agent, other])
@@ -823,10 +824,10 @@ it.each([
       screen.getByRole("button", { name: /Activity: .*working/ }),
     ).toBeVisible();
     expect(
-      screen.getByText(
+      shimmers(
         team ? `${agent.slice(0, 10)}: Checking the fix` : "Checking the fix",
       ),
-    ).toHaveAttribute("data-active", "true");
+    ).toBe(true);
     // Recorded ownership does not make the indicator adjacent to its author.
     view.rerender(renderFlow(true, human));
     const tail = view.container.querySelector<HTMLElement>(
@@ -843,10 +844,10 @@ it.each([
         }),
       ).toBeVisible();
       expect(
-        screen.getByText(
+        shimmers(
           team ? `${agent.slice(0, 10)}: Checking the fix` : "Checking the fix",
         ),
-      ).toHaveAttribute("data-active", "true");
+      ).toBe(true);
     }
     f.update(
       [{ pubkey: agent, channelId: "channel", threadRootId: secondRoot }],
@@ -864,10 +865,10 @@ it.each([
       screen.getByRole("button", { name: "Activity: Agent working" }),
     ).toBeVisible();
     expect(
-      screen.getByText(
+      shimmers(
         team ? `${agent.slice(0, 10)}: Checking the fix` : "Checking the fix",
       ),
-    ).not.toHaveAttribute("data-active");
+    ).toBe(false);
     f.update([{ pubkey: agent, channelId: "channel" }], { local: [] });
     view.rerender(renderFlow(false));
     expect(
@@ -1159,10 +1160,7 @@ it.each([undefined, root])(
       screen.queryByRole("button", { name: /Activity: .*working/ });
     const dots = () => document.querySelectorAll('[data-state="working"]');
     const view = render(preview(true));
-    expect(screen.getByText("Checking the fix")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    expect(shimmers("Checking the fix")).toBe(true);
     expect(cue()).toBeNull();
     expect(dots()).toHaveLength(1);
     expect(

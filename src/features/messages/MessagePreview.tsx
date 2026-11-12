@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ConversationExtensions } from "../conversation/contracts";
+import { messagePreviewText } from "../conversation/message-preview-text";
 import {
   PLAIN_TEXT_LIMIT,
   plainText,
@@ -88,5 +89,30 @@ export function MessagePreview({
       compact
       fallback={fallback}
     />
+  );
+}
+
+/** A message's first paragraph, cut before its next. */
+export const excerptRow = (row: ChannelMessage): ChannelMessage => ({
+  ...row,
+  content: messagePreviewText(row.content),
+});
+
+/** An excerpt rendered inline on its row's one line, after the row's own prefix. */
+export function MessageExcerpt({
+  row,
+  session,
+  extensions,
+}: {
+  row: ChannelMessage;
+  session?: RelaySession | undefined;
+  extensions?: ConversationExtensions | undefined;
+}) {
+  return session ? (
+    <span className={styles.excerpt}>
+      <MessagePreview row={row} session={session} extensions={extensions} />
+    </span>
+  ) : (
+    plainPreview(row)
   );
 }

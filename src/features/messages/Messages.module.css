@@ -3621,6 +3621,43 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* An excerpt flows inline after its row's prefix, so the line's ellipsis cuts
+   it. Its blocks read as words, a space apart. */
+.excerpt .text[data-compact],
+.excerpt
+  .text[data-compact]
+  :is(p, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, li, pre, .codeBlock) {
+  display: inline;
+  padding: 0;
+}
+.excerpt
+  .text[data-compact]
+  *
+  + :is(
+    p,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    blockquote,
+    ul,
+    ol,
+    li,
+    pre,
+    .codeBlock
+  )::before {
+  content: " ";
+}
+.excerpt .text[data-compact] hr {
+  display: none;
+}
+/* Wrap, or not, as the line does: the body's own pre-wrap would wrap it. */
+.excerpt .text[data-compact],
+.excerpt .text[data-compact] * {
+  white-space: inherit;
+}
 .audienceRow:has(.audienceBody) .audiencePreviewText {
   display: none;
 }

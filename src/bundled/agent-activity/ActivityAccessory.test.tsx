@@ -41,6 +41,7 @@ import { requestWork } from "../../features/agents/request-work";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelMessage } from "../../features/relay/contracts";
+import { shimmers } from "../../features/messages/activity-line-testing";
 
 // Stop's results are host toasts; the shared Toast owns how they show.
 const notify = vi.hoisted(() => vi.fn());
@@ -2256,13 +2257,8 @@ it("hands live work to only the latest history for each agent and keeps Stop and
   );
   const view = render(ui(false));
   try {
-    expect(screen.getByText("Checking the files")).not.toHaveAttribute(
-      "data-active",
-    );
-    expect(screen.getByText("Checking more files")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    expect(shimmers("Checking the files")).toBe(false);
+    expect(shimmers("Checking more files")).toBe(true);
     view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),
@@ -2346,13 +2342,8 @@ it("hands a follow-up's live work to the update its run published to the thread 
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
-    expect(screen.getByText("Checking the follow-up")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
-    expect(screen.getByText("Checking the root")).not.toHaveAttribute(
-      "data-active",
-    );
+    expect(shimmers("Checking the follow-up")).toBe(true);
+    expect(shimmers("Checking the root")).toBe(false);
     view.rerender(ui(true));
     expect(
       screen.queryByLabelText("Agent activity on this message"),
@@ -2409,20 +2400,13 @@ it("hands a remote follow-up's live work to the update that claims it, leaving o
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
-    expect(screen.getByText("Checking the follow-up")).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    expect(shimmers("Checking the follow-up")).toBe(true);
     // One working presentation: the history row, its dots included.
     expect(workingCue()).toBeNull();
     expect(workingDots()).toHaveLength(1);
-    expect(screen.getByText("Checking the root")).not.toHaveAttribute(
-      "data-active",
-    );
+    expect(shimmers("Checking the root")).toBe(false);
     f.send(A, "t1", 2, "turn_completed");
-    expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
-      "data-active",
-    );
+    expect(shimmers("Checking the follow-up")).toBe(false);
     expect(
       screen.queryByLabelText("Agent activity on this message"),
     ).toBeNull();
@@ -2487,9 +2471,7 @@ it("keeps a failed request's update from borrowing a nested follow-up's remote w
     expect(
       screen.getByLabelText("Agent activity on this message"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Earlier root progress")).not.toHaveAttribute(
-      "data-active",
-    );
+    expect(shimmers("Earlier root progress")).toBe(false);
     expect(dotsOn(old.id)).toHaveLength(0);
     // The failed request keeps its own outcome.
     expect(outcomes).toEqual(["error"]);
@@ -2573,22 +2555,15 @@ it.each(["grouped", "standalone"])(
     }
     const view = render(<Thread />);
     try {
-      expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
-        "data-active",
-      );
+      expect(shimmers("Checking the follow-up")).toBe(false);
       expect(dotsOn(step.id)).toHaveLength(0);
       // The root request's own update is its one working cue.
-      expect(screen.getByText("Checking the root")).toHaveAttribute(
-        "data-active",
-        "true",
-      );
+      expect(shimmers("Checking the root")).toBe(true);
       expect(dotsOn(old.id)).toHaveLength(1);
       // The follow-up below that update keeps the conversation's cue too.
       expect(workingCue()).toBeVisible();
       f.send(A, "t0", 2, "turn_completed");
-      expect(screen.getByText("Checking the follow-up")).not.toHaveAttribute(
-        "data-active",
-      );
+      expect(shimmers("Checking the follow-up")).toBe(false);
       expect(workingDots()).toHaveLength(0);
     } finally {
       view.unmount();

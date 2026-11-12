@@ -3,7 +3,7 @@ import type { MessageLinkOrigin } from "./MessageRow";
 import { ActivityGroupActions } from "./ActivityGroupActions";
 import { useActivityTypingReplacement } from "../conversation/typing-presentation";
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
-import { useRef, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import {
   ActivityOutcome,
@@ -19,7 +19,7 @@ import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import type { ActivityPresentation } from "./activity-presentation";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { avatarMedia } from "../../shared/avatar-source";
-import { messagePreviewText } from "../conversation/message-preview-text";
+import { excerptRow, MessageExcerpt, plainPreview } from "./MessagePreview";
 
 /** One stable disclosure for a run of activity, showing its latest speaker. */
 export function ActivityGroupPreview({
@@ -107,11 +107,9 @@ export function ActivityGroupPreview({
   const name = named(primary);
   const previewRow = group.workingUpdate ?? row;
   const speaker = named(previewRow.authorId);
-  const text = Array.from(
-    messagePreviewText(previewRow.content).replace(/\s+/g, " "),
-  );
-  const preview =
-    text.length > 280 ? `${text.slice(0, 279).join("")}…` : text.join("");
+  const excerpt = useMemo(() => excerptRow(previewRow), [previewRow]);
+  const preview = plainPreview(excerpt);
+  const shown = <MessageExcerpt row={excerpt} session={session} />;
   const outcomeText = outcomes
     .map(
       (entry) => `${named(entry.agent)}: ${activityOutcomeLabel(entry.state)}`,
@@ -174,11 +172,16 @@ export function ActivityGroupPreview({
                   }
                 />
               ))}
-              {working && <ShimmerText active>{namedPreview}</ShimmerText>}
+              {working && (
+                <ShimmerText active>
+                  {speaker}: {shown}
+                </ShimmerText>
+              )}
             </span>
           ) : (
             <ShimmerText active={working || live}>
-              {participants.length > 1 ? namedPreview : preview}
+              {participants.length > 1 && `${speaker}: `}
+              {shown}
             </ShimmerText>
           )
         }

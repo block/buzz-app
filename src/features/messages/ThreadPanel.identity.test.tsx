@@ -24,6 +24,7 @@ import { ThreadPanel } from "./ThreadPanel";
 import { createAgentActivity } from "../agents/activity";
 import { createLocalAgentActivity } from "../agents/local-activity";
 import { stubAvatarBrowserApis } from "../agents/avatar-testing";
+import { shimmers } from "./activity-line-testing";
 
 stubAvatarBrowserApis();
 
@@ -228,10 +229,10 @@ it("keeps a standalone activity root subscribed to its request through completio
         onOpenLink={() => false}
       />,
     );
-    const preview = await screen.findByText("Checking root activity");
-    expect(preview).toHaveAttribute("data-active", "true");
+    await screen.findByText("Checking root activity");
+    expect(shimmers("Checking root activity")).toBe(true);
     act(() => work.finish({ ok: true }));
-    expect(preview).not.toHaveAttribute("data-active");
+    expect(shimmers("Checking root activity")).toBe(false);
   } finally {
     cleanup();
     release();

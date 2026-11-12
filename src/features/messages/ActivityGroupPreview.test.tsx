@@ -26,6 +26,7 @@ import {
   useStableRowActivity,
 } from "./activity-presentation";
 import { MessageRow } from "./MessageRow";
+import { activityLine, shimmers } from "./activity-line-testing";
 
 stubAvatarBrowserApis();
 afterEach(() => {
@@ -406,10 +407,7 @@ it.each(["signed failure", "failed update", "working update"])(
       helper.started();
       const view = render(<Preview />);
       expect(screen.getByText("Couldn’t finish")).toBeVisible();
-      expect(screen.getByText(`helper: ${preview}`)).toHaveAttribute(
-        "data-active",
-        "true",
-      );
+      expect(shimmers(`helper: ${preview}`)).toBe(true);
       expect(
         screen.getByRole("button", {
           name: `Show activity history: agent: Couldn’t finish; helper: still working — ${preview}`,
@@ -587,12 +585,9 @@ it("shimmers a standalone working step and stops when that request finishes", ()
       );
     }
     render(<Preview />);
-    expect(screen.getByText(step.content)).toHaveAttribute(
-      "data-active",
-      "true",
-    );
+    expect(shimmers(step.content)).toBe(true);
     act(() => work.finish({ ok: true }));
-    expect(screen.getByText(step.content)).not.toHaveAttribute("data-active");
+    expect(shimmers(step.content)).toBe(false);
   } finally {
     owner.dispose();
     f.dispose();
@@ -766,7 +761,7 @@ it("uses channel-qualified names for the excerpt and participant avatars", () =>
     expect(
       screen.getByRole("img", { name: `${first}, ${second}` }),
     ).toBeVisible();
-    expect(screen.getByText(`${second}: ${step.content}`)).toBeVisible();
+    expect(activityLine(`${second}: ${step.content}`)).toBeVisible();
   } finally {
     cleanup();
     names.dispose();
@@ -810,6 +805,41 @@ it("follows live work for collapsed request controls only once they are shown", 
       />,
     );
     expect(subscribe).toHaveBeenCalled();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("renders the latest step's first paragraph as its message does", () => {
+  const owner = createRelaySession(null);
+  const group = activityPresentation(
+    [
+      {
+        ...step,
+        content: "Pushed **the fix** at `abc123`\n\nThen ran the suite",
+      },
+    ],
+    undefined,
+    new Set(["agent"]),
+  ).groups[0];
+  if (!group) throw new Error("Missing group");
+  try {
+    render(
+      <ActivityGroupPreview
+        session={owner.session}
+        group={group}
+        profiles={new Map()}
+        media={() => undefined}
+        expanded={false}
+        onToggle={() => {}}
+      />,
+    );
+    const line = screen.getByRole("button", {
+      name: "Show activity history: agent: Pushed the fix at abc123…",
+    });
+    expect(line).toHaveTextContent(/^Pushed the fix at abc123…$/);
+    expect(within(line).getByText("the fix").tagName).toBe("STRONG");
+    expect(within(line).getByText("abc123").tagName).toBe("CODE");
   } finally {
     owner.dispose();
   }

@@ -25,7 +25,7 @@ import {
 } from "../../shared/design-system/icons";
 import { useProfileOwner } from "../profiles/useProfileOwner";
 import { RemoteAgentHint, RemoteWorkIcon } from "./RemoteAgentHint";
-import { messagePreviewText } from "../conversation/message-preview-text";
+import { excerptRow, MessageExcerpt, plainPreview } from "./MessagePreview";
 import { profileMentionParts } from "./profile-mentions";
 import { addressedMessage } from "./audience-address";
 import { WorkflowByline } from "./WorkflowByline";
@@ -1798,20 +1798,8 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   const to = recipients.map((pubkey) =>
     person(pubkey, directory.profiles.get(pubkey)),
   );
-  const excerpt = Array.from(
-    messagePreviewText(body.content).replace(/\s+/g, " "),
-  );
-  const preview =
-    excerpt.length > 280
-      ? `${excerpt.slice(0, 279).join("")}…`
-      : excerpt.join("");
-  const addressedPreview = Array.from(
-    `${to.length ? `${to.map((who) => `@${who.name}`).join(", ")} ` : ""}${preview}`,
-  );
-  const visiblePreview =
-    addressedPreview.length > 280
-      ? `${addressedPreview.slice(0, 279).join("")}…`
-      : addressedPreview.join("");
+  const excerpt = useMemo(() => excerptRow(body), [body]);
+  const preview = plainPreview(excerpt);
   const avatar = (who: typeof author) => (
     <span className={styles.audienceAvatar} title={who.name}>
       <AgentAvatar
@@ -1929,7 +1917,15 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                 {open && bubble && "Collapse"}
                 {!open && (
                   <span className={styles.audiencePreviewText}>
-                    <ShimmerText active={active}>{visiblePreview}</ShimmerText>
+                    <ShimmerText active={active}>
+                      {to.length > 0 &&
+                        `${to.map((who) => `@${who.name}`).join(", ")} `}
+                      <MessageExcerpt
+                        row={excerpt}
+                        session={session}
+                        extensions={props.extensions}
+                      />
+                    </ShimmerText>
                   </span>
                 )}
                 {!open && row.edited && <EditedMarker />}

@@ -369,7 +369,6 @@ mod tests {
             rule: None,
         }
     }
-    #[cfg(unix)]
     const ORG_SOCKET: &str = "Library/Application Support/example-ssh-agent/agent.sock";
     #[cfg(unix)]
     fn agent(path: &Path) -> std::os::unix::net::UnixListener {

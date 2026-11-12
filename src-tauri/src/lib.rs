@@ -58,6 +58,8 @@ use nsec_backup::{
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
 mod claude_key;
+#[cfg(unix)]
+mod cli_link;
 mod clipboard;
 mod jev;
 mod keep_awake;
@@ -1028,6 +1030,25 @@ pub fn run() {
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
                     eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
+                }
+            }
+            // Only the installed app owns the link: a development build's would
+            // dangle once its worktree goes, and an AppImage's path is a mount
+            // that ends when it quits.
+            #[cfg(unix)]
+            if !tauri::is_dev()
+                && app.config().identifier == sign_out::legacy_identifier::CURRENT
+                && std::env::var_os("APPIMAGE").is_none()
+            {
+                let cli = app
+                    .path()
+                    .resource_dir()
+                    .map_err(std::io::Error::other)
+                    .and_then(|resources| resources.join("bin/buzz").canonicalize());
+                if let (Some(home), Ok(cli)) = (dirs::home_dir(), cli) {
+                    if let Err(error) = cli_link::ensure(&home.join(".local/bin"), &cli) {
+                        eprintln!("Could not link the buzz command: {error}");
+                    }
                 }
             }
             tauri::async_runtime::spawn(host_command::load_login_shell_path());

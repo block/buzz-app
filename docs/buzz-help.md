@@ -301,9 +301,10 @@ comes from that app. Protected agents cannot use this connection. Keep Buzz
 open. An unavailable agent cannot authorize access. Enable its runtime plugin
 or use the Buzz copy that runs it.
 
-Use **Settings → External apps → Revoke access** to stop it. Changing community
-or identity also ends access. If a connection ends, start setup in the external
-app again. Never put connection credentials in a chat or file.
+Use **Settings → External apps → Revoke access** to stop it; it asks you to
+confirm first. Changing community or identity also ends access. If a
+connection ends, start setup in the external app again. Never put connection
+credentials in a chat or file.
 Older apps asked for limited read, post or create access, which Buzz no longer
 grants. Buzz shows an update notice for such a request; select **Deny**, update
 the app and start setup again. A saved limited approval does nothing until you
@@ -608,6 +609,9 @@ for 30 days expires.
   or are removed in People.
 - In a channel, typing `/leave` by itself opens the same **Leave channel**
   confirmation. The command is not posted as a message.
+- If **Delete chat** or **Delete channel** fails because relay requests are
+  paused, nothing was deleted and the confirmation stays open. **Retry** becomes
+  available when the pause ends; it checks your permission again before deleting.
 - **Pasted web links** keep their labels when the clipboard's HTML and plain
   text agree, including image alt text. Use ordinary paste; plain-text paste
   uses only the clipboard's plain text.
@@ -681,7 +685,10 @@ for 30 days expires.
   misspellings but does not correct them unless you turn on **Settings →
   Appearance → Allow automatic spelling correction**. Correct Spelling
   Automatically in the message box's right-click Spelling and Grammar menu then
-  turns correction on or off.
+  turns correction on or off. A plugin that checks writing, such as a spelling or
+  grammar checker, adds its own wavy underlines; right-click one, or put the
+  caret in it and press ⌘. (Ctrl+. elsewhere), to see what it found and pick a
+  replacement. ⌘Z undoes the change.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus
@@ -861,6 +868,10 @@ recovery controls instead. A save or recovery error keeps the draft or queued ro
 available rather than silently discarding it.
 
 ## Choosing and customizing agents
+
+- An optional plugin can attach context to a native session. Follow-ups and
+  reconnects keep that association. **New** starts another association. Each
+  agent keeps its current conversation, reply placement and session controls.
 
 - Open an agent’s **Memory** tab and expand a memory to read it with Markdown
   formatting, including headings, lists, code, tables, and line breaks. Memory
@@ -1221,8 +1232,6 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   **Update** review showing access changes and any change to the branch or tag
   later updates follow, and the plugin keeps its enabled or disabled state.
   Other links to an installed plugin offer **Open in Buzz**.
-- A marketplace or URL install link can update a Git-installed plugin in place.
-  Review the source change and choose **Update**; removal is not needed.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved
@@ -1268,6 +1277,11 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   change waits until the person reviews and confirms it there (or under **Requested
   by agents** in **Settings → Plugins → Manage plugins**). A restart discards it. An agent cannot
   install plugin code by itself.
+- A `buzz://plugin-install` link, or a plugin's request to install another
+  plugin from a URL, can update a plugin with that ID installed from Git in
+  place: review the source change and choose **Update**, with no removal. It is
+  refused before anything downloads when the plugin is installed from a folder;
+  **Open plugin** shows it in Manage plugins, where you can delete it first.
 - **Focus**, when its optional plugin is on, is in the profile menu. For a
   chosen time it shows only Solo chats in the sidebar and lets only Solo chats
   in the selected community show banners, play sounds or light the Dock dot. Links and search still open
@@ -1389,7 +1403,7 @@ for another 30 days. Approval expires after 30 days without renewal. Buzz shows
 this policy before you authorize access. Expired or revoked approval requires
 new owner consent. The app can restore the same access after Buzz or the app
 restarts. Keep Buzz open in the approved community. Keys stay in Buzz. Use **Settings > External apps > Revoke access** to remove approval,
-even when no session is connected. Full access requires new approval.
+even when no session is connected; it asks you to confirm first. Full access requires new approval.
 
 ### Reconnecting an old agent in a DM
 
@@ -1415,3 +1429,8 @@ In **Workflows**, an archived channel’s group says **Archived**, as do its wor
 Desktop builds save a small local trace when a draft conflict or save failure
 occurs. It contains operation metadata, with no draft text or secrets. See
 [draft diagnostics](draft-diagnostics.md) for the file location and collection steps.
+
+## Plugin account actions
+
+Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.
+

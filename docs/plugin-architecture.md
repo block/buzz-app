@@ -161,8 +161,11 @@ invalid.
 `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
 a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
 downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
-review as a recommended plugin. It never mixes with the Git keys, and each key may
-appear once.
+review as a recommended plugin. A plugin installed from Git updates in place, and the
+review explains that the URL replaces the saved Git source. If the plugin is already
+installed from a folder or an unknown source, Buzz says so before downloading anything
+and offers **Open plugin**, where it can be deleted first. It never mixes with the Git keys, and
+each key may appear once.
 
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
@@ -615,7 +618,8 @@ A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unle
 its SHA-256 and plugin ID match, and shows the access review for the owner to
 confirm. It can install a new plugin or update one installed from a URL or Git.
 For Git installations, the review explains that the URL replaces the saved Git
-source.
+source. A plugin installed from a folder or an unknown source is refused before
+the download, as a link is.
 
 A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
@@ -928,8 +932,9 @@ close a section, so a transcript shows which plugin said what. The agent follows
 it below the base prompt and the owner's requests. Each turn carries the
 complete current set, replacing earlier turns', so turning the plugin off or a
 `when(agent)` that stops returning `true` ends them. Write the text yourself and
-keep it short: it is sent with every turn. Context for one turn belongs in a
-note, which the agent reads as data.
+keep it short: it is sent with every turn. `addInstructions` throws on text over
+4096 UTF-8 bytes after trimming. Context for one turn belongs in a note, which
+the agent reads as data.
 
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
@@ -3023,6 +3028,108 @@ metadata retain a neutral waveform. Disabling the plugin restores ordinary audio
 cards. The fixture at `/tests/fixtures/voice-notes.html` exercises the real recorder,
 composer and session with disposable local media; browser tests provide its local
 media response. Native microphone permissions were exercised in the staging app.
+
+### Composer annotators
+
+`ctx.conversation.registerAnnotator({ id, title, component })` lets a plugin
+mark ranges of the rich composer's prose and offer replacements for them, for
+example a spelling, grammar or style checker. The component is headless: the
+host mounts it for the focused composer and draws the marks, and the plugin
+owns everything else, including its checker, language, scheduling, timeouts,
+failure handling and the wording of labels and replacements. Annotators never
+edit the draft; the host replaces text only when the person picks a
+replacement. The native spell checker and the autocorrection preference are
+unchanged.
+
+```tsx
+import { useEffect } from "react";
+import type { ComposerAnnotatorProps, Context } from "@buzz/author";
+export const inject = ["conversation"];
+function Checker({ observation, publish }: ComposerAnnotatorProps) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Ranges inside `observation.prose`, in UTF-16 offsets into its text.
+      publish([]);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [observation, publish]);
+  return null;
+}
+export function apply(ctx: Context) {
+  ctx.conversation.registerAnnotator({
+    id: "example",
+    title: "Example checker",
+    component: Checker,
+  });
+}
+```
+
+The component receives the completion context (`session`, `scope`,
+`channelId`, `threadRootId`, `inviteAgents`) and an `observation` with the same
+disclosure as completion matching: the focused, enabled composer's editable
+text, never the caret, another editor or a draft that is not focused. It is
+frozen and keeps its identity for one document:
+
+- `text` is the editable-text projection completions see: formatting
+  delimiters removed, blocks and line breaks as `\n`, chips as their source.
+- `prose` lists the half-open UTF-16 ranges that are prose. Code, link labels,
+  raw Markdown code, link targets and HTML, mentions, chips and line breaks are
+  outside every range; bold, italic and other formatting do not split one.
+- `revision` changes with every document, even one with the same text.
+
+No observation is offered while the composer is unfocused, disabled, read-only
+or composing with an IME; a new one follows when the composition ends.
+
+`publish(annotations)` shows annotations for that observation, replacing the
+annotator's earlier ones, and returns a disposer that withdraws them; once the
+draft has moved on, a disposer leaves the marks following their text until the
+next publication, so cleanup per observation does not flicker. It returns
+`false`, showing nothing, once the draft has moved to another observation, the
+annotator has been removed or retired, or the value is not an array. Each
+annotation is `{ start, end, text, label, kind?, replacements? }`:
+
+- The host keeps an annotation only when `text` equals
+  `observation.text.slice(start, end)`, the range lies inside one prose range
+  and neither end splits a surrogate pair or grapheme cluster.
+- `label` (required, 1–120 UTF-16 units) says what is wrong and titles the
+  menu. `kind: "spelling"` or `"grammar"` sets `aria-invalid` to that value;
+  otherwise it is `"true"`.
+- `replacements` are `{ text, label? }`. The host keeps at most five, distinct
+  by `text`, of at most 64 UTF-16 units that differ from the marked text.
+  `label` defaults to `text` and is required when `text` is empty, which
+  deletes the range.
+- Text and labels have no surrounding whitespace and contain no control,
+  line-separator or bidirectional-formatting characters or lone surrogates.
+- The host reads at most 200 annotations per publication, keeps the one that
+  starts first of overlapping ones, lets earlier annotators win overlaps and shows at most 400
+  marks per editor, redrawing at most once per animation frame.
+
+Changing destination (channel, thread or edited message), disabling the
+composer, removing the annotator or a render error in it clears its marks and
+makes every earlier `publish` return `false`; a component error is contained
+like other contributions. Read-only and sending states keep shown marks inert.
+
+The host owns presentation: a wavy underline in the danger text color, hidden
+on the word being typed until the caret leaves it. Marks stay actionable only
+at the revision they were published for; after an edit a mark follows its
+unchanged text until the next publication and is removed once that text
+changes.
+
+Right-clicking a mark, or pressing Command-. (Ctrl+. elsewhere) with the caret
+in one, opens a host menu with the label and the replacements. Arrow keys and
+Enter choose, and Escape closes it. Focus returns to the composer. The menu
+closes when the draft changes, its annotation is withdrawn or replaced, or a
+composition starts. Choosing rechecks the
+revision, range and text, refuses a range whose formatting is not uniform, and
+replaces it in that formatting as one undo step separate from typing before and
+after it. A caret inside or touching the range moves after the replacement.
+Right-clicking a mark shows this menu instead of the native one; elsewhere the
+native menu is unchanged.
+
+The jsdom suites cover the contract with an annotator registered through the
+real runtime. Native WebKit right-click selection and context-menu behavior,
+screen reader announcement of `aria-invalid`, and IME composition in the
+desktop app are not exercised there.
 
 ## Desktop browser
 

@@ -32,6 +32,54 @@ migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
 
+## Plugin session associations
+
+A plugin can use `ctx.agents.registerSessionRouter` to attach local data to a
+native agent session before execution. The argument type is
+`Parameters<Agents["registerSessionRouter"]>[0]` from `@buzz/author`.
+The host verifies the request and selects the native conversation first.
+The hook receives both the source message's channel/thread and that native
+conversation. It cannot change session scope, reply placement or access.
+Solo keeps each agent's existing channel conversation. Thread-scoped agents
+keep their existing thread conversations.
+
+`ready()` opens only the plugin's local keyed storage. It must not wait for
+relay publication or sidebar loading. `matches()` selects the sources the
+plugin manages. Exactly one router can match an unassociated session.
+Its `prepare()` receives the agent, owner, harness, source, conversation,
+invocation ID, logical `sessionKey`, `intent`, `adopted`, `resumed`, saved
+association and abort signal. An owner message supplies `event`. A trusted
+wake has no signed event. A rootless wake has no source root; its synthetic
+ID is never a thread root. Returning `undefined` leaves an unassociated run
+unchanged.
+
+The result supplies JSON `association` and optional text `context`. The host
+saves the association before execution. The association stays fixed for that
+logical lifetime. `Delivery.session`, `LocalWork.session` and tool `Context.session`
+carry `{sessionKey, router, association}`. Tool arguments and prompt text cannot
+set this value. The context stays pending until the harness acknowledges a
+request. Plugins own their record meaning, task relationships, publication
+and sidebar updates. The host does not interpret the association JSON.
+
+A first association adopts the native lifetime with `intent: "existing"` and
+`adopted: true`. This does not prove whether the harness has a saved session.
+**New** changes the logical key and uses `intent: "new"`. Follow-ups, retries,
+restore, reconnect and Compact keep the key. A saved invocation keeps its key
+after New. A request from that retired lifetime cannot start in the current
+session. An incomplete reset blocks admission until the owner retries New.
+The host keeps its existing execution claims. These local records do not add a
+cross-device execution guarantee.
+
+A native type opts in with `sessionAdmission: true`. It performs its authority
+and scope checks, then calls `Delivery.prepareSession(placement, deferred)`
+inside its existing session-control handover callback, after New or Compact
+completes. `placement` supplies the source and the unchanged native conversation.
+The type carries the returned session into tool context and the returned context
+into its prompt. New resets the logical key inside the same control callback
+as the native reset. A failed reset blocks admission until New succeeds.
+Claude and Codex implement this contract. With no router and
+no saved association, the extension adds no execution or publication work.
+
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and

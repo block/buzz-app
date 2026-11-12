@@ -283,6 +283,121 @@ function visibilityFixture() {
   return { f, read, lifecycle };
 }
 
+/** A DM the relay first reports hidden, with a stub for confirmed opens. */
+function confirmedOpenFixture() {
+  const dm = "11111111-1111-4111-8111-111111111111";
+  const relayKey = keypair();
+  const f = fixture(undefined, "ready", [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    {
+      id: dm,
+      name: "Avery",
+      channelType: "dm",
+      members: ["a".repeat(64), "c".repeat(64)],
+    },
+  ]);
+  let at = 1_700_000_000;
+  const visibility = (hidden: boolean) =>
+    signed(relayKey, {
+      kind: 30622,
+      created_at: at++,
+      tags: [
+        ["d", f.session.viewer],
+        ["p", f.session.viewer],
+        ...(hidden ? [["h", dm]] : []),
+      ],
+      content: "",
+    });
+  const relay = { hidden: true };
+  const read = vi.fn(async () => [visibility(relay.hidden)]);
+  const lifecycle = createChannelLifecycle({
+    reader: { read },
+    viewer: f.session.viewer,
+    relayAuthor: relayKey.pubkey,
+    canAccess: () => true,
+    acceptDiscovery() {},
+    removed() {},
+  });
+  f.session.channelLifecycle = lifecycle.capability;
+  const opened = new Set<(id: string) => void>();
+  f.session.directMessages = {
+    ...f.session.directMessages,
+    subscribeOpened(listener) {
+      opened.add(listener);
+      return () => void opened.delete(listener);
+    },
+  };
+  return {
+    dm,
+    f,
+    read,
+    relay,
+    visibility,
+    lifecycle,
+    open: () =>
+      act(() => {
+        for (const listener of opened) listener(dm);
+      }),
+    row: () => document.querySelector(`[data-channel-id="${dm}"]`),
+  };
+}
+
+it("reads DM visibility again after a confirmed open within FRESH_FOR", async () => {
+  const { dm, f, read, relay, lifecycle, open, row } = confirmedOpenFixture();
+  try {
+    render(f.view("alpha"));
+    await waitFor(() =>
+      expect(lifecycle.capability.snapshot().hidden).toEqual([dm]),
+    );
+    expect(row()).toBeNull();
+    // The relay unhides the DM; a roster commit within FRESH_FOR reads nothing.
+    relay.hidden = false;
+    f.commit();
+    expect(read).toHaveBeenCalledOnce();
+    open();
+    await waitFor(() => expect(row()).not.toBeNull());
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    cleanup();
+    lifecycle.dispose();
+  }
+});
+it("reads DM visibility after a confirmed open that a pending read predates", async () => {
+  const { f, read, relay, visibility, lifecycle, open, row } =
+    confirmedOpenFixture();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  read.mockImplementationOnce(async () => {
+    const before = visibility(true);
+    await held;
+    return [before];
+  });
+  try {
+    render(f.view("alpha"));
+    await waitFor(() => expect(read).toHaveBeenCalledOnce());
+    relay.hidden = false;
+    // Repeated opens during the pending read share one later read.
+    open();
+    open();
+    expect(read).toHaveBeenCalledOnce();
+    release();
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(lifecycle.capability.snapshot()).toMatchObject({
+        status: "ready",
+        hidden: [],
+      }),
+    );
+    expect(row()).not.toBeNull();
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    release();
+    cleanup();
+    lifecycle.dispose();
+  }
+});
 it("keeps visibility recovery quiet, then offers the existing retry after exhaustion", async () => {
   vi.useFakeTimers();
   const random = vi.spyOn(Math, "random").mockReturnValue(0.5);

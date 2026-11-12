@@ -211,7 +211,8 @@ const publicRank = (name: string, needle: string, exact?: boolean) =>
       ? MatchRank.exact
       : undefined
     : matchRank(name, needle);
-const FRESH_FOR = 60_000;
+/** How long a completed read answers a repeated trigger without asking again. */
+export const FRESH_FOR = 60_000;
 /** Pages a reconnect catch-up reads back from the head before it gives up on
  * reaching the rows the reader kept across the disconnect. */
 const CATCH_UP_PAGES = 5;

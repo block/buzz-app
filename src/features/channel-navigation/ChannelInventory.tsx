@@ -242,11 +242,27 @@ export function ChannelInventory({
     visibilityRequest.current = request;
     return () => request.abort();
   }, [lifecycle]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a completed roster refresh also refreshes per-viewer visibility.
+  // A completed roster refresh also refreshes per-viewer visibility. One new
+  // chat commits the roster several times; a recent read answers the repeats.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each roster commit is a trigger.
   useEffect(() => {
     if (list.status === "ready")
-      void lifecycle.refreshVisibility(visibilityRequest.current?.signal);
+      void lifecycle.refreshVisibility(visibilityRequest.current?.signal, {
+        ifStale: true,
+      });
   }, [lifecycle, list.asOf, list.status]);
+  // A confirmed open asks the relay to unhide its DM, so a recent read is out
+  // of date.
+  useEffect(
+    () =>
+      queries.directMessages.subscribeOpened(
+        () =>
+          void lifecycle.refreshVisibility(visibilityRequest.current?.signal, {
+            trailing: true,
+          }),
+      ),
+    [queries, lifecycle],
+  );
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
   const sidebar = useSidebarView(

@@ -300,6 +300,47 @@ export type ConversationExtensions = Readonly<{
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
+  annotators?: ContributionReader<ComposerAnnotator>;
+}>;
+
+/** One document revision of the draft an annotator may mark: the projected text
+ * completion providers observe, without the selection. `prose` lists its
+ * ascending, disjoint runs of ordinary prose, outside code, links, chips, line
+ * breaks and raw Markdown syntax. */
+export type AnnotationObservation = Pick<
+  ComposerObservation,
+  "revision" | "text"
+> &
+  Readonly<{ prose: readonly InlineRange[] }>;
+/** Text the person may put in place of an annotation's range. `label` names the
+ * choice when the text alone would not, and is required for an empty `text`. */
+export type ComposerReplacement = Readonly<{ text: string; label?: string }>;
+/** A mark on UTF-16 `[start, end)` of the observed text, which must equal `text`
+ * and lie within one prose run. `label` says what is wrong; `kind` announces a
+ * spelling or grammar error rather than a general one. */
+export type ComposerAnnotation = Readonly<{
+  start: number;
+  end: number;
+  text: string;
+  label: string;
+  kind?: "spelling" | "grammar" | undefined;
+  replacements?: readonly ComposerReplacement[] | undefined;
+}>;
+export type ComposerAnnotatorProps = CompletionContext &
+  Readonly<{
+    observation: AnnotationObservation;
+    /** Shows annotations for this observation, replacing this annotator's
+     * earlier ones. Returns false once the draft has changed or the annotator
+     * retired; cleanup of the returned disposer withdraws them. */
+    publish(annotations: readonly ComposerAnnotation[]): (() => void) | false;
+  }>;
+/** A headless component that marks ranges of the focused composer's prose. The
+ * host draws the marks and replaces text only when the person picks a
+ * replacement; scheduling and the annotations themselves are the plugin's. */
+export type ComposerAnnotator = Readonly<{
+  id: string;
+  title: string;
+  component: ComponentType<ComposerAnnotatorProps>;
 }>;
 
 /** Immutable host-issued evidence, scoped to one live editor observation. */

@@ -49,6 +49,8 @@ import type {
   CompletionPending,
   CompletionResolution,
   CompletionResult,
+  ComposerAnnotator,
+  ComposerAnnotatorProps,
   InlineRenderer,
 } from "../conversation/contracts";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
@@ -16137,6 +16139,18 @@ describe("oversized paste feedback", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("retires feedback when an edit replaces the draft", () => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    pasteText(h.input(), "x".repeat(16001));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /This paste would make your message too long/,
+    );
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveValue("Original message");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("offers a file only when the composer supports attachments", () => {
     const h = mount();
     h.retarget({ session: { ...h.session, attachments: { upload: vi.fn() } } });
@@ -16167,4 +16181,72 @@ describe("oversized paste feedback", () => {
       screen.getByRole("region", { name: "Chat attachments" }),
     ).toBeVisible();
   });
+});
+
+it("shows an annotator's marks in the composer and retires them with the destination", async () => {
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  // A headless annotator that marks "teh" in channel drafts; in a thread it
+  // publishes nothing, so marks there could only be left over.
+  function Fixture({
+    observation,
+    publish,
+    threadRootId,
+  }: ComposerAnnotatorProps) {
+    useEffect(() => {
+      if (threadRootId) return;
+      const start = observation.text.indexOf("teh");
+      publish(
+        start < 0
+          ? []
+          : [
+              {
+                start,
+                end: start + 3,
+                text: "teh",
+                label: "Possible misspelling",
+                kind: "spelling",
+                replacements: [{ text: "the" }],
+              },
+            ],
+      );
+    }, [observation, publish, threadRootId]);
+    return null;
+  }
+  const annotators: readonly Contribution<ComposerAnnotator>[] = [
+    {
+      id: "fixture",
+      key: "example.annotator/fixture",
+      pluginId: "example.annotator",
+      revision: "1",
+      title: "Fixture annotator",
+      component: Fixture,
+    },
+  ];
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      completions: none,
+      annotators: { snapshot: () => annotators, subscribe: () => () => {} },
+    },
+  });
+  h.fill("teh cat");
+  await waitFor(() =>
+    expect(
+      h.input().querySelector('[aria-invalid="spelling"]'),
+    ).toHaveTextContent("teh"),
+  );
+  act(() => h.input().setSelectionRange(1, 1));
+  fireEvent.keyDown(h.input(), { key: ".", ctrlKey: true });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "the" }));
+  expect(h.input()).toHaveValue("the cat");
+  h.fill("teh dog");
+  await waitFor(() =>
+    expect(h.input().querySelector('[aria-invalid="spelling"]')).not.toBeNull(),
+  );
+  h.retarget({ threadRootId: "root" });
+  await waitFor(() =>
+    expect(h.input().querySelector('[aria-invalid="spelling"]')).toBeNull(),
+  );
 });

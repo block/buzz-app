@@ -477,6 +477,7 @@ function setup(
         : [],
     registerTab: () => {},
     controlAttention: () => {},
+    registerSessionRouter: () => {},
     registerExecution: () => {},
     bindExecution: async () => {},
     executionBinding: () => undefined,

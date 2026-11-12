@@ -110,6 +110,8 @@ type Request = {
   toolRoot?: string;
   /** The agent's team sections, if it is on a team. */
   team: string;
+  session?: Delivery["session"];
+  sessionContext?: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
   /** The model and effort the owner picked for this turn. */
@@ -268,6 +270,7 @@ function noteOf(request: Request) {
       request.conversation.root,
     ) ?? [];
   const notes = [
+    request.sessionContext,
     request.resumed ? RESUMED_PROMPT : undefined,
     ...request.notes,
     turnNote(request.agent),
@@ -522,11 +525,16 @@ export class CodexRuntime {
       ? "active"
       : "idle";
   }
-  session(agent: Agent, place: SessionPlace, action: SessionControlAction) {
+  session(
+    agent: Agent,
+    place: SessionPlace,
+    action: SessionControlAction,
+    reset?: (change: () => Promise<void>) => Promise<void>,
+  ) {
     const abort = new AbortController();
     const pending = {
       abort,
-      done: this.changeSession(agent, place, action, abort.signal),
+      done: this.changeSession(agent, place, action, abort.signal, reset),
     };
     const actions = this.actions.get(agent.key) ?? new Set();
     this.actions.set(agent.key, actions);
@@ -541,6 +549,7 @@ export class CodexRuntime {
     place: SessionPlace,
     action: SessionControlAction,
     lifetime: AbortSignal,
+    reset?: (change: () => Promise<void>) => Promise<void>,
   ): Promise<void> {
     const reads = this.reads(agent.key);
     const remote = await this.inspect?.(agent.key);
@@ -567,32 +576,36 @@ export class CodexRuntime {
           `${agent.key}/${conversation}`,
           action,
           async () => {
-            await this.storage.set(
-              key,
-              JSON.stringify({ key: crypto.randomUUID(), intent: "new" }),
-            );
-            this.inventoryReads.delete(agent.key);
-            this.inventories.set(
-              agent.key,
-              (this.inventories.get(agent.key) ?? []).filter(
-                (row) => row.key !== conversation,
-              ),
-            );
-            this.inventoryVersions.set(
-              agent.key,
-              this.conversationVersion(agent.key) + 1,
-            );
-            const prior = this.remote.get(key);
-            this.remote.delete(key);
-            prior?.runtime.dispose();
-            if (prior) await this.disposeExecution(agent.key, prior.execution);
-            this.views.set(
-              agent.key,
-              [...this.remote.values()]
-                .filter((entry) => entry.agent === agent.key)
-                .flatMap((entry) => entry.runtime.sessions(agent.key)),
-            );
-            for (const listener of this.listeners) listener();
+            const change = async () => {
+              await this.storage.set(
+                key,
+                JSON.stringify({ key: crypto.randomUUID(), intent: "new" }),
+              );
+              this.inventoryReads.delete(agent.key);
+              this.inventories.set(
+                agent.key,
+                (this.inventories.get(agent.key) ?? []).filter(
+                  (row) => row.key !== conversation,
+                ),
+              );
+              this.inventoryVersions.set(
+                agent.key,
+                this.conversationVersion(agent.key) + 1,
+              );
+              const prior = this.remote.get(key);
+              this.remote.delete(key);
+              prior?.runtime.dispose();
+              if (prior)
+                await this.disposeExecution(agent.key, prior.execution);
+              this.views.set(
+                agent.key,
+                [...this.remote.values()]
+                  .filter((entry) => entry.agent === agent.key)
+                  .flatMap((entry) => entry.runtime.sessions(agent.key)),
+              );
+              for (const listener of this.listeners) listener();
+            };
+            await (reset ? reset(change) : change());
           },
         );
       if ((await this.storage.read(key)) === null) {
@@ -623,15 +636,22 @@ export class CodexRuntime {
       signal.throwIfAborted();
       const saved = entry.saved[key];
       if (action === "new") {
-        if (!saved) return;
-        delete entry.saved[key];
-        try {
-          await this.storage.set(entry.storageKey, JSON.stringify(entry.saved));
-        } catch (error) {
-          entry.saved[key] = saved;
-          throw error;
-        }
-        this.forget(agent.key, key);
+        const change = async () => {
+          if (!saved) return;
+          delete entry.saved[key];
+          try {
+            await this.storage.set(
+              entry.storageKey,
+              JSON.stringify(entry.saved),
+            );
+          } catch (error) {
+            entry.saved[key] = saved;
+            throw error;
+          }
+          this.forget(agent.key, key);
+          return;
+        };
+        await (reset ? reset(change) : change());
         return;
       }
       if (agent.protection && !this.handle(agent.key)?.protection)
@@ -1646,19 +1666,46 @@ export class CodexRuntime {
     const root = settings.scope === "channel" ? undefined : toolRoot;
     delivery.signal.throwIfAborted();
     const conversationKey = JSON.stringify([channelId, root ?? "channel"]);
+    const sourceRoot = wake ? wake.root : rootOf(event);
+    const admission = (deferred: boolean) =>
+      delivery.prepareSession?.(
+        {
+          source: {
+            channelId,
+            ...(!channel?.dm && sourceRoot ? { root: sourceRoot } : {}),
+          },
+          conversation: { channelId, ...(root ? { root } : {}) },
+        },
+        deferred,
+      );
+
     if (await this.inspect?.(agent.key)) {
       const handoff = this.controls.deliver(
         `${agent.key}/${conversationKey}`,
-        async () => {
+        async (deferred) => {
+          const admitted = await admission(deferred);
           const runtime = await this.connection(
             agent.key,
             reads.scope,
             conversationKey,
-            delivery.signal,
+            deferred ? undefined : delivery.signal,
           );
-          await runtime.run(delivery);
+          const accepted = deferred ? runtime.target?.signal : delivery.signal;
+          if (!accepted)
+            throw new Error("The remote Codex lifetime is unavailable");
+          await runtime.run({
+            ...delivery,
+            ...(admitted
+              ? { session: admitted.session, sessionContext: admitted.context }
+              : {}),
+            signal: accepted,
+          });
         },
       );
+      if (handoff.deferred) {
+        delivery.workingUntil(handoff.done);
+        return;
+      }
       return handoff.done;
     }
     if (this.disposed) throw new Error("Codex runtime is disposed");
@@ -1699,6 +1746,10 @@ export class CodexRuntime {
         ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
       },
       team: delivery.team ?? "",
+      ...(delivery.session ? { session: delivery.session } : {}),
+      ...(delivery.sessionContext
+        ? { sessionContext: delivery.sessionContext }
+        : {}),
       ...(project ? { project: `${project}\n` } : {}),
       answered,
       failActivity,
@@ -1729,6 +1780,13 @@ export class CodexRuntime {
       async (deferred) => {
         if (deferred) entry.abort.signal.throwIfAborted();
         else delivery.signal.throwIfAborted();
+        const admitted = await admission(deferred);
+        if (admitted) {
+          request.session = admitted.session;
+          if (admitted.context !== undefined)
+            request.sessionContext = admitted.context;
+          else delete request.sessionContext;
+        }
         const text = textOf(request.event, agent.name);
         let lane = entry.lanes.get(key);
         if (!lane) {
@@ -2048,12 +2106,13 @@ export class CodexRuntime {
    * success. Watches have no bubble; mentions in other threads keep theirs,
    * and a top-level chat is one scope. */
   private acknowledgeActivity(active: Active, request: Request) {
-    if (!request.step) return;
-    const scope = request.activityScope;
-    const prior = active.activity.get(scope);
-    if (prior === request) return;
-    prior?.superseded?.();
-    active.activity.set(scope, request);
+    if (request.step) {
+      const scope = request.activityScope;
+      const prior = active.activity.get(scope);
+      if (prior === request) return;
+      prior?.superseded?.();
+      active.activity.set(scope, request);
+    }
     request.acknowledged?.();
   }
 
@@ -2264,6 +2323,7 @@ export class CodexRuntime {
     // A watch or timer turn has no default destination.
     const context: Context = request
       ? {
+          ...(request.session ? { session: request.session } : {}),
           channel: request.conversation.channelId,
           ...(request.toolRoot ? { root: request.toolRoot } : {}),
           ...(request.toolRoot && !request.conversation.root

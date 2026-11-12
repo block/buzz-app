@@ -5859,34 +5859,56 @@ it("queues an ordinary follow-up when a source is cancelled during startup histo
   await f.complete(0);
 });
 
-it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
-  const f = fixture();
-  const delivery = pluginWake(f);
-  if (delivery.trigger.type !== "plugin")
-    throw new Error("Expected plugin wake");
-  f.snapshot.session.canvas.available = true;
-  f.snapshot.session.canvas.read.mockResolvedValue(
-    canvasHead("Only Solo chats supply this"),
-  );
-  await f.runtime.run({
-    ...delivery,
-    trigger: { ...delivery.trigger, type: "attention", topLevel: true },
-  });
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const input = JSON.stringify(f.starts()[0]?.params);
-  expect(input).not.toContain("<plugin-wake");
-  expect(input).not.toContain("continuous personal chat");
-  expect(input).toContain("unless the Interest instructions");
-  expect(input).toContain("top-level");
-  expect(input).not.toContain(WAKE_ID);
-  expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
-  f.exits.resolve(3);
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    tags: expect.not.arrayContaining([expect.arrayContaining(["e"])]),
-  });
-  expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
-});
+it.each(["plugin", "attention"] as const)(
+  "delivers a rootless %s wake without publishing its anchor",
+  async (type) => {
+    const f = fixture();
+    if (type === "plugin") f.soloChannels.add("channel");
+    const delivery = pluginWake(f);
+    const acknowledged = vi.fn();
+    if (delivery.trigger.type !== "plugin")
+      throw new Error("Expected plugin wake");
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead("Only Solo chats supply this"),
+    );
+    await f.runtime.run({
+      ...delivery,
+      acknowledged,
+      trigger:
+        type === "attention"
+          ? { ...delivery.trigger, type: "attention", topLevel: true }
+          : { ...delivery.trigger, topLevel: true },
+      prepareSession: async (placement) => {
+        expect(placement.source.root).toBeUndefined();
+        return {
+          session: {
+            sessionKey: "wake",
+            router: "example/tasks",
+            association: {},
+          },
+        };
+      },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await vi.waitFor(() => expect(acknowledged).toHaveBeenCalledOnce());
+    const input = JSON.stringify(f.starts()[0]?.params);
+    if (type === "attention") {
+      expect(input).not.toContain("<plugin-wake");
+      expect(input).not.toContain("continuous personal chat");
+      expect(input).toContain("unless the Interest instructions");
+      expect(input).toContain("top-level");
+      expect(input).not.toContain(WAKE_ID);
+      expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
+    }
+    f.exits.resolve(3);
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: expect.not.arrayContaining([expect.arrayContaining(["e"])]),
+    });
+    expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
+  },
+);
 
 it.each(["v7", "v12", "v13"])(
   "does not reuse %s persisted bindings with older built-in tool schemas",
@@ -7347,6 +7369,71 @@ it("neither lists nor runs the retired owner-read tools, while its own reads wor
   expect(ownerRead).not.toHaveBeenCalled();
   expect(JSON.stringify((await f.tool("read", {}))?.result)).toContain(
     "OWN_CONVERSATION",
+  );
+  await f.complete();
+});
+
+it("keeps thread session context and defers its admission during New", async () => {
+  const f = fixture();
+  const session = {
+    sessionKey: "logical-one",
+    router: "example/tasks",
+    association: { task: "child" },
+  };
+  const prepare: NonNullable<Delivery["prepareSession"]> = vi.fn(
+    async (placement) => {
+      expect(placement.source).toEqual({ channelId: "channel", root });
+      expect(placement.conversation).toEqual({ channelId: "channel", root });
+      return { session };
+    },
+  );
+  const call = vi.fn(async () => "bound");
+  f.added.push({
+    name: "session_probe",
+    description: "Read session context",
+    inputSchema: { type: "object" },
+    call,
+  });
+  const delivery = f.delivery("first thread turn");
+  await f.runtime.run({ ...delivery, prepareSession: prepare });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("session_probe", {});
+  expect(call.mock.calls[0]).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ channel: "channel", root, session }),
+    ]),
+  );
+  await f.complete();
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
+  });
+  const agent = {
+    ...delivery.agent,
+    config: delivery.config,
+  } as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  const started = deferred<void>();
+  const released = deferred<void>();
+  const reset = f.runtime.session(agent, place, "new", async (change) => {
+    started.resolve();
+    await released.promise;
+    await change();
+  });
+  await started.promise;
+  await f.runtime.run({ ...f.delivery("during New"), prepareSession: prepare });
+  expect(prepare).toHaveBeenCalledOnce();
+  released.resolve();
+  await reset;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(prepare).toHaveBeenLastCalledWith(
+    {
+      source: { channelId: "channel", root },
+      conversation: { channelId: "channel", root },
+    },
+    true,
   );
   await f.complete();
 });

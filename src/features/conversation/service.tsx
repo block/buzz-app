@@ -27,6 +27,7 @@ import type {
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
+  ComposerAnnotator,
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
@@ -72,6 +73,9 @@ export type Conversation = {
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
   registerCompletion(provider: ComposerCompletion): void;
+  annotators: ContributionReader<ComposerAnnotator>;
+  /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
+  registerAnnotator(annotator: ComposerAnnotator): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
@@ -132,6 +136,7 @@ function validate(
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
+    | ComposerAnnotator
     | ComposerAccessory
     | LinkRenderer
     | LinkPreviewRenderer
@@ -161,6 +166,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly accessoryEntries;
   readonly completions;
   private readonly completionEntries;
+  readonly annotators;
+  private readonly annotatorEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
@@ -206,6 +213,12 @@ export class ConversationService extends Service implements Conversation {
     this.completions = {
       snapshot: completions.snapshot,
       subscribe: completions.subscribe,
+    };
+    const annotators = createContributions<ComposerAnnotator>(ctx);
+    this.annotatorEntries = annotators;
+    this.annotators = {
+      snapshot: annotators.snapshot,
+      subscribe: annotators.subscribe,
     };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
@@ -349,6 +362,10 @@ export class ConversationService extends Service implements Conversation {
     if (typeof value.match !== "function")
       throw new Error("A completion provider needs a matcher");
     this.completionEntries.register(this.ctx, value);
+  }
+  registerAnnotator(value: ComposerAnnotator) {
+    validate(value);
+    this.annotatorEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

@@ -761,6 +761,7 @@ export class ClaudeRuntime {
     agent: Agent,
     place: SessionPlace,
     action: SessionControlAction,
+    reset?: (change: () => Promise<void>) => Promise<void>,
   ): Promise<void> {
     const key = this.controlKey(agent, place);
     if (await this.inspect?.(agent.key)) {
@@ -785,18 +786,21 @@ export class ClaudeRuntime {
         action,
         async (signal) => {
           if (action === "new") {
-            const held = this.remote.get(remoteKey);
-            if (held) {
-              await held.runtime.retire(agent.key);
-              await held.execution.dispose();
-            }
-            signal.throwIfAborted();
-            await this.storage.set(
-              remoteKey,
-              JSON.stringify({ key: crypto.randomUUID(), intent: "new" }),
-            );
-            this.remote.delete(remoteKey);
-            this.notify();
+            const change = async () => {
+              const held = this.remote.get(remoteKey);
+              if (held) {
+                await held.runtime.retire(agent.key);
+                await held.execution.dispose();
+              }
+              signal.throwIfAborted();
+              await this.storage.set(
+                remoteKey,
+                JSON.stringify({ key: crypto.randomUUID(), intent: "new" }),
+              );
+              this.remote.delete(remoteKey);
+              this.notify();
+            };
+            await (reset ? reset(change) : change());
             return;
           }
           const stored = await this.storage.read(remoteKey);
@@ -828,8 +832,10 @@ export class ClaudeRuntime {
       throw new Error("Wait for the active turn to finish first.");
     return this.controls.run(control, action, async (signal) => {
       signal.throwIfAborted();
-      if (action === "new") await entry.sessions.forget(key);
-      else {
+      if (action === "new") {
+        const change = () => entry.sessions.forget(key);
+        await (reset ? reset(change) : change());
+      } else {
         const result = await entry.sessions.compact(key);
         if (!result.ok) throw new Error(result.error);
       }
@@ -931,13 +937,44 @@ export class ClaudeRuntime {
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
-    const key = await this.key(entry, agent, event, channel, topLevel);
+    const { key, source } = await this.key(
+      entry,
+      agent,
+      event,
+      channel,
+      topLevel,
+    );
+    const admission = (deferred: boolean) =>
+      delivery.prepareSession?.(
+        {
+          source: wake
+            ? {
+                channelId: channel,
+                ...(source.root && wake.root ? { root: wake.root } : {}),
+              }
+            : source,
+          conversation: {
+            channelId: channel,
+            ...(key !== channel
+              ? { root: threadReference(event)?.rootId ?? event.id }
+              : {}),
+          },
+        },
+        deferred,
+      );
+
+    let session = delivery.session;
+    let sessionContext = delivery.sessionContext;
     signal.throwIfAborted();
     if (this.execution && (await this.inspect?.(agent.key))) {
       const handoff = this.controls.deliver(
         `${agent.key}/${key}`,
         async (deferred) => {
           if (this.agents.get(agent.key) !== entry) return;
+          const admitted = await admission(deferred);
+          session = admitted?.session ?? session;
+          sessionContext = admitted?.context ?? sessionContext;
+
           const runtime = await this.connection(
             agent.key,
             key,
@@ -946,7 +983,12 @@ export class ClaudeRuntime {
           const accepted = deferred ? runtime.target?.signal : signal;
           if (!accepted)
             throw new Error("The remote Claude lifetime is unavailable");
-          await runtime.run({ ...delivery, signal: accepted });
+          await runtime.run({
+            ...delivery,
+            ...(session ? { session } : {}),
+            ...(sessionContext ? { sessionContext } : {}),
+            signal: accepted,
+          });
         },
       );
       if (handoff.deferred) {
@@ -962,6 +1004,9 @@ export class ClaudeRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.key) !== entry) return;
         if (!deferred) signal.throwIfAborted();
+        const admitted = await admission(deferred);
+        session = admitted?.session ?? session;
+        sessionContext = admitted?.context ?? sessionContext;
         // `fresh` is for a session that has been shown nothing yet.
         const prompt = async (fresh: boolean) => {
           const turn = await this.turn(
@@ -1016,17 +1061,22 @@ export class ClaudeRuntime {
               ? undefined
               : (threadReference(event)?.rootId ?? event.id);
           const notes = agent.notes?.(channel, noteRoot) ?? [];
-          const text = this.review(entry, prepared, notes);
+          const text = [sessionContext, this.review(entry, prepared, notes)]
+            .filter(Boolean)
+            .join("\n\n");
           // A conversation's tools default to its thread; a session shared by
           // several threads is told which to reply in instead.
-          entry.contexts.set(
-            key,
-            topLevel
+          entry.contexts.set(key, {
+            ...(session ? { session } : {}),
+            ...(topLevel
               ? { channel, ...(solo ? { topLevel } : {}) }
               : key === channel
                 ? { channel }
-                : { channel, root: threadReference(event)?.rootId ?? event.id },
-          );
+                : {
+                    channel,
+                    root: threadReference(event)?.rootId ?? event.id,
+                  }),
+          });
           delivered = entry.sessions.deliver(key, text, event.created_at, {
             current: () => !interrupted && (!current || current()),
             ...(wake
@@ -1037,13 +1087,18 @@ export class ClaudeRuntime {
                       (await prompt(fresh)).text,
                       notes,
                     );
-                    return text;
+                    return [sessionContext, text].filter(Boolean).join("\n\n");
                   },
                 }
               : {}),
             steer: steerPrompt(text),
             fresh: async () =>
-              this.review(entry, (await prompt(true)).text, notes),
+              [
+                sessionContext,
+                this.review(entry, (await prompt(true)).text, notes),
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
             ...(contextRoot ? { contextRoot } : {}),
             activityScope: topLevel
               ? channel
@@ -1254,9 +1309,17 @@ export class ClaudeRuntime {
     topLevel: boolean,
   ) {
     const summary = await this.reads(agent.key)?.channel(channelId);
-    return topLevel || summary?.dm === true || entry.config.scope === "channel"
-      ? channelId
-      : `${channelId}/${threadReference(event)?.rootId ?? event.id}`;
+    const root = threadReference(event)?.rootId ?? event.id;
+    return {
+      key:
+        topLevel || summary?.dm === true || entry.config.scope === "channel"
+          ? channelId
+          : `${channelId}/${root}`,
+      source: {
+        channelId,
+        ...(summary?.dm !== true ? { root } : {}),
+      },
+    };
   }
 
   /** Where the event's turn goes, and what its prompt needs. */

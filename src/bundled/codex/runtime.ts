@@ -45,6 +45,7 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { CREDENTIAL_ENV } from "../../features/host/service";
+import { ReadError } from "../../features/relay/errors";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
@@ -2285,17 +2286,35 @@ export class CodexRuntime {
     const reads = this.reads(request.agent.key);
     if (reads?.scope !== request.scope)
       throw new Error("The community changed");
-    // A chat its owner is still creating has nothing earlier to read.
-    const starting = (await reads.channel(request.conversation.channelId))
-      ?.starting;
-    return conversationHistory(
-      request.event,
-      request.conversation,
-      (filters) =>
-        starting ? Promise.resolve([]) : reads.read(filters, signal),
-      reads,
-      reads.workflowAuthority(),
-    );
+    const read = async () => {
+      // A chat its owner is still creating has nothing earlier to read.
+      const starting = (await reads.channel(request.conversation.channelId))
+        ?.starting;
+      return conversationHistory(
+        request.event,
+        request.conversation,
+        (filters) =>
+          starting ? Promise.resolve([]) : reads.read(filters, signal),
+        reads,
+        reads.workflowAuthority(),
+      );
+    };
+    // A slow relay costs the turn its earlier messages, not the turn itself.
+    for (let retried = false; ; retried = true)
+      try {
+        return await read();
+      } catch (error) {
+        if (
+          signal.aborted ||
+          !(error instanceof ReadError) ||
+          error.kind === "cancelled"
+        )
+          throw error;
+        if (retried) {
+          console.warn("Codex could not read the conversation", error);
+          return "";
+        }
+      }
   }
   // Tags the owner even when a sibling asked: tagging the sibling would wake
   // it, and two agents failing alike would wake each other without end.

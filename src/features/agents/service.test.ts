@@ -1541,6 +1541,9 @@ it("keeps handed-off activity local, and pulses typing in the thread until the t
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     await settle();
     expect(activity.reader.work()[0]?.state).toBe("working");
+    expect(activity.reader.work()[0]?.messageId).toBe(mention.id);
+    expect(activity.reader.work()[0]).not.toHaveProperty("syntheticMessage");
+    expect(activity.reader.work()[0]).not.toHaveProperty("requestText");
     expect(native.publish).toHaveBeenCalledWith(member(bot), {
       kind: 20002,
       content: "",
@@ -1684,6 +1687,8 @@ describe("a plugin's wake", () => {
           agent: bot,
           channelId: channel,
           threadRootId: root,
+          syntheticMessage: true,
+          requestText: "Read the task request",
           state: "working",
           ...(channelType === "solo" ? { soloChat: true } : {}),
         });
@@ -1691,6 +1696,18 @@ describe("a plugin's wake", () => {
           channelType ? undefined : true,
         );
         const work = f.activity.reader.work()[0] as LocalWork;
+        const delivery = f.run.mock.calls[0]?.[0];
+        expect(work.messageId).toBe(
+          delivery?.trigger.type === "plugin" ? delivery.trigger.id : undefined,
+        );
+        const reply = await delivery?.agent.publish({
+          kind: 9,
+          content: "Please approve the preview",
+          tags: [["h", channel]],
+        });
+        expect(f.activity.reader.work()[0]?.publishedMessageIds).toEqual([
+          reply?.id,
+        ]);
         const target = completionTarget(work, {
           viewer,
           communityOrigin: "https://buzz.example",
@@ -1732,6 +1749,9 @@ describe("a plugin's wake", () => {
         await vi.waitFor(() =>
           expect(f.activity.reader.work()[0]?.state).toBe("done"),
         );
+        expect(f.activity.reader.work()[0]?.publishedMessageIds).toEqual([
+          reply?.id,
+        ]);
       } finally {
         finish({ ok: true });
         await f.ctx.fiber.dispose();
@@ -13179,14 +13199,19 @@ describe("Attention plugin sources", () => {
 
 it.each(
   [undefined, "e".repeat(64)].flatMap((root) =>
-    ["success", "stopped", "invalidated"].map((outcome) => ({ root, outcome })),
+    ["success", "failure", "stopped", "invalidated"].map((outcome) => ({
+      root,
+      outcome,
+    })),
   ),
 )(
   "delivers a timer once and retains unfinished work (root: $root, outcome: $outcome)",
   async ({ root, outcome }) => {
     vi.useFakeTimers({ now: 1_000_000 });
     const runOnce = vi.fn(async () => ({ ok: true }));
-    const { service, run, native, watching } = await setup({ runOnce });
+    const { service, run, native, watching, activity } = await setup({
+      runOnce,
+    });
     let release!: (outcome: WorkOutcome) => void;
     const held = new Promise<WorkOutcome>((resolve) => {
       release = resolve;
@@ -13223,14 +13248,30 @@ it.each(
         text: expect.stringContaining("Check the release"),
       },
     });
-    expect(run.mock.calls[0]?.[0].step).toBeUndefined();
-    expect(run.mock.calls[0]?.[0].superseded).toBeUndefined();
+    expect(run.mock.calls[0]?.[0].step).toEqual(expect.any(Function));
+    expect(run.mock.calls[0]?.[0].superseded).toEqual(expect.any(Function));
     const trigger = run.mock.calls[0]?.[0].trigger;
     if (trigger?.type !== "attention")
       throw new Error("Expected conversation delivery");
     expect(trigger.text).toContain("Be brief.");
     expect(trigger.text).toContain("spent: true");
     expect(trigger.text).not.toContain("no default destination");
+    expect(activity.reader.work()[0]).toMatchObject({
+      agent: bot,
+      channelId: channel,
+      messageId: trigger.id,
+      threadRootId: root ?? trigger.id,
+      syntheticMessage: true,
+      requestText: trigger.text,
+      state: "working",
+    });
+    expect(activity.reader.work()[0]?.thread).toBe(root ? true : undefined);
+    expect(activity.reader.work()[0]?.retryable).toBeUndefined();
+    const reply = await run.mock.calls[0]?.[0].agent.publish({
+      kind: 9,
+      content: "Please approve the preview",
+      tags: [["h", channel]],
+    });
     try {
       if (outcome === "invalidated") {
         await watching?.dispose();
@@ -13238,12 +13279,29 @@ it.each(
       }
     } finally {
       release(
-        outcome === "stopped" ? { ok: true, stopped: true } : { ok: true },
+        outcome === "failure"
+          ? { ok: false, error: "Provider unavailable" }
+          : outcome === "stopped"
+            ? { ok: true, stopped: true }
+            : { ok: true },
       );
     }
     await vi.advanceTimersByTimeAsync(180_000);
     expect(run).toHaveBeenCalledTimes(1);
     expect(runOnce).not.toHaveBeenCalled();
+    if (outcome !== "invalidated") {
+      expect(activity.reader.work()[0]).toMatchObject({
+        requestText: trigger.text,
+        state:
+          outcome === "failure"
+            ? "error"
+            : outcome === "stopped"
+              ? "stopped"
+              : "done",
+        publishedMessageIds: [reply?.id],
+      });
+      expect(await published(native, 9)).toHaveLength(1);
+    }
     if (outcome !== "success") {
       expect(service.find(bot)?.attention["watch/once"]).toBeDefined();
       expect(service.find(bot)?.timers["watch/once"]?.used).toBe(1);
@@ -13256,7 +13314,9 @@ it.each(
 
 it("delivers matched events to their configured address rather than the listening channel", async () => {
   const runOnce = vi.fn(async () => ({ ok: true }));
-  const { service, run, emit, native, session } = await setup({ runOnce });
+  const { service, run, emit, native, session, activity } = await setup({
+    runOnce,
+  });
   await service.create({ type: "example/echo", name: "Echo" });
   const destination = "11111111-1111-1111-1111-111111111111";
   const root = "e".repeat(64);
@@ -13296,6 +13356,34 @@ it("delivers matched events to their configured address rather than the listenin
   expect(trigger.text).toContain("Be brief.");
   expect(trigger.text).not.toContain("no default destination");
   try {
+    expect(activity.reader.work()[0]).toMatchObject({
+      agent: bot,
+      channelId: destination,
+      messageId: trigger.id,
+      threadRootId: root,
+      thread: true,
+      syntheticMessage: true,
+      requestText: trigger.text,
+      state: "working",
+    });
+    await service.save(bot, {
+      attention: {
+        "interest/default": {
+          type: "interest",
+          instructions: "Ask for approval.",
+        },
+      },
+    });
+    const refreshed = await run.mock.calls[0]?.[0].wakeText?.();
+    expect(refreshed).toContain("Ask for approval.");
+    expect(refreshed).not.toBe(trigger.text);
+    expect(activity.reader.work()[0]?.requestText).toBe(refreshed);
+    const reply = await run.mock.calls[0]?.[0].agent.publish({
+      kind: 9,
+      content: "Please approve the preview",
+      tags: [["h", destination]],
+    });
+    expect(activity.reader.work()[0]?.publishedMessageIds).toEqual([reply?.id]);
     await vi.waitFor(async () => {
       const pulses = await published(native, 20002);
       expect(pulses.length).toBeGreaterThan(0);
@@ -13305,6 +13393,7 @@ it("delivers matched events to their configured address rather than the listenin
   } finally {
     finish();
   }
+  await vi.waitFor(() => expect(activity.reader.work()[0]?.state).toBe("done"));
   expect(runOnce).not.toHaveBeenCalled();
 });
 

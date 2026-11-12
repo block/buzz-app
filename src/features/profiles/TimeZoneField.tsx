@@ -4,8 +4,42 @@ import { Combobox } from "../../shared/design-system/ui/Combobox";
 
 const zoneLabel = (zone: string) => zone.replaceAll("_", " ");
 
-/** Chooses the profile's shared `tz`. Undefined means none is shared; the
- * picker then offers this device's zone without choosing it. */
+// Renamed zones some engines still list only by their old name (V8 lists
+// Asia/Calcutta, not Asia/Kolkata), so search finds either spelling.
+const renamed: Readonly<Record<string, string>> = {
+  "Africa/Asmera": "Africa/Asmara",
+  "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+  "America/Godthab": "America/Nuuk",
+  "America/Indianapolis": "America/Indiana/Indianapolis",
+  "America/Louisville": "America/Kentucky/Louisville",
+  "Asia/Calcutta": "Asia/Kolkata",
+  "Asia/Katmandu": "Asia/Kathmandu",
+  "Asia/Rangoon": "Asia/Yangon",
+  "Asia/Saigon": "Asia/Ho_Chi_Minh",
+  "Atlantic/Faeroe": "Atlantic/Faroe",
+  "Europe/Kiev": "Europe/Kyiv",
+  "Pacific/Enderbury": "Pacific/Kanton",
+  "Pacific/Ponape": "Pacific/Pohnpei",
+  "Pacific/Truk": "Pacific/Chuuk",
+};
+const aliases = new Map(
+  Object.entries(renamed).flatMap(([old, current]) => [
+    [old, current],
+    [current, old],
+  ]),
+);
+const searchable = (text: string) => zoneLabel(text).toLowerCase();
+function matches(zone: string, query: string) {
+  const needle = searchable(query.trim());
+  const alias = aliases.get(zone);
+  return (
+    searchable(zone).includes(needle) ||
+    (!!alias && searchable(alias).includes(needle))
+  );
+}
+
+/** Chooses the profile's shared `tz`, written exactly as picked. Undefined
+ * means none is shared; the picker then offers this device's zone. */
 export function TimeZoneField({
   value,
   onChange,
@@ -18,7 +52,15 @@ export function TimeZoneField({
   const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const shown = value ?? device;
   const zones = useMemo(
-    () => [...new Set([shown, device, ...Intl.supportedValuesOf("timeZone")])],
+    () => [
+      ...new Set([
+        shown,
+        device,
+        ...Intl.supportedValuesOf("timeZone"),
+        // Some engines leave UTC out of their list.
+        "UTC",
+      ]),
+    ],
     [shown, device],
   );
   const [search, setSearch] = useState("");
@@ -34,6 +76,7 @@ export function TimeZoneField({
         items={zones}
         value={shown}
         itemToStringLabel={zoneLabel}
+        filter={matches}
         inputValue={search}
         onInputValueChange={setSearch}
         onOpenChange={(open) => {
@@ -60,7 +103,13 @@ export function TimeZoneField({
         >
           <Combobox.List>
             {(zone: string) => (
-              <Combobox.Item key={zone} value={zone}>
+              <Combobox.Item
+                key={zone}
+                value={zone}
+                description={
+                  renamed[zone] ? `Now ${zoneLabel(renamed[zone])}` : undefined
+                }
+              >
                 {zoneLabel(zone)}
               </Combobox.Item>
             )}

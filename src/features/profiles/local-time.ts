@@ -32,9 +32,24 @@ function utcOffset(timeZone: string, at: Date): number {
   return match[1] === "-" ? -minutes : minutes;
 }
 
+/** Days since the epoch of the calendar date in `timeZone` at `at`. */
+function calendarDay(timeZone: string, at: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(at);
+  const part = (type: string) =>
+    Number(parts.find((item) => item.type === type)?.value);
+  return Date.UTC(part("year"), part("month") - 1, part("day")) / 86_400_000;
+}
+
 /** "3:42 PM local time · 8h ahead": the clock in `timeZone` at `now`, and how
- * far it is from the viewer's zone when the two differ at that moment.
- * Undefined when `timeZone` is not a usable zone. */
+ * far it is from the viewer's zone when the two differ at that moment. A
+ * different calendar date reads "tomorrow" or "yesterday", or the weekday when
+ * the dates are two apart (UTC+14 against UTC-11). Undefined when `timeZone` is
+ * not a usable zone. */
 export function localTimeLabel(
   timeZone: string | undefined,
   now: Date,
@@ -50,12 +65,22 @@ export function localTimeLabel(
     ...(options.hourCycle ? { hourCycle: options.hourCycle } : {}),
   }).format(now);
   const viewer = profileTimeZone(viewerZone);
-  const difference = viewer ? utcOffset(zone, now) - utcOffset(viewer, now) : 0;
-  if (!difference) return `${time} local time`;
+  if (!viewer) return `${time} local time`;
+  const days = calendarDay(zone, now) - calendarDay(viewer, now);
+  const day =
+    days === 1
+      ? " tomorrow"
+      : days === -1
+        ? " yesterday"
+        : days
+          ? ` ${new Intl.DateTimeFormat(options.locale, { timeZone: zone, weekday: "long" }).format(now)}`
+          : "";
+  const difference = utcOffset(zone, now) - utcOffset(viewer, now);
+  if (!difference) return `${time}${day} local time`;
   const hours = Math.floor(Math.abs(difference) / 60);
   const minutes = Math.abs(difference) % 60;
   const amount = [hours && `${hours}h`, minutes && `${minutes}m`]
     .filter(Boolean)
     .join(" ");
-  return `${time} local time · ${amount} ${difference > 0 ? "ahead" : "behind"}`;
+  return `${time}${day} local time · ${amount} ${difference > 0 ? "ahead" : "behind"}`;
 }

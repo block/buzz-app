@@ -36,13 +36,13 @@ import { TimeZoneField } from "../features/profiles/TimeZoneField";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
-/** The profile content with `tz` shared as chosen, or removed. */
+/** The profile content with `tz` shared as chosen. An empty `tz` records the
+ * opt-out, so sharing by default never brings it back. */
 function withTimeZone(
   existing: Record<string, unknown>,
   tz: string | undefined,
 ): Record<string, unknown> {
-  const { tz: _previous, ...rest } = existing;
-  return tz ? { ...rest, tz } : rest;
+  return { ...existing, tz: tz ?? "" };
 }
 
 function selectedProfileSession(

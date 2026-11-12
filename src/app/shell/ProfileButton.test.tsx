@@ -16,6 +16,8 @@ import type { AccountActionsService } from "../../features/account-actions/servi
 import type { Communities } from "../../features/communities/service";
 import { APPEARANCE_KEY, createAppearance } from "../../shared/theme/service";
 import { ProfileButton } from "./ProfileButton";
+import * as communityApi from "../../features/communities/api";
+import { resetSharedTimeZones } from "../../features/profiles/share-time-zone";
 
 const testAppearance = createAppearance(window);
 
@@ -845,6 +847,10 @@ it("refreshes the viewer through the real session after roster setup, not a stal
   owner.session.channels.ensureList();
   const initialRoster = wire.next();
   const read = vi.fn(owner.session.read);
+  resetSharedTimeZones();
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockResolvedValue(undefined);
   const connection = {
     viewer: viewer.pubkey,
     status: "ready",
@@ -931,10 +937,22 @@ it("refreshes the viewer through the real session after roster setup, not a stal
       await screen.findByRole("menu", { name: "Current community name" }),
     ).toBeVisible();
     expect(snapshot.profile.name).toBe("Local only");
+    // That fresh read shows no `tz`, so this device's zone is shared once.
+    await waitFor(() =>
+      expect(publish).toHaveBeenCalledWith(
+        "https://community.test",
+        { name: "Current community name", picture: "", about: "" },
+        {
+          name: "Current community name",
+          tz: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+      ),
+    );
     // Unrelated live notifications do not start extra reads.
     act(() => live.state({ status: "connected", routes: [] }));
     expect(read).toHaveBeenCalledTimes(1);
   } finally {
+    publish.mockRestore();
     view.unmount();
     owner.dispose();
   }

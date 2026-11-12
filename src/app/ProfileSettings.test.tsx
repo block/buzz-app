@@ -1060,7 +1060,38 @@ it("shares a time zone only when chosen and saved, and keeps other fields", asyn
   });
 });
 
-it("clears a shared time zone on save", async () => {
+it("keeps a shared time zone through an unrelated save", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { tz: "Asia/Kolkata" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={communities()}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const about = await screen.findByLabelText("Profile description (optional)");
+  await user.type(about, "Hello");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Community name", picture: "", about: "Hello" },
+      { tz: "Asia/Kolkata" },
+    ),
+  );
+});
+
+it("records clearing a shared time zone as an opt-out", async () => {
   const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
     exists: true,
     existing: { website: "https://example.test", tz: "Asia/Kolkata" },
@@ -1092,7 +1123,8 @@ it("clears a shared time zone on save", async () => {
     expect(publish).toHaveBeenCalledWith(
       "community-id",
       { name: "Community name", picture: "", about: "" },
-      { website: "https://example.test" },
+      // An empty zone keeps sharing by default from bringing it back.
+      { website: "https://example.test", tz: "" },
     ),
   );
   expect(await screen.findByText("Profile updated")).toBeVisible();

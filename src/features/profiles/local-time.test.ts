@@ -58,6 +58,48 @@ describe("localTimeLabel", () => {
     );
   });
 
+  it("marks a different calendar date in either zone", () => {
+    // Los Angeles is still on November 11 when Kolkata reaches the 12th.
+    const at = new Date("2026-11-12T00:12:00Z");
+    expect(label("Asia/Kolkata", at, "America/Los_Angeles", en)).toBe(
+      "5:42 AM tomorrow local time · 13h 30m ahead",
+    );
+    expect(label("America/Los_Angeles", at, "Asia/Kolkata", en)).toBe(
+      "4:12 PM yesterday local time · 13h 30m behind",
+    );
+  });
+
+  it("names the weekday when the dates are two apart", () => {
+    // Kiritimati (UTC+14) is on Friday the 16th while Pago Pago (UTC-11) is
+    // still on Wednesday the 14th.
+    const at = new Date("2026-01-15T10:30:00Z");
+    expect(label("Pacific/Kiritimati", at, "Pacific/Pago_Pago", en)).toBe(
+      "12:30 AM Friday local time · 25h ahead",
+    );
+    expect(label("Pacific/Pago_Pago", at, "Pacific/Kiritimati", en)).toBe(
+      "11:30 PM Wednesday local time · 25h behind",
+    );
+  });
+
+  it("changes the day marker at the viewer's midnight", () => {
+    expect(
+      label(
+        "Europe/London",
+        new Date("2026-01-15T04:59:00Z"),
+        "America/New_York",
+        en,
+      ),
+    ).toBe("4:59 AM tomorrow local time · 5h ahead");
+    expect(
+      label(
+        "Europe/London",
+        new Date("2026-01-15T05:00:00Z"),
+        "America/New_York",
+        en,
+      ),
+    ).toBe("5:00 AM local time · 5h ahead");
+  });
+
   it("uses the chosen hour cycle", () => {
     expect(
       label("UTC", new Date("2026-01-15T15:42:00Z"), "UTC", {

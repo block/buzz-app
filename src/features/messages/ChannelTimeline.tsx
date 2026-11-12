@@ -47,7 +47,7 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
-import { useRecovery } from "../relay/RecoveryNotice";
+import { useHeadReadPending, useRecovery } from "../relay/RecoveryNotice";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -398,6 +398,11 @@ function Timeline({
     getUnreadSync,
     getUnreadSync,
   );
+  // The catch-up head read the session owes this channel, queued or in
+  // flight. The store marks a page verified when any page lands, so an older
+  // page read meanwhile says nothing about the head still being read.
+  const headPending = useHeadReadPending(queries.live, channelId);
+  const awaitingHead = window.refreshing === true || headPending;
   const boundaryBaseline = useRef<NewMessageBoundaryBaseline | undefined>(
     retainedVisit?.baseline,
   );
@@ -429,7 +434,7 @@ function Timeline({
     !baseline.messageIds &&
     window.status === "ready" &&
     window.freshness === "verified" &&
-    !window.refreshing
+    !awaitingHead
   )
     baseline.messageIds = new Set(window.rows.map((row) => row.id));
   const entryAttention =
@@ -467,24 +472,22 @@ function Timeline({
     if (
       window.status !== "ready" ||
       window.freshness !== "verified" ||
-      window.refreshing ||
+      awaitingHead ||
       window.loadingOlder ||
       unreadSync.completeness !== "snapshot"
     )
       return {
         ready: false,
         // Rows are on screen and the head read that verifies them is running
-        // or owed: a revisit past the head's freshness lease, rows restored
+        // or queued: a revisit past the head's freshness lease, rows restored
         // from disk, a catch-up queued behind another. Dwell is shorter than
         // a slow read, so this list's own reading is held for that wait too.
-        // The read ends in a verified page, which passes this gate, or in a
-        // failure, which reports an error on the page: the visit then waits
-        // without holding reading, so a read that never succeeds cannot keep
-        // the channel unread.
-        awaitingPage:
-          window.status === "ready" &&
-          (window.refreshing === true ||
-            (window.freshness !== "verified" && !window.error)),
+        // The hold follows the read itself, not the page's freshness: a read
+        // that settles, fails or is cancelled ends it, and unverified rows
+        // that nothing is reading (a saved session that cannot connect, a
+        // cancelled catch-up) never start it. The visit then waits without
+        // holding reading, so no page state can keep the channel unread.
+        awaitingPage: window.status === "ready" && awaitingHead,
       };
     if (
       unreadSnapshot?.coverage !== "observed" ||
@@ -1153,10 +1156,10 @@ function Timeline({
     // waits for: catch-up reads every loaded row and observe the unread ones,
     // and either advances the read revision that settles it with no line.
     // Hold reading while the boundary waits for the page's head read or for
-    // the repair; re-enabling schedules dwell at once. A failed head read
-    // reports its error on the page, and a failed repair marks freshness
-    // stale, which an earlier gate catches, so each hold ends with its read
-    // either way.
+    // the repair; re-enabling schedules dwell at once. The page hold ends
+    // when its head read does, however it ends, and a failed repair marks
+    // freshness stale, which an earlier gate catches, so each hold ends with
+    // its read either way.
     enabled:
       marksRead &&
       !boundaryCandidate.awaitingPage &&

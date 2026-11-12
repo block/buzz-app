@@ -258,6 +258,7 @@ function mount(bottom = false, revealOnMount = false, anchorLoaded = true) {
 }
 
 /** `reading`: this list's own dwell can mark rows read, as the real store would. */
+type HeadReadState = "pending" | "verified" | "deferred" | "error";
 function boundaryFixture({ reading = false } = {}) {
   const viewer = keypair(),
     peer = keypair(),
@@ -409,7 +410,32 @@ function boundaryFixture({ reading = false } = {}) {
         }
       : {}),
   };
-  const session = { ...owner.session, channels, unread };
+  // The session's catch-up head reads, as its live view reports them.
+  let headReads: { channelId: string; state: HeadReadState }[] = [];
+  const liveListeners = new Set<() => void>();
+  const live = {
+    ...owner.session.live,
+    snapshot: () => ({ ...owner.session.live.snapshot(), heads: headReads }),
+    subscribe(listener: () => void) {
+      liveListeners.add(listener);
+      const stop = owner.session.live.subscribe(listener);
+      return () => {
+        liveListeners.delete(listener);
+        stop();
+      };
+    },
+  };
+  /** Report the channel's catch-up head read; undefined is none owed. */
+  function headRead(state: HeadReadState | undefined, channelId = "c") {
+    headReads = [
+      ...headReads.filter((head) => head.channelId !== channelId),
+      ...(state ? [{ channelId, state }] : []),
+    ];
+    act(() => {
+      for (const listener of [...liveListeners]) listener();
+    });
+  }
+  const session = { ...owner.session, channels, unread, live };
   function row(
     event: RelayEvent,
     channelId = "c",
@@ -506,6 +532,7 @@ function boundaryFixture({ reading = false } = {}) {
     enterChannel,
     subscribers: () => ({ unread: listeners.size, sync: syncListeners.size }),
     completeReadStateSnapshot,
+    headRead,
     async completeEntry() {
       const entry = entries.find((candidate) => !candidate.settled);
       if (!entry) throw new Error("No pending channel entry");
@@ -937,6 +964,8 @@ const awaitedPages: {
   name: string;
   entered: Partial<ChannelWindow>;
   waiting: Partial<ChannelWindow>;
+  /** The read is the session's catch-up, which the page does not report. */
+  catchUp?: true;
 }[] = [
   {
     name: "a revisit refresh past the head's freshness lease",
@@ -952,6 +981,15 @@ const awaitedPages: {
     name: "cached rows whose catch-up read is queued",
     entered: { freshness: "cached" },
     waiting: { freshness: "cached" },
+    catchUp: true,
+  },
+  {
+    // The store marks a page verified when an older page lands, with the
+    // head still unread: these rows are not yet what the reader enters on.
+    name: "rows an older page verified while the catch-up read is queued",
+    entered: { freshness: "cached" },
+    waiting: {},
+    catchUp: true,
   },
   {
     // The retry keeps the earlier error until it settles.
@@ -970,9 +1008,11 @@ const awaitedPages: {
 async function pageReader({
   entered,
   waiting,
-}: Pick<(typeof awaitedPages)[number], "entered" | "waiting">) {
+  catchUp,
+}: Pick<(typeof awaitedPages)[number], "entered" | "waiting" | "catchUp">) {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const h = boundaryFixture({ reading: true });
+  if (catchUp) h.headRead("pending");
   const read = h.row(message(h.peer, "c", "Read before leaving", 2));
   const first = h.row(message(h.peer, "c", "First unread arrival", 3));
   const later = h.row(message(h.peer, "c", "Later unread arrival", 4));
@@ -1004,6 +1044,7 @@ it.each(awaitedPages)(
       ).toBeNull();
 
       mounted.rerender(page());
+      if (states.catchUp) h.headRead("verified");
       h.publish();
       expect(
         precedes(divider(), screen.getByText("First unread arrival")),
@@ -1036,6 +1077,7 @@ it.each(awaitedPages)(
       mounted.rerender(
         page({ freshness: "cached", error: "Relay read failed" }),
       );
+      if (states.catchUp) h.headRead("error");
       await h.dwell();
       expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
       expect(
@@ -1045,6 +1087,35 @@ it.each(awaitedPages)(
       // Reading has changed the evidence, so a later read places no line.
       mounted.rerender(page());
       h.publish();
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  },
+);
+
+// A catch-up cancelled by an access change elsewhere ends as deferred with no
+// error on the page, and a saved session that cannot connect never reads at
+// all. Nothing will verify those rows, so nothing may wait for it.
+it.each([
+  { name: "cancelled", head: "deferred" as const },
+  { name: "never sent", head: undefined },
+])(
+  "resumes this list's reading on unverified rows whose head read is $name",
+  async ({ head }) => {
+    const { h, mounted, later } = await pageReader({
+      entered: { freshness: "cached" },
+      waiting: { freshness: "cached" },
+      catchUp: true,
+    });
+    try {
+      expect(h.catchUp).not.toHaveBeenCalled();
+      h.headRead(head);
+      await h.dwell();
+      expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
       expect(
         screen.queryByRole("separator", { name: "New messages" }),
       ).toBeNull();

@@ -826,7 +826,8 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
   // Runs every timer the dwell could have set, then shows that nothing was
   // read and no boundary settled while the head read is still held.
   const expectHeld = async (page, arrivals, waiting) => {
-    expect(await pageOf(page, "beta")).toEqual(waiting);
+    // Polled: a hover prefetch can start a head read before the visit's own.
+    await expect.poll(() => pageOf(page, "beta")).toEqual(waiting);
     await page.clock.runFor(1_000);
     expect(await unreadIn(page, "beta", arrivals)).toMatchObject({
       unread: true,

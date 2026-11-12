@@ -13,6 +13,7 @@ import {
 } from "./channel-labels.ts";
 
 export type ChannelDetailsDraft = Readonly<{
+  messagePublisher?: string | undefined;
   name: string;
   description: string;
   visibility: "public" | "private";
@@ -81,6 +82,12 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
         ? "Channel visibility could not be verified."
         : undefined,
     labels: labelsError(draft?.labels),
+    messagePublisher:
+      draft?.messagePublisher !== undefined &&
+      draft.messagePublisher !== "" &&
+      !/^[0-9a-f]{64}$/.test(draft.messagePublisher)
+        ? "Enter the publisher’s 64-character public key, or leave empty for ordinary posting."
+        : undefined,
     joinRole:
       draft?.joinRole !== undefined &&
       draft.joinRole !== "member" &&
@@ -118,7 +125,8 @@ export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
     errors.visibility ??
     errors.lifetime ??
     errors.labels ??
-    errors.joinRole;
+    errors.joinRole ??
+    errors.messagePublisher;
   if (error) throw new Error(error);
 }
 
@@ -152,6 +160,7 @@ export function detailsSettings(
     description,
     visibility,
     ...(joinRole ? { joinRole } : {}),
+    messagePublisher: channelMessagePublisher(metadata) ?? "",
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     labels: channelIdentity(metadata).labels,
     canEdit:
@@ -191,6 +200,10 @@ export function detailsTemplate(
         : []),
       ...(draft.joinRole !== undefined && draft.joinRole !== base.joinRole
         ? [["join_role", draft.joinRole]]
+        : []),
+      ...(draft.messagePublisher !== undefined &&
+      draft.messagePublisher !== (base.messagePublisher ?? "")
+        ? [["message_publisher", draft.messagePublisher]]
         : []),
       // NIP-CL: `t` tags replace the set; one empty `t` clears it; none keeps it.
       ...(draft.labels !== undefined &&
@@ -235,6 +248,19 @@ export function channelJoinRole(event: RelayEvent): "member" | "guest" {
     : "guest";
 }
 
+/** Absent is ordinary policy; malformed explicit metadata stays locked. */
+export function channelMessagePublisher(
+  event: Pick<RelayEvent, "tags">,
+): string | undefined {
+  const tags = event.tags.filter(([key]) => key === "message_publisher");
+  if (!tags.length) return undefined;
+  return tags.length === 1 &&
+    tags[0]?.length === 2 &&
+    /^[0-9a-f]{64}$/.test(tags[0]?.[1] ?? "")
+    ? tags[0]?.[1]
+    : "invalid";
+}
+
 /** A relay metadata TTL must be an unambiguous positive i32; only absence is ongoing. */
 function parseDetailsTtl(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -249,6 +275,22 @@ function parseDetailsTtl(value: string | undefined): number | undefined {
 
 /** Separate from lifecycle and outbox admission. Admits only explicit open/private visibility. */
 export function validateDetailsTemplate(event: EventTemplate): void {
+  const publishers =
+    event.tags?.filter(([key]) => key === "message_publisher") ?? [];
+  if (
+    publishers.length > 1 ||
+    publishers.some(
+      (tag) =>
+        tag.length !== 2 ||
+        (tag[1] !== "" && !/^[0-9a-f]{64}$/.test(tag[1] ?? "")),
+    )
+  )
+    throw new Error("Invalid channel publisher command.");
+  event = {
+    ...event,
+    tags: event.tags?.filter(([key]) => key !== "message_publisher"),
+  };
+
   if (
     event?.kind !== 9002 ||
     event.content !== "" ||

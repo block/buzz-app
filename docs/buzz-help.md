@@ -1383,3 +1383,7 @@ Owning the agent does not grant permission to edit or run its workflow.
 ## Workflows in archived channels
 
 In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.
+
+### Channels with one post publisher
+
+On communities that support publisher channels, a channel owner or admin can set a **Post publisher** in Edit channel details. Paste that account’s public key; clear the field to restore ordinary posting. Only that account can start posts. Anyone with access to the channel can reply in its threads, including people who have not joined. Existing posts stay visible; threads started by other accounts no longer accept replies. Open a publisher’s post to reply. Only the publisher can send a reply to the main channel.

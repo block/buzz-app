@@ -20,7 +20,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=15).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -50,6 +50,17 @@ fn details(event: &EventTemplate) -> bool {
     // NIP-CL: trailing `t` tags replace the label set; one `["t", ""]` clears it.
     if let Some(role) = tag(event, index, "join_role") {
         if !matches!(role, "member" | "guest") {
+            return false;
+        }
+        index += 1;
+    }
+    if let Some(publisher) = tag(event, index, "message_publisher") {
+        if !publisher.is_empty()
+            && !(publisher.len() == 64
+                && publisher
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        {
             return false;
         }
         index += 1;
@@ -884,6 +895,45 @@ mod boundary_tests {
         let mut late = edit(vec![t("a")]);
         late.tags.push(vec!["ttl".into(), String::new()]);
         assert!(!details(&late));
+    }
+    #[test]
+    fn publisher_details_validate_at_sign_and_publish_boundaries() {
+        let host = IdentityHost::fixture();
+        for publisher in [String::new(), "a".repeat(64)] {
+            for extra in [
+                vec![vec!["message_publisher".into(), publisher.clone()]],
+                vec![
+                    vec!["join_role".into(), "guest".into()],
+                    vec!["message_publisher".into(), publisher.clone()],
+                    vec!["t".into(), "updates".into()],
+                ],
+            ] {
+                let event = serde_json::to_value(details_event(extra)).unwrap();
+                let parsed = validate("channel-details", &event, None).unwrap();
+                let signed = tauri::async_runtime::block_on(host.sign(parsed)).unwrap();
+                assert!(validate("channel-details", &signed, signed["pubkey"].as_str()).is_ok());
+            }
+        }
+        for extra in [
+            vec![vec!["message_publisher".into(), "bad".into()]],
+            vec![vec!["message_publisher".into()]],
+            vec![vec![
+                "message_publisher".into(),
+                "a".repeat(64),
+                "extra".into(),
+            ]],
+            vec![
+                vec!["message_publisher".into(), "a".repeat(64)],
+                vec!["message_publisher".into(), "b".repeat(64)],
+            ],
+            vec![
+                vec!["message_publisher".into(), "a".repeat(64)],
+                vec!["join_role".into(), "guest".into()],
+            ],
+        ] {
+            let event = serde_json::to_value(details_event(extra)).unwrap();
+            assert!(validate("channel-details", &event, None).is_err());
+        }
     }
 }
 

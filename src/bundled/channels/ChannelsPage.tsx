@@ -1,3 +1,4 @@
+import { canStartMessage } from "../../features/relay/message-policy";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -2040,7 +2041,9 @@ function ChannelWorkspace({
   }, [currentId, queries.channels]);
   const channelNotice =
     !!current &&
-    (current.archived ||
+    ((current.messagePublisher !== undefined &&
+      current.messagePublisher !== queries.viewer) ||
+      current.archived ||
       (current.readOnly &&
         (!current.cached || current.viewerRole === "guest")));
   useChannelHistoryFocus(
@@ -2100,12 +2103,18 @@ function ChannelWorkspace({
             ready={contentReadyChannel === current.id}
             channelId={current.id}
             archived={!!current.archived}
+            message={
+              !current.archived && current.messagePublisher !== undefined
+                ? "Open a post by the channel publisher to reply."
+                : undefined
+            }
             place={solo ? "chat" : "channel"}
             guest={current.viewerRole === "guest"}
             joinRole={current.joinRole}
             lifecycle={queries.channelLifecycle}
             joinable={
               !current.archived &&
+              !!current.readOnly &&
               (current.channelType === "stream" ||
                 current.channelType === "forum" ||
                 (current.channelType === "solo" &&
@@ -2144,8 +2153,10 @@ function ChannelWorkspace({
       )}
       {current &&
         !current.archived &&
-        current.viewerRole !== "guest" &&
-        (!current.readOnly || current.cached) && (
+        (current.messagePublisher !== undefined
+          ? canStartMessage(current, queries.viewer)
+          : current.viewerRole !== "guest" &&
+            (!current.readOnly || current.cached)) && (
           <ConversationComposer
             key={`composer:${current.id}`}
             onFocusedRemoval={focusArchivedHistory}

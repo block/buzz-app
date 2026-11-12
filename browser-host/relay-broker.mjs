@@ -328,6 +328,9 @@ async function relayAuthority(fetch, relay) {
     channelCreation:
       Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
     // NIP-CL: the relay keeps channel labels and answers label lookups.
+    messagePublisher:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-message-publisher"),
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
@@ -1694,6 +1697,7 @@ export function relayBrokerPlugin({
               sidebarMuteWrites: true,
               channelKit: true,
               channelIdentity: (await getAuthority(relay)).channelIdentity,
+              messagePublisher: (await getAuthority(relay)).messagePublisher,
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarSectionRemoval: true,

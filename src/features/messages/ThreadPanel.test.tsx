@@ -2523,3 +2523,33 @@ it("reveals a completed step selected by an exact thread link", async () => {
     screen.getByRole("button", { name: /Collapse activity history/ }),
   ).toBeVisible();
 });
+
+it.each(["guest", undefined] as const)(
+  "offers a publisher-thread composer to a %s reader without joining",
+  (role) => {
+    const h = messagesHarness();
+    const channel: ChannelSummary = {
+      id: "channel",
+      name: "Updates",
+      channelType: "stream",
+      visibility: "public",
+      messagePublisher: row.authorId,
+      readOnly: true,
+      viewerRole: role,
+    };
+    Object.assign(h.session, {
+      channels: {
+        list: () => ({ status: "ready", channels: [] }),
+        get: () => channel,
+        subscribeList: () => () => {},
+      },
+    });
+    h.render();
+    expect(
+      screen.getByRole("region", { name: "Composer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Join/ }),
+    ).not.toBeInTheDocument();
+  },
+);

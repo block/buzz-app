@@ -12,6 +12,7 @@ import styles from "./Messages.module.css";
 export function ChannelJoinNotice({
   channelId,
   ready = true,
+  message,
   lifecycle,
   joinable,
   guest = false,
@@ -23,6 +24,7 @@ export function ChannelJoinNotice({
 }: {
   channelId: string;
   ready?: boolean;
+  message?: string | undefined;
   lifecycle?: ChannelLifecycleCapability | undefined;
   joinable: boolean;
   guest?: boolean;
@@ -106,13 +108,14 @@ export function ChannelJoinNotice({
         <p className="max-w-md px-2 text-center text-body-sm text-subtle">
           {archived
             ? `This ${place} is archived`
-            : readOnly
-              ? joinRole === "guest"
-                ? `This ${place} is read-only${canJoin ? ". Join to keep it in your sidebar and appear as a viewer." : ""}`
-                : "Read-only access"
-              : canJoin
-                ? `Join ${place} to send messages`
-                : `You’re previewing this ${place}`}
+            : (message ??
+              (readOnly
+                ? joinRole === "guest"
+                  ? `This ${place} is read-only${canJoin ? ". Join to keep it in your sidebar and appear as a viewer." : ""}`
+                  : "Read-only access"
+                : canJoin
+                  ? `Join ${place} to send messages`
+                  : `You’re previewing this ${place}`))}
         </p>
         {canJoin && (
           <Button

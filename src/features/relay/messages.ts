@@ -48,6 +48,7 @@ export function createMessages(
   canWrite: (
     channelId: string,
     owner?: AgentOwnerAuthorization,
+    kind?: number,
   ) => boolean = () => true,
   relayOrigin?: string,
   /** Resolves on relay OK. Reports are never echoed, so they bypass the outbox. */
@@ -66,7 +67,7 @@ export function createMessages(
     channelId: string,
     owner?: AgentOwnerAuthorization,
   ) => {
-    if (!canWrite(channelId, owner))
+    if (!canWrite(channelId, owner, kind))
       throw new Error("You don’t have write access to this conversation.");
     if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");

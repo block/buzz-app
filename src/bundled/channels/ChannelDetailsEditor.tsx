@@ -1,3 +1,5 @@
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import {
   useCallback,
   useEffect,
@@ -159,6 +161,7 @@ export function ChannelDetailsEditor({
       normalized.description !== view.base.description ||
       normalized.visibility !== view.base.visibility ||
       normalized.joinRole !== view.base.joinRole ||
+      normalized.messagePublisher !== view.base.messagePublisher ||
       normalized.ttlSeconds !== view.base.ttlSeconds);
   const temporaryTtl =
     draft?.ttlSeconds ??
@@ -201,6 +204,7 @@ export function ChannelDetailsEditor({
       draft.description !== view.base.description ||
       draft.visibility !== view.base.visibility ||
       draft.joinRole !== view.base.joinRole ||
+      draft.messagePublisher !== view.base.messagePublisher ||
       draft.ttlSeconds !== view.base.ttlSeconds);
   const requestClose = () => {
     if (pending || busy.current) return;
@@ -418,6 +422,29 @@ export function ChannelDetailsEditor({
                     patch({ draft: { ...draft, description } })
                   }
                 />
+                {channel.channelType === "stream" && (
+                  <Field
+                    label="Post publisher"
+                    description="Only this account starts posts. Everyone with channel access can reply in its threads. Leave empty for ordinary posting."
+                    error={errors?.messagePublisher}
+                  >
+                    <Input
+                      value={draft.messagePublisher ?? ""}
+                      placeholder="Account public key"
+                      disabled={locked || !canEdit}
+                      onChange={(event) =>
+                        patch({
+                          draft: {
+                            ...draft,
+                            messagePublisher: event.currentTarget.value
+                              .trim()
+                              .toLowerCase(),
+                          },
+                        })
+                      }
+                    />
+                  </Field>
+                )}
                 <ChannelDurationField
                   temporary={draft.ttlSeconds !== undefined}
                   ttlSeconds={temporaryTtl}

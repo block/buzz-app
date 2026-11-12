@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { canReplyToPublisher, publisherReader } from "../relay/message-policy";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -576,6 +577,7 @@ function ThreadMessages({
     (listed) => {
       const channel = listed ?? session.channels?.get?.(channelId);
       if (channel?.archived) return "archived";
+      if (publisherReader(channel)) return "publisher";
       if (channel?.viewerRole === "guest") return "guest";
       if (channel?.readOnly && !channel.cached) {
         return channel.channelType === "stream" ||
@@ -1753,6 +1755,8 @@ function ThreadMessages({
   // The reply composer, and the activity lane its TypingIndicator needs.
   const composerRoot =
     !preview &&
+    (channelAccess !== "publisher" ||
+      canReplyToPublisher(session.channels.get?.(channelId), snapshot.root)) &&
     !soloConversation &&
     (!requireReadyRoot ||
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
@@ -2045,6 +2049,7 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          policyRoot={snapshot.root}
           threadSeed={threadSeed}
           replyParentId={replyParent}
           disabled={

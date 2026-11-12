@@ -1,3 +1,4 @@
+import { channelMessagePublisher } from "./channel-details-protocol";
 import { byteSize } from "./budget";
 import {
   channelJoinRole,
@@ -448,6 +449,7 @@ export class DiscoveryState {
         ? {
             visibility: channelVisibility(event),
             joinRole: channelJoinRole(event),
+            messagePublisher: channelMessagePublisher(event),
             description: tag(event, "about") ?? "",
           }
         : {}),

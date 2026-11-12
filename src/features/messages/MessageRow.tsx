@@ -1,3 +1,4 @@
+import { publisherReader } from "../relay/message-policy";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
@@ -304,6 +305,14 @@ function MessageRowContent({
     channels,
     row.channelId,
     (channel) => !!channel,
+  );
+  const publisher = useListedChannel(
+    channels,
+    row.channelId,
+    (channel) => (channel ?? channels?.get?.(row.channelId))?.messagePublisher,
+  );
+  const policyReader = useListedChannel(channels, row.channelId, (channel) =>
+    publisherReader(channel ?? channels?.get?.(row.channelId)),
   );
   const cached = useListedChannel(
     channels,
@@ -803,13 +812,14 @@ function MessageRowContent({
       replyDisabled={
         !!(row.delivery && !["accepted", "seen"].includes(row.delivery)) ||
         archived ||
-        (!!session?.channels.get && (!listed || readOnly))
+        (!!session?.channels.get && (!listed || readOnly) && !policyReader)
       }
       onSendToChannel={
         session &&
         listed &&
         !archived &&
         !readOnly &&
+        (publisher === undefined || publisher === session.viewer) &&
         row.threadRootId &&
         row.authorId === session.viewer &&
         !row.agentEnvelope &&

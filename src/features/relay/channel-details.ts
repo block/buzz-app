@@ -43,6 +43,7 @@ export function createChannelDetails({
   reader,
   writer,
   labels = false,
+  messagePublisher = false,
   viewer,
   relayAuthor,
   canAccess,
@@ -52,6 +53,7 @@ export function createChannelDetails({
   writer?: RelayWriter | undefined;
   /** The relay keeps channel labels (NIP-CL). Without it, label edits are refused. */
   labels?: boolean;
+  messagePublisher?: boolean;
   viewer: string;
   relayAuthor: string;
   canAccess(id: string): boolean;
@@ -124,6 +126,8 @@ export function createChannelDetails({
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
       (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
+      (draft.messagePublisher !== undefined &&
+        (details.messagePublisher ?? "") !== draft.messagePublisher) ||
       (draft.labels !== undefined &&
         JSON.stringify([...new Set(draft.labels)].sort()) !==
           JSON.stringify([...(details.labels ?? [])].sort()))
@@ -208,6 +212,14 @@ export function createChannelDetails({
           : {}),
       });
       validateDetailsDraft(draft);
+      if (
+        !messagePublisher &&
+        draft.messagePublisher !== undefined &&
+        draft.messagePublisher !== (base.messagePublisher ?? "")
+      )
+        throw new Error(
+          "This community does not support publisher channels yet.",
+        );
       if (
         !labels &&
         draft.labels !== undefined &&

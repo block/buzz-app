@@ -1,3 +1,4 @@
+import { publisherReader, validatePublisherMessage } from "./message-policy";
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createSoloPreferences, soloGroups } from "./solo-preferences";
@@ -1164,6 +1165,7 @@ export function createRelaySession(
     reader: transport && !options.cachedOnly ? requests.reader : undefined,
     writer: transport?.channelDetails,
     labels: transport?.channelIdentity === true,
+    messagePublisher: transport?.messagePublisher === true,
     viewer: transport?.viewer ?? "",
     relayAuthor: transport?.relayAuthor ?? "",
     canAccess: (id) => !closed && channels.canParticipate(id),
@@ -1568,9 +1570,9 @@ export function createRelaySession(
   }
   function validateMentions(channelId: string, pubkeys: readonly string[]) {
     if (!pubkeys.length) return;
-    const channel = channels.queries
-      .list()
-      .channels.find((item) => item.id === channelId);
+    const channel =
+      channels.queries.list().channels.find((item) => item.id === channelId) ??
+      channels.queries.get?.(channelId);
     // A one-to-one DM's partner is addressed by every message there, so a
     // plain message must still queue while the live stream reconnects.
     // Publication still reads the roster fresh (preflightMentions).
@@ -1578,7 +1580,7 @@ export function createRelaySession(
     const addressesPartnerOnly = pubkeys.every((key) => partners.includes(key));
     if (
       closed ||
-      !channels.canWrite(channelId) ||
+      (!channels.canWrite(channelId) && !publisherReader(channel)) ||
       !channel?.members ||
       channel.archived ||
       (transport?.subscribe &&
@@ -1603,7 +1605,23 @@ export function createRelaySession(
     // Guest removing an owned agent. They are not channel contributions.
     if ([9000, 9001, 9022].includes(event.kind)) return;
     const id = event.tags.find(([key]) => key === "h")?.[1];
-    if (!id || channels.queries.get?.(id)?.viewerRole !== "guest") return;
+    if (!id) return;
+    const channel = channels.queries.get?.(id);
+    if (
+      channel?.messagePublisher !== undefined &&
+      validatePublisherMessage(
+        channel,
+        event,
+        transport?.viewer,
+        (target) =>
+          local().find((item) => item.event.id === target)?.event ??
+          recent.peek(target)?.event ??
+          retainedEvent(target),
+        transport?.archiveAuthority,
+      )
+    )
+      return;
+    if (channel?.viewerRole !== "guest") return;
     // Workflow-coordinate deletion is an ownership action, not a contribution.
     // Full command validation still runs before signing and publication.
     if (event.kind === 5 && isWorkflowOperation(event)) {
@@ -2708,9 +2726,11 @@ export function createRelaySession(
           retainedEvent(id),
         emoji.tags,
         validateMentions,
-        (id, owner) =>
+        (id, owner, kind) =>
           !closed &&
           (channels.canWrite(id) ||
+            ([9, 40003].includes(kind ?? 0) &&
+              publisherReader(channels.queries.get?.(id))) ||
             // editOwnedAgent and messages.remove supply owner evidence;
             // validateChannelWrite rechecks it before signing and publication.
             (!!owner && channels.canParticipate(id))),

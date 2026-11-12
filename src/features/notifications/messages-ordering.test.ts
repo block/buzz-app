@@ -15,7 +15,7 @@ it.each([9, 40002])(
     const mention = signed(h.peer, { ...h.make("Please review this"), kind });
     h.query.mockResolvedValueOnce([mention]);
     await h.owner.session.readRemote([
-      { kinds: [9], "#h": ["room"], limit: 30 },
+      { kinds: [kind], "#h": ["room"], limit: 30 },
     ]);
     await flush();
     expect(h.show).not.toHaveBeenCalled();

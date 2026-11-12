@@ -31,12 +31,11 @@ built-in ones.
 
 ### Remote agents
 
-A remote agent runs on a hosted machine instead of your computer, so it keeps
-working when Buzz is closed or your laptop is off. It cannot open files on your
-computer.
+Close your laptop and your agent keeps working. A remote agent runs on a hosted
+machine instead of your computer, so it can still answer when Buzz is closed.
 
 Builderlab, the hosted service built into Buzz, runs these agents. You sign in
-with a Builderlab account to use them, and availability depends on your account.
+with a Builderlab account to use them.
 
 Local agents still work as before.
 

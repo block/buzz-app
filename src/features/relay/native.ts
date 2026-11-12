@@ -49,7 +49,7 @@ import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { repoGitHost } from "../repos/git";
 
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
 import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
@@ -154,7 +154,15 @@ export async function nativeRelayRequest(
     // The shared admission slot stays held until native work settles: at
     // once for a cancelled read, otherwise within its timeout.
     bounded.throwIfAborted();
-    return nativeResponse(result);
+    const response = nativeResponse(result);
+    // Only a signed request speaks for the session, as native decides (`send`
+    // in relay.rs signs only POST): a refused GET says nothing about it.
+    if (
+      body !== undefined &&
+      (response.status === 401 || response.status === 403)
+    )
+      await announceRefusal(community, response);
+    return response;
   } finally {
     if (id) bounded.removeEventListener("abort", cancel);
   }
@@ -385,6 +393,21 @@ export function relaySelf(info: Record<string, unknown>): string | undefined {
 type RefusalListener = (kind: CommunityRefusal) => void;
 const refusalListeners = new Map<string, Set<RefusalListener>>();
 let refusalEvents: Promise<unknown> | undefined;
+function notifyRefusal(community: string, kind: CommunityRefusal) {
+  for (const listener of [...(refusalListeners.get(community) ?? [])])
+    listener(kind);
+}
+/** The response itself also reports a refusal, so the community's owner hears
+ * it even when the window event never arrives (its listener failed to
+ * install). The owner takes the first report; a repeat changes nothing. */
+async function announceRefusal(community: string, response: Response) {
+  const { admission } = await readApiFailure(response.clone());
+  if (admission)
+    notifyRefusal(
+      new URL(communityDestination(community).url).origin,
+      admission,
+    );
+}
 /** Native reports a community's refusal from whichever signed request met it
  * (`observe_refusal` in relay.rs), so no command needs its own check. One
  * window listener serves every connection; it is ready before any connects. */
@@ -394,13 +417,11 @@ async function nativeRefusals(origin: string) {
     ({ payload }) => {
       const kind = payload.refusal;
       if (kind !== "sign-in" && kind !== "access") return;
-      for (const listener of [
-        ...(refusalListeners.get(payload.community) ?? []),
-      ])
-        listener(kind);
+      notifyRefusal(payload.community, kind);
     },
   ).catch(() => {
-    // Without it a refusal still fails its own request; the next connect retries.
+    // Without it the failed response still reports the refusal (see
+    // announceRefusal); the next connect retries the listener.
     refusalEvents = undefined;
   });
   await refusalEvents;
@@ -590,6 +611,7 @@ export async function connectNativeTransport(
       ? {
           configArtifacts: {
             kinds: [ARTIFACT_KIND],
+            isNotSent: (error: unknown) => error instanceof PublishNotSent,
             async sign(event: EventTemplate, signal: AbortSignal) {
               if (event.kind !== ARTIFACT_KIND)
                 throw new Error("Not an artifact");

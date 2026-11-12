@@ -12,6 +12,7 @@ import { SettingsCardsService } from "../features/settings/service";
 import { IdentityNamesService } from "../features/identity-names/service";
 import { createLocalAgents } from "../features/agents/local";
 import {
+  askAgain,
   FederatedIdentityService,
   onSignedIn,
 } from "../features/federated-identity/service";
@@ -124,6 +125,7 @@ export function createServices() {
     identity ? connectNativeTransport : undefined,
     localActivity.reader,
     identity ? verifyNativeStored : undefined,
+    identity ? askAgain : undefined,
   );
   ctx.provide("communityReader", {
     snapshot: communities.snapshot,

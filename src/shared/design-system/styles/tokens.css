@@ -1635,6 +1635,9 @@
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
+  /* Corner counts keep a dark fill and readable accent ink in both modes. */
+  --surface-dock-count: var(--mono-2-dark);
+  --text-dock-count: var(--accent-link-dark);
   --text-sidebar-hover: var(--accent-12);
   --affordance-sidebar-hover: var(--accent-2);
   --affordance-accent-prominent: var(--accent-9);
@@ -1681,6 +1684,9 @@
   --text-message-link: var(--accent-link);
   --surface-sidebar-selected: var(--accent-9);
   --text-sidebar-selected: var(--accent-contrast);
+  /* Corner counts keep a dark fill and readable accent ink in both modes. */
+  --surface-dock-count: var(--mono-2-dark);
+  --text-dock-count: var(--accent-link-dark);
   --text-sidebar-hover: var(--accent-12);
   --affordance-sidebar-hover: var(--accent-3);
   --affordance-accent-prominent: var(--accent-9);
@@ -2062,6 +2068,8 @@
   --text-color-sidebar-selected: var(--text-sidebar-selected);
   --text-color-sidebar-hover: var(--text-sidebar-hover);
   --color-surface-sidebar-selected: var(--surface-sidebar-selected);
+  --color-surface-dock-count: var(--surface-dock-count);
+  --text-color-dock-count: var(--text-dock-count);
   --color-affordance-sidebar-hover: var(--affordance-sidebar-hover);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);

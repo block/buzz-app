@@ -512,6 +512,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "proposed",
       },
       {
+        token: "bg-surface-dock-count",
+        variable: "--surface-dock-count",
+        pointsAt: "dark mono 2 in both modes",
+        use: "Dark corner count capsules on dock tiles; pair with text-dock-count.",
+        status: "core",
+      },
+      {
+        token: "text-dock-count",
+        variable: "--text-dock-count",
+        pointsAt: "dark-mode accent link ink in both modes",
+        use: "Readable accent numerals on surface-dock-count.",
+        status: "core",
+      },
+      {
         token: "bg-surface-row-selected-detail",
         variable: "--surface-row-selected-detail",
         pointsAt: "neutral-2 light / neutral-6 dark",

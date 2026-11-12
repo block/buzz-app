@@ -315,6 +315,11 @@ const MemberIdentityRow = memo(function MemberIdentityRow({
                 {keyLabel}
               </span>
             )}
+            {!adding && archived && (
+              <span className="shrink-0 text-caption text-subtle">
+                Archived
+              </span>
+            )}
           </span>
           {ownerName && (
             <span className={styles.manager}>
@@ -733,6 +738,23 @@ export function ChannelMembersDialog({
         ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
         ?.focus();
   });
+  // A late archive list moves archived members to the Archived group, which
+  // remounts a focused row. Its control leaves without a blur, so focus falls
+  // to the dialog or the body. Hand off to its group's heading, as a page
+  // change does, or Search, unless focus has moved on to another control.
+  const listFocus = useRef<{ control: HTMLElement; group: string }>(undefined);
+  useLayoutEffect(() => {
+    const previous = listFocus.current;
+    const list = scrollport.current;
+    if (!previous || previous.control.isConnected) return;
+    listFocus.current = undefined;
+    const active = document.activeElement;
+    if (!list || (active && !active.contains(list))) return;
+    (
+      document.getElementById(`${presenceId}-${previous.group}-page`) ??
+      input.current
+    )?.focus({ preventScroll: true });
+  });
   const lifetime = useRef<AbortController>(undefined);
   const [query, setQuery] = useState("");
   const [selectedRole, setSelectedRole] = useState("All");
@@ -1012,7 +1034,6 @@ export function ChannelMembersDialog({
     searchPeople.map((person) => [person.pubkey, person]),
   );
   const members = new Set(channel?.members ?? []);
-  const archived = new Set(archives.archived);
   const verifiedOf = (key: string): VerifiedProfile | undefined =>
     profiles.get(key)?.verified ?? searchVerified.get(key);
   const pageLabel = (verified: VerifiedProfile | undefined) =>
@@ -1127,8 +1148,24 @@ export function ChannelMembersDialog({
       initialLoading,
       groups: orderedGroups,
     });
-  const groups = (largeRoster ? orderedGroups : currentGroups).map((group) => ({
-    ...group,
+  // Known-archived members leave People and Agents for an Archived group
+  // after them, each keeping the order above, so archives that arrive late or
+  // members who join later still list there.
+  const isArchived = (key: string) =>
+    archiveHides(session.archives, key, session.viewer);
+  const baseGroups = largeRoster ? orderedGroups : currentGroups;
+  const groups = [
+    ...baseGroups.map((group) => ({
+      name: group.name,
+      keys: group.keys.filter((key) => !isArchived(key)),
+    })),
+    {
+      name: "Archived",
+      keys: baseGroups.flatMap((group) => group.keys.filter(isArchived)),
+    },
+  ].map((group) => ({
+    name: group.name,
+    count: group.keys.length,
     keys: group.keys.filter((key) => matches(key, memberLabel(key))),
   }));
   const presentGroups = groups.filter((group) => group.count > 0);
@@ -1724,7 +1761,7 @@ export function ChannelMembersDialog({
         adding={adding}
         picture={picture ?? profiles.get(key)?.picture}
         isAgent={isAgent}
-        archived={archived.has(key)}
+        archived={isArchived(key)}
         roleLabel={
           isAgent && role === "bot"
             ? "member"
@@ -2184,7 +2221,20 @@ export function ChannelMembersDialog({
                       >
                         {group.name} · {text ? group.keys.length : group.count}
                       </h3>
-                      <ul aria-busy={refreshing}>
+                      <ul
+                        aria-busy={refreshing}
+                        onFocus={(event) => {
+                          // Portaled menus bubble here too; keep only rows.
+                          if (
+                            event.currentTarget.contains(event.target) &&
+                            event.target instanceof HTMLElement
+                          )
+                            listFocus.current = {
+                              control: event.target,
+                              group: group.name,
+                            };
+                        }}
+                      >
                         {group.keys
                           .slice(
                             page * MEMBER_PAGE_SIZE,

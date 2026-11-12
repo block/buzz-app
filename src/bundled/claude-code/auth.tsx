@@ -5,9 +5,11 @@
 //
 // Builds can replace this one file with another way to sign in, so the rest
 // of the plugin reaches authentication only through its exports: keep their
-// names and shapes when changing it.
+// names and shapes when changing it. The optional ClaudeAuth.Settings surface
+// belongs to this authentication method; other implementations may omit it.
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { type ComponentType, useEffect, useState } from "react";
+import { ClaudeSettings } from "./ClaudeSettings";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -16,12 +18,12 @@ import type { Spawn } from "./claude";
 import type { ClaudeSetup } from "./setup";
 
 const NO_KEY =
-  "Claude needs an Anthropic API key. Add one in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
+  "Claude needs an Anthropic API key. Add one in Settings → Claude.";
 /** What setup says first: the key is one for all of Claude, not per agent. */
 const KEY_ONCE =
   "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.";
 const REJECTED_KEY =
-  "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Agent setup → Harness defaults → Claude → Edit configuration.";
+  "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Claude.";
 
 /** Runs one process as a setup step, its output shown; throws unless it
  * succeeds. */
@@ -51,22 +53,22 @@ async function output(spawn: Spawn, id: string) {
   return stdout;
 }
 
-/** The key's native store (`claude_key.rs`): the OS credential store,
- * which hands the key to the Claude processes that ask for it. Nothing
- * here reads it back; native code relies on that, as it gives the key to
- * `claude-sh`, which runs whatever script it is given. */
+/** The native store never returns saved credentials to setup or Settings.
+ * Native code injects the key into the Claude processes that request it. */
 const nativeStore = ():
   | Readonly<{
       /** Whether a key is saved. */
       status(): Promise<boolean>;
-      /** Saves the key; it is never read back. */
+      /** Saves the key without echoing it. */
       save(key: string): Promise<void>;
+      clear(): Promise<void>;
     }>
   | undefined =>
   isTauri()
     ? {
         status: async () => (await invoke("claude_api_key_status")) === true,
         save: (value) => invoke("claude_api_key_set", { value }),
+        clear: () => invoke("claude_api_key_clear"),
       }
     : undefined;
 
@@ -93,6 +95,22 @@ export class ClaudeAuth {
 
   constructor(private readonly spawn: Spawn | undefined) {
     this.store = spawn ? nativeStore() : undefined;
+  }
+
+  /** Optional management UI for this build's authentication method. */
+  get Settings():
+    | ComponentType<{
+        setup: ClaudeSetup;
+        active(): boolean;
+      }>
+    | undefined {
+    return ({ setup, active }) => (
+      <ClaudeSettings
+        setup={setup}
+        active={active}
+        clearKey={() => this.clear()}
+      />
+    );
   }
 
   /** Told when the credentials change, so running sessions start again. */
@@ -140,6 +158,19 @@ export class ClaudeAuth {
     }
     for (const listener of this.listeners) listener();
     return "Saved the Anthropic API key.";
+  }
+
+  /** Removes the saved key and retires sessions using it through the same
+   * credential-change notification as replacement. */
+  async clear() {
+    const store = this.store;
+    if (!store) throw new Error("Claude runs only in the desktop app");
+    try {
+      await store.clear();
+    } finally {
+      this.saved = undefined;
+    }
+    for (const listener of this.listeners) listener();
   }
 
   /** `spawn`, starting each `claude` with the saved key, which native code
@@ -207,11 +238,15 @@ export function SignIn({
   disabled = false,
   variant = "full",
   onSaved,
+  active,
+  onSavingChange,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
   variant?: "full" | "compact";
   onSaved?: (() => void) | undefined;
+  active?: (() => boolean) | undefined;
+  onSavingChange?: ((saving: boolean) => void) | undefined;
 }) {
   return (
     <div className="grid gap-3">
@@ -222,6 +257,8 @@ export function SignIn({
         disabled={disabled}
         compact={variant === "compact"}
         onSaved={onSaved}
+        active={active}
+        onSavingChange={onSavingChange}
       />
     </div>
   );
@@ -269,7 +306,7 @@ export function Missing({
           to add one.
         </>
       ) : (
-        "Add one in Settings → Agent setup."
+        "Add one in Settings → Claude."
       )}
     </p>
   );
@@ -281,12 +318,16 @@ function KeyForm({
   compact = false,
   replace = false,
   onSaved,
+  active = () => true,
+  onSavingChange,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
   compact?: boolean;
   replace?: boolean;
   onSaved?: (() => void) | undefined;
+  active?: (() => boolean) | undefined;
+  onSavingChange?: ((saving: boolean) => void) | undefined;
 }) {
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState<AbortController>();
@@ -295,9 +336,10 @@ function KeyForm({
   // Closing the form cancels a save.
   useEffect(() => () => saving?.abort(), [saving]);
   const save = async () => {
-    if (!key.trim() || saving || disabled) return;
+    if (!active() || !key.trim() || saving || disabled) return;
     const controller = new AbortController();
     setSaving(controller);
+    onSavingChange?.(true);
     setSaved(undefined);
     try {
       const text = await setup.auth.save(key.trim(), controller.signal);
@@ -310,6 +352,7 @@ function KeyForm({
         setSaved({ ok: false, text: message(error) });
     } finally {
       setSaving(undefined);
+      onSavingChange?.(false);
     }
   };
   return (

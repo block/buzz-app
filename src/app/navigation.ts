@@ -579,7 +579,7 @@ export function useAppNavigation(
       ) {
         const status = services.relay.snapshot().status;
         if (status === "error" || status === "disconnected")
-          services.relay.retry();
+          services.relay.tryAgain();
       }
       void navigation.retry();
     },

@@ -72,6 +72,9 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
   async function getCatalog(): Promise<StorageResult> {
     return desktop ? invoke("plugin_catalog") : webCatalog();
   }
+  async function refreshManaged(): Promise<StorageResult> {
+    return desktop ? invoke("plugin_managed_refresh") : webCatalog();
+  }
   async function changePlugin(
     action: ManagementAction,
     id: string,
@@ -125,18 +128,21 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         previewFolder: (id) => invoke("plugin_update_preview", { id }),
         files: (source, files) =>
           invoke("plugin_import_folder", { upload: { source, files } }),
-        git: (repository, reference, authorization, commit) =>
+        git: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
-            commit,
+            commit: scope?.commit,
+            path: scope?.path,
           }),
-        checkGit: (repository, reference, authorization) =>
+        checkGit: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
+            commit: scope?.commit,
+            path: scope?.path,
             checkOnly: true,
           }),
         url: (url, sha256) => invoke("plugin_import_url", { url, sha256 }),
@@ -151,12 +157,14 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     recoverSettings,
     readModule,
     reloadPlugin,
+    refreshManaged,
     imports,
   };
 }
 export type PluginStorage = Omit<
   ReturnType<typeof createPluginStorage>,
-  "imports"
+  "imports" | "refreshManaged"
 > & {
   imports?: PluginImports | undefined;
+  refreshManaged?: (() => Promise<StorageResult>) | undefined;
 };

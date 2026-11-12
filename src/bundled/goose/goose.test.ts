@@ -1,3 +1,4 @@
+import { sessionTools } from "../../buzz-mcp/session-tools";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GooseProcess,
@@ -98,6 +99,11 @@ describe("GooseProcess", () => {
     expect(process.options.cwd).toBe("/work");
     expect(process.options.env).toMatchObject({
       GOOSE_MODE: "auto",
+      GOOSE_TOOL_DEFERRAL: "lookup",
+      GOOSE_TOOL_DEFERRAL_ALWAYS_LOAD: sessionTools()
+        .filter((tool) => tool.load === "always")
+        .map((tool) => `buzz__${tool.name}`)
+        .join(","),
       BUZZ_PRIVATE_KEY: null,
       BUZZ_AUTH_TAG: null,
       BUZZ_RELAY_URL: null,

@@ -46,6 +46,7 @@ import { manifestProcesses } from "./claude-testing";
 import { apply, inject } from "./index";
 import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
+import { ClaudeAuth } from "./auth";
 import { ClaudeDefaults } from "./defaults";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
@@ -307,6 +308,7 @@ function applied({
   const ctx = {
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     navigation: { open: vi.fn(async () => ({ status: "opened" })) },
+    settingsCards: { register: vi.fn() },
     agentProtection: { registerModels: vi.fn() },
     host: {
       spawn,
@@ -825,7 +827,13 @@ it("shows the channel's current kind for a session another build started", async
 });
 
 it("is an agent type on the desktop app", () => {
-  expect(inject).toEqual(["agents", "host", "agentProtection", "navigation"]);
+  expect(inject).toEqual([
+    "agents",
+    "host",
+    "agentProtection",
+    "navigation",
+    "settingsCards",
+  ]);
   const { type } = installed();
   expect(type).toMatchObject({
     id: "claude-code",
@@ -1841,8 +1849,7 @@ it("offers Set up Claude beside Harness when Claude is picked, then its models",
   expect(navigation.open).toHaveBeenCalledWith({
     version: 1,
     kind: "settings",
-    section: "agents",
-    provider: "buzz.claude-code/claude-code",
+    section: "buzz.claude-code/credentials",
   });
 });
 
@@ -2056,33 +2063,41 @@ it("still asks for the key to edit an agent that runs on this computer", async (
   expect(onReadyChange).toHaveBeenLastCalledWith(false);
 });
 
-it("sends a library card without a key to Claude's setup in Settings", async () => {
-  const { type, navigation } = installed({ keySaved: false });
-  const Model = type.CreateModel;
-  if (!Model) throw new Error("Missing model field");
-  render(
-    <Model
-      agent={agent()}
-      modelAppearance="glass-ghost"
-      config={DEFAULT_CONFIG}
-      disabled={false}
-      onChange={vi.fn()}
-    />,
-  );
-  expect(
-    await screen.findByText(/Claude is missing an API key\./),
-  ).toBeVisible();
-  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Settings" }));
-  expect(navigation.open).toHaveBeenCalledWith({
-    version: 1,
-    kind: "settings",
-    section: "agents",
-    provider: "buzz.claude-code/claude-code",
-  });
-});
+it.each([true, false])(
+  "sends a library card to its auth setup (settings=%s)",
+  async (keySettings) => {
+    if (!keySettings)
+      vi.spyOn(ClaudeAuth.prototype, "Settings", "get").mockReturnValue(
+        undefined,
+      );
+    const { type, navigation } = installed({ keySaved: false });
+    const Model = type.CreateModel;
+    if (!Model) throw new Error("Missing model field");
+    render(
+      <Model
+        agent={agent()}
+        modelAppearance="glass-ghost"
+        config={DEFAULT_CONFIG}
+        disabled={false}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(/Claude is missing an API key\./),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Settings" }));
+    expect(navigation.open).toHaveBeenCalledWith({
+      version: 1,
+      kind: "settings",
+      ...(keySettings
+        ? { section: "buzz.claude-code/credentials" }
+        : { section: "agents", provider: "buzz.claude-code/claude-code" }),
+    });
+  },
+);
 
 it("opens setup from a Model row without a key and closes it once one is saved", async () => {
   const { type } = installed({ keySaved: false });

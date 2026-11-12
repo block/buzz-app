@@ -1024,6 +1024,47 @@ it("announces split human and agent activity once from the composer", () => {
   );
 });
 
+it.each([false, true])(
+  "opens the conversation for a rootless plugin wake (stoppable=%s)",
+  async (stoppable) => {
+    const f = fixture();
+    const user = userEvent.setup();
+    const open = vi.fn(() => true);
+    f.update([], {
+      local: [
+        {
+          scope: "test",
+          agent,
+          channelId: "channel",
+          messageId: "f".repeat(64),
+          threadRootId: "f".repeat(64),
+          syntheticMessage: true,
+          soloChat: true,
+          state: "working",
+          startedAt: 1,
+          ...(stoppable ? { stoppable: true } : {}),
+        },
+      ],
+    });
+    render(
+      <TypingIndicator
+        session={f.session}
+        channelId="channel"
+        canOpenActivity={() => false}
+        openActivity={open}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Activity: Agent working" }),
+    );
+    await user.click(screen.getByRole("button", { name: /Open .* for Agent/ }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      "buzz://channel/channel",
+      undefined,
+    );
+  },
+);
+
 it("keeps dots beside a local tool step", () => {
   const f = fixture();
   f.update([], {

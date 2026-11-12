@@ -1259,17 +1259,16 @@ function InboxList({
                         aria-label={`Actions for ${sender} in ${context}`}
                         anchor={menu?.id === item.id ? menu.anchor : undefined}
                       >
+                        {/* One action for the row's current state. It stays,
+                            disabled, when it cannot run, so the menu is never
+                            empty. */}
                         <MenuItem
-                          disabled={pending || !unread || !canRead}
-                          onClick={() => markRead(item)}
+                          disabled={pending || !canRead}
+                          onClick={() =>
+                            unread ? markRead(item) : mutate(item, true)
+                          }
                         >
-                          Mark as read
-                        </MenuItem>
-                        <MenuItem
-                          disabled={pending || unread || !canRead}
-                          onClick={() => mutate(item, true)}
-                        >
-                          Mark unread
+                          {unread ? "Mark as read" : "Mark unread"}
                         </MenuItem>
                       </MenuPopup>
                     </ContextMenuRoot>

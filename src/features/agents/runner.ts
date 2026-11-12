@@ -547,6 +547,8 @@ export type RunnerHost = {
   soloWorkspaces?(agent: Agent): SoloWorkspaces | undefined;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
+  /** The owner's sidebar sections, for a run's handle. */
+  sections?(agent: Agent): ReturnType<NonNullable<AgentHandle["sections"]>>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
   /** Whether watch classifiers can run here. */
@@ -3074,6 +3076,10 @@ export class AgentRunners {
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),
+        ...(run &&
+          this.host.sections && {
+            sections: () => this.host.sections?.(agent),
+          }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

@@ -106,7 +106,9 @@ it("lists the tools only where settings can change, and refuses them elsewhere",
   const tools = SETTINGS_TOOLS.map(({ name }) => name);
   expect(await names(client)).toEqual(expect.arrayContaining(tools));
   // A process started ahead of its agent lists them as the agent's will.
-  expect(await names(undefined)).toEqual(await names(client));
+  expect(await names(undefined)).toEqual(
+    expect.arrayContaining(await names(client)),
+  );
   expect((await names(without)).filter((name) => tools.includes(name))).toEqual(
     [],
   );

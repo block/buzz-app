@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { callTool, memoryVersion, TOOLS } from "./tools";
 import { callSessionTool, sessionTools } from "./session-tools";
 import { PLUGIN_TOOLS } from "./plugins";
+import { SECTIONS_TOOLS } from "./sections";
 import { SETTINGS_TOOLS } from "./settings";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { Context } from "@deepseek-ai/cordis";
@@ -157,8 +158,9 @@ it.each([false, true])(
         if (property === "protect")
           return protectedSession ? protect : undefined;
         if (property === "nativeToolGate") return undefined;
-        // The tool list checks whether settings can change here.
-        if (property === "settings") return undefined;
+        // The tool list checks whether settings or sections can change here.
+        if (property === "settings" || property === "sections")
+          return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -1408,13 +1410,14 @@ it("lists its tools before it can call them", async () => {
     },
   )) as { result: { tools: unknown[] } };
   // Every app session lists the same tools: the Buzz, attention, Solo worker,
-  // plugin and settings tools.
+  // plugin, settings and sections tools.
   expect(list.result.tools).toHaveLength(
     TOOLS.length +
       ATTENTION_TOOLS.length +
       SOLO_WORKER_TOOLS.length +
       PLUGIN_TOOLS.length +
-      SETTINGS_TOOLS.length,
+      SETTINGS_TOOLS.length +
+      SECTIONS_TOOLS.length,
   );
   await expect(
     respond(

@@ -1464,3 +1464,80 @@ it("applies an agent owner's edit only with ownership evidence for that author",
   expect(fold(relay.pubkey)).toBe("Whole answer");
   expect(fold(bob.pubkey)).toBe("Spoken prefix");
 });
+
+describe("link preview dismissal edits", () => {
+  const edit = (
+    original: ReturnType<typeof message>,
+    content: string,
+    created_at: number,
+  ) =>
+    signed(alice, {
+      kind: 40003,
+      content,
+      created_at,
+      tags: [
+        ["h", channel],
+        ["e", original.id],
+      ],
+    });
+
+  it("does not mark a message edited when the only change wraps links in <…>", () => {
+    const original = message(
+      alice,
+      channel,
+      "See https://a.test/x and [https://b.test](https://b.test)",
+      10,
+    );
+    const first = edit(
+      original,
+      "See <https://a.test/x> and [https://b.test](https://b.test)",
+      11,
+    );
+    const second = edit(
+      original,
+      "See <https://a.test/x> and <https://b.test>",
+      12,
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [
+      original,
+      first,
+      second,
+    ]);
+    expect(row?.content).toBe("See <https://a.test/x> and <https://b.test>");
+    expect(row?.edited).toBeUndefined();
+  });
+
+  it("still marks the message edited when any edit changes the text", () => {
+    const original = message(alice, channel, "See https://a.test/x", 10);
+    const reworded = edit(original, "Look at https://a.test/x", 11);
+    const dismissed = edit(original, "Look at <https://a.test/x>", 12);
+    expect(
+      foldMessages(channel, relay.pubkey, [original, reworded, dismissed])[0]
+        ?.edited,
+    ).toBe(true);
+    expect(
+      foldMessages(channel, relay.pubkey, [
+        original,
+        edit(original, "See <https://a.test/x> today", 11),
+      ])[0]?.edited,
+    ).toBe(true);
+  });
+
+  it("does not mark an agent envelope edited when a dismissal only wraps a link", () => {
+    const original = signed(alice, {
+      kind: 40002,
+      content: JSON.stringify({ content: "Done: https://a.test/pr/1" }),
+      created_at: 10,
+      tags: [["h", channel]],
+    });
+    const dismissed = signed(alice, {
+      kind: 40003,
+      content: JSON.stringify({ content: "Done: <https://a.test/pr/1>" }),
+      created_at: 11,
+      tags: [["e", original.id]],
+    });
+    const [row] = foldMessages(channel, relay.pubkey, [original, dismissed]);
+    expect(row?.content).toBe("Done: <https://a.test/pr/1>");
+    expect(row?.edited).toBeUndefined();
+  });
+});

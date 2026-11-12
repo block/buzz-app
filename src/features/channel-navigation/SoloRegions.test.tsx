@@ -2222,6 +2222,15 @@ it("keeps a visible priority cue on a muted Solo recovery destination", () => {
 
 it("keeps native rename and selection with a source-owned destination", async () => {
   const h = fixture();
+  Object.assign(h.session, {
+    channelDetails: {
+      ...h.session.channelDetails,
+      available: true,
+      load: async () => {
+        throw new Error("Offline");
+      },
+    },
+  });
   const open = vi.fn();
   await h.register({
     component: ({ ui }) => (

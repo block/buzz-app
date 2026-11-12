@@ -187,6 +187,10 @@ export class ClaudeProcess {
   /** Aborts when the owner stops the work. The next turn, sent or its own,
    * starts anew, so a stopped turn's tool calls stay stopped. */
   private workLifetime = new AbortController();
+  /** Aborts when a turn settles, failed or not, so a tool call it left
+   * waiting, such as for an owner's approval, ends with it. The process and
+   * the next turn's calls are unaffected. */
+  private turnLifetime = new AbortController();
   /** The owner's Stop awaiting Claude's answer, for the work it stopped;
    * another Stop of that work shares it. */
   private stopRequest:
@@ -724,7 +728,12 @@ export class ClaudeProcess {
     this.stopping = false;
     this.stopped = false;
     this.compacting = false;
+    this.endTurn();
     for (const resolve of this.waiters.splice(0)) resolve(settled);
+  }
+  private endTurn() {
+    this.turnLifetime.abort(new Error("The turn ended"));
+    this.turnLifetime = new AbortController();
   }
 
   private readError(data: string) {
@@ -787,10 +796,13 @@ export class ClaudeProcess {
       this.reportsState = true;
       const active = this.active;
       const starts = !this.working && !this.busy && message.state !== "idle";
+      const ends = this.working && message.state === "idle";
       this.working = message.state !== "idle";
       // A turn of its own, such as a background task's, is new work.
       if (starts) this.renew();
       if (!this.working && this.pending) this.done();
+      // A turn of its own has no message to settle; its calls end with it.
+      else if (!this.working && ends) this.endTurn();
       if (!this.active) this.stopping = false;
       if (active !== this.active) this.onActivity?.();
       if (active && !this.active) this.onQuiet?.();
@@ -901,6 +913,7 @@ export class ClaudeProcess {
           AbortSignal.any([
             this.protectionLifetime.signal,
             this.workLifetime.signal,
+            this.turnLifetime.signal,
           ]),
         ).catch((error) => ({
           jsonrpc: "2.0",

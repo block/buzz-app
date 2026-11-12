@@ -1033,7 +1033,7 @@ it("asks for an API key and is ready once one is saved", async () => {
   const field = screen.getByLabelText("Anthropic API key");
   expect(field).toHaveAttribute("type", "password");
   await user.type(field, "sk-ant-api03-pasted");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   expect(
     await screen.findByText("Claude runs with your Anthropic API key."),
   ).toBeVisible();
@@ -2511,7 +2511,7 @@ async function heldKeySaves() {
     saves,
     onClose,
     field: () => screen.getByLabelText("Replace API key"),
-    save: () => screen.getByRole("button", { name: "Save key" }),
+    save: () => screen.getByRole("button", { name: "Save" }),
   };
 }
 
@@ -2546,7 +2546,6 @@ it("keeps focus on Save after a keyboard save clears the field", async () => {
   act(() => saves[0]?.settle());
   expect(await screen.findByText("Saved the Anthropic API key.")).toBeVisible();
   expect(field()).toHaveValue("");
-  // Empty again, Save stays focusable: a browser drops a disabled one's focus.
   expect(save()).not.toBeDisabled();
   expect(save()).toHaveAttribute("aria-disabled", "true");
   expect(document.activeElement).toBe(save());

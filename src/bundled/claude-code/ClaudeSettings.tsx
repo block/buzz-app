@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
+import { Header } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { SignIn } from "./auth";
+import { KEY_ONCE, SignIn } from "./auth";
 import { SavedClaudeKey } from "./SavedClaudeKey";
 import type { ClaudeSetup } from "./setup";
 
@@ -81,53 +81,55 @@ export function ClaudeSettings({
       <Header
         id="claude-settings-title"
         title="Claude"
-        subtitle="Manage Claude’s credentials on this computer."
+        subtitle={
+          configured === true
+            ? "Manage Claude’s credentials on this computer."
+            : KEY_ONCE
+        }
       />
       <div className="mt-section-gap grid gap-section-gap">
-        <div>
-          <InlineHeader title="Anthropic API key" />
-          <SettingsGroup layout="form">
-            <LoadingRegion
-              pending={checking}
-              label="Checking for a saved key…"
-              statusVisibility="screen-reader"
-              feedback={
-                readError ? (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <p role="alert" className="buzz-field-error m-0">
-                      {readError}
-                    </p>
-                    <Button onClick={() => void check()}>Retry</Button>
-                  </div>
-                ) : undefined
-              }
-            >
-              {configured === true ? (
-                <SavedClaudeKey
-                  setup={setup}
-                  active={active}
-                  disabled={disabled}
-                  conceal={confirm || clearing || !!readError || !active()}
-                  onSavingChange={setSaving}
-                  trigger={actionsButton}
-                  onRemove={() => {
-                    if (active()) {
-                      setClearError("");
-                      setConfirm(true);
-                    }
-                  }}
-                />
-              ) : (
-                <SignIn
-                  setup={setup}
-                  disabled={disabled || configured === undefined}
-                  active={active}
-                  onSavingChange={setSaving}
-                />
-              )}
-            </LoadingRegion>
-          </SettingsGroup>
-        </div>
+        <LoadingRegion
+          pending={checking}
+          label="Checking for a saved key…"
+          statusVisibility="screen-reader"
+          feedback={
+            readError ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <p role="alert" className="buzz-field-error m-0">
+                  {readError}
+                </p>
+                <Button onClick={() => void check()}>Retry</Button>
+              </div>
+            ) : undefined
+          }
+        >
+          {configured === true ? (
+            <SettingsGroup layout="form">
+              <SavedClaudeKey
+                setup={setup}
+                active={active}
+                disabled={disabled}
+                conceal={confirm || clearing || !!readError || !active()}
+                onSavingChange={setSaving}
+                trigger={actionsButton}
+                onRemove={() => {
+                  if (active()) {
+                    setClearError("");
+                    setConfirm(true);
+                  }
+                }}
+              />
+            </SettingsGroup>
+          ) : (
+            <SignIn
+              variant="settings"
+              setup={setup}
+              disabled={disabled || configured === undefined}
+              active={active}
+              onSavingChange={setSaving}
+            />
+          )}
+        </LoadingRegion>
       </div>
       {confirm && (
         <AlertDialog

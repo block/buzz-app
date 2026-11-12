@@ -126,8 +126,7 @@ export function SavedClaudeKey({
   return (
     <div aria-busy={saving}>
       <Field
-        label={editing ? "Replacement API key" : "Saved API key"}
-        labelVisibility="hidden"
+        label="Anthropic API key"
         description="Saved securely on this computer."
         error={error}
       >

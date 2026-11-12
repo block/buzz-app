@@ -73,13 +73,12 @@ function fixture(active = () => true) {
 }
 
 async function savedKey() {
-  const input = await screen.findByLabelText("Saved API key");
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "API key actions" }),
     ).toBeEnabled(),
   );
-  return input;
+  return screen.getByLabelText("Anthropic API key");
 }
 
 async function action(name: string, user = userEvent.setup()) {
@@ -92,7 +91,7 @@ async function action(name: string, user = userEvent.setup()) {
 async function replaceKey(user = userEvent.setup()) {
   await savedKey();
   await action("Replace", user);
-  const input = screen.getByLabelText("Replacement API key");
+  const input = screen.getByLabelText("Anthropic API key");
   await waitFor(() => expect(input).not.toHaveAttribute("readonly"));
   return input;
 }
@@ -109,9 +108,35 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   const { spawn } = fixture();
   const add = await screen.findByLabelText("Anthropic API key");
   await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
+  const card = add.closest(".buzz-settings-group");
+  expect(card).not.toBeNull();
+  expect(screen.getAllByText("Anthropic API key")).toHaveLength(1);
+  expect(card).toContainElement(screen.getByText("Anthropic API key"));
+  expect(
+    screen
+      .getByText(/^Claude requires an API key/)
+      .closest(".buzz-settings-group"),
+  ).toBeNull();
+  expect(
+    screen
+      .getByText(/^Claude requires an API key/)
+      .closest(".buzz-content-header"),
+  ).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await user.type(add, " ");
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(spawn).not.toHaveBeenCalled();
   await user.type(add, "sk-ant-first");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
+  expect(add.closest(".buzz-input-group")).toContainElement(
+    screen.getByRole("button", { name: "Save" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
   const confirmation = await removeKey(user);
   expect(confirmation).toHaveAccessibleDescription(
@@ -138,7 +163,7 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   await screen.findByLabelText("Anthropic API key");
   expect(native.saved).toBe(false);
   await user.type(screen.getByLabelText("Anthropic API key"), "sk-ant-third");
-  await user.click(screen.getByRole("button", { name: "Save key" }));
+  await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
   expect(native.saved).toBe(true);
 });
@@ -176,7 +201,7 @@ it.each(["Save", "Remove key"])(
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     if (operation === "Save") {
       expect(native.value).toBe("sk-ant-new");
-      expect(screen.getByLabelText("Saved API key")).toHaveAttribute(
+      expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(
         "readonly",
       );
     } else {
@@ -189,7 +214,7 @@ it.each(["Save", "Remove key"])(
 it("keeps a failed removal open for retry and prevents duplicate writes while pending", async () => {
   const user = userEvent.setup();
   fixture();
-  await screen.findByLabelText("Saved API key");
+  await savedKey();
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
@@ -225,6 +250,8 @@ it("preserves a rejected replacement and blocks other actions while saving", asy
   const user = userEvent.setup();
   fixture();
   const input = await replaceKey(user);
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   fireEvent.change(input, { target: { value: "invalid-key" } });
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
@@ -274,12 +301,12 @@ it("treats a credential read failure as unknown and offers retry", async () => {
   expect(
     screen.queryByRole("button", { name: "API key actions" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Save key" })).toHaveAttribute(
+  expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(
     "aria-disabled",
     "true",
   );
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByLabelText("Saved API key");
+  await savedKey();
 });
 
 it("rejects writes from a retired settings visit", async () => {
@@ -313,7 +340,7 @@ it("ignores an older credential read that resolves after removal", async () => {
   const user = userEvent.setup();
   fixture();
   try {
-    await screen.findByLabelText("Saved API key");
+    await savedKey();
     await removeKey(user);
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
@@ -332,7 +359,7 @@ it("checks visit ownership again before confirming removal", async () => {
   let active = true;
   const user = userEvent.setup();
   fixture(() => active);
-  await screen.findByLabelText("Saved API key");
+  await savedKey();
   await removeKey(user);
   active = false;
   await user.click(
@@ -364,7 +391,7 @@ it("offers replacement and confirmed removal without reading the saved key", asy
     screen.getAllByRole("menuitem").map((item) => item.textContent),
   ).toEqual(["Replace", "Remove"]);
   await user.click(screen.getByRole("menuitem", { name: "Replace" }));
-  expect(screen.getByLabelText("Replacement API key")).toHaveValue("");
+  expect(screen.getByLabelText("Anthropic API key")).toHaveValue("");
   expect(
     native.invoke.mock.calls.every(
       ([command]) => command === "claude_api_key_status",
@@ -396,7 +423,7 @@ it("opens replacement from input focus without trapping reverse Tab or reopening
   );
   await user.keyboard("{Enter}");
   await waitFor(() =>
-    expect(screen.getByLabelText("Replacement API key")).toHaveValue(""),
+    expect(screen.getByLabelText("Anthropic API key")).toHaveValue(""),
   );
   expect(input).toHaveFocus();
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
@@ -457,7 +484,7 @@ it("starts replacement blank, gates Save, and discards the draft on Cancel", asy
   expect(input).toHaveValue("");
   expect(input).toHaveAttribute("type", "password");
   await waitFor(() => expect(input).toHaveFocus());
-  const save = screen.getByRole("button", { name: "Save" });
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   expect(
     screen.queryByRole("menuitem", { name: "Remove" }),
   ).not.toBeInTheDocument();
@@ -465,12 +492,12 @@ it("starts replacement blank, gates Save, and discards the draft on Cancel", asy
   expect(
     screen.queryByRole("button", { name: "API key actions" }),
   ).not.toBeInTheDocument();
-  expect(save).toBeDisabled();
   await user.keyboard("{Enter}");
   fireEvent.change(input, { target: { value: "" } });
-  expect(save).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   fireEvent.keyDown(input, { key: "Enter" });
   fireEvent.change(input, { target: { value: "sk-ant-draft" } });
+  const save = screen.getByRole("button", { name: "Save" });
   expect(save).toBeEnabled();
   fireEvent.change(input, { target: { value: native.value } });
   expect(save).toBeEnabled();

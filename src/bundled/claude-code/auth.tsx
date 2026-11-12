@@ -13,6 +13,8 @@ import { ClaudeSettings } from "./ClaudeSettings";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
+import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import type { Spawn } from "./claude";
 import type { ClaudeSetup } from "./setup";
@@ -20,7 +22,7 @@ import type { ClaudeSetup } from "./setup";
 const NO_KEY =
   "Claude needs an Anthropic API key. Add one in Settings → Claude.";
 /** What setup says first: the key is one for all of Claude, not per agent. */
-const KEY_ONCE =
+export const KEY_ONCE =
   "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.";
 const REJECTED_KEY =
   "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Claude.";
@@ -243,23 +245,31 @@ export function SignIn({
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
-  variant?: "full" | "compact";
+  variant?: "full" | "compact" | "settings";
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
   onSavingChange?: ((saving: boolean) => void) | undefined;
 }) {
+  const form = (
+    <KeyForm
+      setup={setup}
+      disabled={disabled}
+      onSaved={onSaved}
+      active={active}
+      onSavingChange={onSavingChange}
+    />
+  );
   return (
     <div className="grid gap-3">
-      {/* One paragraph says it all; the field adds no description of its own. */}
-      <p className="m-0 text-body-sm text-secondary">{KEY_ONCE}</p>
-      <KeyForm
-        setup={setup}
-        disabled={disabled}
-        compact={variant === "compact"}
-        onSaved={onSaved}
-        active={active}
-        onSavingChange={onSavingChange}
-      />
+      {/* Settings puts the introduction in its shared page header. */}
+      {variant !== "settings" && (
+        <p className="m-0 text-body-sm text-secondary">{KEY_ONCE}</p>
+      )}
+      {variant === "settings" ? (
+        <SettingsGroup layout="form">{form}</SettingsGroup>
+      ) : (
+        form
+      )}
     </div>
   );
 }
@@ -315,7 +325,6 @@ export function Missing({
 function KeyForm({
   setup,
   disabled = false,
-  compact = false,
   replace = false,
   onSaved,
   active = () => true,
@@ -323,7 +332,6 @@ function KeyForm({
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
-  compact?: boolean;
   replace?: boolean;
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
@@ -365,43 +373,47 @@ function KeyForm({
             "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it.",
         })}
       >
-        <Input
-          type="password"
-          autoComplete="off"
-          value={key}
-          readOnly={!!saving}
-          aria-disabled={saving || disabled ? true : undefined}
-          onValueChange={setKey}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-            event.preventDefault();
-            void save();
-          }}
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          {...(!replace && { variant: "prominent" as const })}
-          size={compact ? "sm" : "md"}
-          disabled={disabled || !key.trim()}
-          focusableWhenDisabled
-          loading={!!saving}
-          onClick={() => void save()}
+        <InputGroup
+          trailing={
+            <Button
+              type="button"
+              variant={replace ? "subtle" : "prominent"}
+              size="sm"
+              disabled={disabled || !key.trim()}
+              focusableWhenDisabled
+              loading={!!saving}
+              onClick={() => void save()}
+            >
+              Save
+            </Button>
+          }
         >
-          Save key
-        </Button>
-        {saved && (
-          <p
-            role={saved.ok ? "status" : "alert"}
-            className={
-              saved.ok ? "m-0 text-body-sm text-subtle" : "buzz-field-error m-0"
-            }
-          >
-            {saved.text}
-          </p>
-        )}
-      </div>
+          <Input
+            type="password"
+            autoComplete="off"
+            value={key}
+            readOnly={!!saving}
+            aria-disabled={saving || disabled ? true : undefined}
+            onValueChange={setKey}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing)
+                return;
+              event.preventDefault();
+              void save();
+            }}
+          />
+        </InputGroup>
+      </Field>
+      {saved && (
+        <p
+          role={saved.ok ? "status" : "alert"}
+          className={
+            saved.ok ? "m-0 text-body-sm text-subtle" : "buzz-field-error m-0"
+          }
+        >
+          {saved.text}
+        </p>
+      )}
     </div>
   );
 }

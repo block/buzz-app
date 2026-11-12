@@ -649,8 +649,9 @@ and are asked to sign in again in Buzz.
     (`in:@me` is your own). A name that matches several conversations, or
     none, says so instead of searching.
   - `after:`, `before:`, `on:` a date (`YYYY-MM-DD`, `today`, `yesterday`), and
-    `during:` a day, month (`2026-10`, `october`), or year, in local time.
-    `after:` includes its day; `before:` does not.
+    `during:` a day, month (`2026-10`, `october`), or year, in local time, or a
+    rolling period ending today (`7d`, `4w`, `3m`, `1y`). `after:` includes its
+    day; `before:` does not.
   - `"exact phrase"` and `-word` match whole words, not word starts. Anything
     inside quotes, `from:` or `-` included, is part of the phrase.
   Other words with a colon, such as `has:link`, are searched as text. An
@@ -669,8 +670,25 @@ and are asked to sign in again in Buzz.
   it. With a dialog open, it searches that dialog. It doesn't find messages
   that haven't loaded or text in the message box; use ⌘F (**Search this
   conversation**) to search a conversation's full history.
+- **Search results** list the best match's group first: channels, people,
+  pages and messages are ordered by how well they match, each heading showing
+  a count and why it ranks there. Messages lead when the text reads like a
+  phrase. Each message shows the words around the match. A panel beside the
+  results previews the highlighted row: the message with the ones just before
+  and after it, or a channel's or person's latest messages. Tab and Shift+Tab
+  show one group whole (as does **See all**); Escape goes back. When the
+  community offers decisions, the first page of message results is reordered
+  by likely relevance a moment after it appears, and the heading says
+  **Reranked**. Groups reorder as slower results arrive until you move the
+  highlight; after that they stay put and later groups join at the end. The
+  panel and key hints hide in narrow windows.
+- **Ask an agent**: start with `ask:` to write a question for your default
+  agent, or choose **Ask** under a long query. Enter opens New chat with the
+  question addressed to that agent; press Enter again to send it. With an empty
+  query, search lists your recent searches on this device.
 - **Channel, people, and message search** shows “Searching…” beside each section heading
-  if a lookup takes more than a second. You can open results already shown
+  if a lookup takes more than a second; in the combined results, “Still
+  searching messages…” appears at the end instead. You can open results already shown
   while the rest of the search finishes.
 - **Search while offline**: while a community is offline or still connecting,
   search finds and opens the conversations saved on this device, and a line

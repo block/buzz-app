@@ -188,3 +188,52 @@ it("keeps a footer below the results, outside their scrollport, so it stays in v
     "data-search-footer",
   );
 });
+
+it("keeps Peek's group order once the highlight moves, adding late groups at the end", () => {
+  const onFreeze = vi.fn();
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  const peek = { ranked: true, preview: () => null, onFreeze };
+  const palette = (groups: { label: string; rows: string[] }[]) => (
+    <SearchChoices
+      query="lau"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={peek}
+      groups={groups.map(({ label, rows }) => ({
+        label,
+        destinations: rows.map(row),
+      }))}
+    />
+  );
+  const order = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+  const { rerender } = render(
+    palette([
+      { label: "Chats", rows: ["chat"] },
+      { label: "People", rows: ["lau"] },
+    ]),
+  );
+  // Untouched, an arrival re-ranks every group.
+  rerender(
+    palette([
+      { label: "People", rows: ["lau"] },
+      { label: "Chats", rows: ["chat"] },
+    ]),
+  );
+  expect(order()).toEqual(["People", "Chats"]);
+  expect(onFreeze).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  expect(onFreeze).toHaveBeenCalledOnce();
+  // Moved, groups shown keep their places and a late one goes last.
+  rerender(
+    palette([
+      { label: "Messages", rows: ["message"] },
+      { label: "Chats", rows: ["chat"] },
+      { label: "People", rows: ["lau"] },
+    ]),
+  );
+  expect(order()).toEqual(["People", "Chats", "Messages"]);
+  expect(onFreeze).toHaveBeenCalledOnce();
+});

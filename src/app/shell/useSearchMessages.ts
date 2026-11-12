@@ -1,3 +1,4 @@
+import { plainText } from "../../features/notifications/content";
 import { workflowOwner } from "../../features/relay/workflow-attribution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -5,6 +6,7 @@ import {
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
+import { threadReference } from "../../features/relay/thread-reference";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { foldProfiles } from "../../features/relay/profiles";
@@ -31,7 +33,28 @@ export type SearchMessage = Readonly<{
   workflowOwnerId?: string | undefined;
   createdAt: number;
   preview: string;
+  /** The searchable text, whitespace kept, for snippets and previews. */
+  text: string;
+  /** A forum comment's post, which opens with it. */
+  threadRootId?: string | undefined;
 }>;
+
+/** Message kinds search returns: chat, agent and diff messages, forum posts
+ * and their comments. */
+export const SEARCH_KINDS = [9, 40002, 40008, 45001, 45003];
+
+/** An indexed event's readable text. */
+export function eventText(event: { kind: number; content: string }) {
+  if (event.kind !== 40002) return event.content;
+  const body = objectBody(event.content);
+  return typeof body?.content === "string" ? body.content : "Agent message";
+}
+
+/** An indexed event's text as it reads, without Markdown syntax and with
+ * spoilers hidden, for snippets, previews and reranking. */
+export function searchText(event: { kind: number; content: string }) {
+  return plainText(eventText(event), { limit: 4000 });
+}
 type Result = {
   owner: object;
   messages: readonly SearchMessage[];
@@ -70,7 +93,7 @@ async function readPage(
     const hitChannelId = destinations[0]?.[1];
     const hitChannel = hitChannelId && session.channels.get?.(hitChannelId);
     if (
-      ![9, 40002, 40008].includes(event.kind) ||
+      !SEARCH_KINDS.includes(event.kind) ||
       destinations.length !== 1 ||
       !hitChannelId ||
       (channelId && hitChannelId !== channelId) ||
@@ -80,13 +103,9 @@ async function readPage(
       return [];
     // Search returns original indexed events, not an auxiliary edit fold.
     // Exact navigation owns current content/deletion checks when opened.
-    const body = event.kind === 40002 ? objectBody(event.content) : undefined;
-    const text =
-      event.kind === 40002
-        ? typeof body?.content === "string"
-          ? body.content
-          : "Agent message"
-        : event.content;
+    const text = searchText(event);
+    const root =
+      event.kind === 45003 ? threadReference(event)?.rootId : undefined;
     return [
       {
         id: event.id,
@@ -95,6 +114,8 @@ async function readPage(
         workflowOwnerId: workflowOwner(event, session.workflowAuthority),
         createdAt: event.created_at,
         preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
+        text,
+        ...(root ? { threadRootId: root } : {}),
       },
     ];
   });
@@ -290,7 +311,7 @@ export function useSearchMessages(
           }
         }
         const filter: ReadFilter = {
-          kinds: [9, 40002, 40008],
+          kinds: SEARCH_KINDS,
           ...(parsed.text
             ? {
                 search: parsed.text,

@@ -36,8 +36,28 @@ import {
   ArrowsDownUpIcon,
   CalendarIcon,
   ChatCircleIcon,
+  ChatsCircleIcon,
+  ClockIcon,
+  GearIcon,
+  HashIcon,
   MessageReplyIcon,
+  InfoIcon,
+  RobotIcon,
+  SparklesIcon,
+  XIcon,
+  UserIcon,
+  UsersIcon,
 } from "../../shared/design-system/icons/index";
+import type { Decisions } from "../../features/decisions/service";
+import { useDefaultAgent } from "../../features/solo/default-agent";
+import type { MentionRecipient } from "../../features/messages/mention-draft";
+import { searchTerms, snippet } from "../../features/search/snippet";
+import {
+  readRecentSearches,
+  recordRecentSearch,
+} from "../../features/search/recent-searches";
+import { useMessageRerank } from "./message-rerank";
+import { SearchPreview } from "./SearchPreview";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Calendar } from "../../shared/design-system/ui/Calendar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -134,7 +154,7 @@ const noMembers: readonly string[] = [];
 /** "Search in this conversation" narrows the search and "Show more messages"
  * extends it; neither is a result. */
 const isSearchAction = (key: string) =>
-  key.startsWith("scope:") || key === "more-messages";
+  key.startsWith("scope:") || key === "more-messages" || key === "ask";
 
 function useDelayedSearch(pending: boolean) {
   const [slow, setSlow] = useState(false);
@@ -196,8 +216,19 @@ export function SearchResults({
   sidebarScope,
   views,
   offline,
+  decisions,
+  community,
+  openAsk,
 }: {
   session: RelaySession;
+  /** Reranks message hits by how well each answers the query. */
+  decisions?: Decisions | undefined;
+  /** The community's relay URL, for the decision provider. */
+  community?: string | undefined;
+  /** Open a new chat with `agent` that starts with `question`. */
+  openAsk?:
+    | ((question: string, agent: { pubkey: string; name: string }) => void)
+    | undefined;
   /** Tabs that switch this search to other views of it. */
   views?: SearchViews | undefined;
   pages: readonly SearchDestination[];
@@ -222,7 +253,14 @@ export function SearchResults({
 } & SearchInputProps) {
   const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
-  const parsed = useMemo(() => parseSearchOperators(query.trim()), [query]);
+  // `ask:` hands the question to the default agent instead of searching.
+  const askMatch = /^\s*ask:\s*/i.exec(query);
+  const asking = !!askMatch;
+  const question = askMatch ? query.slice(askMatch[0].length).trim() : "";
+  const parsed = useMemo(
+    () => parseSearchOperators(asking ? "" : query.trim()),
+    [query, asking],
+  );
   // `in:@` names a person too, so it shares the author picker.
   const authorPrompt = operatorMatches(
     query,
@@ -367,6 +405,10 @@ export function SearchResults({
   const datePresets =
     dateOperator === "during"
       ? ([
+          "Past 7 days",
+          "Past 30 days",
+          "Past 3 months",
+          "Past 12 months",
           "Today",
           "Yesterday",
           "This week",
@@ -395,8 +437,15 @@ export function SearchResults({
     if (label === "This month") day.setDate(1);
     const date = localDate(day);
     // There is no week period, so `during:` this week starts after its Monday.
-    const operand =
-      dateOperator !== "during"
+    const rolling = {
+      "Past 7 days": "7d",
+      "Past 30 days": "30d",
+      "Past 3 months": "3m",
+      "Past 12 months": "12m",
+    }[label as string];
+    const operand = rolling
+      ? `during:${rolling}`
+      : dateOperator !== "during"
         ? `${datePrompt?.[1]}:${date}`
         : label === "This week"
           ? `after:${date}`
@@ -553,10 +602,13 @@ export function SearchResults({
     session.agentChoices.snapshot,
     session.agentChoices.snapshot,
   );
+  // `ask:` and the Ask row start a chat with the agent New chat would tag,
+  // read only once there is something to ask.
+  const [askAgent, setAskAgent] = useState<MentionRecipient>();
   const [sort, setSort] = useState<SearchSort>("relevance");
   const search = useSearchMessages(
     session,
-    offline ? "" : query,
+    offline || asking ? "" : query,
     scopedChannelId,
     operatorChannelId,
     new Map(
@@ -825,8 +877,16 @@ export function SearchResults({
     () => (usageScope ? readSearchUsage(usageScope) : noSearchUsage),
     [usageScope],
   );
+  const recentSearches = useMemo(
+    () => (usageScope ? readRecentSearches(usageScope) : []),
+    [usageScope],
+  );
+  const remember = () => {
+    if (usageScope && query.trim()) recordRecentSearch(usageScope, query);
+  };
   const choose = (key: string, run: () => void) => () => {
     if (usageScope) recordChoice(usageScope, needle, key);
+    remember();
     cancelPersonOpen(key);
     run();
   };
@@ -1159,6 +1219,11 @@ export function SearchResults({
               ? soloDetail(channel)
               : "Conversation",
       icon: ChatCircleIcon,
+      peek: {
+        kind: "channel",
+        channelId: channel.id,
+        about: channel.description,
+      },
       run: choose(key, () => openConversation(channel.id)),
     };
   };
@@ -1301,6 +1366,7 @@ export function SearchResults({
         shape: person.agent ? "squircle" : "circle",
       },
       score,
+      peek: { kind: "person", pubkey: person.pubkey },
       run: choose(key, () =>
         newSession
           ? openAgentSession(person.pubkey)
@@ -1423,7 +1489,46 @@ export function SearchResults({
           },
         ]
       : [];
-  const messages: SearchDestination[] = search.messages.map((message) => {
+  const nameOf = (pubkey: string, channelId?: string) =>
+    resolveName(
+      pubkey,
+      profiles.get(pubkey)?.name ?? pubkey.slice(0, 10),
+      (channelId && session.channels.get?.(channelId)?.members) || noMembers,
+    );
+  const whereOf = (channelId: string) => {
+    const channel = session.channels.get?.(channelId);
+    const name = names.get(channelId) ?? channel?.name ?? "Conversation";
+    return channel?.channelType === "stream" || channel?.channelType === "forum"
+      ? `#${name}`
+      : name;
+  };
+  const terms = useMemo(() => searchTerms(parsed.text), [parsed.text]);
+  // The text whose results the person has started moving through: from then
+  // on nothing reorders.
+  const [frozenFor, setFrozenFor] = useState<string>();
+  const rerank = useMessageRerank(
+    decisions,
+    community,
+    parsed.text,
+    search.messages,
+    !!parsed.text && !search.newestFirst && !search.loading,
+    (message) => {
+      const channel = session.channels.get?.(message.channelId);
+      return {
+        where:
+          channel?.channelType === "dm"
+            ? `Direct message: ${whereOf(message.channelId)}`
+            : whereOf(message.channelId),
+        author: nameOf(
+          message.workflowOwnerId ?? message.authorId,
+          message.channelId,
+        ),
+        mine: message.authorId === session.viewer,
+      };
+    },
+    frozenFor === query,
+  );
+  const messages: SearchDestination[] = rerank.messages.map((message) => {
     // Every listed hit's channel is readable here, with settled metadata.
     const channel = session.channels.get?.(message.channelId);
     const displayId = message.workflowOwnerId ?? message.authorId;
@@ -1433,16 +1538,32 @@ export function SearchResults({
       list.channels.find((channel) => channel.id === message.channelId)
         ?.members ?? noMembers,
     );
+    const shown = snippet(message.text || message.preview, terms);
     return {
       key: message.id,
-      label: message.preview,
+      label: shown.text || "Attachment",
+      ...(shown.matches.length ? { matches: shown.matches } : {}),
+      peek: {
+        kind: "message" as const,
+        channelId: message.channelId,
+        messageId: message.id,
+        createdAt: message.createdAt,
+        authorId: message.workflowOwnerId ?? message.authorId,
+        text: message.text || message.preview,
+      },
       detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
       detailIcon: channel && channelIcon(channel),
       detailIconLabel: channel && channelIconLabel(channel),
       icon: ChatCircleIcon,
+      avatar: {
+        src: avatarMedia(profiles.get(displayId)?.picture, session.media),
+        shape: "circle" as const,
+        name,
+      },
       run: () => {
         cancelPersonOpen();
-        openConversation(message.channelId, message.id);
+        remember();
+        openConversation(message.channelId, message.id, message.threadRootId);
       },
     };
   });
@@ -1462,6 +1583,81 @@ export function SearchResults({
         },
       ]
     : messages;
+  const askRow =
+    openAsk && askAgent
+      ? (text: string): SearchDestination => ({
+          key: "ask",
+          label: askAgent.name,
+          detail: `Search Buzz to answer: ${text}`,
+          icon: RobotIcon,
+          trailing: (
+            <span className="search-peek-start text-body-sm text-subtle">
+              Start chat <kbd>↵</kbd>
+            </span>
+          ),
+          run: () => {
+            cancelPersonOpen();
+            if (usageScope) recordRecentSearch(usageScope, `ask: ${text}`);
+            openAsk(text, askAgent);
+          },
+        })
+      : undefined;
+  /** Adds an operator to the typed text, for its picker to complete. */
+  const addOperator = (operator: string) => {
+    if (operator === "ask:") onQueryChange(`ask: ${parsed.text}`);
+    else {
+      const visible = displayQuery ?? query;
+      updateDisplayQuery(
+        `${visible.trimEnd()}${visible.trim() ? " " : ""}${operator}`,
+      );
+    }
+    input.current?.focus();
+  };
+  const hints = asking ? (
+    <div className="search-peek-hints">
+      <button
+        type="button"
+        tabIndex={-1}
+        className="search-peek-ask-chip text-body-sm"
+        aria-label="Remove ask:"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          onQueryChange(question);
+          input.current?.focus();
+        }}
+      >
+        <SparklesIcon size={14} aria-hidden="true" />
+        Ask {askAgent?.name ?? "your agent"}
+        <XIcon size={12} aria-hidden="true" />
+      </button>
+      <span className="text-body-sm text-subtle">
+        {askAgent?.name ?? "Your agent"} searches Buzz for you in a new chat
+      </span>
+    </div>
+  ) : !scopedChannelId && !offline ? (
+    <div className="search-peek-hints">
+      {(
+        [
+          ["from:", "person", "person"],
+          ["in:", "channel", "channel"],
+          ["during:", "date", "plugin"],
+          ["ask:", askAgent?.name ?? "agent", "agent"],
+        ] as const
+      ).map(([operator, what, tone]) => (
+        <button
+          key={operator}
+          type="button"
+          tabIndex={-1}
+          className="search-peek-hint"
+          data-tone={tone}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => addOperator(operator)}
+        >
+          {operator} <span>{what}</span>
+        </button>
+      ))}
+    </div>
+  ) : undefined;
   const directoryPending = publicChannels.loading || personDirectory.loading;
   const messagesPending = operatorLookupPending || search.loading;
   const slowMessages = useDelayedSearch(messagesPending);
@@ -1511,6 +1707,165 @@ export function SearchResults({
     input.current?.focus();
     retry();
   };
+  // Named destinations lead, so typed text selects one first. The group with
+  // the best match leads them, so Enter opens the "Work" page before a
+  // channel that merely contains it. Every group scores on one scale, match
+  // and usage, not the relationship band that orders rows inside People and
+  // Agents. An exact name always leads. After exact names, when the text
+  // finds one of the viewer's agents, its "New chat" row leads and its chats
+  // follow. Messages then take their place among the rest by how strongly
+  // they answer the text: a topic of three or more words, or many hits
+  // against only weak name matches, puts them ahead.
+  const namedGroups = [
+    {
+      label: "Agents",
+      tone: "agent" as const,
+      icon: RobotIcon,
+      destinations: agentResults,
+      best: Math.min(...agentResults.map(({ score }) => score)),
+    },
+    {
+      label: "Chats",
+      tone: "chat" as const,
+      icon: ChatsCircleIcon,
+      destinations: chatResults.map(({ channel }) =>
+        conversationDestination(channel),
+      ),
+      best: Math.min(...chatResults.map(({ rank }) => rank)),
+      exactName: chatResults.some(({ exactName }) => exactName),
+    },
+    {
+      label: "Channels",
+      tone: "channel" as const,
+      icon: HashIcon,
+      destinations: channelResults.map(channelDestination),
+      best: Math.min(...channelResults.map(channelRank)),
+      headingStatus: slowChannels ? "Searching…" : undefined,
+    },
+    {
+      label: "People",
+      tone: "person" as const,
+      icon: UserIcon,
+      destinations: personResults,
+      headingStatus: slowPeople ? "Searching…" : undefined,
+      best: Math.min(...personResults.map(({ score }) => score)),
+    },
+    {
+      label: "Direct messages",
+      tone: "person" as const,
+      icon: UsersIcon,
+      destinations: directMessageResults.map(conversationDestination),
+      best: Math.min(...directMessageResults.map(dmRank)),
+    },
+    {
+      label: "Pages",
+      tone: "page" as const,
+      icon: GearIcon,
+      // PageSearch already ranked these by text and underlined them; here
+      // usage and earlier choices adjust the order.
+      destinations: byMatch(pages, (page) => rankOf(page.label, page.key)).map(
+        (page) => ({ ...page, run: choose(page.key, page.run) }),
+      ),
+      best: Math.min(...pages.map((page) => rankOf(page.label, page.key))),
+    },
+  ]
+    .map(({ exactName, ...group }) => {
+      const named = exactName ?? exact(group.best);
+      return {
+        ...group,
+        named,
+        lead:
+          named ||
+          (newChats.size > 0 &&
+            (group.label === "Agents" || group.label === "Chats")),
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(b.named) - Number(a.named) ||
+        Number(b.lead) - Number(a.lead) ||
+        (a.lead ? 0 : a.best - b.best),
+    )
+    .map(({ best, lead, named, ...group }) => {
+      const top = group.destinations[0];
+      const tier = top ? rankName(top.label) : undefined;
+      const remembered = !!top && top.key === picked;
+      const why = named
+        ? "Exact name"
+        : lead
+          ? "Your agent"
+          : remembered
+            ? "You picked this before"
+            : tier === MatchRank.prefix
+              ? "Name starts with it"
+              : tier === MatchRank.wordStart
+                ? "Words in the name"
+                : "Part of a name";
+      const strength =
+        named || lead || remembered
+          ? 100
+          : tier === MatchRank.prefix
+            ? 85
+            : tier === MatchRank.wordStart
+              ? 60
+              : 40;
+      // Inline settings slot in by rank, so they follow too.
+      return { ...group, why, strength, rank: lead ? -Infinity : best };
+    });
+  const words = parsed.text.split(/\s+/).filter(Boolean).length;
+  const hits = messages.length;
+  // Messages stay below a name that starts with the text (85): a page of 20
+  // tops out near 84, and later pages don't count. A topic of three or more
+  // words takes that top score.
+  const messageStrength = !hits
+    ? -1
+    : words >= 3
+      ? 84
+      : 40 + 10 * Math.log2(1 + Math.min(hits, 20)) - (search.hasMore ? 0 : 5);
+  const messageCount = search.hasMore ? `${hits}+` : undefined;
+  const messageLead = namedGroups.findIndex(
+    (group) => group.destinations.length && group.strength < messageStrength,
+  );
+  const messageGroup: SearchGroup = {
+    label: "Messages",
+    icon: ChatCircleIcon,
+    tone: "message",
+    rank: messageLead === 0 ? -Infinity : Infinity,
+    why: hits
+      ? `${words >= 3 ? "Reads like a topic" : `${messageCount ?? hits} mention it`}${rerank.reranked ? " · Reranked" : ""}`
+      : undefined,
+    count: messageCount,
+    destinations: messageRows,
+    // Until the relay answers, Messages has no heading or empty state: after
+    // a second, one line at the end says it is still looking.
+    hideLabel: !hits && slowMessages,
+    empty: hits
+      ? undefined
+      : slowMessages
+        ? "Still searching messages…"
+        : directMessageResults.length ||
+            chatResults.length ||
+            channelResults.length ||
+            rankedPeople.length ||
+            pages.length
+          ? undefined
+          : messageEmpty,
+  };
+  const rankedGroups: SearchGroup[] = namedGroups.map(
+    ({ strength: _strength, ...group }) => group,
+  );
+  rankedGroups.splice(
+    messageLead < 0 ? rankedGroups.length : messageLead,
+    0,
+    messageGroup,
+  );
+  // An agent can answer what search can't: offered for a question-like
+  // query, or when nothing matched.
+  const settledEmpty =
+    !directoryPending &&
+    !messagesPending &&
+    !rankedGroups.some((group) => group.destinations.length);
+  const offerAsk = !!parsed.text && (words >= 4 || settledEmpty);
   const groups: readonly SearchGroup[] =
     pickerPrompt || showAmbiguousPicker
       ? [
@@ -1546,336 +1901,353 @@ export function SearchResults({
                   empty: "No matching channels.",
                 },
           ]
-        : scopedChannelId || hasOperator
+        : asking
           ? [
               {
-                label: messageOrder,
-                rank: Infinity,
-                destinations: messageRows,
-                headingStatus: slowMessages ? "Searching…" : undefined,
-                empty: messageEmpty,
+                label: `New chat with ${askAgent?.name ?? "your agent"}`,
+                icon: RobotIcon,
+                tone: "agent",
+                multiline: true,
+                destinations: question && askRow ? [askRow(question)] : [],
+                empty: !askRow
+                  ? "No agent is set up to ask yet. Add one in Agents."
+                  : `Type a question for ${askAgent?.name ?? "your agent"}.`,
+                notice: (
+                  <p className="search-peek-note text-body-sm text-subtle">
+                    <InfoIcon size={14} aria-hidden="true" />
+                    <span>
+                      Remove <code>ask:</code> to search messages yourself.
+                    </span>
+                  </p>
+                ),
               },
             ]
-          : !query.trim()
+          : scopedChannelId || hasOperator
             ? [
-                ...(unread.length
-                  ? [{ label: "Unread", destinations: unread }]
-                  : []),
-                ...(scopeAction.length
-                  ? [{ label: "This conversation", destinations: scopeAction }]
-                  : []),
-                ...(recent.length || !unread.length
-                  ? [
-                      {
-                        label: "Recent activity",
-                        destinations: recent,
-                        empty:
-                          list.status === "loading"
-                            ? "Loading recent conversations…"
-                            : "No recent activity yet.",
-                      },
-                    ]
-                  : []),
-              ]
-            : [
-                // Named destinations lead, so typed text selects one first.
-                // The group with the best match leads them, so Enter opens
-                // the "Work" page before a channel that merely contains it.
-                // Every group scores on one scale, match and usage, not the
-                // relationship band that orders rows inside People and
-                // Agents. An exact name always leads. After exact names, when
-                // the text finds one of the viewer's agents, its "New chat"
-                // row leads and its chats follow, whatever else matches
-                // better or was picked before; its DM, and every other group,
-                // comes after them.
-                ...[
-                  {
-                    label: "Agents",
-                    destinations: agentResults,
-                    best: Math.min(...agentResults.map(({ score }) => score)),
-                  },
-                  {
-                    label: "Chats",
-                    destinations: chatResults.map(({ channel }) =>
-                      conversationDestination(channel),
-                    ),
-                    best: Math.min(...chatResults.map(({ rank }) => rank)),
-                    exactName: chatResults.some(({ exactName }) => exactName),
-                  },
-                  {
-                    label: "Channels",
-                    destinations: channelResults.map(channelDestination),
-                    best: Math.min(...channelResults.map(channelRank)),
-                    headingStatus: slowChannels ? "Searching…" : undefined,
-                  },
-                  {
-                    label: "People",
-                    destinations: personResults,
-                    headingStatus: slowPeople ? "Searching…" : undefined,
-                    best: Math.min(...personResults.map(({ score }) => score)),
-                  },
-                  {
-                    label: "Direct messages",
-                    destinations: directMessageResults.map(
-                      conversationDestination,
-                    ),
-                    best: Math.min(...directMessageResults.map(dmRank)),
-                  },
-                  {
-                    label: "Pages",
-                    // PageSearch already ranked these by text and underlined
-                    // them; here usage and earlier choices adjust the order.
-                    destinations: byMatch(pages, (page) =>
-                      rankOf(page.label, page.key),
-                    ).map((page) => ({
-                      ...page,
-                      run: choose(page.key, page.run),
-                    })),
-                    best: Math.min(
-                      ...pages.map((page) => rankOf(page.label, page.key)),
-                    ),
-                  },
-                ]
-                  .map(({ exactName, ...group }) => {
-                    const named = exactName ?? exact(group.best);
-                    return {
-                      ...group,
-                      named,
-                      lead:
-                        named ||
-                        (newChats.size > 0 &&
-                          (group.label === "Agents" ||
-                            group.label === "Chats")),
-                    };
-                  })
-                  .sort(
-                    (a, b) =>
-                      Number(b.named) - Number(a.named) ||
-                      Number(b.lead) - Number(a.lead) ||
-                      (a.lead ? 0 : a.best - b.best),
-                  )
-                  // Inline settings slot in by rank, so they follow too.
-                  .map(({ best, lead, named: _named, ...group }) => ({
-                    ...group,
-                    rank: lead ? -Infinity : best,
-                  })),
-                ...(scopeAction.length
-                  ? [{ label: "This conversation", destinations: scopeAction }]
-                  : []),
                 {
-                  label: messageOrder,
+                  label: scopedChannelId ? messageOrder : "Messages",
                   rank: Infinity,
+                  icon: ChatCircleIcon,
+                  why: scopedChannelId
+                    ? rerank.reranked
+                      ? "Reranked"
+                      : undefined
+                    : `Filters apply to messages${rerank.reranked ? " · Reranked" : ""}`,
                   destinations: messageRows,
                   headingStatus: slowMessages ? "Searching…" : undefined,
-                  empty:
-                    directMessageResults.length ||
-                    chatResults.length ||
-                    channelResults.length ||
-                    rankedPeople.length ||
-                    pages.length
-                      ? undefined
-                      : messageEmpty,
+                  empty: messageEmpty,
                 },
-              ];
+              ]
+            : !query.trim()
+              ? [
+                  ...(unread.length
+                    ? [{ label: "Unread", destinations: unread }]
+                    : []),
+                  ...(scopeAction.length
+                    ? [
+                        {
+                          label: "This conversation",
+                          destinations: scopeAction,
+                        },
+                      ]
+                    : []),
+                  ...(recent.length || !unread.length
+                    ? [
+                        {
+                          label: "Recent activity",
+                          destinations: recent,
+                          empty:
+                            list.status === "loading"
+                              ? "Loading recent conversations…"
+                              : "No recent activity yet.",
+                        },
+                      ]
+                    : []),
+                  ...(recentSearches.length
+                    ? [
+                        {
+                          label: "Recent searches",
+                          destinations: recentSearches.map(
+                            (text): SearchDestination => ({
+                              key: `recent:${text}`,
+                              label: text,
+                              icon: ClockIcon,
+                              run: () => onQueryChange(text),
+                            }),
+                          ),
+                        },
+                      ]
+                    : []),
+                ]
+              : [
+                  ...rankedGroups,
+                  ...(scopeAction.length
+                    ? [
+                        {
+                          label: "This conversation",
+                          destinations: scopeAction,
+                        },
+                      ]
+                    : []),
+                  ...(offerAsk && askRow
+                    ? [
+                        {
+                          label: `Ask ${askAgent?.name ?? "your agent"}`,
+                          icon: RobotIcon,
+                          tone: "agent" as const,
+                          destinations: [askRow(parsed.text)],
+                        },
+                      ]
+                    : []),
+                ];
+  const askReader =
+    openAsk && !offline && (asking || !!parsed.text) ? (
+      <DefaultAgent
+        session={session}
+        scope={sidebarScope ?? ""}
+        onAgent={setAskAgent}
+      />
+    ) : null;
   return (
-    <SearchChoices
-      onRowsShown={(keys) => {
-        // Only channel results without a roster read a count.
-        const unknown = new Set(
-          channelResults.flatMap((channel) =>
-            channel.members?.length ? [] : [`channel:${channel.id}`],
-          ),
-        );
-        memberCounts.show(
-          keys.flatMap((key) =>
-            unknown.has(key) ? [key.slice("channel:".length)] : [],
-          ),
-        );
-      }}
-      inlineSettings={inlineSettings}
-      query={query}
-      onQueryChange={onQueryChange}
-      views={views}
-      chips={chips}
-      onRemoveChip={removeChip}
-      onEditLastChip={editLastChip}
-      displayQuery={displayQuery}
-      onDisplayQueryChange={updateDisplayQuery}
-      input={input}
-      label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
-      scopeAction={
-        scopedChannelId && session.searchSort && parsed.text ? (
-          <MenuRoot>
-            <MenuTrigger
-              render={(props) => (
-                <IconButton
-                  {...props}
-                  variant="ghost"
-                  aria-label="Sort messages"
-                  title="Sort messages"
-                  icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
-                />
-              )}
-            />
-            <MenuPopup
-              align="end"
-              size="compact"
-              aria-label="Sort messages"
-              finalFocus={input}
-            >
-              <MenuRadioGroup
-                value={sort}
-                onValueChange={(value) =>
-                  setSort(value === "newest" ? "newest" : "relevance")
-                }
+    <>
+      {askReader}
+      <SearchChoices
+        onRowsShown={(keys) => {
+          // Only channel results without a roster read a count.
+          const unknown = new Set(
+            channelResults.flatMap((channel) =>
+              channel.members?.length ? [] : [`channel:${channel.id}`],
+            ),
+          );
+          memberCounts.show(
+            keys.flatMap((key) =>
+              unknown.has(key) ? [key.slice("channel:".length)] : [],
+            ),
+          );
+        }}
+        inlineSettings={inlineSettings}
+        query={query}
+        onQueryChange={onQueryChange}
+        views={views}
+        chips={chips}
+        onRemoveChip={removeChip}
+        onEditLastChip={editLastChip}
+        displayQuery={displayQuery}
+        onDisplayQueryChange={updateDisplayQuery}
+        input={input}
+        label={scopedChannelId ? "Search this conversation" : "Search Buzz"}
+        scopeAction={
+          scopedChannelId && session.searchSort && parsed.text ? (
+            <MenuRoot>
+              <MenuTrigger
+                render={(props) => (
+                  <IconButton
+                    {...props}
+                    variant="ghost"
+                    aria-label="Sort messages"
+                    title="Sort messages"
+                    icon={<ArrowsDownUpIcon size={16} aria-hidden="true" />}
+                  />
+                )}
+              />
+              <MenuPopup
+                align="end"
+                size="compact"
+                aria-label="Sort messages"
+                finalFocus={input}
               >
-                <MenuRadioItem value="relevance" closeOnClick>
-                  Most relevant
-                </MenuRadioItem>
-                <MenuRadioItem value="newest" closeOnClick>
-                  Most recent
-                </MenuRadioItem>
-              </MenuRadioGroup>
-            </MenuPopup>
-          </MenuRoot>
-        ) : undefined
-      }
-      scope={
-        scopedChannelId && onScopeChange
-          ? {
-              label:
-                names.get(scopedChannelId) ??
-                session.channels.get?.(scopedChannelId)?.name ??
-                "Conversation",
-              onRemove: () => onScopeChange(),
-            }
-          : undefined
-      }
-      groups={groups}
-      open={open}
-      highlightEmpty={!scopedChannelId && !query.trim() && unread.length > 0}
-      // Enter before any row, or on search actions alone, waits for a
-      // channel or person row, or for the lookups to settle, rather than
-      // opening a message that lands first. A cold joined list has not yet
-      // started the open-channel lookup.
-      pending={
-        (directoryPending ||
-          operatorLookupPending ||
-          search.loading ||
-          (!scopedChannelId &&
+                <MenuRadioGroup
+                  value={sort}
+                  onValueChange={(value) =>
+                    setSort(value === "newest" ? "newest" : "relevance")
+                  }
+                >
+                  <MenuRadioItem value="relevance" closeOnClick>
+                    Most relevant
+                  </MenuRadioItem>
+                  <MenuRadioItem value="newest" closeOnClick>
+                    Most recent
+                  </MenuRadioItem>
+                </MenuRadioGroup>
+              </MenuPopup>
+            </MenuRoot>
+          ) : undefined
+        }
+        scope={
+          scopedChannelId && onScopeChange
+            ? {
+                label:
+                  names.get(scopedChannelId) ??
+                  session.channels.get?.(scopedChannelId)?.name ??
+                  "Conversation",
+                onRemove: () => onScopeChange(),
+              }
+            : undefined
+        }
+        groups={groups}
+        open={open}
+        highlightEmpty={!scopedChannelId && !query.trim() && unread.length > 0}
+        // Enter before any row, or on search actions alone, waits for a
+        // channel or person row, or for the lookups to settle, rather than
+        // opening a message that lands first. A cold joined list has not yet
+        // started the open-channel lookup.
+        pending={
+          (directoryPending ||
+            operatorLookupPending ||
+            search.loading ||
+            (!scopedChannelId &&
+              !!query.trim() &&
+              list.status === "loading" &&
+              !list.channels.length)) &&
+          !groups.some(
+            (group) =>
+              group.rank !== Infinity &&
+              group.destinations !== scopeAction &&
+              group.destinations.length,
+          )
+        }
+        isAction={isSearchAction}
+        footer={offline}
+        peek={{
+          ranked:
+            !asking &&
             !!query.trim() &&
-            list.status === "loading" &&
-            !list.channels.length)) &&
-        !groups.some(
-          (group) =>
-            group.rank !== Infinity &&
-            group.destinations !== scopeAction &&
-            group.destinations.length,
-        )
-      }
-      isAction={isSearchAction}
-      footer={offline}
-    >
-      {dateOperator === "on" && (
-        <Calendar
-          mode="single"
-          aria-label="Choose a day"
-          onSelect={(day) => {
-            if (day) completeDate(`on:${localDate(day)}`);
-            input.current?.focus();
-          }}
-        />
-      )}
-      <div
-        className="space-y-2 px-3 text-body-sm text-subtle"
-        aria-live="polite"
+            !scopedChannelId &&
+            !hasOperator &&
+            resultsShown,
+          hints,
+          busy: !!query.trim() && (messagesPending || directoryPending),
+          onFreeze: () => setFrozenFor(query),
+          preview: (row, tone) => (
+            <SearchPreview
+              session={session}
+              row={row}
+              tone={tone}
+              terms={terms}
+              nameOf={nameOf}
+              whereOf={whereOf}
+            />
+          ),
+        }}
       >
-        {list.status === "loading" && query.trim() && !list.channels.length && (
-          <p>Loading joined conversations…</p>
+        {dateOperator === "on" && (
+          <Calendar
+            mode="single"
+            aria-label="Choose a day"
+            onSelect={(day) => {
+              if (day) completeDate(`on:${localDate(day)}`);
+              input.current?.focus();
+            }}
+          />
         )}
-        {list.status === "error" && (
-          <div>
-            <p>Couldn’t load all joined conversations.</p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={retryFromInput(() =>
-                session.channels.refreshList
-                  ? session.channels.refreshList()
-                  : session.channels.ensureList(),
-              )}
-            >
-              Retry conversations
-            </Button>
-          </div>
-        )}
-        {list.coverage === "partial" && (
-          <p>Conversation names include only loaded joined conversations.</p>
-        )}
-        {query.trim() &&
-          !scopedChannelId &&
-          (publicChannels.partial || operatorPublicChannels.partial) && (
-            <p>Only the newest open channels were searched.</p>
+        <div
+          className="space-y-2 px-3 text-body-sm text-subtle"
+          aria-live="polite"
+        >
+          {list.status === "loading" &&
+            query.trim() &&
+            !list.channels.length && <p>Loading joined conversations…</p>}
+          {list.status === "error" && (
+            <div>
+              <p>Couldn’t load all joined conversations.</p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={retryFromInput(() =>
+                  session.channels.refreshList
+                    ? session.channels.refreshList()
+                    : session.channels.ensureList(),
+                )}
+              >
+                Retry conversations
+              </Button>
+            </div>
           )}
-        {!scopedChannelId && publicChannels.error && (
-          <div>
-            <p>{publicChannels.error}</p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={retryFromInput(publicChannels.retry)}
-            >
-              Retry channels
-            </Button>
-          </div>
-        )}
-        {operatorLookupError && (
-          <div>
-            <p>{operatorLookupError}</p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={retryFromInput(operatorPublicChannels.retry)}
-            >
-              Retry channels
-            </Button>
-          </div>
-        )}
-        {personOpen && (
-          <p role={personOpen.error ? "alert" : undefined}>
-            {personOpen.error ??
-              `Opening your conversation with ${personOpen.name}…`}
-          </p>
-        )}
-        {peopleActive && personDirectory.error && (
-          <div>
-            <p>Couldn’t search community people.</p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={retryFromInput(personDirectory.retry)}
-            >
-              Retry people
-            </Button>
-          </div>
-        )}
-        {search.moreError && <p>{search.moreError}</p>}
-        {search.error && (
-          <div>
-            <p>{search.error}</p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={retryFromInput(search.retry)}
-            >
-              Retry messages
-            </Button>
-          </div>
-        )}
-      </div>
-      <p className="sr-only" role={searchAnnouncement ? "status" : undefined}>
-        {searchAnnouncement}
-      </p>
-    </SearchChoices>
+          {list.coverage === "partial" && (
+            <p>Conversation names include only loaded joined conversations.</p>
+          )}
+          {query.trim() &&
+            !scopedChannelId &&
+            (publicChannels.partial || operatorPublicChannels.partial) && (
+              <p>Only the newest open channels were searched.</p>
+            )}
+          {!scopedChannelId && publicChannels.error && (
+            <div>
+              <p>{publicChannels.error}</p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={retryFromInput(publicChannels.retry)}
+              >
+                Retry channels
+              </Button>
+            </div>
+          )}
+          {operatorLookupError && (
+            <div>
+              <p>{operatorLookupError}</p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={retryFromInput(operatorPublicChannels.retry)}
+              >
+                Retry channels
+              </Button>
+            </div>
+          )}
+          {personOpen && (
+            <p role={personOpen.error ? "alert" : undefined}>
+              {personOpen.error ??
+                `Opening your conversation with ${personOpen.name}…`}
+            </p>
+          )}
+          {peopleActive && personDirectory.error && (
+            <div>
+              <p>Couldn’t search community people.</p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={retryFromInput(personDirectory.retry)}
+              >
+                Retry people
+              </Button>
+            </div>
+          )}
+          {search.moreError && <p>{search.moreError}</p>}
+          {search.error && (
+            <div>
+              <p>{search.error}</p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={retryFromInput(search.retry)}
+              >
+                Retry messages
+              </Button>
+            </div>
+          )}
+        </div>
+        <p className="sr-only" role={searchAnnouncement ? "status" : undefined}>
+          {searchAnnouncement}
+        </p>
+      </SearchChoices>
+    </>
   );
+}
+
+/** Reports the agent New chat would tag, for `ask:`. */
+function DefaultAgent({
+  session,
+  scope,
+  onAgent,
+}: {
+  session: RelaySession;
+  scope: string;
+  onAgent: (agent: MentionRecipient | undefined) => void;
+}) {
+  const agent = useDefaultAgent(session, scope);
+  const key = agent ? `${agent.pubkey}:${agent.name}` : "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the agent.
+  useEffect(() => onAgent(agent), [key, onAgent]);
+  return null;
 }

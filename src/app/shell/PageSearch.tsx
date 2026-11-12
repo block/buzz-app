@@ -38,6 +38,7 @@ import { SearchResults } from "./SearchResults";
 import { ChannelDirectoryResults } from "./ChannelDirectoryResults";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { soloDraftTarget } from "../../features/channel-navigation/routes";
+import { writeView } from "../../shared/view-state";
 import { usageScope } from "../../features/search/usage";
 import { unreadFirstPreference } from "../../features/search/unread-first-preference";
 
@@ -53,6 +54,7 @@ export type SearchServices = Pick<
       | "plugins"
       | "adminAccess"
       | "settingsCards"
+      | "decisions"
     >
   >;
 const SEARCH_ID = "global-search";
@@ -302,6 +304,7 @@ export function PageSearch({
         motion="default"
         dismissOnOutsideClick
         presentation="search"
+        size="expanded"
         initialFocus={input}
         finalFocus={() =>
           returnFocus.current?.id === "main-content"
@@ -650,6 +653,38 @@ function CommunitySearch({
         views={views}
         offline={saved ? offline : undefined}
         openConversation={openConversation}
+        decisions={services.decisions}
+        community={scope.communityOrigin}
+        openAsk={(question, agent) => {
+          const current = services.communities.snapshot();
+          const relay = services.communities.relay.snapshot();
+          if (
+            !isOpen() ||
+            current.viewer !== scope.viewer ||
+            current.selected !== client.selected ||
+            relay.session !== connection.session ||
+            !relay.scope
+          )
+            return;
+          // New chat opens with the question addressed to the agent; Enter
+          // sends it.
+          const tag = `@${agent.name}`;
+          writeView(relay.scope, "solo:new-draft", {
+            text: `${tag} Search Buzz to answer: ${question}`,
+            recipients: [
+              {
+                pubkey: agent.pubkey,
+                name: agent.name,
+                start: 0,
+                end: tag.length,
+              },
+            ],
+          });
+          close();
+          void services.navigation.open(
+            soloDraftTarget(relay.scope, { agent: agent.pubkey }),
+          );
+        }}
         openAgentSession={(pubkey) => {
           const current = services.communities.snapshot();
           const relay = services.communities.relay.snapshot();

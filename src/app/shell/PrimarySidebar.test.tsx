@@ -424,27 +424,33 @@ it("expands fallback Solo when navigation selects an ordinary chat", async () =>
 it.each(["Solo", "All"])(
   "preserves %s for a source opening and selects Team on its next explicit open",
   async (filter) => {
-    const f = fixture(true);
-    f.roster((channels) => [
-      ...channels,
-      { id: "source", name: "Source channel", channelType: "stream" },
-    ]);
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: filter }));
-    const target = conversationTarget(scope, "source");
-    await act(() => f.open(target, { sidebar: "preserve" }));
-    expect(screen.getByRole("tab", { name: filter })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    const teamRow = document.querySelector('[data-channel-id="source"]');
-    expect(teamRow).not.toBeNull();
-    expect(teamRow).not.toHaveAttribute("aria-current");
-    await act(() => f.open(target));
-    expect(
-      screen.getByRole("tab", { name: filter === "All" ? "All" : "Team" }),
-    ).toHaveAttribute("aria-selected", "true");
-    expect(teamRow).toHaveAttribute("aria-current", "page");
+    vi.useFakeTimers();
+    try {
+      const f = fixture(true);
+      f.roster((channels) => [
+        ...channels,
+        { id: "source", name: "Source channel", channelType: "stream" },
+      ]);
+      await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole("tab", { name: filter }));
+      const target = conversationTarget(scope, "source");
+      await act(() => f.open(target, { sidebar: "preserve" }));
+      expect(screen.getByRole("tab", { name: filter })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      const teamRow = document.querySelector('[data-channel-id="source"]');
+      expect(teamRow).not.toBeNull();
+      expect(teamRow).not.toHaveAttribute("aria-current");
+      await act(() => f.open(target));
+      expect(
+        screen.getByRole("tab", { name: filter === "All" ? "All" : "Team" }),
+      ).toHaveAttribute("aria-selected", "true");
+      expect(teamRow).toHaveAttribute("aria-current", "page");
+    } finally {
+      vi.useRealTimers();
+    }
   },
 );
 

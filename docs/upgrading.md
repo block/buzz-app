@@ -25,12 +25,6 @@ core of the app is made of plugins too:
 Plugins you add use the same building blocks, so they can go as far as the
 built-in ones.
 
-Plugins are trusted code that runs inside the app, so add only ones you trust.
-
-To write your own, read the [plugin authoring guide](plugin-authoring-guide.md)
-and try the [example plugins](../examples/plugins/README.md). The plugin API is
-still a preview and may change, so an app update can break a plugin.
-
 ## What's new: remote agents
 
 A remote agent runs on a hosted machine instead of your computer. It keeps

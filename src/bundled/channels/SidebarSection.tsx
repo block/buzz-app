@@ -10,6 +10,7 @@ import {
   type Ref,
 } from "react";
 import {
+  MenuCheckboxItem,
   MenuGroup,
   MenuGroupLabel,
   MenuIcon,
@@ -69,6 +70,7 @@ export function SidebarSection({
   newMessage,
   sort,
   filter,
+  showAll,
   channels,
   dropRef,
   dropTarget = false,
@@ -119,6 +121,10 @@ export function SidebarSection({
         change: (mode: SidebarFilter, seconds?: number) => unknown;
         dismissError?: () => void;
       }
+    | undefined;
+  /** Pauses every section's filter at once, without saving. */
+  showAll?:
+    | { checked: boolean; change: (checked: boolean) => void }
     | undefined;
   channels?:
     | {
@@ -261,6 +267,20 @@ export function SidebarSection({
                             )}
                           </MenuRadioItem>
                         </MenuRadioGroup>
+                        {showAll && (
+                          <>
+                            <MenuSeparator />
+                            <MenuCheckboxItem
+                              checked={showAll.checked}
+                              onCheckedChange={(checked) => {
+                                showAll.change(checked);
+                                setMenuOpen(false);
+                              }}
+                            >
+                              Show all conversations
+                            </MenuCheckboxItem>
+                          </>
+                        )}
                         {channels &&
                           filter.value !== "all" &&
                           channels.rows.length > 0 && (

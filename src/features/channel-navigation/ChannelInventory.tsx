@@ -31,6 +31,8 @@ import {
   type SidebarRows,
   type RegisteredSidebarRows,
 } from "./sidebar-rows-service";
+import type { ShortcutsService } from "../shortcuts/service";
+import { useShowAllSecondsPreference } from "./show-all-preference";
 import { useSidebarRowUnread } from "./useSidebarRowUnread";
 import type { SidebarSortMode } from "../relay/sidebar-sort";
 import type { SidebarFrame } from "./SidebarFrame";
@@ -156,6 +158,7 @@ export function ChannelInventory({
   viewer,
   sidebarSections: contributedSections,
   sidebarRows: contributedRows,
+  shortcuts,
   render,
 }: {
   relay: RelayData;
@@ -171,6 +174,8 @@ export function ChannelInventory({
   viewer?: string | undefined;
   sidebarSections?: SidebarSections | undefined;
   sidebarRows?: SidebarRows | undefined;
+  /** Registers Show all conversations while this inventory is mounted. */
+  shortcuts?: Pick<ShortcutsService, "registerHost"> | undefined;
   render(inventory: Inventory): ReactNode;
 }) {
   const contributions = useSyncExternalStore(
@@ -620,14 +625,48 @@ export function ChannelInventory({
         : sections,
     [sections, rowSortModes, sectionSort, rowUnread, queries.unread],
   );
+  const savedFilters = Object.fromEntries(
+    Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
+      key.startsWith("section:") ? `group:${key.slice(8)}` : key,
+      mode,
+    ]),
+  );
+  // Pausing every filter is brief and unsaved: the saved filters return after
+  // the chosen duration, on reload or reconnect, or with a new filter choice.
+  // Changing the duration while paused starts the new duration afresh.
+  const [showAll, setShowAll] = useState(false);
+  const showAllSeconds = useShowAllSecondsPreference().seconds;
+  useEffect(() => {
+    if (!showAll) return;
+    const timer = window.setTimeout(
+      () => setShowAll(false),
+      showAllSeconds * 1000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [showAll, showAllSeconds]);
+  const filtering = sortedSections.some(
+    ({ key }) => (savedFilters[key] ?? "all") !== "all",
+  );
+  const showAllAvailable = useRef(false);
+  useLayoutEffect(() => {
+    showAllAvailable.current = filtering || showAll;
+  });
+  useEffect(
+    () =>
+      shortcuts?.registerHost({
+        id: "show-all-conversations",
+        title: "Show all conversations",
+        binding: { key: "f", mod: true, shift: true },
+        order: 77,
+        allowInEditable: true,
+        when: () => showAllAvailable.current,
+        run: () => setShowAll((paused) => !paused),
+      }),
+    [shortcuts],
+  );
   const filteredSections = useSidebarFilters(
     sortedSections,
-    Object.fromEntries(
-      Object.entries(preferences.data?.filters ?? {}).map(([key, mode]) => [
-        key.startsWith("section:") ? `group:${key.slice(8)}` : key,
-        mode,
-      ]),
-    ),
+    showAll ? {} : savedFilters,
     current?.id,
     queries.unread,
     Object.fromEntries(
@@ -1430,8 +1469,10 @@ export function ChannelInventory({
                             ? `section:${section.key.slice(6)}`
                             : section.key
                         ],
-                      change: (mode, seconds) =>
-                        setSectionFilter(section.key, mode, seconds),
+                      change: (mode, seconds) => {
+                        setShowAll(false);
+                        return setSectionFilter(section.key, mode, seconds);
+                      },
                       dismissError: () =>
                         preferences.dismissFilterError(
                           section.key.startsWith("group:")
@@ -1439,6 +1480,11 @@ export function ChannelInventory({
                             : section.key,
                         ),
                     }
+                  : undefined
+              }
+              showAll={
+                filtering || showAll
+                  ? { checked: showAll, change: setShowAll }
                   : undefined
               }
               channels={{

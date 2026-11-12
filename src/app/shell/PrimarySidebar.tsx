@@ -42,6 +42,7 @@ import type { ChannelList } from "../../features/relay/contracts";
 import type { ContributionReader } from "../../features/conversation/contracts";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
+import type { ShortcutsService } from "../../features/shortcuts/service";
 import type { SidebarSections } from "../../features/channel-navigation/sidebar-sections-service";
 import {
   CommunityRefusalNotice,
@@ -73,6 +74,7 @@ type Props = {
   /** A plugin restriction shows only Solo; the saved filter returns after. */
   sidebarScope?: SidebarScope | undefined;
   sidebarRows?: SidebarRows | undefined;
+  shortcuts?: Pick<ShortcutsService, "registerHost"> | undefined;
   target: OpenTarget;
   children: ReactNode;
   creationAction?: ReactNode;
@@ -265,6 +267,7 @@ function ScopedSidebar({
           viewer={connection.viewer}
           sidebarSections={props.sidebarSections}
           sidebarRows={props.sidebarRows}
+          shortcuts={props.shortcuts}
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           connectionError={connection.error}

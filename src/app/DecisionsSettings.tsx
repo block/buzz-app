@@ -388,7 +388,10 @@ export function DecisionsSettings({
           onOpenChange={(open) => !open && setPicked(undefined)}
           initialFocus={
             selected.key === ownKey.key
-              ? () => setupForm.current?.querySelector("input") ?? null
+              ? () =>
+                  setupForm.current?.querySelector<HTMLInputElement>(
+                    "input:not([readonly])",
+                  ) ?? null
               : undefined
           }
           finalFocus={() =>

@@ -157,7 +157,9 @@ Add `"host"` to `inject`, then:
 ### Host Markdown and panel workspaces
 
 Inject `conversation` to render `ctx.conversation.ui.Markdown` with
-`{ content, session?, openLink? }`. This is the host document renderer: GFM,
+`{ content, session?, openLink?, scale? }`. The shared host styles own headings,
+spacing, code frames and tables. `scale` defaults to `"message"`; choose
+`"document"` for a page or editor read view. This is the host document renderer: GFM,
 Buzz-rich links, credential-free HTTP(S) links, no executable HTML, and images
 shown as alt text. Oversized or deeply nested input falls back to literal text
 using the same bounds as Shared notes. `session` supplies community-aware link

@@ -169,3 +169,32 @@ it("defaults to host Buzz navigation, lets a local override handle links, and re
     await root.fiber.dispose();
   }
 });
+
+it("uses shared code and table components without optional code actions", async () => {
+  const { root, runtime, Markdown } = fixture();
+  try {
+    const { container } = render(
+      <Markdown
+        scale="document"
+        content={
+          "# Guide\n\n```ts\nconst ready = true;\n```\n\n| Area | State |\n| --- | --- |\n| Docs | Ready |"
+        }
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Guide", level: 1 }),
+    ).toBeVisible();
+    expect(container.querySelector("pre code")).toHaveTextContent(
+      "const ready = true;",
+    );
+    expect(screen.getByRole("table")).toBeVisible();
+    expect(screen.getByRole("cell", { name: "Ready" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy code block" }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    await runtime.dispose();
+    await root.fiber.dispose();
+  }
+});

@@ -31,7 +31,8 @@ export function PluginMarkdown({
   navigation,
 }: MarkdownProps & { navigation?: Navigation | undefined }) {
   const plain = useMemo(
-    () => !guardDocument(content, DOCUMENT_PROFILE, { chars: MAX_MARKDOWN_LENGTH }),
+    () =>
+      !guardDocument(content, DOCUMENT_PROFILE, { chars: MAX_MARKDOWN_LENGTH }),
     [content],
   );
   return plain ? (

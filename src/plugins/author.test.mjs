@@ -256,7 +256,7 @@ import type { Context, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, P
 export const inject = ["react", "conversation", "panels"];
 export function apply(ctx: Context) {
   const React = ctx.react;
-  const document: MarkdownProps = { content: "**Hello**", openLink: () => false };
+  const document: MarkdownProps = { content: "**Hello**", scale: "document", openLink: () => false };
   function Reader() {
     ctx.panels.ui.useTabTitle("A page");
     return React.createElement(ctx.conversation.ui.Markdown, document);
@@ -286,6 +286,8 @@ export function apply(ctx: Context) {
   void [tabMenu, drag, identity, main, adoption, instance];
   // @ts-expect-error Host link dispatch must synchronously report acceptance.
   const bad: MarkdownProps = { content: "", openLink: async () => true };
+  // @ts-expect-error Only supported host heading scales are public.
+  const badScale: MarkdownProps = { content: "", scale: "custom" };
   // @ts-expect-error Tab content is required.
   const missing: PanelWorkspaceItem = { id: "page", label: "Page" };
   void [bad, missing];

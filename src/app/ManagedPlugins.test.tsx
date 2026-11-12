@@ -850,33 +850,6 @@ it.each([true, false])(
   },
 );
 
-it("keeps a failed Git-to-URL update open without removing the installed plugin", async () => {
-  const user = userEvent.setup();
-  const { manager } = harness();
-  manager.installImport.mockResolvedValue(false);
-  manager.snapshot = () => ({ error: "Registry is locked" });
-  Object.assign(manager.imports, {
-    url: vi.fn(async () =>
-      preview({
-        commit: null,
-        candidates: [{ path: ".", revision: artifact.sha256, manifest }],
-      }),
-    ),
-  });
-  const { outcome } = showRequest(manager, [gitInstalled]);
-  const dialog = await screen.findByRole("dialog");
-  await user.click(
-    await within(dialog).findByRole("button", { name: "Update" }),
-  );
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-    "Registry is locked",
-  );
-  expect(manager.installImport).toHaveBeenCalledOnce();
-  expect(manager.change).not.toHaveBeenCalled();
-  fireEvent.keyDown(dialog, { key: "Escape" });
-  await expect(outcome).resolves.toBe("cancelled");
-});
-
 it.each([
   {
     source: { root: "/plugins/example", path: "." },

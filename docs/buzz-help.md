@@ -1221,10 +1221,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   **Update** review showing access changes and any change to the branch or tag
   later updates follow, and the plugin keeps its enabled or disabled state.
   Other links to an installed plugin offer **Open in Buzz**.
-- A marketplace or install link can update a Git-installed plugin to a packaged
-  URL download. The review explains the source change before you confirm
-  **Update**. You do not need to remove the plugin first, and it keeps its enabled
-  or disabled state. Publisher and signature checks still apply.
+- A marketplace or URL install link can update a Git-installed plugin in place.
+  Review the source change and choose **Update**; removal is not needed.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved

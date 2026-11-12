@@ -614,11 +614,8 @@ Hosts that accept only Git leave it out, so check it before requesting a URL sou
 A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
 its SHA-256 and plugin ID match, and shows the access review for the owner to
 confirm. It can install a new plugin or update one installed from a URL or Git.
-For a Git installation, the review explains that the URL replaces its saved Git
-source. Confirmation replaces the plugin in place, preserving its enabled state;
-there is no remove-and-reinstall step. Folder installations and plugins with an
-unknown source still require removal before switching to a URL. Publisher and
-signature checks still apply.
+For Git installations, the review explains that the URL replaces the saved Git
+source.
 
 A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,

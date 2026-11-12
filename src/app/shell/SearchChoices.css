@@ -306,12 +306,25 @@
     height: 0.9375rem;
   }
 
-  /* Group headings: tile, name, count and why it ranks there. */
+  /* Group headings: tile, name, count and why it ranks there, on one line,
+     so a reason that changes as results land never pushes the rows down.
+     The reason gives way first. */
   .search-palette[data-search-peek] .navigation-section-label {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .search-peek-group-label,
+  .search-peek-why {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search-peek-why {
+    flex: 0 100 auto;
   }
   .search-peek-group-label {
     color: var(--text-standard);
@@ -333,6 +346,7 @@
     justify-content: space-between;
   }
   .search-peek-see-all {
+    position: relative;
     display: inline-flex;
     flex: none;
     align-items: center;
@@ -343,6 +357,12 @@
     font: inherit;
     font-size: var(--text-caption);
     cursor: pointer;
+  }
+  /* Its target fills the heading's height, short of the row below. */
+  .search-peek-see-all::before {
+    content: "";
+    position: absolute;
+    inset: calc(-1 * var(--space-1h)) calc(-1 * var(--space-2));
   }
   .search-peek-see-all:hover {
     color: var(--text-standard);
@@ -358,6 +378,20 @@
     min-height: var(--search-palette-results-max);
   }
   .search-peek-side {
+    /* The rail's heading and five rows, or less than half the side with
+       enlarged text. The preview keeps the rest whatever groups arrive, and
+       a longer rail scrolls. */
+    --search-peek-rail-room: min(
+      calc(
+        6 *
+        var(--text-body-sm) *
+        var(--text-body-sm--line-height) +
+        var(--space-1) +
+        5 *
+        (2 * var(--space-2) + var(--space-half))
+      ),
+      calc(0.45 * var(--search-palette-results-max))
+    );
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
@@ -368,8 +402,12 @@
 
   /* The preview: concentric with the rows beside it. */
   .search-peek-preview {
-    flex: 1 1 auto;
-    min-height: 0;
+    flex: none;
+    height: calc(
+      var(--search-palette-results-max) -
+      var(--space-4) -
+      var(--search-peek-rail-room)
+    );
     overflow-y: auto;
     border: 1px solid var(--border-standard);
     border-radius: var(--radius-control);
@@ -450,9 +488,14 @@
   /* The rail of groups. */
   .search-peek-rail {
     display: flex;
-    flex: none;
+    flex: 1 1 auto;
     flex-direction: column;
     gap: var(--space-half);
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .search-peek-rail > * {
+    flex: none;
   }
   .search-peek-rail-head {
     display: flex;
@@ -493,11 +536,13 @@
   }
 
   /* Filters to add, each with its kind's dot. */
+  /* One height for the filters and the Ask chip that replaces them. */
   .search-peek-hints {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-2);
+    min-height: calc(var(--space-6) + var(--space-1));
     margin-top: var(--space-2);
     padding-inline: var(--space-control-inset);
   }

@@ -1063,7 +1063,7 @@ export function SearchChoices({
                 );
               })()}
             </div>
-            {ranked.length > 1 && (
+            {ranked.length > 0 && (
               <nav className="search-peek-rail" aria-label="Result groups">
                 <div className="search-peek-rail-head text-body-sm text-subtle">
                   <span>{query.trim() ? "Show" : "Browse"}</span>
@@ -1075,15 +1075,21 @@ export function SearchChoices({
                     : query.trim()
                       ? MagnifyingGlassIcon
                       : ClockIcon;
+                  const shown = (scoped?.label ?? undefined) === group?.label;
                   return (
                     <button
                       key={group?.label ?? ""}
+                      // A long rail scrolls; the group shown stays in sight.
+                      ref={
+                        shown
+                          ? (item) =>
+                              item?.scrollIntoView?.({ block: "nearest" })
+                          : undefined
+                      }
                       type="button"
                       tabIndex={-1}
                       className="search-peek-rail-item text-body-sm"
-                      aria-pressed={
-                        (scoped?.label ?? undefined) === group?.label
-                      }
+                      aria-pressed={shown}
                       title={group?.why}
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => showScope(group?.label)}
@@ -1107,12 +1113,12 @@ export function SearchChoices({
                       <span className="search-peek-count">
                         {group
                           ? countOf(group)
-                          : ranked.reduce(
+                          : `${ranked.reduce(
                               (sum, item) =>
                                 sum +
                                 (item.browse ? 0 : resultRows(item).length),
                               0,
-                            )}
+                            )}${ranked.some((item) => !item.browse && item.count?.endsWith("+")) ? "+" : ""}`}
                       </span>
                     </button>
                   );

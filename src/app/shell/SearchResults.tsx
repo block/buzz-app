@@ -2016,7 +2016,9 @@ export function SearchResults({
                     : []),
                 ]
               : [
-                  ...rankedGroups,
+                  ...rankedGroups.filter(
+                    (group) => hits || group !== messageGroup,
+                  ),
                   ...(scopeAction.length
                     ? [
                         {
@@ -2035,6 +2037,9 @@ export function SearchResults({
                         },
                       ]
                     : []),
+                  // Until messages arrive, their status line comes last, so
+                  // nothing moves when it goes.
+                  ...(hits ? [] : [messageGroup]),
                 ];
   const askReader =
     openAsk && !offline && (asking || !!parsed.text) ? (

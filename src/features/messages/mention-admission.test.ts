@@ -77,6 +77,11 @@ it("keeps Solo chat, roster and agent-invite limits", () => {
   expect(owned(library)).toBe(true);
   expect(owned(outside)).toBe(true);
   expect(owned(member)).toBe(false);
+  // A roster that leaves out one of the viewer's agents (a region's plugin
+  // refuses it) keeps it out: the send would add it, not reference it.
+  const narrowed = mentionAdmission(sessionChannel, "channel", true, []);
+  expect(narrowed(library)).toBe(false);
+  expect(narrowed(outside)).toBe(true);
   // Unknown Solo membership cannot tell outside keys from left-out members.
   expect(
     mentionAdmission(

@@ -84,7 +84,8 @@ offers the Solo chat's own agent list instead of item 3, and also offers item 4
 so people can name anyone. It never adds directory people: an outside key that
 is not one of the viewer's own agents is a reference (section 7). When the
 owner's composer limits members to its own roster, the directory MUST NOT
-bring back a member that the roster leaves out. A New chat's composer follows the
+bring back a member that the roster leaves out, nor one of the viewer's own
+agents that it leaves out, such as an agent a region's plugin refuses. A New chat's composer follows the
 same rule before its chat is listed: its reserved id stands for a Solo chat
 holding only the viewer. The Solo toolbar's agent menu picks agents only and
 MUST NOT search the directory. Other Solo chat composers, such as media

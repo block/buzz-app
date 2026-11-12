@@ -2601,6 +2601,50 @@ it("offers directory people as references in a New chat's first message", async 
   t.library.dispose();
 });
 
+it("keeps an agent a region's New chat leaves out of directory results, while people stay references", async () => {
+  const t = setup(null);
+  const outside = { pubkey: "e".repeat(64), name: "Outside" };
+  // The directory finds the viewer's own agent too; the region refuses it.
+  const people = vi.fn(async () => ({
+    people: [
+      { pubkey: t.key, name: "Outside agent", isAgent: true as const },
+      outside,
+    ],
+    hasMore: false,
+  }));
+  const session = {
+    ...t.session,
+    directMessages: { ...t.session.directMessages, people },
+  } as unknown as RelaySession;
+  const release = reserveSoloMentions(session, "parent");
+  const publish = vi.fn();
+  render(
+    <DraftMentionRoster.Provider value={{ recipients: [] }}>
+      <MentionCompletion
+        session={session}
+        scope="test"
+        channelId="parent"
+        observation={{ revision: 1, text: "@Out", start: 4, end: 4 }}
+        publish={publish}
+        query={{ start: 0, end: 4, query: "Out" }}
+        inviteAgents
+      />
+    </DraftMentionRoster.Provider>,
+  );
+  const items = () =>
+    (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items ?? [];
+  await waitFor(() =>
+    expect(items().find((item) => item.label === "Outside")?.detail).toBe(
+      "Not in chat · Will not be notified",
+    ),
+  );
+  expect(people).toHaveBeenCalled();
+  expect(items().map((item) => item.label)).not.toContain("Outside agent");
+  expect(mentionAdmission(session, "parent", true, [])(t.key)).toBe(false);
+  release();
+  t.library.dispose();
+});
+
 it("offers outside directory people in a DM, like a channel", async () => {
   const t = setup();
   const outside = { pubkey: "e".repeat(64), name: "Outside" };

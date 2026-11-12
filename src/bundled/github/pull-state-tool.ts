@@ -105,7 +105,7 @@ export function addPullStateTool(
             : {}),
           read_at: new Date(readAt).toISOString(),
           age_seconds: Math.max(0, Math.round((Date.now() - readAt) / 1000)),
-          source: state.head ? "gh" : "public",
+          source: state.source ?? (state.head ? "gh" : "public"),
           // The state above is the last one read; reading it again failed.
           ...(error ? { last_read_failed: error.message } : {}),
         },

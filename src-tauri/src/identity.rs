@@ -1376,6 +1376,46 @@ pub async fn identity_export(host: tauri::State<'_, IdentityHost>) -> Result<Str
 pub(crate) mod tests;
 
 impl IdentityHost {
+    /// Only a webhook secret, sealed to the relay, leaves here: there is no decrypt.
+    pub(crate) async fn seal_hook_secret(&self, relay: String, secret: String) -> Result<String> {
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            let secret_key = NostrSecretKey::from_slice(key.0.as_ref()).map_err(|_| INVALID)?;
+            let relay = nostr::key::PublicKey::from_hex(&relay).map_err(|_| "Invalid relay key")?;
+            nip44::encrypt(&secret_key, &relay, &secret, nip44::Version::V2)
+                .map_err(|_| "Could not seal the webhook secret".into())
+        })
+        .await
+    }
+    /// A one-way key, per community and GitHub hook, from which only this
+    /// identity can name the pull request cards it publishes for that hook.
+    pub(crate) async fn github_card_key(&self, community: String, hook: String) -> Result<String> {
+        use hmac::{Hmac, Mac};
+        let community = crate::relay::origin(&community)?
+            .origin()
+            .ascii_serialization();
+        with_identity(self.clone(), move |identity| {
+            identity.restore()?;
+            let State::Ready(key) = &identity.state else {
+                return Err("Set up your identity first".into());
+            };
+            let mut mac = Hmac::<Sha256>::new_from_slice(key.0.as_ref()).map_err(|_| INVALID)?;
+            mac.update(b"buzz-github-device-pull-v1\0");
+            mac.update(community.as_bytes());
+            mac.update(b"\0");
+            mac.update(hook.as_bytes());
+            Ok(mac
+                .finalize()
+                .into_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect())
+        })
+        .await
+    }
     /// Only recipe plaintext may cross this boundary. Never export arbitrary decrypt.
     pub(crate) async fn kit_cipher(&self, ciphertext: String, encrypt: bool) -> Result<String> {
         with_identity(self.clone(), move |identity| {

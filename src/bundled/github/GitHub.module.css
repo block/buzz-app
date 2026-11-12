@@ -480,3 +480,47 @@
   margin: 0;
   padding-inline-start: var(--space-6);
 }
+.pullCard {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+}
+.pullCardState {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding-top: var(--space-half);
+}
+.pullCardBody {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+.pullCardTitle {
+  overflow-wrap: anywhere;
+}
+.pullCardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.pullCardMeta [data-tone="failure"] {
+  color: var(--text-danger);
+}
+.pullCardMeta [data-tone="pending"] {
+  color: var(--text-warning);
+}
+.hooks {
+  padding: var(--space-panel-inset);
+}

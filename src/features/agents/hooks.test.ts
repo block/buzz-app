@@ -199,3 +199,83 @@ it("composes only the winning response with its registered plugin source", async
   ).resolves.toBeUndefined();
   expect(compose).not.toHaveBeenCalled();
 });
+
+const hookList = (runs: readonly ((...args: never[]) => unknown)[]) =>
+  runs.map((run, index) => ({
+    id: `hook-${index}`,
+    pluginId: `plugin-${index}`,
+    harness: "type",
+    event: "before",
+    run,
+  }));
+/** Joins plain strings, as an adapter would join context-only responses. */
+const joinText = (outputs: readonly unknown[]) =>
+  outputs.every((output) => typeof output === "string")
+    ? outputs.join("|")
+    : undefined;
+
+it("joins context-only responses from every callback until one does more", async () => {
+  const { dispatchAgentHooks } = await import("./hooks");
+  const dispatch = (runs: readonly ((...args: never[]) => unknown)[]) =>
+    dispatchAgentHooks(
+      hookList(runs),
+      {},
+      { agent: "a", session: "s" },
+      (value) => value != null,
+      1000,
+      (output, pluginId) =>
+        typeof output === "string" ? `${pluginId}:${output}` : output,
+      joinText,
+    );
+  const failing = vi.fn().mockRejectedValue(new Error("observer failed"));
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  await expect(
+    dispatch([() => "a", () => undefined, failing, () => "b"]),
+  ).resolves.toBe("plugin-0:a|plugin-3:b");
+  expect(failing).toHaveBeenCalledOnce();
+
+  // A response that does more wins over context gathered before it, and
+  // ends dispatch, as the first nonempty response did before.
+  const after = vi.fn(() => "c");
+  await expect(
+    dispatch([() => "a", () => ({ deny: true }), after]),
+  ).resolves.toEqual({ deny: true });
+  await expect(dispatch([() => ({ deny: true }), after])).resolves.toEqual({
+    deny: true,
+  });
+  expect(after).not.toHaveBeenCalled();
+});
+
+it("delivers context gathered before the deadline and starts no callbacks after it", async () => {
+  const { dispatchAgentHooks } = await import("./hooks");
+  vi.useFakeTimers();
+  try {
+    let finish!: (value: unknown) => void;
+    const later = vi.fn();
+    const result = dispatchAgentHooks(
+      hookList([
+        () => "a",
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+        later,
+      ]),
+      {},
+      { agent: "a", session: "s" },
+      (value) => value != null,
+      2500,
+      undefined,
+      joinText,
+    );
+    const resolved = expect(result).resolves.toBe("a");
+    await vi.advanceTimersByTimeAsync(2500);
+    await resolved;
+    finish("b");
+    await Promise.resolve();
+    expect(later).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});

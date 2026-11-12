@@ -1,4 +1,4 @@
-import { nativeHookOutput } from "../hook-output";
+import { joinNativeContext, nativeHookOutput } from "../hook-output";
 import { CLAUDE_HOOK_EVENTS } from "./hooks";
 import { repositoriesContext } from "../../features/communities/repositories";
 // Claude agents: an agent type whose agents are Claude sessions on
@@ -83,6 +83,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             Object.keys(output).length > 0,
           milliseconds: 25000,
           compose: nativeHookOutput,
+          join: joinNativeContext,
         },
       )) ?? {}) as Record<string, unknown>;
     },

@@ -16194,6 +16194,23 @@ it("lets an installed harness dispatch only its own hooks through the plugin API
       ),
     ).resolves.toEqual({ output: { denied: true }, pluginId: "policy" });
     expect(calls).toEqual(["first", "later"]);
+    // An adapter's join receives every composed response, in order.
+    await expect(
+      plugin.agents.dispatchHook(
+        "example/hooked",
+        "BeforeTool",
+        input,
+        context,
+        {
+          ...options,
+          accepts: (value) => !!value && typeof value === "object",
+          join: (outputs) => outputs,
+        },
+      ),
+    ).resolves.toEqual([
+      { output: {}, pluginId: "policy" },
+      { output: { denied: true }, pluginId: "policy" },
+    ]);
     expect(() =>
       scope.agents.dispatchHook(
         "example/hooked",

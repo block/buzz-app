@@ -35,6 +35,37 @@ export function nativeHookOutput(output: unknown, pluginId: string): unknown {
   return result;
 }
 
+/** Joins Claude and Codex responses that only add context to the same event,
+ * such as each plugin's `UserPromptSubmit` reminder, one paragraph each;
+ * undefined when any response does more. */
+export function joinNativeContext(outputs: readonly unknown[]): unknown {
+  const texts: string[] = [];
+  let event: unknown;
+  for (const output of outputs) {
+    const specific = record(output) ? output.hookSpecificOutput : undefined;
+    if (
+      !record(output) ||
+      Object.keys(output).some((key) => key !== "hookSpecificOutput") ||
+      !record(specific) ||
+      typeof specific.additionalContext !== "string" ||
+      Object.keys(specific).some(
+        (key) => key !== "hookEventName" && key !== "additionalContext",
+      ) ||
+      (texts.length > 0 && specific.hookEventName !== event)
+    )
+      return undefined;
+    event = specific.hookEventName;
+    texts.push(specific.additionalContext);
+  }
+  if (outputs.length === 1) return outputs[0];
+  return {
+    hookSpecificOutput: {
+      ...(event !== undefined && { hookEventName: event }),
+      additionalContext: texts.join("\n\n"),
+    },
+  };
+}
+
 /** Pi's arguments and opaque details are tool data, not hook explanations. */
 export function piHookOutput(
   output: unknown,

@@ -109,3 +109,63 @@ it.each(["claude", "codex", "pi"] as const)(
     }
   },
 );
+
+it.each(["claude", "codex"] as const)(
+  "joins every plugin's prompt context through the %s adapter",
+  async (name) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
+    const context = (text: string) => ({
+      hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit",
+        additionalContext: text,
+      },
+    });
+    const dispatchHook = (
+      harness: string,
+      event: string,
+      input: unknown,
+      routing: AgentHookContext,
+      options: AgentHookDispatchOptions,
+    ) =>
+      dispatchAgentHooks(
+        ["choices", "tasks"].map((pluginId) => ({
+          id: "reminder",
+          pluginId,
+          harness,
+          event,
+          run: () => context(`Use ${pluginId}`),
+        })),
+        input,
+        routing,
+        options.accepts,
+        options.milliseconds,
+        options.compose,
+        options.join,
+      );
+    ({ claude, codex })[name]({
+      pluginOwner: { id: `buzz.${name}`, revision: "r1" },
+      host: { request: vi.fn(), serveMcp: vi.fn() },
+      agents: {
+        register: vi.fn(),
+        relay: () => undefined,
+        subscribe: () => () => {},
+        snapshot: () => ({ status: "ready", running: [] }),
+        dispatchHook,
+      },
+      settingsCards: { register: vi.fn() },
+      agentProtection: { registerModels: vi.fn() },
+      effect: vi.fn(),
+    } as never);
+    const hook =
+      name === "claude"
+        ? vi.mocked(ClaudeRuntime).mock.calls.at(-1)?.[7]
+        : vi.mocked(CodexRuntime).mock.calls.at(-1)?.[7]?.run;
+    expect(
+      await hook?.("a".repeat(64), "session", "UserPromptSubmit", {}),
+    ).toEqual(
+      context(
+        "[Buzz plugin: choices] Use choices\n\n[Buzz plugin: tasks] Use tasks",
+      ),
+    );
+  },
+);

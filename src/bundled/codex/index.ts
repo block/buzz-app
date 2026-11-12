@@ -1,4 +1,4 @@
-import { nativeHookOutput } from "../hook-output";
+import { joinNativeContext, nativeHookOutput } from "../hook-output";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
 import { isTauri } from "@tauri-apps/api/core";
@@ -59,6 +59,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   Object.keys(output).length > 0,
                 milliseconds: event === "Interrupt" ? 2500 : 25000,
                 compose: nativeHookOutput,
+                join: joinNativeContext,
               },
             )) ?? {}) as Record<string, unknown>;
           },

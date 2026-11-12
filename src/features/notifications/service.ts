@@ -5,6 +5,7 @@ import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
 import type { Navigation } from "../navigation/controller";
 import {
   createNotificationPreferences,
+  isQuietConversation,
   type NotificationPreferences,
 } from "./preferences";
 import {
@@ -38,6 +39,11 @@ export type NotificationGate = Readonly<{
   allows(target: OpenTarget): boolean;
 }>;
 export interface Notifications {
+  /** Account-local audio policy; banners and unread state retain their normal behavior. */
+  setConversationSound(
+    target: Extract<OpenTarget, { kind: "conversation" }>,
+    sound: "default" | "silent",
+  ): void;
   register(
     category: NotificationCategoryDescriptor,
   ): Readonly<{ submit(input: NotificationInput): Promise<boolean> }>;
@@ -199,8 +205,40 @@ export class NotificationsService extends Service implements Notifications {
     this.publish({ viewer, error: null });
     this.preferences.selectViewer(viewer);
   }
-  updatePreferences(patch: Partial<NotificationPreferences>) {
+  updatePreferences(
+    patch: Partial<Omit<NotificationPreferences, "quietConversations">>,
+  ) {
     return this.preferences.update(patch);
+  }
+  setConversationSound(
+    target: Extract<OpenTarget, { kind: "conversation" }>,
+    sound: "default" | "silent",
+  ) {
+    const parsed = parseOpenTarget(target);
+    if (
+      this.closed ||
+      parsed.kind !== "conversation" ||
+      parsed.scope.viewer !== this.state.viewer ||
+      (sound !== "default" && sound !== "silent")
+    )
+      throw new Error("Cannot change sound for this conversation");
+    // Preserve active off intent after a failed save; a reload would restore older on settings.
+    if (this.state.preferencesError)
+      throw new Error(
+        "Save your notification choices in Settings → Notifications, then retry background triage.",
+      );
+    if (
+      !this.preferences.setConversationSound(
+        {
+          communityOrigin: parsed.scope.communityOrigin,
+          channelId: parsed.channelId,
+        },
+        sound,
+      )
+    )
+      throw new Error(
+        "Could not save silent conversation settings. Retry before starting background work.",
+      );
   }
   reloadPreferences() {
     this.preferences.reload();
@@ -257,10 +295,12 @@ export class NotificationsService extends Service implements Notifications {
       this.gated(item.target)
     );
   }
-  private soundEnabled(category: string) {
+  private soundEnabled(item: Candidate) {
+    if (isQuietConversation(this.state.preferences, item.target)) return false;
     return (
       this.state.preferences.sound &&
-      resolveCategorySound(this.state.preferences.sounds, category) !== "silent"
+      resolveCategorySound(this.state.preferences.sounds, item.category) !==
+        "silent"
     );
   }
   /** Whether every registered gate lets this target alert. */
@@ -297,7 +337,7 @@ export class NotificationsService extends Service implements Notifications {
     // Restoring the setting before submission resolves must not resurrect it.
     for (const decision of this.sounding) {
       if (
-        !this.soundEnabled(decision.item.category) ||
+        !this.soundEnabled(decision.item) ||
         !this.allowed(decision.item) ||
         decision.item.eligible() === false
       )
@@ -460,7 +500,7 @@ export class NotificationsService extends Service implements Notifications {
       // The item is out of `pending`, so register its audio decision for
       // sticky cancellation by `revalidate` while the submission is
       // outstanding. Sound off at submission means no decision at all.
-      const decision = this.soundEnabled(item.category)
+      const decision = this.soundEnabled(item)
         ? { item, cancelled: false }
         : null;
       if (decision) this.sounding.add(decision);
@@ -499,7 +539,7 @@ export class NotificationsService extends Service implements Notifications {
         decision &&
         !decision.cancelled &&
         generation === this.generation &&
-        this.soundEnabled(item.category) &&
+        this.soundEnabled(item) &&
         this.allowed(item) &&
         item.eligible() === true
       )

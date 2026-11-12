@@ -13,6 +13,7 @@ import {
   completionToast,
   shouldShowForegroundCompletion,
 } from "./agent-completions";
+import { isQuietConversation } from "./preferences";
 import { playNotificationSound, resolveCategorySound } from "./sound";
 
 export function AgentCompletionNotifications({
@@ -52,7 +53,7 @@ export function AgentCompletionNotifications({
           const state = services.notifications.snapshot();
           const { preferences } = state;
           if (!shouldShowForegroundCompletion(state)) return;
-          if (preferences.sound)
+          if (preferences.sound && !isQuietConversation(preferences, target))
             playNotificationSound(
               resolveCategorySound(preferences.sounds, "agent"),
             );

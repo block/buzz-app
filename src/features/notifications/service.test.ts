@@ -21,15 +21,21 @@ afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.restoreAllMocks();
 });
-function setup() {
+function setup(
+  authorized?: (target: import("../navigation/targets").OpenTarget) => boolean,
+  values = new Map<string, string>(),
+) {
   const ctx = new Context();
   contexts.push(ctx);
   let module: PluginModule = { apply() {} };
   const runtime = new PluginRuntime(ctx, async () => module);
   ctx.effect(() => () => runtime.dispose());
-  const values = new Map<string, string>();
   const host = {
     localStorage: {
+      get length() {
+        return values.size;
+      },
+      key: (index: number) => [...values.keys()][index] ?? null,
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => values.set(key, value),
     },
@@ -57,7 +63,7 @@ function setup() {
     navigation.navigation,
     platform,
     preferences,
-    undefined,
+    authorized,
     (name) => plays.push(name),
   );
   service.selectViewer(viewer);
@@ -543,4 +549,209 @@ it("plugin display text is flattened and bounded, with the category text as fall
   expect(rich.body.startsWith("Call Ana <b>raw</b> bbb")).toBe(true);
   expect(Array.from(rich.body)).toHaveLength(200);
   expect(shown[1]).toMatchObject({ title: "Buzz", body: "New updates" });
+});
+
+it("keeps one conversation silent across mention, reply and agent completion categories without changing banners or other chats", async () => {
+  const t = setup(() => true);
+  const quiet = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  t.service.setConversationSound(quiet, "silent");
+  for (const category of ["mention", "thread", "agent"]) {
+    await t.service.admit(
+      category,
+      category,
+      { sourceKey: category, target: quiet },
+      () => true,
+    );
+    await flush();
+  }
+  expect(t.platform.show).toHaveBeenCalledTimes(3);
+  expect(t.plays).toHaveLength(0);
+  await t.service.admit(
+    "mention",
+    "Mentions",
+    { sourceKey: "other-chat", target: { ...quiet, channelId: "other-chat" } },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toHaveLength(1);
+  await t.service.admit(
+    "agent",
+    "Agents",
+    {
+      sourceKey: "other-community",
+      target: {
+        ...quiet,
+        scope: { ...quiet.scope, communityOrigin: "https://other.test" },
+      },
+    },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toHaveLength(2);
+  t.preferences.reload();
+  expect(t.service.snapshot().preferences.quietConversations).toEqual([
+    {
+      communityOrigin: quiet.scope.communityOrigin,
+      channelId: quiet.channelId,
+    },
+  ]);
+  const nextViewer = "b".repeat(64);
+  t.service.selectViewer(nextViewer);
+  expect(() => t.service.setConversationSound(quiet, "default")).toThrow();
+  await t.service.admit(
+    "mention",
+    "Mentions",
+    {
+      sourceKey: "other-owner",
+      target: { ...quiet, scope: { ...quiet.scope, viewer: nextViewer } },
+    },
+    () => true,
+  );
+  await flush();
+  expect(t.plays).toHaveLength(3);
+});
+
+it("cancels pending sound permanently when the conversation becomes silent during banner delivery, and reports a failed save", async () => {
+  const t = setup(() => true);
+  const quiet = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  let release!: () => void;
+  vi.mocked(t.platform.show).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  await t.service.admit(
+    "agent",
+    "Agents",
+    { sourceKey: "pending", target: quiet },
+    () => true,
+  );
+  await flush();
+  t.service.setConversationSound(quiet, "silent");
+  t.service.setConversationSound(quiet, "default");
+  release();
+  await flush();
+  expect(t.plays).toHaveLength(0);
+  vi.spyOn(t.host.localStorage, "setItem").mockImplementationOnce(() => {
+    throw new Error("Disk full");
+  });
+  expect(() => t.service.setConversationSound(quiet, "silent")).toThrow(
+    "Could not save",
+  );
+  expect(t.service.snapshot().preferencesError).toBeTruthy();
+});
+
+it("rechecks durable quiet policy before skipping a repeated setting from another window", () => {
+  const t = setup(() => true);
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  t.service.setConversationSound(target, "silent");
+  const key = `buzz-notification-preferences.v1:sound:${viewer}:${JSON.stringify([target.scope.communityOrigin, target.channelId])}`;
+  t.values.set(key, "default");
+  t.service.setConversationSound(target, "silent");
+  expect(t.values.get(key)).toBe("silent");
+  vi.spyOn(t.host.localStorage, "getItem").mockImplementationOnce(() => {
+    throw new Error("Storage unavailable");
+  });
+  expect(() => t.service.setConversationSound(target, "silent")).toThrow(
+    "Could not save",
+  );
+});
+
+it("does not reload older saved on settings over unsaved off intent", () => {
+  const t = setup(() => true);
+  t.service.updatePreferences({ enabled: true, sound: true });
+  vi.spyOn(t.host.localStorage, "setItem").mockImplementationOnce(() => {
+    throw new Error("Disk full");
+  });
+  expect(t.service.updatePreferences({ enabled: false, sound: false })).toBe(
+    false,
+  );
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "quiet-chat",
+  } as const;
+  expect(() => t.service.setConversationSound(target, "silent")).toThrow(
+    "Save your notification choices",
+  );
+  expect(t.service.snapshot().preferences).toMatchObject({
+    enabled: false,
+    sound: false,
+  });
+  expect(t.service.snapshot().preferencesError).toBeTruthy();
+});
+
+it("preserves overlapping different-chat writes and stale Settings saves across windows", () => {
+  const a = setup(() => true);
+  const b = setup(() => true, a.values);
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer, communityOrigin: "https://community.test" },
+    channelId: "chat-a",
+  } as const;
+  // Both windows read before either write commits, as independent renderers can.
+  const write = a.host.localStorage.setItem;
+  vi.spyOn(a.host.localStorage, "setItem").mockImplementationOnce(
+    (key, value) => {
+      b.service.setConversationSound(
+        { ...target, channelId: "chat-b" },
+        "silent",
+      );
+      write(key, value);
+    },
+  );
+  a.service.setConversationSound(target, "silent");
+  // A third Settings window is stale when it saves a normal sound choice.
+  const stale = setup(() => true, a.values);
+  a.service.setConversationSound({ ...target, channelId: "chat-c" }, "silent");
+  stale.service.updatePreferences({ sound: false });
+  const restored = setup(() => true, a.values);
+  expect(
+    restored.service
+      .snapshot()
+      .preferences.quietConversations?.map((e) => e.channelId)
+      .sort(),
+  ).toEqual(["chat-a", "chat-b", "chat-c"]);
+});
+
+it("keeps the first and newest chats silent beyond 1,000 saved conversations", () => {
+  const t = setup(() => true);
+  for (let index = 0; index < 1002; index++)
+    t.service.setConversationSound(
+      {
+        version: 1,
+        kind: "conversation",
+        scope: { viewer, communityOrigin: "https://community.test" },
+        channelId: `chat-${index}`,
+      },
+      "silent",
+    );
+  t.service.updatePreferences({ notifyWhileViewing: true });
+  const restored = setup(() => true, t.values);
+  const quiet = restored.service.snapshot().preferences.quietConversations;
+  expect(quiet).toHaveLength(1002);
+  expect(quiet).toEqual(
+    expect.arrayContaining([
+      { communityOrigin: "https://community.test", channelId: "chat-0" },
+      { communityOrigin: "https://community.test", channelId: "chat-1001" },
+    ]),
+  );
 });

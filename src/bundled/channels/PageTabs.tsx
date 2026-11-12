@@ -504,6 +504,7 @@ export function PageTabs({
                           <ConversationReader
                             key={JSON.stringify(primaryTarget)}
                             tab={primaryTab}
+                            focusOnMount={false}
                             intro={workspace.intro}
                             active={
                               secondary.selectedMain === "conversation" &&

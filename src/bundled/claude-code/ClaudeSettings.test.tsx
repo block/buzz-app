@@ -529,7 +529,9 @@ it("starts replacement blank, gates Save, and discards the draft on Cancel", asy
   expect(input).toHaveValue("");
   expect(input).toHaveAttribute("type", "password");
   await waitFor(() => expect(input).toHaveFocus());
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(save).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
   expect(
     screen.queryByRole("menuitem", { name: "Remove" }),
   ).not.toBeInTheDocument();
@@ -542,8 +544,8 @@ it("starts replacement blank, gates Save, and discards the draft on Cancel", asy
   expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   fireEvent.keyDown(input, { key: "Enter" });
   fireEvent.change(input, { target: { value: "sk-ant-draft" } });
-  const save = screen.getByRole("button", { name: "Save" });
   expect(save).toBeEnabled();
+  expect(input).toHaveFocus();
   fireEvent.change(input, { target: { value: native.value } });
   expect(save).toBeEnabled();
   fireEvent.change(input, { target: { value: "sk-ant-draft" } });

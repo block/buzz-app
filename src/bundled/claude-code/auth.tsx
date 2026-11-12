@@ -10,10 +10,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { type ComponentType, useEffect, useState } from "react";
 import { ClaudeSettings } from "./ClaudeSettings";
-import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
-import { Input } from "../../shared/design-system/ui/Input";
-import { InputGroup } from "../../shared/design-system/ui/InputGroup";
+import { ApiKeyForm } from "../../features/settings/ApiKeyForm";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import type { Spawn } from "./claude";
 import type { ClaudeSetup } from "./setup";
@@ -356,56 +353,31 @@ function KeyForm({
     }
   };
   return (
-    // Not a form: it sits inside agent creation's and Settings' own.
-    <div className="grid gap-2" aria-busy={saving ? true : undefined}>
-      <Field
-        label={replace ? "Replace API key" : "Anthropic API key"}
-        {...(replace && {
-          description:
-            "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it.",
-        })}
-      >
-        <InputGroup
-          trailing={
-            <Button
-              type="button"
-              variant={replace ? "subtle" : "prominent"}
-              size="sm"
-              disabled={disabled || !key.trim()}
-              focusableWhenDisabled
-              loading={!!saving}
-              onClick={() => void save()}
-            >
-              Save
-            </Button>
-          }
-        >
-          <Input
-            type="password"
-            autoComplete="off"
-            value={key}
-            readOnly={!!saving}
-            aria-disabled={saving || disabled ? true : undefined}
-            onValueChange={setKey}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.nativeEvent.isComposing)
-                return;
-              event.preventDefault();
-              void save();
-            }}
-          />
-        </InputGroup>
-      </Field>
-      {saved && (
-        <p
-          role={saved.ok ? "status" : "alert"}
-          className={
-            saved.ok ? "m-0 text-body-sm text-subtle" : "buzz-field-error m-0"
-          }
-        >
-          {saved.text}
-        </p>
-      )}
-    </div>
+    <ApiKeyForm
+      label={replace ? "Replace API key" : "Anthropic API key"}
+      description={
+        replace
+          ? "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it."
+          : undefined
+      }
+      value={key}
+      onValueChange={setKey}
+      onSave={() => void save()}
+      disabled={disabled}
+      saving={!!saving}
+      variant={replace ? "subtle" : "prominent"}
+      feedback={
+        saved && (
+          <p
+            role={saved.ok ? "status" : "alert"}
+            className={
+              saved.ok ? "m-0 text-body-sm text-subtle" : "buzz-field-error m-0"
+            }
+          >
+            {saved.text}
+          </p>
+        )
+      }
+    />
   );
 }

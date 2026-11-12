@@ -2535,7 +2535,7 @@ it("keeps focus in the field through a save started there", async () => {
   expect(document.activeElement).toBe(field());
 });
 
-it("keeps focus on Save after a keyboard save clears the field", async () => {
+it("keeps focus on Save when a keyboard save clears the field", async () => {
   const { saves, field, save } = await heldKeySaves();
   const user = userEvent.setup();
   await user.type(field(), "sk-ant-api03-secret");
@@ -2546,7 +2546,6 @@ it("keeps focus on Save after a keyboard save clears the field", async () => {
   act(() => saves[0]?.settle());
   expect(await screen.findByText("Saved the Anthropic API key.")).toBeVisible();
   expect(field()).toHaveValue("");
-  expect(save()).not.toBeDisabled();
   expect(save()).toHaveAttribute("aria-disabled", "true");
   expect(document.activeElement).toBe(save());
 });

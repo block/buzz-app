@@ -8,7 +8,7 @@ import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { KEY_ONCE, SignIn } from "./auth";
-import { SavedClaudeKey } from "./SavedClaudeKey";
+import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import type { ClaudeSetup } from "./setup";
 
 /** Credentials are independent of the installed Claude version, so a missing
@@ -116,8 +116,11 @@ export function ClaudeSettings({
         >
           {configured === true ? (
             <SettingsGroup layout="form">
-              <SavedClaudeKey
-                setup={setup}
+              <SavedApiKey
+                label="Anthropic API key"
+                labelVisibility="visible"
+                credential={setup.auth}
+                onSaved={() => setup.check()}
                 active={active}
                 disabled={disabled}
                 conceal={confirm || clearing || !!readError || !active()}

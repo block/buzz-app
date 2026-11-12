@@ -237,3 +237,30 @@ it("keeps Peek's group order once the highlight moves, adding late groups at the
   expect(order()).toEqual(["People", "Chats", "Messages"]);
   expect(onFreeze).toHaveBeenCalledOnce();
 });
+
+it("keeps an action-only group in place when Peek's order freezes", () => {
+  const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
+  const palette = (labels: string[]) => (
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      isAction={(key) => key.startsWith("scope:")}
+      peek={{ ranked: true, preview: () => null }}
+      groups={labels.map((label) => ({
+        label,
+        destinations: [row(label === "This conversation" ? "scope:a" : label)],
+      }))}
+    />
+  );
+  const order = () =>
+    screen
+      .getAllByRole("group")
+      .map((group) => group.getAttribute("aria-label"));
+  const { rerender } = render(
+    palette(["This conversation", "Recent activity"]),
+  );
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+  rerender(palette(["This conversation", "Recent activity"]));
+  expect(order()).toEqual(["This conversation", "Recent activity"]);
+});

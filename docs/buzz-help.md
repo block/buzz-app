@@ -591,13 +591,15 @@ and are asked to sign in again in Buzz.
   - If the sidebar says the community refused your account, **Try again**
     asks again, so it works once an admin has fixed your access. Buzz never
     asks again on its own.
-- **Finding channels**: search's **Channels** tab lists the community's open
-  channels you can join, with their member counts; typing also matches channels
-  you're in. Opening an unjoined channel shows a preview with **Join**. Private
+- **Finding channels**: typing in search matches channels you're in and the
+  community's open channels you can join, with their member counts. With
+  nothing typed, **Browse** beside the results lists your channels, direct
+  messages and chats by kind. Opening an unjoined channel shows a preview with
+  **Join**. Private
   channels appear only once someone adds you. Search reopens where you left it
   for a few minutes; Escape starts fresh next time.
 - **Jumping to unread**: opening search (⌘T or ⌘K; Ctrl elsewhere) with
-  nothing typed lists up to six of your other unread channels and DMs first,
+  nothing typed lists up to five of your other unread channels and DMs first,
   most recently active first, and selects the first, so Enter opens it, instead
   of reopening where you left it. A conversation unread only through thread
   replies previews its newest unread reply and opens it in its thread. Muted

@@ -287,16 +287,20 @@
     height: 2.5rem;
   }
   .search-palette[data-search-peek]
-    .search-palette-group[data-tone]
-    .search-row-icon[data-tile] {
+    :is(
+      .search-palette-group[data-tone] .search-row-icon,
+      .search-row-icon[data-tone]
+    )[data-tile] {
     justify-items: center;
     border-radius: 30%;
     background: var(--peek-fill);
     color: var(--peek-ink);
   }
   .search-palette[data-search-peek]
-    .search-palette-group[data-tone]
-    .search-row-icon[data-tile]
+    :is(
+      .search-palette-group[data-tone] .search-row-icon,
+      .search-row-icon[data-tone]
+    )[data-tile]
     svg {
     width: 0.9375rem;
     height: 0.9375rem;

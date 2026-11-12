@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   CaretRightIcon,
+  ClockIcon,
   MagnifyingGlassIcon,
   type ChatCircleIcon,
 } from "../../shared/design-system/icons/index";
@@ -51,6 +52,8 @@ export type SearchDestination = {
     | undefined;
   /** What the preview beside the results reads for this row. */
   peek?: PeekTarget | undefined;
+  /** The row's own kind, where its group mixes kinds. */
+  kind?: SearchTone | undefined;
   run: () => void;
 };
 
@@ -79,6 +82,9 @@ export type SearchGroup = {
   tone?: SearchTone | undefined;
   /** Rows show their whole detail, wrapped, rather than one line of it. */
   multiline?: boolean | undefined;
+  /** Peek lists it beside Top results and shows it whole when chosen, but
+   * not among them. */
+  browse?: boolean | undefined;
 };
 
 /** What kind of thing a group holds, for Peek's icon tints. */
@@ -149,12 +155,12 @@ export type SearchInputProps = {
 /** Views of one search, switched from the field with Ctrl+Tab and
  * Ctrl+Shift+Tab, drawn between the field and the results. */
 export type SearchViews = {
-  tabs: ReactNode;
+  tabs?: ReactNode;
   /** Names the results list for the view shown. */
   resultsLabel: string;
   /** The shown view's tab panel, which its tab controls. */
-  panelId: string;
-  onSwitch: (delta: 1 | -1) => void;
+  panelId?: string;
+  onSwitch?: (delta: 1 | -1) => void;
   /** Where the results were: their scroll position and highlighted row,
    * restored as the view mounts and kept as they change. */
   place: SearchPlace;
@@ -300,16 +306,18 @@ export function SearchChoices({
     ? merged
     : scoped
       ? [scoped]
-      : merged.map((group) => {
-          const place = ranked.indexOf(group);
-          if (place < 0) return group;
-          const rows = resultRows(group);
-          const limit = place === 0 ? LEAD_ROWS : GROUP_ROWS;
-          if (rows.length <= limit && !group.count)
-            return { ...group, destinations: rows };
-          truncated.set(group.label, rows.length);
-          return { ...group, destinations: rows.slice(0, limit) };
-        });
+      : merged
+          .filter((group) => !group.browse)
+          .map((group) => {
+            const place = ranked.indexOf(group);
+            if (place < 0) return group;
+            const rows = resultRows(group);
+            const limit = place === 0 ? LEAD_ROWS : GROUP_ROWS;
+            if (rows.length <= limit && !group.count)
+              return { ...group, destinations: rows };
+            truncated.set(group.label, rows.length);
+            return { ...group, destinations: rows.slice(0, limit) };
+          });
   const showScope = (label: string | undefined) => {
     setPeekScope(label);
     const first = (
@@ -351,7 +359,7 @@ export function SearchChoices({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Freezes the order just shown, once per text.
   useLayoutEffect(() => {
     if (!moved || frozen.current) return;
-    frozen.current = { query, labels: ranked.map(({ label }) => label) };
+    frozen.current = { query, labels: merged.map(({ label }) => label) };
     freeze?.();
   }, [moved, query]);
   // A highlight is kept only while its row is in view: one scrolled away
@@ -518,8 +526,8 @@ export function SearchChoices({
       ref={palette}
       className="search-palette"
       data-search-palette=""
-      data-modal-tab-switch={views ? "" : undefined}
-      data-search-views={views ? "" : undefined}
+      data-modal-tab-switch={views?.onSwitch ? "" : undefined}
+      data-search-views={views?.tabs ? "" : undefined}
       data-search-footer={footer ? "" : undefined}
       data-search-peek={peek ? "" : undefined}
       {...highlight.listProps}
@@ -567,7 +575,7 @@ export function SearchChoices({
         aria-haspopup={hasControls ? "grid" : "listbox"}
         {...highlight.fieldProps}
         label={label}
-        placeholder="Search..."
+        placeholder="Search people, channels, plugins and messages"
         value={displayQuery ?? query}
         onValueChange={onDisplayQueryChange ?? onQueryChange}
         spellCheck={false}
@@ -631,26 +639,26 @@ export function SearchChoices({
             return;
           }
           if (
-            views &&
+            switchView &&
             event.key === "Tab" &&
             event.ctrlKey &&
             !event.metaKey &&
             !event.altKey
           ) {
             event.preventDefault();
-            views.onSwitch(event.shiftKey ? -1 : 1);
+            switchView(event.shiftKey ? -1 : 1);
             return;
           }
           highlight.keyDown(event);
         }}
       />
       {peek?.hints}
-      {views && <div className="search-palette-views">{views.tabs}</div>}
+      {views?.tabs && <div className="search-palette-views">{views.tabs}</div>}
       <div className={peek?.ranked ? "search-peek-body" : "contents"}>
         <div
           ref={resultsViewport}
           className="search-palette-height"
-          {...(views
+          {...(views?.panelId
             ? {
                 role: "tabpanel",
                 id: views.panelId,
@@ -803,6 +811,7 @@ export function SearchChoices({
                               icon,
                               image,
                               avatar,
+                              kind,
                             }) =>
                               content ? (
                                 // biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table.
@@ -950,6 +959,7 @@ export function SearchChoices({
                                           data-tile={
                                             (!avatar && !image) || undefined
                                           }
+                                          data-tone={kind}
                                         >
                                           {avatar ? (
                                             <Avatar
@@ -1056,13 +1066,15 @@ export function SearchChoices({
             {ranked.length > 1 && (
               <nav className="search-peek-rail" aria-label="Result groups">
                 <div className="search-peek-rail-head text-body-sm text-subtle">
-                  <span>Show</span>
+                  <span>{query.trim() ? "Show" : "Browse"}</span>
                   <kbd>Tab</kbd>
                 </div>
                 {[undefined, ...ranked].map((group, index) => {
                   const Icon = group
                     ? (group.icon ?? group.destinations[0]?.icon)
-                    : MagnifyingGlassIcon;
+                    : query.trim()
+                      ? MagnifyingGlassIcon
+                      : ClockIcon;
                   return (
                     <button
                       key={group?.label ?? ""}
@@ -1086,8 +1098,9 @@ export function SearchChoices({
                         </span>
                       )}
                       <span className="search-peek-rail-label">
-                        {group?.label ?? "Top results"}
-                        {index === 1 && (
+                        {group?.label ??
+                          (query.trim() ? "Top results" : "Jump back in")}
+                        {index === 1 && !!query.trim() && (
                           <small className="search-peek-best">Best match</small>
                         )}
                       </span>
@@ -1095,7 +1108,9 @@ export function SearchChoices({
                         {group
                           ? countOf(group)
                           : ranked.reduce(
-                              (sum, item) => sum + resultRows(item).length,
+                              (sum, item) =>
+                                sum +
+                                (item.browse ? 0 : resultRows(item).length),
                               0,
                             )}
                       </span>

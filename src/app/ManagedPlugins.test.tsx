@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { PluginManager } from "../plugins/manager";
 import type {
@@ -736,6 +737,14 @@ const artifact = {
   url: "https://cdn.example.com/example.managed.json",
   sha256: "c".repeat(64),
 };
+const gitInstalled = {
+  ...installed,
+  updateSource: {
+    repository: "https://example.com/plugins",
+    reference: "v1",
+    path: "dist",
+  },
+};
 function showRequest(manager: unknown, plugins: Catalog["plugins"] = []) {
   const requests = createPluginInstallRequests();
   const outcome = requests.request(artifact, market);
@@ -793,7 +802,7 @@ it("cancels a plugin's URL install request when its review closes", async () => 
       }),
     ),
   });
-  const { outcome } = showRequest(manager, [installed]);
+  const { outcome } = showRequest(manager, [gitInstalled]);
   const dialog = await screen.findByRole("dialog");
   await within(dialog).findByRole("button", { name: "Update" });
   fireEvent.keyDown(dialog, { key: "Escape" });
@@ -802,7 +811,79 @@ it("cancels a plugin's URL install request when its review closes", async () => 
   expect(manager.installImport).not.toHaveBeenCalled();
 });
 
-it("refuses a URL install request over a plugin installed from Git", async () => {
+it.each([true, false])(
+  "reviews a Git-to-URL update without removing or changing enabled=%s",
+  async (enabled) => {
+    const user = userEvent.setup();
+    const { manager } = harness();
+    Object.assign(manager.imports, {
+      url: vi.fn(async () =>
+        preview({
+          commit: null,
+          candidates: [{ path: ".", revision: artifact.sha256, manifest }],
+        }),
+      ),
+    });
+    const { outcome } = showRequest(manager, [{ ...gitInstalled, enabled }]);
+    const dialog = await screen.findByRole("dialog", {
+      name: "Update Managed example",
+    });
+    expect(
+      await within(dialog).findByText(
+        /switches this plugin from Git to a packaged download/,
+      ),
+    ).toBeVisible();
+    expect(within(dialog).getByText(artifact.url)).toBeVisible();
+    expect(manager.installImport).not.toHaveBeenCalled();
+    expect(manager.change).not.toHaveBeenCalled();
+    if (!enabled)
+      expect(
+        within(dialog).getByText("This plugin will stay disabled."),
+      ).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Update" }));
+    await expect(outcome).resolves.toBe("updated");
+    expect(manager.installImport).toHaveBeenCalledExactlyOnceWith(
+      "preview",
+      ".",
+    );
+    expect(manager.change).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps a failed Git-to-URL update open without removing the installed plugin", async () => {
+  const user = userEvent.setup();
+  const { manager } = harness();
+  manager.installImport.mockResolvedValue(false);
+  manager.snapshot = () => ({ error: "Registry is locked" });
+  Object.assign(manager.imports, {
+    url: vi.fn(async () =>
+      preview({
+        commit: null,
+        candidates: [{ path: ".", revision: artifact.sha256, manifest }],
+      }),
+    ),
+  });
+  const { outcome } = showRequest(manager, [gitInstalled]);
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Update" }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Registry is locked",
+  );
+  expect(manager.installImport).toHaveBeenCalledOnce();
+  expect(manager.change).not.toHaveBeenCalled();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  await expect(outcome).resolves.toBe("cancelled");
+});
+
+it.each([
+  {
+    source: { root: "/plugins/example", path: "." },
+    label: "/plugins/example",
+  },
+  { source: null, label: "an unknown source" },
+])("refuses a URL install over $label", async ({ source, label }) => {
   const { manager } = harness();
   Object.assign(manager.imports, {
     url: vi.fn(async () =>
@@ -815,11 +896,7 @@ it("refuses a URL install request over a plugin installed from Git", async () =>
   const { outcome } = showRequest(manager, [
     {
       ...installed,
-      updateSource: {
-        repository: "https://example.com/plugins",
-        reference: "v1",
-        path: "dist",
-      },
+      updateSource: source,
     },
   ]);
   const dialog = await screen.findByRole("dialog");
@@ -828,7 +905,7 @@ it("refuses a URL install request over a plugin installed from Git", async () =>
   );
   expect(
     await within(dialog).findByText(
-      `Installed example is already installed from https://example.com/plugins; remove it first to install it from ${artifact.url}.`,
+      `Installed example is already installed from ${label}; remove it first to install it from ${artifact.url}.`,
     ),
   ).toBeVisible();
   expect(manager.installImport).not.toHaveBeenCalled();

@@ -576,6 +576,15 @@ export function ManagedPluginReview({
               {requestedBy.reason}
             </p>
           )}
+          {"url" in entry &&
+            existing?.source === "external" &&
+            existing.updateSource &&
+            "repository" in existing.updateSource && (
+              <p className="mb-4 mt-0 break-words">
+                This update switches this plugin from Git to a packaged
+                download. The URL below replaces its saved Git source.
+              </p>
+            )}
           <code className={`${importStyles.sourcePath} break-all`}>
             {location(entry)}
           </code>
@@ -684,14 +693,13 @@ export function UrlPluginInstallReview({
           (plugin) => plugin.manifest.id === source.id,
         );
         const saved = current?.updateSource;
-        if (current?.source !== "external" || (saved && "url" in saved))
+        if (
+          current?.source !== "external" ||
+          (saved && ("url" in saved || "repository" in saved))
+        )
           return undefined;
         return `${current.manifest.name} is already installed from ${
-          saved && "repository" in saved
-            ? saved.repository
-            : saved
-              ? saved.root
-              : "an unknown source"
+          saved ? saved.root : "an unknown source"
         }; remove it first to install it from ${source.url}.`;
       }}
       confirm={request && (() => request.confirm(request.id))}

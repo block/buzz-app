@@ -1078,17 +1078,27 @@ it("is unavailable without native imports, before the catalog is ready, or while
   await expect(first).resolves.toBe("cancelled");
 });
 
-it("reports a confirmed self-update as updated even though it replaces the requester", async () => {
-  const { requests, as, fibers } = setup();
-  const installer = await as("example.market");
-  const outcome = installer.requestInstall(base);
-  const id = requests.snapshot()?.id ?? 0;
-  requests.confirm(id);
-  await fibers[0]?.dispose();
-  expect(requests.snapshot()?.id).toBe(id);
-  requests.settle(id, "updated");
-  await expect(outcome).resolves.toBe("updated");
-});
+it.each([
+  base,
+  {
+    id: "example.market",
+    url: "https://cdn.example.com/market.json",
+    sha256: "e".repeat(64),
+  },
+])(
+  "reports a confirmed self-update from %j as updated even though it replaces the requester",
+  async (source) => {
+    const { requests, as, fibers } = setup();
+    const installer = await as("example.market");
+    const outcome = installer.requestInstall(source);
+    const id = requests.snapshot()?.id ?? 0;
+    requests.confirm(id);
+    await fibers[0]?.dispose();
+    expect(requests.snapshot()?.id).toBe(id);
+    requests.settle(id, "updated");
+    await expect(outcome).resolves.toBe("updated");
+  },
+);
 
 it("advertises URL sources and admits a URL request for review", async () => {
   const { as, requests, open } = setup();

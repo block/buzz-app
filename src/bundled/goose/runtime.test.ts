@@ -66,6 +66,7 @@ function setup(
   options: Readonly<{
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
+    dm?: boolean;
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
@@ -141,7 +142,11 @@ function setup(
           {
             id: channel,
             name: "general",
-            channelType: options.solo?.has(channel) ? "solo" : "stream",
+            channelType: options.dm
+              ? "dm"
+              : options.solo?.has(channel)
+                ? "solo"
+                : "stream",
             members: [],
           },
         ],
@@ -1706,6 +1711,66 @@ it("leaves a later thread's context unseen after a resume in a channel session",
   expect(turns[0]?.text).toContain("One reached 10");
   expect(turns[1]?.text).toContain("Use the blue palette");
 });
+
+it.each([false, true])(
+  "keeps each thread's unseen context in a shared session (dm: %s)",
+  async (dm) => {
+    const reply = (id: string, root: RelayEvent, content: string, at: number) =>
+      message(id, content, {
+        created_at: at,
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+        ],
+      });
+    const aRoot = message("1", "Task A", { created_at: 80 });
+    const bRoot = message("2", "Task B", { created_at: 90 });
+    const bNote = reply("3", bRoot, "B must use staging only", 100);
+    // A DM's top-level turn reads the whole DM, so A starts in a thread there.
+    const first = dm
+      ? reply("4", aRoot, "@Gander work on A", 110)
+      : message("4", "@Gander work on A", { created_at: 110 });
+    const aNote = reply("5", dm ? aRoot : first, "A must include refunds", 115);
+    const history = [aRoot, bRoot, bNote, first, aNote];
+    const f = setup({ scope: "channel", dm });
+    f.read.mockImplementation((async (
+      filters: { ids?: string[]; "#e"?: string[] }[],
+    ) =>
+      history.filter((event) =>
+        filters.some(
+          (filter) =>
+            filter.ids?.includes(event.id) ||
+            event.tags.some(
+              (tag) => tag[0] === "e" && filter["#e"]?.includes(tag[1] ?? ""),
+            ),
+        ),
+      )) as never);
+    const deliver = async (event: RelayEvent) => {
+      const workingUntil = vi.fn<Delivery["workingUntil"]>();
+      await f.deliver(event, { workingUntil });
+      await vi.waitFor(() => expect(workingUntil).toHaveBeenCalledOnce());
+      await workingUntil.mock.calls[0]?.[0];
+      return f.goose()?.turns.at(-1)?.text ?? "";
+    };
+    await deliver(first);
+    expect(await deliver(reply("6", bRoot, "@Gander do B now", 120))).toContain(
+      bNote.content,
+    );
+    expect(
+      await deliver(reply("7", bRoot, "@Gander continue B", 130)),
+    ).not.toContain(bNote.content);
+    expect(
+      await deliver(reply("8", dm ? aRoot : first, "@Gander continue A", 140)),
+    ).toContain(aNote.content);
+    expect(
+      await deliver(reply("9", bRoot, "@Gander finish B", 150)),
+    ).not.toContain(bNote.content);
+    const turns = f.goose()?.turns ?? [];
+    expect(turns).toHaveLength(5);
+    expect(new Set(turns.map((turn) => turn.sessionId)).size).toBe(1);
+  },
+);
 
 it("ends a turn's prompt with the notes plugins left for it in its channel", async () => {
   const f = setup();

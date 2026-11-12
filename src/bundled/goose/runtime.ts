@@ -463,6 +463,7 @@ export class GooseRuntime {
       return {
         key: turn.key,
         shown: turn.shown,
+        contextRoot: turn.contextRoot,
         place: where.name
           ? `#${where.name}`
           : where.dm
@@ -471,7 +472,13 @@ export class GooseRuntime {
         text: resumed ? `${text}\n\n${RESUMED_PROMPT}` : text,
       };
     };
-    const { key, text: prepared, place, shown } = await prompt(false);
+    const {
+      key,
+      text: prepared,
+      place,
+      shown,
+      contextRoot,
+    } = await prompt(false);
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
@@ -534,6 +541,7 @@ export class GooseRuntime {
             steer: steerPrompt(text),
             fresh: async () =>
               this.review(entry, (await prompt(true, key)).text, notes),
+            ...(contextRoot ? { contextRoot } : {}),
             title: sessionTitle(entry.name, place, key.split("/")[1]),
             // A Solo chat takes the name goose gives its first session.
             ...(solo && named ? { named } : {}),
@@ -712,9 +720,13 @@ export class GooseRuntime {
 
     // The conversation it was admitted to, not the scope as it is now.
     const scope: Scope = key === channelId ? "channel" : "thread";
+    // Sharing a session does not mean it has seen every thread in the channel.
+    // A DM's top-level turns read the whole DM, so they keep its one timestamp.
+    const contextRoot =
+      scope === "channel" && !topLevel && (!dm || thread) ? rootId : undefined;
     // A resumed turn's session never saw its thread, its own replies included,
     // even when another resumed turn already opened it in a channel session.
-    const seen = fresh || resumed ? 0 : entry.sessions.seen(key);
+    const seen = fresh || resumed ? 0 : entry.sessions.seen(key, contextRoot);
     // Read alongside the conversation: only a Solo chat's Canvas is handed over.
     const owner = entry.handle?.owner;
     const reading = solo
@@ -784,6 +796,7 @@ export class GooseRuntime {
       },
       ...(thread ? { thread } : {}),
       context: unseen,
+      contextRoot,
       /** created_at of the newest event the turn is shown. A thread read in a
        * channel session stops at the event: the other threads were not read. */
       shown:

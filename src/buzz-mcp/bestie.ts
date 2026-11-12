@@ -21,7 +21,7 @@ export const BESTIE_TOOLS: readonly Tool[] = [
   {
     name: "bestie_set",
     description:
-      "Make one of your owner's agents in this community their Bestie, on this device and their account, as Make my bestie does. The answer is bestie_get's.",
+      "Make one of your owner's agents in this community their Bestie, saved on this device and their account as Make my bestie saves it. Unlike Make my bestie, it doesn't turn on Remembers you; your owner does that in the agent's Bestie tab. The answer is bestie_get's.",
     inputSchema: {
       type: "object",
       properties: {

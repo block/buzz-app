@@ -49,6 +49,7 @@ import type { SyncState } from "../../features/agents/team-migration";
 import { localStore } from "../../features/agents/state";
 import {
   chooseDefaultAgent,
+  defaultAgentControl,
   setDefaultAgent,
 } from "../../features/solo/default-agent";
 import { readView, writeView } from "../../shared/view-state";
@@ -5280,6 +5281,110 @@ it("removes a Bestie on another device from its card, asking first", async () =>
   expect(
     within(menu).queryByRole("menuitem", { name: "Remove as bestie" }),
   ).toBeNull();
+});
+
+it("asks to try again while an agent is still changing the Bestie, saving nothing", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const rows = [ada, bea].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi.fn(async (_agent: string | null) => {}),
+  };
+  const scope = "agent-changing-bestie";
+  const connection = {
+    status: "ready",
+    scope,
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+        refresh: async () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  // The agent's change to Bea is still saving to the account.
+  let finish!: () => void;
+  mainAgent.write.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const setting = defaultAgentControl(
+    connection.session as unknown as RelaySession,
+    scope,
+  ).set(bea.pubkey);
+  await vi.waitFor(() => expect(mainAgent.write).toHaveBeenCalledOnce());
+  const busy = "An agent is still changing your Bestie. Try again.";
+  try {
+    await user.click(
+      within(screen.getByRole("gridcell", { name: /^Bea/ })).getByRole(
+        "button",
+        { name: "Actions for Bea" },
+      ),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Make my bestie" }),
+    );
+    await user.click(
+      within(
+        await screen.findByRole("alertdialog", {
+          name: "Make Bea your bestie?",
+        }),
+      ).getByRole("button", { name: "Switch to Bea" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(busy);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await user.click(
+      within(screen.getByRole("gridcell", { name: /^Ada/ })).getByRole(
+        "button",
+        { name: "Actions for Ada" },
+      ),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Remove as bestie" }),
+    );
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Remove Ada as your Bestie?",
+    });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove as Bestie" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(busy);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  } finally {
+    finish();
+  }
+  await setting;
+  expect(mainAgent.write).toHaveBeenCalledExactlyOnceWith(bea.pubkey);
+  expect(readView(scope, "solo:default-agent", null)).toBe(bea.pubkey);
+  expect(
+    await screen.findByRole("gridcell", { name: "Bea, Bestie" }),
+  ).toBeVisible();
 });
 
 it("keeps a Bestie chosen elsewhere while its removal is being asked about", async () => {

@@ -4,6 +4,7 @@ import type { AgentChoicesSnapshot } from "../../features/agents/choices";
 import type { AgentPlace } from "../../features/agents/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
+  agentChangingBestie,
   chooseDefaultAgent,
   clearDefaultAgent,
   restoreDefaultAgent,
@@ -15,6 +16,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 type BestieAgent = AgentChoicesSnapshot["selectable"][number];
 
 const made = new Set<(pubkey: string) => void>();
+const AGENT_CHANGING = "An agent is still changing your Bestie. Try again.";
 /** Hears each agent the viewer makes Bestie on this device, once it is
  * saved. A choice synced from elsewhere isn't heard. */
 export function onBestieMade(listener: (pubkey: string) => void) {
@@ -86,6 +88,14 @@ export function useBestieChoice(
       .selectable.find((agent) => agent.pubkey === pubkey);
   const save = (pubkey: string, previous?: string) => {
     if (!eligible(pubkey)) return;
+    // Closing the dialogs keeps their close from putting back a choice this
+    // never made.
+    if (agentChangingBestie(session)) {
+      setReplacement(undefined);
+      setRemote(undefined);
+      setError(AGENT_CHANGING);
+      return;
+    }
     const choice = ++latest.current;
     setError("");
     setSavingBestie(true);
@@ -163,10 +173,12 @@ export function useBestieChoice(
           // edited.
           remote={placeOf?.(removing.pubkey) === "elsewhere"}
           remove={() =>
-            // A choice changed elsewhere while this dialog was open wins.
-            saved === removing.pubkey
-              ? clearDefaultAgent(session, scope)
-              : Promise.resolve()
+            agentChangingBestie(session)
+              ? Promise.reject(new Error(AGENT_CHANGING))
+              : // A choice changed elsewhere while this dialog was open wins.
+                saved === removing.pubkey
+                ? clearDefaultAgent(session, scope)
+                : Promise.resolve()
           }
           onClose={() => setRemoving(undefined)}
         />

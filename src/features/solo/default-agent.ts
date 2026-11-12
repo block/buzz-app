@@ -250,6 +250,12 @@ export function defaultAgentControl(session: RelaySession, scope: string) {
 }
 export type DefaultAgentControl = ReturnType<typeof defaultAgentControl>;
 
+/** Whether one of the viewer's agents is changing their Bestie, which a change
+ * started now could undo. */
+export function agentChangingBestie(session: RelaySession) {
+  return !!session.mainAgent && changing.has(session.mainAgent);
+}
+
 /** Clears a deleted agent from the account only when it is still the saved
  * choice. Another agent chosen on the account is left alone. */
 export async function clearDeletedDefaultAgent(

@@ -931,7 +931,10 @@ available rather than silently discarding it.
   An agent running on this device can also show, change or remove your Bestie
   when you ask it to. It saves to this device and your account, as the menu
   does, and accepts only your agents you can tag in this community. It also
-  says when the Bestie saved on this device isn't one of them.
+  says when the Bestie saved on this device isn't one of them. Unlike the menu,
+  it doesn't turn on **Remembers you** with the **Bestie** plugin on; turn that
+  on in the agent's **Bestie** tab. While an agent's change is saving, **Make
+  my bestie** and **Remove as bestie** ask you to try again.
 - With the **Bestie** plugin on, open **Create an agent** in the left navigation
   when you haven’t chosen a Bestie. You can create one or choose an existing agent.
   The placeholder cycles through character avatars; reduced motion keeps it still.

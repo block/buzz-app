@@ -198,6 +198,7 @@ import {
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
+import { sidebarSections } from "../relay/sidebar-agent-sections";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import { replyInvocationIntents } from "../relay/messages";
@@ -739,6 +740,9 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** On a run's handle only: the owner's sidebar sections in the agent's
+   * community; undefined while it is not connected. */
+  sections?(): ReturnType<typeof sidebarSections> | undefined;
   /** On a run's handle only: the owner's sidebar workspaces. */
   workspaces?: Readonly<{
     list(
@@ -3482,6 +3486,10 @@ export class AgentsService extends Service implements Agents {
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
         return session && channelTabs(session, ctx.navigation);
+      },
+      sections: (agent) => {
+        const session = this.bindingOf(agent)?.session;
+        return session && sidebarSections(session);
       },
       settings: () => this.deviceSettings,
       bestie: (agent) => {

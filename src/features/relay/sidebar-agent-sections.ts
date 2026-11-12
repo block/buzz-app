@@ -4,8 +4,17 @@ const SECTIONABLE = new Set([undefined, "stream", "forum"]);
 
 /** The owner's sidebar sections in `session`, for their agents. Each write
  * goes through the same queued, confirmed preference writes as the sidebar. */
-export function sidebarSections(session: RelaySession) {
+export function sidebarSections(
+  session: RelaySession,
+  steward: () => Promise<boolean>,
+) {
   const preferences = session.sidebarPreferences;
+  const stewarding = async () => {
+    if (!(await steward()))
+      throw new Error(
+        "Only your owner's Bestie can arrange their sidebar sections. Ask it to.",
+      );
+  };
   const loaded = async () => {
     if (!preferences.writable) await preferences.ensure();
     if (!preferences.writable) await preferences.refresh();
@@ -60,6 +69,7 @@ export function sidebarSections(session: RelaySession) {
       };
     },
     async create(name: string) {
+      await stewarding();
       const section = { id: crypto.randomUUID(), name: named(name) };
       await loaded();
       if (!preferences.sectionCreationWritable)
@@ -74,15 +84,18 @@ export function sidebarSections(session: RelaySession) {
       return section;
     },
     async rename(id: string, name: string) {
+      await stewarding();
       const next = named(name);
       await existing(id);
       await preferences.renameSection(id, next);
     },
     async remove(id: string) {
+      await stewarding();
       await existing(id);
       await preferences.removeSection(id);
     },
     async assign(channelId: string, sectionId: string | undefined) {
+      await stewarding();
       const channel = sectionable(channelId);
       if (sectionId === undefined) await loaded();
       else await existing(sectionId);

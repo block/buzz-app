@@ -18,7 +18,9 @@ const channels: ChannelSummary[] = [
   { id: "c-twin-2", name: "Twin", channelType: "stream" },
 ] as ChannelSummary[];
 
-function setup(options: Readonly<{ failCreate?: "lost" | "saved" }> = {}) {
+function setup(
+  options: Readonly<{ failCreate?: "lost" | "saved"; bestie?: boolean }> = {},
+) {
   let data: SidebarPreferences = {
     sections: [
       { id: "s-b", name: "Later", order: 1 },
@@ -83,7 +85,10 @@ function setup(options: Readonly<{ failCreate?: "lost" | "saved" }> = {}) {
     sidebarPreferences: store.queries,
     channels: { list: () => ({ channels }) },
   } as unknown as RelaySession;
-  return { sections: sidebarSections(session), write };
+  return {
+    sections: sidebarSections(session, async () => options.bestie ?? true),
+    write,
+  };
 }
 
 it("lists sections in sidebar order with channel names and starred channels", async () => {
@@ -154,4 +159,15 @@ it("reports a created section whose confirmation failed but was saved", async ()
   await expect(lost.sections.create("Ops")).rejects.toThrow(
     "confirmation timed out",
   );
+});
+
+it("lets any agent list sections but only the Bestie change them", async () => {
+  const { sections, write } = setup({ bestie: false });
+  expect((await sections.list()).sections).toHaveLength(2);
+  const refusal = "Only your owner's Bestie can arrange their sidebar sections";
+  await expect(sections.create("Ops")).rejects.toThrow(refusal);
+  await expect(sections.rename("s-a", "X")).rejects.toThrow(refusal);
+  await expect(sections.remove("s-a")).rejects.toThrow(refusal);
+  await expect(sections.assign("dev", "s-b")).rejects.toThrow(refusal);
+  expect(write).not.toHaveBeenCalled();
 });

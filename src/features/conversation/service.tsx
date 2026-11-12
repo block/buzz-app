@@ -13,6 +13,8 @@ import {
   type MessageComposerProps,
 } from "../messages/MessageComposer";
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
+import { ReplyBranch } from "../messages/ReplyBranch";
+import { ReplySummary } from "../messages/ReplySummary";
 import {
   formatDayGroupLabel,
   formatFullTimestamp,
@@ -29,6 +31,7 @@ import type {
   LinkRenderer,
   LinkPreviewRenderer,
   MessageRenderer,
+  IdentityMark,
   MessageAction,
   ContributionReader,
   PageTabsProps,
@@ -83,6 +86,8 @@ export type Conversation = {
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  identityMarks: ContributionReader<IdentityMark>;
+  registerIdentityMark(mark: IdentityMark): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
@@ -90,6 +95,10 @@ export type Conversation = {
     Conversation: (props: EmbeddedConversationProps) => ReactNode;
     Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
+    /** Controlled native reply grouping for caller-owned retained readers. */
+    ReplyBranch: typeof ReplyBranch;
+    /** Native reply summary from the caller's count and participant facts. */
+    ReplySummary: typeof ReplySummary;
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
@@ -131,7 +140,8 @@ function validate(
     | LinkPreviewRenderer
     | CodeBlockRenderer
     | MessageRenderer
-    | MessageAction,
+    | MessageAction
+    | IdentityMark,
 ) {
   if (
     !value ||
@@ -167,6 +177,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
+  readonly identityMarks;
+  private readonly identityMarkEntries;
   private readonly tabEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
@@ -225,6 +237,12 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const identityMarks = createContributions<IdentityMark>(ctx);
+    this.identityMarkEntries = identityMarks;
+    this.identityMarks = {
+      snapshot: identityMarks.snapshot,
+      subscribe: identityMarks.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
@@ -259,6 +277,8 @@ export class ConversationService extends Service implements Conversation {
       Message: (props: Omit<MessageRowProps, "extensions">) => (
         <MessageRow {...props} extensions={this} />
       ),
+      ReplyBranch,
+      ReplySummary,
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;
       },
@@ -291,6 +311,10 @@ export class ConversationService extends Service implements Conversation {
     )
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
+  }
+  registerIdentityMark(value: IdentityMark) {
+    validate(value);
+    this.identityMarkEntries.register(this.ctx, value);
   }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);

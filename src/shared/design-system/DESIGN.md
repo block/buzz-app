@@ -2148,8 +2148,11 @@ accessible selected state.
 Dock artwork stays still on hover and press. Bestie uses its configured avatar
 from the shared page presentation, at the standard avatar size.
 Dock labels remain accessible and use the dock label hover bucket to the right of each vertical dock
-button (beneath horizontal docks); badges overlay the tile. A tile with a page
-preview shows its label on keyboard focus and while its preview is closed.
+button (beneath horizontal docks); badges overlay the tile. CountBadge uses a compact
+corner capsule straddling the top-right edge, with `surface-dock-count` and
+`text-dock-count` keeping dark fill and readable accent ink in both modes. The
+shell scrollport preserves gutter space for the full capsule and focus ring.
+A tile with a page preview shows its label on keyboard focus and while its preview is closed.
 Up/Down arrow keys move focus in the side dock without selecting; Enter, Space or
 pointer selection changes the page while focus stays on its tab. Horizontal dock
 compositions use Left/Right. The host passes per-opening focus intent so page

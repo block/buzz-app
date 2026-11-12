@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { finalizeEvent } from "nostr-tools";
-import { browserReadPublisherLock, createReadState } from "./read-state";
+import {
+  browserReadPublisherLock,
+  CapturedReadNotRetainedError,
+  createReadState,
+} from "./read-state";
 import { effectiveFrontier, overrideActive } from "./read-state-model";
 import {
   newReadJournal,
@@ -11,6 +15,7 @@ import {
 import { keypair, scriptedTransport } from "./testing";
 import { createRelayReader } from "./reader";
 import { eventDto, type RelayEvent } from "./events";
+import { READ_RESERVE_KEYS, retainRead } from "./read-state-retention";
 // Test the real host codec with ephemeral identities, never a bypass signer.
 import {
   decodeReadState,
@@ -2388,6 +2393,83 @@ describe("durable read-state owner", () => {
     const restarted = f.make();
     await restarted.ready;
     expect(restarted.floor()).toBe(floor);
+  });
+  it("rejects a captured reply when retention drops its mark despite a retained thread frontier", async () => {
+    const f = fixture();
+    const rootId = (READ_RESERVE_KEYS - 1).toString(16).padStart(64, "0");
+    const selectedKey = `msg:${"e".repeat(64)}`;
+    const selectedAt = 6000;
+    const overrideKey = "manual";
+    const override = { [overrideKey]: { set: 2, clear: 0, baseline: 0 } };
+    const journal = newReadJournal();
+    let channels: Record<string, number> = {};
+    for (let n = 0; n < 1000; n++) {
+      const key = `c${n}`.padEnd(128, "x");
+      try {
+        channels = retainRead(
+          [{ frontiers: { ...channels, [key]: 100 }, overrides: override }],
+          {},
+          journal.clientId,
+        ).state.frontiers;
+      } catch {
+        break;
+      }
+    }
+    const reserve = Object.fromEntries(
+      Array.from({ length: READ_RESERVE_KEYS }, (_, n) => [
+        `thread:${n.toString(16).padStart(64, "0")}`,
+        n === READ_RESERVE_KEYS - 1 ? selectedAt : 100 + n,
+      ]),
+    );
+    f.setJournal({
+      ...journal,
+      revision: 1,
+      state: {
+        frontiers: channels,
+        overrides: override,
+      },
+      localUnread: { [selectedKey]: 1 },
+      reserve,
+    });
+    const owner = f.make();
+    await owner.ready;
+    const before = f.journal();
+
+    await expect(
+      owner.readMessages(
+        [
+          {
+            key: selectedKey,
+            timestamp: selectedAt,
+            channelId: "target-room",
+            rootId,
+          },
+        ],
+        undefined,
+        () => true,
+        false,
+        undefined,
+        [selectedKey],
+        { preserveCapturedSet: true },
+      ),
+    ).rejects.toBeInstanceOf(CapturedReadNotRetainedError);
+
+    expect(f.journal()).toEqual(before);
+    expect(owner.floor()).toBe(0);
+    expect(owner.state().frontiers[selectedKey]).toBeUndefined();
+    expect(
+      effectiveFrontier(owner.state(), selectedKey, "target-room"),
+    ).toBeUndefined();
+    expect(owner.localUnread(selectedKey)).toBe(1);
+
+    owner.dispose();
+    const reloaded = f.make();
+    await reloaded.ready;
+    expect(reloaded.localUnread(selectedKey)).toBe(1);
+    expect(reloaded.state().frontiers[selectedKey]).toBeUndefined();
+    expect(
+      effectiveFrontier(reloaded.state(), selectedKey, "target-room"),
+    ).toBeUndefined();
   });
   it("preserves the reserve through remote replay, local unread and concurrent mutations", async () => {
     const f = fixture();

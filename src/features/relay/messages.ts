@@ -12,6 +12,7 @@ import { safeMessageUrl } from "./message-content";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
 import { agentCandidateTags } from "./agent-candidates";
+import { signedMessageTokenTags } from "../messages/message-tokens";
 
 /** Owner authorization is supplied only after the agent's signed profile is verified. */
 export type AgentOwnerAuthorization = Readonly<{
@@ -323,6 +324,7 @@ export function createMessages(
             ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
             ...message.tags,
+            ...signedMessageTokenTags(),
           ],
         },
         ...(recovery ? [recovery] : []),
@@ -446,6 +448,7 @@ export function createMessages(
           ...(mediaTarget ? [[MEDIA_TARGET_TAG, mediaTarget]] : []),
           ...emojiTags(content),
           ...message.tags,
+          ...signedMessageTokenTags(),
         ],
       });
     },

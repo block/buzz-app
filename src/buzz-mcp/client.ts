@@ -5,6 +5,7 @@ import type { ProtectionAction } from "../features/agent-protection/service";
 import type { GitAuth } from "../features/agents/native";
 import type {
   AgentAttention,
+  SoloPlacement,
   AgentReadout,
   TeamReadout,
   TeamUpdateInput,
@@ -171,6 +172,15 @@ export interface BuzzClient {
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;
+  /** Local run-only discovery and one-use placement of a newly published Solo. */
+  soloWorkspaces?: Readonly<{
+    list(): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+    prepare(
+      workspace: string,
+      members: readonly string[],
+      channelId: string,
+    ): Promise<(id: string) => Promise<SoloPlacement>>;
+  }>;
   /** The owner's channel templates, where the host has them. */
   templates?(): Promise<readonly ChannelTemplate[]>;
   /** The agent's attention, where its host keeps one. Without it the

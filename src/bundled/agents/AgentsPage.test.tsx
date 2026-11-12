@@ -23,6 +23,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { flushSync } from "react-dom";
+import { onBestieMade } from "./BestieChoice";
 import { Context } from "@deepseek-ai/cordis";
 import {
   useEffect,
@@ -326,6 +328,7 @@ function setup(
     session: vi.fn(async () => {}),
     register: vi.fn(),
     addTool: vi.fn(),
+    addInstructions: vi.fn(),
     tools: () => [],
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.
@@ -5449,7 +5452,21 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
   await user.click(
     within(retry).getByRole("button", { name: "Switch to Bea" }),
   );
-  await act(async () => writes[1]?.());
+  // The saved store publishes before the local celebration callback. Force
+  // that intermediate render: the new badge must not flash at full opacity.
+  let checkedBeforeCelebration = false;
+  const stop = onBestieMade(() => {
+    flushSync(() => {});
+    expect(beaCard).toBeInTheDocument();
+    expect(within(beaCard).queryByText("Bestie")).toBeNull();
+    checkedBeforeCelebration = true;
+  });
+  try {
+    await act(async () => writes[1]?.());
+  } finally {
+    stop();
+  }
+  expect(checkedBeforeCelebration).toBe(true);
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   expect(
     await screen.findByRole("gridcell", { name: "Bea, Bestie" }),

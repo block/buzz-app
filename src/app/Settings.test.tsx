@@ -28,6 +28,14 @@ import type { RelayData } from "../features/relay/service";
 import type { Contribution } from "../plugins/contributions";
 import { createPluginInstallRequests } from "../plugins/installer";
 import { createPluginRequests } from "../plugins/requests";
+import { createPluginManager } from "../plugins/manager";
+import { PagesService } from "../features/pages/service";
+import type { PluginStorage } from "../plugins/storage";
+import type {
+  ImportPreview,
+  PluginInfo,
+  StorageResult,
+} from "../plugins/types";
 
 afterEach(cleanup);
 // Settings reads agent plugin requests from every plugin manager.
@@ -722,6 +730,159 @@ it("opens each plugin's existing metadata and controls in a detail aside", () =>
 });
 
 // These fixtures exercise catalog updates through the same subscription as the host.
+it.each(["folder", "git"] as const)(
+  "repairs an enabled unsigned plugin through Settings without changing its revision (%s)",
+  async (source) => {
+    const signatureError = "External plugins require a signed release";
+    const unsigned: PluginInfo = {
+      manifest: { id: "example.repair", name: "Repair", apiVersion: 1 },
+      source: "external",
+      enabled: true,
+      revision: "unchanged",
+      previous: null,
+      hasSignature: false,
+      publisher: null,
+      reloadable: true,
+      updateSource:
+        source === "folder"
+          ? { root: "/plugins", path: "dist" }
+          : {
+              repository: "https://example.com/plugins.git",
+              reference: "main",
+              path: "dist",
+            },
+      error: signatureError,
+    };
+    const signed = {
+      ...unsigned,
+      hasSignature: true,
+      publisher: "a".repeat(64),
+      error: null,
+    };
+    let installed = unsigned;
+    const catalog = (): StorageResult => ({
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: { profile: "test", location: "test", plugins: [installed] },
+    });
+    const preview: ImportPreview = {
+      token: "repair-preview",
+      source: "/plugins",
+      commit: null,
+      warnings: [],
+      candidates: [
+        {
+          path: "dist",
+          manifest: signed.manifest,
+          revision: signed.revision,
+          publisher: signed.publisher,
+        },
+      ],
+    };
+    const code = `export const inject = ["pages"];
+export function apply(ctx) {
+  ctx.pages.register({ id: "repaired", title: "Repaired", component: () => null });
+}`;
+    const originalURL = URL;
+    vi.stubGlobal(
+      "URL",
+      class extends originalURL {
+        static createObjectURL() {
+          return `data:text/javascript,${encodeURIComponent(code)}`;
+        }
+        static revokeObjectURL() {}
+      },
+    );
+    const install = vi.fn(async () => {
+      installed = signed;
+      return catalog();
+    });
+    const storage: PluginStorage = {
+      getCatalog: async () => catalog(),
+      changePlugin: vi.fn(),
+      recoverSettings: vi.fn(),
+      reloadPlugin: vi.fn(),
+      readModule: vi.fn(async () => code),
+      imports: {
+        folder: vi.fn(),
+        files: vi.fn(),
+        git: vi.fn(async () => preview),
+        url: vi.fn(),
+        checkGit: vi.fn(async () => preview),
+        checkFolder: vi.fn(async () => ({
+          revision: signed.revision,
+          publisher: signed.publisher,
+        })),
+        previewFolder: vi.fn(async () => preview),
+        install,
+        discard: vi.fn(async () => {}),
+      },
+    };
+    const root = new Context();
+    const plugins = createPluginManager(root, { storage, bundled: [] });
+    const pages = new PagesService(root);
+    const { cards } = registry([]);
+    const view = render(<Settings {...host} cards={cards} plugins={plugins} />);
+    try {
+      await waitFor(() => expect(plugins.startup()).toBe("ready"));
+      fireEvent.click(screen.getByRole("button", { name: "Manage plugins" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "View Repair details" }),
+      );
+      const details = screen.getByRole("complementary", {
+        name: "Repair details",
+      });
+      expect(within(details).getByText(signatureError)).toBeVisible();
+      if (source === "git")
+        fireEvent.click(
+          within(details).getByRole("button", { name: "Check for updates" }),
+        );
+      await waitFor(() =>
+        expect(
+          within(details).getByRole("button", { name: "Update" }),
+        ).toBeEnabled(),
+      );
+      fireEvent.click(within(details).getByRole("button", { name: "Update" }));
+      const dialog = await screen.findByRole("dialog", {
+        name: "Update Repair",
+      });
+      const confirm = await within(dialog).findByRole("button", {
+        name: "Update",
+      });
+      expect(install).not.toHaveBeenCalled();
+      expect(storage.readModule).not.toHaveBeenCalled();
+      expect(pages.snapshot()).toEqual([]);
+      fireEvent.click(confirm);
+      await waitFor(() =>
+        expect(pages.snapshot().map((page) => page.key)).toEqual([
+          "example.repair/repaired",
+        ]),
+      );
+      expect(install).toHaveBeenCalledExactlyOnceWith("repair-preview", "dist");
+      expect(plugins.snapshot().configuration).toMatchObject({
+        catalog: {
+          plugins: [
+            {
+              enabled: true,
+              revision: "unchanged",
+              hasSignature: true,
+              error: null,
+            },
+          ],
+        },
+      });
+      expect(within(details).queryByText(signatureError)).toBeNull();
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(within(details).getByText("Up to date")).toBeVisible();
+    } finally {
+      view.unmount();
+      await plugins.dispose();
+      await root.fiber.dispose();
+      vi.stubGlobal("URL", originalURL);
+    }
+  },
+);
+
 function reviewPluginFixture(
   extra: Partial<Parameters<typeof Settings>[0]> = {},
 ) {
@@ -2322,7 +2483,7 @@ it("keeps related plugins out of the pane even when tags overlap", () => {
   };
   const plugins = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(),
       folder: vi.fn(),
       files: vi.fn(),
@@ -2945,11 +3106,11 @@ it("retains both local drafts across section navigation but retires them with th
 });
 
 it("allows Add to install while an independent folder check is pending, including pane remount", async () => {
-  let finish!: (revision: string) => void;
+  let finish!: (release: { revision: string }) => void;
   const fixture = reviewPluginFixture();
   const checkFolder = vi.fn(
     () =>
-      new Promise<string>((resolve) => {
+      new Promise<{ revision: string }>((resolve) => {
         finish = resolve;
       }),
   );
@@ -2993,7 +3154,7 @@ it("allows Add to install while an independent folder check is pending, includin
   await within(dialog).findByRole("button", { name: "Install plugin" });
   fixture.external.revision = "cli-reloaded";
   act(fixture.publish);
-  await act(async () => finish("current"));
+  await act(async () => finish({ revision: "current" }));
   expect(discard).not.toHaveBeenCalled();
   fireEvent.click(
     within(dialog).getByRole("switch", { name: "Enable plugin" }),

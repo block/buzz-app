@@ -61,6 +61,29 @@ async function fixture(canUseRemoteAgents = true) {
   const client = createAgentClient(session);
   return { session, client, request };
 }
+it("asks for sign-in only when signed out, not while a sign-in is pending", async () => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  const held = deferred<never>();
+  const session = createTestSession(() => held.promise);
+  render(
+    <RemoteAgents
+      session={session}
+      client={createAgentClient(session)}
+      active={() => true}
+    />,
+  );
+  const prompt = "Sign in to view your remote agents.";
+  expect(screen.getByText(prompt)).toBeVisible();
+  const signIn = session.signIn();
+  await waitFor(() => expect(session.snapshot().status).toBe("pending"));
+  expect(screen.queryByText(prompt)).toBeNull();
+  await act(async () => {
+    held.reject(new Error("Sign-in failed. Try again."));
+    await signIn;
+  });
+  expect(screen.getByText(prompt)).toBeVisible();
+  session.dispose();
+});
 it("omits the agent summary when remote agents are unavailable", async () => {
   const h = await fixture(false);
   const overview = vi.fn();

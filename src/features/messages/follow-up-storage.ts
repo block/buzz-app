@@ -6,6 +6,8 @@ import {
 } from "../../shared/view-state";
 import type { UploadedAttachment } from "../relay/attachments";
 import type { MentionPicks } from "../relay/messages";
+import type { ComposerToken } from "./composer-token";
+import { messageTokenTags } from "./message-tokens";
 
 export type FollowUpMessage = {
   channelId: string;
@@ -15,6 +17,8 @@ export type FollowUpMessage = {
   references: readonly string[];
   picks: MentionPicks;
   candidates?: readonly string[];
+  /** The message's chips; publication signs them. */
+  tokens?: readonly ComposerToken[];
 };
 export type SavedFollowUp = FollowUpMessage & {
   id: string;
@@ -186,6 +190,15 @@ function strings(value: unknown): value is string[] {
 function valid(value: unknown): value is SavedFollowUp {
   if (!value || typeof value !== "object") return false;
   const v = value as SavedFollowUp;
+  // Malformed chips stay in storage; this build cannot send them.
+  try {
+    if (v.tokens !== undefined) {
+      if (!Array.isArray(v.tokens)) return false;
+      messageTokenTags(v.tokens);
+    }
+  } catch {
+    return false;
+  }
   return (
     typeof v.id === "string" &&
     typeof v.channelId === "string" &&

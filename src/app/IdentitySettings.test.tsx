@@ -555,6 +555,12 @@ it("renders native status transitions and ignores a stale completion", async () 
     if (progress.status === "complete") {
       expect(badge.getByText(/A backup is saved/)).toBeVisible();
       expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
+    } else if (
+      // A sign-in on this page starts the next pass itself.
+      progress.status === "waiting" &&
+      progress.reason === "no_session"
+    ) {
+      expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
     } else {
       const retry = badge.getByRole("button", { name: "Retry backup" });
       if (progress.status === "running") {
@@ -568,6 +574,132 @@ it("renders native status transitions and ignores a stale completion", async () 
     }
     expect(backupRow()).toBeNull();
   }
+});
+
+const confirmedAt = (seq: number, progress: Progress) => {
+  const status = at(seq, progress);
+  return {
+    ...status,
+    management: { ...status.management, initialBackupConfirmed: true },
+  } as BackupStatus;
+};
+
+// The native receipt confirms the key at launch: a re-check that can't reach
+// or sign in to Builderlab leaves it backed up.
+it.each([
+  { status: "idle" },
+  { status: "waiting", reason: "no_session" },
+  ...(
+    ["unreachable", "signed_out", "busy", "storage", "not_offered"] as const
+  ).map((kind) => ({ status: "failed", kind }) as const),
+] as const)(
+  "shows a confirmed key as backed up through a %o re-check",
+  async (progress) => {
+    vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+    await renderBackup(confirmedAt(1, progress)).settled();
+    const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+    expect(badge.getByText("Backed up")).toBeVisible();
+    expect(badge.queryByRole("button", { name: "Check backup" })).toBeNull();
+    await showKeyDetails();
+    expect(badge.getByText(/A backup is saved/)).toBeVisible();
+    expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
+    expect(
+      badge.queryByText(/Couldn’t reach|Sign in to Builderlab/),
+    ).toBeNull();
+  },
+);
+
+it("shows a confirmed key as backed up when the account read fails", async () => {
+  const { fi, mount } = accountFixture(confirmedAt(1, { status: "idle" }));
+  fi.request.mockRejectedValue(new Error("Offline"));
+  mount();
+  await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(2));
+  await act(async () => {
+    await Promise.allSettled(
+      fi.request.mock.results.map((result) => result.value),
+    );
+  });
+  const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+  expect(badge.getByText("Backed up")).toBeVisible();
+  await showKeyDetails();
+  expect(badge.getByText(/A backup is saved/)).toBeVisible();
+  expect(badge.queryByText("Backup status unknown")).toBeNull();
+  expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
+});
+
+// Backed up K, turned automatic backup off, then linked K2 elsewhere: native
+// stops at consent before it asks the account, so only Settings' own read
+// sees K2.
+it("withholds a receipt's Backed up while the account shows another backed-up key", async () => {
+  const other = "cd".repeat(32);
+  const { fi, mount } = accountFixture(
+    confirmedAt(1, { status: "waiting", reason: "no_consent" }),
+  );
+  fi.request.mockImplementation(async ({ path }) =>
+    accountResponse(path, other, [viewer, other]),
+  );
+  mount();
+  expect(await screen.findByText("Backed-up key · Linked")).toBeVisible();
+  const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+  expect(badge.queryByText("Backed up")).toBeNull();
+  await showKeyDetails();
+  expect(badge.queryByText(/A backup is saved/)).toBeNull();
+});
+
+// A receipt counts for any account. Backed up K with account A, turned
+// automatic backup off, then signed in to B: native stops at consent before it
+// asks B, and B's read finds no backup of K. The pill stays; the copy names
+// this account only once it confirms the backup.
+it.each([
+  { linked: "cd".repeat(32), backups: [] as string[], holder: "a" },
+  { linked: viewer, backups: [viewer], holder: "your" },
+])(
+  "says a receipt's backup is with $holder account after reading $linked",
+  async ({ linked, backups, holder }) => {
+    const { fi, mount } = accountFixture(
+      confirmedAt(1, { status: "waiting", reason: "no_consent" }),
+    );
+    fi.request.mockImplementation(async ({ path }) =>
+      accountResponse(path, linked, backups),
+    );
+    mount();
+    await waitFor(() => expect(fi.request).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.allSettled(
+        fi.request.mock.results.map((result) => result.value),
+      );
+    });
+    const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+    expect(badge.getByText("Backed up")).toBeVisible();
+    await showKeyDetails();
+    expect(
+      badge.getByText(`A backup is saved with ${holder} Builderlab account.`, {
+        exact: false,
+      }),
+    ).toBeVisible();
+  },
+);
+
+// Another attempt gets the same answer: the copy says what to do instead.
+it.each([
+  [
+    { status: "waiting", reason: "no_session" },
+    "Sign in to Builderlab to back up your key",
+  ],
+  ...(["not_offered", "invalid_service", "refused"] as const).map(
+    (kind) =>
+      [
+        { status: "failed", kind },
+        BACKUP_FAILURES[kind].message.replace(/\.$/, ""),
+      ] as const,
+  ),
+] as const)("offers no Retry backup for %o", async (progress, copy) => {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example");
+  await renderBackup(at(1, progress)).settled();
+  await showKeyDetails();
+  const badge = within(screen.getByRole("region", { name: "Your Buzz ID" }));
+  expect(badge.getByText(copy)).toBeVisible();
+  expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
 });
 
 /** bb-acme first, then bb-public, each with its own session. */
@@ -931,7 +1063,7 @@ it("rechecks the account after backup completes without adding a duplicate same-
 it.each(["success", "failure"] as const)(
   "retries an account lookup through the card with %s while blocking duplicate starts",
   async (outcome) => {
-    const { host, fi, mount } = accountFixture(at(1, { status: "complete" }));
+    const { host, fi, mount } = accountFixture(at(1, { status: "idle" }));
     const retry = vi.spyOn(host.identity.backup, "retry").mockResolvedValue(2);
     let retrying = false;
     let release!: () => void;
@@ -973,7 +1105,6 @@ it.each(["success", "failure"] as const)(
         expect(badge.queryByText("Backup status unknown")).toBeNull(),
       );
       expect(badge.queryByRole("button", { name: "Retry backup" })).toBeNull();
-      expect(badge.getByText(/A backup is saved/)).toBeVisible();
     } else {
       await waitFor(() => expect(action).toBeEnabled());
       expect(badge.getByText("Backup status unknown")).toBeVisible();

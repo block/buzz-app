@@ -21,6 +21,8 @@ export type PluginInfo = {
   iconPngRevision?: string | null;
   iconJpgRevision?: string | null;
 };
+export type PluginRelease = Pick<PluginInfo, "revision" | "publisher">;
+
 export type Catalog = {
   profile: string;
   location: string;
@@ -99,7 +101,7 @@ export type ImportFile = { path: string } & (
 );
 export type PluginImports = {
   folder(): Promise<ImportPreview | null>;
-  checkFolder(id: string): Promise<string>;
+  checkFolder(id: string): Promise<PluginRelease>;
   previewFolder(id: string): Promise<ImportPreview | null>;
   files(source: string, files: ImportFile[]): Promise<ImportPreview | null>;
   /**

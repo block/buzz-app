@@ -254,11 +254,19 @@ it.each(["cancel", "timeout"] as const)(
         name: "Sign in to Builderlab",
       });
       expect(retry).toBeEnabled();
-      const guidance = screen.getByText(
-        "Sign in to edit settings. You can still message this agent.",
-      );
-      expect(row).not.toContainElement(guidance);
-      expect(row?.parentElement).toContainElement(guidance);
+      if (outcome === "cancel") {
+        const guidance = screen.getByText(
+          "Sign in to edit settings. You can still message this agent.",
+        );
+        expect(row).not.toContainElement(guidance);
+        expect(row?.parentElement).toContainElement(guidance);
+      } else {
+        // The failure beside Sign in replaces the guidance: one message.
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          "Builderlab authentication timed out",
+        );
+        expect(screen.queryByText(/Sign in to edit settings/)).toBeNull();
+      }
       expect(screen.queryByRole("region")).toBeNull();
       expect(h.acquire).toHaveBeenCalledOnce();
       expect(h.request).not.toHaveBeenCalled();

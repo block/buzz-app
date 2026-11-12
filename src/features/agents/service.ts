@@ -193,6 +193,9 @@ import {
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import { soloChannelMetadata } from "../relay/discovery";
+import { channelIdentity } from "../relay/channel-labels";
+import { regionLabels } from "../solo/region-labels";
 import { nameSoloChat } from "./solo-chat-name";
 import { visibleTeams } from "./visible-teams";
 import {
@@ -375,6 +378,18 @@ export type AgentAddedTab = Readonly<{
   subscribe?: (listener: () => void) => () => void;
 }>;
 export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
+/** Standing instructions a plugin gives every turn of every agent this copy
+ * of the app runs, or of those `when` accepts, while the plugin is on. */
+export type AgentInstructions = Readonly<{
+  id: string;
+  /** Sent with every turn, so keep it short. */
+  text: string;
+  /** Whether the agent's turns get them; absent, every agent's do. Asked as
+   * each turn's prompt is built. A `when` that throws leaves out only these. */
+  when?: (agent: Agent) => boolean;
+}>;
+/** Instructions for one turn, with the plugin that gave them. */
+export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
@@ -456,6 +471,21 @@ export type HandoffSource = Readonly<
 >;
 /** A wake the agent sends itself, `from` another of its conversations. */
 export type AgentHandoff = AgentWake & Readonly<{ from: HandoffSource }>;
+/** Run-only placement of a just-created Solo; never a general move capability. */
+export type SoloPlacement = Readonly<{
+  status: "filed" | "not-filed" | "unconfirmed";
+  error?: string;
+}>;
+export type SoloWorkspaces = Readonly<{
+  list(
+    signal: AbortSignal,
+  ): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+  prepare(
+    workspace: string,
+    members: readonly string[],
+    signal: AbortSignal,
+  ): Promise<(created: RelayEvent) => Promise<SoloPlacement>>;
+}>;
 /** The agent as `run` holds it. A run's handle works for as long as the
  * agent exists; one from `Agents.handle` fails each call while `handle`
  * would not return it, and for good once the agent's type or its plugin is
@@ -529,11 +559,25 @@ export type AgentHandle = Readonly<{
   /** The owner's thread tabs on this device in the agent's community;
    * undefined while it is not connected. */
   tabs(): ReturnType<typeof channelTabs> | undefined;
+  /** On a run's handle only: personal workspaces for new Solo chats. */
+  soloWorkspaces?: Readonly<{
+    list(
+      signal?: AbortSignal,
+    ): Promise<readonly Readonly<{ id: string; name: string }>[]>;
+    prepare(
+      workspace: string,
+      members: readonly string[],
+      channelId: string,
+      signal?: AbortSignal,
+    ): Promise<(id: string) => Promise<SoloPlacement>>;
+  }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
+  /** The instructions plugins give the agent's turns now, in a stable order. */
+  instructions?(): readonly TurnInstructions[];
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -1316,6 +1360,10 @@ export type Agents = {
   addTool(tool: AddedTool): void;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Adds standing instructions to every turn of the agents this copy of the
+   * app runs, or of those `when` accepts, while the plugin is on. Each turn
+   * shows them in a `<plugin-instructions>` section that names the plugin. */
+  addInstructions(instructions: AgentInstructions): void;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -1899,6 +1947,7 @@ export class AgentsService extends Service implements Agents {
   private readonly tabContributions;
   private readonly attentionControls;
   private readonly addedTools;
+  private readonly addedInstructions;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
   private readonly attentionSources;
@@ -2034,6 +2083,7 @@ export class AgentsService extends Service implements Agents {
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
@@ -2433,6 +2483,7 @@ export class AgentsService extends Service implements Agents {
         }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      instructions: (agent) => this.turnInstructions(agent),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -2450,6 +2501,136 @@ export class AgentsService extends Service implements Agents {
           canvas: template.canvas,
           agents: templateAgents(template, this.allTeams(), here),
         }));
+      },
+      soloWorkspaces: (agent) => {
+        const binding = this.bindingOf(agent);
+        if (!binding) return undefined;
+        const check = (signal: AbortSignal) => {
+          signal.throwIfAborted();
+          binding.controller.signal.throwIfAborted();
+          if (this.bindingOf(agent) !== binding || !this.liveMember(agent.key))
+            throw new Error(
+              "The requesting agent's community is no longer connected",
+            );
+        };
+        const list = async (signal: AbortSignal) => {
+          check(signal);
+          if (!binding.session.snapshotRead || !binding.session.relayAuthor)
+            throw new Error("Solo workspace authority is unavailable");
+          const preferences = binding.session.soloPreferences;
+          await binding.session.channelKit.refresh({ after: true });
+          check(signal);
+          await preferences.refresh();
+          check(signal);
+          const state = preferences.snapshot();
+          if (state.status !== "ready" || state.cached || !preferences.writable)
+            throw new Error(state.error ?? "Solo workspaces are unavailable");
+          return (state.data?.sections ?? []).map(({ id, name }) => ({
+            id,
+            name,
+          }));
+        };
+        return {
+          list,
+          prepare: async (workspace, members, signal) => {
+            if (!members.includes(binding.viewer))
+              throw new Error(
+                "Include your owner in members to file a Solo chat",
+              );
+            if (!(await list(signal)).some(({ id }) => id === workspace))
+              throw new Error(
+                "No such Solo workspace; use solo_workspace_list",
+              );
+            const active = AbortSignal.any([signal, binding.controller.signal]);
+            return async (created) => {
+              const errorText = (error: unknown) =>
+                error instanceof Error ? error.message : String(error);
+              let id: string | undefined;
+              try {
+                check(active);
+                id = created.tags.find(([key]) => key === "h")?.[1];
+                if (
+                  created.kind !== 9007 ||
+                  created.pubkey !== agent.pubkey ||
+                  !id ||
+                  !created.tags.some(
+                    ([key, value]) => key === "t" && value === "buzz.solo",
+                  ) ||
+                  !created.tags.some(
+                    ([key, value]) => key === "p" && value === binding.viewer,
+                  )
+                )
+                  throw new Error("Not this agent's new Solo chat");
+                // Read relay-owned authority, not an optimistic channel-list entry.
+                const events = await binding.session.snapshotRead?.(
+                  [
+                    {
+                      kinds: [39000, 39002],
+                      authors: [binding.session.relayAuthor ?? ""],
+                      "#d": [id],
+                      limit: 2,
+                      consistency: "strong",
+                    },
+                  ],
+                  { signal: active },
+                );
+                check(active);
+                const metadata = events?.find(
+                  (event) =>
+                    event.kind === 39000 &&
+                    event.pubkey === binding.session.relayAuthor &&
+                    event.tags.some(
+                      ([key, value]) => key === "d" && value === id,
+                    ),
+                );
+                const roster = events?.find(
+                  (event) =>
+                    event.kind === 39002 &&
+                    event.pubkey === binding.session.relayAuthor &&
+                    event.tags.some(
+                      ([key, value]) => key === "d" && value === id,
+                    ),
+                );
+                if (
+                  !metadata ||
+                  !soloChannelMetadata(metadata) ||
+                  regionLabels(channelIdentity(metadata).labels).length > 0 ||
+                  !metadata.tags.some(
+                    ([key, value]) => key === "P" && value === agent.pubkey,
+                  ) ||
+                  ![agent.pubkey, binding.viewer, ...members].every((member) =>
+                    roster?.tags.some(
+                      ([key, value]) => key === "p" && value === member,
+                    ),
+                  )
+                )
+                  throw new Error(
+                    "New Solo chat creator and members are not confirmed",
+                  );
+              } catch (error) {
+                return {
+                  status: "not-filed" as const,
+                  error: errorText(error),
+                };
+              }
+              try {
+                await binding.session.soloPreferences.assign(
+                  id,
+                  workspace,
+                  active,
+                );
+                check(active);
+                return { status: "filed" as const };
+              } catch (error) {
+                // Assignment can enqueue durably before confirmation/cancellation fails.
+                return {
+                  status: "unconfirmed" as const,
+                  error: errorText(error),
+                };
+              }
+            };
+          },
+        };
       },
       tabs: (agent) => {
         const session = this.bindingOf(agent)?.session;
@@ -2723,6 +2904,35 @@ export class AgentsService extends Service implements Agents {
       this.toolNames.add(tool.name);
       return () => this.toolNames.delete(tool.name);
     });
+  }
+  addInstructions(instructions: AgentInstructions) {
+    if (
+      !/^[a-z0-9][a-z0-9._-]*$/.test(instructions.id ?? "") ||
+      typeof instructions.text !== "string" ||
+      !instructions.text.trim() ||
+      (instructions.when !== undefined &&
+        typeof instructions.when !== "function")
+    )
+      throw new Error("Agent instructions need an id and text");
+    this.addedInstructions.register(this.ctx, instructions);
+  }
+  /** The instructions active plugins give this agent's turns now, ordered by
+   * plugin and id so the order plugins start in does not change a prompt. */
+  private turnInstructions(agent: Agent): readonly TurnInstructions[] {
+    const current = this.agent(agent.key) ?? agent;
+    return this.addedInstructions
+      .snapshot()
+      .filter((entry) => {
+        try {
+          // Only true admits them: an async `when` gives a Promise.
+          return !entry.when || entry.when(current) === true;
+        } catch (error) {
+          console.warn("Agent instructions failed to match", entry.key, error);
+          return false;
+        }
+      })
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map((entry) => ({ plugin: entry.pluginId, text: entry.text }));
   }
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
     const plugin = this.ctx.pluginOwner?.id;
@@ -3147,9 +3357,11 @@ export class AgentsService extends Service implements Agents {
     const run = this.runners.handle(key, undefined, true);
     if (!run)
       throw new Error("This agent is not running in this copy of Buzz.");
-    const { handoff } = run;
+    // Workspace filing is for local turns, not an external app's run authority.
+    const { soloWorkspaces: _, ...external } = run;
+    const { handoff } = external;
     const handle: AgentHandle = {
-      ...run,
+      ...external,
       ...(handoff && {
         handoff: ({ from: _, ...wake }: AgentHandoff) =>
           handoff({ ...wake, from: { external: true } }),
@@ -3337,12 +3549,13 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ key, pubkey, name, relay, owner, picture }) =>
+          .map(({ key, pubkey, name, relay, owner, picture, type }) =>
             Object.freeze({
               pubkey,
               name,
               relayUrl: relay,
               owner,
+              type,
               ...(remote.has(key) ? { execution: "remote" as const } : {}),
               ...(picture ? { picture } : {}),
             }),

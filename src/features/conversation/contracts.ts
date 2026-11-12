@@ -81,9 +81,19 @@ export type ComposerCaptureProps = Readonly<{
   accept(recording: VoiceRecording): boolean;
   cancel(): void;
 }>;
+export type FileCardProps = Readonly<{
+  attachment: Attachment;
+  source: string;
+  onOpenLink(url: string): boolean;
+  onPreview?: (() => void) | undefined;
+  typeLabel?: string | undefined;
+}>;
 export type AttachmentRendererProps = Readonly<{
   attachment: Attachment;
   source: string;
+  placement?: "message" | "composer";
+  message?: ChannelMessage | undefined;
+  FileCard?: ComponentType<FileCardProps> | undefined;
   onRemove?: (() => void) | undefined;
 }> &
   TargetOpener;
@@ -264,6 +274,20 @@ export type MessageAction = Readonly<{
    */
   marker?: ComponentType<{ message: ChannelMessage; session: RelaySession }>;
 }>;
+/** Presentation after a person's name in @mention suggestions, such as an
+ * identity check. The host owns placement, focus and the row; the component
+ * decides from `pubkey` whether to draw anything. */
+export type IdentityMark = Readonly<{
+  id: string;
+  title: string;
+  component: ComponentType<IdentityMarkProps>;
+}>;
+/** `profiles` is the session's shared profile directory, whose entries carry
+ * community verification (`verified`) when the community provides it. */
+export type IdentityMarkProps = Readonly<{
+  pubkey: string;
+  profiles: RelaySession["profiles"];
+}>;
 export type ConversationExtensions = Readonly<{
   /** Optional pre-send assignment for owner-authored Solo requests. */
   routeAgents?: (
@@ -273,6 +297,7 @@ export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
   actions?: ContributionReader<MessageAction>;
+  identityMarks?: ContributionReader<IdentityMark>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

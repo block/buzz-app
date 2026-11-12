@@ -161,9 +161,14 @@ it("keeps automatic failure explanations in the incoming agent frame for every r
   }
 });
 
-it.each([false, true])(
-  "previews human and agent identities and preserves avatar navigation: %s",
-  async (agentEnvelope) => {
+it.each([
+  { agentEnvelope: false, trigger: "avatar" },
+  { agentEnvelope: true, trigger: "avatar" },
+  { agentEnvelope: false, trigger: "name" },
+  { agentEnvelope: true, trigger: "name" },
+])(
+  "previews human and agent identities and preserves navigation: %j",
+  async ({ agentEnvelope, trigger }) => {
     vi.useFakeTimers();
     const showPopover = HTMLElement.prototype.showPopover;
     HTMLElement.prototype.showPopover = function () {
@@ -187,9 +192,13 @@ it.each([false, true])(
           retry={undefined}
         />,
       );
-      const avatar = screen.getByRole("button", {
-        name: `View ${authorId.slice(0, 10)} profile`,
-      });
+      const avatar =
+        trigger === "avatar"
+          ? screen.getByRole("button", {
+              name: `View ${authorId.slice(0, 10)} profile`,
+            })
+          : document.querySelector<HTMLElement>("[data-message-author]");
+      if (!avatar) throw new Error("Missing profile trigger");
       expect(
         screen.queryByRole("dialog", { name: /profile preview/ }),
       ).toBeNull();
@@ -345,17 +354,41 @@ it("treats a click that selected the name as a selection, and opens from Enter o
     if (!selection) throw new Error("jsdom selection missing");
     // A double-click or drag leaves the name selected when the click lands.
     selection.selectAllChildren(name);
-    fireEvent.click(name);
+    fireEvent.click(name, { detail: 1 });
     expect(open).not.toHaveBeenCalled();
     selection.removeAllRanges();
     fireEvent.click(name);
     expect(open).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(name, { key: "a" });
     expect(open).toHaveBeenCalledTimes(1);
+    selection.selectAllChildren(name);
     fireEvent.keyDown(name, { key: "Enter" });
     // Space must not also scroll the timeline: the default is cancelled.
     expect(fireEvent.keyDown(name, { key: " " })).toBe(false);
     expect(open).toHaveBeenCalledTimes(3);
+  } finally {
+    cleanup();
+  }
+});
+
+it("does not reveal an extra grouped avatar when the author name receives focus", () => {
+  try {
+    renderMessage({
+      row: { ...row, authorId: "ab".repeat(32) },
+      profile: { name: "Mic" },
+      onOpenLink: () => true,
+      canOpenLink: () => true,
+      stackNext: true,
+    });
+    expect(
+      screen.queryByRole("button", { name: "View Mic profile" }),
+    ).toBeNull();
+    const name = screen.getByRole("button", { name: "Mic" });
+    act(() => name.focus());
+    expect(name).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "View Mic profile" }),
+    ).toBeNull();
   } finally {
     cleanup();
   }

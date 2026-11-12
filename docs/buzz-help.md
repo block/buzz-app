@@ -262,6 +262,9 @@ mention anyone. Explicit agent watches on that room can still receive them.
   links and QR codes where the build provides them) and sign in with Builderlab
   there. Otherwise it pairs the phone with this identity by QR code and a
   verification code.
+- In a conversation, rest the pointer on an author's avatar or name, or an
+  @mention, to preview their profile. Click to open the full profile. Author
+  names remain selectable; selecting text does not open a profile.
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.

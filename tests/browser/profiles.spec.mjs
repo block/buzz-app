@@ -517,6 +517,88 @@ test("a Profile opened after closing a thread and its Profile stays open with a 
   expect(errors.unexplained()).toEqual([]);
 });
 
+test("shows the same identity preview from its avatar and mention", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html?profile-previews");
+  const preview = page.getByRole("dialog", {
+    name: "Viewer profile preview",
+    exact: true,
+  });
+  const triggers = page.getByRole("button", {
+    name: "View Viewer profile",
+    exact: true,
+  });
+  await expect(triggers).toHaveCount(2);
+  let avatar;
+  for (const trigger of await triggers.all()) {
+    await trigger.hover();
+    await expect(preview).toBeVisible();
+    const content = await preview.evaluate((element) => ({
+      text: element.textContent,
+      images: [...element.querySelectorAll("img")].map((image) =>
+        image.getAttribute("src"),
+      ),
+      actions: [...element.querySelectorAll("button")].map((button) =>
+        button.getAttribute("aria-label"),
+      ),
+    }));
+    expect(content.images.length).toBeGreaterThan(0);
+    if (avatar) expect(content).toEqual(avatar);
+    else avatar = content;
+    await page.mouse.move(0, 0);
+    await expect(preview).toBeHidden();
+  }
+  expect(errors.unexplained()).toEqual([]);
+});
+
+// Real pointer entry also activates the message toolbar; jsdom hover events do not.
+test("previews message avatars, author names and mentions with the pointer", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/profiles.html");
+  for (const [trigger, name] of [
+    ["View Mic profile", "Mic"],
+    ["Viewer", "Viewer"],
+    ["View Viewer profile", "Viewer"],
+  ]) {
+    const button = page.getByRole("button", { name: trigger, exact: true });
+    const preview = page.getByRole("dialog", {
+      name: `${name} profile preview`,
+      exact: true,
+    });
+    await button.hover();
+    await expect(preview).toBeVisible();
+    await expect(
+      preview.getByRole("button", { name: "View profile", exact: true }),
+    ).toBeVisible();
+    if (trigger === "Viewer") {
+      for (const key of ["Enter", "Space"]) {
+        await button.press(key);
+        const panel = page.getByRole("complementary", {
+          name: "Profile",
+          exact: true,
+        });
+        await expect(
+          panel.getByRole("heading", { name: "Viewer", exact: true }),
+        ).toBeVisible();
+        await expect(preview).toBeHidden();
+        await page
+          .getByRole("button", { name: "Close Viewer tab", exact: true })
+          .click();
+        await expect(panel).toBeHidden();
+        await expect(button).toBeFocused();
+        await expect(preview).toBeHidden();
+      }
+    }
+    await page.mouse.move(0, 0);
+    await expect(preview).toBeHidden();
+  }
+  expect(errors.unexplained()).toEqual([]);
+});
+
 test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecycle and recovery", async ({
   page,
 }, testInfo) => {

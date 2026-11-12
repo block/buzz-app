@@ -4583,7 +4583,10 @@ it("addresses a new reaction to the actual message author and fails before publi
 });
 
 it("holds channel_create to the naming rules only in a listed community", async () => {
-  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_COMMUNITIES", "https://relay.example");
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
   const { client } = relay();
   const block = Object.assign(Object.create(client), {
     relayUrl: "wss://relay.example",

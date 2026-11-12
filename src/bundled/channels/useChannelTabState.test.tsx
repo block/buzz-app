@@ -59,10 +59,9 @@ test("a detail visit retains the exact source thread in the main pane", () => {
     messageId: "reply",
   });
   expect(h.result.current.mainSelected).toBe(id);
-  expect(h.result.current.detailVisits?.source).toEqual({
-    channelId: "alpha",
-    target: "example:task",
-  });
+  expect(h.result.current.detailVisits("alpha", "example:task")).toEqual([
+    "source",
+  ]);
 });
 
 test("selection readers stay stable during local updates and change with the channel", () => {

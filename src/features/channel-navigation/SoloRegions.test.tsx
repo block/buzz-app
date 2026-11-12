@@ -2219,3 +2219,25 @@ it("keeps a visible priority cue on a muted Solo recovery destination", () => {
   const row = screen.getByRole("button", { name: /^Owned/ });
   expect(row.querySelector("[data-channel-priority]")).toBeInTheDocument();
 });
+
+it("keeps native rename and selection with a source-owned destination", async () => {
+  const h = fixture();
+  const open = vi.fn();
+  await h.register({
+    component: ({ ui }) => (
+      <ui.Conversation channelId="owned" selected onOpen={open}>
+        {(c) => <c.Link label={c.name} />}
+      </ui.Conversation>
+    ),
+  });
+  const view = mount(h);
+  const row = screen.getByRole("button", { name: "Owned", exact: true });
+  expect(row).toHaveAttribute("aria-current", "page");
+  fireEvent.click(row);
+  expect(open).toHaveBeenCalledOnce();
+  expect(view.open).not.toHaveBeenCalled();
+  fireEvent.doubleClick(row);
+  expect(
+    await screen.findByRole("textbox", { name: "Chat name", exact: true }),
+  ).toBeInTheDocument();
+});

@@ -152,20 +152,117 @@ async function observe(screenName: string, element: ReactElement) {
   return record;
 }
 
+const RAW = "<script>alert(1)</script> and <mark>x</mark>";
+const AUTO = "https://example.com/x";
+const CRED = "https://u:p@example.com/";
+const MAIL = "mailto:me@example.com";
+const BUZZ = "buzz://channel/general";
+/**
+ * What each screen shows for raw HTML and images, and the href of every link
+ * it keeps per input (an omitted input keeps none; "" is a disabled link).
+ */
+const EXPECTED: Record<
+  string,
+  { html: string; image: "alt" | "img"; links: Record<string, string[]> }
+> = {
+  canvas: {
+    html: RAW,
+    image: "alt",
+    links: { buzz: [BUZZ], autolink: [AUTO] },
+  },
+  pluginReadme: { html: "", image: "alt", links: { autolink: [AUTO] } },
+  github: {
+    html: "alert(1) and x",
+    image: "alt",
+    links: {
+      relative: [
+        "https://github.com/o/r/pull/docs/page",
+        "https://github.com/o/r/pull/1#part",
+      ],
+      image: ["https://example.com/a.png"],
+      autolink: [AUTO],
+    },
+  },
+  attention: {
+    html: RAW,
+    image: "alt",
+    links: {
+      credentialed: [CRED],
+      relative: ["#part"],
+      mailto: [MAIL],
+      buzz: [BUZZ],
+      autolink: [AUTO],
+    },
+  },
+  repo: {
+    html: RAW,
+    image: "img",
+    links: {
+      javascript: [""],
+      data: [""],
+      vbscript: [""],
+      credentialed: [CRED],
+      relative: ["", ""],
+      mailto: [MAIL],
+      buzz: [BUZZ],
+      profile: [""],
+      autolink: [AUTO],
+    },
+  },
+  memory: {
+    html: RAW,
+    image: "alt",
+    links: {
+      credentialed: [CRED],
+      relative: ["docs/page", "#part"],
+      mailto: [MAIL],
+      buzz: [BUZZ],
+      autolink: [AUTO],
+    },
+  },
+  transcript: {
+    html: RAW,
+    image: "alt",
+    links: {
+      credentialed: [CRED],
+      relative: ["docs/page", "#part"],
+      mailto: [MAIL],
+      autolink: [AUTO],
+    },
+  },
+};
+
+function expected(screenName: string, input: string) {
+  const entry = EXPECTED[screenName];
+  if (!entry) throw new Error(`no expectation for ${screenName}`);
+  const { html, image, links } = entry;
+  const text =
+    input === "html"
+      ? html
+      : input === "image"
+        ? image === "img"
+          ? ""
+          : "alt"
+        : input === "relative"
+          ? "a b"
+          : input === "autolink"
+            ? `see ${AUTO}`
+            : "a";
+  const elements = input === "image" && image === "img" ? "img" : "";
+  return { elements, text, links: links[input] ?? [] };
+}
+
 it("keeps each screen's trust policy", async () => {
-  const records: Record<string, Record<string, unknown>> = {};
-  for (const [screenName, draw] of Object.entries(SCREENS)) {
-    records[screenName] = {};
+  for (const [screenName, draw] of Object.entries(SCREENS))
     for (const [name, input] of Object.entries(INPUTS))
-      records[screenName][name] = await observe(screenName, draw(input));
-  }
-  await expect(`${JSON.stringify(records, null, 2)}\n`).toMatchFileSnapshot(
-    "./__trust__/screens.txt",
-  );
+      expect(
+        await observe(screenName, draw(input)),
+        `${screenName} ${name}`,
+      ).toEqual(expected(screenName, name));
 });
 
 // Only Attention routes profile links; the other screens drop or keep them as
-// recorded above.
+// listed in EXPECTED.
 it("routes a valid profile link through Attention's host", () => {
   const opened: string[] = [];
   render(

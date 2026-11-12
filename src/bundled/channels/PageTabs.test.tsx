@@ -421,6 +421,7 @@ it("opens a tab's conversation in its channel from the tab's menu", async () => 
 });
 
 it("a workspace owns its main reader, intro, menu, and no initial detail", async () => {
+  const user = userEvent.setup();
   const f = fixture();
   cleanup();
   const source = vi.fn();
@@ -442,11 +443,11 @@ it("a workspace owns its main reader, intro, menu, and no initial detail", async
     screen.getByRole("link", { name: "Source channel: #alpha" }),
   ).toBeVisible();
   expect(screen.queryAllByRole("tablist")).toHaveLength(1);
-  await userEvent.click(
+  await user.click(
     screen.getByRole("button", { name: "Conversation actions" }),
   );
-  await userEvent.click(
-    screen.getByRole("menuitem", { name: "View in source channel" }),
+  await user.click(
+    await screen.findByRole("menuitem", { name: "View in source channel" }),
   );
   expect(source).toHaveBeenCalledOnce();
 });

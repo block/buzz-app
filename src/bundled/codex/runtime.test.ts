@@ -2511,6 +2511,16 @@ it("accepts a steer without history when the history read keeps timing out", asy
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({ content: "DONE" });
 });
+it("still fails a turn whose history read is denied", async () => {
+  const f = fixture();
+  f.read.mockRejectedValue(new ReadError("denied", "Relay read failed (403)"));
+  await f.runtime.run(f.delivery("FIRST_REQUEST"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    content: "Codex could not finish: Relay read failed (403).",
+  });
+  expect(f.starts()).toHaveLength(0);
+});
 it("cuts delayed history messages off before the request while applying current edits", async () => {
   const f = fixture();
   const first = f.delivery("CURRENT_REQUEST");

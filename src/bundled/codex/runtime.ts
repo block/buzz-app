@@ -2306,8 +2306,7 @@ export class CodexRuntime {
       } catch (error) {
         if (
           signal.aborted ||
-          !(error instanceof ReadError) ||
-          error.kind === "cancelled"
+          !(error instanceof ReadError && error.kind === "unavailable")
         )
           throw error;
         if (retried) {

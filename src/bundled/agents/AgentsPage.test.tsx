@@ -5591,6 +5591,84 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
   expect(view.container.querySelector("[data-celebrating]")).toBeNull();
 });
 
+it("keeps the Bestie an agent saved when a failed replacement is kept", async () => {
+  const user = userEvent.setup();
+  const ada = agent("Ada", 1);
+  const bea = agent("Bea", 2);
+  const view = setup([ada, bea]);
+  const rows = [ada, bea].map((each) => ({
+    pubkey: each.pubkey,
+    name: each.name,
+    managed: true,
+  }));
+  const choices = {
+    status: "ready",
+    complete: true,
+    pending: false,
+    identities: rows,
+    selectable: rows,
+    archives: { status: "unavailable", archived: [] },
+  };
+  const mainAgent = {
+    read: async () => ada.pubkey,
+    write: vi
+      .fn(async (_agent: string | null) => {})
+      .mockRejectedValueOnce(new Error("offline")),
+  };
+  const scope = "agent-saved-replacement";
+  const connection = {
+    status: "ready",
+    scope,
+    session: {
+      mainAgent,
+      agentChoices: {
+        snapshot: () => choices,
+        subscribe: () => () => {},
+        retain: () => () => {},
+        ensure: () => {},
+        refresh: async () => {},
+      },
+    },
+  };
+  const relay = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+  await screen.findByRole("gridcell", { name: "Ada, Bestie" });
+  await user.click(
+    within(screen.getByRole("gridcell", { name: "Bea" })).getByRole("button", {
+      name: "Actions for Bea",
+    }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Make my bestie" }),
+  );
+  const confirmation = await screen.findByRole("alertdialog", {
+    name: "Make Bea your bestie?",
+  });
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Switch to Bea" }),
+  );
+  expect(await within(confirmation).findByRole("alert")).toHaveTextContent(
+    "Your bestie couldn't be saved to your account. Try again.",
+  );
+  // An agent saves Bea while the failure still shows.
+  await act(() =>
+    defaultAgentControl(
+      connection.session as unknown as RelaySession,
+      scope,
+    ).set(bea.pubkey),
+  );
+  await user.click(
+    within(confirmation).getByRole("button", { name: "Keep Ada" }),
+  );
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(mainAgent.write).toHaveBeenLastCalledWith(bea.pubkey);
+  expect(readView(scope, "solo:default-agent", null)).toBe(bea.pubkey);
+  expect(screen.getByRole("gridcell", { name: "Bea, Bestie" })).toBeVisible();
+});
+
 it("retries a failed replacement in the same dialog after an earlier Bestie save", async () => {
   const user = userEvent.setup();
   const ada = agent("Ada", 1);

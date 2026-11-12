@@ -8,6 +8,7 @@ import {
   chooseDefaultAgent,
   clearDefaultAgent,
   restoreDefaultAgent,
+  savedAgentStore,
   useSavedAgent,
 } from "../../features/solo/default-agent";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
@@ -67,14 +68,21 @@ export function useBestieChoice(
   useEffect(() => {
     abandon.current =
       error && replacement
-        ? () =>
-            restoreDefaultAgent(
-              scope,
-              replacement.replacing.pubkey,
-              replacement.current.pubkey,
+        ? () => {
+            // Read as it runs: an agent saving the replacement can close the
+            // Bestie tab before this renders that save.
+            if (
+              savedAgentStore(session, scope).snapshot() !==
+              replacement.replacing.pubkey
             )
+              restoreDefaultAgent(
+                scope,
+                replacement.replacing.pubkey,
+                replacement.current.pubkey,
+              );
+          }
         : undefined;
-  }, [error, replacement, scope]);
+  }, [error, replacement, scope, session]);
   useEffect(() => {
     gone.current = false;
     return () => {
@@ -136,14 +144,14 @@ export function useBestieChoice(
           pending={savingBestie}
           error={error}
           onClose={() => {
-            if (error) {
+            // An account now holding the replacement was saved elsewhere; keep it.
+            if (error && saved !== replacement.replacing.pubkey)
               restoreDefaultAgent(
                 scope,
                 replacement.replacing.pubkey,
                 replacement.current.pubkey,
               );
-              setError("");
-            }
+            setError("");
             setReplacement(undefined);
           }}
           onChoose={() => {

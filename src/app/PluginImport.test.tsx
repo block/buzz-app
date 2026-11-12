@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -25,6 +27,15 @@ afterEach(cleanup);
 
 const gitReferenceDescription =
   "Copy a plugin listing’s Ref into this field. Leave blank to scan the repository’s default branch.";
+const gitSizeRefusalMessages = {
+  output: "Git output exceeds the import size limit",
+  repository: "Repository exceeds the 256 MiB import limit",
+  repositoryFileCount:
+    "Repository has more than 20,000 files; enter the folder to import from",
+  repositoryEntries: "Repository exceeds the import entry limit",
+  file: "File exceeds its size limit",
+  scopedFileCountSuffix: " has more than 20,000 files; choose a smaller folder",
+};
 
 function startReview(updates: ReturnType<typeof createPluginUpdates>) {
   return updates.startNextReview(() => () => {});
@@ -82,41 +93,49 @@ const gitRepositoryFileCountHint =
 const gitScopedFileCountHint =
   "Choose Back, enter a smaller folder path in Folder, then try again.";
 
+it("keeps Git recovery message keys aligned with native import refusals", () => {
+  const nativeImports = readFileSync(
+    resolve(process.cwd(), "crates/plugin-manager/src/imports.rs"),
+    "utf8",
+  );
+  for (const message of Object.values(gitSizeRefusalMessages)) {
+    expect(nativeImports).toContain(message);
+  }
+});
+
 it.each([
   {
-    error: "Git output exceeds the import size limit",
+    error: gitSizeRefusalMessages.output,
     reference: "",
     recoveryHint: gitOutputRecoveryHint,
   },
   {
-    error: "Git output exceeds the import size limit",
+    error: gitSizeRefusalMessages.output,
     reference: "release/stable",
     recoveryHint: gitOutputRecoveryHint,
   },
   {
-    error: "Repository exceeds the 256 MiB import limit",
+    error: gitSizeRefusalMessages.repository,
     reference: "",
     recoveryHint: gitRepositoryRecoveryHint,
   },
   {
-    error: "Repository exceeds the import entry limit",
+    error: gitSizeRefusalMessages.repositoryEntries,
     reference: "",
     recoveryHint: gitEntryRecoveryHint,
   },
   {
-    error: "File exceeds its size limit",
+    error: gitSizeRefusalMessages.file,
     reference: "",
     recoveryHint: gitFileRecoveryHint,
   },
   {
-    error:
-      "Repository has more than 20,000 files; enter the folder to import from",
+    error: gitSizeRefusalMessages.repositoryFileCount,
     reference: "",
     recoveryHint: gitRepositoryFileCountHint,
   },
   {
-    error:
-      "extensions/large has more than 20,000 files; choose a smaller folder",
+    error: `extensions/large${gitSizeRefusalMessages.scopedFileCountSuffix}`,
     reference: "release/stable",
     recoveryHint: gitScopedFileCountHint,
   },

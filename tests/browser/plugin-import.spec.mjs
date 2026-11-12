@@ -676,6 +676,20 @@ test("manual Git release-ref guidance stays readable across scale and themes", a
 
   const alert = enlargedDialog.getByRole("alert");
   await expect(alert).toBeVisible();
+  const refusal = alert.getByText(
+    "Error: Git output exceeds the import size limit",
+    { exact: true },
+  );
+  const recovery = alert.getByText(
+    "Try another branch or tag. If the same output limit persists, ask the publisher for a ref or repository that Buzz can read.",
+    { exact: true },
+  );
+  await expect(refusal).toBeVisible();
+  await expect(recovery).toBeVisible();
+  await refusal.scrollIntoViewIfNeeded();
+  await expect(refusal).toBeInViewport({ ratio: 1 });
+  await recovery.scrollIntoViewIfNeeded();
+  await expect(recovery).toBeInViewport({ ratio: 1 });
   await expect(button(page, "Back")).toBeFocused();
   const alertBounds = await alert.boundingBox();
   expect(alertBounds).not.toBeNull();

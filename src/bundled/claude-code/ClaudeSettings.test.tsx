@@ -121,12 +121,12 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   expect(card).toContainElement(screen.getByText("Anthropic API key"));
   expect(
     screen
-      .getByText(/^Claude requires an API key/)
+      .getByText("Claude requires an API key to connect to your account.")
       .closest(".buzz-settings-group"),
   ).toBeNull();
   expect(
     screen
-      .getByText(/^Claude requires an API key/)
+      .getByText("Claude requires an API key to connect to your account.")
       .closest(".buzz-content-header"),
   ).not.toBeNull();
   expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
@@ -136,6 +136,12 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   ).toHaveAccessibleDescription(
     "Create an API key at console.anthropic.com and paste it below.",
   );
+  expect(
+    within(screen.getByRole("dialog", { name: "Connect Claude" })).getByRole(
+      "link",
+      { name: "console.anthropic.com" },
+    ),
+  ).toHaveAttribute("href", "https://console.anthropic.com/settings/keys");
   expect(add).toHaveAccessibleDescription(
     "Your key will be stored securely on this computer.",
   );

@@ -7,7 +7,7 @@ import { Header } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
-import { KEY_ONCE, SignIn } from "./auth";
+import { SignIn } from "./auth";
 import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import type { ClaudeSetup } from "./setup";
 
@@ -95,7 +95,7 @@ export function ClaudeSettings({
         subtitle={
           configured === true
             ? "Manage Claude’s credentials on this computer."
-            : KEY_ONCE
+            : "Claude requires an API key to connect to your account."
         }
       />
       <div className="mt-section-gap grid gap-section-gap">
@@ -165,7 +165,27 @@ export function ClaudeSettings({
           open
           visit
           title="Connect Claude"
-          description="Create an API key at console.anthropic.com and paste it below."
+          description={
+            <>
+              Create an API key at{" "}
+              <Button
+                variant="link"
+                size="text"
+                nativeButton={false}
+                role="link"
+                render={
+                  <a
+                    href="https://console.anthropic.com/settings/keys"
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
+              >
+                console.anthropic.com
+              </Button>{" "}
+              and paste it below.
+            </>
+          }
           headerGap="compact"
           preventClose={saving}
           onOpenChange={(open) => !open && setConnecting(false)}

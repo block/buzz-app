@@ -14,6 +14,7 @@ import {
   CATEGORY_SOUND_LABELS,
   RECOMMENDED_SOUND_BY_CATEGORY,
   SOUND_NAMES,
+  playNotificationSound,
   type SoundName,
 } from "../features/notifications/sound";
 import styles from "./NotificationSettings.module.css";
@@ -95,51 +96,29 @@ export function NotificationSettings({
     category: NotificationCategory;
     name: SoundName;
   } | null>(null);
-  const previewAudio = useRef<HTMLAudioElement | null>(null);
-  const stopPreview = useCallback((owner?: HTMLAudioElement) => {
-    const audio = previewAudio.current;
-    if (owner && audio !== owner) return;
-    previewAudio.current = null;
-    if (audio) {
-      audio.onended = null;
-      audio.onpause = null;
-      audio.onerror = null;
-      audio.pause();
-    }
+  // Previews use the alert player, so they never take macOS Now Playing.
+  const stopPreviewSound = useRef<(() => void) | null>(null);
+  const stopPreview = useCallback(() => {
+    const stop = stopPreviewSound.current;
+    stopPreviewSound.current = null;
     preview.current = null;
+    stop?.();
   }, []);
   const previewSound = useCallback(
     (category: NotificationCategory, name: SoundName) => {
       stopPreview();
       if (name === "silent") return;
-      try {
-        const audio = new Audio(`/sounds/${name}.mp3`);
-        previewAudio.current = audio;
-        preview.current = { category, name };
-        const stop = () => stopPreview(audio);
-        audio.onended = stop;
-        audio.onpause = stop;
-        audio.onerror = stop;
-        void audio.play().catch(stop);
-      } catch {
-        stopPreview();
-      }
+      preview.current = { category, name };
+      const stop = playNotificationSound(name, () => {
+        if (stopPreviewSound.current !== stop) return;
+        stopPreviewSound.current = null;
+        preview.current = null;
+      });
+      stopPreviewSound.current = stop;
     },
     [stopPreview],
   );
-  useEffect(
-    () => () => {
-      const audio = previewAudio.current;
-      previewAudio.current = null;
-      if (audio) {
-        audio.onended = null;
-        audio.onpause = null;
-        audio.onerror = null;
-        audio.pause();
-      }
-    },
-    [],
-  );
+  useEffect(() => stopPreview, [stopPreview]);
   useEffect(() => {
     if (
       preview.current &&

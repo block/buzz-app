@@ -62,30 +62,88 @@ export function resolveCategorySound(
   );
 }
 
-const cache = new Map<SoundName, HTMLAudioElement>();
+// Web Audio, not an <audio> element: WebKit makes a played media element the
+// macOS Now Playing session, so the keyboard play/pause key would replay the
+// last alert instead of controlling the user's music. An AudioContext only
+// becomes Now Playing when navigator.audioSession.type is "playback".
+let output: AudioContext | undefined;
+let playing = 0;
+const clips = new Map<SoundName, Promise<AudioBuffer>>();
 
-function getAudio(name: SoundName): HTMLAudioElement {
-  let audio = cache.get(name);
-  if (!audio) {
-    audio = new Audio(`/sounds/${name}.mp3`);
-    cache.set(name, audio);
+function loadClip(
+  context: AudioContext,
+  name: SoundName,
+): Promise<AudioBuffer> {
+  let clip = clips.get(name);
+  if (!clip) {
+    clip = fetch(`/sounds/${name}.mp3`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Sound ${name}: ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((data) => context.decodeAudioData(data));
+    clips.set(name, clip);
+    // A failed load may succeed later; never cache the rejection.
+    clip.catch(() => clips.delete(name));
   }
-  return audio;
+  return clip;
 }
 
+/**
+ * Play a bundled sound; best-effort. `ended` runs once when it finishes or
+ * fails to load, unless the returned function stopped it first.
+ */
 export function playNotificationSound(
   name: SoundName,
-): HTMLAudioElement | null {
-  if (name === "silent") return null;
+  ended?: () => void,
+): () => void {
+  const none = () => {};
+  if (name === "silent") return none;
   try {
-    const audio = getAudio(name);
-    audio.currentTime = 0;
-    audio.play().catch(() => {
+    if (!output || output.state === "closed") output = new AudioContext();
+    const context = output;
+    const ready = Promise.all([loadClip(context, name), context.resume()]);
+    playing += 1;
+    let stopped = false;
+    let finished = false;
+    let source: AudioBufferSourceNode | undefined;
+    // Release the output device once no sound is loading or playing.
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      if (--playing === 0) void context.suspend().catch(() => {});
+      if (!stopped) ended?.();
+    };
+    void ready
+      .then(([buffer]) => {
+        if (stopped) return done();
+        const node = context.createBufferSource();
+        source = node;
+        node.buffer = buffer;
+        node.connect(context.destination);
+        node.onended = () => {
+          try {
+            node.disconnect();
+          } finally {
+            done();
+          }
+        };
+        node.start();
+      })
       // Best-effort — user may not have interacted with the page yet.
-    });
-    return audio;
+      .catch(done);
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        // Ending the source runs `done` through `onended`.
+        source?.stop();
+      } catch {
+        done();
+      }
+    };
   } catch {
     // Best-effort only.
-    return null;
+    return none;
   }
 }

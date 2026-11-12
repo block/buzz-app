@@ -4,7 +4,9 @@ import { communityDestination } from "../../features/communities/destination";
  * The build flag lists exact canonical community origins; empty (the default)
  * leaves every community on the plain create flow. */
 export function namingRulesApply(community: string | undefined): boolean {
-  const listed = (import.meta.env.VITE_BUZZ_CHANNEL_NAMING_COMMUNITIES ?? "")
+  const listed = (
+    import.meta.env.VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES ?? ""
+  )
     .split(" ")
     .filter(Boolean);
   if (!community || !listed.length) return false;

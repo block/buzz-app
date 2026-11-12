@@ -1169,7 +1169,10 @@ it("creates a plain channel from a template that adds nothing here", async () =>
 });
 
 it("applies the naming rules and guidelines link only in a listed community", async () => {
-  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_COMMUNITIES", "https://relay.example");
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
   vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
   const user = userEvent.setup();
   const block = {

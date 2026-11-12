@@ -479,6 +479,7 @@ function OpenCreateChannelDialog({
                   {hintText}{" "}
                   {guidelinesUrl && (
                     <a
+                      className={styles.guidelinesLink}
                       href={guidelinesUrl}
                       tabIndex={-1}
                       target="_blank"

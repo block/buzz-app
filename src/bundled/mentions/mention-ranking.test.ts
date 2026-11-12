@@ -238,6 +238,15 @@ it("only another member's longer name keeps a member's exact name from selecting
   expect(continuedMention([mira, member], "mira")).toBe(true);
   expect(exactMention([mira, member], "mira")).toBeUndefined();
   expect(exactMention([mira, outside, member], "mira", local)).toBeUndefined();
+  // A saved chat's roster offers agents from outside it as members; such a
+  // name is outside the channel here: it never blocks a member's exact name,
+  // and its own exact name is blocked by any longer name.
+  const offered = choice("4", "Mira Example", { offered: true });
+  expect(continuedMention([mira, offered], "mira")).toBe(false);
+  expect(exactMention([mira, offered], "mira", local)).toBe(key);
+  expect(
+    exactMention([choice("1", "Mira", { offered: true }), member], "mira"),
+  ).toBeUndefined();
   // An outside exact name is still blocked by any longer name.
   const outsideMira = choice("1", "Mira", { member: false });
   expect(exactMention([outsideMira, outside], "mira")).toBeUndefined();

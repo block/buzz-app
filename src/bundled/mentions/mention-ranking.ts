@@ -247,6 +247,11 @@ export function continuingNames(
   return [...names.values()];
 }
 /**
+ * In the channel's own member list. A saved chat's roster marks every choice
+ * it offers a `member`; the ones from outside the chat are `offered`.
+ */
+export const channelMember = (c: MentionChoice) => c.member && !c.offered;
+/**
  * Whether a known longer name keeps the query's exact name from selecting
  * (README section 5). Once a member has the exact name, only another
  * member's longer name does; a choice outside the channel never makes a
@@ -260,12 +265,12 @@ export function continuedMention(
   const needle = normalized(query);
   const member = choices.some(
     (c) =>
-      c.member &&
+      channelMember(c) &&
       c.aliases.length > 0 &&
       choiceNames(c).some((name) => normalized(name) === needle),
   );
   return (
-    continuingNames(member ? choices.filter((c) => c.member) : choices, query)
+    continuingNames(member ? choices.filter(channelMember) : choices, query)
       .length > 0
   );
 }

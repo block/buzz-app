@@ -18,7 +18,11 @@ import {
   remoteMentionDetail,
 } from "./mention-candidates";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
-import { continuedMention, matchingMentions } from "./mention-ranking";
+import {
+  channelMember,
+  continuedMention,
+  matchingMentions,
+} from "./mention-ranking";
 import { resolveSpaceMention } from "./resolve-space-mention";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
@@ -332,7 +336,7 @@ export function MentionCompletion({
         // name, which no outside name blocks, so until every member is known
         // and named only members' names decline.
         matchingMentions(model.candidates, query.query).filter(
-          (c) => c.member || !model.missingNames,
+          (c) => channelMember(c) || !model.missingNames,
         ),
         query.query,
       );

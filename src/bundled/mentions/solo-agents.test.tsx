@@ -4382,8 +4382,9 @@ it("the resolver continues a roster name into the roster's longer name without t
   const h = spaceFixture("Jose");
   try {
     const luis = { pubkey: outsideJose, name: "Jose Luis" };
+    // A draft with no saved member list: everyone in its roster is a member.
     const scope = {
-      channelId: "parent",
+      channelId: "draft",
       roster: { recipients: [{ pubkey: h.member, name: "Josefa" }, luis] },
       selected: [],
     };

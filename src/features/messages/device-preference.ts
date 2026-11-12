@@ -3,17 +3,24 @@ import { useSyncExternalStore } from "react";
 const unsavedError =
   "This choice is active, but could not be saved on this device. Try again.";
 
-/** A device-local boolean choice with an independent unsaved fallback. */
-export function devicePreference(preferenceKey: string, changedEvent: string) {
+/** A device-local boolean choice with an independent unsaved fallback.
+ * `defaultEnabled` applies until the person saves a choice, or when storage is
+ * unavailable or holds something else. */
+export function devicePreference(
+  preferenceKey: string,
+  changedEvent: string,
+  defaultEnabled = false,
+) {
   let unsavedPreference: boolean | undefined;
 
   function read(): boolean {
     if (unsavedPreference !== undefined) return unsavedPreference;
     try {
-      return localStorage.getItem(preferenceKey) === "on";
-    } catch {
-      return false;
-    }
+      const saved = localStorage.getItem(preferenceKey);
+      if (saved === "on") return true;
+      if (saved === "off") return false;
+    } catch {}
+    return defaultEnabled;
   }
   function subscribe(listener: () => void) {
     const storage = (event: StorageEvent) => {

@@ -70,7 +70,20 @@ function host(agents: Agent[], usage: RegisteredAgentType["usage"]) {
   } as unknown as Agents;
 }
 
-it("shows nothing until its setting is on", async () => {
+it("shows the amount when no choice is saved", async () => {
+  const store = todayStore(
+    host([agent("Pixel")], async () => [session("s", 1)]),
+  );
+  render(<TodaySpend store={store} open={vi.fn()} />);
+  expect(
+    await screen.findByRole("button", {
+      name: "Your agents’ estimated spend today: $1.00",
+    }),
+  ).toBeTruthy();
+});
+
+it("shows nothing and reads nothing while its setting is off", async () => {
+  setSpendBesideSend(false);
   const usage = vi.fn(async () => [session("s", 1)]);
   const store = todayStore(host([agent("Pixel")], usage));
   render(<TodaySpend store={store} open={vi.fn()} />);

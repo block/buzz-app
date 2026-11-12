@@ -1830,8 +1830,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   known. Agents that are hosted, run on another device or report no usage are
   left out, and the card says how many. It updates within about a second of an agent here finishing a turn,
   at most every 10 seconds. Hover or select it to see each agent; select an agent to
-  open its latest conversation. It starts off, only you see it, and it is saved on this
-  device. It is an estimate, not your bill.
+  open its latest conversation. It starts on once Usage is enabled; turning it off is
+  saved on this device. Only you see it. It is an estimate, not your bill.
 - **Settings → Plugins → GitHub → Links → Open GitHub links in Buzz** controls
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all

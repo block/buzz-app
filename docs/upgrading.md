@@ -27,27 +27,15 @@ built-in ones.
 
 ## What's new: remote agents
 
-A remote agent runs on a hosted machine instead of your computer. It keeps
+A remote agent runs on a hosted machine instead of your computer, so it keeps
 working when Buzz is closed or your laptop is off. It cannot open files on your
-computer.
+computer. Builderlab, the hosted service built into Buzz, runs these agents.
 
-Builderlab is the hosted service, built into Buzz, that runs these agents. You
-sign in with a Builderlab account to use them.
+If remote agents are available for your account, create one from **Agents**:
+start a new agent, pick **Builderlab** under **Remote** in the **Harness**
+menu, and sign in with your Builderlab account.
 
-If remote agents are available for your account, create one like this:
-
-1. Open **Agents** and choose **New agent**, then **Create a new agent**. If
-   you have no agents yet, choose **Create your first agent** instead.
-2. In the **Harness** menu, pick **Builderlab** under **Remote**.
-3. Choose **Sign in** beside Harness and sign in with your Builderlab account.
-4. Choose a model and a thinking level.
-5. Choose **Create agent**, read the introduction, then choose **Let’s go**.
-
-Your remote agents are listed under **Remote agents** in
-**Settings → Plugins → Builderlab**.
-
-Local agents still work as before. They run on your own computer and appear
-under **Local** in the same **Harness** menu.
+Local agents still work as before.
 
 ## Next steps
 

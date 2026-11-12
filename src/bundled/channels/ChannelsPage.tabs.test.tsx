@@ -263,9 +263,14 @@ async function page(
   };
 }
 
-it.each(["channel", "message"])(
-  "Back and Forward preserve the selected thread after following a %s link to another channel",
-  async (link) => {
+it.each([
+  { link: "channel", direction: "Back" },
+  { link: "message", direction: "Back" },
+  { link: "channel", direction: "Forward" },
+  { link: "message", direction: "Forward" },
+])(
+  "$direction preserves the selected thread after following a $link link to another channel",
+  async ({ link, direction }) => {
     const host = createNavigationController(createMemoryHistory());
     const h = await page("stream", host.navigation, true);
     if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");
@@ -300,14 +305,22 @@ it.each(["channel", "message"])(
       content: "Destination thread",
     });
     h.events.push(second, destination);
-    act(() => void host.navigation.open(target("alpha", h.root)));
+    act(() => void host.navigation.open(target("beta")));
+    present();
+    act(
+      () =>
+        void host.navigation.open(
+          target("alpha", direction === "Back" ? h.root : undefined),
+        ),
+    );
     present();
     await screen.findByRole("tab", { name: "Initiating thread" });
     const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
     act(() => {
-      tabs.result.current.leaveVisit();
+      if (direction === "Back") tabs.result.current.leaveVisit();
       tabs.result.current.openThreadTab("alpha", second.id, second.id);
-      void host.navigation.open(target("alpha", second.id));
+      if (direction === "Back")
+        void host.navigation.open(target("alpha", second.id));
     });
     present();
     const selected = `thread:alpha:${second.id}`;
@@ -328,6 +341,13 @@ it.each(["channel", "message"])(
     for (let visit = 0; visit < 2; visit++) {
       act(() => host.navigation.back());
       present();
+      if (direction === "Forward") {
+        // Back past Alpha, then restore its saved workspace with Forward.
+        act(() => host.navigation.back());
+        present();
+        act(() => host.navigation.forward());
+        present();
+      }
       expect(tabs.result.current.selected).toBe(selected);
       expect(
         document.querySelector(`[role="tab"][data-tab-value="${selected}"]`),

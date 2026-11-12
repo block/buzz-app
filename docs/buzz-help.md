@@ -696,7 +696,8 @@ revokes all of them, and a pairing unused for 30 days expires.
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
 - **Back and Forward**: after following a channel or message link to another
-  channel, Back restores the thread tab you last selected in the channel you left.
+  channel, Back and Forward restore the thread tab you last selected in the
+  channel you left.
   In the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

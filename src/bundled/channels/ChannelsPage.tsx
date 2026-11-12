@@ -1822,18 +1822,18 @@ function ChannelWorkspace({
         // Internal panel targets also use buzz:. Only routable links belong
         // to the navigator; registered panels handle the remaining targets.
         if (target) {
-          const leavesChannel =
+          const opensAnotherChannel =
             target.kind === "conversation" && target.channelId !== current?.id;
           if (target.kind === "conversation" && target.messageId) {
-            if (!leavesChannel) tabState.leaveVisit();
+            if (!opensAnotherChannel) tabState.leaveVisit();
             threadTrigger.current =
               document.activeElement instanceof HTMLElement
                 ? document.activeElement
                 : null;
           }
           // A different channel has its own workspace. Keep this one's
-          // selection intact so Back returns to the thread the viewer left.
-          if (!leavesChannel) open(undefined);
+          // selection intact so Back/Forward restores the thread the viewer left.
+          if (!opensAnotherChannel) open(undefined);
           void navigator.open(target);
           return true;
         }

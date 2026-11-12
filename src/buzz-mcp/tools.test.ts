@@ -1818,10 +1818,10 @@ it("discovers local workspaces and files only after creating a Solo with explici
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1];
-  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice], id);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice, boss], id);
   expect(file).toHaveBeenCalledExactlyOnceWith(id);
   expect(answer).toBe(
-    `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
+    `created ${id}\nadded ${alice} Alice Smith\nadded ${boss}\nfiled in workspace work`,
   );
   expect(published).toHaveLength(1);
   expect(published[0]?.kind).toBe(9007);

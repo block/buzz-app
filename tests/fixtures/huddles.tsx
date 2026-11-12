@@ -308,6 +308,8 @@ const stats = {
     attachments: readonly UploadedAttachment[];
   }[],
   opens: 0,
+  /** The room each open asked for, or null for a new or discovered call. */
+  rooms: [] as (string | null)[],
   closes: 0,
   frames: 0,
   lastFrameLength: 0,
@@ -323,10 +325,11 @@ const deferConnection = new URLSearchParams(location.search).has(
 );
 const bridge: HuddleBridge = {
   available: true,
-  async open(_id, context, _room, fn) {
+  async open(_id, context, room, fn) {
     lifecycleParent = context.channelId;
     endedAt = undefined;
     stats.opens++;
+    stats.rooms.push(room ?? null);
     receive = fn;
     connect = () =>
       fn({

@@ -377,7 +377,7 @@ pub(super) async fn run(
     let (mut sink, mut socket) = connection
         .socket
         .take()
-        .ok_or("Huddle audio connection closed")?
+        .ok_or("Huddle audio connection closed.")?
         .split();
     let mut peers = connection.peers;
     let expires_at = connection.expires_at;
@@ -395,7 +395,7 @@ pub(super) async fn run(
         let (out, mut outbound) = mpsc::channel(5);
         let writer = async move {
             while let Some(message) = outbound.recv().await {
-                tokio::time::timeout(Duration::from_secs(2), sink.send(message)).await.map_err(|_| "Huddle connection stalled")?.map_err(|_| "Huddle disconnected")?;
+                tokio::time::timeout(Duration::from_secs(2), sink.send(message)).await.map_err(|_| "Huddle connection stalled.")?.map_err(|_| "Huddle disconnected.")?;
             }
             let _ = sink.close().await;
             Result::Ok(())
@@ -442,7 +442,7 @@ pub(super) async fn run(
                                         codec.receivers.remove(&(i as u8));
                                     }
                                 }
-                                Some("error") => return Err("The relay ended this Huddle connection".into()),
+                                Some("error") => return Err("The relay ended this Huddle connection.".into()),
                                 _ => continue,
                             }
                             updates.send(Update::Participants {participants:peers.values().cloned().collect()}).map_err(|_| "Huddle view closed")?;
@@ -559,8 +559,8 @@ mod tests {
                     socket.send(Message::Ping(vec![1].into())),
                 )
                 .await
-                .map_err(|_| "Huddle connection stalled")?
-                .map_err(|_| "Huddle disconnected")?;
+                .map_err(|_| "Huddle connection stalled.")?
+                .map_err(|_| "Huddle disconnected.")?;
                 Ok(())
             });
             tokio::pin!(sending);

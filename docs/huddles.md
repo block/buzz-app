@@ -1,7 +1,7 @@
 # Huddles plugin
 
 **Huddles** is enabled by default on desktop (macOS, Linux and Windows) and can be turned off in
-Settings → Plugins. Click the headphone button immediately after members in a
+Settings → Plugins. Click **Start or join a huddle** immediately after members in a
 channel or DM header to join the latest available Huddle or start one when none
 is found. The Huddle window opens and receives focus by default once connected. The mini
 player stays visible beside search at the same time. Closing the window or using
@@ -80,8 +80,14 @@ keeps audio connected. Leave releases the microphone and closes the companion.
 Native call completion also retires it after a renderer reload/crash. The companion
 has no identity, signing or microphone permissions. Failed companion updates also report their error in the main app toast stack,
 instead of silently ignoring the chat button. Connection failures appear
-in the shared app toast stack without showing the compact player; the headphone
-button can retry them, and dismissing the notice clears the failed call.
+in the shared app toast stack without showing the compact player. The notice is
+titled by phase (Couldn’t join the Huddle before the call connects, Huddle
+disconnected after), maps each known native or service cause to one sentence,
+offers Join again where joining again can work, and says something went wrong for
+an unrecognized cause. It never shows native text; it logs it to the console
+instead. Join again returns to the failed call's room while it is still live
+in its conversation. With no room to return to, it asks Start a huddle? as the header
+button does, naming the voice agent a new call in its DM would invite. Dismissing the notice clears the failed call.
 
 Disabling the plugin, losing channel access, replacing the relay session, or
 switching community ends the local call. If the UI disappears, the native call

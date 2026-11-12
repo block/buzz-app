@@ -112,6 +112,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         huddles={huddles}
         relay={ctx.relay}
         companion={companion}
+        agents={ctx.agents}
       />
     ),
     channelLauncher: (props) => (

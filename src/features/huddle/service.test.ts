@@ -171,6 +171,28 @@ describe("Huddle lifetime", () => {
       await h.dispose();
     },
   );
+  it("keeps the destination with a failure and records whether the call had connected", async () => {
+    const h = harness();
+    await h.service.join(destination);
+    h.receive({ type: "ended", error: "Huddle connection stalled." });
+    await vi.waitFor(() => expect(h.service.snapshot().phase).toBe("error"));
+    expect(h.service.snapshot()).toMatchObject({
+      destination,
+      error: "Huddle connection stalled.",
+    });
+    expect(h.service.snapshot().dropped).toBeUndefined();
+    await h.service.leave();
+    await h.service.join(destination);
+    h.receive({ type: "connected", room: "room", participants: [] });
+    h.receive({ type: "ended", error: "Huddle disconnected." });
+    await vi.waitFor(() => expect(h.service.snapshot().phase).toBe("error"));
+    expect(h.service.snapshot()).toMatchObject({
+      destination,
+      room: "room",
+      dropped: true,
+    });
+    await h.dispose();
+  });
   it("sends only while connected/unmuted and releases capture on leave", async () => {
     const h = harness();
     await h.service.join(destination);

@@ -566,13 +566,14 @@ it("reopens the same invitation with its failure after an unsuccessful attempt",
       phase: "error",
       muted: false,
       participants: [],
-      error: "Microphone denied",
+      error: "Microphone access denied",
     });
-    h.set({ ...initial, error: "Microphone denied" });
+    h.set({ ...initial, error: "Microphone access denied" });
     await vi.waitFor(() => expect(h.bridge.open).toHaveBeenCalledTimes(2));
+    // The reopened request shows the mapped cause, not the raw failure.
     expect(vi.mocked(h.bridge.open).mock.lastCall?.[0]).toMatchObject({
       phase: "incoming",
-      error: "Microphone denied",
+      error: "Buzz couldn’t use your microphone. Check it, then join again.",
     });
   } finally {
     await h.dispose();

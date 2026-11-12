@@ -6,6 +6,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { RelayData } from "../relay/service";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import type { Huddles } from "./service";
+import { huddleFailure } from "./failure";
 import { createHuddleDiscussion, type HuddleDiscussion } from "./discussion";
 
 export type HuddleView = {
@@ -146,8 +147,11 @@ export function createHuddleWindow(
       title: Array.from(call.destination.channelName).slice(0, 1000).join(""),
       phase: call.phase as HuddleView["phase"],
       muted: call.muted,
+      // A failed join leaves its request open; show the mapped cause, not raw text.
       error: call.error
-        ? Array.from(call.error).slice(0, 2000).join("")
+        ? call.phase === "incoming"
+          ? huddleFailure(call.error, false).description
+          : Array.from(call.error).slice(0, 2000).join("")
         : undefined,
       audioSettings:
         call.audioSettings && projectAudioSettings(call.audioSettings),

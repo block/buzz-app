@@ -16,8 +16,6 @@ import {
   LinkIcon,
   UsersIcon,
 } from "../../shared/design-system/icons";
-import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
-import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MenuRoot,
@@ -29,6 +27,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import styles from "./Huddles.module.css";
+import { StartHuddleDialog } from "./StartHuddleDialog";
 import { writeClipboardText } from "../../shared/clipboard";
 
 type Props = Pick<
@@ -111,7 +110,6 @@ export function HuddleLauncher(props: Props) {
   const target = [context.scope, context.viewer, context.channelId].join("\n");
   const [confirming, setConfirming] = useState<string>();
   if (confirming && confirming !== target) setConfirming(undefined);
-  const proceed = useRef<HTMLButtonElement>(null);
   const active = ["connecting", "connected", "leaving"].includes(call.phase);
   const here =
     call.phase === "connected" &&
@@ -176,30 +174,10 @@ export function HuddleLauncher(props: Props) {
         onClick={active || joinable ? activate : () => setConfirming(target)}
       />
       {confirming === target && (
-        <AlertDialog
-          title="Start a huddle?"
-          description={
-            voiceAgent
-              ? `Your microphone will turn on and ${voiceAgent.name} will join automatically.`
-              : "Your microphone will turn on, and others in this conversation can join."
-          }
-          initialFocus={proceed}
+        <StartHuddleDialog
+          voiceAgent={voiceAgent?.name}
           onClose={close}
-          actions={
-            <>
-              <Button onClick={close}>Cancel</Button>
-              <Button
-                ref={proceed}
-                variant="primary"
-                onClick={() => {
-                  close();
-                  activate();
-                }}
-              >
-                Start huddle
-              </Button>
-            </>
-          }
+          onStart={activate}
         />
       )}
     </span>

@@ -4,12 +4,12 @@ Talk with people in your channels and direct messages using live audio on deskto
 
 ## Getting started
 
-1. Open a channel or direct message and select the headphone button to start or join a Huddle.
+1. Open a channel or direct message and select **Start or join a huddle** in its header.
 2. Allow microphone access when prompted. Use the Huddle controls to mute yourself or choose an audio device.
 3. Leave using the call controls when you're finished. Closing the Huddle window keeps the call connected; reopen it from the mini player beside search.
 
-In a one-to-one DM with your voice-capable agent running on this computer, the
-headphone button says **Talk with [agent]**, and starting a Huddle adds the agent
+In a one-to-one DM with your voice-capable agent running on this computer, that
+button says **Talk with [agent]**, and starting a Huddle adds the agent
 to its room. Joining an existing Huddle never adds anyone. Otherwise, add agents
 with **Add someone**; parent conversation membership alone does not seat them.
 

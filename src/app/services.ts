@@ -282,7 +282,15 @@ export function createServices() {
     ctx.effect(() =>
       bindUnreadIndicator(communities, notifications.indicator.setUnread, {
         allows: (target) => notifications.gated(target),
-        subscribe: notifications.subscribeGates,
+        badgeActivity: () => notifications.snapshot().preferences.badgeActivity,
+        subscribe(listener) {
+          const stopGates = notifications.subscribeGates(listener);
+          const stopPreferences = notifications.subscribe(listener);
+          return () => {
+            stopGates();
+            stopPreferences();
+          };
+        },
       }),
     );
   let disposal: Promise<void> | undefined;

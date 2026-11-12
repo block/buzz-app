@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import * as unreadIndicator from "../features/notifications/indicator-unread";
+import type { Notifications } from "../features/notifications/service";
 import type { Host } from "../features/host/service";
 import { createServices, type AppServices } from "./services";
 
 const plugin = vi.hoisted(() => ({
   cleanup: vi.fn<() => void | Promise<void>>(),
   host: undefined as Host | undefined,
+  notifications: undefined as Notifications | undefined,
 }));
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
@@ -24,9 +27,10 @@ vi.mock("../bundled", () => ({
     {
       manifest: { id: "test.page", name: "Test", apiVersion: 1 },
       module: {
-        inject: ["pages", "host"],
+        inject: ["pages", "host", "notifications"],
         apply(ctx: Context) {
           plugin.host = ctx.host;
+          plugin.notifications = ctx.notifications;
           ctx.pages.register({
             id: "main",
             title: "Test",
@@ -53,6 +57,7 @@ beforeEach(() => {
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   plugin.cleanup.mockReset();
   plugin.host = undefined;
+  plugin.notifications = undefined;
   vi.mocked(isTauri).mockReturnValue(false);
   vi.mocked(invoke).mockReset();
   values = new Map<string, string>();
@@ -565,4 +570,57 @@ it("keeps pinned macOS desktop development on the broker identity", async () => 
       .mocked(invoke)
       .mock.calls.some(([command]) => command.startsWith("identity_")),
   ).toBe(false);
+});
+
+it("connects the saved badge policy and preference changes to native startup", async () => {
+  await services.dispose();
+  const bind = vi.spyOn(unreadIndicator, "bindUnreadIndicator");
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "dock_permission") return "enabled";
+    if (
+      command === "unread_indicator_set" ||
+      command === "deep_link_watch" ||
+      command === "keep_awake_set"
+    )
+      return null;
+    if (command === "deep_link_take") return [];
+    throw new Error("Fixture native capability unavailable");
+  });
+  try {
+    services = createServices();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bind).toHaveBeenCalledOnce();
+    const gates = bind.mock.calls[0]?.[2];
+    expect(gates?.badgeActivity?.()).toBe("all");
+    const notifications = plugin.notifications;
+    if (!notifications) throw new Error("Fixture plugin did not start");
+    const changed = vi.fn();
+    const unsubscribe = gates?.subscribe(changed);
+    try {
+      services.notifications.updatePreferences({
+        badgeActivity: "mentions-and-dms",
+      });
+      expect(gates?.badgeActivity?.()).toBe("mentions-and-dms");
+      expect(changed).toHaveBeenCalledOnce();
+      const removeGate = notifications.gate({
+        id: "test.badge",
+        allows: () => true,
+      });
+      expect(changed).toHaveBeenCalledTimes(2);
+      removeGate();
+      expect(changed).toHaveBeenCalledTimes(3);
+    } finally {
+      unsubscribe?.();
+    }
+    services.notifications.updatePreferences({ badgeActivity: "all" });
+    const removeGate = notifications.gate({
+      id: "test.badge-stopped",
+      allows: () => true,
+    });
+    removeGate();
+    expect(changed).toHaveBeenCalledTimes(3);
+  } finally {
+    bind.mockRestore();
+  }
 });

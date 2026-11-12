@@ -982,6 +982,12 @@ available rather than silently discarding it.
 - On desktop, Buzz starts every agent with `BUZZ_VERSION` set to the app's
   version, and agents usually pass it on to the shell commands they run. A
   script or shell config can check for it to tell it is running under Buzz.
+- On a Mac, agents get your login shell's PATH. To pass on more of what your
+  `~/.zprofile` or `~/.zshrc` exports, export
+  `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` there as a comma-separated list of
+  names, where `*` matches anything and a leading `!` excludes, such as
+  `export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS="AWS_PROFILE,TOOL_*,!*_SECRET"`.
+  Quit and reopen Buzz after changing it.
 - In communities where your build restricts workflows, workflow messages do
   not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
   have one act on a workflow result, send it a direct request explaining what

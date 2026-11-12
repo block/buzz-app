@@ -12,7 +12,9 @@ use claude_hooks::ClaudeHooks;
 use protection::ProcessProtection;
 
 use crate::credential_service::{CredentialService, Issued, ProtectedLaunch};
-use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
+use crate::host_command::{
+    effective_path, load_login_shell_environment, login_shell_environment, resolve_program,
+};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::{HostProcess, ProcessArtifact};
 use serde::{Deserialize, Serialize};
@@ -442,7 +444,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             return Err("Use a packaged Buzz build for protected workers; development frontends are mutable".into());
         }
     }
-    load_login_shell_path().await;
+    load_login_shell_environment().await;
     let path = effective_path();
     let controls = if protected {
         Some(
@@ -521,6 +523,11 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         for name in std::env::vars_os()
             .map(|(name, _)| name)
             .chain(environment.keys().map(std::ffi::OsString::from))
+            .chain(
+                login_shell_environment()
+                    .iter()
+                    .map(|(name, _)| name.clone()),
+            )
         {
             let text = name.to_string_lossy();
             if matches!(
@@ -593,8 +600,9 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     )
 }
 
-/// Sets a process's environment: the app's own, less any Buzz identity it was
-/// started with, plus the plugin's `environment` (`None` removes a variable).
+/// Sets a process's environment: the app's own, plus the login-shell variables
+/// it forwards, less any Buzz identity the app was started with, plus the
+/// plugin's `environment` (`None` removes a variable).
 /// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
 /// under Buzz.
 fn set_environment(
@@ -603,6 +611,7 @@ fn set_environment(
     environment: &HashMap<String, Option<String>>,
     version: &str,
 ) -> Result<(), String> {
+    command.envs(login_shell_environment().iter().cloned());
     // Never pass on an identity the app itself was started with.
     for (name, _) in std::env::vars_os() {
         let text = name.to_string_lossy();

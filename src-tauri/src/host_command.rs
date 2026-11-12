@@ -228,44 +228,63 @@ pub(crate) async fn plugin_host_run_command(
 }
 
 #[cfg(target_os = "macos")]
-static LOGIN_SHELL_PATH: tokio::sync::OnceCell<Option<OsString>> =
+static LOGIN_SHELL_ENVIRONMENT: tokio::sync::OnceCell<Option<Vec<(OsString, OsString)>>> =
     tokio::sync::OnceCell::const_new();
 #[cfg(target_os = "macos")]
 static LOGIN_SHELL_PROBE_GROUP: AtomicI32 = AtomicI32::new(0);
 #[cfg(target_os = "macos")]
 const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(10);
 #[cfg(target_os = "macos")]
-const LOGIN_SHELL_PATH_MARKER: &str = "__BUZZ_LOGIN_SHELL_PATH__";
+const LOGIN_SHELL_ENVIRONMENT_MARKER: &str = "__BUZZ_LOGIN_SHELL_ENVIRONMENT__";
+/// Login-shell variables every process gets.
+#[cfg(target_os = "macos")]
+const LOGIN_SHELL_DEFAULT_EXPORTS: &[&str] = &["PATH"];
+/// Names, in the login shell, more variables to forward: comma-separated
+/// patterns where `*` matches any run of characters and a leading `!` excludes.
+#[cfg(target_os = "macos")]
+const LOGIN_SHELL_ADDITIONAL_EXPORTS: &str = "BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS";
 
-/// Reads PATH from the user's login shell once, so later calls to
-/// [`effective_path`] see it. Apps opened from Finder only inherit launchd's
+/// Reads the user's login-shell environment once, so later calls to
+/// [`effective_path`] see its PATH and [`login_shell_environment`] the
+/// variables it forwards. Apps opened from Finder only inherit launchd's
 /// `/usr/bin:/bin:/usr/sbin:/sbin`, which would run system tools, such as an
 /// older Apple git, instead of the ones the user's terminal finds.
-pub(crate) async fn load_login_shell_path() {
+pub(crate) async fn load_login_shell_environment() {
     #[cfg(target_os = "macos")]
-    LOGIN_SHELL_PATH
+    LOGIN_SHELL_ENVIRONMENT
         .get_or_init(|| async {
             use std::io::IsTerminal as _;
-            // Started from a terminal, Buzz already has that shell's PATH, and an
-            // interactive probe would stop on the terminal it cannot take over.
+            // Started from a terminal, Buzz already has that shell's environment,
+            // and an interactive probe would stop on the terminal it cannot take over.
             if std::io::stdin().is_terminal() {
                 return None;
             }
             let shell = crate::terminal::resolve_shell(std::env::var("SHELL").ok().as_deref());
-            let path = login_shell_path(
+            let environment = login_shell_exports(
                 Path::new(&shell),
                 LOGIN_SHELL_DEADLINE,
                 &LOGIN_SHELL_PROBE_GROUP,
             )
             .await;
-            if path.is_none() {
+            if environment.is_none() {
                 eprintln!(
-                    "Could not read PATH from login shell {shell}; agents use the app's PATH"
+                    "Could not read the environment of login shell {shell}; agents use the app's"
                 );
             }
-            path
+            environment
         })
         .await;
+}
+
+/// The login-shell variables processes get: [`LOGIN_SHELL_DEFAULT_EXPORTS`]
+/// and those `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` names. Empty until
+/// [`load_login_shell_environment`] has read them, or when it could not.
+pub(crate) fn login_shell_environment() -> &'static [(OsString, OsString)] {
+    #[cfg(target_os = "macos")]
+    if let Some(Some(environment)) = LOGIN_SHELL_ENVIRONMENT.get() {
+        return environment;
+    }
+    &[]
 }
 
 /// Kills a login-shell probe still running when the app exits: its async task
@@ -284,11 +303,17 @@ fn kill_published_group(group: &AtomicI32) {
 }
 
 #[cfg(target_os = "macos")]
-async fn login_shell_path(shell: &Path, deadline: Duration, group: &AtomicI32) -> Option<OsString> {
+async fn login_shell_exports(
+    shell: &Path,
+    deadline: Duration,
+    group: &AtomicI32,
+) -> Option<Vec<(OsString, OsString)>> {
+    use std::os::unix::ffi::OsStrExt as _;
+
     // External commands only, so any shell's syntax runs it and PATH arrives
     // colon-separated even from shells that keep it as a list, such as fish.
     let script = format!(
-        "/usr/bin/printf {LOGIN_SHELL_PATH_MARKER}; /usr/bin/printenv PATH; /usr/bin/printf {LOGIN_SHELL_PATH_MARKER}"
+        "/usr/bin/printf {LOGIN_SHELL_ENVIRONMENT_MARKER}; /usr/bin/env -0; /usr/bin/printf {LOGIN_SHELL_ENVIRONMENT_MARKER}"
     );
     // Profiles can check BUZZ_RESOLVING_ENVIRONMENT to skip slow setup, and
     // DISABLE_AUTO_UPDATE stops Oh My Zsh from prompting to update.
@@ -302,7 +327,7 @@ async fn login_shell_path(shell: &Path, deadline: Duration, group: &AtomicI32) -
         &script,
     ]
     .map(String::from);
-    // Profiles may print banners or exit non-zero after setting PATH.
+    // Profiles may print banners or exit non-zero after exporting.
     let (output, _) = run_output_with_input(
         Path::new("/usr/bin/env"),
         &args,
@@ -313,11 +338,74 @@ async fn login_shell_path(shell: &Path, deadline: Duration, group: &AtomicI32) -
         Some(group),
     )
     .await?;
-    let path = output
-        .split(LOGIN_SHELL_PATH_MARKER)
-        .nth(1)?
-        .trim_end_matches('\n');
-    (!path.is_empty()).then(|| path.into())
+    // Bytes, as `env -0` prints them: a value need not be UTF-8.
+    let marker = LOGIN_SHELL_ENVIRONMENT_MARKER.as_bytes();
+    let find = |bytes: &[u8]| bytes.windows(marker.len()).position(|w| w == marker);
+    let start = find(&output)? + marker.len();
+    let end = start + find(&output[start..])?;
+    let variables = output[start..end]
+        .split(|byte| *byte == 0)
+        .filter_map(|entry| {
+            let separator = entry.iter().position(|byte| *byte == b'=')?;
+            Some((&entry[..separator], &entry[separator + 1..]))
+        })
+        .collect::<Vec<_>>();
+    let additional = variables
+        .iter()
+        .find(|(name, _)| *name == LOGIN_SHELL_ADDITIONAL_EXPORTS.as_bytes())
+        .map_or(&b""[..], |(_, value)| value);
+    Some(
+        variables
+            .iter()
+            .filter(|(name, _)| {
+                LOGIN_SHELL_DEFAULT_EXPORTS
+                    .iter()
+                    .any(|default| default.as_bytes() == *name)
+                    || is_additional_export(additional, name)
+            })
+            .map(|(name, value)| {
+                (
+                    OsStr::from_bytes(name).to_owned(),
+                    OsStr::from_bytes(value).to_owned(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Whether `patterns`, comma-separated, name `name`: `*` matches any run of
+/// characters, a leading `!` excludes, and the last pattern that matches
+/// decides, as in `.gitignore`.
+#[cfg(target_os = "macos")]
+fn is_additional_export(patterns: &[u8], name: &[u8]) -> bool {
+    patterns
+        .split(|byte| *byte == b',')
+        .map(<[u8]>::trim_ascii)
+        .rev()
+        .find_map(|pattern| match pattern.strip_prefix(b"!") {
+            Some(excluded) => matches_glob(excluded, name).then_some(false),
+            None => matches_glob(pattern, name).then_some(true),
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn matches_glob(pattern: &[u8], name: &[u8]) -> bool {
+    let mut parts = pattern.split(|byte| *byte == b'*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let Some(last) = parts.next_back() else {
+        return rest.is_empty();
+    };
+    for part in parts.filter(|part| !part.is_empty()) {
+        let Some(index) = rest.windows(part.len()).position(|w| w == part) else {
+            return false;
+        };
+        rest = &rest[index + part.len()..];
+    }
+    rest.ends_with(last)
 }
 
 pub(crate) fn effective_path() -> OsString {
@@ -329,11 +417,12 @@ pub(crate) fn effective_path() -> OsString {
         } else {
             path
         };
-        compose_path(
-            std::env::var_os("HOME").as_deref(),
-            LOGIN_SHELL_PATH.get().cloned().flatten().as_deref(),
-            &path,
-        )
+        let login_shell = login_shell_environment()
+            .iter()
+            .find(|(name, _)| name == "PATH")
+            .map(|(_, value)| value.as_os_str())
+            .filter(|value| !value.is_empty());
+        compose_path(std::env::var_os("HOME").as_deref(), login_shell, &path)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -445,7 +534,10 @@ async fn run(
         None,
     )
     .await?;
-    status.success().then_some(output)
+    status
+        .success()
+        .then(|| String::from_utf8(output).ok())
+        .flatten()
 }
 
 async fn run_output_with_input(
@@ -456,7 +548,7 @@ async fn run_output_with_input(
     max_output_bytes: u64,
     input: Option<&str>,
     group: Option<&AtomicI32>,
-) -> Option<(String, std::process::ExitStatus)> {
+) -> Option<(Vec<u8>, std::process::ExitStatus)> {
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -525,7 +617,7 @@ async fn run_output_with_input(
     .await;
 
     if let Ok(Some((bytes, status))) = output {
-        return Some((String::from_utf8(bytes).ok()?, status));
+        return Some((bytes, status));
     }
 
     #[cfg(unix)]
@@ -592,20 +684,63 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn login_shell_path_is_read_past_profile_output() {
+    async fn login_shell_exports_path_and_the_variables_it_lists() {
+        use std::os::unix::ffi::OsStrExt as _;
+
         let (_directory, shell) = executable(
             "[ \"$DISABLE_AUTO_UPDATE$BUZZ_RESOLVING_ENVIRONMENT\" = true1 ] || exit\n\
-             echo 'Last login: Tue'; PATH=/opt/homebrew/bin:/usr/bin; eval \"$4\"; exit 1",
+             echo 'Last login: Tue'; export PATH=/opt/homebrew/bin:/usr/bin\n\
+             export TOOL_FLOW='a=b\nc' TOOL_SECRET=hidden SHLVL=7 UNLISTED=dropped\n\
+             export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS='TOOL_*, !*_SECRET,SHLVL'\n\
+             eval \"$4\"; echo 'Goodbye'; exit 1",
         );
+        let mut exports =
+            super::login_shell_exports(&shell, Duration::from_secs(2), &Default::default())
+                .await
+                .unwrap();
+        exports.sort();
+        let exports = exports
+            .iter()
+            .map(|(name, value)| (name.to_str().unwrap(), value.as_bytes()))
+            .collect::<Vec<_>>();
         assert_eq!(
-            super::login_shell_path(&shell, Duration::from_secs(2), &Default::default()).await,
-            Some("/opt/homebrew/bin:/usr/bin".into())
+            exports,
+            [
+                ("PATH", &b"/opt/homebrew/bin:/usr/bin"[..]),
+                ("SHLVL", b"7"),
+                ("TOOL_FLOW", b"a=b\nc"),
+            ]
         );
-        let (_directory, shell) = executable("echo 'no PATH here'");
+        let (_directory, shell) = executable("echo 'no environment here'");
         assert_eq!(
-            super::login_shell_path(&shell, Duration::from_secs(2), &Default::default()).await,
+            super::login_shell_exports(&shell, Duration::from_secs(2), &Default::default()).await,
             None
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn additional_exports_follow_the_last_matching_pattern() {
+        let exported = |patterns: &str, name: &str| {
+            super::is_additional_export(patterns.as_bytes(), name.as_bytes())
+        };
+        assert!(exported("TOOL", "TOOL"));
+        assert!(!exported("TOOL", "TOOLS"));
+        assert!(!exported("TOOL", "MY_TOOL"));
+        assert!(exported("TOOL_*", "TOOL_"));
+        assert!(!exported("TOOL_*", "MY_TOOL_FLOW"));
+        assert!(exported("*_DIR", "TOOL_CACHE_DIR"));
+        assert!(!exported("*_DIR", "TOOL_DIRS"));
+        assert!(exported("A*B*C", "AxBxC"));
+        assert!(!exported("A*B*C", "AxCxB"));
+        assert!(!exported("AB*B", "AB"));
+        assert!(exported("*", "SHLVL"));
+        assert!(!exported("*,!*_SECRET", "TOOL_SECRET"));
+        assert!(exported("!TOOL_SECRET,*", "TOOL_SECRET"));
+        assert!(exported("*,!TOOL_*,TOOL_SECRET", "TOOL_SECRET"));
+        assert!(!exported("!TOOL", "TOOL"));
+        assert!(exported(" , TOOL ,", "TOOL"));
+        assert!(!exported("", "TOOL"));
     }
 
     #[cfg(target_os = "macos")]
@@ -615,7 +750,7 @@ mod tests {
         static GROUP: AtomicI32 = AtomicI32::new(0);
         let (_directory, shell) = executable("sleep 30");
         let probe = tokio::spawn(async move {
-            super::login_shell_path(&shell, Duration::from_secs(30), &GROUP).await
+            super::login_shell_exports(&shell, Duration::from_secs(30), &GROUP).await
         });
         let process_id = tokio::time::timeout(Duration::from_secs(2), async {
             loop {

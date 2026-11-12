@@ -429,7 +429,6 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   display: block;
   width: 0.75rem;
   height: 0.75rem;
-  color: var(--text-subtle);
 }
 /* Paint 12px artwork at 14px (10.5pt), keeping the capsule's layout box. */
 .reactionGlyph [data-reaction-artwork],

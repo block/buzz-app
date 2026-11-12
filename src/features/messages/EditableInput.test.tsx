@@ -1381,6 +1381,23 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
   });
 });
 
+it("does not spellcheck a mention, as a chip or opened as text", () => {
+  const h = mount();
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  act(() => h.input.insertText("", honey));
+  expect(h.input.querySelector('[data-source="@Honey"]')).toHaveAttribute(
+    "spellcheck",
+    "false",
+  );
+  act(() => h.input.setSelectionRange(2, 2));
+  expect(h.input.querySelector('[data-source="@Honey"]')).toBeNull();
+  const text = [...h.input.querySelectorAll("span")].find(
+    (span) => span.textContent === "@Honey",
+  );
+  expect(text).toHaveAttribute("spellcheck", "false");
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
+});
+
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
   const h = mount();
   const honey = { pubkey: "a".repeat(64), name: "Honey" };

@@ -1920,6 +1920,7 @@ export function EditableInput({
             const dom = document.createElement("span");
             dom.className = tokenClass.current;
             dom.contentEditable = "false";
+            dom.setAttribute("spellcheck", "false");
             dom.dataset.source = node.attrs.source;
             hosts.current.set(dom, {
               key: `token-${++tokenHosts}`,

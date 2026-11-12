@@ -6,19 +6,11 @@ block/buzz-app. It adds plugins and remote agents.
 
 ## Get the new app
 
-Download Buzz from [buzz.xyz](https://buzz.xyz). You can also get it from the
-[releases page](https://github.com/block/buzz-app/releases).
-
-| Platform | Notes |
-| --- | --- |
-| macOS (Apple Silicon) | Signed and notarized. |
-| macOS (Intel) | Signed and notarized. |
-| Windows (x64) | Not code-signed, so Windows SmartScreen warns you before it runs. |
-| Linux (x64) | `.deb` or AppImage, built on Ubuntu 24.04. |
+Download the latest release from [buzz.xyz](https://buzz.xyz) or view
+[all releases](https://github.com/block/buzz-app/releases). Available for
+macOS, Windows and Linux.
 
 The old app's updater does not deliver the new app, so this is a fresh install.
-After that, Buzz updates itself. You can also check from
-**Settings → Software updates**.
 
 ## What's new: plugins
 

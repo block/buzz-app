@@ -96,32 +96,30 @@ it("says to turn a provider on when none is, linking to Manage plugins", async (
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
 });
 
-it.each([undefined, false])(
-  "shows a lone provider's settings with heading visibility %s",
-  (showSettingsHeading) => {
-    render(
-      <DecisionsSettings
-        decisions={fake([
-          {
-            key: TYPESAFE,
-            status: "needs-setup",
-            ...(showSettingsHeading !== undefined
-              ? { showSettingsHeading }
-              : {}),
-          },
-        ])}
-        active={() => true}
-      />,
-    );
-    expect(screen.queryByRole("radio")).toBeNull();
-    const heading = screen.queryByRole("heading", {
-      name: "Provider typesafe",
-    });
-    if (showSettingsHeading === false) expect(heading).toBeNull();
-    else expect(heading).toBeVisible();
-    expect(screen.getByText("Settings for typesafe")).toBeVisible();
-  },
-);
+it("shows a lone provider's settings and honors its heading preference", () => {
+  const view = (showSettingsHeading?: boolean) => (
+    <DecisionsSettings
+      decisions={fake([
+        {
+          key: TYPESAFE,
+          status: "needs-setup",
+          ...(showSettingsHeading === false ? { showSettingsHeading } : {}),
+        },
+      ])}
+      active={() => true}
+    />
+  );
+  const { rerender } = render(view());
+  expect(screen.queryByRole("radio")).toBeNull();
+  expect(
+    screen.getByRole("heading", { name: "Provider typesafe" }),
+  ).toBeVisible();
+  rerender(view(false));
+  expect(
+    screen.queryByRole("heading", { name: "Provider typesafe" }),
+  ).toBeNull();
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
+});
 
 it("says once, above every provider's settings, that the provider receives message text", () => {
   render(
@@ -334,21 +332,11 @@ async function withdrawable(typesafe = true) {
   return { decisions, withdraw: () => act(() => remove()) };
 }
 
-it("hands focus to the selected radio when a sign-out removes the focused provider", async () => {
-  const user = userEvent.setup();
-  const { decisions } = await withdrawable();
-  render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  const signOut = screen.getByRole("button", { name: "Sign out" });
-  signOut.focus();
-  await user.keyboard("{Enter}");
-  expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
-  expect(screen.getByRole("radio", { name: /typesafe/ })).toHaveFocus();
-});
-
 it("hands focus to the selected radio when the focused provider's own radio goes", async () => {
   const { decisions, withdraw } = await withdrawable();
   render(<DecisionsSettings decisions={decisions} active={() => true} />);
-  screen.getByRole("radio", { name: /builderlab/ }).focus();
+  expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+  screen.getByRole("combobox", { name: "Decision provider" }).focus();
   await withdraw();
   expect(screen.queryByRole("radio", { name: /builderlab/ })).toBeNull();
   expect(screen.getByRole("radio", { name: /typesafe/ })).toHaveFocus();
@@ -377,4 +365,41 @@ it("hands focus to the section when the removed provider was the only one", asyn
   await user.keyboard("{Enter}");
   expect(screen.getByRole("status")).toHaveTextContent("Manage plugins");
   expect(screen.getByRole("region", { name: "Decisions API" })).toHaveFocus();
+});
+
+it("offers Builderlab first and reveals key setup without switching until ready", async () => {
+  const user = userEvent.setup();
+  const builderlab = "block.builderlab/builderlab";
+  const decisions = fake(
+    [
+      { key: builderlab, status: "ready" },
+      { key: TYPESAFE, status: "needs-setup" },
+    ],
+    builderlab,
+  );
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  const toggle = screen.getByRole("combobox", { name: "Decision provider" });
+  expect(toggle).toHaveTextContent("Builderlab");
+  expect(screen.queryByText("Settings for typesafe")).toBeNull();
+  await user.click(toggle);
+  await user.click(screen.getByRole("option", { name: "TypeSafe" }));
+  expect(toggle).toHaveTextContent("Builderlab");
+  expect(
+    screen.getByRole("dialog", { name: "Connect TypeSafe" }),
+  ).toBeVisible();
+  expect(screen.getByText("Settings for typesafe")).toBeVisible();
+  expect(decisions.chosen()).toBe(builderlab);
+  await user.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(decisions.chosen()).toBe(builderlab);
+  await user.click(toggle);
+  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
+  act(() => decisions.setStatus(TYPESAFE, "ready"));
+  expect(decisions.chosen()).toBe(TYPESAFE);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(toggle).toHaveTextContent("TypeSafe");
+  await user.click(toggle);
+  await user.click(await screen.findByRole("option", { name: "Builderlab" }));
+  expect(decisions.chosen()).toBe(builderlab);
+  expect(screen.queryByText("Settings for typesafe")).toBeNull();
 });

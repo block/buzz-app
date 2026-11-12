@@ -17,8 +17,12 @@ export const typesafeProvider = (typesafe: TypeSafeKey): DecisionProvider => ({
   status: typesafe.status,
   subscribe: typesafe.subscribe,
   decide: typesafe.decide,
-  Settings: ({ active }) => (
-    <TypeSafeSettings typesafe={typesafe} active={active} />
+  Settings: ({ active, grouped }) => (
+    <TypeSafeSettings
+      typesafe={typesafe}
+      active={active}
+      grouped={grouped ?? true}
+    />
   ),
 });
 

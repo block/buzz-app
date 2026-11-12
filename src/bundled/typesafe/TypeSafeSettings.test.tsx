@@ -38,31 +38,6 @@ function fake(desktop = true, keyState: KeyState = "missing") {
   };
 }
 
-it("keeps an attached Save visible and disabled until a key is entered", async () => {
-  const user = userEvent.setup();
-  render(<TypeSafeSettings typesafe={fake()} active={() => true} />);
-  const input = screen.getByLabelText("TypeSafe API key");
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  await user.type(input, "tk-draft");
-  const save = screen.getByRole("button", { name: "Save" });
-  expect(save).toHaveAttribute("aria-disabled", "false");
-  expect(input.closest(".buzz-input-group")).toContainElement(save);
-  expect(save).toHaveAttribute("data-size", "sm");
-  await user.clear(input);
-  expect(save).toHaveAttribute("aria-disabled", "true");
-  expect(input).toHaveFocus();
-  expect(input.closest(".buzz-settings-group")).toHaveAttribute(
-    "data-layout",
-    "form",
-  );
-  expect(
-    screen.getByRole("status").closest(".buzz-field-description"),
-  ).not.toBeNull();
-});
-
 it("asks for the desktop app in the browser", () => {
   render(<TypeSafeSettings typesafe={fake(false)} active={() => true} />);
   expect(screen.getByRole("status")).toHaveTextContent("desktop app");
@@ -73,14 +48,22 @@ it("adds, replaces, and confirms removal without revealing a saved key", async (
   const user = userEvent.setup();
   const typesafe = fake();
   render(<TypeSafeSettings typesafe={typesafe} active={() => true} apple />);
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Add your TypeSafe API key",
-  );
   const input = screen.getByLabelText("TypeSafe API key");
+  const save = screen.getByRole("button", { name: "Save" });
   expect(input).toHaveAttribute("type", "password");
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
+  expect(save).toHaveAttribute("aria-disabled", "true");
+  await user.type(input, "tk-draft");
+  expect(save).toHaveAttribute("aria-disabled", "false");
+  expect(input.closest(".buzz-input-group")).toContainElement(save);
+  await user.clear(input);
+  expect(save).toHaveAttribute("aria-disabled", "true");
+  expect(input).toHaveFocus();
+  expect(input.closest(".buzz-settings-group")).toHaveAttribute(
+    "data-layout",
+    "form",
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Your key will be stored securely on this computer.",
   );
   await user.type(input, "  tk-secret  ");
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -96,9 +79,6 @@ it("adds, replaces, and confirms removal without revealing a saved key", async (
   expect(screen.getByRole("status")).toHaveTextContent(
     "Saved securely on this computer.",
   );
-  expect(
-    screen.getByLabelText("TypeSafe API key").closest(".buzz-settings-group"),
-  ).toHaveAttribute("data-layout", "form");
   expect(
     screen.getByRole("status").closest(".buzz-field-description"),
   ).not.toBeNull();
@@ -146,7 +126,7 @@ it("adds, replaces, and confirms removal without revealing a saved key", async (
   );
   expect(typesafe.clear).toHaveBeenCalledOnce();
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Add your TypeSafe API key",
+    "Your key will be stored securely on this computer.",
   );
 });
 

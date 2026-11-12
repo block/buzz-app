@@ -1239,6 +1239,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   its settings: sections it adds, such as GitHub comment authors, and Decisions
   API for a decision provider, such as TypeSafe. Only sections the Settings
   sidebar currently shows are linked. Back from one returns to those details.
+- When Builderlab and TypeSafe are available in **Settings → Decisions API**,
+  the **Decision provider** dropdown chooses Builderlab or TypeSafe. Each choice
+  uses that provider for requests. Choosing TypeSafe without a key opens a setup dialog.
+  Saving the key completes the switch; closing setup keeps the current provider.
 - In **Settings → Decisions API**, TypeSafe’s saved API key stays masked. Its
   chevron menu offers **Replace / Remove**. Replacement starts blank and masked,
   with inline **Cancel / Save** controls. **Save** stays disabled until you enter

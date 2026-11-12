@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useRef, useState, useSyncExternalStore } from "react";
 import { ApiKeyForm } from "../../features/settings/ApiKeyForm";
 import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import { isApplePlatform } from "../../features/shortcuts/format";
@@ -7,10 +7,10 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import type { KeyState, TypeSafeKey } from "./key";
 
-const KEY_STATUS: Record<KeyState, string> = {
+const KEY_STATUS: Record<KeyState, string | undefined> = {
   checking: "Checking for a saved key…",
   saved: "Saved securely on this computer.",
-  missing: "Add your TypeSafe API key to use TypeSafe.",
+  missing: undefined,
   unreadable:
     "Buzz could not read your saved key. Unlock your keychain, or replace or remove the key.",
   refused:
@@ -22,6 +22,7 @@ const KEY_STATUS: Record<KeyState, string> = {
 export function TypeSafeSettings({
   typesafe,
   active,
+  grouped = true,
   apple = isApplePlatform(navigator.platform),
 }: {
   typesafe: Pick<
@@ -29,6 +30,7 @@ export function TypeSafeSettings({
     "snapshot" | "subscribe" | "save" | "clear" | "desktop"
   >;
   active(): boolean;
+  grouped?: boolean;
   /** Whether the key goes to the macOS Keychain, which only Buzz can read. */
   apple?: boolean;
 }) {
@@ -71,10 +73,17 @@ export function TypeSafeSettings({
         Open the Buzz desktop app to use TypeSafe.
       </p>
     );
-  const description = <span role="status">{KEY_STATUS[keyState]}</span>;
+  const Group = grouped ? SettingsGroup : Fragment;
+  const description = (
+    <span role="status">
+      {keyState === "missing"
+        ? "Your key will be stored securely on this computer."
+        : KEY_STATUS[keyState]}
+    </span>
+  );
   return (
     <div ref={container} className="w-full">
-      <SettingsGroup layout="form">
+      <Group {...(grouped ? { layout: "form" as const } : {})}>
         {saved ? (
           <SavedApiKey
             label="TypeSafe API key"
@@ -120,7 +129,7 @@ export function TypeSafeSettings({
             key.
           </p>
         )}
-      </SettingsGroup>
+      </Group>
       {confirm && (
         <AlertDialog
           title="Remove TypeSafe API key?"

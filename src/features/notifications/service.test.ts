@@ -351,7 +351,7 @@ it("plays the selected per-category sound once delivery is accepted", async () =
     () => true,
   );
   await flush();
-  expect(t.plays).toEqual(["ping", "flutter"]);
+  expect(t.plays).toEqual(["ping", "buzz"]);
 });
 it("sound off delivers silently and a failed submission never plays", async () => {
   const t = setup();
@@ -446,7 +446,7 @@ it("a deferred submission revalidates the sound decision before playing", async 
   await flush();
   expect(t.plays).toEqual([]);
   await settle();
-  expect(t.plays).toEqual(["flutter"]);
+  expect(t.plays).toEqual(["buzz"]);
 });
 
 it.each(["mention"] as const)(
@@ -479,7 +479,7 @@ it.each(["mention"] as const)(
     );
     await flush();
     expect(t.platform.show).toHaveBeenCalledTimes(2);
-    expect(t.plays).toEqual(["flutter"]);
+    expect(t.plays).toEqual(["buzz"]);
   },
 );
 

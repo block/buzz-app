@@ -4,6 +4,7 @@ import type { NotificationCategory } from "./preferences";
 export const SOUND_NAMES = [
   "bong",
   "boo",
+  "buzz",
   "dng",
   "doo",
   "doodone",
@@ -25,7 +26,7 @@ export function isSoundName(value: unknown): value is SoundName {
   );
 }
 
-export const DEFAULT_SOUND: SoundName = "flutter";
+export const DEFAULT_SOUND: SoundName = "buzz";
 
 export type CategorySounds = Readonly<Record<NotificationCategory, SoundName>>;
 export const DEFAULT_CATEGORY_SOUNDS: CategorySounds = Object.freeze({

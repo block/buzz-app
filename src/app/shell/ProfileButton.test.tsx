@@ -671,6 +671,13 @@ it("shows the selected community's current status above the profile avatar", asy
     );
     expect(preview.querySelector("time")).toHaveTextContent(/^Until /);
     act(() => {
+      status = { ...status, expiresAt: Number.MAX_SAFE_INTEGER };
+      statuses = new Map([[viewer, status]]);
+      for (const listener of listeners) listener();
+    });
+    expect(preview).toHaveTextContent("On vacation");
+    expect(preview.querySelector("time")).toBeNull();
+    act(() => {
       status = {
         ...status,
         emoji: "",

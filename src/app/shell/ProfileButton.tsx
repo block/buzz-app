@@ -82,6 +82,12 @@ function ProfileStatusDetails({
   status: UserStatus | undefined;
 }) {
   useClockFormat();
+  const expiration = status?.expiresAt;
+  const expiresAt =
+    expiration !== undefined &&
+    Number.isFinite(new Date(expiration * 1000).getTime())
+      ? expiration
+      : undefined;
   return (
     <>
       <div className={styles.previewName}>
@@ -104,13 +110,13 @@ function ProfileStatusDetails({
             />
             <span className="text-body-sm">{status.text}</span>
           </div>
-          {status.expiresAt !== undefined && (
+          {expiresAt !== undefined && (
             <time
               className="text-caption text-subtle"
-              dateTime={new Date(status.expiresAt * 1000).toISOString()}
-              title={formatFullTimestamp(status.expiresAt)}
+              dateTime={new Date(expiresAt * 1000).toISOString()}
+              title={formatFullTimestamp(expiresAt)}
             >
-              Until {formatItemTimestamp(status.expiresAt, { withTime: true })}
+              Until {formatItemTimestamp(expiresAt, { withTime: true })}
             </time>
           )}
         </>

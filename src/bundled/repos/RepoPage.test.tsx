@@ -137,15 +137,17 @@ function setup(
   let live: LiveCallbacks | undefined;
   const ctx = new Context();
   const host = provideNavigation(ctx);
-  const readGit = vi.fn(async (input: GitRead): Promise<GitSnapshot> => ({
-    ...git,
-    ...(input.commit
-      ? { diff: "diff --git a/readme b/readme\n+actual change" }
-      : {}),
-    ...(input.path
-      ? { file: { path: input.path, content: "actual file", size: 11 } }
-      : {}),
-  }));
+  const readGit = vi.fn(
+    async (input: GitRead): Promise<GitSnapshot> => ({
+      ...git,
+      ...(input.commit
+        ? { diff: "diff --git a/readme b/readme\n+actual change" }
+        : {}),
+      ...(input.path
+        ? { file: { path: input.path, content: "actual file", size: 11 } }
+        : {}),
+    }),
+  );
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
     [...events, roster(true), channel].filter((event) =>
       filters.some((filter) => matchesEvent(event, filter)),

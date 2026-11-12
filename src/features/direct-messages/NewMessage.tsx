@@ -302,7 +302,8 @@ export function NewMessage({
     const controlled = new Set(
       session.agentChoices
         .snapshot()
-        .identities.filter(canMessageAgent)
+        // Forward-looking: neither archived nor being deleted.
+        .selectable.filter(canMessageAgent)
         .map((agent) => agent.pubkey),
     );
     if (

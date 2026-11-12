@@ -585,3 +585,57 @@ it.each(["cancel", "cache", "dispose"] as const)(
     }
   },
 );
+it.each([
+  ["no profile proof", []],
+  ...outOfBounds().map(([label, conditions]) => [
+    `a ${label} profile proof`,
+    [attested(target, viewer, [], [authTag(target, viewer, conditions)])],
+  ]),
+] as [string, RelayEvent[]][])(
+  "an owner archives with a proof issued now when there is %s",
+  async (_label, profiles) => {
+    const fixture = archiveRelay(viewer, relay, profiles);
+    const archives = writable(fixture);
+    const issued = authTag(target, viewer);
+    const issue = vi.fn(async () => issued);
+    await archives.request("archive", target.pubkey, undefined, issue);
+    expect(issue).toHaveBeenCalledWith(target.pubkey, expect.any(AbortSignal));
+    expect(fixture.published).toHaveLength(1);
+    expect(fixture.published[0]?.tags).toContainEqual(issued);
+    expect(archives.state(target.pubkey)).toBe("archived");
+  },
+);
+it("refuses an issued proof that names another owner or agent", async () => {
+  for (const issued of [authTag(target, other), authTag(other, viewer)]) {
+    const fixture = archiveRelay(viewer, relay);
+    await expect(
+      writable(fixture).request(
+        "archive",
+        target.pubkey,
+        undefined,
+        async () => issued,
+      ),
+    ).rejects.toThrow("The owner proof issued for this identity is invalid");
+    expect(fixture.signedBy).toEqual([]);
+  }
+});
+it("issues no proof when the profile's own or the admin path is usable", async () => {
+  const issue = vi.fn(async () => authTag(target, viewer));
+  const owned = archiveRelay(viewer, relay, [attested(target, viewer)]);
+  await writable(owned).request("archive", target.pubkey, undefined, issue);
+  const admin = archiveRelay(viewer, relay, [], { [viewer.pubkey]: "admin" });
+  await writable(admin).request("archive", target.pubkey, undefined, issue);
+  expect(issue).not.toHaveBeenCalled();
+  expect(admin.published[0]?.tags.some(([name]) => name === "auth")).toBe(
+    false,
+  );
+});
+it("a proof that can't be issued archives nothing", async () => {
+  const fixture = archiveRelay(viewer, relay);
+  await expect(
+    writable(fixture).request("archive", target.pubkey, undefined, () =>
+      Promise.reject(new Error("Set up your identity first")),
+    ),
+  ).rejects.toThrow("Set up your identity first");
+  expect(fixture.signedBy).toEqual([]);
+});

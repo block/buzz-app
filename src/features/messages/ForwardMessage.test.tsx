@@ -149,6 +149,11 @@ function setup({
     profiles = new Map();
   const choices = {
     identities: [] as { pubkey: string; managed: boolean }[],
+    // None is archived or being deleted.
+    get selectable() {
+      return this.identities;
+    },
+    archives: { status: "ready", archived: [] },
     pending: false,
   };
   const directMessages = {

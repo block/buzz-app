@@ -100,7 +100,7 @@ export function RecipientPicker({
     key: query,
     settled: !directory.loading,
   });
-  const agents = useAgentChoices(session, false);
+  const agents = useAgentChoices(session, false, true);
   const removal = useChipRemoval();
   const atLimit = selected.length >= maxRecipients;
   const needle = query.trim().toLowerCase();
@@ -131,7 +131,7 @@ export function RecipientPicker({
     keys,
   } = useMemo(() => {
     const controlled = new Set(
-      agents.identities.filter(canMessageAgent).map((agent) => agent.pubkey),
+      agents.selectable.filter(canMessageAgent).map((agent) => agent.pubkey),
     );
     const relationships = peopleRelationships(channels, controlled);
     const inDirectory = new Map(
@@ -139,7 +139,7 @@ export function RecipientPicker({
     );
     // An eligible agent's own name, kept for ranking and for Space.
     const agentName = new Map(
-      agents.identities.flatMap((agent) =>
+      agents.selectable.flatMap((agent) =>
         canMessageAgent(agent) && agent.name
           ? [[agent.pubkey, agent.name] as const]
           : [],
@@ -190,7 +190,7 @@ export function RecipientPicker({
     const byVerifiedName = withVerifiedNames(pool, pageNames, profiles);
     const typedKey = typedPublicKey(query);
     const localAgents = query.trim()
-      ? agents.identities.flatMap((agent): Recipient[] => {
+      ? agents.selectable.flatMap((agent): Recipient[] => {
           if (
             !canMessageAgent(agent) ||
             !agent.name ||
@@ -304,7 +304,7 @@ export function RecipientPicker({
       keys: candidates.map((person) => person.pubkey),
     };
   }, [
-    agents.identities,
+    agents.selectable,
     channels,
     profiles,
     directory.people,

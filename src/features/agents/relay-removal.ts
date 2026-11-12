@@ -7,27 +7,51 @@ type RemovalSession = Pick<
   "outbox" | "channels" | "channelWrites" | "archives"
 >;
 
-/** Remove a relay-only agent from this community: archive its identity when a
- * consent path exists, delete the owner's kind 30177 record, then try to
- * remove it from its channels. Archive and record deletion must succeed; a
- * refusal stops the later steps and Remove stays retryable. Channel removal is
- * best effort: its failure does not fail the removal. */
+/** A fresh owner proof (NIP-OA) for an agent the caller owns. */
+export type OwnerProof = (
+  pubkey: string,
+  signal: AbortSignal,
+) => Promise<readonly string[]>;
+
+/** Archives the agent unless a read started now finds it archived already, so
+ * a retry goes on past it, or its community keeps no archives. Rejects unless the relay confirms the archive.
+ * `issue`, only for an agent the caller owns, proves ownership when its
+ * profile cannot. */
+export async function archiveAgent(
+  session: Pick<RelaySession, "archives">,
+  pubkey: string,
+  signal: AbortSignal,
+  issue?: OwnerProof,
+) {
+  const { archives } = session;
+  // A community that keeps no archives hides nothing by them.
+  if (!archives.supported) return;
+  if (!archives.writable)
+    throw new Error("Archive is unavailable on this connection");
+  // The archive cache is not live; this needs a read started now.
+  await archives.ensure();
+  await archives.refresh();
+  signal.throwIfAborted();
+  const state = archives.state(pubkey);
+  // An unfinished read says nothing, least of all "not archived".
+  if (state === "unknown") throw new Error("Archive state is unknown");
+  if (state === "not-archived")
+    await archives.request("archive", pubkey, signal, issue);
+}
+
+/** Remove a relay-only agent from this community: archive its identity,
+ * delete the owner's kind 30177 record, then try to remove it from its
+ * channels. Archive and record deletion must succeed; a refusal stops the
+ * later steps and Remove stays retryable. Channel removal is best effort: its
+ * failure does not fail the removal. */
 export async function removeRelayAgent(
   session: RemovalSession,
   viewer: string,
   pubkey: string,
   signal: AbortSignal,
+  issue?: OwnerProof,
 ): Promise<void> {
-  // A retry after a later step failed does not archive again.
-  if (session.archives.state(pubkey) !== "archived") {
-    // No consent path (for example, an agent that never published a profile)
-    // still removes the record and channel memberships.
-    const consent = session.archives.writable
-      ? await session.archives.consent(pubkey, signal)
-      : null;
-    signal.throwIfAborted();
-    if (consent) await session.archives.request("archive", pubkey, signal);
-  }
+  await archiveAgent(session, pubkey, signal, issue);
   await deleteAgentRecord(session, viewer, pubkey, signal);
   try {
     await removeAgentFromChannels(session, pubkey, signal);

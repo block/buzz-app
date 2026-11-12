@@ -206,6 +206,9 @@ export function createIdentityArchives(
     action: IdentityArchiveAction,
     target: string,
     caller?: AbortSignal,
+    /** For an identity the caller owns: a fresh owner proof (NIP-OA), used
+     * when no consent path is usable now, as when its profile has none. */
+    issue?: (target: string, signal: AbortSignal) => Promise<readonly string[]>,
   ): Promise<void> {
     if (!writer) throw new Error("Archive is unavailable on this connection");
     const owned = new AbortController();
@@ -218,13 +221,26 @@ export function createIdentityArchives(
     ]);
     try {
       const path = await consent(target, signal);
-      if (!path) throw new Error("You can no longer archive this identity");
       // Relay order: role authority stands alone, so never attach a credential
       // whose time bounds could fail it.
-      const auth = path.admin ? undefined : path.auth;
-      const template = archiveRequestTemplate(action, target, auth);
-      if (auth && !withinTimeBounds(auth[2] ?? "", template.created_at))
-        throw new Error("You can no longer archive this identity");
+      let auth = path?.admin ? undefined : path?.auth;
+      let template = path && archiveRequestTemplate(action, target, auth);
+      if (
+        !template ||
+        (auth && !withinTimeBounds(auth[2] ?? "", template.created_at))
+      ) {
+        if (!issue) throw new Error("You can no longer archive this identity");
+        auth = await issue(target, signal);
+        signal.throwIfAborted();
+        template = archiveRequestTemplate(action, target, auth);
+        if (
+          (await authTagOwner(target, auth)) !== viewer ||
+          !withinTimeBounds(auth[2] ?? "", template.created_at)
+        )
+          throw new Error(
+            "The owner proof issued for this identity is invalid",
+          );
+      }
       const signed = await writer.sign(structuredClone(template), signal);
       signal.throwIfAborted();
       if (

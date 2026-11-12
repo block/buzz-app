@@ -39,7 +39,20 @@ type Choice = AgentLibrarySnapshot["identities"][number] & {
   managedName?: string;
   /** Additional DM eligibility from completed owned hosted-agent records. */
   messageable?: true;
+  /** Its Delete started here: kept for existing content, never offered. */
+  deleting?: true;
 };
+
+/** Whether a forward-looking choice (a mention, invite or recipient) must
+ * refuse this agent: its Delete started, whatever source still lists it. */
+export function deletingAgent(
+  choices: Pick<AgentChoicesSnapshot, "identities">,
+  pubkey: string,
+) {
+  return choices.identities.some(
+    (agent) => agent.pubkey === pubkey && agent.deleting,
+  );
+}
 
 export function canMessageAgent(
   agent: Pick<Choice, "managed" | "messageable">,
@@ -158,6 +171,13 @@ export function createAgentChoices({
           ...(row.type ? { type: row.type } : {}),
         });
       }
+    // After every source, so none of them offers one whose Delete started.
+    if (local?.status === "ready")
+      for (const row of sameCommunityAgents(local.agents, scope)) {
+        const choice = choices.get(row.pubkey);
+        if (row.deleting && choice)
+          choices.set(row.pubkey, { ...choice, deleting: true });
+      }
     const ready = legacy.status === "ready" || local?.status === "ready";
     const errors = [
       legacy.error,
@@ -199,7 +219,8 @@ export function createAgentChoices({
       definitions: legacy.status === "ready" ? legacy.definitions : [],
       identities: [...choices.values()],
       selectable: [...choices.values()].filter(
-        (agent) => !archiveHides(archives, agent.pubkey, viewer),
+        (agent) =>
+          !agent.deleting && !archiveHides(archives, agent.pubkey, viewer),
       ),
       archives: archive,
       ...(errors.length ? { error: errors.join(" ") } : {}),

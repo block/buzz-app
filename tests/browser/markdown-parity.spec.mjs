@@ -12,9 +12,11 @@ import { watchPageErrors } from "./page-errors.mjs";
 const EXPECTED = fileURLToPath(
   new URL("./markdown-parity.expected.json", import.meta.url),
 );
-// Each element's box within its bubble, from the same code and fixture.
+// Each element's box within its bubble, from the same code and fixture. Font
+// metrics differ by platform, so each platform keeps its own pre-extraction
+// capture; Linux's comes from CI's Playwright container.
 const BOXES = fileURLToPath(
-  new URL("./markdown-parity.boxes.json", import.meta.url),
+  new URL(`./markdown-parity.boxes.${process.platform}.json`, import.meta.url),
 );
 const PROPERTIES = [
   "font-size",

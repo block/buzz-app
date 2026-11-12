@@ -175,6 +175,24 @@ export function PageTabs({
     enteredDetail.current = { session, key: detailKey };
     secondary.open(entry, true);
   });
+  const primaryChannelId = workspace?.target.channelId;
+  useLayoutEffect(() => {
+    if (!primaryChannelId) return;
+    return host.panels.handleOpenRequests(({ target, channelId, rootId }) => {
+      const connection = host.relay.snapshot();
+      if (
+        !mounted.current ||
+        channelId !== primaryChannelId ||
+        connection.status !== "ready" ||
+        connection.session !== session
+      )
+        return false;
+      const entry = panelOpening(host.panels, channelId, target, rootId);
+      if (!entry) return false;
+      secondary.open(entry, true);
+      return true;
+    });
+  }, [host.panels, host.relay, primaryChannelId, secondary.open, session]);
   // One stable opener, so a page's effects can depend on it; it reads the
   // live workspace when called.
   const opening = useRef<

@@ -478,7 +478,9 @@ for 30 days expires.
   even if older rows load later. While Buzz is still checking such a channel's
   older history for unread messages, the channel waits to mark anything read,
   so opening it then does not hide its own divider; if that check fails, there
-  is no divider for that visit and reading resumes. It may also be absent when
+  is no divider for that visit and reading resumes. The channel waits in the
+  same way while it loads or refreshes the messages you entered on, however
+  slow the connection; if that fails, reading resumes. It may also be absent when
   unread evidence is incomplete, or when
   read intent or the read evidence needed to locate the boundary changes
   elsewhere before it is established.

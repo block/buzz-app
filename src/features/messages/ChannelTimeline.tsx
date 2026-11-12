@@ -471,7 +471,21 @@ function Timeline({
       window.loadingOlder ||
       unreadSync.completeness !== "snapshot"
     )
-      return { ready: false };
+      return {
+        ready: false,
+        // Rows are on screen and the head read that verifies them is running
+        // or owed: a revisit past the head's freshness lease, rows restored
+        // from disk, a catch-up queued behind another. Dwell is shorter than
+        // a slow read, so this list's own reading is held for that wait too.
+        // The read ends in a verified page, which passes this gate, or in a
+        // failure, which reports an error on the page: the visit then waits
+        // without holding reading, so a read that never succeeds cannot keep
+        // the channel unread.
+        awaitingPage:
+          window.status === "ready" &&
+          (window.refreshing === true ||
+            (window.freshness !== "verified" && !window.error)),
+      };
     if (
       unreadSnapshot?.coverage !== "observed" ||
       unreadSnapshot?.freshness !== "observed"
@@ -487,10 +501,10 @@ function Timeline({
       // Every relay read feeds the store, so until its repair has sampled
       // history it may know only the loaded rows, and its oldest unread one
       // can sit in the window below any read row while older ones are unread.
-      // This is the only gate that holds this list's own reading: every
-      // earlier one has passed, so the repair alone is awaited. A repair that
-      // ended without sampling (failed, overflowed, abandoned) settles the
-      // visit with no line, so reading never waits for a later retry.
+      // This gate holds this list's own reading as well: every earlier one
+      // has passed, so the repair alone is awaited. A repair that ended
+      // without sampling (failed, overflowed, abandoned) settles the visit
+      // with no line, so reading never waits for a later retry.
       if (!unreadSnapshot.sampled)
         return unreadSnapshot.sampling
           ? { ready: false, awaitingRepair: true }
@@ -1138,10 +1152,15 @@ function Timeline({
     // Reading before the entry boundary settles would erase the evidence it
     // waits for: catch-up reads every loaded row and observe the unread ones,
     // and either advances the read revision that settles it with no line.
-    // Hold reading while the boundary waits for the repair; re-enabling
-    // schedules dwell at once. A failed repair marks freshness stale, which
-    // an earlier gate catches, so the hold ends with the repair either way.
-    enabled: marksRead && !boundaryCandidate.awaitingRepair,
+    // Hold reading while the boundary waits for the page's head read or for
+    // the repair; re-enabling schedules dwell at once. A failed head read
+    // reports its error on the page, and a failed repair marks freshness
+    // stale, which an earlier gate catches, so each hold ends with its read
+    // either way.
+    enabled:
+      marksRead &&
+      !boundaryCandidate.awaitingPage &&
+      !boundaryCandidate.awaitingRepair,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages

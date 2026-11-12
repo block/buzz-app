@@ -930,6 +930,160 @@ it("a read-intent change from elsewhere during the held wait still settles with 
   }
 });
 
+// The page states a visit waits in for the head read that verifies its rows.
+// `entered` is what the visit is captured on; the store reports `waiting`
+// once the channel's load effect has run.
+const awaitedPages: {
+  name: string;
+  entered: Partial<ChannelWindow>;
+  waiting: Partial<ChannelWindow>;
+}[] = [
+  {
+    name: "a revisit refresh past the head's freshness lease",
+    entered: {},
+    waiting: { refreshing: true },
+  },
+  {
+    name: "saved rows whose head read is running",
+    entered: { freshness: "cached" },
+    waiting: { freshness: "cached", refreshing: true },
+  },
+  {
+    name: "cached rows whose catch-up read is queued",
+    entered: { freshness: "cached" },
+    waiting: { freshness: "cached" },
+  },
+  {
+    // The retry keeps the earlier error until it settles.
+    name: "a retry of a failed head read",
+    entered: { freshness: "cached", error: "Relay read failed" },
+    waiting: {
+      freshness: "cached",
+      error: "Relay read failed",
+      refreshing: true,
+    },
+  },
+];
+
+/** A focused reader at the bottom of rows that wait for their head read, with
+ * two unread arrivals below a row catch-up read. One dwell has elapsed. */
+async function pageReader({
+  entered,
+  waiting,
+}: Pick<(typeof awaitedPages)[number], "entered" | "waiting">) {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const h = boundaryFixture({ reading: true });
+  const read = h.row(message(h.peer, "c", "Read before leaving", 2));
+  const first = h.row(message(h.peer, "c", "First unread arrival", 3));
+  const later = h.row(message(h.peer, "c", "Later unread arrival", 4));
+  h.unreadIds.add(first.id);
+  h.unreadIds.add(later.id);
+  h.completeReadStateSnapshot();
+  h.publish();
+  const page = (state: Partial<ChannelWindow> = {}) =>
+    h.tree("c", [read, first, later], false, true, true, state);
+  const mounted = render(page(entered));
+  mounted.rerender(page(waiting));
+  await h.completeEntry();
+  await h.focusReader();
+  await h.dwell();
+  return { h, mounted, page, later };
+}
+
+it.each(awaitedPages)(
+  "holds this list's reading while the boundary waits for the page's head read, then reads once it is placed: $name",
+  async (states) => {
+    const { h, mounted, page, later } = await pageReader(states);
+    try {
+      // Without the hold, catch-up's read would advance the read revision
+      // before the head read lands, and the visit would settle with no line.
+      expect(h.catchUp).not.toHaveBeenCalled();
+      expect(h.observe).not.toHaveBeenCalled();
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+
+      mounted.rerender(page());
+      h.publish();
+      expect(
+        precedes(divider(), screen.getByText("First unread arrival")),
+      ).toBe(true);
+      expect(precedes(screen.getByText("Read before leaving"), divider())).toBe(
+        true,
+      );
+      expect(h.catchUp).not.toHaveBeenCalled();
+
+      // The hold lifting starts dwell on its own.
+      await h.dwell();
+      expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+      expect(
+        precedes(divider(), screen.getByText("First unread arrival")),
+      ).toBe(true);
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(awaitedPages)(
+  "resumes this list's reading with no boundary when the page's head read fails: $name",
+  async (states) => {
+    const { h, mounted, page, later } = await pageReader(states);
+    try {
+      expect(h.catchUp).not.toHaveBeenCalled();
+      // A failed head read leaves the rows unverified and reports its error.
+      mounted.rerender(
+        page({ freshness: "cached", error: "Relay read failed" }),
+      );
+      await h.dwell();
+      expect(h.catchUp).toHaveBeenCalledWith(later.id, undefined);
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+
+      // Reading has changed the evidence, so a later read places no line.
+      mounted.rerender(page());
+      h.publish();
+      expect(
+        screen.queryByRole("separator", { name: "New messages" }),
+      ).toBeNull();
+    } finally {
+      mounted.unmount();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("does not carry the page hold into the next channel", async () => {
+  const { h, mounted } = await pageReader({
+    entered: {},
+    waiting: { refreshing: true },
+  });
+  try {
+    expect(h.catchUp).not.toHaveBeenCalled();
+    const next = h.row(
+      message(h.peer, "other", "Unread elsewhere", 5),
+      "other",
+    );
+    h.unreadIds.add(next.id);
+    h.publish("other");
+    mounted.rerender(h.tree("other", [next]));
+    await h.completeEntry();
+    await frame();
+    await frame();
+    await act(async () => {
+      screen.getByRole("region", { name: "Channel message history" }).focus();
+      await Promise.resolve();
+    });
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalledWith(next.id, undefined);
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it.each([{ remoteRead: false }, { remoteRead: true }])(
   "does not infer an entry boundary when the oldest unread message is outside the entry window: %j",
   async ({ remoteRead }) => {

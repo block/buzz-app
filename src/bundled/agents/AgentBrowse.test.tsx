@@ -373,6 +373,7 @@ it("imports a shared agent through the import path, then hands back", async () =
   );
   expect(props.agents.port).toHaveBeenCalledExactlyOnceWith({
     source: "shared",
+    catalog: `${shared.pubkey}:helper`,
     type: "test/echo",
     name: "Shared helper",
     picture: "https://example.test/helper.png",

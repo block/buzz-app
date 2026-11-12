@@ -109,6 +109,15 @@ origin, candidate `{ pubkey, name, description }` records, and up to six recent
 loaded messages as `{ author, text }`. No private agent configuration is passed.
 For model-based policy, reuse `ctx.decisions.decide`; the owner selects its provider.
 
+`ctx.agents.snapshot().agents` may expose `publicInstructions` evidence with
+`{ community, event, sha256 }`. The host derives it when importing an unchanged
+Marketplace definition, using one bounded read of the current catalog head.
+The digest covers the complete published instructions. Before treating current
+instructions as public, match both the request community and the SHA-256 digest
+of the full current text, before truncation. Edited or older imports can lack
+matching evidence. Publication means visible in that community; it does not
+approve sharing with any particular provider. This evidence is device-local.
+
 The owner Solo composer invokes one active router before signing, including new
 chats. Multiple active routers, invalid/empty assignments, timeout, errors, and
 plugin replacement while deciding keep the draft unsent. The host validates the

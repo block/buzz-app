@@ -87,7 +87,7 @@ import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
 import { NoTeamChannel, type TeamSent } from "./team-ops";
 import { importedTeamId } from "./config-channels";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
-import { readTeams, writeTeams, type AgentRecord } from "./store";
+import { readRecords, readTeams, writeTeams, type AgentRecord } from "./store";
 import { createPluginRequests } from "../../plugins/requests";
 import {
   createDeviceSettings,
@@ -709,6 +709,54 @@ it("imports a shared agent as a new identity with its name and picture, adopting
   await expect(
     service.port({ source: "shared", type: "example/echo", name: "  " }),
   ).rejects.toThrow("Name the agent");
+});
+
+it("keeps host-verified public instruction evidence on Marketplace imports across storage reads", async () => {
+  const h = await setup();
+  const instructions = "Public role instructions";
+  const publisher = "a".repeat(64);
+  const published = {
+    id: "b".repeat(64),
+    pubkey: publisher,
+    kind: 30175,
+    created_at: 1,
+    tags: [
+      ["d", "helper"],
+      ["shared", "true"],
+    ],
+    content: JSON.stringify({
+      display_name: "Helper",
+      system_prompt: instructions,
+    }),
+  };
+  vi.spyOn(h.session, "read").mockResolvedValueOnce([published]);
+  const { agent } = await h.service.port({
+    source: "shared",
+    catalog: `${publisher}:helper`,
+    type: "example/echo",
+    name: "Helper",
+    instructions,
+  });
+  expect(agent.publicInstructions).toEqual({
+    community: "https://relay.example.test",
+    event: published.id,
+    sha256: createHash("sha256").update(instructions).digest("hex"),
+  });
+  expect(readRecords(h.storage)[agent.key]?.publicInstructions).toEqual(
+    agent.publicInstructions,
+  );
+  vi.spyOn(h.session, "read").mockResolvedValueOnce([published]);
+  const { agent: edited } = await h.service.port({
+    source: "shared",
+    catalog: `${publisher}:helper`,
+    type: "example/echo",
+    name: "Edited helper",
+    instructions: `${instructions} private addition`,
+  });
+  expect(edited.publicInstructions).toBeUndefined();
+  expect(
+    readRecords(h.storage)[edited.key]?.publicInstructions,
+  ).toBeUndefined();
 });
 
 /** The imported copy of old Buzz team `id` for `owner` in `community`. */

@@ -1162,8 +1162,13 @@ Open-ended group requests for thoughts, opinions or feedback invite everyone
 to answer. Name particular agents or ask for one answer to narrow the audience.
 Work requiring agent coordination starts all selected agents. Agent replies and
 intermediate outputs continue normally without another routing decision.
-The plugin uses profile bios and the agent instructions Buzz can read here to
-help match requests to agents; these go to your Decisions API provider.
+The plugin sends your request, profile bios and verified Marketplace instructions
+to your Decisions API provider. In Settings → Solo Agents Router, you can separately
+enable sharing local agent instructions and recent chat context; both start off.
+Private edits to Marketplace copies need the local-instructions opt-in. Older
+imports without verification need that opt-in or a new Marketplace import.
+Preferences apply to the current account and community on this device. The
+Decisions API provider can differ from an agent's own model/provider.
 If routing is uncertain, selects nobody, or fails, the plugin sends to all
 selected agents. Missing instructions do not prevent sending. Disable
 the plugin to restore ordinary sending to every selected agent. Routing selects

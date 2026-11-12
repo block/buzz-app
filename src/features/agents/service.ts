@@ -1,3 +1,7 @@
+import {
+  verifyPublicInstructions,
+  type PublicInstructions,
+} from "./public-instructions";
 import { followUpQueue } from "../messages/follow-up-queue";
 import type {} from "../navigation/service";
 import {
@@ -250,6 +254,8 @@ export type Agent<Config = unknown> = Readonly<{
   attentionEnabled: boolean;
   /** Its type's settings, the same in each of its communities. */
   config: Config;
+  /** Verified Marketplace instruction digest; absent for private or unverified imports. */
+  publicInstructions?: PublicInstructions;
   /** The synced head each synced side's editor opens; Save revises it. */
   configBase?: ConfigBase;
   /** Why a synced side can't be read here; its field is then not shown. */
@@ -1248,6 +1254,8 @@ export type PortInput = Readonly<
     }
   | {
       source: "shared";
+      /** Community Marketplace publisher:slug, verified by the host before retaining evidence. */
+      catalog?: string;
       type: string;
       name: string;
       /** An HTTPS image URL. */
@@ -4012,6 +4020,13 @@ export class AgentsService extends Service implements Agents {
     const name = input.name.trim();
     if (!name) throw new Error("Name the agent");
     const { picture, instructions } = input;
+    const binding = this.selectedBinding();
+    const publicInstructions = await verifyPublicInstructions(
+      binding.session,
+      binding.origin,
+      input.catalog,
+      instructions,
+    );
     // A shared agent has no key to keep; it is a new identity that carries
     // what was shared, as a brought-over one does.
     const agent = await this.add(
@@ -4023,7 +4038,9 @@ export class AgentsService extends Service implements Agents {
       {
         picture,
         ...(input.config !== undefined ? { config: input.config } : {}),
+        ...(publicInstructions ? { publicInstructions } : {}),
       },
+      binding,
     );
     return { agent, notes: [] };
   }
@@ -4290,6 +4307,7 @@ export class AgentsService extends Service implements Agents {
       config?: unknown;
       picture?: string | undefined;
       strict?: true;
+      publicInstructions?: PublicInstructions;
     }> = {},
     given?: Binding,
   ) {
@@ -4306,7 +4324,13 @@ export class AgentsService extends Service implements Agents {
       relayOrigin(binding.origin),
       binding.viewer,
     );
-    let record: AgentRecord = { ...settings, pubkey: identity.pubkey };
+    let record: AgentRecord = {
+      ...settings,
+      pubkey: identity.pubkey,
+      ...(made.publicInstructions
+        ? { publicInstructions: made.publicInstructions }
+        : {}),
+    };
     try {
       if (made.config !== undefined)
         record = { ...record, config: made.config };
@@ -6188,6 +6212,9 @@ export class AgentsService extends Service implements Agents {
       attentionHistory: record.attentionHistory,
       attentionEnabled: this.attentionShown(),
       config: editor?.config ?? record.config,
+      ...(record.publicInstructions
+        ? { publicInstructions: record.publicInstructions }
+        : {}),
       ...(editor && { configBase: editor.base }),
       ...(editor?.problem && { configProblem: editor.problem }),
       ...(this.archiveUnchecked(identity.key) && { archiveUnchecked: true }),

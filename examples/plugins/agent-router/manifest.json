@@ -1,6 +1,0 @@
-{
-  "id": "example.agent-router",
-  "name": "Solo Agents Router",
-  "apiVersion": 1,
-  "description": "Assign selected Solo agents before they start. Sends the request, public descriptions, readable saved instructions and recent context to your configured Decisions API provider."
-}

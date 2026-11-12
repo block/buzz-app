@@ -118,10 +118,11 @@ assignment. Single-agent requests, people, ordinary channels, DMs and programmat
 sends retain ordinary routing. This hook selects initial workers; it does not
 own subsequent agent collaboration or synthesize their final answers.
 
-Feature-check the method: older hosts do not support it. An installable example
-is `examples/plugins/agent-router`. No extra host grant is needed beyond the
-injected trusted plugin services; installation description should explain that
-the plugin changes which selected agents receive a request.
+Feature-check the method: older hosts do not support it. No extra host grant is
+needed beyond the injected trusted plugin services. Keep assignment policy in
+the plugin; the host does not require a particular model or decision provider.
+The installation description should explain which information the plugin sends
+to its provider and that it changes which selected agents receive a request.
 
 ## Host access (`manifest.host`)
 

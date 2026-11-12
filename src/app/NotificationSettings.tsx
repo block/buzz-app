@@ -14,6 +14,8 @@ import {
   CATEGORY_SOUND_LABELS,
   RECOMMENDED_SOUND_BY_CATEGORY,
   SOUND_NAMES,
+  playSoundEffect,
+  type SoundPlayback,
   type SoundName,
 } from "../features/notifications/sound";
 import styles from "./NotificationSettings.module.css";
@@ -95,16 +97,13 @@ export function NotificationSettings({
     category: NotificationCategory;
     name: SoundName;
   } | null>(null);
-  const previewAudio = useRef<HTMLAudioElement | null>(null);
-  const stopPreview = useCallback((owner?: HTMLAudioElement) => {
+  const previewAudio = useRef<SoundPlayback | null>(null);
+  const stopPreview = useCallback((owner?: SoundPlayback) => {
     const audio = previewAudio.current;
     if (owner && audio !== owner) return;
     previewAudio.current = null;
     if (audio) {
-      audio.onended = null;
-      audio.onpause = null;
-      audio.onerror = null;
-      audio.pause();
+      audio.stop();
     }
     preview.current = null;
   }, []);
@@ -112,18 +111,11 @@ export function NotificationSettings({
     (category: NotificationCategory, name: SoundName) => {
       stopPreview();
       if (name === "silent") return;
-      try {
-        const audio = new Audio(`/sounds/${name}.mp3`);
-        previewAudio.current = audio;
-        preview.current = { category, name };
-        const stop = () => stopPreview(audio);
-        audio.onended = stop;
-        audio.onpause = stop;
-        audio.onerror = stop;
-        void audio.play().catch(stop);
-      } catch {
-        stopPreview();
-      }
+      const audio = playSoundEffect(name);
+      if (!audio) return;
+      previewAudio.current = audio;
+      preview.current = { category, name };
+      void audio.finished.then(() => stopPreview(audio));
     },
     [stopPreview],
   );
@@ -132,10 +124,7 @@ export function NotificationSettings({
       const audio = previewAudio.current;
       previewAudio.current = null;
       if (audio) {
-        audio.onended = null;
-        audio.onpause = null;
-        audio.onerror = null;
-        audio.pause();
+        audio.stop();
       }
     },
     [],

@@ -13,6 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { provideNavigation } from "../features/navigation/service";
 import { NotificationsService } from "../features/notifications/service";
+import * as sounds from "../features/notifications/sound";
 import { NotificationSettings } from "./NotificationSettings";
 import { PluginRuntime } from "../plugins/runtime";
 
@@ -228,7 +229,17 @@ it("owns one preview and stops it across replacement, disablement, inactivity, e
       audios.push(this);
     }
   }
-  vi.stubGlobal("Audio", FakeAudio);
+  vi.spyOn(sounds, "playSoundEffect").mockImplementation((name) => {
+    const audio = new FakeAudio(`/sounds/${name}.mp3`);
+    void audio.play();
+    return {
+      stop: audio.pause,
+      finished: new Promise((resolve) => {
+        audio.onended = resolve;
+        audio.onerror = resolve;
+      }),
+    };
+  });
   const ctx = new Context();
   contexts.push(ctx);
   const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
@@ -255,7 +266,7 @@ it("owns one preview and stops it across replacement, disablement, inactivity, e
   expect(audios[0]?.play).toHaveBeenCalledOnce();
   await chooseSound("@Mentions", "boo");
   expect(audios[0]?.pause).toHaveBeenCalledOnce();
-  expect(audios[0]?.onended).toBeNull();
+
   expect(audios).toHaveLength(2);
   act(() => service.updatePreferences({ categories: { mention: false } }));
   expect(audios[1]?.pause).toHaveBeenCalledOnce();
@@ -268,7 +279,7 @@ it("owns one preview and stops it across replacement, disablement, inactivity, e
   view.rerender(<NotificationSettings notifications={service} />);
   expect(audios).toHaveLength(3);
   await chooseSound("@Mentions", "boo");
-  act(() => audios[3]?.onerror?.());
+  await act(async () => audios[3]?.onerror?.());
   expect(audios[3]?.pause).toHaveBeenCalledOnce();
   await chooseSound("@Mentions", "doo");
   act(() => service.updatePreferences({ sound: false }));
@@ -281,7 +292,6 @@ it("owns one preview and stops it across replacement, disablement, inactivity, e
   await chooseSound("@Mentions", "doo");
   view.unmount();
   expect(audios[6]?.pause).toHaveBeenCalledOnce();
-  expect(audios[6]?.onerror).toBeNull();
 });
 
 it("cleans up the preview when playback rejects", async () => {
@@ -299,7 +309,10 @@ it("cleans up the preview when playback rejects", async () => {
         }),
     );
   }
-  vi.stubGlobal("Audio", RejectingAudio);
+  vi.spyOn(sounds, "playSoundEffect").mockImplementation(() => {
+    const audio = new RejectingAudio();
+    return { stop: audio.pause, finished: audio.play().catch(() => {}) };
+  });
   const ctx = new Context();
   contexts.push(ctx);
   const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
@@ -417,14 +430,10 @@ it("repeated identical permission failures retain feedback without leaving Setti
 it("selects and restores Silent for every category, stops previews, and can restore a sound", async () => {
   const pause = vi.fn();
   const play = vi.fn(async () => {});
-  vi.stubGlobal(
-    "Audio",
-    class {
-      currentTime = 0;
-      pause = pause;
-      play = play;
-    },
-  );
+  vi.spyOn(sounds, "playSoundEffect").mockImplementation(() => {
+    void play();
+    return { stop: pause, finished: new Promise(() => {}) };
+  });
   const ctx = new Context();
   contexts.push(ctx);
   const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));

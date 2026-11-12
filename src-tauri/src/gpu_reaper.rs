@@ -11,7 +11,9 @@
 //! still that process is killed. A process WebKit could shut down exits
 //! within that time and is forgotten instead.
 //!
-//! A process the timer never saw reported is never killed.
+//! A process the timer never saw reported is never killed. A check made while
+//! the webview has no content process is skipped: WebKit then reports no GPU
+//! process for it, dropped or not.
 
 /// Seconds between checks. WebKit reports a GPU process for the 3 s it waits.
 #[cfg(target_os = "macos")]
@@ -66,6 +68,27 @@ fn abandoned(
     abandoned
 }
 
+/// One check of the pids the webview reports for its content process and its
+/// GPU process, 0 for none. `process` reads the identity of a GPU process.
+///
+/// A webview whose content process is gone reports no GPU process, even one
+/// WebKit still uses for other webviews. That check is skipped: it kills
+/// nothing and counts towards no grace.
+fn check(
+    seen: &mut Vec<Seen>,
+    content: i32,
+    gpu: i32,
+    process: impl Fn(i32) -> Option<Process>,
+) -> Vec<Process> {
+    if content <= 0 {
+        return Vec::new();
+    }
+    let reported = (gpu > 0).then(|| process(gpu)).flatten();
+    abandoned(seen, reported, |earlier| {
+        process(earlier.pid) == Some(earlier)
+    })
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) use macos::install;
 
@@ -79,7 +102,7 @@ mod macos {
     use objc2_web_kit::WKWebView;
     use tauri::{AppHandle, Manager, Runtime};
 
-    use super::{abandoned, Process, INTERVAL};
+    use super::{check, Process, INTERVAL};
 
     /// The executable of every WebKit GPU process.
     const GPU_BINARY: &[u8] = b"/com.apple.WebKit.GPU";
@@ -126,8 +149,12 @@ mod macos {
         let installed = window.with_webview(|webview| {
             // SAFETY: Wry's macOS webview is a WKWebView.
             let webview = unsafe { &*webview.inner().cast::<WKWebView>() };
-            if !webview.respondsToSelector(sel!(_gpuProcessIdentifier)) {
-                eprintln!("This WebKit does not report its GPU process; not watching it");
+            if !webview.respondsToSelector(sel!(_gpuProcessIdentifier))
+                || !webview.respondsToSelector(sel!(_webProcessIdentifier))
+            {
+                eprintln!(
+                    "This WebKit does not report its processes; not watching the GPU process"
+                );
                 return;
             }
             let webview = Weak::from(webview);
@@ -138,12 +165,16 @@ mod macos {
                     unsafe { timer.as_ref() }.invalidate();
                     return;
                 };
-                // SAFETY: the webview has this private property, a `pid_t`
-                // that is 0 while WebKit has no launched GPU process.
-                let pid: libc::pid_t = unsafe { msg_send![&*webview, _gpuProcessIdentifier] };
-                let reported = (pid > 0).then(|| process(pid, GPU_BINARY)).flatten();
-                let running = |earlier: Process| process(earlier.pid, GPU_BINARY) == Some(earlier);
-                for dropped in abandoned(&mut seen.borrow_mut(), reported, running) {
+                // SAFETY: the webview has these private properties, each a
+                // `pid_t` that is 0 while it has no such launched process.
+                let (content, gpu): (libc::pid_t, libc::pid_t) = unsafe {
+                    (
+                        msg_send![&*webview, _webProcessIdentifier],
+                        msg_send![&*webview, _gpuProcessIdentifier],
+                    )
+                };
+                let identity = |pid| process(pid, GPU_BINARY);
+                for dropped in check(&mut seen.borrow_mut(), content, gpu, identity) {
                     kill(dropped);
                 }
             });
@@ -244,6 +275,25 @@ mod tests {
         for _ in 0..5 {
             assert!(abandoned(&mut seen, None, |_| true).is_empty());
         }
+    }
+
+    #[test]
+    fn a_check_without_a_content_process_is_skipped() {
+        let healthy = |pid| (pid == OLD.pid).then_some(OLD);
+        let mut seen = Vec::new();
+        assert!(check(&mut seen, 7, OLD.pid, healthy).is_empty());
+
+        // The content process crashed. WebKit reports no GPU process for this
+        // webview and still uses OLD for its other webviews.
+        for _ in 0..5 {
+            assert!(check(&mut seen, 0, 0, healthy).is_empty());
+        }
+        assert_eq!(pids(&seen), [OLD.pid]);
+
+        // Reloaded. The skipped checks counted towards no grace, and a
+        // process WebKit then drops is still killed.
+        assert!(check(&mut seen, 8, 0, healthy).is_empty());
+        assert_eq!(check(&mut seen, 8, 0, healthy), [OLD]);
     }
 
     /// The identity read and the kill, on a child this test starts.

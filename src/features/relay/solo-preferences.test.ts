@@ -265,6 +265,7 @@ it("leaves a Solo read of a catalog that cannot load for a manual retry", async 
       status: "ready",
       data: { sections: [{ id: "work", name: "Solo work", order: 0 }] },
     });
+    expect(catalogReads()).toBe(reads + 1);
   } finally {
     f.dispose();
     vi.useRealTimers();

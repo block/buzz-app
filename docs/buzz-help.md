@@ -1404,3 +1404,5 @@ Owning the agent does not grant permission to edit or run its workflow.
 ## Workflows in archived channels
 
 In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.
+
+Plugins can add actions to your avatar menu. Profile-related actions may appear just above Settings; other plugin actions appear below it.

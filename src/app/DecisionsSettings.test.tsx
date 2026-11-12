@@ -382,7 +382,8 @@ it("offers Builderlab first and reveals key setup without switching until ready"
   expect(toggle).toHaveTextContent("Builderlab");
   expect(screen.queryByText("Settings for typesafe")).toBeNull();
   await user.click(toggle);
-  await user.click(screen.getByRole("option", { name: "TypeSafe" }));
+  // The Select opens on an animation frame after the pointer press.
+  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
   expect(toggle).toHaveTextContent("Builderlab");
   expect(
     screen.getByRole("dialog", { name: "Connect TypeSafe" }),

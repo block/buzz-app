@@ -419,17 +419,27 @@ it("explains lost Builderlab access only while it is selected and confirmed unav
   const unavailable = () => screen.queryByRole("status");
   expect(unavailable()).toBeNull();
   act(() => decisions.setStatus(builderlab, "needs-setup"));
+  expect(screen.getByLabelText("Unavailable for this account")).toBeVisible();
   expect(unavailable()).toHaveTextContent(
     "Decisions API isn’t available for this Builderlab account. Use your own TypeSafe key or contact your account administrator.",
   );
   expect(screen.queryByText(`Settings for ${builderlab}`)).toBeNull();
   expect(decisions.chosen()).toBe(builderlab);
   act(() => decisions.setStatus(builderlab, "checking"));
+  expect(screen.queryByLabelText("Unavailable for this account")).toBeNull();
   expect(unavailable()).toBeNull();
   act(() => decisions.setStatus(builderlab, "ready"));
   expect(unavailable()).toBeNull();
   act(() => decisions.setStatus(builderlab, "needs-setup"));
   await user.click(screen.getByRole("combobox", { name: "Decision provider" }));
+  expect(
+    await screen.findByRole("option", { name: "Builderlab" }),
+  ).toHaveAccessibleDescription("Unavailable for this account");
+  act(() => decisions.setStatus(builderlab, "ready"));
+  expect(
+    screen.getByRole("option", { name: "Builderlab" }),
+  ).not.toHaveAccessibleDescription();
+  act(() => decisions.setStatus(builderlab, "needs-setup"));
   await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
   expect(unavailable()).toBeNull();
   expect(decisions.chosen()).toBe(TYPESAFE);

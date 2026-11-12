@@ -14,7 +14,10 @@ import {
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import typesafeMark from "../shared/assets/typesafe-mark.png";
-import { BuilderlabLogoIcon } from "../shared/design-system/icons";
+import {
+  BuilderlabLogoIcon,
+  WarningCircleIcon,
+} from "../shared/design-system/icons";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { Field } from "../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
@@ -211,6 +214,16 @@ export function DecisionsSettings({
                       />
                     )
                   }
+                  valueSuffix={
+                    shown?.key === builderlab.key &&
+                    builderlabStatus === "needs-setup" ? (
+                      <WarningCircleIcon
+                        size={16}
+                        className="ml-2 text-danger"
+                        aria-label="Unavailable for this account"
+                      />
+                    ) : undefined
+                  }
                   variant="preference"
                   value={shown?.key ?? ""}
                   disabled={!active()}
@@ -222,9 +235,23 @@ export function DecisionsSettings({
                         {
                           value: builderlab.key,
                           label: "Builderlab",
-                          leading: (
-                            <BuilderlabLogoIcon size={20} aria-hidden="true" />
-                          ),
+                          description:
+                            builderlabStatus === "needs-setup"
+                              ? "Unavailable for this account"
+                              : undefined,
+                          leading:
+                            builderlabStatus === "needs-setup" ? (
+                              <WarningCircleIcon
+                                size={20}
+                                className="text-danger"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <BuilderlabLogoIcon
+                                size={20}
+                                aria-hidden="true"
+                              />
+                            ),
                         },
                         {
                           value: ownKey.key,

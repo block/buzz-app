@@ -700,6 +700,11 @@ for 30 days expires.
   follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
+- **Smooth mouse-wheel scrolling**: in the Mac app and Safari, a mouse wheel
+  glides through a conversation's messages and thread replies instead of
+  jumping a notch at a time. It is on by default, applies at once in every
+  window, and is set in **Settings → Appearance**. Trackpad scrolling is
+  unchanged, and Reduce motion turns it off.
 - **Back and Forward**: in the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe

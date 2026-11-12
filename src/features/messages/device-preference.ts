@@ -3,16 +3,22 @@ import { useSyncExternalStore } from "react";
 const unsavedError =
   "This choice is active, but could not be saved on this device. Try again.";
 
-/** A device-local boolean choice with an independent unsaved fallback. */
-export function devicePreference(preferenceKey: string, changedEvent: string) {
+/** A device-local boolean choice with an independent unsaved fallback.
+ * Missing, unreadable or unknown values read as `fallback`. */
+export function devicePreference(
+  preferenceKey: string,
+  changedEvent: string,
+  fallback = false,
+) {
   let unsavedPreference: boolean | undefined;
 
   function read(): boolean {
     if (unsavedPreference !== undefined) return unsavedPreference;
     try {
-      return localStorage.getItem(preferenceKey) === "on";
+      const saved = localStorage.getItem(preferenceKey);
+      return saved === "on" || (fallback && saved !== "off");
     } catch {
-      return false;
+      return fallback;
     }
   }
   function subscribe(listener: () => void) {

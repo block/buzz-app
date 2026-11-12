@@ -59,6 +59,7 @@ import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
+import { useWheelSmoothing } from "./wheel-smoothing";
 import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -715,6 +716,11 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  // Raised by reader input and by every scroll this panel makes itself (a
+  // reveal, a send, Jump to latest, a returning visit). A mouse-wheel glide
+  // ends at any newer intent than its own notches.
+  const intent = useRef(0);
+  useWheelSmoothing(scroller, intent);
   const positioned = useRef(false);
   const shown = useRef(active);
   const readingSettled = useRef(false);
@@ -787,6 +793,7 @@ function ThreadMessages({
   const targetAnchor = useRef<number | undefined>(undefined);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
+    intent.current++;
     targetAnchor.current = undefined;
   }, [messageId, navigation?.signal, revealRequest]);
   const selectedRow = useCallback(
@@ -847,7 +854,11 @@ function ThreadMessages({
     readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
   }, [captureResizePosition, navigation, selectedOffset]);
+  const bumpIntent = useCallback(() => {
+    intent.current++;
+  }, []);
   const prepareTarget = useCallback(() => {
+    intent.current++;
     follow.current = false;
   }, []);
   // Each request reveals its ancestors once; a branch the reader then
@@ -960,6 +971,8 @@ function ThreadMessages({
       snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
+    // A notch between preparing and placing must not glide off the target.
+    placed: bumpIntent,
   });
   // Leaving a visit once it was presented, by navigating on, hiding or
   // unmounting, records where the reader was. A return counts only once
@@ -1258,6 +1271,7 @@ function ThreadMessages({
         return;
       }
       restoredVisit.current = navigation.signal;
+      intent.current++;
       targetAnchor.current = undefined;
       follow.current = !row;
       if (row && anchor)
@@ -1438,6 +1452,7 @@ function ThreadMessages({
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
+    intent.current++;
     targetAnchor.current = undefined;
     positioned.current = true;
     follow.current = true;
@@ -1457,6 +1472,7 @@ function ThreadMessages({
     }, 1000);
   };
   const keepReadingPosition = () => {
+    intent.current++;
     jumpingToLatest.current = false;
     if (jumpTimer.current !== undefined) {
       clearTimeout(jumpTimer.current);
@@ -1842,6 +1858,8 @@ function ThreadMessages({
         }}
         onPointerDown={keepReadingPosition}
         onKeyDown={(event) => {
+          // Every key is reader intent, including one message selection takes.
+          intent.current++;
           moveMessageSelection(event);
           if (event.defaultPrevented) return;
           if (
@@ -2095,6 +2113,7 @@ function ThreadMessages({
           onDraftSaved={onDraftSaved}
           onSend={(id) => {
             onSend?.(id);
+            intent.current++;
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

@@ -38,6 +38,7 @@ import {
   useUnreadFirstPreference,
 } from "../features/search/unread-first-preference";
 import { macWebKit } from "../features/messages/mac-webkit";
+import { smoothWheelPreference } from "../features/messages/smooth-wheel-preference";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import {
   setClockPreference,
@@ -68,16 +69,21 @@ export function AppearanceSettings({
   appearance,
   active = true,
   autocorrectAvailable = macWebKit(),
+  smoothWheelAvailable = macWebKit(),
   communities,
 }: {
   appearance: Appearance;
   active?: boolean;
   /** Only Mac WebKit applies the composer's autocorrect attribute. */
   autocorrectAvailable?: boolean;
+  /** Only Mac WebKit jumps a whole mouse-wheel notch at once. */
+  smoothWheelAvailable?: boolean;
   communities?: Pick<Communities, "relay"> | undefined;
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
+  const smoothWheel = smoothWheelPreference.usePreference();
+  const smoothWheelError = smoothWheelPreference.useSaveError();
   const unreadFirst = useUnreadFirstPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -300,6 +306,14 @@ export function AppearanceSettings({
             checked={clock.seconds}
             onCheckedChange={(seconds) => setClockPreference({ seconds })}
           />
+          {smoothWheelAvailable && (
+            <SwitchPreferenceRow
+              label="Smooth mouse-wheel scrolling"
+              description="Mouse-wheel scrolling through messages glides instead of jumping. Trackpad scrolling is unchanged, and Reduce motion turns this off."
+              checked={smoothWheel}
+              onCheckedChange={smoothWheelPreference.set}
+            />
+          )}
         </SettingsGroup>
       </div>
       <div className="mt-section-gap">
@@ -535,6 +549,20 @@ export function AppearanceSettings({
               }
             >
               Retry saving spelling correction
+            </Button>
+          </ToastNotice>
+        )}
+        {active && smoothWheelError && (
+          <ToastNotice
+            title="Scrolling preference wasn’t saved"
+            description={smoothWheelError}
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => smoothWheelPreference.set(smoothWheel)}
+            >
+              Retry saving smooth scrolling
             </Button>
           </ToastNotice>
         )}

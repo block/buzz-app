@@ -12,6 +12,7 @@ import {
   behindActiveOverlay,
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
+import { forwardWheel } from "./wheel-smoothing";
 
 const contentSelector =
   "[data-message-action-anchor], [data-message-attachments] > *";
@@ -568,6 +569,8 @@ export function useFloatingActionBar(
     // the pointer; leave browser zoom gestures alone.
     const wheel = (event: WheelEvent) => {
       if (!scroller || event.ctrlKey || !bar.matches(":popover-open")) return;
+      // A timeline smoothing mouse wheels glides this one too.
+      if (forwardWheel(scroller, event)) return;
       const unit =
         event.deltaMode === WheelEvent.DOM_DELTA_PAGE
           ? scroller.clientHeight

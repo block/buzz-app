@@ -65,7 +65,8 @@ export function BestieNavigationProvider({
   );
   const channel = bestieChat(channels.channels, viewer, promoted);
   // The published profile picture wins, as in DM rows and message avatars; the
-  // agent definition's art covers only the wait for that profile.
+  // agent definition's art covers the wait for that profile, or a profile
+  // without a picture (as ChannelMemberAvatars does).
   const bestie = agent?.pubkey;
   const generation = useProfileGeneration(session.profiles);
   useEffect(() => {

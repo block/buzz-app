@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { readView } from "../../shared/view-state";
@@ -11,6 +12,54 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.restoreAllMocks();
+});
+it("keeps the viewport when a child retries a pending reveal during a preserved open", () => {
+  function Rows({
+    retryReveal,
+    current,
+  }: {
+    retryReveal(): void;
+    current: boolean;
+  }) {
+    useLayoutEffect(() => retryReveal());
+    return current ? (
+      <button type="button" aria-current="page">
+        Source
+      </button>
+    ) : null;
+  }
+  function View({ current = false }: { current?: boolean }) {
+    const sidebar = useSidebarView(
+      "fixture",
+      true,
+      current ? "source" : "activity",
+      current,
+    );
+    return (
+      <>
+        <button type="button" onClick={sidebar.revealAgain}>
+          Reveal current
+        </button>
+        <nav ref={sidebar.list} data-testid="viewport">
+          <Rows current={current} retryReveal={sidebar.retryReveal} />
+        </nav>
+      </>
+    );
+  }
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      return this.tagName === "BUTTON"
+        ? ({ top: 200, bottom: 220, height: 20 } as DOMRect)
+        : ({ top: 0, bottom: 100, height: 100 } as DOMRect);
+    },
+  );
+  const view = render(<View />);
+  const viewport = screen.getByTestId("viewport");
+  Object.defineProperty(viewport, "clientHeight", { value: 100 });
+  view.rerender(<View current />);
+  expect(viewport.scrollTop).toBe(0);
+  fireEvent.click(screen.getByText("Reveal current"));
+  expect(viewport.scrollTop).toBe(160);
 });
 it("re-arms only explicit current reveals using the latest location and preserves manual scrolling otherwise", () => {
   let sidebar: ReturnType<typeof useSidebarView> | undefined;

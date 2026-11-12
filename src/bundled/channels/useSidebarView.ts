@@ -189,7 +189,10 @@ export function useSidebarView(
     reveal.current = latestLocation.current;
     attempt.current();
   }, []);
-  const retryReveal = useCallback(() => attempt.current(), []);
+  const retryReveal = useCallback(() => {
+    // Children can retry before this hook's layout effects clear an old reveal.
+    if (!preserve) attempt.current();
+  }, [preserve]);
   useLayoutEffect(() => {
     attempt.current = () => {
       if (!ready || !reveal.current || !list.current) return;

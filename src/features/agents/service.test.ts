@@ -13523,6 +13523,60 @@ it.each([false, true])(
   },
 );
 
+it("removes Solo wake activity when its watch stops during root validation", async () => {
+  const { service, run, emit, native, session, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const list = session.channels.list();
+  vi.spyOn(session.channels, "list").mockReturnValue({
+    ...list,
+    channels: list.channels.map((row) =>
+      row.id === channel ? { ...row, channelType: "solo" as const } : row,
+    ),
+  });
+  const root = "e".repeat(64);
+  let release!: (events: RelayEvent[]) => void;
+  const pending = new Promise<RelayEvent[]>((resolve) => {
+    release = resolve;
+  });
+  native.query.mockImplementation(async (_member, filters) =>
+    filters.some((filter) => filter.ids?.includes(root)) ? pending : [],
+  );
+  const watch = service.find(bot)?.attention["watch/channel"]?.value;
+  if (watch?.type !== "event") throw new Error("fixture");
+  await service.save(bot, {
+    attentionEnabled: true,
+    attention: { "watch/channel": { ...watch, channel, root } },
+  });
+  const states: string[] = [];
+  const stop = activity.reader.subscribeWork(() => {
+    for (const row of activity.reader.work()) states.push(row.state);
+  });
+  try {
+    emit({ channelId: channel, events: [deploy("cancelled-wake")] });
+    await vi.waitFor(() =>
+      expect(native.query).toHaveBeenCalledWith(member(bot), [
+        { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+      ]),
+    );
+    expect(activity.reader.work()[0]).toMatchObject({
+      state: "working",
+      soloChat: true,
+    });
+    await service.save(bot, {
+      attention: {
+        "watch/channel": { ...watch, channel, root, enabled: false },
+      },
+    });
+    release([event(root, { tags: [["h", channel]] })]);
+    await vi.waitFor(() => expect(activity.reader.work()).toEqual([]));
+    expect(run).not.toHaveBeenCalled();
+    expect(states).not.toContain("done");
+  } finally {
+    release([]);
+    stop();
+  }
+});
+
 it("rebuilds addressed Interest instructions after a queued handover", async () => {
   const { service, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });

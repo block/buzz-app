@@ -2878,7 +2878,10 @@ export class AgentRunners {
       );
     // Handover expiry releases the queue, never the actual work's outcome.
     void completion.then(
-      () => working.release(),
+      () => {
+        if (!attempted) job.work?.remove();
+        working.release();
+      },
       (error) => working.release({ ok: false, error: message(error) }),
     );
     const aborted = new Promise<never>((_, reject) => {

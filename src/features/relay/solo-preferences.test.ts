@@ -196,16 +196,17 @@ it.each(["clearCache", "dispose"] as const)(
   },
 );
 
+const catalog = (
+  calls: readonly (readonly [readonly ReadFilter[], ...unknown[]])[],
+) =>
+  calls.filter(([filters]) =>
+    filters.some((filter) => filter["#t"]?.includes(ME_KIT_TAG)),
+  ).length;
+
 it("reloads Solo workspaces by itself once a relay request pause ends", async () => {
   vi.useFakeTimers();
   const lane = createApiAdmission();
   const f = fixture(lane);
-  const catalog = (
-    calls: readonly (readonly [readonly ReadFilter[], ...unknown[]])[],
-  ) =>
-    calls.filter(([filters]) =>
-      filters.some((filter) => filter["#t"]?.includes(ME_KIT_TAG)),
-    ).length;
   const catalogReads = () => catalog(f.query.mock.calls);
   try {
     f.install(groups);
@@ -243,10 +244,7 @@ it("reloads Solo workspaces by itself once a relay request pause ends", async ()
 it("leaves a Solo read of a catalog that cannot load for a manual retry", async () => {
   vi.useFakeTimers();
   const f = fixture();
-  const catalogReads = () =>
-    f.query.mock.calls.filter(([filters]) =>
-      filters.some((filter) => filter["#t"]?.includes(ME_KIT_TAG)),
-    ).length;
+  const catalogReads = () => catalog(f.query.mock.calls);
   try {
     f.install(groups);
     await f.session.soloPreferences.ensure();

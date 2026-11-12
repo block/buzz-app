@@ -405,19 +405,13 @@ it("offers Builderlab first and reveals key setup without switching until ready"
   // The Select opens on an animation frame after the pointer press.
   await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
   expect(toggle).toHaveTextContent("Builderlab");
-  expect(
-    screen.getByRole("dialog", { name: "Connect TypeSafe" }),
-  ).toBeVisible();
-  expect(
-    screen.getByRole("dialog", { name: "Connect TypeSafe" }),
-  ).toHaveAccessibleDescription(
+  const dialog = screen.getByRole("dialog", { name: "Connect TypeSafe" });
+  expect(dialog).toBeVisible();
+  expect(dialog).toHaveAccessibleDescription(
     "Create an API key at console.typesafe.ai and paste it below.",
   );
   expect(
-    within(screen.getByRole("dialog", { name: "Connect TypeSafe" })).getByRole(
-      "link",
-      { name: "console.typesafe.ai" },
-    ),
+    within(dialog).getByRole("link", { name: "console.typesafe.ai" }),
   ).toHaveAttribute("href", "https://console.typesafe.ai/keys");
   await waitFor(() =>
     expect(screen.getByLabelText("TypeSafe API key")).toHaveFocus(),

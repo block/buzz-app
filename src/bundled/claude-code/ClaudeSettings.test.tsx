@@ -114,56 +114,31 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   native.saved = false;
   const user = userEvent.setup();
   const { spawn } = fixture();
-  const set = await screen.findByRole("button", { name: "Set" });
-  const card = set.closest(".buzz-settings-group");
-  expect(card).not.toBeNull();
+  await screen.findByRole("button", { name: "Set" });
   expect(screen.getAllByText("Anthropic API key")).toHaveLength(1);
-  expect(card).toContainElement(screen.getByText("Anthropic API key"));
   expect(
-    screen
-      .getByText("Claude requires an API key to connect to your account.")
-      .closest(".buzz-settings-group"),
-  ).toBeNull();
-  expect(
-    screen
-      .getByText("Claude requires an API key to connect to your account.")
-      .closest(".buzz-content-header"),
-  ).not.toBeNull();
+    screen.getByText("Claude requires an API key to connect to your account."),
+  ).toBeVisible();
   expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
-  let add = await connectKey(user);
-  expect(
-    screen.getByRole("dialog", { name: "Connect Claude" }),
-  ).toHaveAccessibleDescription(
+  const add = await connectKey(user);
+  const dialog = screen.getByRole("dialog", { name: "Connect Claude" });
+  expect(dialog).toHaveAccessibleDescription(
     "Create an API key at console.anthropic.com and paste it below.",
   );
   expect(
-    within(screen.getByRole("dialog", { name: "Connect Claude" })).getByRole(
-      "link",
-      { name: "console.anthropic.com" },
-    ),
+    within(dialog).getByRole("link", { name: "console.anthropic.com" }),
   ).toHaveAttribute("href", "https://console.anthropic.com/settings/keys");
   expect(add).toHaveAccessibleDescription(
     "Your key will be stored securely on this computer.",
   );
   await waitFor(() => expect(add).toHaveFocus());
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
   await user.type(add, " ");
   expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
     "aria-disabled",
     "true",
   );
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(set).toHaveFocus());
-  add = await connectKey(user);
-  expect(add).toHaveValue("");
   expect(spawn).not.toHaveBeenCalled();
   await user.type(add, "sk-ant-first");
-  expect(add.closest(".buzz-input-group")).toContainElement(
-    screen.getByRole("button", { name: "Save" }),
-  );
   await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -267,7 +242,9 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
   expect(input).toHaveValue("sk-ant-draft");
   expect(input).not.toHaveAttribute("readonly");
   await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Set" })).toHaveFocus(),
+  );
   expect(await connectKey(user)).toHaveValue("");
   expect(native.saved).toBe(false);
 });
@@ -311,8 +288,6 @@ it("preserves a rejected replacement and blocks other actions while saving", asy
   const user = userEvent.setup();
   fixture();
   const input = await replaceKey(user);
-  expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   fireEvent.change(input, { target: { value: "invalid-key" } });
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {

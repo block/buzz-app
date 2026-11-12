@@ -1,19 +1,28 @@
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { IconButton } from "../shared/design-system/ui/IconButton";
-import { PencilSimpleIcon, XIcon } from "../shared/design-system/icons";
+import {
+  KeyboardIcon,
+  PencilSimpleIcon,
+  XIcon,
+} from "../shared/design-system/icons";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SwitchPreferenceRow } from "../shared/design-system/ui/SwitchPreferenceRow";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import {
   Fragment,
+  memo,
+  useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "../shared/design-system/ui/Button";
+import { EmptyState } from "../shared/design-system/ui/EmptyState";
+import { SearchField } from "../shared/design-system/ui/SearchField";
 import {
   sameBinding,
   type KeyBinding,
@@ -31,6 +40,12 @@ import {
   type CapturedChord,
 } from "../features/shortcuts/KeyCaptureControl";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
+import {
+  sameKeyOnLayout,
+  searchEntry,
+  shortcutFilter,
+  type ShortcutSearch,
+} from "../features/shortcuts/search";
 import type { ShortcutsService } from "../features/shortcuts/service";
 import {
   sendKeyPreference,
@@ -60,6 +75,8 @@ type Group = Readonly<{
   description?: string;
   rows: readonly Row[];
 }>;
+const NO_SEARCH: ShortcutSearch = { kind: "text", text: "" };
+const NO_ROWS: readonly Row[] = [];
 type Notice = Readonly<{
   key: string;
   tone: "error" | "warning";
@@ -132,29 +149,6 @@ const DESKTOP_CHORDS: readonly KeyBinding[] = [
   { key: "Tab", mod: true },
   { key: "Tab", mod: true, shift: true },
 ];
-// Common shifted pairs. Aliases for one physical key (⌘= and ⌘+) exist so
-// the chord works on every layout; the row shows that key once.
-const SHIFTED: Readonly<Record<string, string>> = {
-  "=": "+",
-  "-": "_",
-  "\\": "|",
-  "/": "?",
-  ",": "<",
-  ".": ">",
-  ";": ":",
-  "'": '"',
-  "[": "{",
-  "]": "}",
-  "`": "~",
-};
-const physicalKey = (key: string) =>
-  Object.entries(SHIFTED).find((pair) => pair.includes(key))?.[0];
-const sameKeyOnLayout = (a: KeyBinding, b: KeyBinding) =>
-  !!a.mod === !!b.mod &&
-  !!a.ctrl === !!b.ctrl &&
-  !!a.alt === !!b.alt &&
-  physicalKey(a.key) !== undefined &&
-  physicalKey(a.key) === physicalKey(b.key);
 /** The distinct chords to show: each physical key once, in registration order. */
 const shownChords = (chords: readonly KeyBinding[]) =>
   chords.filter(
@@ -205,6 +199,48 @@ function useShortcutGroups({
   );
   const sendWithModEnter = useSendWithModEnterPreference();
 
+  // Built once per registry, binding or catalog change, so a filter keystroke
+  // reuses every row and memoized rows skip rendering.
+  return useMemo(
+    () =>
+      shortcutGroups({
+        host,
+        contributed,
+        overrides,
+        error,
+        configuration,
+        sendWithModEnter,
+        desktop,
+      }),
+    [
+      host,
+      contributed,
+      overrides,
+      error,
+      configuration,
+      sendWithModEnter,
+      desktop,
+    ],
+  );
+}
+
+function shortcutGroups({
+  host,
+  contributed,
+  overrides,
+  error,
+  configuration,
+  sendWithModEnter,
+  desktop,
+}: {
+  host: readonly NormalizedShortcut[];
+  contributed: ReturnType<ShortcutsService["snapshot"]>;
+  overrides: ReturnType<ShortcutBindings["snapshot"]>["overrides"];
+  error: ReturnType<ShortcutBindings["snapshot"]>["error"];
+  configuration: ReturnType<PluginManager["snapshot"]>["configuration"];
+  sendWithModEnter: boolean;
+  desktop: boolean;
+}) {
   const pluginName = (id: string) =>
     (configuration.status === "ready"
       ? configuration.catalog.plugins.find(
@@ -334,112 +370,210 @@ export function ShortcutSettings({
   });
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [search, setSearch] = useState<ShortcutSearch>(NO_SEARCH);
+  const searchInput = useRef<HTMLElement | null>(null);
   const sendChord = apple ? "⌘ Enter" : "Ctrl+Enter";
   // A chord can become shared after capture (a plugin enabled later, a new
   // default in a release). The dispatcher then picks one silently, so each
   // affected row names the others.
-  const sharedWith = (target: Row) =>
-    rows.filter(
-      (other) =>
-        other.key !== target.key &&
-        other.effective.some((binding) =>
-          target.effective.some((current) => sameBinding(current, binding)),
-        ),
-    );
+  const sharedWith = useMemo(
+    () =>
+      new Map(
+        rows.map((target) => [
+          target.key,
+          rows.filter(
+            (other) =>
+              other.key !== target.key &&
+              other.effective.some((binding) =>
+                target.effective.some((current) =>
+                  sameBinding(current, binding),
+                ),
+              ),
+          ),
+        ]),
+      ),
+    [rows],
+  );
   const modified = Object.keys(overrides).length > 0;
+  // Each row is prepared once per change to the rows, not per keystroke.
+  const entries = useMemo(
+    () =>
+      new Map(
+        shownGroups.flatMap((group) =>
+          group.rows.map((row) => [
+            row.key,
+            searchEntry(row.title, group.label, row.effective, apple),
+          ]),
+        ),
+      ),
+    [shownGroups, apple],
+  );
+  const filter = useMemo(
+    () =>
+      search.kind === "keys" || search.text.trim()
+        ? shortcutFilter(search, apple)
+        : undefined,
+    [search, apple],
+  );
+  const visibleGroups = useMemo(
+    () =>
+      filter
+        ? shownGroups
+            .map((group) => ({
+              ...group,
+              rows: group.rows.filter((row) => {
+                const entry = entries.get(row.key);
+                return !!entry && filter.matches(entry);
+              }),
+            }))
+            .filter((group) => group.rows.length)
+        : shownGroups,
+    [filter, shownGroups, entries],
+  );
+  const found = visibleGroups.reduce(
+    (count, group) => count + group.rows.length,
+    0,
+  );
+  // A rebind can take the focused row out of the results; keep focus here.
+  useEffect(() => {
+    if (filter && visibleGroups && document.activeElement === document.body)
+      searchInput.current?.focus();
+  }, [filter, visibleGroups]);
 
-  const start = (key: string) => {
-    setEditing(key);
+  const start = useCallback((row: Row) => {
+    setEditing(row.key);
     setNotice(null);
-  };
-  const cancel = (key: string) => {
+  }, []);
+  const cancel = useCallback(({ key }: Row) => {
     setEditing((current) => (current === key ? null : current));
     setNotice((current) =>
       current?.key === key && current.tone === "error" ? null : current,
     );
-  };
+  }, []);
+  const reset = useCallback(
+    (row: Row) => {
+      cancel(row);
+      setNotice(null);
+      bindings.set(row.key, null);
+    },
+    [cancel, bindings],
+  );
   // Conflicts are decided here, not in the dispatcher: host chords always win
   // there, and plugin ties resolve by sorted key, neither of which is a choice.
-  const capture = (
-    target: Row,
-    { binding, otherPrimary, code }: CapturedChord,
-  ) => {
-    const chord = formatBinding(binding, apple).text;
-    const refuse = (message: string) =>
-      setNotice({ key: target.key, tone: "error", message });
-    if (binding.key === "Dead" || binding.key === "Unidentified")
-      return refuse("That key can’t be used for a shortcut. Try another.");
-    if (otherPrimary)
-      return refuse(
-        "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
+  const capture = useCallback(
+    (target: Row, { binding, otherPrimary, code }: CapturedChord) => {
+      const chord = formatBinding(binding, apple).text;
+      const refuse = (message: string) =>
+        setNotice({ key: target.key, tone: "error", message });
+      if (binding.key === "Dead" || binding.key === "Unidentified")
+        return refuse("That key can’t be used for a shortcut. Try another.");
+      if (otherPrimary)
+        return refuse(
+          "The Windows/Command key isn’t used for shortcuts on this device. Try Control or Alt.",
+        );
+      if (!binding.mod && !binding.alt)
+        return refuse(
+          `Include ${apple ? "Command or Option" : "Control or Alt"} so ordinary typing keeps working.`,
+        );
+      // Apple's ⌥⇧⌘V browser paste types a layout-specific key, so match the physical V.
+      const applePlainPaste =
+        apple &&
+        code === "KeyV" &&
+        binding.mod &&
+        binding.shift &&
+        binding.alt &&
+        !binding.ctrl;
+      if (includes(CLIPBOARD_CHORDS, binding) || applePlainPaste)
+        return refuse(
+          `${chord} is reserved for copy, cut, paste and select all. Try another.`,
+        );
+      if (desktop && includes(DESKTOP_CHORDS, binding))
+        return refuse(
+          `${chord} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
+        );
+      const conflict = rows.find(
+        (row) =>
+          row.key !== target.key &&
+          row.effective.some((current) => sameBinding(current, binding)),
       );
-    if (!binding.mod && !binding.alt)
-      return refuse(
-        `Include ${apple ? "Command or Option" : "Control or Alt"} so ordinary typing keeps working.`,
+      if (conflict)
+        return refuse(
+          `${chord} is already used by ${conflict.title} (${conflict.owner}).`,
+        );
+      const isDefault =
+        target.defaults.length === 1 &&
+        target.defaults.every((current) => sameBinding(current, binding));
+      bindings.set(target.key, isDefault ? null : binding);
+      setEditing(null);
+      // EditableInput handles Enter locally regardless of the held modifiers.
+      setNotice(
+        binding.key === "Enter" ||
+          includes(EDITOR_CHORDS, binding) ||
+          includes(EDITOR_FORMAT_CHORDS, binding)
+          ? {
+              key: target.key,
+              tone: "warning",
+              message: `Saved. The message editor handles ${chord} itself while you are typing, so it wins there.`,
+            }
+          : null,
       );
-    // Apple's ⌥⇧⌘V browser paste types a layout-specific key, so match the physical V.
-    const applePlainPaste =
-      apple &&
-      code === "KeyV" &&
-      binding.mod &&
-      binding.shift &&
-      binding.alt &&
-      !binding.ctrl;
-    if (includes(CLIPBOARD_CHORDS, binding) || applePlainPaste)
-      return refuse(
-        `${chord} is reserved for copy, cut, paste and select all. Try another.`,
-      );
-    if (desktop && includes(DESKTOP_CHORDS, binding))
-      return refuse(
-        `${chord} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
-      );
-    const conflict = rows.find(
-      (row) =>
-        row.key !== target.key &&
-        row.effective.some((current) => sameBinding(current, binding)),
-    );
-    if (conflict)
-      return refuse(
-        `${chord} is already used by ${conflict.title} (${conflict.owner}).`,
-      );
-    const isDefault =
-      target.defaults.length === 1 &&
-      target.defaults.every((current) => sameBinding(current, binding));
-    bindings.set(target.key, isDefault ? null : binding);
-    setEditing(null);
-    // EditableInput handles Enter locally regardless of the held modifiers.
-    setNotice(
-      binding.key === "Enter" ||
-        includes(EDITOR_CHORDS, binding) ||
-        includes(EDITOR_FORMAT_CHORDS, binding)
-        ? {
-            key: target.key,
-            tone: "warning",
-            message: `Saved. The message editor handles ${chord} itself while you are typing, so it wins there.`,
-          }
-        : null,
-    );
-  };
+    },
+    [apple, desktop, rows, bindings],
+  );
 
   return (
     <section aria-labelledby="shortcut-settings-title">
       <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
-        <MessageKeyPreference
-          title="Sending messages"
-          label={`Send with ${sendChord}`}
-          description={`Enter adds a new line. ${sendChord} sends your message.`}
-          preference={sendKeyPreference}
+        <ShortcutSearchBar
+          search={search}
+          apple={apple}
+          inputRef={searchInput}
+          onSearch={setSearch}
         />
-        <MessageKeyPreference
-          title="Editing messages"
-          label="Edit last message with Up Arrow"
-          description="When the composer is empty, Up Arrow edits your most recent editable message instead of selecting messages."
-          preference={editKeyPreference}
-        />
+        {/* The only result announcement: the count, or the empty state. */}
+        <div aria-live="polite">
+          {filter &&
+            (found ? (
+              <p className="sr-only">
+                {found === 1 ? "1 shortcut" : `${found} shortcuts`}
+              </p>
+            ) : (
+              <EmptyState
+                icon={<KeyboardIcon size={24} />}
+                title={
+                  filter.chord
+                    ? `Nothing is mapped to ${formatBinding(filter.chord, apple).text}`
+                    : "No shortcuts match"
+                }
+                description={
+                  filter.chord
+                    ? "Try other keys, or search by name."
+                    : "Try another name, or search by keys."
+                }
+              />
+            ))}
+        </div>
+        {/* Results come straight after the search; these switches match nothing. */}
+        {!filter && (
+          <>
+            <MessageKeyPreference
+              title="Sending messages"
+              label={`Send with ${sendChord}`}
+              description={`Enter adds a new line. ${sendChord} sends your message.`}
+              preference={sendKeyPreference}
+            />
+            <MessageKeyPreference
+              title="Editing messages"
+              label="Edit last message with Up Arrow"
+              description="When the composer is empty, Up Arrow edits your most recent editable message instead of selecting messages."
+              preference={editKeyPreference}
+            />
+          </>
+        )}
         {rows.length ? (
           <div className="grid gap-section-gap">
-            {shownGroups.map((group) => (
+            {visibleGroups.map((group) => (
               <section key={group.id}>
                 <InlineHeader
                   title={group.label}
@@ -452,17 +586,13 @@ export function ShortcutSettings({
                       row={row}
                       explained={!!group.description}
                       apple={apple}
-                      sharedWith={sharedWith(row)}
+                      sharedWith={sharedWith.get(row.key) ?? NO_ROWS}
                       listening={editing === row.key}
                       notice={notice?.key === row.key ? notice : null}
-                      onStart={() => start(row.key)}
-                      onCancel={() => cancel(row.key)}
-                      onCapture={(chord) => capture(row, chord)}
-                      onReset={() => {
-                        cancel(row.key);
-                        setNotice(null);
-                        bindings.set(row.key, null);
-                      }}
+                      onStart={start}
+                      onCancel={cancel}
+                      onCapture={capture}
+                      onReset={reset}
                     />
                   ))}
                 </SettingsGroup>
@@ -541,7 +671,8 @@ function MessageKeyPreference({
   );
 }
 
-function ShortcutRow({
+/** Memoized with stable callbacks: filtering renders only rows it shows. */
+const ShortcutRow = memo(function ShortcutRow({
   row,
   explained,
   apple,
@@ -561,10 +692,10 @@ function ShortcutRow({
   sharedWith: readonly Row[];
   listening: boolean;
   notice: Notice | null;
-  onStart: () => void;
-  onCancel: () => void;
-  onCapture: (chord: CapturedChord) => void;
-  onReset: () => void;
+  onStart: (row: Row) => void;
+  onCancel: (row: Row) => void;
+  onCapture: (row: Row, chord: CapturedChord) => void;
+  onReset: (row: Row) => void;
 }) {
   const titleId = useId();
   const noticeId = useId();
@@ -617,8 +748,8 @@ function ShortcutRow({
                 apple={apple}
                 label={`New shortcut for ${row.title}`}
                 describedBy={notice ? noticeId : undefined}
-                onCapture={onCapture}
-                onCancel={onCancel}
+                onCapture={(chord) => onCapture(row, chord)}
+                onCancel={() => onCancel(row)}
               />
             ) : (
               <ShortcutChords chords={row.effective} apple={apple} />
@@ -644,7 +775,7 @@ function ShortcutRow({
                 }
                 // Keep focus on the listening control so a click here cancels once.
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={listening ? onCancel : onStart}
+                onClick={() => (listening ? onCancel : onStart)(row)}
               />
             )}
             {row.override && !listening && (
@@ -654,7 +785,7 @@ function ShortcutRow({
                 aria-label={`Reset shortcut for ${row.title}`}
                 onClick={() => {
                   resetting.current = true;
-                  onReset();
+                  onReset(row);
                 }}
               >
                 Reset
@@ -673,5 +804,86 @@ function ShortcutRow({
         </p>
       )}
     </article>
+  );
+});
+
+/**
+ * Text search, or a recorded chord. Recording reuses KeyCaptureControl, which
+ * consumes the key so its shortcut never fires; Escape there cancels
+ * recording and here clears the search, without reaching Settings.
+ */
+function ShortcutSearchBar({
+  search,
+  apple,
+  inputRef,
+  onSearch,
+}: {
+  search: ShortcutSearch;
+  apple: boolean;
+  inputRef: { current: HTMLElement | null };
+  onSearch: (search: ShortcutSearch) => void;
+}) {
+  const [recording, setRecording] = useState(false);
+  const wasRecording = useRef(false);
+  const value =
+    search.kind === "keys"
+      ? formatBinding(search.chord, apple).text
+      : search.text;
+  // After recording, typing or Escape continues in the search field, unless
+  // the person moved focus elsewhere.
+  useEffect(() => {
+    const stopped = wasRecording.current && !recording;
+    wasRecording.current = recording;
+    if (stopped && document.activeElement === document.body)
+      inputRef.current?.focus();
+  }, [recording, inputRef]);
+  return (
+    <div className="flex items-center gap-2">
+      <div className="min-w-0 flex-1">
+        {recording ? (
+          <KeyCaptureControl
+            apple={apple}
+            layout="field"
+            label="Keys to search for"
+            onCapture={({ binding }) => {
+              setRecording(false);
+              onSearch({ kind: "keys", chord: binding });
+            }}
+            onCancel={() => setRecording(false)}
+          />
+        ) : (
+          <SearchField
+            inputRef={inputRef}
+            label="Search shortcuts"
+            placeholder="Search by name or keys, like ⌘K"
+            value={value}
+            onValueChange={(text) => onSearch({ kind: "text", text })}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || !value) return;
+              event.preventDefault();
+              event.stopPropagation();
+              onSearch(NO_SEARCH);
+            }}
+          />
+        )}
+      </div>
+      <IconButton
+        variant="ghost"
+        size="sm"
+        type="button"
+        icon={
+          recording ? (
+            <XIcon size={16} aria-hidden="true" />
+          ) : (
+            <KeyboardIcon size={16} aria-hidden="true" />
+          )
+        }
+        title={recording ? "Cancel" : "Search by keys"}
+        aria-label={recording ? "Cancel searching by keys" : "Search by keys"}
+        // Keep focus on the listening control so a click here cancels once.
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => setRecording(!recording)}
+      />
+    </div>
   );
 }

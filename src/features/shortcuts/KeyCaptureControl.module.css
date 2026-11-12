@@ -4,3 +4,6 @@
   max-width: 100%;
   min-width: 0;
 }
+.listening[data-layout="field"] {
+  width: 100%;
+}

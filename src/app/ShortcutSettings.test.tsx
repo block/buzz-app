@@ -13,6 +13,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ShortcutSettings } from "./ShortcutSettings";
+import { KeyCombo } from "../features/shortcuts/KeyCombo";
 import type { Shortcut } from "../features/shortcuts/bindings";
 import {
   createShortcutBindings,
@@ -30,6 +31,12 @@ import { setSendWithModEnterPreference } from "../features/messages/send-key-pre
 import { setEditWithUpArrowPreference } from "../features/messages/edit-key-preference";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn(() => false) }));
+// Counts row renders: every shown chord renders one KeyCombo.
+vi.mock("../features/shortcuts/KeyCombo", async (load) => {
+  const { KeyCombo } =
+    await load<typeof import("../features/shortcuts/KeyCombo")>();
+  return { KeyCombo: vi.fn(KeyCombo) };
+});
 
 afterEach(() => {
   cleanup();
@@ -184,7 +191,7 @@ const change = (title: string) =>
 const capture = (title: string) =>
   screen.getByRole("textbox", { name: `New shortcut for ${title}` });
 
-it("lists live host and plugin shortcuts without search or intro text and follows plugin state", async () => {
+it("lists live host and plugin shortcuts under a search, without intro text, and follows plugin state", async () => {
   const h = await harness();
   try {
     render(
@@ -248,7 +255,9 @@ it("lists live host and plugin shortcuts without search or intro text and follow
       screen.getByRole("button", { name: "Reset all shortcuts" }),
     ).toBeDisabled();
 
-    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("searchbox", { name: "Search shortcuts" }),
+    ).toHaveValue("");
     expect(
       screen.queryByText(
         "Every shortcut from Buzz and your enabled plugins. Choose Change, then press the new keys; Escape cancels. Saved on this device.",
@@ -338,6 +347,42 @@ it("presents actual host registrations in navigation, interface sizing, search/s
     appearance.dispose();
     bindings.dispose();
     await root.fiber.dispose();
+  }
+});
+
+it("narrowing the search renders no row again, and clearing it restores every group", async () => {
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple={false}
+      />,
+    );
+    const user = userEvent.setup();
+    const field = screen.getByRole("searchbox", { name: "Search shortcuts" });
+    vi.mocked(KeyCombo).mockClear();
+    await user.type(field, "search");
+    expect(
+      appRows().map((article) => article.querySelector("h4")?.textContent),
+    ).toEqual(["Search Buzz"]);
+    // Rows that stay are not rendered again; the others only unmount.
+    expect(KeyCombo).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("heading", { name: "Message formatting" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Clear search shortcuts" }),
+    );
+    expect(field).toHaveFocus();
+    expect(appRows()).toHaveLength(6);
+    expect(
+      screen.getByRole("heading", { name: "Message formatting" }),
+    ).toBeVisible();
+  } finally {
+    await h.dispose();
   }
 });
 

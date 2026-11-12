@@ -143,7 +143,7 @@ it.each([
       target: `target-${index}`,
     }));
     act(() => {
-      state.setEntries(entries);
+      for (const entry of entries) workspace.open(entry, true);
       if (pane === "main")
         for (const entry of entries)
           state.moveEntry(`app:${entry.target}`, "main");

@@ -1831,8 +1831,6 @@ function ChannelWorkspace({
                 ? document.activeElement
                 : null;
           }
-          // A different channel has its own workspace. Keep this one's
-          // selection intact so Back/Forward restores the thread the viewer left.
           if (!opensAnotherChannel) open(undefined);
           void navigator.open(target);
           return true;

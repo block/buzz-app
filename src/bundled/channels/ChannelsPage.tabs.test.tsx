@@ -342,7 +342,6 @@ it.each([
       act(() => host.navigation.back());
       present();
       if (direction === "Forward") {
-        // Back past Alpha, then restore its saved workspace with Forward.
         act(() => host.navigation.back());
         present();
         act(() => host.navigation.forward());

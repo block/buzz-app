@@ -48,7 +48,7 @@ import type {
 } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { useRecovery } from "../relay/RecoveryNotice";
-import { geometryFor, geometrySignature } from "./geometry";
+import { geometryFor, rowSignature, type RowGeometry } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { correctScrollTop } from "./scroll-correction";
@@ -708,9 +708,58 @@ function Timeline({
       ?.querySelector<HTMLButtonElement>("button")
       ?.focus({ preventScroll: true });
   }, [rows, focusedActivityId]);
+  // How a row sits among its neighbors, which changes its height in place.
+  const rowLayout = (row: ChannelMessage, index: number) => {
+    const previousRow =
+      row.audience === "agents"
+        ? rows[index - 1]
+        : publicMessageNeighbor(rows, index, -1);
+    const nextRow =
+      row.audience === "agents"
+        ? rows[index + 1]
+        : publicMessageNeighbor(rows, index, 1);
+    return {
+      disclosure: disclosures.get(row.id),
+      hidden: foldedActivity.has(row.id),
+      day:
+        index === 0 ||
+        calendarDay(rows[index - 1]?.createdAt ?? 0) !==
+          calendarDay(row.createdAt),
+      stackPrevious:
+        !!previousRow &&
+        !foldedActivity.has(previousRow.id) &&
+        continuesMessageGroup(previousRow, row),
+      stackNext:
+        presentation.bubbleAnchors.has(row.id) ||
+        (row.id === lastPublicMessage?.id &&
+          row.audience !== "agents" &&
+          !row.membership &&
+          row.authorId === liveAgents[0]) ||
+        (!!nextRow &&
+          !foldedActivity.has(nextRow.id) &&
+          continuesMessageGroup(row, nextRow)),
+    };
+  };
   // Only read at mount and unmount, so build it on demand.
-  const signature = () =>
-    `${geometrySignature(visibleRows, profiles, resolveName)}:${JSON.stringify([...foldedActivity].sort())}`;
+  const rowGeometry = (): RowGeometry[] =>
+    rows.map((row, index) => {
+      const { disclosure, hidden, day, stackPrevious, stackNext } = rowLayout(
+        row,
+        index,
+      );
+      return {
+        id: row.id,
+        key: `${rowSignature(row, profiles, resolveName)}:${JSON.stringify([
+          stackPrevious,
+          stackNext,
+          day,
+          row.id === newMessageBoundaryId,
+          hidden,
+          containedOwners.has(row.id),
+          disclosure ? [disclosure.ids, disclosure.expanded] : 0,
+        ])}`,
+      };
+    });
   // Mount the saved boundary before restoration measures its divider inset.
   const keptIndices = rows.flatMap((row, index) =>
     row.id === focusedMessageId ||
@@ -763,8 +812,8 @@ function Timeline({
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0, edgeHeight: 0 });
   const width = size.width;
-  const latest = useRef({ signature, width, edgeHeight: size.edgeHeight });
-  latest.current = { signature, width, edgeHeight: size.edgeHeight };
+  const latest = useRef({ rowGeometry, width, edgeHeight: size.edgeHeight });
+  latest.current = { rowGeometry, width, edgeHeight: size.edgeHeight };
   const initialCache = useRef<VirtualizerHandle["cache"] | undefined>(
     undefined,
   );
@@ -1367,7 +1416,7 @@ function Timeline({
     const measured = edge.current?.clientWidth ?? 0;
     initialCache.current = geometry.get(
       channelId,
-      latest.current.signature(),
+      latest.current.rowGeometry(),
       measured,
     );
     let measuredSize = { width: 0, height: 0, edgeHeight: 0 };
@@ -1412,15 +1461,16 @@ function Timeline({
       page?.removeEventListener("pagehide", savePosition);
       savePosition();
       observer.disconnect();
-      if (handle.current)
+      const cache = handle.current?.cache;
+      if (cache)
         geometry.set(
           channelId,
-          latest.current.signature(),
+          latest.current.rowGeometry(),
           latest.current.width,
-          handle.current.cache,
+          cache,
         );
     };
-    // Initial signature only; mutations invalidate the saved cache on remount.
+    // Initial rows only; a changed row's key leaves it to re-measure on remount.
   }, [channelId, geometry, savePosition]);
   // A reveal completes when its scroll runs. Until then it stays pending under
   // the intent that scheduled it: a row update that cancels its frame (an echo,
@@ -1971,24 +2021,21 @@ function Timeline({
           as="ol"
           item="li"
           startMargin={size.edgeHeight}
-          {...(initialCache.current ? { cache: initialCache.current } : {})}
+          // Virtua skips its buffer until it has estimated item size, and
+          // restored sizes never count toward that estimate: give it the
+          // saved one, or a well-cached remount mounts only visible rows.
+          {...(initialCache.current
+            ? {
+                cache: initialCache.current,
+                ...(initialCache.current[1] === undefined
+                  ? {}
+                  : { itemSize: initialCache.current[1] }),
+              }
+            : {})}
         >
           {rows.map((row, index) => {
-            const disclosure = disclosures.get(row.id);
-            const hidden = foldedActivity.has(row.id);
-            const previousRow =
-              row.audience === "agents"
-                ? rows[index - 1]
-                : publicMessageNeighbor(rows, index, -1);
-            const nextRow =
-              row.audience === "agents"
-                ? rows[index + 1]
-                : publicMessageNeighbor(rows, index, 1);
-            const day =
-              index === 0
-                ? true
-                : calendarDay(rows[index - 1]?.createdAt ?? 0) !==
-                  calendarDay(row.createdAt);
+            const { disclosure, hidden, day, stackPrevious, stackNext } =
+              rowLayout(row, index);
             const renderMessage = (row: ChannelMessage, inside = false) => {
               return (
                 <MessageRow
@@ -2006,23 +2053,9 @@ function Timeline({
                     presentation.byRow.get(row.id),
                     "history",
                   )}
-                  stackPrevious={
-                    inside ||
-                    (!!previousRow &&
-                      !foldedActivity.has(previousRow.id) &&
-                      continuesMessageGroup(previousRow, row))
-                  }
-                  stackNext={
-                    inside ||
-                    presentation.bubbleAnchors.has(row.id) ||
-                    (row.id === lastPublicMessage?.id &&
-                      row.audience !== "agents" &&
-                      !row.membership &&
-                      row.authorId === liveAgents[0]) ||
-                    (!!nextRow &&
-                      !foldedActivity.has(nextRow.id) &&
-                      continuesMessageGroup(row, nextRow))
-                  }
+                  // Rows rendered inside an activity group always stack.
+                  stackPrevious={inside || stackPrevious}
+                  stackNext={inside || stackNext}
                   session={queries}
                   scope={scope}
                   row={row}

@@ -355,8 +355,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     (element) => element.scrollTop,
   );
   const expectReading = () => expectAnchor(page, saved);
-  // The long signature exceeds the unchanged 256KiB geometry-cache cap.
-  // Restore the visible message, even when cold estimates cannot reach the old offset.
+  // Restore the visible message, even when estimated heights cannot reach the old offset.
   // Heap is Chromium-only, diagnostic, and sampled after GC at an equivalent
   // warm route; never present unsupported WebKit metrics as zero.
   const cdp =

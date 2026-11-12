@@ -12,7 +12,7 @@ import {
   withoutStartingAgents,
 } from "./membership-rows";
 import { MembershipRow } from "./MembershipRow";
-import { geometrySignature } from "./geometry";
+import { rowSignature } from "./geometry";
 const wes = "a".repeat(64),
   pinky = "b".repeat(64),
   brain = "c".repeat(64);
@@ -290,19 +290,16 @@ it.each([false, true])(
   },
 );
 it("actor/subject profile enrichment invalidates cached system-row geometry", () => {
-  const rows = [row("a", joined(wes, pinky))];
-  const original = geometrySignature(rows, profiles);
+  const event = row("a", joined(wes, pinky));
+  const original = rowSignature(event, profiles);
   expect(
-    geometrySignature(
-      rows,
+    rowSignature(
+      event,
       new Map([...profiles, [pinky, { name: "Longer Pinky" }]]),
     ),
   ).not.toBe(original);
   expect(
-    geometrySignature(
-      rows,
-      new Map([...profiles, [wes, { name: "Longer Wes" }]]),
-    ),
+    rowSignature(event, new Map([...profiles, [wes, { name: "Longer Wes" }]])),
   ).not.toBe(original);
 });
 it("member names open the subject's and the actor's profiles when the host can", () => {

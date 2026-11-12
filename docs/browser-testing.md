@@ -336,12 +336,13 @@ it does not impose a runner-dependent latency threshold or guarantee latency.
 ## Reading-position contract
 
 View intent stores `{offset,bottom,anchor?:{id,y}}`, partitioned by community/viewer
-and channel. Cold or oversized geometry uses the saved message ID and its row Y
-with Virtua's index-based scrolling. Old offset-only records and anchors no longer
+and channel. Restoration uses the saved message ID and its row Y with Virtua's
+index-based scrolling, whether or not row heights are cached. Old offset-only records and anchors no longer
 in the retained window fall back to the saved offset; this may clamp and cannot
 promise the same message. No extra history is loaded just to recover an anchor.
-Measured geometry stays in memory, with the unchanged three-entry / 256KiB
-signature limits in `src/features/messages/geometry.ts`.
+Measured row heights stay in memory for three channels, per row, while that
+row's content, layout context and the layout width are unchanged
+(`src/features/messages/geometry.ts`). Rows without a cached height are estimated.
 
 Panel opening/closing and viewport resizing preserve bottom intent or the visible
 reading anchor. Restoration-generated scrolls retain that message while its row

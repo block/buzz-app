@@ -88,7 +88,7 @@ function fixture() {
         )
           throw new Error("Solo catalog unavailable");
         return [
-          metadata(relayKey, id, "Work", clock, [
+          metadata(relayKey, id, "Work-team", clock, [
             ["t", "stream"],
             ...labels.map((label) => ["t", label]),
             ["private"],
@@ -197,7 +197,7 @@ it("confirms the label change before removing only its project assignment", asyn
   ]);
   expect(f.publish.mock.calls[0]?.[0].tags).toEqual([
     ["h", id],
-    ["name", "Work"],
+    ["name", "Work-team"],
     ["about", "Notes"],
     ["t", "label"],
   ]);
@@ -208,7 +208,7 @@ it("confirms the label change before removing only its project assignment", asyn
   });
   const details = await f.session.channelDetails.load(id);
   expect(details).toMatchObject({
-    name: "Work",
+    name: "Work-team",
     description: "Notes",
     ttlSeconds: 86400,
     labels: ["label"],

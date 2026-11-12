@@ -23,6 +23,7 @@ export function appClient(
      * directory. */
     read(path: string): Promise<Uint8Array>;
     relayAuthor?: string | undefined;
+    relayUrl?: string | undefined;
     signingAuthority?: string | undefined;
     memories(slug?: string): Promise<Memories>;
     /** Forget a read that may have started before a successful memory write. */
@@ -104,6 +105,7 @@ export function appClient(
     key: agent.key,
     owner: agent.owner,
     relayAuthor: options.relayAuthor,
+    relayUrl: options.relayUrl,
     signingAuthority: options.signingAuthority,
     attention: agent.attention && {
       enabled: () => {

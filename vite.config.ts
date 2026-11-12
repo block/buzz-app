@@ -115,6 +115,11 @@ export default defineConfig(async ({ command, mode }) => {
     .filter(Boolean)
     .map(relayOrigin)
     .join(" ");
+  const channelNamingCommunities = (env.BUZZ_CHANNEL_NAMING_COMMUNITIES ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(relayOrigin)
+    .join(" ");
   // Public routing configuration only; the viewer pin and credentials stay in Node.
   const defaultRelay = env.BUZZ_RELAY_URL?.trim();
   const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
@@ -213,6 +218,12 @@ export default defineConfig(async ({ command, mode }) => {
       ),
       "import.meta.env.VITE_BUZZ_WORKFLOW_RESTRICTED_COMMUNITIES":
         JSON.stringify(workflowRestrictedCommunities),
+      "import.meta.env.VITE_BUZZ_CHANNEL_NAMING_COMMUNITIES": JSON.stringify(
+        channelNamingCommunities,
+      ),
+      "import.meta.env.VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL": JSON.stringify(
+        env.BUZZ_CHANNEL_NAMING_GUIDELINES_URL ?? "",
+      ),
       "import.meta.env.VITE_BUZZ_BUILDERLAB_URL": JSON.stringify(builderlabUrl),
       "import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY": JSON.stringify(
         federatedUrl === undefined ? "0" : "1",

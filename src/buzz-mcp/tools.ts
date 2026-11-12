@@ -4,6 +4,8 @@ import { messageAuthor } from "../features/relay/fold";
 // session pays for them in context. Each tool answers in plain text.
 import { decode, npubEncode } from "nostr-tools/nip19";
 import buzzHelp from "../../docs/buzz-help.md?raw";
+import { namingRulesApply } from "../bundled/channels/channel-naming-policy";
+import { channelNameTips } from "../bundled/channels/channel-name-tips";
 import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import {
   canonicalDetailsName,
@@ -1757,6 +1759,18 @@ class Tools {
     const solo = args.solo === true;
     if (!solo && args.members !== undefined)
       throw new Error("members is for Solo chats.");
+    // Solo chats are private working spaces, so the naming rules are for channels.
+    if (!solo && namingRulesApply(this.client.relayUrl)) {
+      const { blockers } = channelNameTips({
+        name,
+        temporary: ttl !== undefined && ttl > 0,
+        description: about ?? "",
+      });
+      if (blockers.length)
+        throw new Error(
+          `Channel name "${name}" needs a fix: ${blockers.join(" ")} Names look like team-purpose or proj-name.`,
+        );
+    }
     const members = keys(args, "members").filter(
       (key) => key !== this.client.pubkey,
     );

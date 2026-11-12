@@ -138,6 +138,8 @@ export interface BuzzClient {
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
+  /** The relay this client talks to, when known. */
+  readonly relayUrl?: string | undefined;
   readonly signingAuthority?: string | undefined;
   /** Reads the community as the agent. Every filter names its kinds. */
   query(filters: readonly Filter[]): Promise<readonly BuzzEvent[]>;

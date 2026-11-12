@@ -1032,14 +1032,12 @@ pub fn run() {
                     eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
                 }
             }
-            // Only the installed app owns the link: a development build's would
-            // dangle once its worktree goes, and an AppImage's path is a mount
-            // that ends when it quits.
             #[cfg(unix)]
-            if !tauri::is_dev()
-                && app.config().identifier == sign_out::legacy_identifier::CURRENT
-                && std::env::var_os("APPIMAGE").is_none()
-            {
+            if cli_link::owns(
+                cli_link::development(),
+                &app.config().identifier,
+                std::env::var_os("APPIMAGE").is_some(),
+            ) {
                 let cli = app
                     .path()
                     .resource_dir()

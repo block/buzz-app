@@ -14,8 +14,16 @@ afterEach(() => {
 });
 it("re-arms only explicit current reveals using the latest location and preserves manual scrolling otherwise", () => {
   let sidebar: ReturnType<typeof useSidebarView> | undefined;
-  function View({ location, ready }: { location?: string; ready: boolean }) {
-    sidebar = useSidebarView("fixture", ready, location);
+  function View({
+    location,
+    ready,
+    preserve = false,
+  }: {
+    location?: string;
+    ready: boolean;
+    preserve?: boolean;
+  }) {
+    sidebar = useSidebarView("fixture", ready, location, preserve);
     return (
       <>
         <button type="button" onClick={sidebar.revealAgain}>
@@ -66,4 +74,9 @@ it("re-arms only explicit current reveals using the latest location and preserve
   view.rerender(<View ready />);
   fireEvent.click(screen.getByText("Reveal current"));
   expect(viewport.scrollTop).toBe(0);
+  view.rerender(<View location="source" ready preserve />);
+  sidebar?.retryReveal();
+  expect(viewport.scrollTop).toBe(0);
+  view.rerender(<View location="source" ready />);
+  expect(viewport.scrollTop).toBe(160);
 });

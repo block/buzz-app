@@ -106,6 +106,7 @@ export function DecisionsSettings({
   // focus is in this section, then hand it to the selected provider's radio,
   // or the section itself, if the update dropped it.
   const section = useRef<HTMLElement>(null);
+  const setupForm = useRef<HTMLDivElement>(null);
   const hadFocus = useRef(false);
   useEffect(
     () =>
@@ -385,28 +386,35 @@ export function DecisionsSettings({
           }
           dismissOnOutsideClick
           onOpenChange={(open) => !open && setPicked(undefined)}
+          initialFocus={
+            selected.key === ownKey.key
+              ? () => setupForm.current?.querySelector("input") ?? null
+              : undefined
+          }
           finalFocus={() =>
             section.current?.querySelector<HTMLElement>('[role="combobox"]') ??
             section.current
           }
         >
-          <OwnedContribution
-            entry={selected}
-            registry={{ snapshot: decisions.providers }}
-            fallback={<p role="alert">TypeSafe settings are unavailable.</p>}
-          >
-            {(entry, owned) => {
-              const Settings = entry.Settings;
-              return (
-                Settings && (
-                  <Settings
-                    active={() => active() && owned()}
-                    grouped={false}
-                  />
-                )
-              );
-            }}
-          </OwnedContribution>
+          <div ref={setupForm}>
+            <OwnedContribution
+              entry={selected}
+              registry={{ snapshot: decisions.providers }}
+              fallback={<p role="alert">TypeSafe settings are unavailable.</p>}
+            >
+              {(entry, owned) => {
+                const Settings = entry.Settings;
+                return (
+                  Settings && (
+                    <Settings
+                      active={() => active() && owned()}
+                      grouped={false}
+                    />
+                  )
+                );
+              }}
+            </OwnedContribution>
+          </div>
         </Dialog>
       )}
     </section>

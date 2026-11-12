@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
 import type { ReactNode } from "react";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -377,7 +384,16 @@ it("offers Builderlab first and reveals key setup without switching until ready"
   const decisions = fake(
     [
       { key: builderlab, status: "ready" },
-      { key: TYPESAFE, status: "needs-setup" },
+      {
+        key: TYPESAFE,
+        status: "needs-setup",
+        Settings: () => (
+          <>
+            <p>Settings for typesafe</p>
+            <input aria-label="TypeSafe API key" />
+          </>
+        ),
+      },
     ],
     builderlab,
   );
@@ -403,6 +419,9 @@ it("offers Builderlab first and reveals key setup without switching until ready"
       { name: "console.typesafe.ai" },
     ),
   ).toHaveAttribute("href", "https://console.typesafe.ai/keys");
+  await waitFor(() =>
+    expect(screen.getByLabelText("TypeSafe API key")).toHaveFocus(),
+  );
   expect(screen.getByText("Settings for typesafe")).toBeVisible();
   expect(decisions.chosen()).toBe(builderlab);
   await user.click(screen.getByRole("button", { name: "Close" }));

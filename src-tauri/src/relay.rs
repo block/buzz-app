@@ -351,7 +351,10 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
             return Err("Relay authentication does not match this community".into());
         }
     } else if event.kind == 5 {
-        if !valid_message_deletion(event) && !valid_managed_agent_deletion(event) {
+        if !valid_message_deletion(event)
+            && !valid_reaction_deletion(event)
+            && !valid_managed_agent_deletion(event)
+        {
             validate_workflow_template(event)?;
         }
     } else if matches!(event.kind, 30620 | 46020) {
@@ -391,6 +394,39 @@ fn validate_event(community: &str, event: &EventTemplate) -> Result<()> {
         };
         if !event.content.is_empty() || !scoped {
             return Err("Invalid typing indicator".into());
+        }
+    } else if event.kind == 48103 {
+        let body = serde_json::from_str::<serde_json::Value>(&event.content).ok();
+        let room = body
+            .as_ref()
+            .and_then(|body| body.get("ephemeral_channel_id"))
+            .and_then(|id| id.as_str());
+        let tags: Vec<_> = event
+            .tags
+            .iter()
+            .filter(|tag| !matches!(tag.first().map(String::as_str), Some("client-id" | "ms")))
+            .collect();
+        let valid = event
+            .tags
+            .iter()
+            .all(|tag| match tag.first().map(String::as_str) {
+                Some("client-id") => {
+                    matches!(tag.as_slice(), [_, id] if uuid::Uuid::parse_str(id).is_ok())
+                }
+                Some("ms") => {
+                    matches!(tag.as_slice(), [_, ms] if ms.parse::<u16>().is_ok_and(|ms| ms < 1000))
+                }
+                _ => true,
+            })
+            && matches!(tags.as_slice(), [tag] if matches!(tag.as_slice(), [name, parent]
+            if name == "h" && uuid::Uuid::parse_str(parent).is_ok()
+                && room.is_some_and(|room| room != parent && uuid::Uuid::parse_str(room).is_ok())))
+            && body
+                .as_ref()
+                .and_then(|body| body.as_object())
+                .is_some_and(|body| body.len() == 1);
+        if !valid {
+            return Err("Invalid Huddle ending".into());
         }
     } else if event.kind == 20003 {
         // Owner presence for agents: a status and one `p` tag per agent; the
@@ -502,6 +538,37 @@ fn valid_managed_agent_deletion(event: &EventTemplate) -> bool {
         && parts.next().is_some_and(hex_key)
         && parts.next().is_some_and(hex_key)
         && parts.next().is_none()
+}
+
+/** One reaction outside any channel, such as a star on a shared agent. Like
+ * every kind-5 without `h`, the relay derives scope from the single target and
+ * deletes it only for its author. */
+fn valid_reaction_deletion(event: &EventTemplate) -> bool {
+    event.kind == 5
+        && event.content.is_empty()
+        && event.created_at <= 9_007_199_254_740_991
+        && event
+            .tags
+            .iter()
+            .all(|tag| tag.len() == 2 && tag[1].len() <= 256)
+        && event
+            .tags
+            .iter()
+            .all(|tag| matches!(tag[0].as_str(), "e" | "k" | "client-id"))
+        && ["e", "k"]
+            .iter()
+            .all(|name| event.tags.iter().filter(|tag| tag[0] == *name).count() == 1)
+        && event
+            .tags
+            .iter()
+            .filter(|tag| tag[0] == "client-id")
+            .count()
+            <= 1
+        && event.tags.iter().any(|tag| tag[0] == "k" && tag[1] == "7")
+        && event
+            .tags
+            .iter()
+            .any(|tag| tag[0] == "e" && hex_key(&tag[1]))
 }
 
 /** Keep the shared kind-5 writer aligned with the broker's channel-local deletion shape. */

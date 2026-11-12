@@ -406,6 +406,7 @@ export function ModelSettings({
             >
               <Field
                 label="Instructions"
+                description={`Up to ${MAX_INSTRUCTIONS_LENGTH.toLocaleString("en-US")} characters.`}
                 error={
                   hasAccess && !validInstructions(instructions)
                     ? "Use text or leave this empty."

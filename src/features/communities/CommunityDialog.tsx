@@ -204,6 +204,13 @@ export function CommunityDialog({
   }
   async function submit() {
     if (uploading || unavailable) return;
+    // Continue is a person's action, so it asks the community's issuer
+    // again instead of repeating a refusal cached this session (even one an
+    // edit has since cleared from view). A community native can't route
+    // (not a secure origin) has none cached.
+    const askAgain = async (url: string) => {
+      await federatedIdentity?.askAgain?.(url)?.catch(() => {});
+    };
     if (step === "destination") {
       await work(async (signal) => {
         const entered = parsePastedInvite(url);
@@ -220,6 +227,7 @@ export function CommunityDialog({
           setNeedsInvite(true);
         }
         setDestination(next);
+        await askAgain(next.url);
         // Transport text names neither the host nor a next step, and differs by engine.
         const explained = (reason: unknown) =>
           isTransientFailure(reason)
@@ -281,7 +289,10 @@ export function CommunityDialog({
       });
     } else if (step === "access") {
       if (!allowed || !destination) return;
-      await work(() => admit(id, destination.url, policy));
+      await work(async () => {
+        await askAgain(destination.url);
+        await admit(id, destination.url, policy);
+      });
     } else {
       if (!profile.name.trim()) return;
       await work(async () => {
@@ -290,6 +301,7 @@ export function CommunityDialog({
         else {
           if (!destination || !original)
             throw new Error("Choose a community first");
+          await askAgain(destination.url);
           const done = await completeJoin({
             community: id,
             membership: {
@@ -602,6 +614,8 @@ export function CommunityDialog({
                 error={error}
                 relay={destination?.url}
                 memberships={client.memberships}
+                // Continue asks the issuer again (`askAgain` in submit).
+                asksAgain={!!federatedIdentity?.askAgain}
                 // Sign-in only clears the refusal: Continue then runs the current
                 // step with current input, never one captured before the login.
                 retry={() => setError("")}

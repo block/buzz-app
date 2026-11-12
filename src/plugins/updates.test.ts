@@ -396,6 +396,12 @@ it("requires the managed commit and removes a candidate when its source changes"
   });
   const updates = createPluginUpdates(f.manager, f.authorize);
   await updates.check();
+  expect(f.checkGit).toHaveBeenCalledWith(
+    "https://example.com/plugins.git",
+    "release",
+    undefined,
+    { commit: "b".repeat(40) },
+  );
   expect(updates.snapshot()[0]?.error).toContain("managed commit");
   expect(f.imports.install).not.toHaveBeenCalled();
   f.preview.commit = "b".repeat(40);
@@ -455,7 +461,7 @@ it("checks a saved Git source after its recommendation is removed", async () => 
   updates.dispose();
 });
 
-it("reuses discovery for plugins in the same repository and reference", async () => {
+it("reuses discovery only for plugins with the same repository, reference and folder", async () => {
   const f = fixture();
   const configuration = f.get();
   if (configuration.status !== "ready") throw new Error("Expected catalog");
@@ -467,6 +473,10 @@ it("reuses discovery for plugins in the same repository and reference", async ()
     manifest: { ...f.plugin.manifest, id: "example.other" },
     updateSource: { ...source, path: "other" },
   };
+  const twin = {
+    ...f.plugin,
+    manifest: { ...f.plugin.manifest, id: "example.twin" },
+  };
   const stable = {
     ...f.plugin,
     manifest: { ...f.plugin.manifest, id: "example.stable" },
@@ -474,19 +484,29 @@ it("reuses discovery for plugins in the same repository and reference", async ()
   };
   f.preview.candidates.push(
     { path: "other", manifest: other.manifest, revision: "other-new" },
+    { path: ".", manifest: twin.manifest, revision: "twin-new" },
     { path: ".", manifest: stable.manifest, revision: "stable-new" },
   );
   f.set({
     ...configuration,
-    catalog: { ...configuration.catalog, plugins: [f.plugin, other, stable] },
+    catalog: {
+      ...configuration.catalog,
+      plugins: [f.plugin, other, twin, stable],
+    },
   });
   const updates = createPluginUpdates(f.manager, f.authorize);
   await updates.check();
   expect(
     updates.snapshot().map((update) => update.candidate?.revision),
-  ).toEqual(["new", "other-new", "stable-new"]);
-  expect(f.checkGit).toHaveBeenCalledTimes(2);
-  expect(f.authorize).toHaveBeenCalledTimes(2);
+  ).toEqual(["new", "other-new", "twin-new", "stable-new"]);
+  expect(f.checkGit).toHaveBeenCalledTimes(3);
+  expect(f.authorize).toHaveBeenCalledTimes(3);
+  expect(f.checkGit).toHaveBeenCalledWith(
+    source.repository,
+    source.reference,
+    undefined,
+    { path: "other" },
+  );
   updates.dispose();
 });
 

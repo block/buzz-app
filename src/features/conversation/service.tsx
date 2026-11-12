@@ -27,10 +27,12 @@ import type {
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
+  ComposerAnnotator,
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
   MessageRenderer,
+  IdentityMark,
   MessageAction,
   ContributionReader,
   PageTabsProps,
@@ -71,6 +73,9 @@ export type Conversation = {
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
   registerCompletion(provider: ComposerCompletion): void;
+  annotators: ContributionReader<ComposerAnnotator>;
+  /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
+  registerAnnotator(annotator: ComposerAnnotator): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
@@ -82,6 +87,8 @@ export type Conversation = {
   registerCodeBlock(renderer: CodeBlockRenderer): void;
   actions: ContributionReader<MessageAction>;
   registerMessageAction(action: MessageAction): void;
+  identityMarks: ContributionReader<IdentityMark>;
+  registerIdentityMark(mark: IdentityMark): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
@@ -129,12 +136,14 @@ function validate(
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
+    | ComposerAnnotator
     | ComposerAccessory
     | LinkRenderer
     | LinkPreviewRenderer
     | CodeBlockRenderer
     | MessageRenderer
-    | MessageAction,
+    | MessageAction
+    | IdentityMark,
 ) {
   if (
     !value ||
@@ -157,6 +166,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly accessoryEntries;
   readonly completions;
   private readonly completionEntries;
+  readonly annotators;
+  private readonly annotatorEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
@@ -168,6 +179,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly codeBlockEntries;
   readonly actions;
   private readonly actionEntries;
+  readonly identityMarks;
+  private readonly identityMarkEntries;
   private readonly tabEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
@@ -201,6 +214,12 @@ export class ConversationService extends Service implements Conversation {
       snapshot: completions.snapshot,
       subscribe: completions.subscribe,
     };
+    const annotators = createContributions<ComposerAnnotator>(ctx);
+    this.annotatorEntries = annotators;
+    this.annotators = {
+      snapshot: annotators.snapshot,
+      subscribe: annotators.subscribe,
+    };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
     this.inlineEntries = inline;
@@ -224,6 +243,12 @@ export class ConversationService extends Service implements Conversation {
     const actions = createContributions<MessageAction>(ctx);
     this.actionEntries = actions;
     this.actions = { snapshot: actions.snapshot, subscribe: actions.subscribe };
+    const identityMarks = createContributions<IdentityMark>(ctx);
+    this.identityMarkEntries = identityMarks;
+    this.identityMarks = {
+      snapshot: identityMarks.snapshot,
+      subscribe: identityMarks.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
@@ -290,6 +315,10 @@ export class ConversationService extends Service implements Conversation {
       throw new Error("A message action needs a matcher");
     this.actionEntries.register(this.ctx, value);
   }
+  registerIdentityMark(value: IdentityMark) {
+    validate(value);
+    this.identityMarkEntries.register(this.ctx, value);
+  }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);
     if (typeof value.matches !== "function")
@@ -333,6 +362,10 @@ export class ConversationService extends Service implements Conversation {
     if (typeof value.match !== "function")
       throw new Error("A completion provider needs a matcher");
     this.completionEntries.register(this.ctx, value);
+  }
+  registerAnnotator(value: ComposerAnnotator) {
+    validate(value);
+    this.annotatorEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

@@ -201,6 +201,7 @@ export interface BuzzClient {
  * this channel's messages out of threads. With no `root`, or with
  * `wholeChannel`, its session is the whole channel. */
 export type Context = Readonly<{
+  session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;
   root?: string;
   topLevel?: boolean;

@@ -1,6 +1,8 @@
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 import type { ComposerToken } from "./composer-token";
+import type { AnnotationMark } from "./composer-annotations";
+import type { AnnotationObservation } from "../conversation/contracts";
 
 export const inlineFormats = [
   {
@@ -152,4 +154,24 @@ export type ComposerInputElement = HTMLDivElement & {
   reset(draft: MentionDraft): void;
   /** Retain this editor's document, selection and undo state across a temporary edit. */
   checkpoint(): () => void;
+  /** The shown annotations that are actionable: none after an edit, and none
+   * of a publication once it is withdrawn or replaced. */
+  readonly shownAnnotations: readonly AnnotationMark[];
+  /** The draft annotators may mark now, or null while the editor is unfocused,
+   * not editable or composing. */
+  annotationObservation(): AnnotationObservation | null;
+  /** Underline validated marks for `revision`; an empty list clears them. */
+  showAnnotations(revision: number, marks: readonly AnnotationMark[]): boolean;
+  /** Replace a shown mark's text with one of its replacements, in one undo step. */
+  replaceAnnotation(
+    revision: number,
+    target: Readonly<{ start: number; end: number; text: string }>,
+    replacement: string,
+  ): boolean;
 };
+/** The person asked for the actions on a shown annotation. */
+export type AnnotationMenuRequest = Readonly<{
+  revision: number;
+  mark: AnnotationMark;
+  anchor: Readonly<{ getBoundingClientRect(): DOMRect }>;
+}>;

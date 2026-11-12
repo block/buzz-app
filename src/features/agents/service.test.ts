@@ -3386,6 +3386,89 @@ it("leaves a plugin's note for an agent's next turn in a channel, once, while th
   ]);
 });
 
+it("takes plugin instructions of at most 4 KB of UTF-8 text", async () => {
+  const { ctx } = await setup();
+  const { agents } = ctx.extend({
+    pluginOwner: Object.freeze({ id: "buzz.big", revision: "bundled" }),
+  });
+  // "é" is two bytes; the surrounding spaces are trimmed before measuring.
+  for (const text of ["x".repeat(4097), "é".repeat(2049)])
+    expect(() => agents.addInstructions({ id: "rules", text })).toThrow(
+      /over 4096 bytes/,
+    );
+  expect(() =>
+    agents.addInstructions({ id: "rules", text: ` ${"é".repeat(2048)} ` }),
+  ).not.toThrow();
+});
+
+it("gives plugins' instructions to every turn of the agents they choose, until the plugin goes", async () => {
+  const { service, ctx, run, emit } = await setup();
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  for (const bad of [
+    { id: "Not An Id", text: "x" },
+    { id: "rules", text: "  " },
+    { id: "rules", text: "x", when: true as never },
+  ])
+    expect(() => owner("buzz.bad").agents.addInstructions(bad)).toThrow(
+      /Agent instructions need/,
+    );
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const zeta = owner("buzz.zeta").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) =>
+      plugin.agents.addInstructions({ id: "rules", text: "Zeta rules." }),
+  });
+  const alpha = owner("buzz.alpha").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => {
+      plugin.agents.addInstructions({
+        id: "echo",
+        text: "Only Echo.",
+        when: (agent) => agent.name === "Echo",
+      });
+      plugin.agents.addInstructions({
+        id: "other",
+        text: "Only Other.",
+        when: (agent) => agent.name === "Other",
+      });
+      plugin.agents.addInstructions({
+        id: "async",
+        text: "Never either.",
+        when: (async () => true) as never,
+      });
+      plugin.agents.addInstructions({
+        id: "broken",
+        text: "Never.",
+        when: () => {
+          throw new Error("no");
+        },
+      });
+    },
+  });
+  await Promise.all([zeta, alpha]);
+  await service.create({ type: "example/echo", name: "Echo" });
+  emit({ events: [event("1", { tags: [["p", bot]] })] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const agent = run.mock.calls[0]?.[0].agent;
+  // Ordered by plugin, whatever order they started in; asked again each time.
+  expect(agent?.instructions?.()).toEqual([
+    { plugin: "buzz.alpha", text: "Only Echo." },
+    { plugin: "buzz.zeta", text: "Zeta rules." },
+  ]);
+  expect(agent?.instructions?.()).toHaveLength(2);
+  expect(warn).toHaveBeenCalledWith(
+    "Agent instructions failed to match",
+    "buzz.alpha/broken",
+    expect.any(Error),
+  );
+  await zeta.dispose();
+  expect(agent?.instructions?.()).toEqual([
+    { plugin: "buzz.alpha", text: "Only Echo." },
+  ]);
+  warn.mockRestore();
+});
+
 it("keeps a plugin's note from posing as a turn's event", async () => {
   const { service, ctx, run, emit } = await setup();
   await service.create({ type: "example/echo", name: "Echo" });
@@ -5874,6 +5957,7 @@ it("reads the list again on refresh and clears the error a failed read left", as
         relayUrl: "wss://relay.example.test",
         owner: viewer,
         picture: "https://cdn.example.test/echo.png",
+        type: "example/echo",
       },
     ],
   });

@@ -276,6 +276,14 @@ it("keeps the Builderlab mark when no shared Harness control is supplied", async
   expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
 });
 
+it("shows the instruction limit as accessible field help", async () => {
+  await fixture();
+  expect(
+    screen.getByRole("textbox", { name: "Instructions" }),
+  ).toHaveAccessibleDescription("Up to 20,000 characters.");
+  expect(screen.getByText("Up to 20,000 characters.")).toBeVisible();
+});
+
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
   const h = await fixture({ instructions: "Saved instructions." });
   expect(screen.getByRole("button", { name: /^Model:/ })).toHaveTextContent(

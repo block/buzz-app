@@ -1,4 +1,10 @@
 import { followUpQueue } from "../messages/follow-up-queue";
+import {
+  createSessionAdmissions,
+  type AgentSessionRouter,
+  type AgentSessionAssociation,
+  type AgentSessionSource,
+} from "./session-admission";
 import type {} from "../navigation/service";
 import {
   createAgentExecutions,
@@ -379,6 +385,22 @@ export type AgentAddedTab = Readonly<{
   subscribe?: (listener: () => void) => () => void;
 }>;
 export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
+/** Standing instructions a plugin gives every turn of every agent this copy
+ * of the app runs, or of those `when` accepts, while the plugin is on. */
+export type AgentInstructions = Readonly<{
+  id: string;
+  /** Sent with every turn, so keep it short: at most 4 KB (UTF-8). */
+  text: string;
+  /** Whether the agent's turns get them; absent, every agent's do. Asked as
+   * each turn's prompt is built. A `when` that throws leaves out only these. */
+  when?: (agent: Agent) => boolean;
+}>;
+/** Most UTF-8 bytes one `AgentInstructions` text may have, after trimming.
+ * It goes with every turn, so this matches a watch classifier's true/false
+ * text, not the once-a-session blocks such as agent instructions. */
+const INSTRUCTIONS_TEXT_LIMIT = 4 * 1024;
+/** Instructions for one turn, with the plugin that gave them. */
+export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
@@ -565,6 +587,8 @@ export type AgentHandle = Readonly<{
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
+  /** The instructions plugins give the agent's turns now, in a stable order. */
+  instructions?(): readonly TurnInstructions[];
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -695,6 +719,18 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
 export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
+  session?: AgentSessionAssociation;
+  sessionContext?: string;
+  /** The native adapter calls this after authority and conversation checks. */
+  prepareSession?(
+    placement: Readonly<{
+      source: AgentSessionSource;
+      conversation: AgentSessionSource;
+    }>,
+    deferred?: boolean,
+  ): Promise<
+    Readonly<{ session: AgentSessionAssociation; context?: string }> | undefined
+  >;
   /** The live route's channel; absent when the wire scope was ambiguous. */
   channelId?: string;
   agent: AgentHandle;
@@ -753,7 +789,10 @@ export type Effort = Readonly<{ id: string; label: string }>;
 export type SessionAction = "compact" | "new";
 /** Immediate controls for an existing conversation; separate from run picks. */
 export type SessionControlAction = SessionAction | "interrupt";
-export type SessionPlace = Readonly<{ channelId: string; root?: string }>;
+export type SessionPlace = Readonly<{
+  channelId: string;
+  root?: string;
+}>;
 export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
   id: string;
@@ -841,6 +880,8 @@ export type AgentVoiceConnection = Readonly<{
 }>;
 
 export type AgentType<Config = unknown> = {
+  /** Carries Delivery.session into tool context and sessionContext into the prompt. */
+  sessionAdmission?: true;
   /** Huddles supplies a running agent owned by the current viewer.
    * Full-duplex voice on the existing room conversation; abort closes the pipe. */
   voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
@@ -951,6 +992,7 @@ export type AgentType<Config = unknown> = {
       agent: Agent<Config>,
       place: SessionPlace,
       action: SessionControlAction,
+      reset?: (change: () => Promise<void>) => Promise<void>,
     ): Promise<void>;
     subscribe(listener: () => void): () => void;
   };
@@ -1287,6 +1329,7 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
   bindExecution(
@@ -1349,6 +1392,10 @@ export type Agents = {
   createToolOperation(id: string): AgentToolProvider;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Adds standing instructions to every turn of the agents this copy of the
+   * app runs, or of those `when` accepts, while the plugin is on. Each turn
+   * shows them in a `<plugin-instructions>` section that names the plugin. */
+  addInstructions(instructions: AgentInstructions): void;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -1841,6 +1888,10 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  private readonly sessionAdmissions;
+  registerSessionRouter(router: AgentSessionRouter) {
+    this.sessionAdmissions.register(this.ctx, router);
+  }
   private readonly executions;
   private async checkExecution(key: AgentKey, type: string) {
     if (!(await this.executions.inspect(key))) return;
@@ -1933,6 +1984,7 @@ export class AgentsService extends Service implements Agents {
   private readonly attentionControls;
   private readonly addedTools;
   private readonly operationNames = new Set<string>();
+  private readonly addedInstructions;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
   private readonly attentionSources;
@@ -2062,12 +2114,17 @@ export class AgentsService extends Service implements Agents {
     private readonly deviceSettings?: DeviceSettings,
   ) {
     super(ctx, "agents");
+    this.sessionAdmissions = createSessionAdmissions(
+      ctx,
+      executionStorage(storage),
+    );
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
     this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
@@ -2153,6 +2210,26 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      prepareSession: async (agent, type, trigger, placement, signal) => {
+        if (
+          !type.sessionAdmission ||
+          (trigger.type !== "mention" &&
+            trigger.type !== "plugin" &&
+            trigger.type !== "attention")
+        )
+          return;
+        return this.sessionAdmissions.prepare({
+          agent: agent.key,
+          owner: agent.owner,
+          harness: agent.type,
+          ...placement,
+          invocationId:
+            trigger.type === "mention" ? trigger.event.id : trigger.id,
+          ...(trigger.type === "mention" ? { event: trigger.event } : {}),
+          resumed: trigger.type === "mention" && !!trigger.resumed,
+          signal,
+        });
+      },
       // Only the copy that runs an agent keeps its watched channels live.
       ownershipChanged: () => {
         this.attend(this.state.running);
@@ -2467,6 +2544,7 @@ export class AgentsService extends Service implements Agents {
         }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      instructions: (agent) => this.turnInstructions(agent),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -2950,6 +3028,43 @@ export class AgentsService extends Service implements Agents {
         release,
       };
     });
+  }
+  addInstructions(instructions: AgentInstructions) {
+    // What is checked is what is kept, whatever the object does later.
+    const { id, text, when } = instructions;
+    if (
+      !/^[a-z0-9][a-z0-9._-]*$/.test(id ?? "") ||
+      typeof text !== "string" ||
+      !text.trim() ||
+      (when !== undefined && typeof when !== "function")
+    )
+      throw new Error("Agent instructions need an id and text");
+    if (new TextEncoder().encode(text.trim()).length > INSTRUCTIONS_TEXT_LIMIT)
+      throw new Error(
+        `Agent instructions are over ${INSTRUCTIONS_TEXT_LIMIT} bytes`,
+      );
+    this.addedInstructions.register(
+      this.ctx,
+      when ? { id, text, when } : { id, text },
+    );
+  }
+  /** The instructions active plugins give this agent's turns now, ordered by
+   * plugin and id so the order plugins start in does not change a prompt. */
+  private turnInstructions(agent: Agent): readonly TurnInstructions[] {
+    const current = this.agent(agent.key) ?? agent;
+    return this.addedInstructions
+      .snapshot()
+      .filter((entry) => {
+        try {
+          // Only true admits them: an async `when` gives a Promise.
+          return !entry.when || entry.when(current) === true;
+        } catch (error) {
+          console.warn("Agent instructions failed to match", entry.key, error);
+          return false;
+        }
+      })
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map((entry) => ({ plugin: entry.pluginId, text: entry.text }));
   }
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
     const plugin = this.ctx.pluginOwner?.id;
@@ -3566,12 +3681,13 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ key, pubkey, name, relay, owner, picture }) =>
+          .map(({ key, pubkey, name, relay, owner, picture, type }) =>
             Object.freeze({
               pubkey,
               name,
               relayUrl: relay,
               owner,
+              type,
               ...(remote.has(key) ? { execution: "remote" as const } : {}),
               ...(picture ? { picture } : {}),
             }),
@@ -4563,6 +4679,21 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  private sessionPlace(
+    agent: Agent,
+    type: RegisteredAgentType,
+    source: SessionPlace,
+  ): SessionPlace {
+    const summary = this.channelOf(agent, { tags: [["h", source.channelId]] });
+    const whole =
+      summary?.channelType === "solo" ||
+      summary?.channelType === "dm" ||
+      type.sessionControls?.scope(agent) === "channel";
+    return {
+      channelId: source.channelId,
+      ...(!whole && source.root ? { root: source.root } : {}),
+    };
+  }
   sessionState(key: AgentKey, place: SessionPlace): SessionState {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
@@ -4573,7 +4704,12 @@ export class AgentsService extends Service implements Agents {
       this.runners.transitioning(key)
     )
       return "unavailable";
-    return type?.sessionControls?.state(agent, place) ?? "unavailable";
+    return (
+      type?.sessionControls?.state(
+        agent,
+        this.sessionPlace(agent, type, place),
+      ) ?? "unavailable"
+    );
   }
   async session(
     key: AgentKey,
@@ -4596,7 +4732,16 @@ export class AgentsService extends Service implements Agents {
       const current = shown();
       if (current?.type !== agent.type || !this.types().includes(type))
         throw new Error("The agent's harness changed. Try again.");
-      await type.sessionControls?.run(current, place, action);
+      const actual = this.sessionPlace(current, type, place);
+      await type.sessionControls?.run(
+        current,
+        actual,
+        action,
+        type.sessionAdmission
+          ? (change) =>
+              this.sessionAdmissions.reset(key, current.type, actual, change)
+          : undefined,
+      );
     });
   }
 

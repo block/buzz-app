@@ -130,6 +130,7 @@ async function fixture(firstAgent = false) {
       };
     },
     retry() {},
+    tryAgain() {},
     disconnect() {},
     async clearCache() {},
   };

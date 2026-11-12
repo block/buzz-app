@@ -970,6 +970,110 @@ it("keeps an explained access refusal hidden after Not now dismisses its switch"
   expect(screen.queryByText(/authorization-denied/)).toBeNull();
 });
 
+// NIP-FA: an issuer refusal is not retried automatically; Continue after one
+// is the user's retry, so it asks the issuer again.
+it("asks the community's issuer again before each Continue's request", async () => {
+  const user = userEvent.setup();
+  let refuse = true;
+  const order: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "info") order.push("info");
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info" && refuse)
+        return Response.json(
+          { error: "authorization-denied" },
+          { status: 403 },
+        );
+      if (route === "info")
+        return Response.json({ name: "Fixture", membershipRequired: true });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Local", picture: "" },
+    }),
+  } as unknown as Communities;
+  const h = federatedFixture();
+  vi.mocked(h.service.askAgain).mockImplementation(async (relay) => {
+    order.push(`ask again ${relay}`);
+  });
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={h.service}
+      mode="join"
+      close={() => {}}
+    />,
+  );
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
+    await screen.findByText(
+      "Your account does not have access to this community. Contact its administrator.",
+    ),
+  ).toBeVisible();
+  refuse = false;
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByLabelText("Invite code")).toBeInTheDocument();
+  expect(order).toEqual([
+    "ask again https://relay.example",
+    "info",
+    "ask again https://relay.example",
+    "info",
+  ]);
+});
+
+// Continue asks the issuer again, so an issuer refusal needn't wait for a restart.
+it("tells the person to try again after an issuer refusal, not to restart", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({ error: "grant-refused" }, { status: 403 });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const communities = {
+    snapshot: () => ({
+      status: "ready",
+      relayAvailable: true,
+      profile: { name: "Local", picture: "" },
+    }),
+  } as unknown as Communities;
+  const h = federatedFixture();
+  render(
+    <CommunityDialog
+      communities={communities}
+      federatedIdentity={h.service}
+      mode="join"
+      close={() => {}}
+    />,
+  );
+  await user.type(
+    screen.getByLabelText("Community URL"),
+    "wss://relay.example",
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  expect(
+    await screen.findByText(
+      "Buzz couldn’t confirm your organization sign-in for this community. Try again. If it keeps happening, contact your administrator.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText(/Restart Buzz/)).toBeNull();
+});
+
 it("offers federated sign-in when joining refuses for it, then lets Continue run the current step", async () => {
   const user = userEvent.setup();
   let refuse = true;

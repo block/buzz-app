@@ -142,21 +142,30 @@ open 'buzz://plugin-install?repository=OWNER%2FPLUGINS&path=plugins%2Fone&commit
 `path` names the plugin folder inside the repository. It is relative and
 `/`-separated; absolute paths, `.` or `..` segments, empty segments, backslashes and
 control characters make the link invalid, and an empty value or `.` means the
-repository root. The review then offers only that folder instead of asking you to
-choose, and refuses a repository with no plugin there.
+repository root. Native Git import receives it and lists only that folder of the
+commit, so the 20,000-entry limit applies to the folder rather than the whole
+repository. Candidate paths stay relative to the repository root, and a folder that
+does not exist at the commit is an error. The review then offers only that folder
+instead of asking you to choose, and refuses a repository with no plugin there.
 
 `commit` is a full 40- or 64-digit hex commit. It pins the link the same way
-`requestInstall` pins a plugin's request: the import refuses a reference whose tip is
-any other commit, the review checks the fetched commit again, and nothing installs
-unless it matches. A link that carries `path` or `commit` locks the repository and
-reference fields, so Find retries the same pinned source. Each of `repository`, `ref`,
-`path` and `commit` may appear once; a repeated key makes the link invalid.
+`requestInstall` pins a plugin's request: the import fetches that commit directly and
+refuses it unless it is reachable from the named reference (the repository default
+branch when `ref` is omitted), so a commit older than the reference's tip installs
+while one from another branch does not. The review checks the fetched commit again, and
+nothing installs unless it matches. A link that carries `path` or `commit` locks the
+repository, reference and folder fields, so Find retries the same pinned source. Each of
+`repository`, `ref`, `path` and `commit` may appear once; a repeated key makes the link
+invalid.
 
 `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
 a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
 downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
-review as a recommended plugin. It never mixes with the Git keys, and each key may
-appear once.
+review as a recommended plugin. A plugin installed from Git updates in place, and the
+review explains that the URL replaces the saved Git source. If the plugin is already
+installed from a folder or an unknown source, Buzz says so before downloading anything
+and offers **Open plugin**, where it can be deleted first. It never mixes with the Git keys, and
+each key may appear once.
 
 The link fetches a preview through the existing importer. Review the plugin and
 computer access, then select **Install plugin**. Opening the link does not install,
@@ -252,7 +261,8 @@ rollback, and restart. A saved choice overrides the plugin default.
 
 The desktop shell checks eligible saved Git sources at startup and once per hour
 while Buzz is visible. `imports.checkGit` reads metadata without taking the import
-preview slot. Checks do not install, reload, or stop a plugin. Folder sources
+preview slot, limited to the saved folder and, for a managed source, read at its
+pinned commit. Checks do not install, reload, or stop a plugin. Folder sources
 keep their existing update flow.
 
 A shell notice offers **Update and reload** when access does not increase.
@@ -382,8 +392,8 @@ type PluginInstaller = {
       | {
           repository: string; // https://, ssh:// or scp-style git URL
           reference: string; // branch or tag
-          path?: string; // relative folder inside the repository
-          commit?: string; // 40- or 64-hex; install exactly this commit
+          path?: string; // relative folder inside the repository; only it is read
+          commit?: string; // 40- or 64-hex; install exactly this commit, on `reference`
         }
       | {
           id: string; // the artifact's plugin ID
@@ -394,6 +404,9 @@ type PluginInstaller = {
   getInstallationStatus(
     id: string,
   ): "installed" | "absent" | "unavailable";
+  getInstallationSource?(
+    id: string,
+  ): "git" | "url" | "folder" | "bundled" | "absent" | "unavailable";
   subscribeInstallationStatus(
     id: string,
     listener: (status: "installed" | "absent" | "unavailable") => void,
@@ -565,6 +578,22 @@ installation or activation. It only means no review or operation from that
 lifetime remains, so any new submission goes through the current provider and
 the normal explicit review.
 
+`getInstallationSource` is also optional on older hosts. In a ready catalog it
+returns `absent` only when the manifest ID is missing. For a present plugin,
+`source: "bundled"` takes precedence and returns `bundled`; otherwise, a
+recognized saved `updateSource.repository`, `updateSource.url`, or
+`updateSource.root` returns `git`, `url`, or `folder`, respectively. Before the
+catalog is ready, or when a manifest ID is duplicated or saved source metadata
+is missing, unknown, malformed, or ambiguous, it returns `unavailable`.
+Git metadata follows the native saved-source contract, including SSH usernames
+such as `deploy+ci`, an empty reference (the repository default), and UTF-8
+plugin folder names with spaces. This does not widen `requestInstall` admission.
+The method returns no source location or other saved metadata, and does not
+check for or establish an update.
+Folder metadata is recognized only when its root is an
+absolute path without an embedded NUL and its plugin path is relative without
+parent components; ordinary path names may include spaces or Unicode.
+
 `requestInstall` never installs silently. It opens Settings → Plugins with the Git
 source prefilled and read-only, and the user still chooses **Find**, reviews the
 existing access review, and confirms. The promise resolves with what the user did:
@@ -587,7 +616,10 @@ install and still resolves `updated`.
 Hosts that accept only Git leave it out, so check it before requesting a URL source.
 A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
 its SHA-256 and plugin ID match, and shows the access review for the owner to
-confirm. It can install a new plugin or update one installed from a URL.
+confirm. It can install a new plugin or update one installed from a URL or Git.
+For Git installations, the review explains that the URL replaces the saved Git
+source. A plugin installed from a folder or an unknown source is refused before
+the download, as a link is.
 
 A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
@@ -595,9 +627,10 @@ including a local folder or an unknown one, is refused with a message naming bot
 sources; remove it first to install it from the new one. Dismissing the review of a
 plugin already at the requested revision resolves `cancelled`, because nothing was
 installed. The folder source is hidden while a request is open. When `commit` is
-given, the native Git import refuses a reference whose tip is any other commit, so a
-branch that moves after a catalog review cannot install unreviewed code, and the
-review checks the fetched commit again before offering to install.
+given, the native Git import fetches that commit and refuses it unless it is reachable
+from `reference`, so a branch that moves after a catalog review cannot install unreviewed
+code, a commit from another branch cannot be shown as on this one, and the review
+checks the fetched commit again before offering to install.
 
 ### Conversation sidebar sections
 
@@ -878,8 +911,11 @@ lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
 `call(client, context, args)` can read `client.signal`, a host-owned
-`AbortSignal` captured for that call. Native Claude and Codex cancel it on
-Stop. Keep that exact signal across waits. Pass it to work that supports
+`AbortSignal` captured for that call. Native Claude, Codex and Goose cancel it on
+Stop. Goose captures the current ACP work burst: steers share its signal, and
+Stop, eligible final-message settlement, normal completion, failure or session close abort
+it. Calls before a Goose session starts work or while idle receive an aborted
+signal; agent retirement also aborts captured calls. Keep that exact signal across waits. Pass it to work that supports
 cancellation, then call `signal.throwIfAborted()` before an external write.
 A new turn does not restore a canceled call. The supplied client also checks
 cancellation before it publishes. Stop cannot undo a write already sent.
@@ -889,6 +925,19 @@ refuse the call when it is absent. Do not infer cancellation from conversation
 activity. The signal is a live object, not part of saved tool arguments or
 session archives. `BuzzClient` from `@buzz/author` declares this property;
 `AddedToolContext` keeps only the conversation destination.
+
+A plugin, bundled or installed, can give standing instructions to the agents
+this copy of the app runs with `ctx.agents.addInstructions({ id, text, when?
+})`. Every turn then ends with a `<plugin-instructions plugin="…">` section for
+each plugin, before the attention note; Mesh agents, which build their own
+prompt, get none. The section names its plugin, and its text cannot open or
+close a section, so a transcript shows which plugin said what. The agent follows
+it below the base prompt and the owner's requests. Each turn carries the
+complete current set, replacing earlier turns', so turning the plugin off or a
+`when(agent)` that stops returning `true` ends them. Write the text yourself and
+keep it short: it is sent with every turn. `addInstructions` throws on text over
+4096 UTF-8 bytes after trimming. Context for one turn belongs in a note, which
+the agent reads as data.
 
 ### Agent operation proofs
 
@@ -1216,7 +1265,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows, Shared compute and Charts are off by default for fresh installs. Bestie,
+Workflows, Changesets, Shared compute and Charts are off by default for fresh installs. Bestie,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -1861,6 +1910,19 @@ absolute path without symbolic links, in the platform's ordinary form, and
 creates it if missing, as a process's `cwd` is. Both act with the user's full
 access; the import preview says so.
 
+`ctx.host.repositoryFolders(binding, signal)` lists the repositories folder that
+the binding's community and account configured in **Local settings**, or the
+default `~/.buzz/REPOS`. It returns immediate real directories as
+`{ name, path, displayPath }`, sorted by name, with absolute paths under the
+folder's canonical path. It follows a linked repositories folder but not linked
+children, never recurses or creates, and rejects past 4096 entries or a 1 MiB
+result, without a partial result. The plugin never names the path: the app
+renderer reads the preference and passes it to native code, which checks the
+`files` grant before any filesystem work. The app's own `!` folder chips use
+the same listing through a command for the trusted app renderer. A sent
+message carries its chips in one `buzz-tokens-v1` tag that only the app's
+composers sign; trust a chip only as far as you trust the message's author.
+
 Bundled host grants use the effective compiled manifest at revision `bundled` and
 require the plugin to be enabled in the native catalog. External grants require the
 enabled current artifact and its integrity checks; safe mode pauses external
@@ -2291,8 +2353,10 @@ does not sandbox plugin code or make a publisher trustworthy.
 
 Desktop Settings → Plugins → Manage plugins loads a folder with the native folder picker, or an
 HTTPS/SSH Git repository (including GitHub `owner/repository`). An optional branch
-or tag is separate from the repository URL; GitHub `tree` URLs are rejected with
-guidance rather than ambiguously splitting branch names and subfolders. Discovery
+or tag and an optional folder are separate from the repository URL; GitHub `tree` URLs
+are rejected with guidance rather than ambiguously splitting branch names and
+subfolders. With a folder, only that folder is listed (candidate paths stay relative to
+the repository root), which lets a very large repository import. Discovery
 lists built plugin folders by path, name and manifest ID, including nested `dist`
 folders. Choose one and explicitly install. An already-installed plugin offers
 Open in Buzz, which discards the preview and opens its installed details. Choosing
@@ -2361,8 +2425,8 @@ saved source keeps the entered URL. Other SSH sources use the desktop process's
 inherited `SSH_AUTH_SOCK`. SSH uses known hosts, with interactive prompts and SSH
 config disabled. For another agent selected by `IdentityAgent` in SSH config, add a
 rule with that socket, or launch the app with it in `SSH_AUTH_SOCK`.
-Each check reads metadata from its own temporary clone; only Update retains an
-immutable installation preview. The source
+Each check reads metadata from its own temporary repository, limited to the saved
+folder; only Update retains an immutable installation preview. The source
 follows the current revision through update and rollback. Rollback requires confirmation
 in Settings and consumes the previous revision: it cannot toggle forward again. The
 enabled/disabled choice is preserved; a later update establishes a new rollback target. Missing sources or changed
@@ -2389,20 +2453,32 @@ confine descendant path resolution. Files must be regular and non-symlink;
 manifests, modules, READMEs, signatures and candidate folder names must be UTF-8,
 while icons are validated as binary PNGs or JPEGs. Folder names are not lossily normalized.
 Discovery never evaluates modules. Git is a required local
-tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,
-submodules, LFS downloads or project scripts. Only HTTPS/SSH are allowed; inherited
+tool: a shallow, blobless, no-checkout repository reads committed blobs, without hooks,
+filters, submodules, LFS downloads or project scripts. Without a pinned commit it is a
+depth-1 clone of the reference tip. With one, Buzz initializes an empty repository and
+fetches only that commit and its trees, then fetches the reference's commit history
+without trees or blobs and requires `merge-base --is-ancestor` to succeed. A host that
+refuses to serve a commit by its ID falls back to the tip clone, and the pin must then
+equal the tip. Listing is limited to the requested folder with `ls-tree`, and the
+20,000-entry limit applies to that listing. The blobs Buzz needs are fetched together
+from the same remote on demand, and every Git process, including those lazy fetches,
+runs with the same disabled hooks, protocol allow list, authorization headers and SSH
+agent socket. The 256 MiB, 60 second and per-file limits cover all of it.
+
+Only HTTPS/SSH are allowed; inherited
 Git config, URL rewrites, credential helpers and interactive prompts are disabled.
 SSH uses the selected agent and known hosts, not user SSH config; password entry, HTTPS
 private-repo sign-in and custom SSH-config aliases are not supported in this slice.
 Repository URLs/refs are passed as arguments, not a shell command. Private/internal
 HTTPS hosts are not prohibited; this is not a public-network-only policy.
-A caller may require a commit: the import then refuses a reference that resolves to
-anything else, and records that commit in the saved source. An unpinned import records
+A caller may require a commit: the import then refuses a commit that is not reachable
+from the reference, and records that commit in the saved source. An unpinned import records
 no commit, so its registry stays readable by older versions.
 [Managed plugin sources](managed-plugins.md) use this.
 
 Git acquisition has a 60-second deadline (including blob discovery), an observed
-256 MiB repository limit and bounded command output; transport processes are killed
+256 MiB repository limit (the repository holds the fetched trees, commits and the
+blobs read, not a full checkout) and bounded command output; transport processes are killed
 on failure before temporary cleanup. These are polling limits, not hard OS quotas.
 Folder traversal checks a 60-second budget between directory reads (a hung filesystem
 syscall is not forcibly cancelled), 32 nesting levels and 20,000 entries. A preview
@@ -2569,6 +2645,21 @@ with an open action stays mounted while it scrolls out of view. Icon, component
 and marker failures each render nothing and leave the row and menu usable. The
 bundled Reminders plugin is the first consumer.
 
+`registerIdentityMark({ id, title, component })` adds presentation right after a
+person's name in the bundled @mention suggestions, such as an identity check that
+tells a person apart from a lookalike while choosing whom to mention. Other
+completion providers, group and channel suggestions, and message bylines get none.
+`component` receives `{ pubkey, profiles }`, where `profiles` is the session's
+shared profile directory. A directory entry's `verified` carries community
+verification when the community provides it, so a mark can read
+`profiles.snapshot().get(pubkey)?.verified` and subscribe to the directory to
+follow it. Marks decide for themselves whether to draw anything: return `null`
+for people they do not mark. The host owns the row, focus and selection; marks
+are presentation only and get no opener. Each mark renders in its own boundary,
+so a failing mark renders nothing and leaves the suggestion usable. Marks draw
+in registration order. A mark's text is part of the suggestion's name, so keep
+it to an icon with an accessible label.
+
 `placement: "toolbar"` puts the action in the host's message toolbar. The
 toolbar appears on hover and keyboard focus. The host supplies an icon button
 with the action title and icon. Activation mounts the same component as a menu
@@ -2628,15 +2719,16 @@ does not fetch metadata or infer a service from names in paths or query strings.
 Its `order` is a function: recognised services and Buzz entities claim the default
 band, the globe case the catch-all band, so a renderer dedicated to one website
 wins it at the default.
-It does not fetch titles. The bundled GitHub plugin contributes a pull request
-and issue renderer at a lower `order` for github.com pull request and issue
-URLs: the same label with the pull request's state (open, draft, merged,
+It does not fetch titles. The bundled GitHub plugin contributes a renderer at a
+lower `order` for github.com repository, pull request, issue and commit URLs.
+For pull requests and issues it shows the same label with the pull request's state (open, draft, merged,
 closed) or the issue's (open, closed as completed, closed as not planned) as a
 coloured icon, read with the person's `gh` sign-in or the public API and kept
 current while shown. A pasted pull request or issue URL is labelled
 `repo#number`, then `repo#number · title` once its title is read with that
-state; an authored label stays. Repositories and commits, and every
-pull request and issue link when that plugin is disabled, keep the Links
+state. A pasted repository URL is labelled `owner/repo` and a commit URL
+`repo@sha`, without reading anything; an authored label stays. Other GitHub
+pages, and every GitHub link when that plugin is disabled, keep the Links
 presentation. If the renderer fails, the link shows as a plain link.
 Messages currently recognize
 credential-free HTTP(S) and supported Buzz links. Markdown labels preserve their
@@ -3001,6 +3093,108 @@ metadata retain a neutral waveform. Disabling the plugin restores ordinary audio
 cards. The fixture at `/tests/fixtures/voice-notes.html` exercises the real recorder,
 composer and session with disposable local media; browser tests provide its local
 media response. Native microphone permissions were exercised in the staging app.
+
+### Composer annotators
+
+`ctx.conversation.registerAnnotator({ id, title, component })` lets a plugin
+mark ranges of the rich composer's prose and offer replacements for them, for
+example a spelling, grammar or style checker. The component is headless: the
+host mounts it for the focused composer and draws the marks, and the plugin
+owns everything else, including its checker, language, scheduling, timeouts,
+failure handling and the wording of labels and replacements. Annotators never
+edit the draft; the host replaces text only when the person picks a
+replacement. The native spell checker and the autocorrection preference are
+unchanged.
+
+```tsx
+import { useEffect } from "react";
+import type { ComposerAnnotatorProps, Context } from "@buzz/author";
+export const inject = ["conversation"];
+function Checker({ observation, publish }: ComposerAnnotatorProps) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Ranges inside `observation.prose`, in UTF-16 offsets into its text.
+      publish([]);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [observation, publish]);
+  return null;
+}
+export function apply(ctx: Context) {
+  ctx.conversation.registerAnnotator({
+    id: "example",
+    title: "Example checker",
+    component: Checker,
+  });
+}
+```
+
+The component receives the completion context (`session`, `scope`,
+`channelId`, `threadRootId`, `inviteAgents`) and an `observation` with the same
+disclosure as completion matching: the focused, enabled composer's editable
+text, never the caret, another editor or a draft that is not focused. It is
+frozen and keeps its identity for one document:
+
+- `text` is the editable-text projection completions see: formatting
+  delimiters removed, blocks and line breaks as `\n`, chips as their source.
+- `prose` lists the half-open UTF-16 ranges that are prose. Code, link labels,
+  raw Markdown code, link targets and HTML, mentions, chips and line breaks are
+  outside every range; bold, italic and other formatting do not split one.
+- `revision` changes with every document, even one with the same text.
+
+No observation is offered while the composer is unfocused, disabled, read-only
+or composing with an IME; a new one follows when the composition ends.
+
+`publish(annotations)` shows annotations for that observation, replacing the
+annotator's earlier ones, and returns a disposer that withdraws them; once the
+draft has moved on, a disposer leaves the marks following their text until the
+next publication, so cleanup per observation does not flicker. It returns
+`false`, showing nothing, once the draft has moved to another observation, the
+annotator has been removed or retired, or the value is not an array. Each
+annotation is `{ start, end, text, label, kind?, replacements? }`:
+
+- The host keeps an annotation only when `text` equals
+  `observation.text.slice(start, end)`, the range lies inside one prose range
+  and neither end splits a surrogate pair or grapheme cluster.
+- `label` (required, 1–120 UTF-16 units) says what is wrong and titles the
+  menu. `kind: "spelling"` or `"grammar"` sets `aria-invalid` to that value;
+  otherwise it is `"true"`.
+- `replacements` are `{ text, label? }`. The host keeps at most five, distinct
+  by `text`, of at most 64 UTF-16 units that differ from the marked text.
+  `label` defaults to `text` and is required when `text` is empty, which
+  deletes the range.
+- Text and labels have no surrounding whitespace and contain no control,
+  line-separator or bidirectional-formatting characters or lone surrogates.
+- The host reads at most 200 annotations per publication, keeps the one that
+  starts first of overlapping ones, lets earlier annotators win overlaps and shows at most 400
+  marks per editor, redrawing at most once per animation frame.
+
+Changing destination (channel, thread or edited message), disabling the
+composer, removing the annotator or a render error in it clears its marks and
+makes every earlier `publish` return `false`; a component error is contained
+like other contributions. Read-only and sending states keep shown marks inert.
+
+The host owns presentation: a wavy underline in the danger text color, hidden
+on the word being typed until the caret leaves it. Marks stay actionable only
+at the revision they were published for; after an edit a mark follows its
+unchanged text until the next publication and is removed once that text
+changes.
+
+Right-clicking a mark, or pressing Command-. (Ctrl+. elsewhere) with the caret
+in one, opens a host menu with the label and the replacements. Arrow keys and
+Enter choose, and Escape closes it. Focus returns to the composer. The menu
+closes when the draft changes, its annotation is withdrawn or replaced, or a
+composition starts. Choosing rechecks the
+revision, range and text, refuses a range whose formatting is not uniform, and
+replaces it in that formatting as one undo step separate from typing before and
+after it. A caret inside or touching the range moves after the replacement.
+Right-clicking a mark shows this menu instead of the native one; elsewhere the
+native menu is unchanged.
+
+The jsdom suites cover the contract with an annotator registered through the
+real runtime. Native WebKit right-click selection and context-menu behavior,
+screen reader announcement of `aria-invalid`, and IME composition in the
+desktop app are not exercised there.
 
 ## Desktop browser
 

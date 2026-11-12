@@ -389,7 +389,7 @@ export function ConvertToChannel({
       )}
       {eligible && !attempt && !converted && nameBlockers.length > 0 && (
         <p role="status">
-          To convert, rename this chat first: {nameBlockers.join(" ")}
+          Rename this chat to convert it. {nameBlockers.join(" ")}
         </p>
       )}
       {base?.canEdit && !eligible && !matchingAttempt && !canFinish && (

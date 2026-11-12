@@ -485,7 +485,7 @@ function OpenCreateChannelDialog({
                       target="_blank"
                       rel="noreferrer"
                     >
-                      Why these rules?
+                      How channel names work
                     </a>
                   )}
                 </>

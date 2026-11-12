@@ -5,6 +5,7 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { createRoot } from "react-dom/client";
+import { MessageMarkdown } from "../../src/features/messages/MessageMarkdown";
 import { PluginReadme } from "../../src/app/PluginReadme";
 import { CanvasEditor } from "../../src/bundled/channels/CanvasEditor";
 import { CanvasMarkdown } from "../../src/bundled/channels/CanvasView";
@@ -24,12 +25,15 @@ import type { RelaySession } from "../../src/features/relay/session";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 
+const LONG_INLINE = `release_${"unbroken_token_".repeat(18)}`;
+
 const SAMPLE = [
   "# Title",
   "## Section",
   "### Topic",
   "#### Detail",
   "Text with `code`, ~~gone~~ and [a link](https://example.com).",
+  `A wrapping snippet: \`${LONG_INLINE}\`.`,
   "- one\n  - two\n    - three",
   "1. first\n2. second",
   "- [x] done",
@@ -171,6 +175,25 @@ createRoot(root).render(
         color: "var(--text-standard)",
       }}
     >
+      <section data-screen="message" className="text-message">
+        <MessageMarkdown
+          row={{
+            id: "fixture-message",
+            channelId: "fixture-channel",
+            authorId: "fixture-author",
+            content: SAMPLE,
+            createdAt: 1,
+            mentions: [],
+            participants: [],
+            attachments: [],
+            reactions: [],
+            replyCount: 0,
+            emoji: [],
+          }}
+          media={() => undefined}
+          onOpenLink={() => false}
+        />
+      </section>
       {/* The real Canvas editor, reading a local Canvas. */}
       <section data-screen="canvas">
         <CanvasEditor

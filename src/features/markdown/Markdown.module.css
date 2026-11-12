@@ -99,6 +99,14 @@
   line-height: var(--text-mono-sm--line-height);
   letter-spacing: var(--text-mono-sm--letter-spacing);
 }
+/* Inline snippets keep their filled, rounded ends on every wrapped fragment. */
+.inline code,
+.document :not(pre) > code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 /* The code scrolls inside its frame so the copy action stays in the corner.
    A plugin-presented block keeps the same frame and action. */
 .document :is(pre, .codeFrame) {

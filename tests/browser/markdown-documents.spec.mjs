@@ -58,6 +58,7 @@ const role = (page, name) =>
 // Each screen's roles for the sample's `#`, `##` and `###` headings; `null`:
 // the screen drops it.
 const ROLES = {
+  message: ["heading", "body-lg", "label"],
   canvas: ["title", "heading", "body-lg"],
   notes: ["title", "heading", "body-lg"],
   repo: ["title", "heading", "body-lg"],
@@ -70,6 +71,7 @@ const ROLES = {
 };
 // Screens whose code blocks offer copy.
 const COPY = [
+  "message",
   "canvas",
   "notes",
   "repo",
@@ -290,4 +292,62 @@ test("document screens keep their roles, elements and code actions in their host
           .toEqual([LONG_CODE_TEXT]);
       }
   expect(errors.unexplained()).toEqual([]);
+});
+
+// Inline fragmentation and painted corners require a browser layout engine.
+test("inline snippets wrap with rounded ends while fenced code keeps scrolling", async ({
+  page,
+}) => {
+  for (const mode of ["light", "dark"])
+    for (const width of [360, 720, 1100])
+      for (const scale of ["1", "1.5"]) {
+        await page.setViewportSize({ width: width + 32, height: 1100 });
+        await page.goto(`${url}?mode=${mode}&width=${width}&scale=${scale}`);
+        await page.evaluate(() => document.fonts.ready);
+        for (const screen of ["canvas", "message"]) {
+          const snippet = page
+            .locator(`[data-screen="${screen}"] p > code`)
+            .filter({ hasText: "release_unbroken_token_" });
+          await expect(snippet).toBeVisible();
+          const shape = await snippet.evaluate((code) => {
+            const style = getComputedStyle(code);
+            const pane = code.closest("main").getBoundingClientRect();
+            const fragments = [...code.getClientRects()];
+            return {
+              fragments: fragments.length,
+              clone:
+                style.getPropertyValue("box-decoration-break") ||
+                style.getPropertyValue("-webkit-box-decoration-break"),
+              radius: Number.parseFloat(style.borderTopLeftRadius),
+              background: style.backgroundColor,
+              // Cloned padding can paint into the text column's gutter.
+              // Every fragment must stay visible without widening the page.
+              withinPane: fragments.every(
+                (r) => r.left >= pane.left && r.right <= pane.right,
+              ),
+              pageFits:
+                document.documentElement.scrollWidth ===
+                document.documentElement.clientWidth,
+            };
+          });
+          expect(shape.fragments).toBeGreaterThan(1);
+          expect(shape.clone).toBe("clone");
+          expect(shape.radius).toBeGreaterThan(0);
+          expect(shape.background).not.toBe("rgba(0, 0, 0, 0)");
+          expect(
+            shape.withinPane,
+            JSON.stringify({ mode, width, scale, screen, shape }),
+          ).toBe(true);
+          expect(shape.pageFits).toBe(true);
+        }
+        const block = page.locator('[data-screen="canvas-host"] pre code');
+        await expect(block).toHaveCSS("white-space", "pre");
+        await expect(block).toHaveCSS("overflow-wrap", "normal");
+        await expect(block).toHaveCSS("border-radius", "0px");
+        const widths = await block.evaluate((code) => ({
+          client: code.clientWidth,
+          scroll: code.scrollWidth,
+        }));
+        expect(widths.scroll).toBeGreaterThan(widths.client);
+      }
 });

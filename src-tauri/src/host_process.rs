@@ -515,6 +515,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     let environment = env.unwrap_or_default();
     set_environment(
         &mut command,
+        login_shell_environment(),
         &path,
         &environment,
         &app.package_info().version.to_string(),
@@ -600,20 +601,25 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     )
 }
 
-/// Sets a process's environment: the app's own, plus the login-shell variables
-/// it forwards, less any Buzz identity the app was started with, plus the
+/// Sets a process's environment: the app's own, plus the `login_shell`
+/// variables it forwards, less any Buzz identity either holds, plus the
 /// plugin's `environment` (`None` removes a variable).
 /// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
 /// under Buzz.
 fn set_environment(
     command: &mut Command,
+    login_shell: &[(std::ffi::OsString, std::ffi::OsString)],
     path: &OsStr,
     environment: &HashMap<String, Option<String>>,
     version: &str,
 ) -> Result<(), String> {
-    command.envs(login_shell_environment().iter().cloned());
-    // Never pass on an identity the app itself was started with.
-    for (name, _) in std::env::vars_os() {
+    command.envs(login_shell.iter().cloned());
+    // Never pass on an identity the app was started with, even one the user
+    // asked their login shell to forward.
+    for name in std::env::vars_os()
+        .map(|(name, _)| name)
+        .chain(login_shell.iter().map(|(name, _)| name.clone()))
+    {
         let text = name.to_string_lossy();
         if text.starts_with("BUZZ_") || text.starts_with("NOSTR_") {
             command.env_remove(&name);

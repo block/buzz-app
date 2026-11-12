@@ -987,7 +987,8 @@ available rather than silently discarding it.
   `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` there as a comma-separated list of
   names, where `*` matches anything and a leading `!` excludes, such as
   `export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS="AWS_PROFILE,TOOL_*,!*_SECRET"`.
-  Quit and reopen Buzz after changing it.
+  Variables starting with `BUZZ_` or `NOSTR_` are never passed on. Quit and
+  reopen Buzz after changing it.
 - In communities where your build restricts workflows, workflow messages do
   not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
   have one act on a workflow result, send it a direct request explaining what

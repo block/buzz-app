@@ -1893,7 +1893,8 @@ stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
 environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
 are never inherited. On macOS, every process also gets the login shell's
 exports named in `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS`, a comma-separated list
-where `*` matches anything and a leading `!` excludes; `env` still wins. The
+where `*` matches anything and a leading `!` excludes, less any `BUZZ_` or
+`NOSTR_` variable; `env` still wins. The
 program is found on the same search path as commands,
 which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and

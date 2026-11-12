@@ -259,6 +259,12 @@ it("leaves a Solo read of a catalog that cannot load for a manual retry", async 
     const reads = catalogReads();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(catalogReads()).toBe(reads);
+    f.events.splice(1);
+    await f.session.soloPreferences.refresh();
+    expect(f.session.soloPreferences.snapshot()).toMatchObject({
+      status: "ready",
+      data: { sections: [{ id: "work", name: "Solo work", order: 0 }] },
+    });
   } finally {
     f.dispose();
     vi.useRealTimers();

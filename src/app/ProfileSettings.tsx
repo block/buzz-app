@@ -38,7 +38,10 @@ import type { Membership } from "../features/communities/service";
 import { communityName } from "../features/communities/names";
 import { profileTimeZone } from "../features/profiles/local-time";
 import { TimeZoneField } from "../features/profiles/TimeZoneField";
-import { deviceTimeZone } from "../features/profiles/share-time-zone";
+import {
+  deviceTimeZone,
+  withDeviceTimeZone,
+} from "../features/profiles/share-time-zone";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
@@ -249,7 +252,8 @@ export function ProfileSettings({
     : (draft ?? persisted);
   const profile = previewReady ? edited : { name: "", picture: "", about: "" };
   // A profile without a `tz` key gets this device's zone by default, so the
-  // control shows that zone as shared; unchecking records the opt-out.
+  // control shows that zone as shared and any save writes it; unchecking
+  // records the opt-out.
   const tzByDefault = !!community && !!loaded && !("tz" in loaded.existing);
   const persistedTz =
     community && loaded
@@ -404,7 +408,11 @@ export function ProfileSettings({
                             next,
                             tzChanged
                               ? withTimeZone(latest.existing, tz)
-                              : latest.existing,
+                              : // Any save shares the default zone the box
+                                // shows, unless a zone arrived since.
+                                tzByDefault
+                                ? withDeviceTimeZone(latest.existing, tz)
+                                : latest.existing,
                           );
                           // Once dispatched, finish on this session even if Settings closes.
                           const confirmed = await inspect(community.id);

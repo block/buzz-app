@@ -26,6 +26,8 @@ import { stubAvatarBrowserApis } from "../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 
 const viewer = "ab".repeat(32);
+// Any save into a profile without a `tz` key shares this device's zone.
+const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -114,7 +116,7 @@ it("loads and publishes the selected community profile before updating the local
         picture: "",
         about: "Community bio",
       },
-      { website: "https://example.test", name: "legacy" },
+      { website: "https://example.test", name: "legacy", tz: device },
     ),
   );
   expect(service.saveProfile).toHaveBeenCalledWith({
@@ -208,7 +210,7 @@ it("shows the verified name read-only and keeps the signed name when saving", as
     expect(publish).toHaveBeenCalledWith(
       "community-id",
       { name: "Signed name", picture: "", about: "Bio" },
-      {},
+      { tz: device },
     ),
   );
 });
@@ -236,7 +238,7 @@ it("keeps the signed name when verification arrives after a name edit", async ()
     expect(publish).toHaveBeenCalledWith(
       "community-id",
       { name: "Signed name", picture: "", about: "Bio" },
-      {},
+      { tz: device },
     ),
   );
 });
@@ -255,7 +257,7 @@ it("keeps an empty signed name editable for repair when verified", async () => {
     expect(publish).toHaveBeenCalledWith(
       "community-id",
       { name: "Repaired", picture: "", about: "" },
-      {},
+      { tz: device },
     ),
   );
 });
@@ -1015,7 +1017,6 @@ it("mounts the already-cached community thumbnail immediately while the profile 
 });
 
 it("shows a profile without a time zone as sharing this device's, and records unchecking it as an opt-out", async () => {
-  const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
     exists: true,
     existing: { website: "https://example.test" },
@@ -1045,16 +1046,19 @@ it("shows a profile without a time zone as sharing this device's, and records un
   expect(screen.getByText(pending)).toBeVisible();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 
-  // An unrelated save leaves the zone to sharing by default.
-  const name = screen.getByLabelText("Display name");
-  await user.type(name, " edited");
+  // Any save shares the zone the box shows, so the note holds even where
+  // sharing by default would skip the profile.
+  const about = screen.getByLabelText("Profile description (optional)");
+  await user.type(about, "Hello");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
   expect(publish.mock.lastCall?.[2]).toEqual({
     website: "https://example.test",
+    tz: device,
   });
   await screen.findByText("Profile updated");
   expect(share).toBeChecked();
+  expect(screen.queryByText(pending)).toBeNull();
 
   // Unchecking is a change of its own, saved as the opt-out.
   await user.click(share);

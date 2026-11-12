@@ -3733,6 +3733,55 @@ describe("a conversation given its own folder", () => {
     expect(published).toEqual([]);
   });
 
+  it("starts a protected agent there, contained as in its workspace", async () => {
+    const { deliver, claudes, data, agent, runtime } = setup([root, mention], {
+      hold: true,
+      resolveDirectory: folders(),
+    });
+    await assign(data, "/repos/worktree");
+    const protection = {
+      key: "policy",
+      stateKey: "revision",
+      processProtection: {
+        readOnlyPaths: ["/guarded"],
+        hiddenPaths: ["/private"],
+      },
+      assertAvailable() {},
+      check: vi.fn<AgentProtection["check"]>().mockResolvedValue(),
+      spawn: async () => {
+        throw new Error("Unused protected runtime");
+      },
+    };
+    await deliver(
+      { type: "mention", event: mention },
+      { agent: { ...agent, protection } as unknown as Delivery["agent"] },
+    );
+    await vi.waitFor(() =>
+      expect(claudes().some((worker) => worker.prompts.length)).toBe(true),
+    );
+    const worker = claudes().find((candidate) => candidate.prompts.length);
+    try {
+      expect(worker?.options.cwd).toBe("/repos/worktree");
+      // The policy's containment names no folder, so the folder neither
+      // widens nor narrows it; and as in the workspace, no repository
+      // settings, CLAUDE.md or MCP servers load.
+      expect(worker?.options.protection).toEqual({
+        readOnlyPaths: ["/guarded", expect.any(String)],
+        hiddenPaths: ["/private"],
+      });
+      const args = worker?.options.args ?? [];
+      expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
+      expect(args).toContain("--strict-mcp-config");
+      expect(args[args.indexOf("--add-dir") + 1]).toBe("/Users/me/.buzz");
+      expect(worker?.options.env).toMatchObject({
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+      });
+    } finally {
+      worker?.finish();
+      await runtime.retire(self);
+    }
+  });
+
   it("starts there for a message from the owner's other client", async () => {
     // The owner's phone signs as the owner, and its message reaches this
     // device from the relay like any other; the folder is this device's.

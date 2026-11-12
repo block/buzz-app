@@ -1202,7 +1202,9 @@ it("shares model discovery with active turns and another agent", async () => {
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });
 
-function protectedPreview() {
+function protectedPreview(
+  resolveDirectory?: ConstructorParameters<typeof CodexRuntime>[14],
+) {
   const engine = () => {
     const next = fixture();
     next.modelIds.splice(0, 2, "protected-model", "protected-deep");
@@ -1249,6 +1251,7 @@ function protectedPreview() {
       },
       handle: (key) => (key === pubkey ? handle : undefined),
     },
+    resolveDirectory,
   );
   const original = {
     ...f.delivery("unused").agent,
@@ -7561,6 +7564,47 @@ describe("a conversation given its own folder", () => {
     ).toMatchObject({ cwd: "/repos/solo" });
     f.complete(0, "DONE");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  });
+
+  it("starts a protected agent's thread there, reading files under its policy", async () => {
+    const f = protectedPreview(folders());
+    const handle = f.handle;
+    if (!handle?.protection) throw new Error("Missing protected handle");
+    await assignConversationFolder(
+      f.store,
+      scope,
+      pubkey,
+      `channel/${root}`,
+      "/repos/worktree",
+    );
+    try {
+      await f.runtime.run({
+        ...f.delivery("post a file"),
+        agent: handle,
+        config: f.agent.config,
+      });
+      await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+      expect(
+        f.worker.sent.find((wire) => wire.method === "thread/start")?.params,
+      ).toMatchObject({ cwd: "/repos/worktree" });
+      await f.worker.tool("send", {
+        audience: "everyone",
+        path: "answer.txt",
+      });
+      // The policy's containment names no folder; a file the agent sends
+      // is read from the folder, contained as in the workspace.
+      expect(f.spawn).toHaveBeenCalledWith(
+        "read-protected",
+        expect.objectContaining({
+          cwd: "/repos/worktree",
+          args: ["answer.txt"],
+          protection: handle.protection.processProtection,
+        }),
+      );
+      await f.worker.complete(0, "");
+    } finally {
+      f.runtime.dispose();
+    }
   });
 
   it("refuses its turn, naming the folder, once the folder is gone", async () => {

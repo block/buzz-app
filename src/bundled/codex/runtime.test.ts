@@ -2481,8 +2481,10 @@ it("retries a timed-out history read once and keeps what the retry finds", async
 });
 it("starts a turn without history when the history read keeps timing out", async () => {
   const f = fixture();
-  const timeout = new ReadError("unavailable", "Relay read timed out");
-  f.read.mockRejectedValueOnce(timeout).mockRejectedValueOnce(timeout);
+  // The native transport rejects with its own message, not a ReadError.
+  f.read
+    .mockRejectedValueOnce(new ReadError("unavailable", "Relay read timed out"))
+    .mockRejectedValueOnce("Relay request could not be confirmed");
   await f.runtime.run(f.delivery("FIRST_REQUEST"));
   await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
   expect(f.read).toHaveBeenCalledTimes(2);

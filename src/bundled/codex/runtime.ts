@@ -45,10 +45,11 @@ import type {
 } from "../../features/agents/service";
 import type { EventData } from "../../features/relay/events";
 import { CREDENTIAL_ENV } from "../../features/host/service";
-import { ReadError } from "../../features/relay/errors";
+import { isRetryableRead } from "../../features/relay/read-retry";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { appClient, readFile } from "../../buzz-mcp/app-client";
+import { readAuthorNames } from "../../features/agent-harness/author-names";
 import { readProject } from "../../features/agent-harness/project";
 import {
   referencedFolders,
@@ -2304,13 +2305,11 @@ export class CodexRuntime {
       try {
         return await read();
       } catch (error) {
-        if (
-          signal.aborted ||
-          !(error instanceof ReadError && error.kind === "unavailable")
-        )
-          throw error;
+        if (signal.aborted || !isRetryableRead(error)) throw error;
         if (retried) {
           console.warn("Codex could not read the conversation", error);
+          // Without history, the turn still names who asked.
+          await readAuthorNames(reads, [request.event]);
           return "";
         }
       }

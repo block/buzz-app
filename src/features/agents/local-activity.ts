@@ -1,3 +1,4 @@
+import type { AgentSessionAssociation } from "./session-admission";
 export const REPLY_CORRELATION_MS = 120_000;
 
 export type LocalWorkState =
@@ -16,6 +17,7 @@ export type WorkOutcome = Readonly<{
 /** A harness step: its own tool name and, when known, what it acts on. */
 export type WorkStep = Readonly<{ tool: string; target?: string }>;
 export type LocalWork = Readonly<{
+  session?: AgentSessionAssociation;
   scope: string;
   agent: string;
   channelId: string;
@@ -285,6 +287,18 @@ export function createLocalAgentActivity() {
       };
       return {
         channelId: input.channelId,
+        associate: (session: AgentSessionAssociation) => {
+          const current = entries.get(id);
+          if (!current) return;
+          entries.set(
+            id,
+            Object.freeze({
+              ...current,
+              session: structuredClone(session),
+            }),
+          );
+          publish();
+        },
         started: () => update("working"),
         confirmSolo: (conversationName?: string) => {
           const current = entries.get(id);

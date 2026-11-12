@@ -23,6 +23,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { flushSync } from "react-dom";
+import { onBestieMade } from "./BestieChoice";
 import { Context } from "@deepseek-ai/cordis";
 import {
   useEffect,
@@ -326,6 +328,7 @@ function setup(
     session: vi.fn(async () => {}),
     register: vi.fn(),
     addTool: vi.fn(),
+    addInstructions: vi.fn(),
     tools: () => [],
     create: vi.fn(async () => {
       // `shown: false`: it was made for a community no longer selected.
@@ -474,6 +477,7 @@ function setup(
         : [],
     registerTab: () => {},
     controlAttention: () => {},
+    registerSessionRouter: () => {},
     registerExecution: () => {},
     bindExecution: async () => {},
     executionBinding: () => undefined,
@@ -3096,6 +3100,128 @@ it("closes the team editor when leaving Your teams", async () => {
   expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
 });
 
+it("asks before Escape, Close or another tab drops a team's unsaved edits", async () => {
+  const user = userEvent.setup();
+  const { agents } = setup([agent("Ada", 1)]);
+  await act(() =>
+    agents.saveTeam({ name: "Crew", instructions: "Before.", members: [] }),
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const open = () => user.click(screen.getByRole("button", { name: "Crew" }));
+  const prompt = () =>
+    screen.findByRole("alertdialog", { name: "Discard changes?" });
+  // An untouched editor closes at once.
+  await open();
+  expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+
+  // Escape asks about an edited name, instructions and members; Keep editing
+  // keeps each edit.
+  await open();
+  await user.type(screen.getByRole("textbox", { name: "Name" }), " 2");
+  await user.type(
+    screen.getByRole("textbox", { name: "Instructions" }),
+    " More.",
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Ada" }));
+  const edited = () => {
+    expect(screen.getByRole("form", { name: "Edit Crew" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Crew 2");
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+      "Before. More.",
+    );
+    expect(screen.getByRole("checkbox", { name: "Ada" })).toBeChecked();
+  };
+  // Shift+Escape is Mark all as read's, and leaves the editor alone.
+  await user.keyboard("{Shift>}{Escape}{/Shift}");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  edited();
+  await user.keyboard("{Escape}");
+  let asked = await prompt();
+  expect(asked).toHaveTextContent("Your unsaved changes to Crew will be lost.");
+  const keep = within(asked).getByRole("button", { name: "Keep editing" });
+  await waitFor(() => expect(keep).toHaveFocus());
+  await user.click(keep);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  edited();
+
+  // The Your agents tab asks too, and Keep editing stays on Your teams.
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  asked = await prompt();
+  await user.click(within(asked).getByRole("button", { name: "Keep editing" }));
+  expect(screen.getByRole("tab", { name: "Your teams" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  edited();
+  // Discard changes leaves, and the reopened team shows its saved version.
+  await user.click(screen.getByRole("tab", { name: "Your agents" }));
+  asked = await prompt();
+  await user.click(
+    within(asked).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.getByRole("tab", { name: "Your agents" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  await open();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Crew");
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(
+    "Before.",
+  );
+  expect(screen.getByRole("checkbox", { name: "Ada" })).not.toBeChecked();
+
+  // So does Close, and Discard changes closes the editor.
+  await user.type(screen.getByRole("textbox", { name: "Name" }), " 3");
+  await user.click(
+    within(screen.getByRole("form", { name: "Edit Crew" })).getByRole(
+      "button",
+      { name: "Close" },
+    ),
+  );
+  asked = await prompt();
+  await user.click(
+    within(asked).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.queryByRole("form", { name: "Edit Crew" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Crew" })).toBeInTheDocument();
+  expect(agents.saveTeam).toHaveBeenCalledOnce();
+});
+
+it("asks before dropping a new team with a name, and closes an empty one at once", async () => {
+  const user = userEvent.setup();
+  setup([agent("Ada", 1)]);
+  await user.click(screen.getByRole("tab", { name: "Your teams" }));
+  const create = async () => {
+    await user.click(screen.getByRole("button", { name: "New team" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Create a new team" }),
+    );
+    expect(screen.getByRole("form", { name: "New team" })).toBeInTheDocument();
+  };
+  await create();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(screen.queryByRole("form", { name: "New team" })).toBeNull();
+
+  await create();
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "Crew");
+  await user.keyboard("{Escape}");
+  const asked = await screen.findByRole("alertdialog", {
+    name: "Discard changes?",
+  });
+  expect(asked).toHaveTextContent("Your new team will be lost.");
+  await user.click(
+    within(asked).getByRole("button", { name: "Discard changes" }),
+  );
+  expect(screen.queryByRole("form", { name: "New team" })).toBeNull();
+});
+
 it("offers New team again when the team being edited disappears", async () => {
   const user = userEvent.setup();
   const { agents } = setup([agent("Ada", 1)]);
@@ -5449,7 +5575,21 @@ it("keeps a failed Bestie replacement visible and retries the account save", asy
   await user.click(
     within(retry).getByRole("button", { name: "Switch to Bea" }),
   );
-  await act(async () => writes[1]?.());
+  // The saved store publishes before the local celebration callback. Force
+  // that intermediate render: the new badge must not flash at full opacity.
+  let checkedBeforeCelebration = false;
+  const stop = onBestieMade(() => {
+    flushSync(() => {});
+    expect(beaCard).toBeInTheDocument();
+    expect(within(beaCard).queryByText("Bestie")).toBeNull();
+    checkedBeforeCelebration = true;
+  });
+  try {
+    await act(async () => writes[1]?.());
+  } finally {
+    stop();
+  }
+  expect(checkedBeforeCelebration).toBe(true);
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   expect(
     await screen.findByRole("gridcell", { name: "Bea, Bestie" }),
@@ -6892,14 +7032,21 @@ describe("a team Save that finishes after its editor is gone", () => {
   it("closes the dirty editor and ends its visit on Close", async () => {
     const f = await fixture({ save: false });
     try {
-      await userEvent
-        .setup()
-        .click(
-          within(screen.getByRole("form", { name: "Edit Crew B" })).getByRole(
-            "button",
-            { name: "Close" },
-          ),
-        );
+      const user = userEvent.setup();
+      await user.click(
+        within(screen.getByRole("form", { name: "Edit Crew B" })).getByRole(
+          "button",
+          { name: "Close" },
+        ),
+      );
+      // Its unsaved draft is asked about first, and the visit stays with it.
+      const asked = await screen.findByRole("alertdialog", {
+        name: "Discard changes?",
+      });
+      expect(f.navigator.snapshot().entry.target).toEqual(visit);
+      await user.click(
+        within(asked).getByRole("button", { name: "Discard changes" }),
+      );
       expect(screen.queryByRole("form", { name: "Edit Crew B" })).toBeNull();
       expect(f.navigator.snapshot().entry.target).toEqual(base);
     } finally {

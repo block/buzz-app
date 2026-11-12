@@ -158,6 +158,7 @@ async function page(
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -349,6 +350,7 @@ function workspace(
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };

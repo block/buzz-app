@@ -72,6 +72,9 @@ export function RemoteAgents({
         )}
       </AgentSection>
     );
+  // A sign-in in progress or being checked shows its state in the account
+  // notice beside this section, so this section says nothing yet.
+  if (login.status === "pending") return null;
   return login.status === "signed-in" ? (
     <AgentList
       key={login.account?.subject}

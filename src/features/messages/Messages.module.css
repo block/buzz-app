@@ -3382,6 +3382,14 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .message[data-stack-previous] {
   padding-top: var(--space-half);
 }
+/* A flat list keeps 8px between stacked rows, such as one author's run, so
+   each reads as its own message rather than a wrapped line of the last. */
+:where(html[data-message-density="compact"]) .message[data-stack-next] {
+  padding-bottom: var(--space-1);
+}
+:where(html[data-message-density="compact"]) .message[data-stack-previous] {
+  padding-top: var(--space-1);
+}
 .message .byline {
   padding-inline-start: var(--space-4);
   font-size: var(--text-caption);

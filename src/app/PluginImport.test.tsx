@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -22,6 +24,18 @@ import userEvent from "@testing-library/user-event";
 import { cloneElement, StrictMode } from "react";
 
 afterEach(cleanup);
+
+const gitReferenceDescription =
+  "Copy a plugin listing’s Ref into this field. Leave blank to scan the repository’s default branch.";
+const gitSizeRefusalMessages = {
+  output: "Git output exceeds the import size limit",
+  repository: "Repository exceeds the 256 MiB import limit",
+  repositoryFileCount:
+    "Repository has more than 20,000 files; enter the folder to import from",
+  repositoryEntries: "Repository exceeds the import entry limit",
+  file: "File exceeds its size limit",
+  scopedFileCountSuffix: " has more than 20,000 files; choose a smaller folder",
+};
 
 function startReview(updates: ReturnType<typeof createPluginUpdates>) {
   return updates.startNextReview(() => () => {});
@@ -48,6 +62,12 @@ it("opens both sources inside Add without a duplicate safety warning, and restor
   expect(
     within(dialog).getByLabelText("Git or GitHub repository"),
   ).toBeVisible();
+  expect(
+    within(dialog).getByRole("textbox", {
+      name: "Branch or tag (optional)",
+      description: gitReferenceDescription,
+    }),
+  ).toHaveValue("");
   expect(within(dialog).queryByText(/plugins aren’t sandboxed/)).toBeNull();
   expect(
     within(dialog).getByRole("button", { name: "Browse plugin folder" }),
@@ -58,6 +78,297 @@ it("opens both sources inside Add without a duplicate safety warning, and restor
   await user.click(add);
   await user.click(document.querySelector(".buzz-dialog-backdrop") as Element);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+const gitOutputRecoveryHint =
+  "Try another branch or tag. If the same output limit persists, ask the publisher for a ref or repository that Buzz can read.";
+const gitRepositoryRecoveryHint =
+  "Try another branch or tag with a smaller plugin source. If it still exceeds the limit, ask the publisher for a smaller plugin-focused repository.";
+const gitEntryRecoveryHint =
+  "Try another branch or tag with fewer repository entries. If it still exceeds the limit, ask the publisher for a plugin-focused repository.";
+const gitFileRecoveryHint =
+  "Try another branch or tag with a smaller plugin file. If it still exceeds the limit, ask the publisher to provide a smaller file.";
+const gitRepositoryFileCountHint =
+  "Choose Back, enter the plugin folder in Folder, then try again.";
+const gitScopedFileCountHint =
+  "Choose Back, enter a smaller folder path in Folder, then try again.";
+
+it("keeps Git recovery message keys aligned with native import refusals", () => {
+  const nativeImports = readFileSync(
+    resolve(process.cwd(), "crates/plugin-manager/src/imports.rs"),
+    "utf8",
+  );
+  for (const message of Object.values(gitSizeRefusalMessages)) {
+    expect(nativeImports).toContain(message);
+  }
+});
+
+it.each([
+  {
+    error: gitSizeRefusalMessages.output,
+    reference: "",
+    recoveryHint: gitOutputRecoveryHint,
+  },
+  {
+    error: gitSizeRefusalMessages.output,
+    reference: "release/stable",
+    recoveryHint: gitOutputRecoveryHint,
+  },
+  {
+    error: `${gitSizeRefusalMessages.output} (repository access rule example-org, agent socket plugin-test)`,
+    reference: "",
+    recoveryHint: gitOutputRecoveryHint,
+  },
+  {
+    error: gitSizeRefusalMessages.repository,
+    reference: "",
+    recoveryHint: gitRepositoryRecoveryHint,
+  },
+  {
+    error: gitSizeRefusalMessages.repositoryEntries,
+    reference: "",
+    recoveryHint: gitEntryRecoveryHint,
+  },
+  {
+    error: gitSizeRefusalMessages.file,
+    reference: "",
+    recoveryHint: gitFileRecoveryHint,
+  },
+  {
+    error: gitSizeRefusalMessages.repositoryFileCount,
+    reference: "",
+    recoveryHint: gitRepositoryFileCountHint,
+  },
+  {
+    error: `extensions/large${gitSizeRefusalMessages.scopedFileCountSuffix}`,
+    reference: "release/stable",
+    recoveryHint: gitScopedFileCountHint,
+  },
+  {
+    error: `extensions/large${gitSizeRefusalMessages.scopedFileCountSuffix} (repository access rule example-org, agent socket plugin-test)`,
+    reference: "release/stable",
+    recoveryHint: gitScopedFileCountHint,
+  },
+  {
+    error: "Repository import exceeded 60 seconds",
+    reference: "",
+    recoveryHint: undefined,
+  },
+  {
+    error: "SSH authentication failed",
+    reference: "",
+    recoveryHint: undefined,
+  },
+  {
+    error: "Could not resolve host: example.org",
+    reference: "",
+    recoveryHint: undefined,
+  },
+])(
+  "keeps Git refusal text and adds only matching recovery guidance: $error",
+  async ({ error, reference: referenceValue, recoveryHint }) => {
+    const user = userEvent.setup();
+    const git = vi.fn(async () => {
+      throw error;
+    });
+    const installImport = vi.fn();
+    const manager = {
+      imports: { git, discard: vi.fn(async () => {}) },
+      installImport,
+    } as unknown as PluginManager;
+    render(
+      <PluginImport
+        plugins={manager}
+        catalog={{ profile: "test", location: "test", plugins: [] }}
+        busy={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add a plugin" });
+    const repository = within(dialog).getByLabelText(
+      "Git or GitHub repository",
+    );
+    const reference = within(dialog).getByLabelText("Branch or tag (optional)");
+    expect(repository).toHaveValue("");
+    expect(reference).toHaveValue("");
+    expect(git).not.toHaveBeenCalled();
+    expect(installImport).not.toHaveBeenCalled();
+
+    await user.type(repository, "https://example.org/plugins");
+    if (referenceValue) await user.type(reference, referenceValue);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Find plugins" }),
+    );
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText(error, { exact: true })).toBeVisible();
+    expect(git).toHaveBeenCalledExactlyOnceWith(
+      "https://example.org/plugins",
+      referenceValue,
+    );
+    expect(installImport).not.toHaveBeenCalled();
+    if (recoveryHint) {
+      expect(within(alert).getByText(recoveryHint)).toBeVisible();
+    } else {
+      expect(within(alert).queryByText(/Try another branch or tag/)).toBeNull();
+    }
+  },
+);
+
+it("matches a Git-size hint from an Error object without changing its display", async () => {
+  const user = userEvent.setup();
+  const git = vi.fn(async () => {
+    throw new Error("Git output exceeds the import size limit");
+  });
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.type(
+    screen.getByLabelText("Git or GitHub repository"),
+    "https://example.org/plugins",
+  );
+  await user.click(screen.getByRole("button", { name: "Find plugins" }));
+
+  const alert = await screen.findByRole("alert");
+  expect(
+    within(alert).getByText("Error: Git output exceeds the import size limit"),
+  ).toBeVisible();
+  expect(within(alert).getByText(gitOutputRecoveryHint)).toBeVisible();
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.org/plugins",
+    "",
+  );
+  expect(manager.installImport).not.toHaveBeenCalled();
+});
+
+it("keeps folder size failures native without Git-specific recovery", async () => {
+  const error = "File exceeds its size limit";
+  const user = userEvent.setup();
+  const folder = vi.fn(async () => {
+    throw error;
+  });
+  const installImport = vi.fn();
+  const manager = {
+    imports: { folder, discard: vi.fn(async () => {}) },
+    installImport,
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse plugin folder" }),
+  );
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText(error, { exact: true })).toBeVisible();
+  expect(within(alert).queryByText(/Try another branch or tag/)).toBeNull();
+  expect(installImport).not.toHaveBeenCalled();
+});
+
+it("does not suggest changing a bound or pinned link source after a size refusal", async () => {
+  const error = "Git output exceeds the import size limit";
+  const user = userEvent.setup();
+  const bound = requestedHarness(requestedPreview(pinned));
+  bound.git.mockRejectedValue(error);
+  render(bound.element);
+  const boundDialog = await screen.findByRole("dialog", {
+    name: "Add a plugin",
+  });
+  expect(within(boundDialog).queryByText(gitReferenceDescription)).toBeNull();
+  await user.click(
+    within(boundDialog).getByRole("button", { name: "Find plugins" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  expect(screen.queryByText(gitOutputRecoveryHint)).toBeNull();
+  expect(bound.git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins.git",
+    "v1",
+    undefined,
+    { commit: pinned, path: undefined },
+  );
+  expect(bound.installImport).not.toHaveBeenCalled();
+
+  cleanup();
+  const git = vi.fn(async () => {
+    throw error;
+  });
+  const installImport = vi.fn();
+  const manager = {
+    imports: { git, discard: vi.fn(async () => {}) },
+    installImport,
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      initialGit={{
+        repository: "https://example.org/plugins",
+        reference: "release/stable",
+        commit: pinned,
+      }}
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  expect(screen.queryByText(gitReferenceDescription)).toBeNull();
+  expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  expect(screen.queryByText(gitOutputRecoveryHint)).toBeNull();
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.org/plugins",
+    "release/stable",
+    undefined,
+    { commit: pinned, path: undefined },
+  );
+  expect(installImport).not.toHaveBeenCalled();
+
+  cleanup();
+  const updateGit = vi.fn(async () => {
+    throw error;
+  });
+  const updateInstall = vi.fn();
+  const source = {
+    repository: "https://example.org/plugins",
+    reference: "v1",
+    path: ".",
+    commit: pinned,
+  };
+  const updateManager = {
+    imports: { git: updateGit, discard: vi.fn(async () => {}) },
+    installImport: updateInstall,
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      updateId="example.saved"
+      updateAction={{ source }}
+      reviewRequested
+      plugins={updateManager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  expect(screen.queryByText(gitOutputRecoveryHint)).toBeNull();
+  expect(updateGit).toHaveBeenCalledExactlyOnceWith(
+    source.repository,
+    source.reference,
+    undefined,
+    { commit: pinned, path: undefined },
+  );
+  expect(updateInstall).not.toHaveBeenCalled();
 });
 
 it("blocks dismissal and duplicate acquisition while loading, then discards the preview on close", async () => {
@@ -224,7 +535,7 @@ it("shows exact declared access and changes before an enabled update", async () 
   };
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => preview),
       folder: vi.fn(async () => preview),
       git: vi.fn(),
@@ -376,7 +687,7 @@ it.each([
     };
     const manager = {
       imports: {
-        checkFolder: vi.fn(async () => "updated"),
+        checkFolder: vi.fn(async () => ({ revision: "updated" })),
         previewFolder: vi.fn(async () => preview),
         folder: vi.fn(async () => preview),
         discard: vi.fn(async () => {}),
@@ -580,7 +891,7 @@ it.each([
     };
     const manager = {
       imports: {
-        checkFolder: vi.fn(async () => "updated"),
+        checkFolder: vi.fn(async () => ({ revision: "updated" })),
         previewFolder: vi.fn(async () => preview),
         folder: vi.fn(async () => preview),
         discard: vi.fn(async () => {}),
@@ -644,7 +955,7 @@ it("signs in only to repositories the community authorizes", async () => {
   const git = vi.fn(async () => preview);
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(),
       folder: vi.fn(),
       git,
@@ -722,7 +1033,7 @@ it("replaces Add with an error view and returns to the retained preview for retr
     );
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => preview),
       folder: vi.fn(async () => preview),
       discard: vi.fn(async () => {}),
@@ -883,6 +1194,10 @@ it("Back restores source fields and focus after acquisition fails", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Repository unavailable",
   );
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://github.com/example/plugin",
+    "stable",
+  );
   expect(screen.queryByRole("form", { name: "Add from Git" })).toBeNull();
   const back = screen.getByRole("button", { name: "Back" });
   expect(back).toHaveFocus();
@@ -902,7 +1217,7 @@ it.each([true, false])(
   async (enabled) => {
     const manager = {
       imports: {
-        checkFolder: vi.fn(async () => "updated"),
+        checkFolder: vi.fn(async () => ({ revision: "updated" })),
         previewFolder: vi.fn(async () => ({
           token: "new",
           source: "/plugin",
@@ -1001,7 +1316,7 @@ it("limits pane updates to the selected plugin without modifying the source prev
   };
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => preview),
       folder: vi.fn(async () => preview),
       discard: vi.fn(async () => {}),
@@ -1307,7 +1622,7 @@ it("opens installed details instead of adding another source", async () => {
     installImport: vi.fn(async () => true),
     change: vi.fn(),
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => ({
         token: "duplicate",
         source: "/example",
@@ -1372,7 +1687,7 @@ it("keeps install review stable while the saved catalog arrives before enabling"
   );
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => ({
         token: "pending",
         source: "/example",
@@ -1497,6 +1812,7 @@ it("rechecks Git with fresh authorization before opening a requested row review"
     repository,
     "release/one",
     "fresh",
+    { path: "dist" },
   );
   expect(authorizeGit).toHaveBeenCalledExactlyOnceWith(repository);
   expect(handled).toHaveBeenCalled();
@@ -1595,7 +1911,7 @@ it.each([
     const user = userEvent.setup();
     const manager = {
       imports: {
-        checkFolder: vi.fn(async () => "updated"),
+        checkFolder: vi.fn(async () => ({ revision: "updated" })),
         previewFolder: vi.fn(async () => rememberedPreview),
         folder: vi.fn(async () => rememberedPreview),
         git: vi.fn(async () => rememberedPreview),
@@ -1647,6 +1963,7 @@ it.each([
         updateSource.repository,
         "release/one",
         "fresh-authorization",
+        { path: "dist" },
       );
     }
     expect(
@@ -1670,7 +1987,7 @@ it("shows unchanged declarations in a separate dialog view and returns without r
   };
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => ({
         ...rememberedPreview,
         candidates: [
@@ -1778,7 +2095,7 @@ it.each([true, false])(
     const discard = vi.fn(async () => {});
     const manager = {
       imports: {
-        checkFolder: vi.fn(async () => "updated"),
+        checkFolder: vi.fn(async () => ({ revision: "updated" })),
         previewFolder: vi.fn(async () => ({
           ...rememberedPreview,
           candidates: [
@@ -1843,7 +2160,7 @@ it("rejects a replacement source without the installed plugin ID", async () => {
   const user = userEvent.setup();
   const manager = {
     imports: {
-      checkFolder: vi.fn(async () => "updated"),
+      checkFolder: vi.fn(async () => ({ revision: "updated" })),
       previewFolder: vi.fn(async () => ({
         ...rememberedPreview,
         candidates: [
@@ -1919,7 +2236,7 @@ function savedFolderProps(imports: unknown) {
 
 it("checks revisions without acquiring a preview and prepares fresh bytes only on Update", async () => {
   const imports = {
-    checkFolder: vi.fn(async () => "new"),
+    checkFolder: vi.fn(async () => ({ revision: "new" })),
     previewFolder: vi.fn(async () => rememberedPreview),
     discard: vi.fn(async () => {}),
   };
@@ -1944,13 +2261,13 @@ it("checks revisions without acquiring a preview and prepares fresh bytes only o
 
 it("retries folder diagnostics and ignores late read-only checks after unmount", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-  let finish!: (revision: string) => void;
+  let finish!: (release: { revision: string }) => void;
   const checkFolder = vi
     .fn()
     .mockRejectedValueOnce(new Error("dist: plugin.js is missing"))
     .mockImplementation(
       () =>
-        new Promise<string>((resolve) => {
+        new Promise<{ revision: string }>((resolve) => {
           finish = resolve;
         }),
     );
@@ -1971,7 +2288,7 @@ it("retries folder diagnostics and ignores late read-only checks after unmount",
     await act(async () => vi.advanceTimersByTime(10_000));
     expect(checkFolder).toHaveBeenCalledTimes(2);
     view.unmount();
-    await act(async () => finish("new"));
+    await act(async () => finish({ revision: "new" }));
     expect(changed).toHaveBeenLastCalledWith(false);
     expect(imports.previewFolder).not.toHaveBeenCalled();
     expect(imports.discard).not.toHaveBeenCalled();
@@ -1983,10 +2300,10 @@ it("retries folder diagnostics and ignores late read-only checks after unmount",
 
 it("keeps unchanged checks quiet until the shared one-second loading delay", async () => {
   vi.useFakeTimers();
-  let finish!: (revision: string) => void;
+  let finish!: (release: { revision: string }) => void;
   const checkFolder = vi.fn(
     () =>
-      new Promise<string>((resolve) => {
+      new Promise<{ revision: string }>((resolve) => {
         finish = resolve;
       }),
   );
@@ -1999,12 +2316,12 @@ it("keeps unchanged checks quiet until the shared one-second loading delay", asy
     expect(screen.getByRole("status")).toHaveTextContent(
       "Checking for updates…",
     );
-    await act(async () => finish("old"));
+    await act(async () => finish({ revision: "old" }));
     expect(screen.getByText("Up to date")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
     await act(async () => vi.advanceTimersByTime(4_000));
     expect(checkFolder).toHaveBeenCalledTimes(2);
-    await act(async () => finish("old"));
+    await act(async () => finish({ revision: "old" }));
   } finally {
     view.unmount();
     vi.useRealTimers();
@@ -2043,12 +2360,13 @@ it("retains known Git updates on reopen and reacquires before review", async () 
     "https://example.com/plugins.git",
     "main",
     undefined,
+    { path: "dist" },
   );
 });
 
 it("refreshes a stale known update from the newly acquired package", async () => {
   const imports = {
-    checkFolder: vi.fn(async () => "earlier-check"),
+    checkFolder: vi.fn(async () => ({ revision: "earlier-check" })),
     previewFolder: vi.fn(async () => ({
       ...rememberedPreview,
       candidates: [{ ...rememberedPreview.candidates[0], revision: "old" }],
@@ -2192,7 +2510,7 @@ it.each(["folder", "git"])(
         candidates: [rememberedPreview.candidates[0]],
       });
     const props = savedFolderProps({
-      checkFolder: vi.fn(async () => "new"),
+      checkFolder: vi.fn(async () => ({ revision: "new" })),
       previewFolder: acquire,
       git: acquire,
       discard: vi.fn(async () => {}),
@@ -2733,10 +3051,10 @@ it("prefills a requested source, reads nothing until Find, and installs only aft
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned },
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Commit 0123456789ab (matches the requested commit)",
+    "Commit 0123456789ab (matches the requested commit, verified on v1)",
   );
   expect(installImport).not.toHaveBeenCalled();
   expect(settled).not.toHaveBeenCalled();
@@ -2763,7 +3081,7 @@ it("shows the native refusal when the reference no longer resolves to the pinned
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned },
   );
   expect(screen.queryByRole("button", { name: "Install plugin" })).toBeNull();
   expect(
@@ -3302,7 +3620,7 @@ it("carries a pinned commit through the signed community branch", async () => {
     "https://example.com/plugins.git?signed",
     "v1",
     "signed-token",
-    pinned,
+    { commit: pinned },
   );
 });
 
@@ -3350,10 +3668,10 @@ it("pins a linked source to its commit and installs the linked folder", async ()
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned, path: "plugins/b" },
   );
   expect(screen.getByRole("dialog")).toHaveTextContent(
-    "Commit 0123456789ab (matches the requested commit)",
+    "Commit 0123456789ab (matches the requested commit, verified on v1)",
   );
   expect(installImport).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
@@ -3408,7 +3726,7 @@ it("locks a pinned link's source and keeps the pin when Find is retried", async 
     within(dialog).getByLabelText("Git or GitHub repository"),
   ).toHaveAttribute("readonly");
   expect(dialog).toHaveTextContent(
-    "Opened from a link. Pinned to commit 0123456789ab.",
+    "Opened from a link. Pinned to commit 0123456789ab on v1. Nothing is installed unless that commit is verified to be on it.",
   );
   fireEvent.click(within(dialog).getByRole("button", { name: "Find plugins" }));
   await waitFor(() => expect(git).toHaveBeenCalledTimes(2));
@@ -3416,7 +3734,7 @@ it("locks a pinned link's source and keeps the pin when Find is retried", async 
     "https://example.com/plugins.git",
     "v1",
     undefined,
-    pinned,
+    { commit: pinned },
   );
 });
 
@@ -3466,7 +3784,7 @@ it("reviews a pinned link to the installed plugin's source as an update instead 
   });
   expect(dialog).not.toHaveTextContent(/already installed/i);
   expect(dialog).toHaveTextContent(
-    "Commit 0123456789ab (matches the requested commit)",
+    "Commit 0123456789ab (matches the requested commit, verified on v1)",
   );
   expect(dialog).not.toHaveTextContent("This plugin will stay disabled.");
   expect(dialog).not.toHaveTextContent("Future updates will follow");
@@ -3699,4 +4017,77 @@ it("refuses a plugin's requested update when the installed plugin changed after 
   );
   expect(installImport).not.toHaveBeenCalled();
   expect(settled).not.toHaveBeenCalled();
+});
+
+it("lists only the folder typed into the Git form, repo-relative, and nothing outside it", async () => {
+  const user = userEvent.setup();
+  const preview: ImportPreview = {
+    token: "folder-preview",
+    source: "https://example.com/plugins.git",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    warnings: [],
+    candidates: [
+      {
+        path: "plugins/one",
+        revision: "one",
+        manifest: { id: "example.one", name: "One", apiVersion: 1 },
+      },
+    ],
+  };
+  const git = vi.fn(async () => preview);
+  const manager = {
+    imports: {
+      checkFolder: vi.fn(),
+      previewFolder: vi.fn(),
+      folder: vi.fn(),
+      git,
+      install: vi.fn(),
+      discard: vi.fn(async () => {}),
+    },
+    installImport: vi.fn(),
+  } as unknown as PluginManager;
+  render(
+    <PluginImport
+      plugins={manager}
+      catalog={{ profile: "test", location: "test", plugins: [] }}
+      busy={false}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Add" }));
+  const folder = screen.getByLabelText("Folder (optional)");
+  expect(folder).not.toHaveAttribute("readonly");
+  fireEvent.change(screen.getByLabelText("Git or GitHub repository"), {
+    target: { value: "https://example.com/plugins.git" },
+  });
+  fireEvent.change(folder, { target: { value: " plugins/one/ " } });
+  await user.click(screen.getByRole("button", { name: "Find plugins" }));
+  await screen.findByRole("region", { name: "Plugin import preview" });
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins.git",
+    "",
+    undefined,
+    { path: "plugins/one" },
+  );
+});
+
+it("shows a link's folder as read-only and sends it with the pinned commit", async () => {
+  const { git, element } = linkedHarness(
+    requestedPreview(pinned, ["plugins/b"]),
+    { commit: pinned, path: "plugins/b" },
+  );
+  render(element);
+  await screen.findByRole("dialog", { name: /^Review .+ access$/ });
+  expect(git).toHaveBeenCalledExactlyOnceWith(
+    "https://example.com/plugins.git",
+    "v1",
+    undefined,
+    { commit: pinned, path: "plugins/b" },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  const folder = screen.getByLabelText("Folder (optional)");
+  expect(folder).toHaveValue("plugins/b");
+  expect(folder).toHaveAttribute("readonly");
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Pinned to commit 0123456789ab on v1. Nothing is installed unless that commit is verified to be on it. Plugin folder: plugins/b. Only this folder is read.",
+  );
 });

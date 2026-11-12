@@ -8,6 +8,8 @@ import {
   ATTENTION_OFF,
   ATTENTION_REVIEW,
 } from "../features/agent-harness/attention-prompt";
+import { pluginInstructions } from "../features/agent-harness/plugin-instructions";
+import type { AgentHandle } from "../features/agents/service";
 import {
   ATTENTION_TOOLS,
   callAttentionTool,
@@ -119,14 +121,25 @@ export function addedKey(added: readonly AddedTool[]) {
   return (hash >>> 0).toString(36);
 }
 
-/** Text for the end of a turn's prompt, as the agent's attention is now.
- * An agent with no Interests has nothing to review, so it need not load the
- * attention tools to find that out. */
-export function turnNote(client?: Pick<BuzzClient, "attention">) {
+/** Text for the end of a turn's prompt: the instructions plugins give the
+ * agent now, then its attention as it is now. An agent with no Interests has
+ * nothing to review, so it need not load the attention tools to find that
+ * out. */
+export function turnNote(
+  client?: Pick<BuzzClient, "attention"> & Pick<AgentHandle, "instructions">,
+) {
   const attention = client?.attention;
-  if (!attention) return undefined;
-  if (!attention.enabled()) return ATTENTION_OFF;
-  return attention.interests().length ? ATTENTION_REVIEW : ATTENTION_NONE;
+  const review = !attention
+    ? undefined
+    : !attention.enabled()
+      ? ATTENTION_OFF
+      : attention.interests().length
+        ? ATTENTION_REVIEW
+        : ATTENTION_NONE;
+  const notes = [pluginInstructions(client?.instructions?.()), review].filter(
+    Boolean,
+  );
+  return notes.length ? notes.join("\n\n") : undefined;
 }
 
 /** Answers one tool call. Throws when the tool cannot run now; the message

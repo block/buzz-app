@@ -32,6 +32,54 @@ migration runs. Browser moves write the destination before removing the source
 and resume identical interrupted copies; differing destinations are left intact
 and reported as migration errors.
 
+## Plugin session associations
+
+A plugin can use `ctx.agents.registerSessionRouter` to attach local data to a
+native agent session before execution. The argument type is
+`Parameters<Agents["registerSessionRouter"]>[0]` from `@buzz/author`.
+The host verifies the request and selects the native conversation first.
+The hook receives both the source message's channel/thread and that native
+conversation. It cannot change session scope, reply placement or access.
+Solo keeps each agent's existing channel conversation. Thread-scoped agents
+keep their existing thread conversations.
+
+`ready()` opens only the plugin's local keyed storage. It must not wait for
+relay publication or sidebar loading. `matches()` selects the sources the
+plugin manages. Exactly one router can match an unassociated session.
+Its `prepare()` receives the agent, owner, harness, source, conversation,
+invocation ID, logical `sessionKey`, `intent`, `adopted`, `resumed`, saved
+association and abort signal. An owner message supplies `event`. A trusted
+wake has no signed event. A rootless wake has no source root; its synthetic
+ID is never a thread root. Returning `undefined` leaves an unassociated run
+unchanged.
+
+The result supplies JSON `association` and optional text `context`. The host
+saves the association before execution. The association stays fixed for that
+logical lifetime. `Delivery.session`, `LocalWork.session` and tool `Context.session`
+carry `{sessionKey, router, association}`. Tool arguments and prompt text cannot
+set this value. The context stays pending until the harness acknowledges a
+request. Plugins own their record meaning, task relationships, publication
+and sidebar updates. The host does not interpret the association JSON.
+
+A first association adopts the native lifetime with `intent: "existing"` and
+`adopted: true`. This does not prove whether the harness has a saved session.
+**New** changes the logical key and uses `intent: "new"`. Follow-ups, retries,
+restore, reconnect and Compact keep the key. A saved invocation keeps its key
+after New. A request from that retired lifetime cannot start in the current
+session. An incomplete reset blocks admission until the owner retries New.
+The host keeps its existing execution claims. These local records do not add a
+cross-device execution guarantee.
+
+A native type opts in with `sessionAdmission: true`. It performs its authority
+and scope checks, then calls `Delivery.prepareSession(placement, deferred)`
+inside its existing session-control handover callback, after New or Compact
+completes. `placement` supplies the source and the unchanged native conversation.
+The type carries the returned session into tool context and the returned context
+into its prompt. New resets the logical key inside the same control callback
+as the native reset. A failed reset blocks admission until New succeeds.
+Claude and Codex implement this contract. With no router and
+no saved association, the extension adds no execution or publication work.
+
 ## Creating and changing agents from a conversation
 
 The shared tools offer `agent_types` to list installed local runtimes and
@@ -519,6 +567,13 @@ section that names that conversation, says nobody wrote it as a message and that
 its text is data, and that the agent acts only on what its owner asked. Only a
 run's handle hands off.
 
+A plugin gives standing instructions to every turn with
+`ctx.agents.addInstructions({ id, text, when? })` (see
+[plugin architecture](plugin-architecture.md)). Unlike a note, they are not
+used up: every turn of the agents this copy runs (Mesh agents excepted), or
+of those `when` accepts,
+shows them while the plugin is on, and each turn's set replaces the last.
+
 A plugin leaves context for a later turn with
 `ctx.agents.note(pubkey, channelId, text, root?)`, without waking the agent
 or publishing a message. Pass the thread root for a thread conversation.
@@ -553,6 +608,9 @@ grid follows the answer: it returns to the kept card, or goes to the card
 chosen or closed. Closing the panel while focus is inside it, with or without a
 prompt, moves focus to the closed agent's card. Import opens as a dialog over the page, so the open agent and
 its draft stay. Deleting an agent closes only its own panel, without asking.
+A team's editor on Your teams asks the same way before Escape, its Close or
+another tab drops an unsaved name, instructions or members; one untouched, or
+whose Save or Delete succeeded, closes at once, and Back leaves a busy one open.
 
 A reviewed provider choice remains a host-owned draft until the form's Save
 action succeeds or the owner confirms discarding it. While it is pending, the
@@ -814,6 +872,22 @@ grant access.
 Regression source: `features/agents/choices.test.ts`, plus the chooser, composer
 and Solo chat admission tests. They exercise shared selection and Solo chat admission,
 not native execution.
+
+## Creating a Solo chat in a personal workspace
+
+Locally hosted agent runs can call `solo_workspace_list` for the host-bound
+owner's personal workspace IDs and names in that community. Pass an exact ID as
+`workspace` to `channel_create` with `solo: true`, and name the owner explicitly
+in `members`. This files only that new confirmed Solo chat. It does not enroll
+members implicitly, copy default agents/Canvas, or change agent authorship.
+Unknown targets and missing owner membership fail before creation. A target
+removed later or a failed preference write leaves the created chat intact; the
+result preserves its ID. A known refusal before assignment says “created, not
+filed”; after assignment starts, failure says placement is unconfirmed and may
+have completed. Inspect or refresh the chat before using **Move to**; never
+create a duplicate. Omit `workspace` for unchanged creation.
+External/standalone tools, Nexus worker requests, and plugin agent handles do
+not gain this host-private capability or a general move operation.
 
 ## Exact channel-member mentions
 

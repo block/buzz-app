@@ -13523,61 +13523,82 @@ it.each([false, true])(
   },
 );
 
-it("removes Solo wake activity when its watch stops during root validation", async () => {
-  const { service, run, emit, native, session, activity } = await setup();
-  await service.create({ type: "example/echo", name: "Echo" });
-  const list = session.channels.list();
-  vi.spyOn(session.channels, "list").mockReturnValue({
-    ...list,
-    channels: list.channels.map((row) =>
-      row.id === channel ? { ...row, channelType: "solo" as const } : row,
-    ),
-  });
-  const root = "e".repeat(64);
-  let release!: (events: RelayEvent[]) => void;
-  const pending = new Promise<RelayEvent[]>((resolve) => {
-    release = resolve;
-  });
-  native.query.mockImplementation(async (_member, filters) =>
-    (filters as ReadFilter[]).some((filter) => filter.ids?.includes(root))
-      ? pending
-      : [],
-  );
-  const watch = service.find(bot)?.attention["watch/channel"]?.value;
-  if (watch?.type !== "event") throw new Error("fixture");
-  await service.save(bot, {
-    attentionEnabled: true,
-    attention: { "watch/channel": { ...watch, channel, root } },
-  });
-  const states: string[] = [];
-  const stop = activity.reader.subscribeWork(() => {
-    for (const row of activity.reader.work()) states.push(row.state);
-  });
-  try {
-    emit({ channelId: channel, events: [deploy("cancelled-wake")] });
-    await vi.waitFor(() =>
-      expect(native.query).toHaveBeenCalledWith(member(bot), [
-        { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
-      ]),
+it.each([
+  { result: "found", cancelled: true },
+  { result: "missing", cancelled: true },
+  { result: "rejected", cancelled: true },
+  { result: "missing", cancelled: false },
+  { result: "rejected", cancelled: false },
+])(
+  "settles Solo wake root validation ($result, cancelled: $cancelled)",
+  async ({ result, cancelled }) => {
+    const { service, run, emit, native, session, activity } = await setup();
+    await service.create({ type: "example/echo", name: "Echo" });
+    const list = session.channels.list();
+    vi.spyOn(session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel ? { ...row, channelType: "solo" as const } : row,
+      ),
+    });
+    const root = "e".repeat(64);
+    let release!: (events: RelayEvent[]) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<RelayEvent[]>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    native.query.mockImplementation(async (_member, filters) =>
+      (filters as ReadFilter[]).some((filter) => filter.ids?.includes(root))
+        ? pending
+        : [],
     );
-    expect(activity.reader.work()[0]).toMatchObject({
-      state: "working",
-      soloChat: true,
-    });
+    const watch = service.find(bot)?.attention["watch/channel"]?.value;
+    if (watch?.type !== "event") throw new Error("fixture");
     await service.save(bot, {
-      attention: {
-        "watch/channel": { ...watch, channel, root, enabled: false },
-      },
+      attentionEnabled: true,
+      attention: { "watch/channel": { ...watch, channel, root } },
     });
-    release([event(root, { tags: [["h", channel]] })]);
-    await vi.waitFor(() => expect(activity.reader.work()).toEqual([]));
-    expect(run).not.toHaveBeenCalled();
-    expect(states).not.toContain("done");
-  } finally {
-    release([]);
-    stop();
-  }
-});
+    const states: string[] = [];
+    const stop = activity.reader.subscribeWork(() => {
+      for (const row of activity.reader.work()) states.push(row.state);
+    });
+    try {
+      emit({ channelId: channel, events: [deploy("cancelled-wake")] });
+      await vi.waitFor(() =>
+        expect(native.query).toHaveBeenCalledWith(member(bot), [
+          { ids: [root], kinds: [9, 40002], "#h": [channel], limit: 1 },
+        ]),
+      );
+      expect(activity.reader.work()[0]).toMatchObject({
+        state: "working",
+        soloChat: true,
+      });
+      if (cancelled)
+        await service.save(bot, {
+          attention: {
+            "watch/channel": { ...watch, channel, root, enabled: false },
+          },
+        });
+      if (result === "rejected") reject(new Error("Root lookup failed"));
+      else
+        release(
+          result === "found" ? [event(root, { tags: [["h", channel]] })] : [],
+        );
+      await vi.waitFor(() => {
+        if (cancelled) expect(activity.reader.work()).toEqual([]);
+        else
+          expect(activity.reader.work()[0]).toMatchObject({ state: "error" });
+      });
+      expect(run).not.toHaveBeenCalled();
+      expect(states).not.toContain("done");
+      if (cancelled) expect(states).not.toContain("error");
+    } finally {
+      release([]);
+      stop();
+    }
+  },
+);
 
 it("rebuilds addressed Interest instructions after a queued handover", async () => {
   const { service, run, emit } = await setup();

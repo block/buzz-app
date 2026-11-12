@@ -2882,7 +2882,10 @@ export class AgentRunners {
         if (!attempted) job.work?.remove();
         working.release();
       },
-      (error) => working.release({ ok: false, error: message(error) }),
+      (error) => {
+        if (!attempted && !this.stillCurrent(runner, job)) job.work?.remove();
+        working.release({ ok: false, error: message(error) });
+      },
     );
     const aborted = new Promise<never>((_, reject) => {
       if (signal.aborted) reject(signal.reason);

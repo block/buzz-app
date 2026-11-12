@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { readView } from "../../shared/view-state";
@@ -21,12 +21,20 @@ it("keeps the viewport when a child retries a pending reveal during a preserved 
     retryReveal(): void;
     current: boolean;
   }) {
+    const [visible, setVisible] = useState(true);
     useLayoutEffect(() => retryReveal());
-    return current ? (
-      <button type="button" aria-current="page">
-        Source
-      </button>
-    ) : null;
+    return (
+      <>
+        <button type="button" onClick={() => setVisible(!visible)}>
+          Toggle source
+        </button>
+        {current && visible && (
+          <button type="button" aria-current="page">
+            Source
+          </button>
+        )}
+      </>
+    );
   }
   function View({ current = false }: { current?: boolean }) {
     const sidebar = useSidebarView(
@@ -59,6 +67,13 @@ it("keeps the viewport when a child retries a pending reveal during a preserved 
   view.rerender(<View current />);
   expect(viewport.scrollTop).toBe(0);
   fireEvent.click(screen.getByText("Reveal current"));
+  expect(viewport.scrollTop).toBe(160);
+  fireEvent.click(screen.getByText("Toggle source"));
+  viewport.scrollTop = 0;
+  fireEvent.scroll(viewport);
+  fireEvent.click(screen.getByText("Reveal current"));
+  expect(viewport.scrollTop).toBe(0);
+  fireEvent.click(screen.getByText("Toggle source"));
   expect(viewport.scrollTop).toBe(160);
 });
 it("re-arms only explicit current reveals using the latest location and preserves manual scrolling otherwise", () => {

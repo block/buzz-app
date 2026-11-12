@@ -432,8 +432,7 @@ it.each(["Solo", "All"])(
         { id: "source", name: "Source channel", channelType: "stream" },
       ]);
       await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      await user.click(screen.getByRole("tab", { name: filter }));
+      fireEvent.click(screen.getByRole("tab", { name: filter }));
       const target = conversationTarget(scope, "source");
       await act(() => f.open(target, { sidebar: "preserve" }));
       expect(screen.getByRole("tab", { name: filter })).toHaveAttribute(

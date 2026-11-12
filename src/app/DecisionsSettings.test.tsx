@@ -132,9 +132,13 @@ it("says once, above every provider's settings, that the provider receives messa
     />,
   );
   expect(
-    screen.getAllByText(/provider receives the message text/),
+    screen.getAllByText(
+      /provider handles these questions and receives the message text/,
+    ),
   ).toHaveLength(1);
-  const disclosure = screen.getByText(/provider receives the message text/);
+  const disclosure = screen.getByText(
+    /provider handles these questions and receives the message text/,
+  );
   expect(disclosure).toHaveTextContent("private channels");
   expect(
     disclosure.compareDocumentPosition(

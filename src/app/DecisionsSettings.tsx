@@ -26,10 +26,6 @@ import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Select } from "../shared/design-system/ui/Select";
 
-/** What any provider receives. The host says it once, for every provider. */
-const DISCLOSURE =
-  "Your decisions provider receives the message text that plugins send it, including from private channels.";
-
 /** Chooses the provider that answers decisions on this device and shows the
  * selected provider's own settings. Providers are plugins. One picked before
  * it is ready shows its settings, but the choice is saved only once it is
@@ -145,10 +141,11 @@ export function DecisionsSettings({
         title="Decisions API"
         subtitle={
           <>
-            Features such as <strong>Attention</strong> can use this API to
-            check watched events, and <strong>agents</strong> and{" "}
-            <strong>plugins</strong> can ask their own focused questions. Choose
-            which account handles those requests. {DISCLOSURE}
+            <strong>Agents</strong>, <strong>plugins</strong> and features like{" "}
+            <strong>Attention</strong> can use this API for quick, inexpensive
+            judgments, such as whether a watched event should wake your agent.
+            Your chosen provider handles these questions and receives the
+            message text sent with them, which may come from private channels.
           </>
         }
       />

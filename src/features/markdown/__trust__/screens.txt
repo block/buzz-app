@@ -235,9 +235,217 @@
     "profile": {
       "elements": "",
       "text": "a",
+      "links": []
+    },
+    "image": {
+      "elements": "",
+      "text": "alt",
+      "links": []
+    },
+    "autolink": {
+      "elements": "",
+      "text": "see https://example.com/x",
       "links": [
-        "nostr:npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+        "https://example.com/x"
       ]
+    }
+  },
+  "repo": {
+    "html": {
+      "elements": "",
+      "text": "<script>alert(1)</script> and <mark>x</mark>",
+      "links": []
+    },
+    "javascript": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        ""
+      ]
+    },
+    "data": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        ""
+      ]
+    },
+    "vbscript": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        ""
+      ]
+    },
+    "credentialed": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "https://u:p@example.com/"
+      ]
+    },
+    "relative": {
+      "elements": "",
+      "text": "a b",
+      "links": [
+        "",
+        ""
+      ]
+    },
+    "mailto": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "mailto:me@example.com"
+      ]
+    },
+    "buzz": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "buzz://channel/general"
+      ]
+    },
+    "profile": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        ""
+      ]
+    },
+    "image": {
+      "elements": "img",
+      "text": "",
+      "links": []
+    },
+    "autolink": {
+      "elements": "",
+      "text": "see https://example.com/x",
+      "links": [
+        "https://example.com/x"
+      ]
+    }
+  },
+  "memory": {
+    "html": {
+      "elements": "",
+      "text": "<script>alert(1)</script> and <mark>x</mark>",
+      "links": []
+    },
+    "javascript": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "data": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "vbscript": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "credentialed": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "https://u:p@example.com/"
+      ]
+    },
+    "relative": {
+      "elements": "",
+      "text": "a b",
+      "links": [
+        "docs/page",
+        "#part"
+      ]
+    },
+    "mailto": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "mailto:me@example.com"
+      ]
+    },
+    "buzz": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "buzz://channel/general"
+      ]
+    },
+    "profile": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "image": {
+      "elements": "",
+      "text": "alt",
+      "links": []
+    },
+    "autolink": {
+      "elements": "",
+      "text": "see https://example.com/x",
+      "links": [
+        "https://example.com/x"
+      ]
+    }
+  },
+  "transcript": {
+    "html": {
+      "elements": "",
+      "text": "<script>alert(1)</script> and <mark>x</mark>",
+      "links": []
+    },
+    "javascript": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "data": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "vbscript": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "credentialed": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "https://u:p@example.com/"
+      ]
+    },
+    "relative": {
+      "elements": "",
+      "text": "a b",
+      "links": [
+        "docs/page",
+        "#part"
+      ]
+    },
+    "mailto": {
+      "elements": "",
+      "text": "a",
+      "links": [
+        "mailto:me@example.com"
+      ]
+    },
+    "buzz": {
+      "elements": "",
+      "text": "a",
+      "links": []
+    },
+    "profile": {
+      "elements": "",
+      "text": "a",
+      "links": []
     },
     "image": {
       "elements": "",

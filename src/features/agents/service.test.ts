@@ -13539,7 +13539,9 @@ it("removes Solo wake activity when its watch stops during root validation", asy
     release = resolve;
   });
   native.query.mockImplementation(async (_member, filters) =>
-    filters.some((filter) => filter.ids?.includes(root)) ? pending : [],
+    (filters as ReadFilter[]).some((filter) => filter.ids?.includes(root))
+      ? pending
+      : [],
   );
   const watch = service.find(bot)?.attention["watch/channel"]?.value;
   if (watch?.type !== "event") throw new Error("fixture");

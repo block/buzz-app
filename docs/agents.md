@@ -585,6 +585,25 @@ They remain in memory only, and the call returns false unless this copy runs
 the agent. Pi agents don't take notes yet: the call still returns true for one,
 but its turns never include the note.
 
+A plugin with `host.files` gives one conversation of the owner's local agent
+its own working folder with
+`ctx.agents.assignConversationFolder(pubkey, { channelId, root? }, path)`,
+before that conversation's first turn. The conversation's session then starts
+in that folder, so the harness loads its repository configuration (for Claude:
+`CLAUDE.md`, `.mcp.json`, skills, hooks and settings). The agent's workspace
+stays reachable, and the base prompt names it by absolute path as the place for
+`RESEARCH/`, `PLANS/` and the other workspace folders. `place` names the
+conversation as session controls do: no root for a DM, a Solo chat or a
+channel-scoped agent. `path` is absolute or `~/…` and must be an existing
+directory; the call resolves with it as a real path. The folder is kept only on
+this device and is set once: the same folder again resolves, another rejects,
+because a session's history is found by the folder it ran in. If the folder
+later disappears, the conversation's next turn fails with an error naming it
+and never falls back to the workspace. `ctx.agents.conversationFolder(pubkey,
+place)` returns the folder. Claude and Codex (`conversationFolders` on the
+type) support folders; other harnesses and agents on an execution target
+reject. Plugins feature-detect the method.
+
 A type marks its primary configuration tab with `role: "settings"`. In the
 Agents build view and profile panel, the host keeps that tab at a stable
 `Settings` destination and supplies the current type identity plus retype

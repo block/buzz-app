@@ -219,6 +219,7 @@ async function setup({
   deviceSettings = undefined as DeviceSettings | undefined,
   /** The echo type's plugin revision: "bundled" for a bundled harness. */
   revision = "one",
+  conversationFolders = undefined as true | undefined,
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -336,6 +337,7 @@ async function setup({
       : {}),
     ...(resumes ? { resumes } : {}),
     ...(syncedSettings ? { syncedSettings } : {}),
+    ...(conversationFolders ? { conversationFolders } : {}),
   };
   plugin.agents.register(type);
   // The Attention plugin starts after the type, then startup is over.
@@ -1642,6 +1644,90 @@ it.each([
     );
   },
 );
+
+describe("a conversation folder", () => {
+  const root = "e".repeat(64);
+  const thread = { channelId: channel, root };
+  const ready = async (options: Parameters<typeof setup>[0] = {}) => {
+    const f = await setup(options);
+    const agent = await f.service.create({
+      type: "example/echo",
+      name: "Echo",
+    });
+    await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalledWith(bot, 0));
+    await settle();
+    const resolveDirectory = vi.fn(
+      async (path: string, _options?: { create?: boolean }) => {
+        if (path === "/gone") throw new Error("Could not find /gone");
+        return path.replace(/^~/, "/home/me");
+      },
+    );
+    f.ctx.provide("host", { resolveDirectory });
+    return { ...f, agent, resolveDirectory };
+  };
+
+  it("is given once, resolved by the host without creating it", async () => {
+    const f = await ready({ conversationFolders: true });
+    const { agents } = f.plugin;
+    await expect(
+      f.service.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("Only a desktop plugin");
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).resolves.toBe("/home/me/work");
+    expect(f.resolveDirectory).toHaveBeenCalledWith("~/work", {
+      create: false,
+    });
+    expect(agents.conversationFolder(f.agent.key, thread)).toBe(
+      "/home/me/work",
+    );
+    // The same folder again is a no-op; another is refused.
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "/home/me/work"),
+    ).resolves.toBe("/home/me/work");
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "/elsewhere"),
+    ).rejects.toThrow("This conversation already works in /home/me/work");
+    // A folder that does not exist is refused, and given to nobody.
+    const other = { channelId: channel, root: "f".repeat(64) };
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "/gone"),
+    ).rejects.toThrow("Could not find /gone");
+    expect(agents.conversationFolder(f.agent.key, other)).toBeUndefined();
+    expect(
+      agents.conversationFolder(f.agent.key, { channelId: channel }),
+    ).toBeUndefined();
+    // Kept on this device, never published.
+    expect(JSON.stringify(f.native.publish.mock.calls)).not.toContain(
+      "/home/me/work",
+    );
+  });
+
+  it("is refused by a harness without folders, such as goose or Pi", async () => {
+    const f = await ready();
+    await expect(
+      f.plugin.agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("Echo agents do not support conversation folders");
+    expect(f.resolveDirectory).not.toHaveBeenCalled();
+  });
+
+  it("is refused for an agent on an execution target, or one not here", async () => {
+    const f = await ready({ conversationFolders: true });
+    const executions = (
+      f.service as unknown as {
+        executions: { inspect(key: string): Promise<unknown> };
+      }
+    ).executions;
+    vi.spyOn(executions, "inspect").mockResolvedValue({ provider: "x/y" });
+    await expect(
+      f.plugin.agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow("unavailable for agents on an execution target");
+    await expect(
+      f.plugin.agents.assignConversationFolder(sibling, thread, "~/work"),
+    ).rejects.toThrow("No such local agent on this device");
+    expect(f.resolveDirectory).not.toHaveBeenCalled();
+  });
+});
 
 describe("a plugin's wake", () => {
   const root = "e".repeat(64);

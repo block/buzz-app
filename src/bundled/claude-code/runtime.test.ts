@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callTool } from "../../buzz-mcp/tools";
@@ -39,6 +39,7 @@ import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { AgentSessions, localSessions } from "./sessions";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
+import { assignConversationFolder } from "../../features/agents/conversation-folders";
 import { quoted } from "../../features/agent-harness/turn-records";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
@@ -94,6 +95,7 @@ function setup(
     nativeHistory?: readonly unknown[];
     /** Raw text after the history, as a line Claude is still writing. */
     nativeTail?: string;
+    resolveDirectory?: Host["resolveDirectory"];
   }> = {},
 ) {
   const fake = fakeSpawn();
@@ -153,7 +155,11 @@ function setup(
     if (options.hold && started) started.hold = true;
     return process;
   };
-  const host = { spawn, request: vi.fn() } as unknown as Host;
+  const host = {
+    spawn,
+    request: vi.fn(),
+    resolveDirectory: options.resolveDirectory,
+  } as unknown as Host;
   const read = vi.fn(async (_filters: readonly ReadFilter[]) => thread);
   const memoryRead = vi.fn(
     async (_pubkey: string, _signal: AbortSignal, _slug?: string) => ({
@@ -212,6 +218,10 @@ function setup(
   } as unknown as RelayData;
   const data = new Map<string, string>();
   const storage = localStore({
+    get length() {
+      return data.size;
+    },
+    key: (index: number) => [...data.keys()][index] ?? null,
     getItem: (key: string) => data.get(key) ?? null,
     setItem: (key: string, value: string) => void data.set(key, value),
     removeItem: (key: string) => void data.delete(key),
@@ -3660,3 +3670,134 @@ it.each(["host", "self", "background"] as const)(
     }
   },
 );
+
+describe("a conversation given its own folder", () => {
+  const scope = `https://agent.example:${alice}`;
+  const root = message("1", "Build is red");
+  const mention = message("2", "@Claude can you look?", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const folders = (missing = new Set<string>()) =>
+    vi.fn(async (path: string, options?: { create?: boolean }) => {
+      if (options?.create === false && missing.has(path))
+        throw new Error(`Could not find ${path}`);
+      return path === "~/.buzz" ? "/Users/me/.buzz" : path;
+    });
+  const assign = (data: Map<string, string>, folder: string) =>
+    assignConversationFolder(
+      localStore({
+        getItem: (key: string) => data.get(key) ?? null,
+        setItem: (key: string, value: string) => void data.set(key, value),
+        removeItem: (key: string) => void data.delete(key),
+      } as Storage),
+      scope,
+      self,
+      `${channel}/${root.id}`,
+      folder,
+    );
+
+  it("starts its session there, with the workspace within reach", async () => {
+    const resolveDirectory = folders();
+    const { deliver, claudes, data, published } = setup([root, mention], {
+      resolveDirectory,
+    });
+    await assign(data, "/repos/worktree");
+    await deliver({ type: "mention", event: mention });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/worktree");
+    expect(resolveDirectory).toHaveBeenCalledWith("/repos/worktree", {
+      create: false,
+    });
+    const args = claude?.options.args ?? [];
+    expect(args[args.indexOf("--add-dir") + 1]).toBe("/Users/me/.buzz");
+    const prompt = systemPromptOf(claude);
+    expect(prompt).toContain(
+      "<workspace>\nCurrent working directory: /repos/worktree\n</workspace>",
+    );
+    expect(prompt).toContain(
+      "Your persistent workspace is at `/Users/me/.buzz`, not in your working directory",
+    );
+    expect(published).toEqual([]);
+  });
+
+  it("refuses its turn, naming the folder, once the folder is gone", async () => {
+    const resolveDirectory = folders(new Set(["/repos/removed"]));
+    const { deliver, claudes, data, published, workingUntil } = setup(
+      [root, mention],
+      { resolveDirectory },
+    );
+    await assign(data, "/repos/removed");
+    await deliver({ type: "mention", event: mention });
+    await flush(10);
+    await expect(workingUntil.mock.calls[0]?.[0]).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "This conversation's folder /repos/removed no longer exists",
+      ),
+    });
+    // It never falls back to the agent's workspace.
+    expect(claudes().filter((process) => process.prompts.length)).toEqual([]);
+    expect(published.find((event) => event.kind === 9)?.content).toContain(
+      "/repos/removed no longer exists",
+    );
+  });
+
+  it("leaves conversations without a folder in the workspace", async () => {
+    const resolveDirectory = folders();
+    const other = message("3", "Elsewhere");
+    const { deliver, claudes, data } = setup([other], { resolveDirectory });
+    await assign(data, "/repos/worktree");
+    await deliver({
+      type: "mention",
+      event: message("4", "@Claude hi", {
+        created_at: 120,
+        tags: [
+          ["h", channel],
+          ["e", other.id, "", "reply"],
+          ["p", self],
+        ],
+      }),
+    });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("~/.buzz");
+    expect(claude?.options.args).not.toContain("/Users/me/.buzz");
+    expect(resolveDirectory).not.toHaveBeenCalled();
+  });
+
+  it("reads its sessions' history from the folder without visiting it", async () => {
+    const { runtime, data, fake } = setup([], { resolveDirectory: folders() });
+    await assign(data, "/repos/worktree");
+    const saved = localSessions(
+      localStore({
+        getItem: (key: string) => data.get(key) ?? null,
+        setItem: (key: string, value: string) => void data.set(key, value),
+        removeItem: (key: string) => void data.delete(key),
+      } as Storage),
+      self,
+    );
+    saved.set(`${channel}/${root.id}`, { id: "in-folder", seen: 100, at: 5 });
+    saved.set(channel, { id: "in-workspace", seen: 100, at: 4 });
+    // Usage reads each place's sessions.
+    expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+      { place: "~/.buzz", saved: ["in-workspace"] },
+      { place: { folder: "/repos/worktree" }, saved: ["in-folder"] },
+    ]);
+    await runtime.find(
+      self,
+      { channelId: channel, root: root.id },
+      "~/.buzz",
+      new AbortController().signal,
+    );
+    // Finding the workspace starts `pwd` there; the folder's project is known.
+    expect(fake.processes.some((process) => process.id === "workspace")).toBe(
+      false,
+    );
+  });
+});

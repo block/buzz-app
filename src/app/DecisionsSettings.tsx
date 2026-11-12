@@ -19,6 +19,7 @@ import {
   WarningCircleIcon,
 } from "../shared/design-system/icons";
 import { Dialog } from "../shared/design-system/ui/Dialog";
+import { Button } from "../shared/design-system/ui/Button";
 import { Field } from "../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
@@ -358,9 +359,29 @@ export function DecisionsSettings({
               : "Set up Builderlab"
           }
           description={
-            selected.key === ownKey.key
-              ? undefined
-              : "Complete account setup to use Builderlab for decision requests."
+            selected.key === ownKey.key ? (
+              <>
+                Create an API key at{" "}
+                <Button
+                  variant="link"
+                  size="text"
+                  nativeButton={false}
+                  role="link"
+                  render={
+                    <a
+                      href="https://console.typesafe.ai/keys"
+                      target="_blank"
+                      rel="noreferrer"
+                    />
+                  }
+                >
+                  console.typesafe.ai
+                </Button>{" "}
+                and paste it below.
+              </>
+            ) : (
+              "Complete account setup to use Builderlab for decision requests."
+            )
           }
           dismissOnOutsideClick
           onOpenChange={(open) => !open && setPicked(undefined)}

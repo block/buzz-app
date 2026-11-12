@@ -392,6 +392,17 @@ it("offers Builderlab first and reveals key setup without switching until ready"
   expect(
     screen.getByRole("dialog", { name: "Connect TypeSafe" }),
   ).toBeVisible();
+  expect(
+    screen.getByRole("dialog", { name: "Connect TypeSafe" }),
+  ).toHaveAccessibleDescription(
+    "Create an API key at console.typesafe.ai and paste it below.",
+  );
+  expect(
+    within(screen.getByRole("dialog", { name: "Connect TypeSafe" })).getByRole(
+      "link",
+      { name: "console.typesafe.ai" },
+    ),
+  ).toHaveAttribute("href", "https://console.typesafe.ai/keys");
   expect(screen.getByText("Settings for typesafe")).toBeVisible();
   expect(decisions.chosen()).toBe(builderlab);
   await user.click(screen.getByRole("button", { name: "Close" }));

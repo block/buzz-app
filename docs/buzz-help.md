@@ -1265,7 +1265,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   sidebar currently shows are linked. Back from one returns to those details.
 - When Builderlab and TypeSafe are available in **Settings → Decisions API**,
   the **Decision provider** dropdown chooses Builderlab or TypeSafe. Each choice
-  uses that provider for requests. Choosing TypeSafe without a key opens a setup dialog.
+  uses that provider for requests. Choosing TypeSafe without a key opens
+  **Connect TypeSafe**, with a link to create a key in the TypeSafe console.
   Saving the key completes the switch; closing setup keeps the current provider.
   If a selected Builderlab account lacks Decisions API access, the pane explains
   that you can use your own TypeSafe key or contact your account administrator.

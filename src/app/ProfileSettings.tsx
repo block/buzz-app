@@ -29,10 +29,16 @@ import {
   profilesEqual,
 } from "../features/communities/ProfileFields";
 import * as communityApi from "../features/communities/api";
+import {
+  beginProfileSave,
+  endProfileSave,
+  isCurrentProfileSave,
+} from "../features/communities/profile-saves";
 import type { Membership } from "../features/communities/service";
 import { communityName } from "../features/communities/names";
 import { profileTimeZone } from "../features/profiles/local-time";
 import { TimeZoneField } from "../features/profiles/TimeZoneField";
+import { deviceTimeZone } from "../features/profiles/share-time-zone";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
 
@@ -82,16 +88,6 @@ function mergeRefreshedDraft(
         ? (after.about ?? "")
         : (draft.about ?? ""),
   };
-}
-
-const profileSaveGenerations = new WeakMap<Communities, number>();
-function beginProfileSave(communities: Communities) {
-  const generation = (profileSaveGenerations.get(communities) ?? 0) + 1;
-  profileSaveGenerations.set(communities, generation);
-  return generation;
-}
-function isCurrentProfileSave(communities: Communities, generation: number) {
-  return profileSaveGenerations.get(communities) === generation;
 }
 
 export function ProfileSettings({
@@ -252,9 +248,14 @@ export function ProfileSettings({
     ? { ...(draft ?? persisted), name: persisted.name }
     : (draft ?? persisted);
   const profile = previewReady ? edited : { name: "", picture: "", about: "" };
+  // A profile without a `tz` key gets this device's zone by default, so the
+  // control shows that zone as shared; unchecking records the opt-out.
+  const tzByDefault = !!community && !!loaded && !("tz" in loaded.existing);
   const persistedTz =
-    community && loaded?.exists
-      ? profileTimeZone(loaded.existing.tz)
+    community && loaded
+      ? tzByDefault
+        ? deviceTimeZone()
+        : profileTimeZone(loaded.existing.tz)
       : undefined;
   const tz = tzDraft === undefined ? persistedTz : (tzDraft ?? undefined);
   const tzChanged = tzDraft !== undefined && tz !== persistedTz;
@@ -437,6 +438,7 @@ export function ProfileSettings({
                               : String(reason),
                           );
                       } finally {
+                        endProfileSave(communities);
                         if (mounted.current) {
                           setSaving(false);
                           setDispatched(false);
@@ -459,6 +461,7 @@ export function ProfileSettings({
                   {community && (
                     <TimeZoneField
                       value={tz}
+                      byDefault={tzByDefault && !tzChanged}
                       disabled={saving || !previewReady}
                       onChange={(next) => {
                         setTzDraft(next ?? null);

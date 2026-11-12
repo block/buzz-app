@@ -1,5 +1,9 @@
 import { profileFromEvent } from "../communities/api";
-import type { PersonalProfile } from "../communities/service";
+import {
+  profileSaveGeneration,
+  profileSavedSince,
+} from "../communities/profile-saves";
+import type { Communities, PersonalProfile } from "../communities/service";
 import { newer, type EventData } from "../relay/events";
 import { profileTimeZone } from "./local-time";
 
@@ -18,22 +22,53 @@ export function withDeviceTimeZone(
 // Community and viewer pairs already settled this launch.
 const settled = new Set<string>();
 
-/** Shares the device zone once per launch per community, after a fresh read
- * of the viewer's own profile. Publishes only into an existing profile that
- * has no `tz` key, and only when the profile writer would leave its other
- * fields as they are, so a background write never renames anyone. Resolves
- * whether it published; a failed read leaves the next fresh read to try. */
+type ProfileRead = ReturnType<typeof profileFromEvent>;
+
+/** Whether a background write may add `tz`: the profile exists, has no `tz`
+ * key, and the profile writer would leave its other fields as they are. */
+function shareable({ exists, existing, profile }: ProfileRead) {
+  if (!exists || "tz" in existing) return false;
+  const name = profile.name.trim();
+  const written: Record<string, unknown> = {
+    name,
+    display_name: name,
+    picture: profile.picture,
+    about: profile.about?.trim() ?? "",
+  };
+  return (
+    !!name &&
+    !Object.entries(written).some(
+      ([field, value]) => field in existing && existing[field] !== value,
+    )
+  );
+}
+
+/** Shares the device zone once per launch per community. A fresh read of the
+ * viewer's own profile triggers it; a strong read just before publishing is
+ * what gets published, so a lagging read never reverts a newer profile.
+ * Publishes only into an existing profile that has no `tz` key, only when the
+ * profile writer would leave its other fields as they are (so a background
+ * write never renames anyone), and never while a profile save is running or
+ * after one started. Resolves whether it published; a failed read leaves the
+ * next fresh read to try. */
 export async function shareDeviceTimeZone({
   community,
   viewer,
+  communities,
   read,
+  inspect,
   publish,
   signal,
   zone,
 }: {
   community: string;
   viewer: string;
+  /** The app's communities, whose profile saves this write stands aside for. */
+  communities: Communities;
+  /** The fresh background read that triggers the share. */
   read: Promise<readonly EventData[]>;
+  /** A strong read of the viewer's profile, as `inspectProfile` returns. */
+  inspect(): Promise<ProfileRead>;
   publish(
     profile: PersonalProfile,
     existing: Record<string, unknown>,
@@ -44,6 +79,7 @@ export async function shareDeviceTimeZone({
 }): Promise<boolean> {
   const key = `${community}\n${viewer}`;
   if (settled.has(key)) return false;
+  const saves = profileSaveGeneration(communities);
   let events: readonly EventData[];
   try {
     events = await read;
@@ -57,30 +93,26 @@ export async function shareDeviceTimeZone({
     if (event.kind === 0 && event.pubkey === viewer)
       latest = newer(latest, event);
   if (!latest || !zone) return false;
-  let parsed: ReturnType<typeof profileFromEvent>;
   try {
-    parsed = profileFromEvent(latest);
+    if (!shareable(profileFromEvent(latest))) return false;
   } catch {
     return false;
   }
-  const { existing, profile } = parsed;
-  if ("tz" in existing) return false;
-  const name = profile.name.trim();
-  const written: Record<string, unknown> = {
-    name,
-    display_name: name,
-    picture: profile.picture,
-    about: profile.about?.trim() ?? "",
-  };
-  if (
-    !name ||
-    Object.entries(written).some(
-      ([field, value]) => field in existing && existing[field] !== value,
-    )
-  )
+  let current: ProfileRead;
+  try {
+    current = await inspect();
+  } catch {
+    settled.delete(key);
+    return false;
+  }
+  if (signal?.aborted) {
+    settled.delete(key);
+    return false;
+  }
+  if (!shareable(current) || profileSavedSince(communities, saves))
     return false;
   try {
-    await publish(profile, withDeviceTimeZone(existing, zone));
+    await publish(current.profile, withDeviceTimeZone(current.existing, zone));
     return true;
   } catch {
     return false;

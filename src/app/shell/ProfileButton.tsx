@@ -190,13 +190,15 @@ export function ProfileButton({
       signal: controller.signal,
     });
     read.catch(() => {});
-    // Local time is shared by default; this fresh read is the evidence of
-    // what the profile holds now.
+    // Local time is shared by default. This fresh read triggers it; a strong
+    // read just before publishing supplies what is published.
     if (selected)
       void shareDeviceTimeZone({
         community: selected,
         viewer,
+        communities,
         read,
+        inspect: () => communityApi.inspectProfile(selected, session),
         signal: controller.signal,
         zone: deviceTimeZone(),
         publish: (profile, existing) =>
@@ -204,6 +206,7 @@ export function ProfileButton({
       });
     return () => controller.abort();
   }, [
+    communities,
     profiles,
     viewer,
     selected,

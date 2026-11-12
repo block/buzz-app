@@ -851,6 +851,15 @@ it("refreshes the viewer through the real session after roster setup, not a stal
   const publish = vi
     .spyOn(communityApi, "publishProfile")
     .mockResolvedValue(undefined);
+  // The strong read just before sharing sees a newer description.
+  const strong = {
+    exists: true,
+    existing: { name: "Current community name", about: "Newer" },
+    profile: { name: "Current community name", picture: "", about: "Newer" },
+  };
+  const inspect = vi
+    .spyOn(communityApi, "inspectProfile")
+    .mockResolvedValue(strong);
   const connection = {
     viewer: viewer.pubkey,
     status: "ready",
@@ -937,22 +946,28 @@ it("refreshes the viewer through the real session after roster setup, not a stal
       await screen.findByRole("menu", { name: "Current community name" }),
     ).toBeVisible();
     expect(snapshot.profile.name).toBe("Local only");
-    // That fresh read shows no `tz`, so this device's zone is shared once.
+    // That fresh read shows no `tz`, so this device's zone is shared once,
+    // into what a strong read of the same session holds just before.
     await waitFor(() =>
       expect(publish).toHaveBeenCalledWith(
         "https://community.test",
-        { name: "Current community name", picture: "", about: "" },
+        strong.profile,
         {
-          name: "Current community name",
+          ...strong.existing,
           tz: new Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       ),
+    );
+    expect(inspect).toHaveBeenCalledExactlyOnceWith(
+      "https://community.test",
+      connection.session,
     );
     // Unrelated live notifications do not start extra reads.
     act(() => live.state({ status: "connected", routes: [] }));
     expect(read).toHaveBeenCalledTimes(1);
   } finally {
     publish.mockRestore();
+    inspect.mockRestore();
     view.unmount();
     owner.dispose();
   }

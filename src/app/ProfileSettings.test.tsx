@@ -1014,7 +1014,7 @@ it("mounts the already-cached community thumbnail immediately while the profile 
   }
 });
 
-it("shares a time zone only when chosen and saved, and keeps other fields", async () => {
+it("shows a profile without a time zone as sharing this device's, and records unchecking it as an opt-out", async () => {
   const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
     exists: true,
@@ -1037,11 +1037,15 @@ it("shares a time zone only when chosen and saved, and keeps other fields", asyn
   const share = await screen.findByRole("checkbox", {
     name: "Show my local time on my profile",
   });
-  expect(share).not.toBeChecked();
-  // The device zone is offered, not shared.
+  // No `tz` key yet: sharing by default will publish this device's zone.
+  await waitFor(() => expect(share).toBeChecked());
   const zone = screen.getByRole("combobox", { name: "Time zone" });
   expect(zone).toHaveTextContent(device.replaceAll("_", " "));
+  const pending = "This device’s time zone will be shared.";
+  expect(screen.getByText(pending)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 
+  // An unrelated save leaves the zone to sharing by default.
   const name = screen.getByLabelText("Display name");
   await user.type(name, " edited");
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -1050,10 +1054,27 @@ it("shares a time zone only when chosen and saved, and keeps other fields", asyn
     website: "https://example.test",
   });
   await screen.findByText("Profile updated");
+  expect(share).toBeChecked();
 
+  // Unchecking is a change of its own, saved as the opt-out.
   await user.click(share);
+  expect(share).not.toBeChecked();
+  expect(screen.queryByText(pending)).toBeNull();
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+  expect(publish.mock.lastCall?.[2]).toEqual({
+    website: "https://example.test",
+    tz: "",
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull(),
+  );
+  expect(share).not.toBeChecked();
+
+  // Checking it again after opting out shares the zone on save.
+  await user.click(share);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(3));
   expect(publish.mock.lastCall?.[2]).toEqual({
     website: "https://example.test",
     tz: device,

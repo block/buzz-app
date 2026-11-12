@@ -73,7 +73,8 @@ export function localTimeLabel(
       : days === -1
         ? " yesterday"
         : days
-          ? ` ${new Intl.DateTimeFormat(options.locale, { timeZone: zone, weekday: "long" }).format(now)}`
+          ? // English, like "tomorrow" and the rest of the label.
+            ` ${new Intl.DateTimeFormat("en-US", { timeZone: zone, weekday: "long" }).format(now)}`
           : "";
   const difference = utcOffset(zone, now) - utcOffset(viewer, now);
   if (!difference) return `${time}${day} local time`;

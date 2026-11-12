@@ -43,10 +43,13 @@ function matches(zone: string, query: string) {
 export function TimeZoneField({
   value,
   onChange,
+  byDefault = false,
   disabled = false,
 }: {
   value: string | undefined;
   onChange(value: string | undefined): void;
+  /** The profile has no `tz` yet; `value` will be shared from this device. */
+  byDefault?: boolean;
   disabled?: boolean;
 }) {
   const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -72,6 +75,11 @@ export function TimeZoneField({
         disabled={disabled}
         onCheckedChange={(checked) => onChange(checked ? shown : undefined)}
       />
+      {byDefault && value !== undefined && (
+        <p className="text-caption text-secondary">
+          This device’s time zone will be shared.
+        </p>
+      )}
       <Combobox.Root
         items={zones}
         value={shown}

@@ -1,4 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { profileFromEvent } from "../communities/api";
+import { beginProfileSave, endProfileSave } from "../communities/profile-saves";
+import type { Communities } from "../communities/service";
+import { newer, type EventData } from "../relay/events";
 import { keypair, profile } from "../relay/testing";
 import {
   resetSharedTimeZones,
@@ -14,18 +18,33 @@ afterEach(resetSharedTimeZones);
 
 function share(
   events: Promise<ReturnType<typeof profile>[]>,
-  options: { zone?: string | undefined; signal?: AbortSignal } = {},
+  options: {
+    zone?: string | undefined;
+    signal?: AbortSignal;
+    communities?: Communities;
+    /** The strong read's events; the background read's by default. */
+    strong?: () => Promise<EventData[]>;
+  } = {},
 ) {
   const publish = vi.fn(async () => {});
+  const { strong = () => events, ...rest } = options;
+  const inspect = vi.fn(async () =>
+    profileFromEvent(
+      (await strong()).reduce<EventData | undefined>(newer, undefined),
+    ),
+  );
   return {
     publish,
+    inspect,
     shared: shareDeviceTimeZone({
       community,
       viewer: viewer.pubkey,
+      communities: {} as Communities,
       read: events,
+      inspect,
       publish,
       zone,
-      ...options,
+      ...rest,
     }),
   };
 }
@@ -74,6 +93,98 @@ it.each([
   );
   expect(await shared).toBe(false);
   expect(publish).not.toHaveBeenCalled();
+});
+
+it("publishes the strong read, not a lagging background read", async () => {
+  // The background read still holds the profile from before another device
+  // added a description; publishing it would revert that edit.
+  const { publish, inspect, shared } = share(
+    Promise.resolve([profile(viewer, { name: "Mic" }, 1)]),
+    {
+      strong: async () => [
+        profile(
+          viewer,
+          { name: "Mic", about: "New bio", website: "https://example.org" },
+          2,
+        ),
+      ],
+    },
+  );
+  expect(await shared).toBe(true);
+  expect(inspect).toHaveBeenCalledOnce();
+  expect(publish).toHaveBeenCalledWith(
+    { name: "Mic", picture: "", about: "New bio" },
+    {
+      name: "Mic",
+      about: "New bio",
+      website: "https://example.org",
+      tz: zone,
+    },
+  );
+});
+
+it.each([
+  ["has a zone by now", { name: "Mic", tz: "Europe/Paris" }],
+  ["has opted out by now", { name: "Mic", tz: "" }],
+  ["the writer would now rename", { name: "mic", display_name: "Mic" }],
+])(
+  "rechecks the strong read and leaves a profile that %s alone",
+  async (_case, content) => {
+    const { publish, shared } = share(
+      Promise.resolve([profile(viewer, { name: "Mic" }, 1)]),
+      { strong: async () => [profile(viewer, content, 2)] },
+    );
+    expect(await shared).toBe(false);
+    expect(publish).not.toHaveBeenCalled();
+  },
+);
+
+it("reads strongly only when the background read would share", async () => {
+  const { inspect, shared } = share(
+    Promise.resolve([profile(viewer, { name: "Mic", tz: "" })]),
+  );
+  expect(await shared).toBe(false);
+  expect(inspect).not.toHaveBeenCalled();
+});
+
+it("publishes nothing after a failed strong read and tries again on the next read", async () => {
+  const failed = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
+    strong: () => Promise.reject(new Error("offline")),
+  });
+  expect(await failed.shared).toBe(false);
+  expect(failed.publish).not.toHaveBeenCalled();
+  const next = share(Promise.resolve([profile(viewer, { name: "Mic" })]));
+  expect(await next.shared).toBe(true);
+});
+
+it("stands aside for a profile save that is running or started after it began", async () => {
+  const communities = {} as Communities;
+  // A save running when the share begins.
+  beginProfileSave(communities);
+  const running = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
+    communities,
+  });
+  expect(await running.shared).toBe(false);
+  expect(running.publish).not.toHaveBeenCalled();
+  endProfileSave(communities);
+  resetSharedTimeZones();
+  // A save that starts and finishes while the strong read is in flight.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const events = [profile(viewer, { name: "Mic" })];
+  const started = share(Promise.resolve(events), {
+    communities,
+    strong: async () => {
+      await held;
+      return events;
+    },
+  });
+  await vi.waitFor(() => expect(started.inspect).toHaveBeenCalled());
+  beginProfileSave(communities);
+  endProfileSave(communities);
+  release();
+  expect(await started.shared).toBe(false);
+  expect(started.publish).not.toHaveBeenCalled();
 });
 
 it("never creates a profile", async () => {

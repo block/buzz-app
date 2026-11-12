@@ -79,6 +79,12 @@ describe("localTimeLabel", () => {
     expect(label("Pacific/Pago_Pago", at, "Pacific/Kiritimati", en)).toBe(
       "11:30 PM Wednesday local time · 25h behind",
     );
+    // The weekday stays in the label's English, whatever the time's locale.
+    expect(
+      label("Pacific/Kiritimati", at, "Pacific/Pago_Pago", {
+        locale: "fr-FR",
+      }),
+    ).toMatch(/^0?0:30 Friday local time · 25h ahead$/);
   });
 
   it("changes the day marker at the viewer's midnight", () => {

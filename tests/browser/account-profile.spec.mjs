@@ -150,3 +150,26 @@ test("account menu choices remain reachable across themes, widths and enlarged t
     page.getByRole("region", { name: "Profile", exact: true }),
   ).toBeVisible();
 });
+
+// Sharing by default crosses the profile button's fresh read, the strong read
+// before publishing and the host's merging profile writer; unit tests stub
+// each of those boundaries.
+test.describe("local time shared by default", () => {
+  test.use({ profileTimeZone: null, timezoneId: "Europe/Paris" });
+
+  test("launch shares the browser's time zone into a profile without one", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await expect
+      .poll(() => app.ownProfile("primary"))
+      .toEqual({
+        name: "Fixture Reader",
+        display_name: "Fixture Reader",
+        picture: "",
+        about: "",
+        tz: "Europe/Paris",
+      });
+  });
+});

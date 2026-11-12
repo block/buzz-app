@@ -111,6 +111,27 @@ it("macOS banner permission reads the native authorization independently of Dock
   expect(sdk.show).toHaveBeenCalledWith("notification_show", expect.anything());
 });
 
+it("forwards numeric, dot and read badges through the production native adapter", async () => {
+  const { service } = setup();
+  await service.indicator.refresh();
+  service.indicator.setUnread(true, 3);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, count: 3 }),
+  );
+  service.indicator.setUnread(true, 1);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true, count: 1 }),
+  );
+  service.indicator.setUnread(true);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true }),
+  );
+  service.indicator.setUnread(false);
+  await vi.waitFor(() =>
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false }),
+  );
+});
+
 it("macOS first-run Delivery exposes an explicit authorization action", async () => {
   sdk.bannerPermission.mockResolvedValueOnce("default");
   const { service } = setup();

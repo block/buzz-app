@@ -64,7 +64,7 @@ it("offers badge activity independently of system permission", async () => {
   const user = userEvent.setup();
   await user.click(screen.getByRole("combobox", { name: "Badge activity" }));
   await user.click(
-    screen.getByRole("option", { name: "Mentions and direct messages" }),
+    await screen.findByRole("option", { name: "Mentions and direct messages" }),
   );
   expect(change).toHaveBeenCalledExactlyOnceWith("mentions-and-dms");
   view.rerender(
@@ -84,7 +84,9 @@ it("requests permission only through the explicit Settings button and updates st
   const h = setup("default");
   await act(() => h.dock.refresh());
   expect(h.permission.mock.calls).toEqual([[false]]);
-  expect(screen.getByText(/doesn’t show a message count/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/number of known unread mentions and direct messages/),
+  ).toBeInTheDocument();
   let resolve!: (permission: IndicatorPermission) => void;
   h.permission.mockImplementationOnce(
     () =>

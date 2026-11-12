@@ -11,24 +11,27 @@ export type IndicatorGates = Readonly<{
   subscribe(listener: () => void): () => void;
 }>;
 
-/** A host projection of existing evidence, never a count or a new read owner. */
+/** A host projection of retained unread evidence, never a new read owner. */
 export function bindUnreadIndicator(
   communities: Communities,
-  project: (unread: boolean) => void,
+  project: (unread: boolean, count?: number) => void,
   gates?: IndicatorGates,
 ) {
   let closed = false;
   let session: RelaySession | undefined;
   let identity = "";
   let previous: boolean | undefined;
+  let previousCount = 0;
   let stopRoster = () => {};
   let refresh = () => {};
   let stopPreferences = () => {};
   const channels = new Map<string, () => void>();
-  const publish = (unread: boolean) => {
-    if (unread === previous) return;
+  const publish = (unread: boolean, count = 0) => {
+    if (unread === previous && count === previousCount) return;
     previous = unread;
-    project(unread);
+    previousCount = count;
+    if (count > 0) project(unread, count);
+    else project(unread);
   };
   const clear = () => {
     stopRoster();
@@ -73,27 +76,27 @@ export function bindUnreadIndicator(
         return;
       }
       const muted = new Set(preferences.data?.muted ?? []);
-      publish(
-        [...channels.keys()].some((channelId) => {
-          if (muted.has(channelId)) return false;
-          const snapshot = owned.unread.snapshot({
-            kind: "channel",
-            channelId,
-          });
-          if (
-            gates?.badgeActivity?.() === "mentions-and-dms" &&
-            !directChannels.has(channelId)
-          )
-            return (
-              ((snapshot.row
-                ? snapshot.row.mentionCount
-                : snapshot.mentionCount) ?? 0) > 0
-            );
-          // The dock follows the sidebar rows, which opening a channel quiets.
-          const count = snapshot.row?.observedCount ?? snapshot.observedCount;
-          return snapshot.manual !== "none" || (count ?? 0) > 0;
-        }),
-      );
+      const activity = gates?.badgeActivity?.() ?? "all";
+      let unread = false;
+      let count = 0;
+      for (const channelId of channels.keys()) {
+        if (muted.has(channelId)) continue;
+        const snapshot = owned.unread.snapshot({ kind: "channel", channelId });
+        // The Dock follows the sidebar rows, which opening a channel quiets.
+        const observed =
+          snapshot.row?.observedCount ?? snapshot.observedCount ?? 0;
+        const mentions =
+          (snapshot.row ? snapshot.row.mentionCount : snapshot.mentionCount) ??
+          0;
+        const direct = directChannels.has(channelId);
+        count += direct ? observed : mentions;
+        if (
+          (activity === "all" || direct) &&
+          (snapshot.manual !== "none" || observed > 0)
+        )
+          unread = true;
+      }
+      publish(unread || count > 0, count);
     };
     stopPreferences = owned.sidebarPreferences.subscribe(changed);
     changed();

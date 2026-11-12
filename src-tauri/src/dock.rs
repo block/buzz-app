@@ -21,18 +21,42 @@ pub(crate) enum Permission {
 pub(crate) fn unread_indicator_set<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
     unread: bool,
+    count: Option<u32>,
 ) -> Result<(), String> {
     if window.label() != "main" {
         return Err("Dock badges belong to the main window".into());
     }
     #[cfg(target_os = "macos")]
     return window
-        .set_badge_label(unread.then(|| "•".into()))
+        .set_badge_label(badge_label(unread, count))
         .map_err(|e| e.to_string());
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = unread;
+        let _ = (unread, count);
         Err("Dock badges are only available on macOS".into())
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn badge_label(unread: bool, count: Option<u32>) -> Option<String> {
+    unread.then(|| match count.filter(|count| *count > 0) {
+        Some(count) => count.to_string(),
+        None => "•".into(),
+    })
+}
+
+#[cfg(test)]
+mod badge_tests {
+    use super::badge_label;
+
+    #[test]
+    fn projects_read_dot_and_number_states() {
+        assert_eq!(badge_label(false, None), None);
+        assert_eq!(badge_label(false, Some(3)), None);
+        assert_eq!(badge_label(true, None).as_deref(), Some("•"));
+        assert_eq!(badge_label(true, Some(0)).as_deref(), Some("•"));
+        assert_eq!(badge_label(true, Some(1)).as_deref(), Some("1"));
+        assert_eq!(badge_label(true, Some(3)).as_deref(), Some("3"));
     }
 }
 

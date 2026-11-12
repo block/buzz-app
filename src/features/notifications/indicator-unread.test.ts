@@ -137,6 +137,47 @@ function badgePolicy(initial: BadgeActivity = "mentions-and-dms") {
   };
 }
 
+it("counts unread mentions and DMs once, decreases on reading, and leaves only ordinary activity as a dot", async () => {
+  const h = setup();
+  h.grant();
+  h.emit([
+    roster(h.relay, "dm", [h.viewer.pubkey, h.peer.pubkey], 10),
+    metadata(h.relay, "dm", "DM", 10, [["t", "dm"]]),
+  ]);
+  const policy = badgePolicy("all");
+  h.bind(policy);
+  h.emit([message(h.peer, "room", "ordinary", 11)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  const first = message(h.peer, "room", "first mention", 12, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const second = message(h.peer, "room", "second mention", 13, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const direct = message(h.peer, "dm", "DM with a mention", 14, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([first, second, direct]);
+  expect(h.project).toHaveBeenLastCalledWith(true, 3);
+  await h.session.unread.markThrough(
+    { kind: "message", channelId: "room", messageId: first.id },
+    first.id,
+  );
+  expect(h.project).toHaveBeenLastCalledWith(true, 2);
+  await h.session.unread.markThrough(target, second.id);
+  expect(h.project).toHaveBeenLastCalledWith(true, 1);
+  await h.session.unread.markThrough(
+    { kind: "channel", channelId: "dm" },
+    direct.id,
+  );
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  h.emit([message(h.peer, "room", "later ordinary", 15)]);
+  expect(h.project).toHaveBeenLastCalledWith(true);
+  policy.select("mentions-and-dms");
+  expect(h.project).toHaveBeenLastCalledWith(false);
+  expect(h.query).not.toHaveBeenCalled();
+});
+
 it("filters ordinary posts and followed replies, and immediately reprojects preference changes", async () => {
   const h = setup();
   h.grant();
@@ -178,7 +219,7 @@ it.each(["post", "reply"])(
     if (kind !== "post") tags.push(["e", root.id, "", "reply"]);
     const mention = message(h.peer, "room", "mention", 12, tags);
     h.emit([root, mention]);
-    expect(h.project).toHaveBeenLastCalledWith(true);
+    expect(h.project).toHaveBeenLastCalledWith(true, 1);
     expect(h.session.unread.snapshot(target).mentionCount).toBe(1);
     await h.session.unread.enterChannel("room");
     expect(h.project).toHaveBeenLastCalledWith(false);
@@ -187,7 +228,7 @@ it.each(["post", "reply"])(
     h.session.unread.leaveChannel("room");
     const newer = message(h.peer, "room", "later mention", 13, tags);
     h.emit([newer]);
-    expect(h.project).toHaveBeenLastCalledWith(true);
+    expect(h.project).toHaveBeenLastCalledWith(true, 1);
     await h.session.unread.markChannelRead("room");
     expect(h.project).toHaveBeenLastCalledWith(false);
     expect(h.query).not.toHaveBeenCalled();
@@ -207,7 +248,7 @@ it("includes DMs without requiring a mention, but excludes ordinary Solo activit
   expect(h.project).toHaveBeenLastCalledWith(false);
   const direct = message(h.peer, "dm", "direct message", 12);
   h.emit([direct]);
-  expect(h.project).toHaveBeenLastCalledWith(true);
+  expect(h.project).toHaveBeenLastCalledWith(true, 1);
   await h.session.unread.markThrough(
     { kind: "channel", channelId: "dm" },
     direct.id,
@@ -236,11 +277,11 @@ it("retains mute, access and agent-audience exclusions in mentions-and-DMs mode"
   ]);
   expect(h.project).toHaveBeenLastCalledWith(false);
   h.emit([message(h.peer, "room", "mention", 12, [["p", h.viewer.pubkey]])]);
-  expect(h.project).toHaveBeenLastCalledWith(true);
+  expect(h.project).toHaveBeenLastCalledWith(true, 1);
   await h.session.sidebarPreferences.setMute("room", true);
   expect(h.project).toHaveBeenLastCalledWith(false);
   await h.session.sidebarPreferences.setMute("room", false);
-  expect(h.project).toHaveBeenLastCalledWith(true);
+  expect(h.project).toHaveBeenLastCalledWith(true, 1);
   h.emit([roster(h.relay, "room", [], 13)]);
   expect(h.project).toHaveBeenLastCalledWith(false);
 });
@@ -473,7 +514,7 @@ it("relights the Dock projection for attention arriving during a background visi
   h.emit([
     message(h.peer, "room", "background mention", 10, [["p", h.viewer.pubkey]]),
   ]);
-  expect(h.project).toHaveBeenLastCalledWith(true);
+  expect(h.project).toHaveBeenLastCalledWith(true, 1);
   h.session.unread.leaveChannel("room");
-  expect(h.project).toHaveBeenLastCalledWith(true);
+  expect(h.project).toHaveBeenLastCalledWith(true, 1);
 });

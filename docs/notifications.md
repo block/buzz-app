@@ -195,23 +195,26 @@ revoked-access rejection. A macOS pass is not Windows/Linux acceptance.
 
 ## macOS Dock unread badge
 
-The host projects one dot from the selected community's existing unread selectors:
-observed unread messages (including thread replies) or explicit channel-unread
-intent. It is not an exact message count or evidence of complete history. Unknown
-and observed-zero both omit the dot. Existing bounded evidence/read-state owns
-startup and updates; this projection adds no relay reads, network subscriptions,
-or storage. Confirmed channel mutes remove that channel from the projection without
-removing its retained unread evidence, so unmuting can restore the dot. The dot
-stays clear while mute preferences are unresolved. Personal space,
-account/session changes, access loss and host disposal clear or recompute the
-indicator. Disabling Channels does not stop host ownership. Desktop alert
-preferences do not alter this unread indicator. The separate **Badge activity**
-choice in Settings → Notifications defaults to **All unread activity**. Choose
-**Mentions and direct messages** to omit ordinary channel posts, replies without
-a mention, and Solo activity without a mention. Viewer mentions still qualify, including mentions in replies. Replies sent
-to the channel do not qualify without a mention. Existing channel mutes, row-seen
-state and read/access checks continue to apply. This account-local choice takes
-effect immediately and does not change desktop alerts or sidebar unread state.
+The host projects the selected community's existing unread selectors: a number
+for known unread mentions and direct messages, a dot for other unread activity,
+and no badge when neither remains. Numbers count retained unread messages, not
+conversations; a mention in a DM counts once. This bounded evidence is not a
+complete-history total. Unknown and observed-zero omit the badge unless explicit
+channel-unread intent contributes a dot. Existing unread/read-state owns startup
+and updates; this projection adds no relay reads, network subscriptions, or storage.
+Confirmed channel mutes remove that channel from the projection without removing
+its retained unread evidence, so unmuting can restore its badge. The badge stays
+clear while mute preferences are unresolved. Personal space, account/session
+changes, access loss and host disposal clear or recompute the indicator. Disabling
+Channels does not stop host ownership. Desktop alert preferences do not alter this
+unread indicator. The separate **Badge activity** choice in Settings → Notifications
+defaults to **All unread activity**. Choose **Mentions and direct messages** to omit
+ordinary channel posts, replies without a mention, and Solo activity without a
+mention. Viewer mentions still qualify, including mentions in replies. Replies sent
+to the channel do not qualify without a mention. A manually unread DM can show a
+dot when there is no known message count. Existing channel mutes, row-seen state
+and read/access checks continue to apply. This account-local choice takes effect
+immediately and does not change desktop alerts or sidebar unread state.
 
 One ordered host writer calls a main-window-only command using Tauri's standard
 `set_badge_label` API. macOS draws the badge; no custom artwork is supplied.
@@ -232,7 +235,7 @@ Badge for a fresh NotDetermined identity. **Set up Dock badges** explicitly requ
 Badge alone when an already Authorized identity reports NotSupported. Startup,
 focus, and **Check Dock permission** only read settings; they never register or
 repair permissions. Denied authorization and explicitly Disabled badges are never
-re-requested. macOS System Settings controls badge opt-out. Errors withhold the dot
+re-requested. macOS System Settings controls badge opt-out. Errors withhold the badge
 and are shown; a later focus or explicit check can retry a failed read.
 
 This permission capability requires an actual macOS `.app` bundle. Unbundled

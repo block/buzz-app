@@ -476,7 +476,7 @@ revokes all of them, and a pairing unused for 30 days expires.
   rather than clearing that choice. Mark the channel read again to clear it.
 - **Opening a channel or DM** while Buzz is visible and focused clears its sidebar row: the bold name, the mention
   dot and the thread dot. Switching away from Buzz pauses this: new messages
-  can light the row even while that conversation stays selected. The macOS Dock dot follows the rows. Nothing is marked
+  can light the row even while that conversation stays selected. The macOS Dock badge follows the rows. Nothing is marked
   read: unread threads keep their dots in the conversation and in Activity →
   Threads, and **New messages** still marks where you left off. A mention, DM or
   reply to you that arrives after you leave lights the row again, as does any
@@ -534,10 +534,13 @@ revokes all of them, and a pairing unused for 30 days expires.
   you. Unmute restores ordinary unread emphasis and dots. Manual **Mark as unread**
   can still make the name bold. Muted rows show no unread dots, including thread
   dots, and do not contribute to the sidebar’s floating **N unread** buttons or
-  their avatar previews. Muted activity does not light the macOS Dock unread dot.
+  their avatar previews. Muted activity does not contribute to the macOS Dock badge.
   Muting does not mark messages or threads as read.
 - **Dock badge activity**: on macOS, Settings → Notifications → Dock unread badge
-  lets you choose **All unread activity** or **Mentions and direct messages**.
+  shows a number for known unread mentions and DM messages, a dot for other unread
+  activity, and no badge when everything is read. The number counts messages, not
+  conversations, using unread activity Buzz already knows about. Choose **All
+  unread activity** or **Mentions and direct messages**.
   The latter omits ordinary posts and replies without a mention. It keeps
   mentions (including mentions in replies) and DMs,
   subject to existing mutes and read state. Desktop alerts and sidebar unread
@@ -1235,7 +1238,7 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
   install plugin code by itself.
 - **Focus**, when its optional plugin is on, is in the profile menu. For a
   chosen time it shows only Solo chats in the sidebar and lets only Solo chats
-  in the selected community show banners, play sounds or light the Dock dot. Links and search still open
+  in the selected community show banners, play sounds or light the Dock badge. Links and search still open
   any conversation. Other alerts are not shown or saved, and those
   conversations keep their unread state. Focus sets 🔭 Focusing as the status
   in the selected community. When Focus ends there, the earlier status comes

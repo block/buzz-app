@@ -89,24 +89,33 @@ export function App({ services }: { services: AppServices }) {
       <ModalWindowDragProvider
         value={isTauri() ? modalWindowDragHandlers : undefined}
       >
-        <LaunchWindowControls />
-        {services.identity ? (
-          <Welcome
-            identity={services.identity}
-            communities={services.communities}
-            invites={services.invites}
-            federatedIdentity={services.firstRunFederatedIdentity}
-          >
-            <LaunchSignIn identity={services.federatedIdentity}>
-              <ConnectedApp services={services} />
-              {!launching && (
-                <LegacyCommunityImport communities={services.communities} />
-              )}
-            </LaunchSignIn>
-          </Welcome>
-        ) : (
-          <ConnectedApp services={services} />
-        )}
+        {/* Desktop sign-out restarts Buzz, so no signed-in toast reaches Welcome. */}
+        <ToastProvider
+          portalContainer={
+            document.getElementById("buzz-toast-root") ?? undefined
+          }
+        >
+          <LaunchWindowControls />
+          {/* Updates, including Buzz → Check for Updates…, work signed out too. */}
+          <UpdateNotice updates={services.updates} />
+          {services.identity ? (
+            <Welcome
+              identity={services.identity}
+              communities={services.communities}
+              invites={services.invites}
+              federatedIdentity={services.firstRunFederatedIdentity}
+            >
+              <LaunchSignIn identity={services.federatedIdentity}>
+                <ConnectedApp services={services} />
+                {!launching && (
+                  <LegacyCommunityImport communities={services.communities} />
+                )}
+              </LaunchSignIn>
+            </Welcome>
+          ) : (
+            <ConnectedApp services={services} />
+          )}
+        </ToastProvider>
       </ModalWindowDragProvider>
     </AgentAvatarArtworkProvider>
   );
@@ -114,9 +123,7 @@ export function App({ services }: { services: AppServices }) {
 
 function ConnectedApp({ services }: { services: AppServices }) {
   return (
-    <ToastProvider
-      portalContainer={document.getElementById("buzz-toast-root") ?? undefined}
-    >
+    <>
       <AgentCompletionNotifications services={services} />
       <AgentsContext.Provider value={services.agents}>
         <PluginUpdates
@@ -128,7 +135,7 @@ function ConnectedApp({ services }: { services: AppServices }) {
           <ConnectedAppContent services={services} />
         </PluginUpdates>
       </AgentsContext.Provider>
-    </ToastProvider>
+    </>
   );
 }
 
@@ -699,7 +706,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             startup === "ready" && workspace.page?.layout === "workspace"
           }
         >
-          <UpdateNotice updates={services.updates} />
           <RejectedLinkNotice links={services.rejectedLinks} />
           <ExternalAuthorizationDialog
             connection={services.externalApps}

@@ -119,7 +119,7 @@ it("does not surface background check failures", async () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-it("stays dismissed until the update leaves the ready state", async () => {
+it("reopens a dismissed ready update on a menu request", async () => {
   const { updates } = await readyUpdate();
   fireEvent.click(
     screen.getByRole("button", { name: "Dismiss update notification" }),
@@ -129,9 +129,9 @@ it("stays dismissed until the update leaves the ready state", async () => {
   );
   expect(updates.snapshot().state).toBe("ready");
 
-  await updates.checkForUpdate();
-  expect(updates.snapshot().state).toBe("up-to-date");
-  void updates.checkForUpdate();
+  await act(async () => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
   expect(
     await screen.findByRole("dialog", { name: "Ready to update!" }),
   ).toBeVisible();
@@ -155,8 +155,9 @@ it("stays dismissed when the notice remounts, e.g. during community restoration"
   expect(updates.snapshot().state).toBe("ready");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-  await updates.checkForUpdate();
-  void updates.checkForUpdate();
+  await act(async () => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
   expect(
     await screen.findByRole("dialog", { name: "Ready to update!" }),
   ).toBeVisible();
@@ -242,6 +243,64 @@ it("follows a menu check's download with its progress, then updates from the not
   expect(update.install).toHaveBeenCalledOnce();
   // The notice, not a second toast, carried the result.
   expect(screen.queryByText("You're on the latest version.")).toBeNull();
+});
+
+it("menu checks reveal the active download and preserve it through installation", async () => {
+  const download = deferred();
+  const install = deferred();
+  const restart = deferred();
+  const update = {
+    version: "1.2.3",
+    download: vi.fn(() => download.promise),
+    install: vi.fn(() => install.promise),
+    close: vi.fn(async () => {}),
+  };
+  // Native checks return a fresh handle, even for the same version.
+  const replacement = { ...update, install: vi.fn(async () => {}) };
+  const check = vi
+    .fn()
+    .mockResolvedValueOnce(update)
+    .mockResolvedValue(replacement);
+  const relaunch = vi.fn(() => restart.promise);
+  updates = createUpdates({ desktop: true, check, relaunch });
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
+  );
+  const request = () =>
+    act(async () => {
+      window.dispatchEvent(new Event("buzz:check-for-updates"));
+    });
+  try {
+    await waitFor(() => expect(update.download).toHaveBeenCalledOnce());
+    await request();
+    expect(await screen.findByText("Downloading Buzz 1.2.3…")).toBeVisible();
+    expect(check).toHaveBeenCalledOnce();
+    await act(async () => download.resolve());
+    await screen.findByRole("dialog", { name: "Ready to update!" });
+    await request();
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    await screen.findByText("Updating");
+    await request();
+    expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await act(async () => install.resolve());
+    expect(relaunch).toHaveBeenCalledOnce();
+    await request();
+    expect(check).toHaveBeenCalledOnce();
+    expect(update.close).not.toHaveBeenCalled();
+    expect(update.install).toHaveBeenCalledOnce();
+    expect(replacement.install).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      download.resolve();
+      install.resolve();
+      restart.resolve();
+    });
+  }
 });
 
 it("reports a build without updates in a toast", async () => {

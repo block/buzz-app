@@ -683,6 +683,10 @@ for 30 days expires.
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
   Settings…** in the menu bar also opens Settings, and **Buzz → Check for
   Updates…** checks for a new version and shows the result in a notification.
+  If an update is already downloading, ready, or installing, the command shows
+  that update's current status. Dismissing its notification leaves the update
+  running and keeps the notification hidden when the download finishes; choose
+  **Check for Updates…** again to bring it back.
 - **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
   Interface**. Narrow is the default; Wide gives messages and the composer
   50% more room when the pane is wide enough. The choice is saved on this device.

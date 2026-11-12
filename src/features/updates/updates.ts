@@ -35,7 +35,7 @@ export const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 // The updater does not carry the check timeout over to the download.
 export const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 export const UPDATE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
-const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
+const CHECK_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "checking",
   "available",
   "downloading",
@@ -80,7 +80,11 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   const setStatus = (next: UpdateStatus) => {
     status = next;
     if (next.state === "ready") noticePinned = false;
-    if (next.state !== "ready" && next.state !== "installing")
+    if (
+      next.state !== "downloading" &&
+      next.state !== "ready" &&
+      next.state !== "installing"
+    )
       noticeDismissed = false;
     notify();
   };
@@ -152,7 +156,16 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       }
       return;
     }
-    if (background && BACKGROUND_BLOCKED_STATES.has(status.state)) return;
+    // A menu request reveals the current update without replacing its handle.
+    if (CHECK_BLOCKED_STATES.has(status.state)) {
+      if (!background) {
+        noticeDismissed = false;
+        noticePinned =
+          status.state === "available" || status.state === "downloading";
+        notify();
+      }
+      return;
+    }
 
     checkInFlight = true;
     manualResultRequested = false;
@@ -205,7 +218,7 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       };
     },
     inlineVisible: () => inlineViews > 0,
-    /** The ready notice stays dismissed across remounts until the update resolves. */
+    /** Keep dismissal through download and readiness; another request reveals it. */
     dismissNotice() {
       noticeDismissed = true;
       noticePinned = false;

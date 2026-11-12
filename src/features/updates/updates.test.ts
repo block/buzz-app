@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import {
   BACKGROUND_UPDATE_CHECK_INTERVAL_MS,
   createUpdates,
@@ -228,3 +229,41 @@ it("stops background checks on dispose without closing an in-flight download", a
   await vi.advanceTimersByTimeAsync(BACKGROUND_UPDATE_CHECK_INTERVAL_MS);
   expect(platform.check).toHaveBeenCalledOnce();
 });
+
+it.each([
+  { name: "mid-download", contentLength: 100, received: 50 },
+  { name: "after the final chunk", contentLength: 100, received: 100 },
+  { name: "with unknown size", contentLength: undefined, received: 50 },
+])(
+  "keeps a download dismissed $name through completion",
+  async ({ contentLength, received }) => {
+    const updates = start();
+    const { update, download } = handle();
+    let report!: (event: DownloadEvent) => void;
+    update.download.mockImplementation((onEvent: typeof report) => {
+      report = onEvent;
+      return download.promise;
+    });
+    // Join the startup check so this download has a visible, dismissible notice.
+    await updates.checkForUpdate();
+    (await check(0)).resolve(update);
+    try {
+      await vi.waitFor(() => expect(state()).toBe("downloading"));
+      report({
+        event: "Started",
+        data: contentLength === undefined ? {} : { contentLength },
+      });
+      report({ event: "Progress", data: { chunkLength: received } });
+      updates.dismissNotice();
+      if (received < 100)
+        report({ event: "Progress", data: { chunkLength: 100 - received } });
+      report({ event: "Finished" });
+      download.resolve();
+      await vi.waitFor(() => expect(state()).toBe("ready"));
+      expect(updates.noticeDismissed()).toBe(true);
+      expect(updates.noticePinned()).toBe(false);
+    } finally {
+      download.resolve();
+    }
+  },
+);

@@ -20,7 +20,16 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { SidebarRightIcon } from "../../shared/design-system/icons";
+import {
+  DotsThreeIcon,
+  SidebarRightIcon,
+} from "../../shared/design-system/icons";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import panelStyles from "../../features/panels/Panels.module.css";
 import { useChannelLabels } from "./useChannelLabels";
 import {
@@ -440,45 +449,79 @@ export function PageTabs({
                   id: "conversation",
                   label,
                   icon,
-                  toolbar: workspace?.toolbar,
+                  toolbar: !!workspace?.actions?.length && (
+                    <MenuRoot>
+                      <MenuTrigger
+                        render={
+                          <IconButton
+                            hint="familiar"
+                            size="sm"
+                            aria-label="Conversation actions"
+                            title="Conversation actions"
+                            icon={
+                              <DotsThreeIcon size="1rem" aria-hidden="true" />
+                            }
+                          />
+                        }
+                      />
+                      <MenuPopup align="end">
+                        {workspace.actions.map((action) => (
+                          <MenuItem
+                            key={action.label}
+                            onClick={() => action.run()}
+                          >
+                            {action.label}
+                          </MenuItem>
+                        ))}
+                      </MenuPopup>
+                    </MenuRoot>
+                  ),
                   actions: workspace?.actions,
                   content: workspace ? (
-                    primaryTab &&
-                    primaryChannel &&
-                    secondary.canOpenConversation(primaryChannel.id) ? (
-                      <ConversationReader
-                        key={JSON.stringify(primaryTarget)}
-                        tab={primaryTab}
-                        active={
-                          secondary.selectedMain === "conversation" && !covered
-                        }
-                        channel={primaryChannel}
-                        session={session}
-                        scope={scope}
-                        extensions={extensions}
-                        openLink={(url, origin) =>
-                          secondary.openConversationLink(
-                            primaryChannel.id,
-                            url,
-                            origin,
-                          )
-                        }
-                        canOpenLink={(target) => !!host.panels.resolve(target)}
-                        openThread={(messageId, rootId, intent) =>
-                          secondary.openConversationThread(
-                            primaryChannel.id,
-                            messageId,
-                            rootId,
-                            intent,
-                          )
-                        }
-                        close={() => {}}
-                      />
-                    ) : (
-                      <p role="status" className={styles.empty}>
-                        This conversation is no longer available.
-                      </p>
-                    )
+                    <div className={styles.conversation}>
+                      {workspace.toolbar}
+                      <div className={styles.workspaceReader}>
+                        {primaryTab &&
+                        primaryChannel &&
+                        secondary.canOpenConversation(primaryChannel.id) ? (
+                          <ConversationReader
+                            key={JSON.stringify(primaryTarget)}
+                            tab={primaryTab}
+                            active={
+                              secondary.selectedMain === "conversation" &&
+                              !covered
+                            }
+                            channel={primaryChannel}
+                            session={session}
+                            scope={scope}
+                            extensions={extensions}
+                            openLink={(url, origin) =>
+                              secondary.openConversationLink(
+                                primaryChannel.id,
+                                url,
+                                origin,
+                              )
+                            }
+                            canOpenLink={(target) =>
+                              !!host.panels.resolve(target)
+                            }
+                            openThread={(messageId, rootId, intent) =>
+                              secondary.openConversationThread(
+                                primaryChannel.id,
+                                messageId,
+                                rootId,
+                                intent,
+                              )
+                            }
+                            close={() => {}}
+                          />
+                        ) : (
+                          <p role="status" className={styles.empty}>
+                            This conversation is no longer available.
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   ) : (
                     children(open, close, isOpen)
                   ),

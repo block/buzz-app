@@ -135,7 +135,8 @@ Add `"host"` to `inject`, then:
   `{ id, session, scope, target, label, toolbar?, actions?, detail? }`.
   `target` is `{ channelId, threadId?, messageId? }`: omit `threadId` for the
   channel timeline, or supply it for a thread. `messageId` selects a message.
-  `toolbar` supplies header icon controls. `actions` supplies menu entries with
+  `toolbar` supplies content controls below the header. `actions` supplies
+  entries in the header's three-dot menu and the tab's context menu, with
   `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel
   in the right pane. The host owns the reader, composer, tabs, and panel frame.
   The page owns its route, content lookup, labels, and actions.

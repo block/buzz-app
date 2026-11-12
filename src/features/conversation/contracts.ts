@@ -466,7 +466,9 @@ export type ConversationWorkspaceProps = {
   scope: string;
   target: PageTabTarget;
   label: string;
+  /** Content controls below the pane header and above the reader. */
   toolbar?: ReactNode;
+  /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */
   detail?: { target: string; rootId?: string };

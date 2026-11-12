@@ -2,6 +2,7 @@ import { test, expect } from "../../../tests/browser/playwright-test.mjs";
 import { createServer } from "../../../tests/browser/vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { watchPageErrors } from "../../../tests/browser/page-errors.mjs";
 import { settleDialogMotion } from "../../../tests/browser/navigation.mjs";
@@ -25,6 +26,97 @@ test.afterAll(async () => {
 
 // The landing status is empty only after every visible channel read settles.
 const landingStatus = (page) => page.locator(".workflow-page-status");
+
+// Native date/time editing and the real signed session boundary cannot be
+// established by the DOM-emulator schedule matrix alone.
+test("fortnightly controls preserve calendar meaning through rejection and signed readback", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const editor = editorControls(page);
+  await editor.open("Fixture A helper");
+  await editor.tab("YAML").click();
+  const calendarYaml = readFileSync(
+    new URL("./fortnightly.fixture.yaml", import.meta.url),
+    "utf8",
+  );
+  await editor.yaml.fill(calendarYaml);
+  await editor.tab("Form").click();
+  await page.getByRole("button", { name: /Edit trigger/ }).click();
+  await expect(
+    page.getByRole("radio", { name: "Every two weeks", exact: true }),
+  ).toBeChecked();
+  await page.getByLabel("First date", { exact: true }).fill("2027-03-10");
+  await page.getByLabel("Local run time", { exact: true }).fill("13:35");
+  const zone = page.getByLabel("Timezone", { exact: true });
+  await zone.fill("America/New_York");
+  await expect(
+    page.getByText(/Every other Wednesday, starting 2027-03-10/),
+  ).toBeVisible();
+  await zone.fill("utc");
+  await expect(editor.button("Save changes")).toBeDisabled();
+  await zone.fill("US/Eastern");
+  await zone.press("Tab");
+  await editor.closeInspector();
+  await editor.rename("Fortnightly agenda");
+  await editor.tab("YAML").click();
+  const submitted = await editor.yaml.inputValue();
+  const expected = {
+    every_weeks: 2,
+    start_date: "2027-03-10",
+    time: "13:35",
+    timezone: "US/Eastern",
+  };
+  expect(parseYaml(submitted).trigger).toEqual({
+    on: "schedule",
+    calendar: expected,
+  });
+  await editor.button("Save changes").focus();
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(1);
+  const signed = await page.evaluate(() =>
+    window.workflowSessionFixture.published(),
+  );
+  expect(signed.content).toBe(submitted);
+  expect(signed.tags.find(([key]) => key === "expected-revision")?.[1]).toMatch(
+    /^[a-f0-9]{64}$/,
+  );
+  await page.evaluate(() => window.workflowSessionFixture.reject());
+  await expect(
+    page.getByText("Configuration was not saved.", { exact: true }),
+  ).toBeVisible();
+  await expect(editor.yaml).toHaveValue(submitted);
+  await editor.button("Continue editing retained draft").click();
+  await editor.button("Save changes").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(2);
+  const retried = await page.evaluate(() =>
+    window.workflowSessionFixture.published(),
+  );
+  expect(retried.content).toBe(submitted);
+  expect(retried.tags.find(([key]) => key === "expected-revision")).toEqual(
+    signed.tags.find(([key]) => key === "expected-revision"),
+  );
+  await page.evaluate(() => {
+    window.workflowSessionFixture.readback();
+    window.workflowSessionFixture.settleSave(false);
+  });
+  await expect(editor.button("Save changes")).toBeEnabled();
+  await editor.button("Close editor").click();
+  await editor.open("Fortnightly agenda");
+  await editor.tab("YAML").click();
+  await expect(editor.yaml).toHaveValue(submitted);
+  expect(errors.unexplained()).toEqual([]);
+});
 
 // The editor dialog is titled by the workflow name, so find it by its region.
 const editorDialog = (page) =>

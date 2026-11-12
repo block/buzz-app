@@ -361,7 +361,7 @@ export function WorkflowEditor({
               <Field
                 label="Workflow YAML"
                 error={error}
-                description="Original text is kept until you edit. Form changes may reformat YAML. Schedules use UTC."
+                description="Original text is kept until you edit. Form changes may reformat YAML. Cron schedules use UTC. Calendar schedules use their explicit timezone."
               >
                 <Textarea
                   id={`${id}-yaml`}

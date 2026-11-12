@@ -56,7 +56,9 @@ test("parses common cron shapes into preset fields", () => {
       customInterval: "",
       frequency: "daily",
       monthDay: "1",
+      startDate: "",
       time: "07:05",
+      timezone: "UTC",
       weekday: "2",
     },
   );
@@ -67,7 +69,9 @@ test("parses common cron shapes into preset fields", () => {
       customInterval: "",
       frequency: "weekly",
       monthDay: "1",
+      startDate: "",
       time: "14:30",
+      timezone: "UTC",
       weekday: "1-5",
     },
   );
@@ -78,7 +82,9 @@ test("parses common cron shapes into preset fields", () => {
       customInterval: "",
       frequency: "monthly",
       monthDay: "31",
+      startDate: "",
       time: "00:00",
+      timezone: "UTC",
       weekday: "2",
     },
   );
@@ -165,5 +171,29 @@ test("an unparseable time falls back to 09:00 rather than emitting NaN", () => {
   assert.deepEqual(scheduleTriggerFromForm({ ...form, time: "" }), {
     on: "schedule",
     cron: "0 9 * * *",
+  });
+});
+
+test("calendar modes preserve incomplete inputs and remove incompatible arms", () => {
+  const calendar = {
+    every_weeks: 2,
+    start_date: "2024-02-29",
+    time: "09:05",
+    timezone: "US/Eastern",
+  };
+  const form = scheduleFormFromTrigger({ on: "schedule", calendar });
+  assert.equal(form.frequency, "every_two_weeks");
+  assert.deepEqual(scheduleTriggerFromForm(form), { on: "schedule", calendar });
+  for (const key of ["startDate", "time", "timezone"]) {
+    const incomplete = scheduleTriggerFromForm({ ...form, [key]: "" });
+    assert.equal(scheduleFormFromTrigger(incomplete)[key], "");
+  }
+  assert.deepEqual(scheduleTriggerFromForm({ ...form, frequency: "hourly" }), {
+    on: "schedule",
+    interval: "1h",
+  });
+  assert.deepEqual(scheduleTriggerFromForm({ ...form, frequency: "daily" }), {
+    on: "schedule",
+    cron: "5 9 * * *",
   });
 });

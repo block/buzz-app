@@ -1405,6 +1405,14 @@ Owning the agent does not grant permission to edit or run its workflow.
 
 In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.
 
+## Every-other-week workflows
+
+Choose **Schedule → Every two weeks** in the workflow editor. Set the first date, local run time, and timezone. The first date sets both the weekday and which alternating weeks run. UTC is preselected explicitly. Existing cron schedules keep their UTC timing and are not converted. New drafts start off.
+
+Use a case-sensitive timezone name such as `UTC` or `America/New_York`. If that wall time does not exist during a clock change, the run is skipped, which can leave 28 days between runs. Repeated wall times run once at the earlier instant. Missed runs are not replayed. Saving or restarting does not move the anchor.
+
+This needs calendar support on every serving and scheduler relay pod before enabling the workflow. An older relay rejects the save and Buzz keeps your draft. The scheduler's existing 60-second admission window and 1,000-row scan cap still apply. Save is not a guarantee of execution. See [workflow details](workflows.md).
+
 ## Draft diagnostics
 
 Desktop builds save a small local trace when a draft conflict or save failure

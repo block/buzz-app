@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { WorkflowEditor } from "./WorkflowEditor";
 import { fixtureYaml } from "./fixtures";
+import calendarYaml from "./fortnightly.fixture.yaml?raw";
 import { parse } from "yaml";
 
 vi.stubGlobal(
@@ -33,6 +40,32 @@ function Example({
     />
   );
 }
+
+test("invalid calendar edits block Save in Form and YAML without defaulting cleared fields", async () => {
+  const user = userEvent.setup();
+  render(<Example initial={calendarYaml} />);
+  await user.click(screen.getByRole("button", { name: /Edit trigger/ }));
+  fireEvent.change(screen.getByLabelText("First date"), {
+    target: { value: "" },
+  });
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  expect(screen.getByLabelText("First date")).toHaveValue("");
+  await user.click(screen.getByRole("tab", { name: "YAML" }));
+  const yaml = screen.getByRole("textbox", { name: "Workflow YAML" });
+  expect(
+    parse((yaml as HTMLTextAreaElement).value).trigger.calendar.start_date,
+  ).toBe("");
+  fireEvent.change(yaml, {
+    target: { value: calendarYaml.replace("timezone: UTC", "timezone: utc") },
+  });
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  expect(yaml).toHaveValue(
+    calendarYaml.replace("timezone: UTC", "timezone: utc"),
+  );
+  fireEvent.change(yaml, { target: { value: calendarYaml } });
+  await user.click(screen.getByRole("tab", { name: "Form" }));
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+});
 
 test("names the create switch for configuration enablement", async () => {
   const change = vi.fn();

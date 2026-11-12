@@ -10,6 +10,7 @@ import {
   SCHEDULE_FREQUENCIES,
   SCHEDULE_FREQUENCY_LABELS,
   type ScheduleFormState,
+  calendarScheduleError,
   scheduleFormFromTrigger,
   scheduleTriggerFromForm,
   scheduleWeekdaysFromCronField,
@@ -204,6 +205,52 @@ export function WorkflowScheduleFields({
         </div>
       )}
 
+      {schedule.frequency === "every_two_weeks" && (
+        <>
+          <Field
+            label="First date"
+            description="This date sets the weekday and every-other-week phase."
+          >
+            <Input
+              type="date"
+              value={schedule.startDate}
+              disabled={disabled}
+              onValueChange={(startDate) => updateSchedule({ startDate })}
+            />
+          </Field>
+          <Field label="Local run time">
+            <Input
+              type="time"
+              value={schedule.time}
+              disabled={disabled}
+              onValueChange={(time) => updateSchedule({ time })}
+            />
+          </Field>
+          <Field
+            label="Timezone"
+            description="Use a case-sensitive IANA name. The relay validates support on save."
+          >
+            <Input
+              value={schedule.timezone}
+              placeholder="America/New_York"
+              disabled={disabled}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onValueChange={(timezone) => updateSchedule({ timezone })}
+            />
+          </Field>
+          <p className="text-body-sm text-secondary">
+            {!calendarScheduleError(trigger.calendar)
+              ? `Every other ${new Intl.DateTimeFormat("en", { weekday: "long", timeZone: "UTC" }).format(new Date(`${schedule.startDate}T00:00:00Z`))}, starting ${schedule.startDate} at ${schedule.time} in ${schedule.timezone}. `
+              : "Choose the first date, local run time and timezone. "}
+            Nonexistent local times are skipped, which can leave 28 days between
+            runs. Repeated times run once at the earlier instant. Missed runs
+            are not replayed.
+          </p>
+        </>
+      )}
+
       {usesTime && (
         <label htmlFor={`${id}-time`} className="workflow-field">
           Run time (UTC)
@@ -243,8 +290,8 @@ export function WorkflowScheduleFields({
             id={`${id}-interval-help`}
             className="text-body-sm text-secondary"
           >
-            Keep this legacy interval or choose a repeat option above. All
-            schedules use UTC.
+            Keep this legacy interval or choose a repeat option above. All cron
+            schedules use UTC. Intervals measure elapsed time.
           </span>
           {legacyIntervalWarning && (
             <p role="status" className="text-body-sm text-warning">

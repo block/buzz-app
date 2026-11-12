@@ -6,6 +6,7 @@ import type {
   WorkflowView,
 } from "../../features/workflows/types";
 import type { WorkflowFormState } from "./workflowFormTypes";
+import { calendarTriggerError } from "./workflowSchedule";
 
 export type WorkflowDraftIssue = {
   message: string;
@@ -42,6 +43,10 @@ export function draftIssue(yaml: string): WorkflowDraftIssue | null {
       typeof (data.trigger as Record<string, unknown>).on !== "string"
     )
       return { message: "Choose a trigger." };
+    const calendarError = calendarTriggerError(
+      data.trigger as Record<string, unknown>,
+    );
+    if (calendarError) return { message: calendarError };
     if (!Array.isArray(data.steps) || !data.steps.length)
       return { message: "Add at least one step." };
     if (data.steps.length > 100) return { message: "Use at most 100 steps." };

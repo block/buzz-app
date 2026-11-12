@@ -1,5 +1,65 @@
 // Adapted from block/buzz desktop workflow helpers at b9392d9d.
 import type { TriggerConfig } from "./workflowFormTypes";
+import calendarTimezones from "./calendar-timezones.json";
+
+export type CalendarSchedule = {
+  every_weeks: number;
+  start_date: string;
+  time: string;
+  timezone: string;
+};
+
+// The relay pins chrono-tz 0.10.4. This is its name table, not the browser's
+// canonicalized zone list (which can drop aliases or accept different casing).
+const relayTimezones = new Set(calendarTimezones);
+
+export function calendarScheduleError(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return "Calendar schedule requires every_weeks, start_date, time and timezone.";
+  const calendar = value as Record<string, unknown>;
+  if (
+    Object.keys(calendar).some(
+      (key) => !["every_weeks", "start_date", "time", "timezone"].includes(key),
+    )
+  )
+    return "Unsupported calendar field. Keep this definition in YAML.";
+  if (calendar.every_weeks !== 2) return "Calendar every_weeks must be 2.";
+  const date = calendar.start_date;
+  if (
+    typeof date !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+    new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date
+  )
+    return "Enter a real first date in YYYY-MM-DD format.";
+  if (
+    typeof calendar.time !== "string" ||
+    !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(calendar.time)
+  )
+    return "Enter a local run time in HH:MM format.";
+  if (
+    typeof calendar.timezone !== "string" ||
+    !relayTimezones.has(calendar.timezone)
+  )
+    return "Enter a supported case-sensitive IANA timezone, such as UTC or America/New_York.";
+  return null;
+}
+
+/** Only the new calendar arm is strict. Legacy schedule parsing stays unchanged. */
+export function calendarTriggerError(
+  trigger: Record<string, unknown>,
+): string | null {
+  if (trigger.on !== "schedule" || trigger.calendar === undefined) return null;
+  if (
+    Object.keys(trigger).some(
+      (key) => !["on", "cron", "interval", "calendar"].includes(key),
+    ) ||
+    trigger.cron != null ||
+    trigger.interval != null
+  )
+    return "Calendar schedules cannot include cron, interval or other trigger fields.";
+  return calendarScheduleError(trigger.calendar);
+}
 
 export const SCHEDULE_FREQUENCIES = [
   "every_15_minutes",
@@ -7,6 +67,7 @@ export const SCHEDULE_FREQUENCIES = [
   "hourly",
   "daily",
   "weekly",
+  "every_two_weeks",
   "monthly",
   "custom_cron",
 ] as const;
@@ -20,7 +81,9 @@ export type ScheduleFormState = {
   customInterval: string;
   frequency: ScheduleFormFrequency;
   monthDay: string;
+  startDate: string;
   time: string;
+  timezone: string;
   weekday: string;
 };
 
@@ -30,6 +93,7 @@ export const SCHEDULE_FREQUENCY_LABELS: Record<ScheduleFrequency, string> = {
   hourly: "Every hour",
   daily: "Daily",
   weekly: "Weekly",
+  every_two_weeks: "Every two weeks",
   monthly: "Monthly",
   custom_cron: "Custom cron",
 };
@@ -112,6 +176,18 @@ function parseCommonCron(cron: string): ParsedCommonCron | null {
 export function scheduleFormFromTrigger(
   trigger: TriggerConfig,
 ): ScheduleFormState {
+  if (trigger.calendar) {
+    return {
+      customCron: "",
+      customInterval: "",
+      frequency: "every_two_weeks",
+      monthDay: DEFAULT_MONTH_DAY,
+      weekday: DEFAULT_WEEKDAY,
+      startDate: trigger.calendar.start_date,
+      time: trigger.calendar.time,
+      timezone: trigger.calendar.timezone,
+    };
+  }
   // A key that is present but empty keeps its custom pane mounted while the
   // user clears and retypes it; only a missing key falls back to daily.
   const interval = trigger.interval;
@@ -122,7 +198,9 @@ export function scheduleFormFromTrigger(
       customInterval: frequency ? "" : interval,
       frequency: frequency ?? "custom_interval",
       monthDay: DEFAULT_MONTH_DAY,
+      startDate: "",
       time: DEFAULT_TIME,
+      timezone: "UTC",
       weekday: DEFAULT_WEEKDAY,
     };
   }
@@ -135,7 +213,9 @@ export function scheduleFormFromTrigger(
     frequency:
       commonCron?.frequency ?? (cron !== undefined ? "custom_cron" : "daily"),
     monthDay: commonCron?.monthDay ?? DEFAULT_MONTH_DAY,
+    startDate: "",
     time: commonCron?.time ?? DEFAULT_TIME,
+    timezone: "UTC",
     weekday: commonCron?.weekday ?? DEFAULT_WEEKDAY,
   };
 }
@@ -157,10 +237,21 @@ function cronTime(time: string): { hour: string; minute: string } {
   };
 }
 
-/** Every branch returns cron or interval, never both; the relay refuses the pair. */
+/** Switching arms deliberately removes incompatible schedule fields. */
 export function scheduleTriggerFromForm(
   form: ScheduleFormState,
 ): TriggerConfig {
+  if (form.frequency === "every_two_weeks") {
+    return {
+      on: "schedule",
+      calendar: {
+        every_weeks: 2,
+        start_date: form.startDate,
+        time: form.time,
+        timezone: form.timezone,
+      },
+    };
+  }
   const interval = FREQUENCY_INTERVALS[form.frequency];
   if (interval) return intervalTrigger(interval);
   if (form.frequency === "custom_interval") {

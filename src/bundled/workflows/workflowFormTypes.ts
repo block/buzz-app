@@ -4,6 +4,10 @@ import { stringify as yamlStringify, parse as yamlParse } from "yaml";
 import type { ParsedConditionExpression } from "./workflowConditionExpression";
 import { cronExpressionError } from "./cronExpression";
 import {
+  type CalendarSchedule,
+  calendarTriggerError,
+} from "./workflowSchedule";
+import {
   formatDurationSeconds,
   parseDurationSeconds,
 } from "./workflowDuration";
@@ -41,6 +45,7 @@ export type TriggerConfig = {
   emoji?: string | undefined;
   cron?: string | undefined;
   interval?: string | undefined;
+  calendar?: CalendarSchedule | undefined;
 };
 
 export type StepFormState = {
@@ -141,8 +146,9 @@ export function withTriggerType(
 export function formStateToYaml(state: WorkflowFormState): string {
   const trigger: Record<string, unknown> = { on: state.trigger.on };
   if (state.trigger.on === "schedule") {
-    // The relay refuses cron and interval together; emit exactly one.
-    if (state.trigger.cron) trigger.cron = state.trigger.cron;
+    // Schedule mode changes remove the other arms before serialization.
+    if (state.trigger.calendar) trigger.calendar = state.trigger.calendar;
+    else if (state.trigger.cron) trigger.cron = state.trigger.cron;
     else if (state.trigger.interval) trigger.interval = state.trigger.interval;
   } else if (state.trigger.on !== "webhook") {
     // A webhook carries nothing but `on`; the relay owns its URL and secret.
@@ -192,7 +198,7 @@ const TRIGGER_KEYS: Record<TriggerType, ReadonlySet<string>> = {
   message_posted: new Set(["on", "filter"]),
   reaction_added: new Set(["on", "emoji", "filter"]),
   diff_posted: new Set(["on", "filter"]),
-  schedule: new Set(["on", "cron", "interval"]),
+  schedule: new Set(["on", "cron", "interval", "calendar"]),
   webhook: new Set(["on"]),
 };
 const COMMON_STEP_KEYS = ["id", "name", "action", "if", "timeout_secs"];
@@ -320,6 +326,14 @@ export function yamlToFormState(
       };
     }
     for (const key of ["filter", "emoji", "cron", "interval"] as const) {
+      // Relay canonical JSON includes null for the absent legacy arms.
+      if (
+        triggerOn === "schedule" &&
+        rawTrigger.calendar &&
+        (key === "cron" || key === "interval") &&
+        rawTrigger[key] === null
+      )
+        continue;
       const error = optionalOwnedStringError(rawTrigger, key, `trigger.${key}`);
       if (error) {
         return {
@@ -335,7 +349,10 @@ export function yamlToFormState(
     if (triggerOn === "schedule") {
       const hasCron = rawTrigger.cron !== undefined;
       const hasInterval = rawTrigger.interval !== undefined;
-      if (hasCron === hasInterval) {
+      if (rawTrigger.calendar !== undefined) {
+        const error = calendarTriggerError(rawTrigger);
+        if (error) return { ok: false, error };
+      } else if (hasCron === hasInterval) {
         return {
           ok: false,
           error: hasCron
@@ -359,6 +376,13 @@ export function yamlToFormState(
       emoji: rawTrigger.emoji as string | undefined,
       cron: rawTrigger.cron as string | undefined,
       interval: rawTrigger.interval as string | undefined,
+      ...(rawTrigger.calendar
+        ? {
+            calendar: rawTrigger.calendar as CalendarSchedule,
+            cron: undefined,
+            interval: undefined,
+          }
+        : {}),
     };
 
     if (!Array.isArray(parsed.steps)) {

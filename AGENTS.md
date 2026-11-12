@@ -84,6 +84,8 @@ Agents run the desktop app with plain `just desktop`, never `just desktop me`:
 
 ## Engineering standard
 
+For workflow schedules, follow [the wire contract and compatibility limits](docs/workflows.md). Keep Form and YAML Save validation aligned and preserve unknown definitions in YAML. The relay owns recurrence and timezone support.
+
 When changing a shipped plugin to default-off, follow the
 [plugin-defaults decision](docs/plugin-defaults.md): apply it to fresh installs
 and preserve existing installs' effective states, including implicit defaults.

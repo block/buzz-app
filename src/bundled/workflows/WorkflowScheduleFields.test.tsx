@@ -50,6 +50,7 @@ it("offers every preset through the shared radio group and reads a daily cron ba
     "Every hour",
     "Daily",
     "Weekly",
+    "Every two weeks",
     "Monthly",
     "Custom cron",
   ]) {
@@ -60,6 +61,40 @@ it("offers every preset through the shared radio group and reads a daily cron ba
   expect(screen.queryByRole("group", { name: "Repeat on" })).toBeNull();
   expect(screen.queryByLabelText("Day of month")).toBeNull();
   expect(screen.queryByLabelText("Minute")).toBeNull();
+});
+
+it("edits a calendar anchor with explicit timezone and keeps cleared values", async () => {
+  const user = userEvent.setup();
+  render(<Harness initial={{ on: "schedule", cron: "0 9 * * *" }} />);
+  await user.click(preset("Every two weeks"));
+  expect(screen.getByLabelText("Timezone")).toHaveValue("UTC");
+  fireEvent.change(screen.getByLabelText("First date"), {
+    target: { value: "2024-02-29" },
+  });
+  fireEvent.change(screen.getByLabelText("Local run time"), {
+    target: { value: "09:05" },
+  });
+  await user.clear(screen.getByLabelText("Timezone"));
+  await user.type(screen.getByLabelText("Timezone"), "Australia/Melbourne");
+  expect(trigger()).toEqual({
+    on: "schedule",
+    calendar: {
+      every_weeks: 2,
+      start_date: "2024-02-29",
+      time: "09:05",
+      timezone: "Australia/Melbourne",
+    },
+  });
+  expect(screen.getByText(/Every other Thursday/)).toHaveTextContent("28 days");
+  fireEvent.change(screen.getByLabelText("Local run time"), {
+    target: { value: "" },
+  });
+  expect(screen.getByLabelText("Local run time")).toHaveValue("");
+  expect(trigger().calendar.time).toBe("");
+  preset("Every two weeks").focus();
+  await user.keyboard("{ArrowRight}");
+  expect(preset("Monthly")).toBeChecked();
+  expect(trigger()).not.toHaveProperty("calendar");
 });
 
 it("builds weekly crons from weekday chips and keeps at least one day", async () => {

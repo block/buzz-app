@@ -1,6 +1,9 @@
 import { expect, test } from "vitest";
 import { draftError, exactSaveReadback } from "./editor-model";
 import { yamlToFormState } from "./workflowFormTypes";
+import { formStateToYaml } from "./workflowFormTypes";
+import calendarYaml from "./fortnightly.fixture.yaml?raw";
+import { parse, stringify } from "yaml";
 import {
   createWorkflowFixture,
   fixtureDefinition,
@@ -26,6 +29,65 @@ test("advanced fields stay raw; opening does not transform source", () => {
   expect(
     draftError(fixtureYaml.replace("text: Hello from a fixture", "text: ''")),
   ).toMatch(/message text/);
+});
+
+test("calendar YAML and canonical trigger defaults round-trip without changing meaning", () => {
+  for (const timezone of [
+    "UTC",
+    "US/Eastern",
+    "Etc/GMT+5",
+    "Australia/Melbourne",
+  ]) {
+    const original = parse(calendarYaml);
+    original.trigger.calendar.timezone = timezone;
+    original.trigger.cron = null;
+    original.trigger.interval = null;
+    const yaml = stringify(original);
+    expect(draftError(yaml)).toBeNull();
+    const form = yamlToFormState(yaml);
+    if (!form.ok) throw new Error(form.error);
+    expect(parse(formStateToYaml(form.state)).trigger).toEqual({
+      on: "schedule",
+      calendar: original.trigger.calendar,
+    });
+  }
+  for (const patch of [
+    { every_weeks: 1 },
+    { every_weeks: "2" },
+    { start_date: "2027-02-29" },
+    { start_date: "2026-1-01" },
+    { start_date: "" },
+    { time: "" },
+    { time: "24:00" },
+    { time: "9:00" },
+    { time: "09:00:00" },
+    { timezone: "" },
+    { timezone: "utc" },
+    { timezone: "+05:00" },
+    { timezone: "Not/AZone" },
+    { unknown: true },
+  ]) {
+    const value = parse(calendarYaml);
+    Object.assign(value.trigger.calendar, patch);
+    const yaml = stringify(value);
+    expect(draftError(yaml)).not.toBeNull();
+    expect(yamlToFormState(yaml).ok).toBe(false);
+  }
+  for (const key of ["every_weeks", "start_date", "time", "timezone"]) {
+    const value = parse(calendarYaml);
+    delete value.trigger.calendar[key];
+    expect(draftError(stringify(value))).not.toBeNull();
+  }
+  for (const extra of [
+    { cron: "0 9 * * *" },
+    { interval: "336h" },
+    { timezone: "UTC" },
+  ]) {
+    const value = parse(calendarYaml);
+    Object.assign(value.trigger, extra);
+    expect(draftError(stringify(value))).not.toBeNull();
+    expect(yamlToFormState(stringify(value)).ok).toBe(false);
+  }
 });
 test("save readback requires operation revision plus owner/channel/id", () => {
   const fixture = createWorkflowFixture();

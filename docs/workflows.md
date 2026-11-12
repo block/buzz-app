@@ -90,6 +90,24 @@ See the [capability contract](../src/features/workflows/types.ts).
   cron fields are not renumbered. Six- and
   seven-field cron stays in YAML. Other definitions stay in YAML; opening them
   does not rewrite their contents.
+- Every two weeks uses a separate `calendar` arm with `every_weeks: 2`, required
+  `start_date` (`YYYY-MM-DD`), local `time` (`HH:MM`) and case-sensitive IANA
+  `timezone`. The first date sets weekday and phase. UTC is visibly preselected
+  for a new calendar schedule and serialized explicitly. Opening an existing UTC
+  cron or interval never converts it. Switching schedule modes removes the other
+  arms. Incomplete or invalid calendar fields block Save in Form and YAML.
+  Unknown nested fields stay in YAML, never silently discarded.
+  The editor mirrors the relay's pinned chrono-tz 0.10.4 name table in
+  `calendar-timezones.json`, preserving aliases and named fixed-offset zones.
+  Update it with the relay fixture when timezone data changes, not from browser
+  `Intl` canonicalization. This is input validation, not a next-run calculator.
+  A nonexistent wall time is skipped, possibly leaving 28 days between runs.
+  A repeated wall time runs once at the earlier UTC instant. Missed runs are not
+  replayed. The relay still has a 60-second admission window and an oldest-1,000
+  scan cap, including database-enabled but definition-disabled drafts.
+  Relay support must reach all serving/scheduler pods before calendar workflows
+  are enabled. On older relays, a rejected save retains the draft. Mixed-version
+  rollout, historical clients, and live scan capacity require separate checks.
 - Save with the original owner/channel/UUID and signed `expected-revision`.
   Warn before enabling an unfiltered message trigger or a schedule that runs
   hourly or more often, not on ordinary enabled edits.

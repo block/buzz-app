@@ -30,11 +30,11 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
-import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkSpoilers } from "./remark-spoilers";
 import type {
   CodeBlockRenderer,
+  InlineRange,
   ContributionReader,
   ConversationExtensions,
 } from "../conversation/contracts";
@@ -80,10 +80,15 @@ type InlinePart = {
   target?: string | undefined;
   literal?: boolean;
 };
+/** Where `piece`, `at` characters into a span's text, lies in the row's content. */
+type SourcePlacer = (at: number, piece: string) => InlineRange | undefined;
 type ProtectedContent = {
   content: string;
   prefix: string;
   parts: InlinePart[];
+  /** The offset in the unprotected body of an offset in `content`, or
+   * undefined inside a placeholder, where no single source offset exists. */
+  sourceOffset(offset: number): number | undefined;
 };
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
@@ -148,17 +153,27 @@ function protectInlineContent(
       part.target && /[\p{P}\p{S}]$/u.test(part.text) ? "\uFFFC" : "\uE002";
     return `${start}${parts.length - 1}${end}`;
   };
+  // Each placeholder: [its span in `content`, the source span it stands for].
+  // Between placeholders `content` is the source unchanged.
+  const edits: [number, number, number, number][] = [];
+  let emitted = 0;
   let offset = 0;
   const content = profileMentionParts(row, profiles, agents)
     .map((segment) => {
       const start = offset;
       offset += segment.text.length;
-      if (segment.target && !isLiteral(start, offset)) return token(segment);
+      if (segment.target && !isLiteral(start, offset)) {
+        const placeholder = token(segment);
+        edits.push([emitted, emitted + placeholder.length, start, offset]);
+        emitted += placeholder.length;
+        return placeholder;
+      }
       let partOffset = start;
       return messageParts(segment.text)
         .map((part) => {
           const partStart = partOffset;
           partOffset += part.length;
+          const partBase = emitted;
           const urlPart = linkPart(part);
           let result = "";
           let end = 0;
@@ -202,10 +217,11 @@ function protectInlineContent(
             )
               continue;
             result += part.slice(end, match.start);
+            const from = partBase + result.length;
             // Angle punctuation preserves the pipes' emphasis flanking while
             // `<` terminates GFM autolinks. The private-use first character is
             // not an HTML/autolink opener, so this remains a text delimiter.
-            result +=
+            const placeholder =
               "spoiler" in match
                 ? `<${prefix}spoiler\uE002>`
                 : token(
@@ -213,14 +229,37 @@ function protectInlineContent(
                       ? { text: match.literal, literal: true }
                       : { text: part.slice(match.start, match.end) },
                   );
+            result += placeholder;
+            edits.push([
+              from,
+              from + placeholder.length,
+              partStart + match.start,
+              partStart + match.end,
+            ]);
             end = match.end;
           }
-          return result + part.slice(end);
+          result += part.slice(end);
+          emitted = partBase + result.length;
+          return result;
         })
         .join("");
     })
     .join("");
-  return { content, prefix, parts };
+  const sourceOffset = (at: number) => {
+    // The last placeholder starting at or before `at`.
+    let low = 0;
+    let high = edits.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if ((edits[middle]?.[0] ?? Infinity) <= at) low = middle + 1;
+      else high = middle;
+    }
+    const edit = edits[low - 1];
+    if (!edit) return at;
+    if (at === edit[0]) return edit[2];
+    return at < edit[1] ? undefined : at + edit[3] - edit[1];
+  };
+  return { content, prefix, parts, sourceOffset };
 }
 
 const placeholderPattern = (protectedContent: ProtectedContent) =>
@@ -394,6 +433,60 @@ function remarkBareLinkEnd(content: string) {
   };
 }
 
+/** micromark skips a leading byte order mark without counting it, so every
+ * position in such a body is off by one: none can be trusted. */
+const hasSourcePositions = (content: string) =>
+  content.charCodeAt(0) !== 0xfeff;
+
+/** Chat line breaks, in one pass: `remarkBreaks` looks each text node up among
+ * its siblings, which is quadratic once a message has a node per line. A text
+ * node that is its source unchanged keeps each line's source position, which
+ * `remarkBreaks` drops. */
+function remarkSourcedBreaks(content: string) {
+  const positioned = hasSourcePositions(content);
+  return function visit(parent: MarkdownNode) {
+    if (!parent.children) return;
+    parent.children = parent.children.flatMap((child) => {
+      const value = child.value ?? "";
+      if (child.type !== "text" || !/[\r\n]/.test(value)) {
+        visit(child);
+        return [child];
+      }
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      const exact =
+        positioned &&
+        start !== undefined &&
+        end !== undefined &&
+        content.slice(start, end) === value;
+      const lines: MarkdownNode[] = [];
+      const line = (from: number, to: number) => {
+        if (from < to)
+          lines.push({
+            type: "text",
+            value: value.slice(from, to),
+            ...(exact
+              ? {
+                  position: {
+                    start: { offset: (start ?? 0) + from },
+                    end: { offset: (start ?? 0) + to },
+                  },
+                }
+              : {}),
+          });
+      };
+      let from = 0;
+      for (const ending of value.matchAll(/\r?\n|\r/g)) {
+        line(from, ending.index);
+        lines.push({ type: "break" });
+        from = ending.index + ending[0].length;
+      }
+      line(from, value.length);
+      return lines;
+    });
+  };
+}
+
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
@@ -428,25 +521,59 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
           visit(child);
           return [child];
         }
-        const parts: InlinePart[] = [];
+        const parts: (InlinePart & { source?: string })[] = [];
+        const positioned = hasSourcePositions(protectedContent.content);
+        const nodeStart = positioned ? child.position?.start.offset : undefined;
+        const nodeEnd = positioned ? child.position?.end.offset : undefined;
+        // Only text that is its source unchanged can be placed within the node.
+        const verbatim =
+          nodeStart !== undefined &&
+          nodeEnd !== undefined &&
+          protectedContent.content.slice(nodeStart, nodeEnd) === child.value;
         let plain = "";
+        // Where the pending plain text began in the node's text.
+        let plainFrom = 0;
         let end = 0;
+        const flush = (to: number) => {
+          if (plain)
+            parts.push({
+              text: plain,
+              ...(verbatim && nodeStart !== undefined
+                ? { source: `${nodeStart + plainFrom},${nodeStart + to},exact` }
+                : {}),
+            });
+          plain = "";
+        };
         for (const match of child.value.matchAll(
           placeholderPattern(protectedContent),
         )) {
           plain += child.value.slice(end, match.index);
           const part = protectedContent.parts[Number(match[1])];
+          end = match.index + match[0].length;
           if (part?.target || part?.literal) {
-            if (plain) parts.push({ text: plain });
+            flush(match.index);
             parts.push(part);
-            plain = "";
+            plainFrom = end;
           } else {
             plain += part?.text ?? match[0];
           }
-          end = match.index + match[0].length;
         }
         plain += child.value.slice(end);
-        if (plain) parts.push({ text: plain });
+        flush(child.value.length);
+        // Rewritten text (escapes, entities, indent) has no exact span. Its node
+        // is the span of a lone segment; beside a mention or literal it would
+        // take them in, and beside another segment it could not tell them apart.
+        const [only] = parts;
+        if (
+          parts.length === 1 &&
+          only &&
+          !only.target &&
+          !only.literal &&
+          !verbatim &&
+          nodeStart !== undefined &&
+          nodeEnd !== undefined
+        )
+          only.source = `${nodeStart},${nodeEnd},node`;
         return parts.map((part) => ({
           type: "buzzInlineContent",
           data: {
@@ -455,6 +582,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
               "data-inline-text": part.text,
               ...(part.literal ? { "data-literal-text": "true" } : {}),
               ...(part.target ? { "data-profile-target": part.target } : {}),
+              ...(part.source ? { "data-inline-source": part.source } : {}),
             },
           },
         }));
@@ -623,22 +751,31 @@ function PreparedMessageMarkdown({
       </MessageLink>
     );
   };
-  const renderInline = (text: string) =>
-    extensions ? (
+  /** `source` places a piece of the span's text, `at` characters in, within the
+   * row's content; see `InlineContent.source`. */
+  const renderInline = (
+    text: string,
+    source: SourcePlacer | undefined,
+    at: number,
+  ) => {
+    const range = source?.(at, text);
+    return extensions ? (
       <InlineText
         registry={extensions.inline}
-        content={{ text, message: row }}
+        content={{ text, message: row, ...(range ? { source: range } : {}) }}
         media={media}
       />
     ) : (
       text
     );
-  const renderText = (text: string) => {
+  };
+  const renderText = (text: string, source?: SourcePlacer) => {
     let offset = 0;
     return messageLinkParts(text).map((part) => {
       // A trailing bare link yields two empty text parts at the same offset.
       if (!part.url && !part.text) return null;
       const key = `${offset}:${part.text}`;
+      const partOffset = offset;
       offset += part.text.length;
       return part.url ? (
         <span key={key}>{renderLink(part.url, part.label)}</span>
@@ -649,7 +786,9 @@ function PreparedMessageMarkdown({
           text={part.text}
           mentions={[]}
           directory={directory}
-          renderText={renderInline}
+          renderText={(piece, at) =>
+            renderInline(piece, source, partOffset + at)
+          }
           onOpenLink={onOpenLink}
           extensions={extensions}
           session={session}
@@ -698,6 +837,31 @@ function PreparedMessageMarkdown({
       protectionKey,
     ],
   );
+  /** Resolve a span's `data-inline-source` (see `remarkInlineContent`) to the
+   * row's own content. Done here, not in the cached tree: equal protected
+   * bodies can come from different sources (`&#58;` and `&#x3a;`). */
+  const sourcePlacer = (
+    attribute: unknown,
+    text: string,
+  ): SourcePlacer | undefined => {
+    if (typeof attribute !== "string") return undefined;
+    const [from, to, kind] = attribute.split(",");
+    const start = protectedContent.sourceOffset(Number(from));
+    const end = protectedContent.sourceOffset(Number(to));
+    if (start === undefined || end === undefined || start >= end)
+      return undefined;
+    // Never vouch for a span that is not the text itself.
+    if (kind === "exact") {
+      if (row.content.slice(start, end) !== text) return undefined;
+      return (at, piece) => ({
+        start: start + at,
+        end: start + at + piece.length,
+      });
+    }
+    // A node's span cannot say where in it a part of its text lies.
+    return (at, piece) =>
+      at === 0 && piece.length === text.length ? { start, end } : undefined;
+  };
   // Explicit profile links are identity locators, not signed notification intent.
   // Reuse the same control and availability gate as bound prose mentions.
   const renderProfile = (text: unknown, target: unknown) => {
@@ -782,10 +946,12 @@ function PreparedMessageMarkdown({
         "data-inline-text": text,
         "data-profile-target": target,
         "data-literal-text": literalText,
+        "data-inline-source": inlineSource,
       } = props as typeof props & {
         "data-inline-text"?: unknown;
         "data-profile-target"?: unknown;
         "data-literal-text"?: unknown;
+        "data-inline-source"?: unknown;
       };
       const profile = renderProfile(text, target);
       if (profile) return profile;
@@ -793,7 +959,7 @@ function PreparedMessageMarkdown({
         literalText === "true" ? (
           text
         ) : (
-          renderText(text)
+          renderText(text, sourcePlacer(inlineSource, text))
         )
       ) : (
         <span {...props}>{children}</span>
@@ -903,7 +1069,7 @@ const MarkdownBody = memo(function MarkdownBody({
           ...(isPlainProse(protectedContent.content) ? [remarkPlainProse] : []),
           remarkGfm,
           [remarkBareLinkEnd, protectedContent.content],
-          remarkBreaks,
+          [remarkSourcedBreaks, protectedContent.content],
           [remarkSpoilers, `<${protectedContent.prefix}spoiler\uE002>`],
           [remarkInlineContent, protectedContent],
           remarkLiteralHtml,

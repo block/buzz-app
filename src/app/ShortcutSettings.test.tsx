@@ -386,6 +386,53 @@ it("narrowing the search renders no row again, and clearing it restores every gr
   }
 });
 
+it("recorded keys find editor rows by physical key, and Escape anywhere in the section clears the search", async () => {
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple={false}
+      />,
+    );
+    const user = userEvent.setup();
+    const searchbox = () =>
+      screen.getByRole("searchbox", { name: "Search shortcuts" });
+    // US Ctrl+Shift+8 types "*"; the editor still treats it as Bullet list.
+    await user.click(screen.getByRole("button", { name: "Search by keys" }));
+    fireEvent.keyDown(
+      screen.getByRole("textbox", { name: "Keys to search for" }),
+      { key: "*", code: "Digit8", ctrlKey: true, shiftKey: true },
+    );
+    expect(
+      screen
+        .getAllByRole("article")
+        .map((a) => a.querySelector("h4")?.textContent),
+    ).toEqual(["Bullet list"]);
+    // Cancelling a row's capture returns focus to its Change button; the next
+    // Escape clears the search there instead of closing Settings.
+    await user.clear(searchbox());
+    await user.type(searchbox(), "search buzz");
+    await user.click(change("Search Buzz"));
+    fireEvent.keyDown(capture("Search Buzz"), { key: "Escape" });
+    expect(change("Search Buzz")).toHaveFocus();
+    expect(searchbox()).toHaveValue("search buzz");
+    expect(fireEvent.keyDown(change("Search Buzz"), { key: "Escape" })).toBe(
+      false,
+    );
+    expect(searchbox()).toHaveValue("");
+    expect(appRows()).toHaveLength(6);
+    // With no search, Escape is left to Settings.
+    expect(fireEvent.keyDown(change("Search Buzz"), { key: "Escape" })).toBe(
+      true,
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
 it("orders plugin rows by metadata then contribution key without merging duplicate titles", async () => {
   const h = await harness();
   try {

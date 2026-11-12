@@ -103,6 +103,7 @@ import {
   blockFormats,
   composerFormats,
   formatBindings,
+  pressesFormat,
   linkBindings,
   type ComposerFormat,
   type ComposerFormatBinding,
@@ -2039,12 +2040,12 @@ export function EditableInput({
           if (primary && !event.altKey && !event.shiftKey && key === "a")
             return selectAll(editor.state, editor.dispatch);
           const pressed = (binding: ComposerFormatBinding) =>
-            (key === binding.key ||
-              event.code === `Digit${binding.key}` ||
-              (event.altKey &&
-                event.code === `Key${binding.key.toUpperCase()}`)) &&
-            event.shiftKey === binding.shift &&
-            event.altKey === !!binding.alt;
+            pressesFormat(binding, {
+              key,
+              code: event.code,
+              shift: event.shiftKey,
+              alt: event.altKey,
+            });
           const format =
             primary &&
             composerFormats.find((item) => formatBindings(item).some(pressed));

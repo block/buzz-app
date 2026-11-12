@@ -33,6 +33,7 @@ import {
   composerFormats,
   formatBindings,
   linkBindings,
+  pressesFormat,
 } from "../features/messages/composer-dom";
 import { KeyCombo } from "../features/shortcuts/KeyCombo";
 import {
@@ -44,6 +45,7 @@ import {
   searchEntry,
   shortcutFilter,
   shownChords,
+  type KeyPress,
   type ShortcutSearch,
 } from "../features/shortcuts/search";
 import type { ShortcutsService } from "../features/shortcuts/service";
@@ -121,6 +123,31 @@ const editorRows = (sendWithModEnter: boolean): readonly Row[] =>
     override: undefined,
     effective: bindings,
   }));
+/** Recorded keys find editor rows as the editor matches them, by physical key too. */
+const editorPresses =
+  (chords: readonly KeyBinding[]) =>
+  ({ chord, code }: KeyPress) =>
+    !!chord.mod &&
+    !chord.ctrl &&
+    chords.some(
+      (binding) =>
+        !!binding.mod &&
+        !binding.ctrl &&
+        pressesFormat(
+          {
+            key: binding.key,
+            mod: true,
+            shift: !!binding.shift,
+            alt: !!binding.alt,
+          },
+          {
+            key: chord.key.toLowerCase(),
+            code,
+            shift: !!chord.shift,
+            alt: !!chord.alt,
+          },
+        ),
+    );
 const EDITOR_FORMAT_CHORDS = editorRows(false).flatMap((row) => row.effective);
 
 /** Chords the message editor handles locally before the window dispatcher: undo/redo and line/document jumps. */
@@ -394,7 +421,13 @@ export function ShortcutSettings({
         shownGroups.flatMap((group) =>
           group.rows.map((row) => [
             row.key,
-            searchEntry(row.title, group.label, row.effective, apple),
+            searchEntry(
+              row.title,
+              group.label,
+              row.effective,
+              apple,
+              group.id === "editor" ? editorPresses(row.effective) : undefined,
+            ),
           ]),
         ),
       ),
@@ -545,7 +578,17 @@ export function ShortcutSettings({
   );
 
   return (
-    <section aria-labelledby="shortcut-settings-title">
+    // Escape clears an active search from anywhere here, before it reaches
+    // Settings. A capture control consumes its own Escape first.
+    <section
+      aria-labelledby="shortcut-settings-title"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !filter) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setSearch(NO_SEARCH);
+      }}
+    >
       <Header id="shortcut-settings-title" title="Shortcuts" />
       <div className="grid gap-5">
         <ShortcutSearchBar
@@ -825,7 +868,7 @@ const ShortcutRow = memo(function ShortcutRow({
 /**
  * Text search, or a recorded chord. Recording reuses KeyCaptureControl, which
  * consumes the key so its shortcut never fires; Escape there cancels
- * recording and here clears the search, without reaching Settings.
+ * recording. The section clears the search on Escape.
  */
 function ShortcutSearchBar({
   search,
@@ -860,9 +903,9 @@ function ShortcutSearchBar({
             apple={apple}
             layout="field"
             label="Keys to search for"
-            onCapture={({ binding }) => {
+            onCapture={({ binding, code }) => {
               setRecording(false);
-              onSearch({ kind: "keys", chord: binding });
+              onSearch({ kind: "keys", chord: binding, code });
             }}
             onCancel={() => setRecording(false)}
           />
@@ -873,12 +916,6 @@ function ShortcutSearchBar({
             placeholder={`Search by name or keys, like ${apple ? "⌘K" : "Ctrl+K"}`}
             value={value}
             onValueChange={(text) => onSearch({ kind: "text", text })}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape" || !value) return;
-              event.preventDefault();
-              event.stopPropagation();
-              onSearch(NO_SEARCH);
-            }}
           />
         )}
       </div>

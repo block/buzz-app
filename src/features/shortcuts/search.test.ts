@@ -138,7 +138,7 @@ it.each<[string, boolean, readonly string[]]>([
 
 it("recorded keys find chords only, not names containing the key", () => {
   const { chord, matches } = shortcutFilter(
-    { kind: "keys", chord: { key: "e" } },
+    { kind: "keys", chord: { key: "e" }, code: "KeyE" },
     true,
   );
   expect(chord).toEqual({ key: "e" });
@@ -149,7 +149,11 @@ it("recorded keys find chords only, not names containing the key", () => {
   ).toEqual(["Edit selected message"]);
   // A key recorded with Shift finds its unshifted alias too.
   const shifted = shortcutFilter(
-    { kind: "keys", chord: { key: "+", mod: true, shift: true } },
+    {
+      kind: "keys",
+      chord: { key: "+", mod: true, shift: true },
+      code: "Equal",
+    },
     true,
   );
   expect(

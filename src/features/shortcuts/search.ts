@@ -139,6 +139,9 @@ export function parseChord(
   return parsed?.key === undefined ? undefined : (parsed as KeyBinding);
 }
 
+/** A recorded key press: its chord, and the physical key that typed it. */
+export type KeyPress = Readonly<{ chord: KeyBinding; code: string }>;
+
 /** One Settings row, prepared once so filtering only compares strings. */
 export type SearchEntry = Readonly<{
   text: string;
@@ -146,12 +149,15 @@ export type SearchEntry = Readonly<{
   shown: string;
   visible: readonly KeyBinding[];
   chords: readonly KeyBinding[];
+  /** A row whose owner matches presses itself, as the message editor does. */
+  presses?: ((press: KeyPress) => boolean) | undefined;
 }>;
 export const searchEntry = (
   title: string,
   group: string,
   chords: readonly KeyBinding[],
   apple: boolean,
+  presses?: (press: KeyPress) => boolean,
 ): SearchEntry => ({
   text: `${title}\n${group}`.toLowerCase(),
   // One chord per line, so a query cannot match across two of them.
@@ -160,11 +166,12 @@ export const searchEntry = (
     .join("\n"),
   visible: shownChords(chords),
   chords,
+  presses,
 });
 
 export type ShortcutSearch =
   | Readonly<{ kind: "text"; text: string }>
-  | Readonly<{ kind: "keys"; chord: KeyBinding }>;
+  | Readonly<{ kind: "keys"; chord: KeyBinding; code: string }>;
 
 /**
  * Text finds names, groups and chords. A whole chord matches chords exactly,
@@ -181,7 +188,9 @@ export function shortcutFilter(
   if (search.kind === "keys")
     return {
       chord: search.chord,
-      matches: (entry) => entry.chords.some((c) => sameChord(c, search.chord)),
+      matches: (entry) =>
+        entry.chords.some((c) => sameChord(c, search.chord)) ||
+        !!entry.presses?.(search),
     };
   const text = search.text.trim().toLowerCase();
   const keys = parseKeys(text, apple);

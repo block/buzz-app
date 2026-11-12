@@ -1,3 +1,4 @@
+import { isSidebarTool } from "./sidebar";
 // The Buzz tools as an MCP server inside the host process: answers one
 // JSON-RPC message at a time, as Claude sends them over its stream-json
 // pipe to an in-process (`sdk`) server, or goose over loopback HTTP. Holds no
@@ -57,7 +58,9 @@ export async function respond(
         // whose client can't change settings, such as a plugin's, lacks them.
         tools: sessionTools(added)
           .filter(
-            ({ name }) => !client || client.settings || !isSettingsTool(name),
+            ({ name }) =>
+              (!client || client.settings || !isSettingsTool(name)) &&
+              (!client || client.sidebar || !isSidebarTool(name)),
           )
           .map(listing.tool ?? (({ load: _, ...tool }) => tool)),
       });

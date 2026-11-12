@@ -19,6 +19,9 @@ deliberately.
 - `settings.ts`: the settings tools (`settings_list`, `settings_get`,
   `settings_set`). The settings themselves are the host's catalog
   (`src/app/device-settings.ts`); the tools never name one.
+- `sidebar.ts`: owner sidebar tools (`section_list`, `channel_move`), using the
+  run-only capability in `src/features/agents/sidebar.ts`. Plugin tools and
+  standalone clients do not receive owner sidebar access.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base

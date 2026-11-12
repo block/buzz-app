@@ -14,6 +14,7 @@ import { respond } from "./rpc";
 import { turnNote } from "./session-tools";
 import { PLUGIN_TOOLS } from "./plugins";
 import { SETTINGS_TOOLS } from "./settings";
+import { SIDEBAR_TOOLS } from "./sidebar";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { TOOLS } from "./tools";
 
@@ -110,6 +111,7 @@ describe("the tool list", () => {
     expect(await list()).toEqual([
       ...names,
       ...SETTINGS_TOOLS.map((tool) => tool.name),
+      ...SIDEBAR_TOOLS.map((tool) => tool.name),
     ]);
     for (const enabled of [true, false])
       expect(

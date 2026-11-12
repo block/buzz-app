@@ -52,7 +52,7 @@ export function appClient(
   };
   const handoff = agent.handoff;
   const plugins = agent.plugins;
-  const { settings, soloWorkspaces } = agent;
+  const { settings, soloWorkspaces, sidebar } = agent;
   return {
     ...(options.callSignal ? { signal: options.callSignal } : {}),
     ...(agent.protection
@@ -326,6 +326,37 @@ export function appClient(
       close: (channel, root) => tabs().close(channel, root),
       rename: (channel, root, name) => tabs().rename(channel, root, name),
     },
+    ...(sidebar && {
+      sidebar: {
+        list: async (signal: AbortSignal) => {
+          check();
+          const result = await sidebar.list(
+            AbortSignal.any([
+              signal,
+              ...(options.signal ? [options.signal] : []),
+            ]),
+          );
+          check();
+          return result;
+        },
+        move: async (
+          channel: string,
+          section: string | undefined,
+          signal: AbortSignal,
+        ) => {
+          check();
+          await sidebar.move(
+            channel,
+            section,
+            AbortSignal.any([
+              signal,
+              ...(options.signal ? [options.signal] : []),
+            ]),
+          );
+          check();
+        },
+      },
+    }),
     ...(settings
       ? {
           settings: {

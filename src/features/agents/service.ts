@@ -1,3 +1,4 @@
+import { agentSidebar, type AgentSidebar } from "./sidebar";
 import { followUpQueue } from "../messages/follow-up-queue";
 import {
   createSessionAdmissions,
@@ -579,6 +580,8 @@ export type AgentHandle = Readonly<{
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
+  /** Owner sidebar access, only on a run handle. */
+  sidebar?: AgentSidebar;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -2690,6 +2693,8 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
+      sidebar: (agent) =>
+        agentSidebar(() => this.bindingOf(agent)?.session, agent.owner),
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),

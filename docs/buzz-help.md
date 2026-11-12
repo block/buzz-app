@@ -831,6 +831,11 @@ for 30 days expires.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- An agent running on this device can list your custom sidebar sections and move
+  joined, active streams and DMs into them when you ask. For example: “Move my project
+  channels into my Work section.” It can also restore a channel to its default
+  group. Moves remove its Star, just like manual moves, and do not change channel
+  membership. Section creation still uses the app.
 - **Side panels stay with their conversation**: a tab or panel you open beside a
   conversation, such as a thread, **Canvas**, a huddle, or Todos, stays open for
   that conversation when you go to another conversation or page and come back,

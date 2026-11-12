@@ -17906,6 +17906,8 @@ describe("Buzz settings", () => {
     expect(write).toHaveBeenCalledExactlyOnceWith("busy");
     expect(agent.settings?.get("example.mood").value).toBe("busy");
     expect(f.plugin.agents.handle(bot)).not.toHaveProperty("settings");
+    expect(agent.sidebar).toBeDefined();
+    expect(f.plugin.agents.handle(bot)).not.toHaveProperty("sidebar");
   });
 
   it.each(["the call's turn signal aborts", "the agent is removed"])(

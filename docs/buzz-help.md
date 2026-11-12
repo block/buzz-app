@@ -420,6 +420,8 @@ for 30 days expires.
   meant; then pick from the list. Typing a name alone does not guarantee a
   notification. Selecting someone outside the channel does not grant access;
   inviting them requires an explicit decision from someone with permission.
+  Repeated mentions of the same person or agent appear once in the invitation
+  prompt; all mentions stay in your message.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.

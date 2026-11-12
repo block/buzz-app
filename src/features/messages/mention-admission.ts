@@ -136,14 +136,19 @@ export function mentionAdmission(
   // known membership a roster admits no outside key. A Solo chat tells a
   // reference from your agent only by a complete agent read, so until then
   // it admits no outside key: a row must not say "Will not be notified" for
-  // an agent the send would add.
+  // an agent the send would add. There an outside key is only a reference:
+  // an agent of yours the roster leaves out (one a region's plugin refuses)
+  // stays out, since the send would add it.
+  const agents = session.agentChoices.snapshot();
+  const solo = channel?.channelType === "solo";
   const open =
     allowsOutsideMentions(channel, roster, inviteAgents) &&
-    (channel?.channelType !== "solo" ||
-      session.agentChoices.snapshot().complete);
+    (!solo || agents.complete);
   const members = roster ? channel?.members : undefined;
   const outside = (pubkey: string) =>
-    open && (!roster || (!!members && !members.includes(pubkey)));
+    open &&
+    (!roster || (!!members && !members.includes(pubkey))) &&
+    (!solo || outsideMentionReferences(channel, agents.identities, pubkey));
   return (pubkey) =>
     /^[0-9a-f]{64}$/.test(pubkey) &&
     // Whatever route offers it: member, roster, directory or bring-back, which

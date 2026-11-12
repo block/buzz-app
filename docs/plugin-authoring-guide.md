@@ -135,11 +135,14 @@ Add `"host"` to `inject`, then:
   `{ id, session, scope, target, label, intro?, actions?, detail? }`.
   `target` is `{ channelId, threadId?, messageId? }`: omit `threadId` for the
   channel timeline, or supply it for a thread. `messageId` selects a message.
-  `intro` supplies content at the start of history. It scrolls with the messages. `actions` supplies
+  `intro` supplies content at the start of history. It scrolls with the messages.
+  `actions` supplies
   entries in the header's three-dot menu and the tab's context menu, with
   `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel
   in the right pane. The host owns the reader, composer, tabs, and panel frame.
   The page owns its route, content lookup, labels, and actions.
+  Set `conversationNavigation: true` on the page to keep the Messages sidebar
+  and dock selection without adding a primary navigation row.
 - A panel can set `addressable: true` to accept conversation `detail` targets.
   It then uses the host's Back/Forward and explicit Close behavior. The host
   resolves the target again on each visit. The panel must check current access

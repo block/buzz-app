@@ -605,6 +605,8 @@ it("persists alignment, follows current cross-window values and resets after sto
   expect(b.root.dataset.messageAlignment).toBe("top");
   b.values.set(MESSAGE_ALIGNMENT_KEY, "bottom");
   b.change(MESSAGE_ALIGNMENT_KEY);
+  expect(restored.snapshot().messageAlignment).toBe("bottom");
+  expect(b.root.dataset.messageAlignment).toBe("bottom");
   b.values.clear();
   b.change(null);
   expect(restored.snapshot().messageAlignment).toBe("top");

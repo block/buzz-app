@@ -327,13 +327,20 @@ it("preserves a rejected replacement and blocks other actions while saving", asy
 });
 
 it("treats a credential read failure as unknown and offers retry", async () => {
-  native.invoke.mockRejectedValueOnce("Secure storage is unavailable");
+  let reject!: (reason: string) => void;
+  const pending = new Promise<boolean>((_, fail) => {
+    reject = fail;
+  });
   // StrictMode starts two reads; both must fail to exercise the current read.
-  native.invoke.mockRejectedValueOnce("Secure storage is unavailable");
+  native.invoke.mockImplementationOnce(() => pending);
+  native.invoke.mockImplementationOnce(() => pending);
   fixture();
+  expect(screen.queryByText(/Claude requires an API key/)).toBeNull();
+  await act(async () => reject("Secure storage is unavailable"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Secure storage is unavailable",
   );
+  expect(screen.queryByText(/Claude requires an API key/)).toBeNull();
   expect(
     screen.queryByRole("button", { name: "API key actions" }),
   ).not.toBeInTheDocument();

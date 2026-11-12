@@ -93,9 +93,9 @@ export function ClaudeSettings({
         id="claude-settings-title"
         title="Claude"
         subtitle={
-          configured === true
-            ? "Manage Claude’s credentials on this computer."
-            : "Claude requires an API key to connect to your account."
+          configured === false && !checking && !readError
+            ? "Claude requires an API key to connect to your account."
+            : "Manage Claude’s credentials on this computer."
         }
       />
       <div className="mt-section-gap grid gap-section-gap">

@@ -1,5 +1,7 @@
 # Upgrading from the old Buzz app
 
+[![A 38-second demo of Buzz: an agent answers a question in a team channel, then a chat with two agents is shared with that channel](assets/readme/demo.webp)](https://buzz.xyz/#demo)
+
 This page is for people using the Buzz desktop app from
 [block/buzz](https://github.com/block/buzz). The new Buzz app lives here, in
 block/buzz-app. It adds plugins and remote agents.

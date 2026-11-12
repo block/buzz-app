@@ -99,6 +99,7 @@ export function useSidebarView(
   scope: string,
   ready: boolean,
   location?: string,
+  preserve = false,
 ) {
   const [view, setView] = useState(() => restore(scope));
   const intent = useRef(view);
@@ -169,8 +170,9 @@ export function useSidebarView(
   // only if the user scrolls there.
   useLayoutEffect(() => {
     latestLocation.current = location;
-    reveal.current = location === restored.current ? undefined : location;
-  }, [location]);
+    reveal.current =
+      preserve || location === restored.current ? undefined : location;
+  }, [location, preserve]);
   // The entry can render after navigation (roster startup, a new DM), so
   // retry after each commit until it exists. Runs after the restore above.
   const attempt = useRef(() => {});

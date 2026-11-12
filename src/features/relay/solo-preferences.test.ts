@@ -240,6 +240,31 @@ it("reloads Solo workspaces by itself once a relay request pause ends", async ()
   }
 });
 
+it("leaves a Solo read of a catalog that cannot load for a manual retry", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const catalogReads = () =>
+    f.query.mock.calls.filter(([filters]) =>
+      filters.some((filter) => filter["#t"]?.includes(ME_KIT_TAG)),
+    ).length;
+  try {
+    f.install(groups);
+    await f.session.soloPreferences.ensure();
+    // Rereading a catalog over the read limit cannot fix it.
+    f.events.push(...Array(500).fill(f.events.at(-1)));
+    await f.session.channelKit.refresh();
+    await f.session.soloPreferences.refresh();
+    expect(f.session.soloPreferences.snapshot().status).toBe("error");
+    expect(f.session.soloPreferences.snapshot().transient).toBeUndefined();
+    const reads = catalogReads();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(catalogReads()).toBe(reads);
+  } finally {
+    f.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("starts Solo preferences empty and changes only the distinct Solo catalog coordinate", async () => {
   const f = fixture();
   const controller = new AbortController();

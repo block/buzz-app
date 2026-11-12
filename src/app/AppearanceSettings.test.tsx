@@ -532,6 +532,40 @@ it("switches message density, restores it, and retries a failed save", async () 
   );
 });
 
+it("shows a plugin-controlled density as such and restores the saved choice", async () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  appearance.setDensity("default");
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const density = screen.getByRole("combobox", { name: "Message density" });
+  expect(density).toBeEnabled();
+  let release = () => {};
+  act(() => {
+    release = appearance.overrideDensity("compact");
+  });
+  await waitFor(() => expect(density).toBeDisabled());
+  expect(density).toHaveTextContent("Compact");
+  expect(screen.getByText(/A plugin sets this/)).toBeInTheDocument();
+  // The applied density decides what the page offers and previews.
+  expect(screen.queryByRole("combobox", { name: "Message width" })).toBeNull();
+  expect(
+    screen
+      .getByRole("figure", { name: "Appearance preview" })
+      .querySelector("[data-message-density]"),
+  ).toHaveAttribute("data-message-density", "compact");
+  expect(document.documentElement.dataset.messageDensity).toBe("compact");
+  expect(localStorage.getItem("buzz-message-density.v1")).toBe("default");
+  act(() => release());
+  await waitFor(() => expect(density).toBeEnabled());
+  expect(density).toHaveTextContent("Default");
+  expect(screen.queryByText(/A plugin sets this/)).toBeNull();
+  expect(document.documentElement.dataset.messageDensity).toBe("default");
+});
+
 it("offers message spelling correction only on Mac WebKit, off until this device opts in", async () => {
   const user = userEvent.setup();
   const appearance = createAppearance();

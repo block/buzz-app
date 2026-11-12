@@ -15,9 +15,12 @@ import {
 function browser(stored: string | null = null, systemDark = false) {
   const values = new Map(stored === null ? [] : [[APPEARANCE_KEY, stored]]);
   const listeners = new Set<(event: StorageEvent) => void>();
+  const attributes = new Map<string, string>();
   const root = {
     dataset: {} as Record<string, string>,
     style: { setProperty: vi.fn() },
+    setAttribute: (name: string, value: string) => attributes.set(name, value),
+    removeAttribute: (name: string) => attributes.delete(name),
   };
   const meta = { setAttribute: vi.fn() };
   const storage = {
@@ -58,6 +61,7 @@ function browser(stored: string | null = null, systemDark = false) {
   } as unknown as Window;
   return {
     host,
+    attributes,
     root,
     meta,
     storage,
@@ -118,6 +122,7 @@ it.each([
       contrast: "low",
       contrastError: null,
       density: "default",
+      densityOverride: null,
       densityError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
@@ -565,3 +570,101 @@ it("keeps density active on storage failure, retries, and follows other windows"
   app.setDensity("compact");
   expect(b.root.dataset.messageDensity).toBe("default");
 });
+
+it("lets a claim override the saved density without changing it, and restores it", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  app.setDensity("default");
+  const seen = vi.fn();
+  app.subscribe(seen);
+  const first = app.overrideDensity("compact");
+  expect(b.root.dataset.messageDensity).toBe("compact");
+  expect(app.snapshot()).toMatchObject({
+    density: "default",
+    densityOverride: "compact",
+  });
+  expect(seen).toHaveBeenCalled();
+  // The saved choice stays editable and is not overwritten by the claim.
+  app.setDensity("default");
+  expect(b.root.dataset.messageDensity).toBe("compact");
+  expect(b.values.get("buzz-message-density.v1")).toBe("default");
+  // Newest claim wins; releasing it falls back to the one before.
+  const second = app.overrideDensity("default");
+  expect(b.root.dataset.messageDensity).toBe("default");
+  second();
+  second();
+  expect(b.root.dataset.messageDensity).toBe("compact");
+  first();
+  expect(app.snapshot().densityOverride).toBeNull();
+  expect(b.root.dataset.messageDensity).toBe("default");
+  expect(() => app.overrideDensity("loose" as never)).toThrow(
+    'Message density must be "default" or "compact"',
+  );
+  app.dispose();
+});
+
+it("ignores other windows' storage events while a density claim is active", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  const release = app.overrideDensity("compact");
+  b.values.set("buzz-message-density.v1", "default");
+  b.change("buzz-message-density.v1");
+  expect(app.snapshot().density).toBe("default");
+  expect(b.root.dataset.messageDensity).toBe("compact");
+  release();
+  expect(b.root.dataset.messageDensity).toBe("default");
+  app.dispose();
+});
+
+it("sets allow-listed root attributes and removes them on release or dispose", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  const first = app.setRootAttribute("data-plugin-theme", "example");
+  expect(b.attributes.get("data-plugin-theme")).toBe("example");
+  const second = app.setRootAttribute("data-plugin-theme", "other");
+  app.setRootAttribute("data-plugin-theme-layout", "flat");
+  expect(b.attributes.get("data-plugin-theme")).toBe("other");
+  second();
+  second();
+  expect(b.attributes.get("data-plugin-theme")).toBe("example");
+  first();
+  expect(b.attributes.has("data-plugin-theme")).toBe(false);
+  expect(b.attributes.get("data-plugin-theme-layout")).toBe("flat");
+  app.dispose();
+  expect(b.attributes.size).toBe(0);
+  app.setRootAttribute("data-plugin-theme", "late")();
+  expect(b.attributes.size).toBe(0);
+});
+
+it.each([
+  "data-color-mode",
+  "data-message-density",
+  "class",
+  "style",
+  "onclick",
+  "data-plugin-id",
+  "data-plugin-themes",
+  "data-plugin-theme-",
+  "data-plugin-theme-Layout",
+])("refuses root attribute %s", (name) => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  expect(() => app.setRootAttribute(name, "example")).toThrow(
+    "Root attribute must be",
+  );
+  expect(b.attributes.size).toBe(0);
+  app.dispose();
+});
+
+it.each(["", "Example", "a b", '"x"', "x".repeat(65), "-x"])(
+  "refuses root attribute value %j",
+  (value) => {
+    const b = browser();
+    const app = createAppearance(b.host);
+    expect(() => app.setRootAttribute("data-plugin-theme", value)).toThrow(
+      "Root attribute value is not allowed",
+    );
+    expect(b.attributes.size).toBe(0);
+    app.dispose();
+  },
+);

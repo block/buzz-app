@@ -695,7 +695,9 @@ for 30 days expires.
   a row to show its timestamp; grouped messages show it in the left gutter.
   Text size stays with **Interface size**.
   Hover a row to highlight it and show message actions at the right
-  edge. The choice applies on this device only.
+  edge. The choice applies on this device only. If a plugin sets the density,
+  the control is disabled and says so; your choice returns when the plugin is
+  turned off.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,

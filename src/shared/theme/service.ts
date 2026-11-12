@@ -42,6 +42,10 @@ export const DENSITY_KEY = "buzz-message-density.v1";
 export const parseMessageDensity = (value: unknown): MessageDensity =>
   value === "compact" ? "compact" : "default";
 
+/** Root attributes a plugin may set: `data-plugin-theme` or `data-plugin-theme-<name>`. */
+const ROOT_ATTRIBUTE = /^data-plugin-theme(-[a-z][a-z0-9]*)*$/;
+const ROOT_ATTRIBUTE_VALUE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
 export interface AppearanceSnapshot {
   readonly preference: ColorModePreference;
   readonly mode: ColorMode;
@@ -53,7 +57,9 @@ export interface AppearanceSnapshot {
   readonly accentError: string | null;
   readonly contrast: Contrast;
   readonly contrastError: string | null;
+  /** The saved choice; `densityOverride`, when set, is what applies. */
   readonly density: MessageDensity;
+  readonly densityOverride: MessageDensity | null;
   readonly densityError: string | null;
   readonly error: string | null;
 }
@@ -81,8 +87,12 @@ export function createAppearance(
     contrast: "low",
     contrastError: null,
     density: "default",
+    densityOverride: null,
     densityError: null,
   };
+  // Plugin claims, oldest first: the newest wins and releasing it restores the one before.
+  const densityClaims: { value: MessageDensity }[] = [];
+  const attributeClaims = new Map<string, { value: string }[]>();
   let disposed = false;
   let paletteGuard = 0;
   const listeners = new Set<() => void>();
@@ -116,7 +126,7 @@ export function createAppearance(
       "--buzz-message-width",
       state.messageWidth === "wide" ? "78rem" : "52rem",
     );
-    root.dataset.messageDensity = state.density;
+    root.dataset.messageDensity = state.densityOverride ?? state.density;
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
@@ -395,10 +405,75 @@ export function createAppearance(
       state = { ...state, density, densityError };
       notify();
     },
+    /**
+     * Forces a density over the saved choice until the returned function runs.
+     * Nothing is saved, so the saved choice returns on release. The newest
+     * claim wins; releasing it restores the one before.
+     */
+    overrideDensity(value: MessageDensity): () => void {
+      if (value !== "default" && value !== "compact")
+        throw new Error('Message density must be "default" or "compact"');
+      const claim = { value };
+      const settle = () => {
+        state = {
+          ...state,
+          densityOverride: densityClaims.at(-1)?.value ?? null,
+        };
+        notify();
+      };
+      if (disposed) return () => {};
+      densityClaims.push(claim);
+      settle();
+      return () => {
+        const at = densityClaims.indexOf(claim);
+        if (at < 0) return;
+        densityClaims.splice(at, 1);
+        if (!disposed) settle();
+      };
+    },
+    /**
+     * Sets an allow-listed `data-plugin-theme[-name]` attribute on the document
+     * root until the returned function runs. The newest claim of a name wins.
+     */
+    setRootAttribute(name: string, value: string): () => void {
+      if (!ROOT_ATTRIBUTE.test(name))
+        throw new Error(
+          `Root attribute must be data-plugin-theme or data-plugin-theme-<name>: ${name}`,
+        );
+      if (!ROOT_ATTRIBUTE_VALUE.test(value))
+        throw new Error(`Root attribute value is not allowed: ${value}`);
+      const claim = { value };
+      const claims = attributeClaims.get(name) ?? [];
+      const settle = () => {
+        const winner = claims.at(-1);
+        const root = host?.document.documentElement;
+        if (winner) root?.setAttribute(name, winner.value);
+        else {
+          root?.removeAttribute(name);
+          attributeClaims.delete(name);
+        }
+      };
+      if (disposed) return () => {};
+      claims.push(claim);
+      attributeClaims.set(name, claims);
+      settle();
+      return () => {
+        const at = claims.indexOf(claim);
+        if (at < 0) return;
+        claims.splice(at, 1);
+        settle();
+      };
+    },
     /** After `dispose`, setters change nothing. */
     isDisposed: () => disposed,
     dispose() {
       disposed = true;
+      densityClaims.length = 0;
+      for (const [name, claims] of attributeClaims) {
+        claims.length = 0;
+        host?.document.documentElement.removeAttribute(name);
+      }
+      attributeClaims.clear();
       host?.removeEventListener("storage", onStorage);
       systemScheme?.removeEventListener("change", onSystemSchemeChange);
       listeners.clear();

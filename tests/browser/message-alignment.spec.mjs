@@ -1,11 +1,46 @@
 // Browser geometry and real scrolling cannot be established in jsdom.
 import { test, expect } from "./fixture.mjs";
-import { open, settle, anchor, expectAnchor, wheel } from "./timeline.mjs";
+import {
+  open,
+  settle,
+  anchor,
+  expectAnchor,
+  wheel,
+  edge,
+  end,
+} from "./timeline.mjs";
 import {
   openSettings,
   closeSettings,
   selectSettingsSection,
 } from "./navigation.mjs";
+
+const geometry = (history) =>
+  history.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const first = el.querySelector("[data-message-id]");
+    return {
+      first: first.getBoundingClientRect().top - box.top,
+      scroll: el.scrollTop,
+      overflow: el.scrollHeight - el.clientHeight,
+      bottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+      // The in-flow tail includes the existing message clearance spacer.
+      // It should meet the scrollport's computed bottom inset in Bottom.
+      endGap:
+        box.top +
+        el.clientTop +
+        el.clientHeight -
+        el.lastElementChild.getBoundingClientRect().bottom -
+        Number.parseFloat(getComputedStyle(el).paddingBottom),
+    };
+  });
+// Match the scroll rounding tolerance used by the shared edge helpers.
+const expectEndAligned = (history) =>
+  expect
+    .poll(async () => Math.abs((await geometry(history)).endGap))
+    .toBeLessThan(4);
+const expectAtBottom = (history) =>
+  expect.poll(async () => (await geometry(history)).bottom).toBeLessThan(4);
 
 test("Bottom alignment: setting, upward growth, reload and overflow", async ({
   page,
@@ -16,20 +51,8 @@ test("Bottom alignment: setting, upward growth, reload and overflow", async ({
     exact: true,
   });
   const rows = history.locator("[data-message-id]");
-  const geometry = () =>
-    history.evaluate((el) => {
-      const box = el.getBoundingClientRect();
-      const rows = [...el.querySelectorAll("[data-message-id]")];
-      return {
-        height: box.height,
-        first: rows[0].getBoundingClientRect().top - box.top,
-        gap: box.bottom - rows.at(-1).getBoundingClientRect().bottom,
-        scroll: el.scrollTop,
-        overflow: el.scrollHeight - el.clientHeight,
-      };
-    });
   await open(page, app);
-  const before = await geometry();
+  const before = await geometry(history);
   await openSettings(page);
   await selectSettingsSection(page, "Appearance");
   const alignment = page.getByRole("combobox", {
@@ -46,8 +69,8 @@ test("Bottom alignment: setting, upward growth, reload and overflow", async ({
   );
   await closeSettings(page);
   await settle(page);
-  await expect.poll(async () => (await geometry()).gap).toBeLessThan(75);
-  expect((await geometry()).first).toBeGreaterThan(before.first + 150);
+  await expectEndAligned(history);
+  expect((await geometry(history)).first).toBeGreaterThan(before.first + 150);
   const firstBefore = await rows.first().boundingBox();
   app.append(
     "primary",
@@ -70,7 +93,7 @@ test("Bottom alignment: setting, upward growth, reload and overflow", async ({
   );
   await expect(rows.first()).toBeVisible();
   await settle(page);
-  await expect.poll(async () => (await geometry()).gap).toBeLessThan(75);
+  await expectEndAligned(history);
   for (let i = 0; i < 18; i++)
     app.append(
       "primary",
@@ -81,11 +104,22 @@ test("Bottom alignment: setting, upward growth, reload and overflow", async ({
     );
   await expect(history.getByText(/^Sample message 18:/)).toBeVisible();
   await settle(page);
-  expect((await geometry()).overflow).toBeGreaterThan(100);
-  const bottom = (await geometry()).scroll;
+  expect((await geometry(history)).overflow).toBeGreaterThan(100);
+  await expectAtBottom(history);
+  await expectEndAligned(history);
+  await edge(page, -1);
+  await expect(history.locator(":scope > div").first()).toBeInViewport();
+  await expect(
+    history.locator(
+      `[data-message-id="${app.histories.get("primary/alpha")[0].id}"]`,
+    ),
+  ).toBeInViewport();
+  await end(page);
+  await expect(history.getByText(/^Sample message 18:/)).toBeInViewport();
+  const bottom = (await geometry(history)).scroll;
   await history.hover();
   await wheel(page, -500);
-  expect((await geometry()).scroll).toBeLessThan(bottom - 100);
+  expect((await geometry(history)).scroll).toBeLessThan(bottom - 100);
   const reading = await anchor(page);
   app.append(
     "primary",
@@ -108,6 +142,8 @@ test("Bottom alignment: setting, upward growth, reload and overflow", async ({
     }),
   ).toBeInViewport();
   await settle(page);
+  await expectAtBottom(history);
+  await expectEndAligned(history);
 });
 
 test.describe("Conversation surfaces", () => {
@@ -143,19 +179,35 @@ test.describe("Conversation surfaces", () => {
       exact: true,
     });
     await expect(history.locator("[data-message-id]").last()).toBeVisible();
-    const gap = (el) => {
-      const rows = [...el.querySelectorAll("[data-message-id]")];
-      return (
-        el.getBoundingClientRect().bottom -
-        rows.at(-1).getBoundingClientRect().bottom
-      );
-    };
-    await expect.poll(() => history.evaluate(gap)).toBeLessThan(75);
+    await settle(page, history);
+    await expectEndAligned(history);
+    const rootBefore = await history
+      .locator(`[data-message-id="${root.id}"]`)
+      .boundingBox();
     app.reply(root.id);
     await expect(
       history.getByText("New peer reply", { exact: true }),
     ).toBeVisible();
-    await expect.poll(() => history.evaluate(gap)).toBeLessThan(75);
+    await settle(page, history);
+    await expectEndAligned(history);
+    expect(
+      (await history.locator(`[data-message-id="${root.id}"]`).boundingBox()).y,
+    ).toBeLessThan(rootBefore.y);
+    // Enough short replies to cross from underfilled to scrolling history.
+    let lastReply;
+    for (let i = 0; i < 30; i++) lastReply = app.reply(root.id);
+    const lastReplyRow = history.locator(`[data-message-id="${lastReply.id}"]`);
+    await expect(lastReplyRow).toBeInViewport();
+    await settle(page, history);
+    expect((await geometry(history)).overflow).toBeGreaterThan(100);
+    await expectAtBottom(history);
+    await expectEndAligned(history);
+    await edge(page, -1, history);
+    await expect(
+      history.locator(`[data-message-id="${root.id}"]`),
+    ).toBeInViewport();
+    await edge(page, 1, history);
+    await expect(lastReplyRow).toBeInViewport();
     await page
       .getByRole("button", { name: "Close Thread root 0 tab", exact: true })
       .click();
@@ -180,7 +232,7 @@ test.describe("Conversation surfaces", () => {
       }),
     ).toBeVisible();
     await settle(page);
-    await expect.poll(() => mainHistory.evaluate(gap)).toBeLessThan(75);
+    await expectEndAligned(mainHistory);
     await page.getByRole("tab", { name: "Solo", exact: true }).click();
     await page.locator('[data-solo-channel-id="beta"]').click();
     await expect(
@@ -190,6 +242,6 @@ test.describe("Conversation surfaces", () => {
       mainHistory.locator("[data-message-id]").first(),
     ).toBeVisible();
     await settle(page);
-    await expect.poll(() => mainHistory.evaluate(gap)).toBeLessThan(75);
+    await expectEndAligned(mainHistory);
   });
 });

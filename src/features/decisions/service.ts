@@ -143,6 +143,8 @@ export type DecisionProvider = Readonly<{
   /** Its settings, shown under Settings > Decisions API while it is
    * selected. */
   Settings?: ComponentType<{ active(): boolean }>;
+  /** Whether Settings adds a heading above the contribution. Defaults to true. */
+  showSettingsHeading?: boolean;
   /** Lower comes first in Settings. Default 0. */
   order?: number;
 }>;

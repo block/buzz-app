@@ -159,8 +159,10 @@ export function DecisionsSettings({
             </div>
           )}
           {shown && (
-            <div className="flex w-full max-w-md flex-col items-start gap-3">
-              <InlineHeader title={shown.label} />
+            <div className="w-full">
+              {shown.showSettingsHeading !== false && (
+                <InlineHeader title={shown.label} />
+              )}
               {shown.Settings && (
                 // A provider's settings are plugin code: if they fail, only
                 // this part does, and Manage plugins can turn it off.

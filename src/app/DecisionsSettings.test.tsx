@@ -26,7 +26,7 @@ function fake(
     status: DecisionProviderStatus;
     /** Replaces the status read, for a provider whose status throws. */
     readStatus?: RegisteredProvider["status"];
-  } & Partial<Pick<RegisteredProvider, "Settings">>)[],
+  } & Partial<Pick<RegisteredProvider, "Settings" | "showSettingsHeading">>)[],
   chosen?: string,
 ) {
   const listeners = new Set<() => void>();
@@ -48,6 +48,9 @@ function fake(
       decide: async () => ({ outcome: "failed", reason: "unavailable" }),
       Settings: () => <p>Settings for {name}</p>,
       ...(entry.Settings ? { Settings: entry.Settings } : {}),
+      ...(entry.showSettingsHeading !== undefined
+        ? { showSettingsHeading: entry.showSettingsHeading }
+        : {}),
       ...(entry.readStatus ? { status: entry.readStatus } : {}),
     };
   });
@@ -93,19 +96,32 @@ it("says to turn a provider on when none is, linking to Manage plugins", async (
   expect(onSection).toHaveBeenCalledExactlyOnceWith("plugins");
 });
 
-it("shows a lone provider's settings, with no provider choice", () => {
-  render(
-    <DecisionsSettings
-      decisions={fake([{ key: TYPESAFE, status: "needs-setup" }])}
-      active={() => true}
-    />,
-  );
-  expect(screen.queryByRole("radio")).toBeNull();
-  expect(
-    screen.getByRole("heading", { name: "Provider typesafe" }),
-  ).toBeVisible();
-  expect(screen.getByText("Settings for typesafe")).toBeVisible();
-});
+it.each([undefined, false])(
+  "shows a lone provider's settings with heading visibility %s",
+  (showSettingsHeading) => {
+    render(
+      <DecisionsSettings
+        decisions={fake([
+          {
+            key: TYPESAFE,
+            status: "needs-setup",
+            ...(showSettingsHeading !== undefined
+              ? { showSettingsHeading }
+              : {}),
+          },
+        ])}
+        active={() => true}
+      />,
+    );
+    expect(screen.queryByRole("radio")).toBeNull();
+    const heading = screen.queryByRole("heading", {
+      name: "Provider typesafe",
+    });
+    if (showSettingsHeading === false) expect(heading).toBeNull();
+    else expect(heading).toBeVisible();
+    expect(screen.getByText("Settings for typesafe")).toBeVisible();
+  },
+);
 
 it("says once, above every provider's settings, that the provider receives message text", () => {
   render(

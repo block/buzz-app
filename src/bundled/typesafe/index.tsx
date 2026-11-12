@@ -12,6 +12,7 @@ export const inject = ["decisions"];
 export const typesafeProvider = (typesafe: TypeSafeKey): DecisionProvider => ({
   id: "typesafe",
   label: "TypeSafe",
+  showSettingsHeading: false,
   description: "Use your own TypeSafe API key.",
   status: typesafe.status,
   subscribe: typesafe.subscribe,

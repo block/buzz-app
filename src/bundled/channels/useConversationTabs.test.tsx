@@ -2180,3 +2180,83 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   });
   expect(rowRenders).toContain(`${roots.r1}:reply`);
 });
+
+it("uses verified sources after reply deletion and revokes deferred source actions", () => {
+  const channels = [
+    { id: "alpha", name: "Alpha" },
+    { id: "beta", name: "Beta" },
+  ];
+  const session = {
+    viewer: "viewer",
+    channels: { list: () => ({ channels }), window: () => ({ rows: [] }) },
+  } as unknown as RelaySession;
+  const available: RegisteredPanel[] = [];
+  const panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+  } as unknown as Panels;
+  const relay = {
+    snapshot: () => ({ status: "ready", session }),
+  } as unknown as RelayData;
+  const open = vi.fn();
+  const h = renderHook(() => {
+    const state = useChannelTabState(session, "alpha");
+    const workspace = useConversationTabs({
+      state,
+      relay,
+      session,
+      panels,
+      current: channels[0],
+      channels,
+      profiles: new Map(),
+      scope: "origin:viewer",
+      conversationIcon: () => null,
+      leadingIds: [],
+      continuingVisit: true,
+      isLive: () => true,
+      openLink: () => false,
+      navigation: { open },
+    });
+    return { state, workspace };
+  });
+  act(() =>
+    h.result.current.state.openThreadTab(
+      "beta",
+      "deleted-reply",
+      "provisional-hint",
+    ),
+  );
+  const sourceAction = () => {
+    const item = h.result.current.workspace.items[0];
+    return item && "actions" in item ? item.actions?.[0] : undefined;
+  };
+  // Unresolved ancestry must use the selected message, never a link's hint.
+  act(() => sourceAction()?.run());
+  expect(open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      messageId: "deleted-reply",
+      context: "timeline",
+    }),
+  );
+  // The reader verified this root before the selected reply disappeared.
+  // A deleted selection does not make its retained original unavailable.
+  act(() =>
+    h.result.current.state.resolveThreadRoot(
+      "thread:beta:provisional-hint",
+      "verified-root",
+    ),
+  );
+  const action = sourceAction();
+  expect(action).toBeDefined();
+  act(() => action?.run());
+  expect(open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      messageId: "verified-root",
+      context: "timeline",
+    }),
+  );
+  open.mockClear();
+  h.unmount();
+  action?.run();
+  expect(open).not.toHaveBeenCalled();
+});

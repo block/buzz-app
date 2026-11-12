@@ -785,10 +785,14 @@ export function useConversationTabs({
       .slice(0, 80);
     return text || (name ? `Thread · ${name}` : "Thread");
   }
-  // The current conversation's own threads are already in its channel.
   function openInChannel(tab: Tab, target: ChannelSummary | undefined) {
-    return target && navigation && viewer && tab.channelId !== currentId
-      ? () =>
+    // A verified root stays usable even if the selected reply was deleted.
+    // An unresolved tab's id can contain a hint, so fall back to its message.
+    const messageId =
+      tab.kind === "thread" ? (tab.rootId ?? tab.messageId) : tab.messageId;
+    return target && navigation && viewer
+      ? () => {
+          if (!currentVisit()) return;
           void navigation.open({
             version: 1,
             kind: "conversation",
@@ -797,18 +801,27 @@ export function useConversationTabs({
               communityOrigin: scope.slice(0, -(viewer.length + 1)),
             },
             channelId: tab.channelId,
-            ...(tab.messageId && { messageId: tab.messageId }),
-            // The channel shows the thread's root beside it, for its context.
-            ...(tab.kind === "thread" && {
-              threadRootId: rootOfTab(tab),
-              context: "channel",
+            ...(messageId && {
+              messageId,
+              context: "timeline",
             }),
-          })
+          });
+        }
       : undefined;
   }
   // A thread names its conversation as Inbox rows do, bounding a group DM's
   // names where its tab lists them all; the name opens it there.
   const resolveName = useIdentityNames(queries.names);
+  function sourceAction(tab: Tab, target: ChannelSummary) {
+    const place = ["dm", "solo"].includes(target.channelType ?? "stream")
+      ? "chat"
+      : "channel";
+    return tab.kind === "thread"
+      ? `Show original message in ${place}`
+      : tab.messageId
+        ? `Show message in ${place}`
+        : `Open ${place}`;
+  }
   function parentOf(tab: Tab, target: ChannelSummary) {
     const open = openInChannel(tab, target);
     return (
@@ -816,7 +829,10 @@ export function useConversationTabs({
         label:
           target.channelType === "dm"
             ? `DM · ${dmLabel(target.participants, profiles, resolveName, target.name)}`
-            : `#${target.name}`,
+            : target.channelType === "solo"
+              ? target.name
+              : `#${target.name}`,
+        action: sourceAction(tab, target),
         open,
       }
     );
@@ -847,9 +863,10 @@ export function useConversationTabs({
         move: (delta: -1 | 1) => moveBy(tab, delta),
         rename: (name: string) => tabState.renameTab(tab.id, name),
       }),
-      ...(openChannel && {
-        actions: [{ label: "Open in channel", run: openChannel }],
-      }),
+      ...(openChannel &&
+        target && {
+          actions: [{ label: sourceAction(tab, target), run: openChannel }],
+        }),
       content:
         !usable || !target ? (
           <p role="status" className={styles.empty}>

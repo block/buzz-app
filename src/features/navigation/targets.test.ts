@@ -87,6 +87,14 @@ describe("open target boundary", () => {
     expect(target).toEqual({ ...parseOpenTarget(thread), context: "channel" });
     expect(targetKey(target)).not.toBe(targetKey(thread));
   });
+  it("keeps a timeline source visit distinct from ordinary message links", () => {
+    const target = parseOpenTarget({ ...conversation, context: "timeline" });
+    expect(target).toEqual({
+      ...parseOpenTarget(conversation),
+      context: "timeline",
+    });
+    expect(targetKey(target)).not.toBe(targetKey(conversation));
+  });
   it("opens a saved Shared sessions target as its conversation", () => {
     const target = parseOpenTarget({
       ...conversation,
@@ -170,7 +178,7 @@ describe("open target boundary", () => {
     { ...conversation, messageId: undefined, threadRootId: "b".repeat(64) },
     // Context names where a thread's root shows; it needs that root.
     { ...conversation, context: "channel" },
-    { ...conversation, threadRootId: "b".repeat(64), context: "timeline" },
+    { ...conversation, messageId: undefined, context: "timeline" },
     { ...conversation, channelId: "../../other" },
     { version: 1, kind: "page", pluginId: "a/b", pageId: "board" },
     {

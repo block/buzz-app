@@ -32,6 +32,14 @@ reveal left the reader less than 80 px from the end, Back keeps the message
 where the reveal placed it, but a plain visit opens at the latest message, as
 it does after the reader scrolls that close to the end.
 
+A thread tab's source link and Show original message in channel/chat action
+create a timeline visit, including when the source channel is already open.
+They resolve the selected message's verified top-level source and seek it within
+the existing history limit. The thread tab remains available with its draft;
+Back restores the prior selection. Repeating the action reveals the source
+again. A missing source produces an explicit failure and Retry instead of
+opening another thread. Ordinary message links keep their existing placement.
+
 Profiles and GitHub use the same rule. Their read-only target and optional
 thread context are carried as `detail` in the scoped conversation address;
 Back/Forward restores selection and reload resolves the panel through the

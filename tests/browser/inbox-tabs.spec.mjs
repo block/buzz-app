@@ -139,7 +139,7 @@ test("Inbox rows open their conversation in one side tab beside the list", async
 // the channel's root row is in view and painted beside the focused thread.
 test.describe("with the thread's root beyond the channel's newest page", () => {
   test.use({ threadUnreadNewerRows: 30 });
-  test("an Inbox tab's menu opens its thread in its channel beside its root", async ({
+  test("an Inbox tab reveals its original in cold channel history", async ({
     page,
     app,
   }) => {
@@ -182,21 +182,16 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
       .getByRole("tablist", { name: "Panel tabs" })
       .getByRole("tab", { name: /^Thread/ })
       .click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Open in channel" }).click();
+    await page
+      .getByRole("menuitem", { name: "Show original message in channel" })
+      .click();
     await expect(inbox).toHaveCount(0);
     const target = await page.evaluate(
       () => history.state.buzzNavigationV1.entry.target,
     );
-    expect(target.threadRootId).toBe(root.id);
+    expect(target.context).toBe("timeline");
     expect(target.messageId).toMatch(/^[a-f0-9]{64}$/);
-    // The thread still opens at the same message, which keeps focus.
-    const reply = page
-      .getByRole("region", { name: "Thread messages", exact: true })
-      .locator(`[data-message-id="${target.messageId}"]`);
-    await expect(reply).toContainText("Unread reply 1");
-    await expect(reply).toBeFocused();
-    // Beside it, the channel waits to show its list at the thread's root,
-    // reading the older page the fixture holds.
+    // The destination owns timeline focus; the source tab remains in Activity.
     await expect.poll(() => app.pending.length).toBe(1);
     expect(app.pending[0].channel).toBe("alpha");
     await expect(
@@ -204,7 +199,6 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         .getByRole("region", { name: "Channel history", exact: true })
         .getByRole("status"),
     ).toHaveText("Loading messages…");
-    await expect(reply).toBeFocused();
     app.pending.shift().release();
     const head = app.report.queries.find(
       ({ community, filter }) =>
@@ -223,7 +217,24 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
         .locator(`[data-message-id="${root.id}"]`),
     ).toBeInViewport();
     await expect.poll(() => page.evaluate(() => window.rootMarked)).toBe(true);
-    await expect(reply).toBeFocused();
+    await expect(
+      page.locator(
+        `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
+      ),
+    ).toBeFocused();
+    await page.goBack();
+    await expect(inbox).toBeVisible();
+    await expect(
+      inbox
+        .getByRole("region", { name: "Thread messages", exact: true })
+        .getByText("Unread reply 1", { exact: true }),
+    ).toBeVisible();
+    await page.goForward();
+    await expect(
+      page.locator(
+        `[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`,
+      ),
+    ).toBeInViewport();
   });
 });
 
@@ -341,7 +352,19 @@ for (const variant of Object.keys(titles))
     await channel.click();
     await expect(inbox).toHaveCount(0);
     if (moved) {
-      app.append(
+      // This source predates the head page; release the fixture's held seek
+      // before asking the timeline to display its live reply summary.
+      const sourceRow = page.locator(
+        `[data-channel-timeline="beta"] [data-message-id="${roots[3].id}"]`,
+      );
+      await expect
+        .poll(async () => {
+          for (const pending of app.pending.splice(0)) pending.release();
+          return sourceRow.count();
+        })
+        .toBe(1);
+      await expect(sourceRow).toBeFocused();
+      const freshReply = app.append(
         "primary",
         "beta",
         "Fresh Beta mention 3",
@@ -351,10 +374,16 @@ for (const variant of Object.keys(titles))
         undefined,
         [["p", app.viewer]],
       );
-      // Delivered to the open thread, so the session has the row's move.
+      // Model the relay-owned summary separately from the authored reply.
+      app.threadSummary(roots[3].id, [freshReply.pubkey], 2, "beta");
+      // The summary follows the reply on the live stream, establishing receipt.
       await expect(
-        page.getByText("Fresh Beta mention 3", { exact: true }),
-      ).toBeVisible();
+        page
+          .locator(
+            `[data-channel-timeline="beta"] [data-message-id="${roots[3].id}"]`,
+          )
+          .getByRole("button", { name: /^View thread:/ }),
+      ).toContainText("2 replies");
     }
     if (variant === "shifted") {
       // A new mentioned thread adds a row above, shifting the rest down.

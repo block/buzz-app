@@ -1,3 +1,4 @@
+import { useSourceOpening } from "./useSourceOpening";
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -677,6 +678,14 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.threadRootId
       : undefined;
+  const sourceRequested =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.context === "timeline";
+  const sourceOpening = useSourceOpening(
+    queries,
+    !cached && !current?.cached ? current?.id : undefined,
+    sourceRequested ? navigation : undefined,
+  );
   const membersRequested =
     navigation?.target.kind === "conversation" &&
     navigation.target.panel === "members";
@@ -958,6 +967,7 @@ function ChannelWorkspace({
       current?.cached ||
       !navigation ||
       !requestedMessage ||
+      sourceRequested ||
       requestedThread === requestedMessage ||
       !currentId ||
       navigation.signal.aborted
@@ -985,6 +995,7 @@ function ChannelWorkspace({
     navigation,
     requestedMessage,
     requestedThread,
+    sourceRequested,
     currentId,
     queries,
   ]);
@@ -993,11 +1004,13 @@ function ChannelWorkspace({
   const exact =
     cached || current?.cached
       ? undefined
-      : navigation && requestedMessage && requestedThread === requestedMessage
-        ? { request: navigation, inTimeline: false }
-        : exactOpening?.request === navigation
-          ? exactOpening
-          : undefined;
+      : sourceRequested && navigation
+        ? { request: navigation, inTimeline: true }
+        : navigation && requestedMessage && requestedThread === requestedMessage
+          ? { request: navigation, inTimeline: false }
+          : exactOpening?.request === navigation
+            ? exactOpening
+            : undefined;
   // The route addresses a thread; its tab owns presentation, the route only
   // selects it and supplies the reveal request.
   const routedThread = useMemo(
@@ -1492,6 +1505,7 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
+  const sourceAttempt = useRef<PageNavigation | undefined>(undefined);
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1533,6 +1547,16 @@ function ChannelWorkspace({
           ? { channelId: currentId, target: detail.target }
           : undefined,
       );
+      // Reopening the same source restarts its attempt without a new history
+      // entry. Apply that explicit intent once; traversal keeps saved selection.
+      if (
+        sourceRequested &&
+        !navigation.traversal &&
+        sourceAttempt.current !== navigation
+      ) {
+        sourceAttempt.current = navigation;
+        tabState.selectMain(undefined);
+      }
       // A re-render while the return is pending must not reapply the detail
       // that was just closed.
       if (detail && currentId && navigation.entryId !== returned?.from) {
@@ -1601,6 +1625,7 @@ function ChannelWorkspace({
     draft,
     composingMessage,
     requestedMessage,
+    sourceRequested,
     navigation,
     requestedChannel,
     open,
@@ -2065,6 +2090,12 @@ function ChannelWorkspace({
         ref={historyContainer}
         className={`relative flex min-h-0 flex-col${current ? " flex-1" : ""}`}
       >
+        {sourceOpening.failed && (
+          <div role="alert" className={styles.empty}>
+            <p>Couldn't show the original message.</p>
+            <Button onClick={() => void navigator?.retry()}>Retry</Button>
+          </div>
+        )}
         {current ? (
           <ChannelBody
             onContentReady={setContentReadyChannel}
@@ -2073,9 +2104,13 @@ function ChannelWorkspace({
             cached={cached}
             // The composer below mounts TypingIndicator for members of a live channel.
             navigation={
-              !requestedMessage || exact?.inTimeline ? navigation : undefined
+              sourceRequested
+                ? sourceOpening.navigation
+                : !requestedMessage || exact?.inTimeline
+                  ? navigation
+                  : undefined
             }
-            holding={contextHolding}
+            holding={contextHolding || sourceOpening.holding}
             inlineTarget={contextTarget}
             onOpenThread={openThread}
             revealMessageId={

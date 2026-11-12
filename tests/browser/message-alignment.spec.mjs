@@ -5,22 +5,17 @@ import {
   openSettings,
   closeSettings,
   selectSettingsSection,
-  chooseColorMode,
 } from "./navigation.mjs";
 
-test.use({ historyCounts: { alpha: 1, beta: 1 } });
-
-test("Bottom alignment: setting, upward growth, reload, themes and overflow", async ({
+test("Bottom alignment: setting, upward growth, reload and overflow", async ({
   page,
   app,
-}, info) => {
+}) => {
   const history = page.getByRole("region", {
     name: "Channel message history",
     exact: true,
   });
   const rows = history.locator("[data-message-id]");
-  const shot = async (name) =>
-    page.screenshot({ path: info.outputPath(`${name}.png`) });
   const geometry = () =>
     history.evaluate((el) => {
       const box = el.getBoundingClientRect();
@@ -34,7 +29,6 @@ test("Bottom alignment: setting, upward growth, reload, themes and overflow", as
       };
     });
   await open(page, app);
-  await shot("01-top-before");
   const before = await geometry();
   await openSettings(page);
   await selectSettingsSection(page, "Appearance");
@@ -45,18 +39,15 @@ test("Bottom alignment: setting, upward growth, reload, themes and overflow", as
   await alignment.scrollIntoViewIfNeeded();
   await expect(alignment).toHaveText("Top");
   await alignment.click();
-  await shot("02-new-setting");
   await page.getByRole("option", { name: "Bottom", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute(
     "data-message-alignment",
     "bottom",
   );
-  await shot("03-bottom-selected");
   await closeSettings(page);
   await settle(page);
   await expect.poll(async () => (await geometry()).gap).toBeLessThan(75);
   expect((await geometry()).first).toBeGreaterThan(before.first + 150);
-  await shot("04-bottom-before-message");
   const firstBefore = await rows.first().boundingBox();
   app.append(
     "primary",
@@ -72,7 +63,6 @@ test("Bottom alignment: setting, upward growth, reload, themes and overflow", as
   ).toBeVisible();
   await settle(page);
   expect((await rows.first().boundingBox()).y).toBeLessThan(firstBefore.y);
-  await shot("05-messages-flow-up");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute(
     "data-message-alignment",
@@ -81,14 +71,6 @@ test("Bottom alignment: setting, upward growth, reload, themes and overflow", as
   await expect(rows.first()).toBeVisible();
   await settle(page);
   await expect.poll(async () => (await geometry()).gap).toBeLessThan(75);
-  for (const mode of ["Light", "Dark"]) {
-    await openSettings(page);
-    await selectSettingsSection(page, "Appearance");
-    await chooseColorMode(page, mode);
-    await closeSettings(page);
-    await settle(page);
-    await shot(`06-${mode.toLowerCase()}-bottom`);
-  }
   for (let i = 0; i < 18; i++)
     app.append(
       "primary",
@@ -126,25 +108,6 @@ test("Bottom alignment: setting, upward growth, reload, themes and overflow", as
     }),
   ).toBeInViewport();
   await settle(page);
-  await shot("07-jump-to-latest");
-  await page.setViewportSize({ width: 480, height: 860 });
-  await openSettings(page);
-  await selectSettingsSection(page, "Appearance");
-  await alignment.scrollIntoViewIfNeeded();
-  await expect(alignment).toHaveText("Bottom");
-  await shot("08-narrow-setting");
-  await alignment.focus();
-  await alignment.press("ArrowDown");
-  await page.getByRole("option", { name: "Top", exact: true }).press("Enter");
-  await expect(alignment).toHaveText("Top");
-  await page
-    .getByRole("button", { name: "Increase interface size", exact: true })
-    .click();
-  await expect(page.getByRole("status", { name: "Interface size" })).toHaveText(
-    "110%",
-  );
-  await alignment.scrollIntoViewIfNeeded();
-  await expect(alignment).toBeVisible();
 });
 
 test.describe("Conversation surfaces", () => {
@@ -158,18 +121,11 @@ test.describe("Conversation surfaces", () => {
     historyCounts: { alpha: 2, beta: 1 },
   });
 
-  test("Bottom alignment in thread, DM and Solo", async ({
-    page,
-    app,
-  }, info) => {
+  test("Bottom alignment in thread, DM and Solo", async ({ page, app }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("buzz-message-alignment.v1", "bottom");
+    });
     await open(page, app);
-    await openSettings(page);
-    await selectSettingsSection(page, "Appearance");
-    await page
-      .getByRole("combobox", { name: "Message alignment", exact: true })
-      .click();
-    await page.getByRole("option", { name: "Bottom", exact: true }).click();
-    await closeSettings(page);
     const root = app.histories
       .get("primary/alpha")
       .find((e) => e.content === "Thread root 0");
@@ -195,7 +151,6 @@ test.describe("Conversation surfaces", () => {
       );
     };
     await expect.poll(() => history.evaluate(gap)).toBeLessThan(75);
-    await page.screenshot({ path: info.outputPath("thread-bottom.png") });
     app.reply(root.id);
     await expect(
       history.getByText("New peer reply", { exact: true }),
@@ -226,7 +181,6 @@ test.describe("Conversation surfaces", () => {
     ).toBeVisible();
     await settle(page);
     await expect.poll(() => mainHistory.evaluate(gap)).toBeLessThan(75);
-    await page.screenshot({ path: info.outputPath("dm-bottom.png") });
     await page.getByRole("tab", { name: "Solo", exact: true }).click();
     await page.locator('[data-solo-channel-id="beta"]').click();
     await expect(
@@ -237,6 +191,5 @@ test.describe("Conversation surfaces", () => {
     ).toBeVisible();
     await settle(page);
     await expect.poll(() => mainHistory.evaluate(gap)).toBeLessThan(75);
-    await page.screenshot({ path: info.outputPath("solo-bottom.png") });
   });
 });

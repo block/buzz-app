@@ -31,6 +31,7 @@ import {
 import { ReadError } from "../../features/relay/errors";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { entityTarget, type EntityRoute } from "../../features/repos/routes";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import type { GitSnapshot } from "../../features/repos/git";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
@@ -136,17 +137,15 @@ function setup(
   let live: LiveCallbacks | undefined;
   const ctx = new Context();
   const host = provideNavigation(ctx);
-  const readGit = vi.fn(
-    async (input: GitRead): Promise<GitSnapshot> => ({
-      ...git,
-      ...(input.commit
-        ? { diff: "diff --git a/readme b/readme\n+actual change" }
-        : {}),
-      ...(input.path
-        ? { file: { path: input.path, content: "actual file", size: 11 } }
-        : {}),
-    }),
-  );
+  const readGit = vi.fn(async (input: GitRead): Promise<GitSnapshot> => ({
+    ...git,
+    ...(input.commit
+      ? { diff: "diff --git a/readme b/readme\n+actual change" }
+      : {}),
+    ...(input.path
+      ? { file: { path: input.path, content: "actual file", size: 11 } }
+      : {}),
+  }));
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
     [...events, roster(true), channel].filter((event) =>
       filters.some((filter) => matchesEvent(event, filter)),
@@ -669,4 +668,39 @@ it("routes each README's Buzz links in its own scope, and follows a changed scop
     entityTarget(route, other),
     entityTarget(route, other),
   ]);
+});
+
+it("admits each README's Buzz links in its own scope, and follows a changed scope", () => {
+  // A plugin link that fits the target limit only in the shorter scope.
+  const plugin = "buzz://plugin?id=com.example.catalog";
+  const wide = {
+    ...scope,
+    communityOrigin: `https://${"c".repeat(200)}.example`,
+  };
+  const params = (last: number) =>
+    [...Array(7)].map((_, i) => `&route.p${i}=${"a".repeat(1024)}`).join("") +
+    `&route.last=${"a".repeat(last)}`;
+  let last = 1024;
+  while (!buzzLinkTarget(plugin + params(last), scope)) last -= 1;
+  const href = plugin + params(last);
+  expect(buzzLinkTarget(href, wide)).toBeNull();
+  const open = async () => ({ status: "opened" }) as const;
+  const hrefs = () =>
+    ["Narrow", "Wide"].map((name) =>
+      screen.getByText(name).closest("a")?.getAttribute("href"),
+    );
+  const view = render(
+    <>
+      <Body text={`[Narrow](${href})`} open={open} scope={scope} />
+      <Body text={`[Wide](${href})`} open={open} scope={wide} />
+    </>,
+  );
+  expect(hrefs()).toEqual([href, ""]);
+  view.rerender(
+    <>
+      <Body text={`[Narrow](${href})`} open={open} scope={wide} />
+      <Body text={`[Wide](${href})`} open={open} scope={scope} />
+    </>,
+  );
+  expect(hrefs()).toEqual(["", href]);
 });

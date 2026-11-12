@@ -6,6 +6,7 @@ import {
   APPEARANCE_KEY,
   FONT_SCALE_KEY,
   MESSAGE_WIDTH_KEY,
+  MESSAGE_ALIGNMENT_KEY,
   createAppearance,
   parseColorMode,
   parseColorModePreference,
@@ -109,6 +110,8 @@ it.each([
       preference: parseColorModePreference(value),
       mode,
       error: null,
+      messageAlignment: "top",
+      messageAlignmentError: null,
       messageWidth: "narrow",
       messageWidthError: null,
       fontScale: 1,
@@ -564,4 +567,63 @@ it("keeps density active on storage failure, retries, and follows other windows"
   app.dispose();
   app.setDensity("compact");
   expect(b.root.dataset.messageDensity).toBe("default");
+});
+
+it.each([
+  [null, "top"],
+  ["BOTTOM", "top"],
+  ["top", "top"],
+  ["bottom", "bottom"],
+] as const)(
+  "bootstrap and service agree on alignment %j",
+  (stored, alignment) => {
+    const b = browser();
+    if (stored !== null) b.values.set(MESSAGE_ALIGNMENT_KEY, stored);
+    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+      localStorage: b.storage,
+      document: b.host.document,
+      matchMedia: b.host.matchMedia,
+    });
+    expect(b.root.dataset.messageAlignment).toBe(alignment);
+    const app = createAppearance(b.host);
+    expect(app.snapshot().messageAlignment).toBe(alignment);
+    expect(b.root.dataset.messageAlignment).toBe(alignment);
+    app.dispose();
+  },
+);
+
+it("persists alignment, follows current cross-window values and resets after storage clears", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  app.setMessageAlignment("bottom");
+  expect(b.values.get(MESSAGE_ALIGNMENT_KEY)).toBe("bottom");
+  app.dispose();
+  const restored = createAppearance(b.host);
+  expect(restored.snapshot().messageAlignment).toBe("bottom");
+  b.values.set(MESSAGE_ALIGNMENT_KEY, "top");
+  b.change(MESSAGE_ALIGNMENT_KEY);
+  expect(b.root.dataset.messageAlignment).toBe("top");
+  b.values.set(MESSAGE_ALIGNMENT_KEY, "bottom");
+  b.change(MESSAGE_ALIGNMENT_KEY);
+  b.values.clear();
+  b.change(null);
+  expect(restored.snapshot().messageAlignment).toBe("top");
+  restored.dispose();
+  restored.setMessageAlignment("bottom");
+  expect(b.root.dataset.messageAlignment).toBe("top");
+});
+
+it("keeps alignment active after a denied save and clears its error on retry", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  b.storage.setItem.mockImplementationOnce(() => {
+    throw new Error("denied");
+  });
+  app.setMessageAlignment("bottom");
+  expect(b.root.dataset.messageAlignment).toBe("bottom");
+  expect(app.snapshot().messageAlignmentError).toContain("could not be saved");
+  app.setMessageAlignment("bottom");
+  expect(app.snapshot().messageAlignmentError).toBeNull();
+  expect(b.values.get(MESSAGE_ALIGNMENT_KEY)).toBe("bottom");
+  app.dispose();
 });

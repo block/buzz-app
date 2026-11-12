@@ -689,6 +689,11 @@ for 30 days expires.
   grammar checker, adds its own wavy underlines; right-click one, or put the
   caret in it and press ⌘. (Ctrl+. elsewhere), to see what it found and pick a
   replacement. ⌘Z undoes the change.
+- **Message alignment**: choose **Top** or **Bottom** in **Settings → Appearance →
+  Conversations**. Top is the default. Bottom places short conversations, including
+  threads, above the message box; earlier messages move upward as new ones arrive.
+  Messages stay in chronological order, and longer conversations scroll normally.
+  The choice is saved on this device.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus

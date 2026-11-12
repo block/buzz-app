@@ -1018,6 +1018,22 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* Auto margins absorb only unused space. Once history overflows, normal
+   chronological flow and the existing scroll owners retain the full range. */
+:where(html[data-message-alignment="bottom"]) :is(.feed, .threadHistory) {
+  display: flex;
+  flex-direction: column;
+}
+:where(html[data-message-alignment="bottom"]) :is(.feed, .threadHistory) > * {
+  flex-shrink: 0;
+}
+:where(html[data-message-alignment="bottom"]) .feed > .edge,
+:where(html[data-message-alignment="bottom"])
+  .threadHistory
+  > [data-thread-rows] {
+  margin-block-start: auto;
+}
+
 /* Compact gives conversations the window's full width, as list layouts do. */
 :where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
   --timeline-measure: 100%;

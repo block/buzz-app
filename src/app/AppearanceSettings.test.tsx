@@ -784,3 +784,37 @@ it("offers a choice between usernames and full names only where the community ve
   expect(namePreference()).toBe("full-name");
   setNamePreference("username");
 });
+
+it("changes and restores message alignment and retries a denied save", async () => {
+  const user = userEvent.setup();
+  const view = render(preferencesPage(), { wrapper: ToastProvider });
+  const choice = () =>
+    screen.getByRole("combobox", { name: "Message alignment" });
+  expect(choice()).toHaveTextContent("Top");
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementationOnce(() => {
+      throw new Error("denied");
+    });
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Bottom" }));
+  expect(document.documentElement.dataset.messageAlignment).toBe("bottom");
+  expect(localStorage.getItem("buzz-message-alignment.v1")).toBeNull();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Retry saving message alignment",
+    }),
+  );
+  expect(localStorage.getItem("buzz-message-alignment.v1")).toBe("bottom");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  write.mockRestore();
+  view.unmount();
+  render(preferencesPage(), { wrapper: ToastProvider });
+  expect(choice()).toHaveTextContent("Bottom");
+  await user.click(choice());
+  await user.click(await screen.findByRole("option", { name: "Top" }));
+  expect(document.documentElement.dataset.messageAlignment).toBe("top");
+  expect(localStorage.getItem("buzz-message-alignment.v1")).toBe("top");
+});

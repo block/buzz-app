@@ -1213,6 +1213,9 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 
 ## Optional features and limits
 
+- Plugins can offer draft rewrite controls. These controls can preserve explicit
+  mentions and support Undo. A rewrite does not send a message. Host-issued
+  snapshots prevent late responses from replacing a changed draft.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

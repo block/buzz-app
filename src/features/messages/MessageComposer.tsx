@@ -3797,6 +3797,28 @@ function Composer({
                     insertMentions={insertMentions}
                     replaceRecipients={replaceRecipients}
                     replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
+                    readDraft={() =>
+                      permitted.current && !editingDisabled
+                        ? (input.current?.readDraft() ?? null)
+                        : null
+                    }
+                    replaceDraft={(snapshot, text) => {
+                      if (
+                        !permitted.current ||
+                        editingDisabled ||
+                        !input.current?.isConnected
+                      )
+                        return false;
+                      const replaced = input.current.replaceDraft(
+                        snapshot,
+                        text,
+                      );
+                      if (replaced) completion.invalidate();
+                      return replaced;
+                    }}
+                    isFocused={() =>
+                      !!input.current?.contains(document.activeElement)
+                    }
                     insertResource={insertResource}
                     focus={() => input.current?.focus()}
                   />

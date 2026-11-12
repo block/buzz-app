@@ -4916,3 +4916,154 @@ describe("oversized paste feedback", () => {
     expect(onPasteTooLong).toHaveBeenCalledTimes(2);
   });
 });
+
+it("rewrites a draft with rich source and explicit mention identities in one undoable edit", () => {
+  const person = { pubkey: "a".repeat(64), name: "Honey" };
+  const h = mount();
+  act(() => {
+    h.input.insertText("Hello ");
+    h.input.insertText("@Honey ", person);
+    h.input.toggleFormat("bold");
+    h.input.insertText("friend");
+  });
+  const original = h.markdown();
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  expect(snapshot.text).toContain("**friend**");
+  expect(snapshot.mentions).toEqual([
+    { name: "Honey", marker: expect.any(String) },
+  ]);
+  expect(snapshot.text).not.toContain("@Honey");
+  act(() => {
+    expect(
+      h.input.replaceDraft(
+        snapshot,
+        `Hi ${snapshot.mentions[0]?.marker}, dear **friend**`,
+      ),
+    ).toBe(true);
+  });
+  expect(h.markdown()).toContain("Hi @Honey, dear **friend**");
+  expect(h.input.querySelector("strong")).toHaveTextContent("friend");
+  expect(h.draft().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    person.pubkey,
+  ]);
+  act(() => h.input.undo(false));
+  expect(h.markdown()).toBe(original);
+  act(() => h.input.undo(true));
+  expect(h.markdown()).toContain("Hi @Honey, dear **friend**");
+  expect(h.input.querySelector("strong")).toHaveTextContent("friend");
+});
+
+it("restores rewritten lists, quotes, links and code as editable structure", () => {
+  const h = mount("Original");
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  act(() => {
+    expect(
+      h.input.replaceDraft(
+        snapshot,
+        "- **one**\n- *two*\n\n3. three\n\n> quoted\n\n[docs](https://example.com/)\n\n```sh\nls\n```",
+      ),
+    ).toBe(true);
+  });
+  expect(h.input.querySelectorAll("ul li")).toHaveLength(2);
+  expect(h.input.querySelector("strong")).toHaveTextContent("one");
+  expect(h.input.querySelector("em")).toHaveTextContent("two");
+  expect(h.input.querySelector("ol")).toHaveAttribute("start", "3");
+  expect(h.input.querySelector("blockquote")).toHaveTextContent("quoted");
+  expect(h.input.querySelector("a")).toHaveAttribute(
+    "href",
+    "https://example.com/",
+  );
+  expect(h.input.querySelector("pre code")).toHaveTextContent("ls");
+  act(() => h.input.undo(false));
+  expect(h.input).toHaveValue("Original");
+});
+
+it("retains a mention's non-inclusive code mark through an unchanged rewrite", () => {
+  const person = { pubkey: "a".repeat(64), name: "Honey" };
+  const h = mount();
+  act(() => {
+    h.input.insertText("@Honey", person);
+    h.input.setSelectionRange(0, 6);
+    h.input.toggleFormat("code");
+  });
+  const original = h.markdown();
+  expect(original).toBe("`@Honey` ");
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  expect(snapshot.text).toBe(`\`${snapshot.mentions[0]?.marker}\` `);
+  act(() => expect(h.input.replaceDraft(snapshot, snapshot.text)).toBe(true));
+  expect(h.markdown()).toBe(original);
+  expect(h.input.querySelector("code")).toHaveTextContent("@Honey");
+  expect(h.draft().recipients.map(({ pubkey }) => pubkey)).toEqual([
+    person.pubkey,
+  ]);
+});
+
+it.each([
+  "First paragraph.\n\nSecond paragraph.",
+  "- one\n-\n- three",
+  "- > quoted\n- normal",
+  ">",
+  "<div>source stays source</div>",
+  "```js title=sample\nlet value = 1;\n```",
+  '[docs](https://example.com/ "Read these docs")',
+  "> ```js title=sample\n> foo()\n> ```",
+  "- ```js title=sample\n  foo()\n  ```",
+  "- outer\n  - > quoted\n  - normal",
+])("accepts rewritten Markdown without losing its meaning: %s", (text) => {
+  const h = mount("Original");
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  act(() => expect(h.input.replaceDraft(snapshot, text)).toBe(true));
+  // Compare parsed meaning because list whitespace can normalize on output.
+  const meaning = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(meaning);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "position")
+        .map(([key, child]) => [key, meaning(child)]),
+    );
+  };
+  expect(meaning(fromMarkdown(h.markdown()))).toEqual(
+    meaning(fromMarkdown(text)),
+  );
+});
+
+it("deduplicates nested identical marks in rewritten text", () => {
+  const h = mount("Original");
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  act(() =>
+    expect(h.input.replaceDraft(snapshot, "**outer **inner** outer**")).toBe(
+      true,
+    ),
+  );
+  expect(h.input.querySelector("strong")).toHaveTextContent(
+    "outer inner outer",
+  );
+});
+
+it("refuses stale or forged rewrite snapshots, lost or duplicate mentions, and overlong results", () => {
+  const person = { pubkey: "b".repeat(64), name: "Honey" };
+  const h = mount("", { maxLength: 30 });
+  act(() => h.input.insertText("@Honey ", person));
+  const snapshot = h.input.readDraft();
+  if (!snapshot) throw new Error("No draft snapshot");
+  const marker = snapshot.mentions[0]?.marker;
+  act(() => {
+    expect(h.input.replaceDraft({ ...snapshot }, `${marker} hello`)).toBe(
+      false,
+    );
+    expect(h.input.replaceDraft(snapshot, "Lost mention")).toBe(false);
+    expect(h.input.replaceDraft(snapshot, `${marker} ${marker}`)).toBe(false);
+    expect(h.input.replaceDraft(snapshot, `${marker} ${"x".repeat(40)}`)).toBe(
+      false,
+    );
+    h.input.insertText("new text");
+    expect(h.input.replaceDraft(snapshot, `${marker} stale`)).toBe(false);
+  });
+  expect(h.input).toHaveValue("@Honey new text");
+});

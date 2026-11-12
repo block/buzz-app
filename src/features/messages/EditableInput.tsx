@@ -76,6 +76,7 @@ import {
   composerInlineDelimiters,
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
+import { createDraftRewriter } from "./composer-rewrite";
 import {
   annotationAt,
   annotationPlugin,
@@ -528,6 +529,22 @@ export function EditableInput({
     );
     let editor: EditorView;
     let separateHistory = false;
+    let draftRevision = 0;
+    const rewriter = createDraftRewriter({
+      state: () => editor.state,
+      revision: () => draftRevision,
+      editable: () => editable() && !composing.current && !editor.composing,
+      maxLength: () => current.current.maxLength,
+      document: (draft) =>
+        readComposerDocument(draft, current.current.decorationsFor(draft)),
+      apply: (tr) => {
+        const previous = editor.state;
+        editor.dispatch(closeHistory(tr).scrollIntoView());
+        separateHistory = true;
+        editor.focus();
+        return previous !== editor.state;
+      },
+    });
     // Mod+Shift+V (and Apple's ⌥⇧⌘V) pastes plain text verbatim. The native
     // command fires the paste event; the held chord, or the desktop menu's
     // `buzz:paste-plain` sent just before its command, marks it as raw.
@@ -1905,6 +1922,7 @@ export function EditableInput({
           }
           editor.updateState(next);
           if (tr.docChanged) {
+            draftRevision++;
             scrollAfterTokens.current ||=
               tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
@@ -2430,6 +2448,8 @@ export function EditableInput({
       },
       setSelectionRange: { configurable: true, value: setRange },
       insertText: { configurable: true, value: insert },
+      readDraft: { configurable: true, value: rewriter.read },
+      replaceDraft: { configurable: true, value: rewriter.replace },
       replaceRecipients: { configurable: true, value: replaceRecipients },
       insertPendingMention: {
         configurable: true,

@@ -19,6 +19,11 @@ export type TargetOpener = Readonly<{
 }>;
 /** Editor-independent reference to plugin content. Not an access grant or recipient. */
 export type ComposerResource = Readonly<{ uri: string; label: string }>;
+/** Opaque host-issued draft. Mention markers must survive a rewrite unchanged. */
+export type ComposerDraftSnapshot = Readonly<{
+  text: string;
+  mentions: readonly Readonly<{ marker: string; name: string }>[];
+}>;
 export type ComposerToolProps = Readonly<{
   session: ComposerSession;
   scope: string;
@@ -49,6 +54,12 @@ export type ComposerToolProps = Readonly<{
     | undefined;
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
+  /** Captures the draft, with opaque markers for explicit mentions. Null while unavailable. */
+  readDraft(): ComposerDraftSnapshot | null;
+  /** One undoable edit. Rejects changed drafts, invalid markers and retired commands. */
+  replaceDraft(snapshot: ComposerDraftSnapshot, text: string): boolean;
+  /** Whether this exact editor currently has keyboard focus. */
+  isFocused(): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.
    * Prose never resolves to identities. Membership is checked by session delivery.
    * Like insertText, this command is revoked with the tool/destination lifetime. */

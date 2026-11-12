@@ -1,5 +1,10 @@
 // FOUNDATION: Shared conversation UI and plugin-owned tools/renderers; never another data owner.
 import type { ComponentType, ReactNode } from "react";
+import { Dialog, type DialogProps } from "../../shared/design-system/ui/Dialog";
+import { Button } from "../../shared/design-system/ui/Button";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
+import { Select } from "../../shared/design-system/ui/Select";
 import {
   EmbeddedConversation,
   EmbeddedThread,
@@ -90,6 +95,12 @@ export type Conversation = {
   identityMarks: ContributionReader<IdentityMark>;
   registerIdentityMark(mark: IdentityMark): void;
   ui: {
+    /** Shared framing for transient composer-tool dialogs, such as draft refinement. */
+    Dialog: ComponentType<DialogProps>;
+    Button: typeof Button;
+    Field: typeof Field;
+    Textarea: typeof Textarea;
+    Select: typeof Select;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
      * own `Message` rows and `Composer`, without visiting the channel. */
@@ -271,6 +282,11 @@ export class ConversationService extends Service implements Conversation {
       return Provided ? <Provided {...props} /> : null;
     };
     this.ui = {
+      Dialog,
+      Button,
+      Field,
+      Textarea,
+      Select,
       Thread: (props: EmbeddedThreadProps) => (
         <EmbeddedThread {...props} host={this.ctx} extensions={this} />
       ),

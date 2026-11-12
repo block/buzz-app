@@ -2935,6 +2935,21 @@ as they do in Channels.
 
 ### Composer ownership and mention tools
 
+Composer tools can call `readDraft()` to capture an opaque snapshot of the current
+text. The snapshot serializes rich formatting and substitutes opaque markers for
+explicit mentions. Its `mentions` array supplies display names for previews.
+`replaceDraft(snapshot, text)` applies one undoable edit only while the snapshot
+still belongs to the live tool and unchanged editor. Every mention marker must
+remain exactly once. Invalid, oversized, disabled, stale, or retired edits return
+`false`. Attachments remain under the composer owner.
+
+`isFocused()` identifies the originating editor for shortcuts that opt into text
+fields. Plugins can use `conversation.ui.Dialog` for transient composer-tool forms,
+with the shared host framing, focus trap, and dismissal controls.
+`conversation.ui` also supplies `Button`, `Field`, `Textarea`, and `Select` so
+external plugins reuse the host controls without runtime imports or copied styles. These local
+editor tools do not create addressable navigation destinations.
+
 The standard composer is reusable host UI in `features/messages`, not a mandatory
 Composer plugin. Page plugins may compose it through `conversation.ui.Composer`
 (or source props), or build their own editor against the shared session. Built-in

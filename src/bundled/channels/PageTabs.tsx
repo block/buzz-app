@@ -381,7 +381,8 @@ export function PageTabs({
             messageId: primaryTarget.messageId,
           }),
         }),
-    ...(primaryTarget.messageId ? { revealRequest: 1 } : { focusRequest: 1 }),
+    // A delayed workspace mount must not take focus from a sidebar name edit.
+    ...(primaryTarget.messageId ? { revealRequest: 1 } : {}),
   };
   // As in a plain channel visit, the page reads its visible selected side tab
   // while focus stays anywhere on the page, such as the row that opened it.
@@ -504,7 +505,6 @@ export function PageTabs({
                           <ConversationReader
                             key={JSON.stringify(primaryTarget)}
                             tab={primaryTab}
-                            focusOnMount={false}
                             intro={workspace.intro}
                             active={
                               secondary.selectedMain === "conversation" &&

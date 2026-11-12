@@ -1,7 +1,9 @@
 use super::*;
+#[cfg(target_os = "macos")]
+use crate::relay::tests::scripted_media_server;
 use crate::relay::tests::{
-    hung_up, media_blob, media_response, ranged_media_server, scripted_media_server,
-    spool_files_deleted, spool_files_reach, whole_media_server, SPOOL_TESTS,
+    hung_up, media_blob, media_response, ranged_media_server, spool_files_deleted,
+    spool_files_reach, whole_media_server, SPOOL_TESTS,
 };
 use crate::relay::{media_blocks::BLOCK, media_spool};
 use std::io::{Read as _, Write as _};

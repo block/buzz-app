@@ -1080,6 +1080,31 @@ it("refuses read arguments it cannot apply, saying how to fix them", async () =>
   expect(client.query).not.toHaveBeenCalled();
 });
 
+it("tags the community emoji a reaction uses, and reads no emoji sets for a plain one", async () => {
+  const merged = "https://relay/media/merged.png";
+  const { client, published } = fake([
+    ...community,
+    event({
+      id: "d".repeat(64),
+      pubkey: alice,
+      kind: 30030,
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "merged", merged],
+      ],
+    }),
+  ]);
+  await callTool(client, {}, "react", { id: root, emoji: "👍" });
+  expect(client.query).not.toHaveBeenCalledWith([
+    expect.objectContaining({ kinds: [30030] }),
+  ]);
+  await callTool(client, {}, "react", { id: root, emoji: ":merged:" });
+  expect(published.map((p) => [p.content, p.tags.slice(2)])).toEqual([
+    ["👍", []],
+    [":merged:", [["emoji", "merged", merged]]],
+  ]);
+});
+
 it("takes back its own reaction", async () => {
   const reaction = event({
     id: "9".repeat(64),

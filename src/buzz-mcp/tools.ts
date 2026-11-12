@@ -718,6 +718,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
               client.signingAuthority,
             ),
           ],
+          ...(await tools.emoji(emoji)),
         ],
       });
       return "reacted";

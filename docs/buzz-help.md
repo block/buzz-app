@@ -466,6 +466,12 @@ for 30 days expires.
   New reactions from updated clients appear; older unaddressed reactions are not backfilled.
   While Buzz is visible, a live reaction briefly replaces the Activity bell with its emoji for three seconds.
   Further reactions during that hold do not change the icon; history loading does not trigger it.
+- **Fog** (Activity): right-click a thread row (or press the Menu key / Shift+F10) and choose **Fog** to mark it
+  read through its latest reply and keep it in place with quieter text. When others post later, a small rain-cloud
+  shows beside it, even if you read the new messages elsewhere. **Dismiss cloud** or opening the thread from its row clears the
+  cloud it showed (later replies bring it back) and keeps the fog; **Unfog** restores the row. Fog never mutes: badges, mentions and notifications are
+  unchanged. Fog is offered on thread rows in the All tab with Unread off (recent activity only, not every
+  thread), is saved on this device only, and is part of Activity, so there is no separate Fog setting yet.
 - **New messages** marks the first known unread incoming channel message when
   you enter. Once established, the divider stays in place for that visit as you
   read, reveal another message, or receive new messages. In a channel with more

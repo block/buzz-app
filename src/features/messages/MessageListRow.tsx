@@ -12,6 +12,7 @@ export function MessageListRow({
   preview,
   previewId,
   unread = false,
+  status,
   ...props
 }: {
   avatar: ReactNode;
@@ -21,6 +22,8 @@ export function MessageListRow({
   preview: string;
   previewId?: string | undefined;
   unread?: boolean;
+  /** A quiet row-owned indicator after the source, beside the unread dot. */
+  status?: ReactNode;
 } & Omit<
   ComponentProps<typeof NavigationItem>,
   "icon" | "label" | "trailing"
@@ -44,6 +47,7 @@ export function MessageListRow({
               >
                 {source}
               </span>
+              {status}
             </span>
             <span
               className={`text-caption text-subtle ${styles.rowDate}`}
@@ -54,6 +58,7 @@ export function MessageListRow({
           </span>
           <span
             id={previewId}
+            data-inbox-preview=""
             className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
           >
             {preview}

@@ -190,3 +190,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Fog: quieter label text only. The unread dot, date, actions and focus ring
+   keep their normal colors, so host indicators are never dimmed. */
+.row[data-fog] strong,
+.row[data-fog] [data-inbox-preview] {
+  color: var(--text-subtle);
+}
+
+.cloud {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--text-subtle);
+}

@@ -12,7 +12,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { messagePreview } from "../../features/notifications/content";
 import { avatarMedia } from "../../shared/avatar-source";
-import { LightningIcon } from "../../shared/design-system/icons";
+import { CloudRainIcon, LightningIcon } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
@@ -85,6 +85,7 @@ export function InboxRowButton({
   feed,
   time,
   previewId,
+  fog,
   ...props
 }: {
   item: InboxItem;
@@ -93,6 +94,8 @@ export function InboxRowButton({
   feed: InboxFeedSnapshot;
   time: ReactNode;
   previewId?: string | undefined;
+  /** Fogged by the viewer; `cloud` when others posted since. */
+  fog?: { cloud: boolean } | undefined;
 } & Omit<
   ComponentProps<typeof NavigationItem>,
   "icon" | "label" | "trailing" | "aria-label"
@@ -101,7 +104,7 @@ export function InboxRowButton({
   return (
     <MessageListRow
       {...props}
-      aria-label={`Open ${sender} in ${context}`}
+      aria-label={`Open ${sender} in ${context}${fog ? (fog.cloud ? ", fogged, new activity" : ", fogged") : ""}`}
       aria-describedby={previewId}
       avatar={
         <Avatar
@@ -129,6 +132,18 @@ export function InboxRowButton({
         </time>
       }
       unread={unread}
+      status={
+        fog?.cloud ? (
+          <span
+            className={styles.cloud}
+            role="img"
+            aria-label="New activity since last acknowledged"
+            title="New activity since last acknowledged"
+          >
+            <CloudRainIcon size={16} aria-hidden="true" />
+          </span>
+        ) : undefined
+      }
       previewId={previewId}
       preview={
         incompletePreview(feed, [item.previewMessageId, ...item.messageIds]) ??

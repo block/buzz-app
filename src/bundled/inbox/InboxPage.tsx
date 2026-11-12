@@ -61,10 +61,20 @@ import { communityRefusalTitle } from "../../features/federated-identity/Communi
 import styles from "./Inbox.module.css";
 import {
   readView,
+  readView as readSaved,
   subscribeView,
   viewRevision,
   writeView,
 } from "../../shared/view-state";
+import {
+  acknowledge,
+  fogId,
+  fogKey,
+  fogStep,
+  hasCloud,
+  parseFog,
+  withFog,
+} from "./fog";
 
 type AttentionFilter = "all" | "unread";
 // Saved values, defaults first.
@@ -317,6 +327,26 @@ function InboxList({
     session.unread.sync,
   );
   const viewScope = session.scope;
+  // Fog is device-local, per viewer and community like the saved filters.
+  const fogRevision = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => subscribeView(viewScope, listener),
+      [viewScope],
+    ),
+    () => viewRevision(viewScope, fogKey),
+  );
+  const fogState = useMemo(() => {
+    void fogRevision;
+    return parseFog(readSaved<unknown>(viewScope, fogKey, undefined));
+  }, [viewScope, fogRevision]);
+  /** Saves from the latest stored state, so other windows' changes are kept. */
+  function saveFog(
+    id: string,
+    record: ReturnType<typeof acknowledge> | undefined,
+  ) {
+    const stored = parseFog(readSaved<unknown>(viewScope, fogKey, undefined));
+    return writeView(viewScope, fogKey, withFog(stored, id, record));
+  }
   const [filters, setFilters] = useState(() => readFilters(viewScope));
   const { activity, sender: senderFilter } = filters;
   const unreadOnly = filters.attention === "unread";
@@ -780,13 +810,31 @@ function InboxList({
     if (!focused || focused === document.body) return true;
     return !!listRef.current?.contains(focused);
   }
-  function markRead(item: InboxItem) {
+  /** Fog reads through the thread reply captured now, and only that step; it
+   * is remembered after the read lands, never before. */
+  function fog(item: InboxItem) {
+    const id = fogId(item);
+    const step = fogStep(item);
+    if (id && step)
+      markRead(item, {
+        step,
+        remember: () => {
+          if (!saveFog(id, acknowledge(item, step.messageId)))
+            notify("Couldn't save fog on this device", "error");
+        },
+      });
+  }
+  function markRead(
+    item: InboxItem,
+    fogged?: { step: InboxItem["readThrough"][number]; remember(): void },
+  ) {
     // Captured at click: the successor, if this row held focus.
     const held = focusAfter(item);
     mutate(
       item,
       false,
       () => {
+        fogged?.remember();
         const view = readView.current;
         const leaves = view.unreadOnly && item.id !== view.selectedId;
         if (held != null && listOwnsFocus())
@@ -800,6 +848,8 @@ function InboxList({
       () => {
         if (held != null && listOwnsFocus()) focusRow.current = item.id;
       },
+      undefined,
+      fogged && [fogged.step],
     );
   }
   /** Undo outlives the page and the busy guard: unread again on this device
@@ -821,6 +871,7 @@ function InboxList({
     onSuccess?: () => void,
     onFailure?: () => void,
     threadId?: string,
+    steps?: InboxItem["readThrough"],
   ) {
     // An open menu is not authority: recheck the current session at action entry.
     if (
@@ -840,7 +891,7 @@ function InboxList({
       ? [...channel.members].sort().join(":")
       : undefined;
     let revision = session.unread.revision();
-    const remaining = [...item.readThrough];
+    const remaining = [...(steps ?? item.readThrough)];
     const valid = () => {
       const current = session.channels
         .list()
@@ -1157,6 +1208,9 @@ function InboxList({
                 const { sender, context } = identity;
                 const unread = hasUnread(item);
                 const readable = unread && canRead;
+                const fid = fogId(item);
+                const record = fid ? fogState[fid] : undefined;
+                const cloud = !!record && hasCloud(item, record);
                 return (
                   <li
                     key={item.id}
@@ -1165,6 +1219,7 @@ function InboxList({
                     data-unread={unread || undefined}
                     data-action={readable || undefined}
                     data-selected={selectedId === item.id || undefined}
+                    data-fog={record ? "" : undefined}
                   >
                     <ContextMenuRoot
                       open={menu?.id === item.id}
@@ -1194,6 +1249,7 @@ function InboxList({
                           feed={feed}
                           time={relativeTimestamp(item.createdAt)}
                           previewId={`${previewId}-${item.id}`}
+                          fog={record ? { cloud } : undefined}
                           disabled={pending}
                           selected={selectedId === item.id}
                           onClick={() => {
@@ -1225,6 +1281,8 @@ function InboxList({
                                   threadRootId: item.rootId,
                                 }),
                               });
+                            // Opening acknowledges the activity the row showed.
+                            if (cloud && fid) saveFog(fid, acknowledge(item));
                             // The selected row is the same visit, even when its
                             // current representative changed after reading.
                             if (selectedId === item.id) return;
@@ -1271,6 +1329,29 @@ function InboxList({
                         >
                           Mark unread
                         </MenuItem>
+                        {fid &&
+                          (record ? (
+                            <MenuItem onClick={() => saveFog(fid, undefined)}>
+                              Unfog
+                            </MenuItem>
+                          ) : (
+                            activity === "all" &&
+                            !unreadOnly && (
+                              <MenuItem
+                                disabled={pending || !canRead}
+                                onClick={() => fog(item)}
+                              >
+                                Fog
+                              </MenuItem>
+                            )
+                          ))}
+                        {fid && cloud && (
+                          <MenuItem
+                            onClick={() => saveFog(fid, acknowledge(item))}
+                          >
+                            Dismiss cloud
+                          </MenuItem>
+                        )}
                       </MenuPopup>
                     </ContextMenuRoot>
                   </li>

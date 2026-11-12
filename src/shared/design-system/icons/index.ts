@@ -173,6 +173,8 @@ import TablerCloudOffIcon from "@tabler/icons-react/dist/esm/icons/IconCloudOff.
 export const CloudOffIcon = defineIcon("tabler", TablerCloudOffIcon);
 import TablerCloudIcon from "@tabler/icons-react/dist/esm/icons/IconCloud.mjs";
 export const CloudIcon = defineIcon("tabler", TablerCloudIcon);
+import TablerCloudRainIcon from "@tabler/icons-react/dist/esm/icons/IconCloudRain.mjs";
+export const CloudRainIcon = defineIcon("tabler", TablerCloudRainIcon);
 import TablerCloudUploadIcon from "@tabler/icons-react/dist/esm/icons/IconCloudUpload.mjs";
 export const CloudUploadIcon = defineIcon("tabler", TablerCloudUploadIcon);
 import TablerCrownIcon from "@tabler/icons-react/dist/esm/icons/IconCrown.mjs";

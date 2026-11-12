@@ -5203,3 +5203,224 @@ it("moves solo emoji into a shared row and back after a live removal", async () 
     1,
   );
 });
+
+// Drizzle: Fog on Inbox All thread rows.
+const threadRow = () => {
+  const row = rows().find((item) =>
+    /A thread update|Later \d+/.test(item.textContent ?? ""),
+  );
+  if (!row) throw Error("Missing thread row");
+  return row;
+};
+const fogged = () => threadRow().hasAttribute("data-fog");
+const fogMenu = async (name: "Fog" | "Unfog" | "Dismiss cloud") => {
+  fireEvent.contextMenu(
+    within(threadRow()).getByRole("button", { name: /^Open / }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name }));
+};
+const fogFixture = async (options: Parameters<typeof fixture>[0] = {}) => {
+  const h = fixture(options);
+  render(h.view);
+  await screen.findByText("A thread update");
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Checking recent activity…"),
+    ).not.toBeInTheDocument(),
+  );
+  return h;
+};
+const otherReply = (h: Awaited<ReturnType<typeof fogFixture>>, at: number) => {
+  const root = h.root;
+  if (!root) throw Error("Missing root");
+  const event = message(h.alice, "room", `Later ${at}`, at, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.events.push(event);
+  act(() => h.emit([event]));
+};
+const cloud = () =>
+  within(threadRow()).queryByRole("img", {
+    name: "New activity since last acknowledged",
+  });
+
+it("Fog reads only the captured thread step, keeps the row, and persists afterwards", async () => {
+  const h = await fogFixture();
+  expect(fogged()).toBe(false);
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  expect(h.readSteps.map((step) => step.target.kind)).toEqual(["thread"]);
+  expect(h.readSteps[0]?.id).toBe(h.reply.id);
+  expect(h.journal()?.state.frontiers[`thread:${h.root?.id}`]).toBe(22);
+  expect(
+    within(threadRow()).getByRole("button", { name: /fogged$/ }),
+  ).toBeInTheDocument();
+  expect(cloud()).toBeNull();
+  expect(rows()).toHaveLength(2);
+});
+
+it("does not fog DM or non-thread rows", async () => {
+  await fogFixture({ withDm: true });
+  for (const text of ["A direct reply", "Please review"]) {
+    const row = rows().find((item) => item.textContent?.includes(text));
+    if (!row) throw Error("Missing row");
+    fireEvent.contextMenu(within(row).getByRole("button", { name: /^Open / }));
+    await screen.findByRole("menuitem", { name: "Mark unread" });
+    expect(screen.queryByRole("menuitem", { name: "Fog" })).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: "Fog" })).toBeNull(),
+    );
+  }
+});
+
+it("a failed read leaves the row unfogged and nothing saved; Retry then fogs it", async () => {
+  const h = await fogFixture();
+  h.failThreadSave();
+  await fogMenu("Fog");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "thread disk full",
+  );
+  expect(fogged()).toBe(false);
+  expect(localStorage.length).toBe(0);
+  fireEvent.click(screen.getByRole("button", { name: "Retry activity" }));
+  await waitFor(() => expect(fogged()).toBe(true));
+});
+
+it("activity arriving while the read saves is not swept into it: it shows a cloud", async () => {
+  const h = await fogFixture();
+  const release = h.holdSave();
+  await fogMenu("Fog");
+  await waitFor(() => expect(h.saveStarted()).toBe(true));
+  otherReply(h, 40);
+  expect(fogged()).toBe(false);
+  await act(async () => release());
+  await waitFor(() => expect(fogged()).toBe(true));
+  await waitFor(() => expect(cloud()).toBeInTheDocument());
+  expect(h.journal()?.state.frontiers[`thread:${h.root?.id}`]).toBe(22);
+});
+
+it("a cloud follows others' later activity, never the viewer's own, and not read state", async () => {
+  const h = await fogFixture();
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  const own = message(h.viewer, "room", "My own reply", 30, [
+    ["e", h.root?.id ?? "", "", "reply"],
+  ]);
+  h.events.push(own);
+  act(() => h.emit([own]));
+  await act(async () => {});
+  expect(cloud()).toBeNull();
+  otherReply(h, 41);
+  await waitFor(() => expect(cloud()).toBeInTheDocument());
+  // The host's own read state did not decide it.
+  expect(h.readSteps).toHaveLength(1);
+});
+
+it("Dismiss cloud never reads and keeps fog; opening clears the observed cloud and keeps fog", async () => {
+  const h = await fogFixture();
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  otherReply(h, 41);
+  await waitFor(() => expect(cloud()).toBeInTheDocument());
+  const steps = h.readSteps.length;
+  await fogMenu("Dismiss cloud");
+  await waitFor(() => expect(cloud()).toBeNull());
+  expect(fogged()).toBe(true);
+  expect(h.readSteps).toHaveLength(steps);
+  otherReply(h, 42);
+  await waitFor(() => expect(cloud()).toBeInTheDocument());
+  fireEvent.click(within(threadRow()).getByRole("button", { name: /^Open / }));
+  await waitFor(() => expect(cloud()).toBeNull());
+  expect(fogged()).toBe(true);
+  // Opening is a one-time acknowledgement: later activity is not swept in.
+  otherReply(h, 43);
+  await waitFor(() => expect(cloud()).toBeInTheDocument());
+});
+
+it("offers Fog only in All with Unread off", async () => {
+  await fogFixture();
+  const row = threadRow();
+  fireEvent.click(screen.getByRole("switch", { name: "Unread" }));
+  const again =
+    rows().find((item) => item.textContent?.includes("Later")) ?? row;
+  fireEvent.contextMenu(within(again).getByRole("button", { name: /^Open / }));
+  await screen.findAllByRole("menuitem", { name: /^Mark / });
+  expect(screen.queryByRole("menuitem", { name: "Fog" })).toBeNull();
+});
+
+it("Unfog restores the row; fog survives a restart but not another viewer's scope", async () => {
+  const h = await fogFixture();
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  cleanup();
+  render(h.view);
+  await screen.findByText("A thread update");
+  await waitFor(() => expect(fogged()).toBe(true));
+  await fogMenu("Unfog");
+  await waitFor(() => expect(fogged()).toBe(false));
+  expect(
+    within(threadRow()).getByRole("button", { name: /^Open [^,]*$/ }),
+  ).toBeInTheDocument();
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  cleanup();
+  // A different viewer on the same device sees none of it.
+  const other = fixture();
+  render(other.view);
+  await screen.findByText("A thread update");
+  expect(fogged()).toBe(false);
+});
+
+it("unmounting leaves no styling or listeners behind; stored fog stays inert", async () => {
+  const h = await fogFixture();
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  const saved = localStorage.length;
+  cleanup();
+  expect(document.querySelector("[data-fog]")).toBeNull();
+  expect(localStorage.length).toBe(saved);
+  void h;
+});
+
+it("fog is keyed by viewer and relay: the same viewer on another relay sees none", async () => {
+  const h = await fogFixture();
+  await fogMenu("Fog");
+  await waitFor(() => expect(fogged()).toBe(true));
+  const scope = h.session.scope;
+  const key = `buzz-view.v1:${JSON.stringify([scope, "drizzle:inbox-fog"])}`;
+  const saved = localStorage.getItem(key);
+  expect(saved).not.toBeNull();
+  cleanup();
+  // The identical record under the same viewer but another relay's partition.
+  const viewer = scope.slice(scope.lastIndexOf(":") + 1);
+  localStorage.clear();
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([`https://other-relay.test:${viewer}`, "drizzle:inbox-fog"])}`,
+    saved ?? "",
+  );
+  render(h.view);
+  await screen.findByText("A thread update");
+  await act(async () => {});
+  expect(fogged()).toBe(false);
+  cleanup();
+  // Control: the same record under this relay's own partition is honored.
+  localStorage.setItem(key, saved ?? "");
+  render(h.view);
+  await screen.findByText("A thread update");
+  await waitFor(() => expect(fogged()).toBe(true));
+});
+
+it("Fog from the row menu returns focus to its row", async () => {
+  const h = await fogFixture();
+  const open = () =>
+    within(threadRow()).getByRole("button", { name: /^Open / });
+  open().focus();
+  fireEvent.contextMenu(open());
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Fog" }));
+  await waitFor(() => expect(fogged()).toBe(true));
+  expect(h.readSteps).toHaveLength(1);
+  await waitFor(() => expect(open()).toHaveFocus());
+});

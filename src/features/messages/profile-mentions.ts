@@ -1,5 +1,6 @@
 import type { AgentLibrary } from "../agents/library";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import { BARE_URL_REST } from "../relay/message-content";
 import { profileTarget } from "../profiles/target";
 
 /** The names a person's signed prose mention binds by: their shown name and,
@@ -95,6 +96,15 @@ export function profileMentionParts(
   return parts.length ? parts : [{ text }];
 }
 
+const urlScheme = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)/.source;
+/** Bare URLs end where rendered ones do, and another can start right there. A
+ * URL after `<`, or after `](` or a pasted `]\(` and any whitespace, keeps
+ * CJK punctuation. */
+const urlChar = new RegExp(`^(?:${BARE_URL_REST})$`, "i");
+const wrapped = /(?<=<|\]\\?\(\s*)/y;
+const wrappedUrl = new RegExp(urlScheme + /[^\s<>`]+/.source, "i");
+const bareUrl = new RegExp(urlScheme + BARE_URL_REST, "i");
+
 // Evaluate exclusions on the full body BEFORE splitting link/emoji rendering.
 // Deliberately conservative for incomplete code/link syntax; not a Markdown parser.
 function protectedTextEnd(text: string, start: number): number {
@@ -120,7 +130,8 @@ function protectedTextEnd(text: string, start: number): number {
       return match ? match.index + match[0].length : text.length;
     }
   }
-  const boundary = start === 0 || /[\s<([]/.test(text[start - 1] ?? "");
+  const prev = text[start - 1] ?? "";
+  const boundary = start === 0 || /[\s<([]/.test(prev) || !urlChar.test(prev);
   if (char !== "`" && char !== "~" && char !== "[" && char !== "!" && !boundary)
     return start;
   const span = /^(?:`+|~{3,})/.exec(rest)?.[0];
@@ -132,8 +143,9 @@ function protectedTextEnd(text: string, start: number): number {
     const link = /^!?\[[^\]\n]*\](?:\([^\n]*?\)|\[[^\]\n]*\])/.exec(rest)?.[0];
     if (link) return start + link.length;
   }
-  const url = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)[^\s<>`]+/i.exec(
-    rest,
-  )?.[0];
+  const bare = bareUrl.exec(rest)?.[0];
+  // The lookbehind rescans whitespace, so test it only where a URL starts.
+  wrapped.lastIndex = start;
+  const url = bare && wrapped.test(text) ? wrappedUrl.exec(rest)?.[0] : bare;
   return url ? start + url.length : start;
 }

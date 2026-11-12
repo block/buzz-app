@@ -721,6 +721,15 @@ describe("Markdown profile mentions", () => {
     },
   );
 
+  it("renders a mention after a bare link that ends at CJK punctuation", () => {
+    const html = render("看这个 https://example.test，@Mic");
+    expect([...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual([
+      "https://example.test/",
+    ]);
+    expect(html).toContain('，<button type="button"');
+    expect(html).toContain('aria-label="View Mic profile"');
+  });
+
   it.each<[string, RenderOptions]>([
     ["no opener", { canOpenLink: undefined }],
     ["a refusing opener", { canOpenLink: () => false }],

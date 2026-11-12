@@ -28,6 +28,10 @@ import type {
 import { eventDto } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
 import type { RelayData } from "../../features/relay/service";
+import {
+  createToolOperation,
+  type AgentToolAuthority,
+} from "../../features/agents/tool-operation";
 import type { MemoryEntry } from "../../features/agents/memory";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
@@ -1276,6 +1280,59 @@ it("puts the agent's teams in its system prompt, resuming idle sessions when the
   expect(second?.options.args).toContain("--resume");
   expect(system(second)).not.toContain("<team>");
   runtime.dispose();
+});
+
+it("runs a timer on the core memory as it is then, after an ordinary turn read it", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, core } = setup([root]);
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  core.mockResolvedValue("Old rules.");
+  await deliver({ type: "mention", event: root });
+  await flush(10);
+  core.mockResolvedValue("New rules.");
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const standalone = prompted()[1];
+  expect(standalone?.prompts[0]).toContain("Timer: daily");
+  expect(systemPromptOf(standalone)).toContain("New rules.");
+  expect(systemPromptOf(standalone)).not.toContain("Old rules.");
+});
+
+it("resumes an idle session on the agent's new core memory", async () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude again", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  const { deliver, claudes, core } = setup([root, reply]);
+  const prompted = () => claudes().filter((process) => process.prompts.length);
+  core.mockResolvedValue("Old rules.");
+  await deliver({ type: "mention", event: root });
+  await flush(10);
+  const [first] = prompted();
+  expect(systemPromptOf(first)).toContain("Old rules.");
+  // Written from another conversation: the host's copy is all that changed.
+  core.mockResolvedValue("New rules.");
+  await deliver({ type: "mention", event: reply });
+  await flush(10);
+  const second = prompted()[1];
+  expect(first?.killed).toBe(true);
+  expect(second?.options.args).toContain("--resume");
+  expect(systemPromptOf(second)).toContain("New rules.");
+  expect(systemPromptOf(second)).not.toContain("Old rules.");
 });
 
 it("starts each session from the host's core memory, reading only recent notes from the relay", async () => {
@@ -3488,3 +3545,118 @@ it("drops a mention stopped while queued behind an Attention refresh", async () 
     f.runtime.dispose();
   }
 });
+
+it.each(["host", "self", "background"] as const)(
+  "revokes a native Claude operation proof when its %s turn ends during a read",
+  async (turn) => {
+    const f = setup([], { hold: true });
+    const provider = createToolOperation("example/proposal", () => ({
+      viewer: "a".repeat(64),
+      community: "https://relay.example.test",
+      check: () => {},
+      release: () => {},
+    }));
+    let authority: AgentToolAuthority | undefined;
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const saved = vi.fn();
+    f.added.push({
+      name: "consumer_propose",
+      description: "Propose a question.",
+      inputSchema: { type: "object" },
+      operation: provider.operation,
+      async call(_client, _context, args, proof) {
+        if (!proof) throw new Error("Expected operation proof");
+        authority = provider.resolve(proof, args);
+        authority.check();
+        expect(authority.context.channel).toBe(channel);
+        enter();
+        await reading;
+        authority.check();
+        saved();
+        return "accepted";
+      },
+    });
+    try {
+      await f.deliver({
+        type: "mention",
+        event: message("1", "@Claude propose", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+          ],
+        }),
+      });
+      await vi.waitFor(() =>
+        expect(f.claudes().some((process) => process.prompts.length)).toBe(
+          true,
+        ),
+      );
+      const process = f.claudes().find((process) => process.prompts.length);
+      if (!process) throw new Error("Expected active Claude");
+      if (turn !== "host") {
+        process.finish();
+        if (turn === "background")
+          process.emit({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ id: "task-1" }],
+          });
+        process.emit({
+          type: "system",
+          subtype: "session_state_changed",
+          state: "working",
+        });
+      }
+      const call = mcp(process, 200, "tools/call", {
+        name: "consumer_propose",
+        arguments: { question: "Question" },
+      });
+      await entered;
+      if (turn === "host") process.finish();
+      else
+        process.emit({
+          type: "system",
+          subtype: "session_state_changed",
+          state: "idle",
+        });
+      await vi.waitFor(() =>
+        expect(() => authority?.check()).toThrow("Claude turn has ended"),
+      );
+      await f.deliver({
+        type: "mention",
+        event: message("2", "@Claude continue", {
+          tags: [
+            ["h", channel],
+            ["p", self],
+            ["e", message("1", "").id, "", "reply"],
+          ],
+        }),
+      });
+      await vi.waitFor(() => expect(process.prompts).toHaveLength(2));
+      expect(() => authority?.check()).toThrow("Claude turn has ended");
+      release();
+      await call;
+      await vi.waitFor(() =>
+        expect(
+          process.received.some(
+            (message) =>
+              message.type === "control_response" &&
+              (message.response as { request_id?: string }).request_id ===
+                "mcp-200",
+          ),
+        ).toBe(true),
+      );
+      expect(saved).not.toHaveBeenCalled();
+    } finally {
+      release();
+      f.runtime.dispose();
+    }
+  },
+);

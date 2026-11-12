@@ -5,8 +5,8 @@ use std::path::Path;
 
 /// A `tauri dev` run, or a debug build, which a packaged debug bundle is
 /// though it keeps the release identifier.
-pub(crate) fn development() -> bool {
-    tauri::is_dev() || cfg!(debug_assertions)
+pub(crate) fn development(tauri_dev: bool) -> bool {
+    tauri_dev || cfg!(debug_assertions)
 }
 
 /// Whether this app owns the link: only the installed release does. A
@@ -49,10 +49,10 @@ mod tests {
     #[test]
     fn only_the_installed_release_owns_the_link() {
         assert!(
-            cfg!(debug_assertions) && development(),
+            cfg!(debug_assertions) && development(false),
             "a debug build is development"
         );
-        assert!(!owns(development(), CURRENT, false));
+        assert!(!owns(development(false), CURRENT, false));
         assert!(owns(false, CURRENT, false));
         assert!(!owns(false, CURRENT, true));
         assert!(!owns(false, "xyz.block.buzz.desktop.dev", false));

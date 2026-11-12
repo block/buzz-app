@@ -49,6 +49,8 @@ import type {
   CompletionPending,
   CompletionResolution,
   CompletionResult,
+  ComposerAccessory,
+  ComposerAccessoryProps,
   ComposerAnnotator,
   ComposerAnnotatorProps,
   InlineRenderer,
@@ -7811,6 +7813,40 @@ function mountEmojiTypeahead() {
     },
   });
 }
+it("takes focus back when a focused composer accessory retires", () => {
+  // Stands in for a card that hands focus back as it closes.
+  function Card({ onFocusedRemoval }: ComposerAccessoryProps) {
+    return (
+      <button type="button" onClick={() => onFocusedRemoval?.()}>
+        Close card
+      </button>
+    );
+  }
+  const accessories: readonly Contribution<ComposerAccessory>[] = [
+    {
+      id: "card",
+      key: "test/card",
+      pluginId: "test",
+      revision: "1",
+      title: "Card",
+      component: Card,
+    },
+  ];
+  const empty: [] = [];
+  const none = { snapshot: () => empty, subscribe: () => () => {} };
+  const h = mount({
+    extensions: {
+      tools: none,
+      inline: none,
+      accessories: { snapshot: () => accessories, subscribe: () => () => {} },
+    },
+  });
+  const close = screen.getByRole("button", { name: "Close card" });
+  close.focus();
+  fireEvent.click(close);
+  expect(h.input()).toHaveFocus();
+});
+
 // ":" is Shift+; on US layouts, so the typed colon arrives with shiftKey set.
 const colon = (input: ComposerInputElement) =>
   fireEvent.keyDown(input, { key: ":", shiftKey: true });

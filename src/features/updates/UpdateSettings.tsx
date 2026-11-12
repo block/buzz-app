@@ -53,10 +53,13 @@ export function UpdateSettings({
     downloading: "Downloading update…",
     installing: "Installing update…",
     ready: "Ready to install. Buzz will restart.",
+    scheduled: "Restarting when agents are idle.",
     error: "",
   };
   const label =
-    status.state === "ready" || status.state === "installing"
+    status.state === "ready" ||
+    status.state === "scheduled" ||
+    status.state === "installing"
       ? "Update now"
       : status.state === "error"
         ? "Retry"
@@ -79,17 +82,35 @@ export function UpdateSettings({
           </span>
         }
         action={
-          <Button
-            type="button"
-            loading={pending}
-            onClick={() =>
-              void (status.state === "ready"
-                ? updates.installAndRelaunch()
-                : updates.checkForUpdate())
-            }
-          >
-            {label}
-          </Button>
+          <>
+            <Button
+              type="button"
+              loading={pending}
+              onClick={() =>
+                void (status.state === "ready" || status.state === "scheduled"
+                  ? updates.installAndRelaunch()
+                  : updates.checkForUpdate())
+              }
+            >
+              {label}
+            </Button>
+            {/* One button for both, so focus stays on it as the schedule changes. */}
+            {(status.state === "scheduled" ||
+              (status.state === "ready" && updates.idleOptionAvailable())) && (
+              <Button
+                type="button"
+                onClick={
+                  status.state === "scheduled"
+                    ? updates.cancelScheduled
+                    : updates.installWhenIdle
+                }
+              >
+                {status.state === "scheduled"
+                  ? "Cancel"
+                  : "Update when agents are idle"}
+              </Button>
+            )}
+          </>
         }
       />
     </section>

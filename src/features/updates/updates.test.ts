@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  type AgentWork,
   BACKGROUND_UPDATE_CHECK_INTERVAL_MS,
   createUpdates,
+  IDLE_QUIET_MS,
   UPDATE_DOWNLOAD_TIMEOUT_MS,
   type UpdateHandle,
   type UpdatePlatform,
@@ -61,8 +63,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const start = () => {
-  updates = createUpdates(platform);
+const start = (work?: AgentWork) => {
+  updates = createUpdates(platform, work);
   return updates;
 };
 const state = () => updates?.snapshot().state;
@@ -227,4 +229,144 @@ it("stops background checks on dispose without closing an in-flight download", a
   expect(update.close).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(BACKGROUND_UPDATE_CHECK_INTERVAL_MS);
   expect(platform.check).toHaveBeenCalledOnce();
+});
+
+/** Local agents with `count` working; `set` reports a change as the runners do. */
+function agentWork(count = 0) {
+  const listeners = new Set<() => void>();
+  return {
+    isWorking: () => count > 0,
+    workingCount: () => count,
+    subscribeWorking(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    set(next: number) {
+      count = next;
+      for (const listener of listeners) listener();
+    },
+    listeners,
+  };
+}
+
+/** An update downloaded and offered, with `work` wired in. */
+async function readyWith(work: AgentWork) {
+  const updates = start(work);
+  const downloaded = handle();
+  (await check(0)).resolve(downloaded.update);
+  downloaded.download.resolve();
+  await vi.waitFor(() => expect(state()).toBe("ready"));
+  return { updates, ...downloaded };
+}
+
+it("installs once agents have been idle for the quiet period", async () => {
+  const { updates, update, install } = await readyWith(agentWork());
+  expect(updates.idleOptionAvailable()).toBe(true);
+  updates.installWhenIdle();
+  expect(state()).toBe("scheduled");
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS - 1);
+  expect(update.install).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(state()).toBe("installing");
+  expect(update.install).toHaveBeenCalledOnce();
+  install.resolve();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(platform.relaunch).toHaveBeenCalledOnce();
+});
+
+it("waits while agents work and starts the quiet period over on each change", async () => {
+  const work = agentWork(2);
+  const { updates, update } = await readyWith(work);
+  updates.installWhenIdle();
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS * 3);
+  expect(update.install).not.toHaveBeenCalled();
+  work.set(0);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS - 1);
+  // A new turn in the quiet period cancels it.
+  work.set(1);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).not.toHaveBeenCalled();
+  expect(state()).toBe("scheduled");
+  work.set(0);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).toHaveBeenCalledOnce();
+});
+
+it("checks again that agents are idle when the quiet period ends", async () => {
+  const work = agentWork();
+  const { updates, update } = await readyWith(work);
+  updates.installWhenIdle();
+  // A turn whose start has not been reported yet.
+  const isWorking = vi.spyOn(work, "isWorking").mockReturnValue(true);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).not.toHaveBeenCalled();
+  expect(state()).toBe("scheduled");
+  isWorking.mockRestore();
+  work.set(1);
+  work.set(0);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).toHaveBeenCalledOnce();
+});
+
+it("installs at once on Update now while scheduled, without a second install", async () => {
+  const work = agentWork(1);
+  const { updates, update } = await readyWith(work);
+  updates.installWhenIdle();
+  void updates.installAndRelaunch();
+  expect(state()).toBe("installing");
+  work.set(0);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).toHaveBeenCalledOnce();
+  expect(work.listeners.size).toBe(1);
+});
+
+it("returns to ready on cancel and stops waiting", async () => {
+  const { updates, update } = await readyWith(agentWork());
+  updates.installWhenIdle();
+  updates.cancelScheduled();
+  expect(state()).toBe("ready");
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).not.toHaveBeenCalled();
+});
+
+it("keeps the schedule when its notice is dismissed", async () => {
+  const { updates, update } = await readyWith(agentWork());
+  updates.installWhenIdle();
+  updates.dismissNotice();
+  expect(updates.noticeDismissed()).toBe(true);
+  await vi.advanceTimersByTimeAsync(IDLE_QUIET_MS);
+  expect(update.install).toHaveBeenCalledOnce();
+});
+
+it("skips background checks while scheduled", async () => {
+  const { updates, update } = await readyWith(agentWork(1));
+  updates.installWhenIdle();
+  await vi.advanceTimersByTimeAsync(BACKGROUND_UPDATE_CHECK_INTERVAL_MS);
+  expect(platform.check).toHaveBeenCalledOnce();
+  expect(update.close).not.toHaveBeenCalled();
+  expect(state()).toBe("scheduled");
+});
+
+it("reports agent work changes to its subscribers for the notice's count", async () => {
+  const work = agentWork();
+  const { updates } = await readyWith(work);
+  const listener = vi.fn();
+  updates.subscribe(listener);
+  work.set(2);
+  expect(listener).toHaveBeenCalledOnce();
+  expect(updates.workingCount()).toBe(2);
+  updates.dispose();
+  expect(work.listeners.size).toBe(0);
+});
+
+it("offers no idle install without agent work", async () => {
+  const updates = start();
+  const { update, download } = handle();
+  (await check(0)).resolve(update);
+  download.resolve();
+  await vi.waitFor(() => expect(state()).toBe("ready"));
+  expect(updates.idleOptionAvailable()).toBe(false);
+  expect(updates.workingCount()).toBe(0);
+  updates.installWhenIdle();
+  expect(state()).toBe("ready");
 });

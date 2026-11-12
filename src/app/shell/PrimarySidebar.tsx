@@ -46,6 +46,7 @@ import type { SidebarSections } from "../../features/channel-navigation/sidebar-
 import {
   CommunityRefusalNotice,
   CommunitySignIn,
+  issuerMayAnswerAgain,
 } from "../../features/federated-identity/CommunitySignIn";
 import type { FederatedIdentity } from "../../features/federated-identity/service";
 import type { Membership } from "../../features/communities/service";
@@ -296,6 +297,7 @@ function ScopedSidebar({
                   )}
                   relay={connection.origin}
                   memberships={props.memberships}
+                  tryAgain={() => props.relay.tryAgain()}
                 />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
@@ -312,7 +314,13 @@ function ScopedSidebar({
                       target={props.target}
                       chatIcons={props.chatIcons}
                       chatMenus={props.chatMenus}
-                      renderContents={(ordinary, header, pendingClick) => (
+                      sidebarRows={props.sidebarRows}
+                      renderContents={(
+                        ordinary,
+                        header,
+                        pendingClick,
+                        composeOrdinary,
+                      ) => (
                         <SoloRegions
                           key={`regions:${scope}:${connection.generation}`}
                           session={connection.session}
@@ -321,6 +329,7 @@ function ScopedSidebar({
                           target={props.target}
                           sidebar={sidebar}
                           ordinary={ordinary}
+                          composeOrdinary={composeOrdinary}
                           pendingClick={pendingClick}
                           groupDisclosure={
                             filter === "all"
@@ -391,7 +400,7 @@ function ScopedSidebar({
                     props.federatedIdentity,
                     connection.origin,
                   )}
-                  retry={props.relay.retry}
+                  retry={props.relay.tryAgain}
                   relay={connection.origin}
                   memberships={props.memberships}
                 />
@@ -412,11 +421,12 @@ function ScopedSidebar({
                           connection.origin,
                         )}
                         error={connection.error}
-                        retry={props.relay.retry}
+                        retry={props.relay.tryAgain}
                         relay={connection.origin}
                         memberships={props.memberships}
+                        asksAgain
                       />
-                      <Button onClick={props.relay.retry}>Try again</Button>
+                      <Button onClick={props.relay.tryAgain}>Try again</Button>
                     </>
                   )}
                 </div>
@@ -485,17 +495,20 @@ function InventoryGroup({
 
 /** A protected community can refuse after its channel list is shown: native
  * discovery hands back the transport before NIP-FI admission, so the refusal
- * arrives on the live socket. Its recovery reconnects only that socket. */
+ * arrives on the live socket. Its recovery reconnects only that socket; a
+ * refusal its sign-in server may change offers Try again, which asks it. */
 function LiveSignIn({
   session,
   identity,
   relay,
   memberships,
+  tryAgain,
 }: {
   session: RelaySession;
   identity: FederatedIdentity | undefined;
   relay: string | undefined;
   memberships: readonly Membership[] | undefined;
+  tryAgain: () => void;
 }) {
   const live = useSyncExternalStore(
     session.live.subscribe,
@@ -503,14 +516,19 @@ function LiveSignIn({
     session.live.snapshot,
   );
   if (live.status !== "error") return null;
+  const asksAgain = !!identity && issuerMayAnswerAgain(live.error);
   return (
-    <CommunitySignIn
-      identity={identity}
-      error={live.error}
-      retry={session.live.retry}
-      relay={relay}
-      memberships={memberships}
-    />
+    <>
+      <CommunitySignIn
+        identity={identity}
+        error={live.error}
+        retry={session.live.retry}
+        relay={relay}
+        memberships={memberships}
+        asksAgain={asksAgain}
+      />
+      {asksAgain && <Button onClick={tryAgain}>Try again</Button>}
+    </>
   );
 }
 

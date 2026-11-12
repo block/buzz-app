@@ -101,6 +101,7 @@ export type AcpHooks = Readonly<{
       title?: string;
       provider: string;
       platform?: PlatformTools;
+      tags?: Readonly<Record<string, string>>;
     }>,
   ): Record<string, unknown>;
   /** Appends `text` to a new session's system prompt; a throw closes it.

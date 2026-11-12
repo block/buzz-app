@@ -13,6 +13,7 @@ import {
   vi,
 } from "vitest";
 import { ReadError } from "./errors";
+import { FRESH_FOR } from "./store";
 import { finalizeEvent, getPublicKey, type EventTemplate } from "nostr-tools";
 import { PublishRejected } from "./outbox";
 import {
@@ -264,6 +265,37 @@ describe("bounded visibility recovery", () => {
     });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.read).toHaveBeenCalledOnce();
+    h.owner.dispose();
+  });
+
+  it("lets a recent read answer a stale-only trigger until FRESH_FOR passes", async () => {
+    const h = harness();
+    const lifecycle = h.owner.capability;
+    const stale = () =>
+      lifecycle.refreshVisibility(undefined, { ifStale: true });
+    await stale();
+    expect(h.read).toHaveBeenCalledOnce();
+    await stale();
+    await vi.advanceTimersByTimeAsync(FRESH_FOR - 1);
+    await stale();
+    expect(h.read).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await stale();
+    expect(h.read).toHaveBeenCalledTimes(2);
+    // An explicit refresh always reads.
+    await lifecycle.refreshVisibility();
+    expect(h.read).toHaveBeenCalledTimes(3);
+    // A failed read is not recent evidence.
+    h.read.mockRejectedValueOnce(new ReadError("denied", "denied", 403));
+    await lifecycle.refreshVisibility();
+    expect(lifecycle.snapshot().status).toBe("error");
+    await stale();
+    expect(h.read).toHaveBeenCalledTimes(5);
+    expect(lifecycle.snapshot().status).toBe("ready");
+    // A cleared session's read answers nothing for the next one.
+    h.owner.clear();
+    await stale();
+    expect(h.read).toHaveBeenCalledTimes(6);
     h.owner.dispose();
   });
 

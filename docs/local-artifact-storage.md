@@ -126,6 +126,18 @@ edits. Sync and delivery own this boundary; the row store does not merge optimis
 edits into confirmed state. Publication conflicts remain failed edits with the
 attempted value retained. Offline shared edits remain undecided.
 
+## Artifact publication outcomes
+
+`session.configArtifactWriter.isNotSent(error)` returns true only when the host
+proves that the rejected publication did not deliver the event. A caller can then
+retry its saved event after a transient refusal. It must check current access
+before each attempt. The method does not grant access or waive relay validation.
+
+The method is optional for older hosts and other writers. Without a true result,
+the caller must treat the send as uncertain and read back its outcome before a
+retry. Do not classify delivery from error text or a class name. An accepted
+receipt confirms publication; a network error does not prove non-delivery.
+
 ## Storage costs
 
 Writes request strict durability. Transactions include only the object stores that each operation uses. Row writes

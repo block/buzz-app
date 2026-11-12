@@ -192,14 +192,13 @@ impl DownloadDelegate {
         let downloads = self.ivars();
         let app = downloads.app.clone();
         let directory = downloads.directory.clone();
-        let filename = crate::relay::download_name("", &url).to_owned();
         tauri::async_runtime::spawn(async move {
             let host = app.state::<crate::identity::IdentityHost>().inner().clone();
             let fi = app
                 .state::<crate::federated_identity::FederatedIdentity>()
                 .inner()
                 .clone();
-            let saved = crate::relay::save_media(&host, &fi, url, directory, filename).await;
+            let saved = crate::relay::save_media(&host, Some(&fi), url, directory, "").await;
             // Its errors never hold the URL.
             if let Err(error) = &saved {
                 eprintln!("Could not download media: {error}");

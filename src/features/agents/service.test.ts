@@ -1,3 +1,4 @@
+import { UnattestedProfile } from "../relay/identity-archives";
 import { createSoloPreferences } from "../relay/solo-preferences";
 import type { ChannelKit } from "../channel-templates/capability";
 import type { KitEntry, KitValue } from "../channel-templates/model";
@@ -6306,6 +6307,7 @@ it("stops it first, and deletes its key only after it left its channels and was 
     bot,
     expect.any(AbortSignal),
     authorize,
+    expect.any(Function),
   );
   expect(await native.list()).toEqual([]);
 });
@@ -6541,6 +6543,7 @@ it("archives the agent it deletes with an owner proof issued now, as its profile
     bot,
     expect.any(AbortSignal),
     authorize,
+    expect.any(Function),
   );
   expect(session.agentChoices.refresh).toHaveBeenCalledWith(true, {
     fresh: true,
@@ -6657,6 +6660,46 @@ it("keeps the key of an agent it couldn't archive, stopped for Delete to run aga
   await vi.waitFor(() =>
     expect(native.forget).toHaveBeenCalledWith(member(bot)),
   );
+});
+
+it("force-republishes the agent's own profile, waits for it, then archives, and keeps the key when that fails", async () => {
+  const { service, native, archives } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const order: string[] = [];
+  // As the archive store does for a profile that names no owner: republish,
+  // confirm by re-reading, then archive.
+  archives.request.mockImplementation(
+    async (_action, _pubkey, signal, _issue, attest) => {
+      if (!attest || !signal) throw new Error("no attest");
+      await attest(signal);
+      order.push("confirmed");
+      order.push("archived");
+    },
+  );
+  let refuse = true;
+  native.publishProfile.mockImplementation(async (_member, force) => {
+    if (!force) return;
+    await settle();
+    if (refuse) {
+      refuse = false;
+      throw new Error("The community refused the agent event");
+    }
+    order.push("published");
+  });
+  await expect(service.remove(bot)).rejects.toThrow(UNFINISHED);
+  expect(native.publishProfile).toHaveBeenCalledWith(member(bot), true);
+  expect(order).toEqual([]);
+  expect(native.forget).not.toHaveBeenCalled();
+  expect(native.remove).not.toHaveBeenCalled();
+  expect(service.memberships(bot)).toEqual([
+    expect.objectContaining({ deleting: true }),
+  ]);
+  await service.remove(bot);
+  await vi.waitFor(() =>
+    expect(native.forget).toHaveBeenCalledWith(member(bot)),
+  );
+  expect(order).toEqual(["published", "confirmed", "archived"]);
+  expect(native.publishProfile).toHaveBeenLastCalledWith(member(bot), true);
 });
 
 it("deletes nothing outside the agent's community, and leaves it stopped for Delete to run again", async () => {
@@ -10776,6 +10819,35 @@ it("refuses to remove a hosted agent's picture, but still renames one that has n
   expect(service.find(hostedKey)).toMatchObject({ name: "Sea" });
 });
 
+it("says a hosted agent wasn't archived when its community advertises no archive authority and its provider fails", async () => {
+  const { service, plugin, archives } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  archives.unavailable = true;
+  remote.remove.mockRejectedValueOnce(new Error("provider down"));
+  await expect(service.remove(hostedKey)).rejects.toThrow(
+    "Sky wasn't deleted: its provider couldn't remove it, so it may still be running. This community advertises no archive authority, so it wasn't archived. Delete it again.",
+  );
+  expect(archives.request).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+  await service.remove(hostedKey);
+  expect(service.find(hostedKey)).toBeUndefined();
+});
+
+it("stops a hosted agent's Delete when its profile names no owner, saying why", async () => {
+  const { service, plugin, archives } = await setup();
+  const { type, remote } = cloud();
+  plugin.agents.register(type);
+  await service.create({ type: "example/cloud", name: "Sky" });
+  archives.request.mockRejectedValueOnce(new UnattestedProfile());
+  await expect(service.remove(hostedKey)).rejects.toThrow(
+    "Sky wasn't deleted: this community archives it only when its profile names you as its owner, and only its provider can publish that profile.",
+  );
+  expect(remote.remove).not.toHaveBeenCalled();
+  expect(service.find(hostedKey)?.place).toBe("hosted");
+});
+
 it("deletes a hosted agent from its provider, then from its community", async () => {
   const { service, plugin, session, archives, authorize } = await setup();
   const { type, remote } = cloud();
@@ -10800,6 +10872,7 @@ it("deletes a hosted agent from its provider, then from its community", async ()
     hostedKey,
     expect.any(AbortSignal),
     authorize,
+    undefined,
   );
   expect(records.removeAgent).not.toHaveBeenCalled();
   expect(service.find(hostedKey)?.place).toBe("hosted");
@@ -10818,7 +10891,7 @@ it("deletes a hosted agent from its provider, then from its community", async ()
     viewer,
     hostedKey,
     expect.any(AbortSignal),
-    authorize,
+    { issue: authorize },
   );
   expect(archives.refresh).toHaveBeenCalled();
   expect(archives.request).not.toHaveBeenCalled();

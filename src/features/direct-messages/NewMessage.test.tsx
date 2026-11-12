@@ -215,15 +215,19 @@ function setup({ archived = [] as string[] } = {}) {
     refresh: async () => {},
   };
   // Archive evidence, read once, as the relay keeps it.
-  const archiveSnapshot = Object.freeze({
+  let archiveSnapshot = Object.freeze({
     status: "ready" as const,
     archived: Object.freeze([...archived]),
   });
+  const archiveListeners = new Set<() => void>();
   const archives = {
     snapshot: () => archiveSnapshot,
-    subscribe: () => () => {},
+    subscribe: (listener: () => void) => {
+      archiveListeners.add(listener);
+      return () => archiveListeners.delete(listener);
+    },
     state: (key: string) =>
-      archived.includes(key)
+      archiveSnapshot.archived.includes(key)
         ? ("archived" as const)
         : ("not-archived" as const),
     ensure: async () => {},
@@ -273,6 +277,15 @@ function setup({ archived = [] as string[] } = {}) {
     onStarted,
     mount,
     control,
+    setArchived(keys: readonly string[]) {
+      archiveSnapshot = Object.freeze({
+        status: "ready" as const,
+        archived: Object.freeze([...keys]),
+      });
+      act(() => {
+        for (const listener of archiveListeners) listener();
+      });
+    },
     updateControl(next: LocalAgentsSnapshot) {
       controlState = next;
       act(() => {
@@ -359,6 +372,38 @@ it("neither offers nor sends to an archived agent", async () => {
   await t.user.type(recipient(), people[1]?.name ?? "");
   expect(
     screen.queryByRole("option", { name: "Person 2, Agent" }),
+  ).not.toBeInTheDocument();
+});
+
+it("holds the archive rule by key, without agent flags, for a selected and a restored recipient", async () => {
+  // Person 1's profile carries neither auth nor is_agent.
+  const pubkey = people[0]?.pubkey ?? "";
+  const t = setup();
+  const view = t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  t.setArchived([pubkey]);
+  expect(screen.getByText("Unavailable")).toBeVisible();
+  await t.user.click(send());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  view.unmount();
+  // Restored with the draft: still refused.
+  t.mount();
+  expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
+  expect(screen.getByText("Unavailable")).toBeVisible();
+  await waitFor(() => expect(send()).toBeEnabled());
+  await t.user.click(send());
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "no longer available",
+  );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+  await t.user.type(recipient(), "Person 1");
+  expect(
+    screen.queryByRole("option", { name: "Person 1" }),
   ).not.toBeInTheDocument();
 });
 

@@ -1,5 +1,5 @@
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
-import { canMessageAgent } from "../agents/choices";
+import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
@@ -309,9 +309,11 @@ export function NewMessage({
     if (
       recipients.some(
         (person) =>
-          (person.isAgent ||
+          // By key, whatever its profile says.
+          agentUnavailable(session, person.pubkey) ||
+          ((person.isAgent ||
             session.profiles.snapshot().get(person.pubkey)?.isAgent) &&
-          !controlled.has(person.pubkey),
+            !controlled.has(person.pubkey)),
       )
     )
       throw new Error(

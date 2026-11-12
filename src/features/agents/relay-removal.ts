@@ -1,5 +1,6 @@
 import type { EventData } from "../relay/events";
 import type { LocalEvents, Outbox } from "../relay/outbox";
+import type { IdentityAttest } from "../relay/identity-archives";
 import type { RelaySession } from "../relay/session";
 
 type RemovalSession = Pick<
@@ -13,19 +14,23 @@ export type OwnerProof = (
   signal: AbortSignal,
 ) => Promise<readonly string[]>;
 
+/** How the caller proves it owns an agent: `issue`, a fresh owner proof
+ * (NIP-OA); `attest`, only with the agent's key, republishes its profile
+ * carrying that proof when the profile has none. */
+export type OwnerConsent = { issue: OwnerProof; attest?: IdentityAttest };
+
 /** Archives the agent unless a read started now finds it archived already, so
- * a retry goes on past it, or its community keeps no archives. Rejects unless the relay confirms the archive.
- * `issue`, only for an agent the caller owns, proves ownership when its
- * profile cannot. */
+ * a retry goes on past it. Rejects unless the relay confirms the archive.
+ * "skipped": the community advertises no archive authority, so nothing is
+ * hidden by one there and Delete goes on without it. */
 export async function archiveAgent(
   session: Pick<RelaySession, "archives">,
   pubkey: string,
   signal: AbortSignal,
-  issue?: OwnerProof,
-) {
+  owner?: OwnerConsent,
+): Promise<"archived" | "skipped"> {
   const { archives } = session;
-  // A community that keeps no archives hides nothing by them.
-  if (!archives.supported) return;
+  if (!archives.supported) return "skipped";
   if (!archives.writable)
     throw new Error("Archive is unavailable on this connection");
   // The archive cache is not live; this needs a read started now.
@@ -36,7 +41,14 @@ export async function archiveAgent(
   // An unfinished read says nothing, least of all "not archived".
   if (state === "unknown") throw new Error("Archive state is unknown");
   if (state === "not-archived")
-    await archives.request("archive", pubkey, signal, issue);
+    await archives.request(
+      "archive",
+      pubkey,
+      signal,
+      owner?.issue,
+      owner?.attest,
+    );
+  return "archived";
 }
 
 /** Remove a relay-only agent from this community: archive its identity,
@@ -49,9 +61,9 @@ export async function removeRelayAgent(
   viewer: string,
   pubkey: string,
   signal: AbortSignal,
-  issue?: OwnerProof,
+  owner?: OwnerConsent,
 ): Promise<void> {
-  await archiveAgent(session, pubkey, signal, issue);
+  await archiveAgent(session, pubkey, signal, owner);
   await deleteAgentRecord(session, viewer, pubkey, signal);
   try {
     await removeAgentFromChannels(session, pubkey, signal);

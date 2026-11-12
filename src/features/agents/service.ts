@@ -116,8 +116,9 @@ import {
   removeAgentFromChannels,
   removeRelayAgent,
   archiveAgent,
-  type OwnerProof,
+  type OwnerConsent,
 } from "./relay-removal";
+import { UnattestedProfile } from "../relay/identity-archives";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
 import {
@@ -5150,11 +5151,18 @@ export class AgentsService extends Service implements Agents {
           binding.controller.signal,
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
+        // Only an owner proves ownership with a proof issued now; its key,
+        // still here, force-republishes its own profile naming that owner.
         await leaveCommunity(
           binding.session,
           pubkey,
           signal,
-          member.owner === binding.viewer ? this.authorize : undefined,
+          member.owner === binding.viewer
+            ? {
+                issue: this.authorize,
+                attest: () => native.publishProfile(member, true),
+              }
+            : undefined,
         );
         await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
@@ -5375,17 +5383,21 @@ export class AgentsService extends Service implements Agents {
     return this.exclusive(pubkey, async () => {
       const { agent, remote, origin, binding } = this.hosted(pubkey, true);
       const { signal } = binding.controller;
-      // Only an owner proves ownership with a proof issued now.
-      const issue: OwnerProof | undefined =
-        agent.owner === binding.viewer ? this.authorize : undefined;
+      // Only an owner proves ownership with a proof issued now. Its key is
+      // its provider's, so a profile that lacks one can't be republished.
+      const owner: OwnerConsent | undefined =
+        agent.owner === binding.viewer ? { issue: this.authorize } : undefined;
       // Archived before its provider removes it, which can't be undone, so
       // nothing offers it once it is gone. A retry finds it archived.
+      let archive: "archived" | "skipped";
       try {
-        await archiveAgent(binding.session, pubkey, signal, issue);
+        archive = await archiveAgent(binding.session, pubkey, signal, owner);
       } catch (error) {
         console.warn(`Agent ${agent.name} was not archived`, error);
         throw new Error(
-          `${agent.name} wasn't deleted: Buzz couldn't archive it in this community. Delete it again.`,
+          error instanceof UnattestedProfile
+            ? `${agent.name} wasn't deleted: this community archives it only when its profile names you as its owner, and only its provider can publish that profile.`
+            : `${agent.name} wasn't deleted: Buzz couldn't archive it in this community. Delete it again.`,
         );
       }
       try {
@@ -5393,7 +5405,9 @@ export class AgentsService extends Service implements Agents {
       } catch (error) {
         console.warn(`Agent ${agent.name} was not removed`, error);
         throw new Error(
-          `${agent.name} is archived and hidden, but its provider couldn't remove it, so it may still be running. Delete it again.`,
+          archive === "archived"
+            ? `${agent.name} is archived and hidden, but its provider couldn't remove it, so it may still be running. Delete it again.`
+            : `${agent.name} wasn't deleted: its provider couldn't remove it, so it may still be running. This community advertises no archive authority, so it wasn't archived. Delete it again.`,
         );
       }
       // Before its record goes, so a failure leaves it listed to Delete again.
@@ -5404,7 +5418,7 @@ export class AgentsService extends Service implements Agents {
         binding.viewer,
         pubkey,
         signal,
-        issue,
+        owner,
       );
       this.unlist(origin, pubkey);
       await this.writeUnfinished(
@@ -7247,10 +7261,10 @@ async function leaveCommunity(
   session: RelaySession,
   pubkey: string,
   signal: AbortSignal,
-  issue?: OwnerProof,
+  owner?: OwnerConsent,
 ) {
   await removeAgentFromChannels(session, pubkey, signal);
-  await archiveAgent(session, pubkey, signal, issue);
+  await archiveAgent(session, pubkey, signal, owner);
 }
 /** After a finished Delete, rereads the shared agent choices, superseding any
  * read begun before it, so their inventory no longer offers it; then forgets

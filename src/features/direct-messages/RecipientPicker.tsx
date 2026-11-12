@@ -2,7 +2,7 @@ import { Virtualizer } from "virtua";
 import { Popover } from "@base-ui/react/popover";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useAgentChoices } from "../agents/use-choices";
-import { canMessageAgent } from "../agents/choices";
+import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import { exactName, matchPerson } from "../search/person-match";
@@ -219,6 +219,7 @@ export function RecipientPicker({
       (person) =>
         person.pubkey !== viewer &&
         !excludedPubkeys.includes(person.pubkey) &&
+        !agentUnavailable(session, person.pubkey) &&
         (!person.isAgent || controlled.has(person.pubkey)) &&
         !selected.some((item) => item.pubkey === person.pubkey),
     );
@@ -317,7 +318,7 @@ export function RecipientPicker({
     selected,
     labels,
     excludedPubkeys,
-    session.profiles,
+    session,
   ]);
   const discriminator = (person: Recipient) => identities.get(person.pubkey);
   // Only a community-verified identity supplies the detail beside the name.
@@ -381,6 +382,7 @@ export function RecipientPicker({
       selection.current.length >= maxRecipients ||
       person.pubkey === session.viewer ||
       excludedPubkeys.includes(person.pubkey) ||
+      agentUnavailable(session, person.pubkey) ||
       (person.isAgent && !controlled.has(person.pubkey)) ||
       selection.current.some((item) => item.pubkey === person.pubkey)
     )
@@ -521,6 +523,9 @@ export function RecipientPicker({
                 <span className={styles.agent}>{discriminator(person)}</span>
               )}
               {person.isAgent && <span className={styles.agent}>Agent</span>}
+              {agentUnavailable(session, person.pubkey) && (
+                <span className={styles.agent}>Unavailable</span>
+              )}
             </span>
           ))}
           <input

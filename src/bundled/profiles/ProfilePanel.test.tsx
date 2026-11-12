@@ -1220,6 +1220,7 @@ it("composes Info in place while preserving the native header, focus region and 
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };
@@ -1272,6 +1273,7 @@ it("leaves an agent-hinted profile outside person Info composition", () => {
     snapshot: () => snapshot,
     subscribe: () => () => {},
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };

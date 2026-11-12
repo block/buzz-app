@@ -5359,6 +5359,24 @@ it("asks to try again while an agent is still changing the Bestie, saving nothin
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(busy);
     expect(screen.queryByRole("alertdialog")).toBeNull();
+    // Reopened and kept, it leaves the agent's change alone.
+    await user.click(
+      within(screen.getByRole("gridcell", { name: /^Bea/ })).getByRole(
+        "button",
+        { name: "Actions for Bea" },
+      ),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Make my bestie" }),
+    );
+    const reopened = await screen.findByRole("alertdialog", {
+      name: "Make Bea your bestie?",
+    });
+    expect(within(reopened).queryByRole("alert")).toBeNull();
+    await user.click(
+      within(reopened).getByRole("button", { name: "Keep Ada" }),
+    );
+    expect(readView(scope, "solo:default-agent", null)).toBe(bea.pubkey);
     await user.click(
       within(screen.getByRole("gridcell", { name: /^Ada/ })).getByRole(
         "button",

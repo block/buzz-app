@@ -120,12 +120,12 @@ export function useBestieChoice(
   const make = (pubkey: string) => {
     const replacing = eligible(pubkey);
     if (!replacing || pubkey === saved) return;
+    // A dialog's close reads an error as its own failed save.
+    setError("");
     const previous = choices.identities.find((agent) => agent.pubkey === saved);
     if (previous) setReplacement({ current: previous, replacing });
-    else if (remoteAgent(placeOf?.(pubkey))) {
-      setError("");
-      setRemote(replacing);
-    } else save(pubkey);
+    else if (remoteAgent(placeOf?.(pubkey))) setRemote(replacing);
+    else save(pubkey);
   };
   const view = (
     <>

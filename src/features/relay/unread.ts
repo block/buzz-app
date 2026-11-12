@@ -183,7 +183,11 @@ export interface UnreadCapability {
     messageId: string,
   ): Promise<ReadMutationResult>;
   /** Explicitly read exactly these captured messages, never their subtrees or
-   * a channel prefix. Optional so older hosts remain compatible. */
+   * a channel prefix. Its one optional Undo restores only captured `msg:<id>`
+   * journal markers the save cleared; it never rewinds frontiers or restores
+   * forced overlays. No handle is returned unless a marker was cleared, and
+   * any later journal revision or lost action validity expires it. Optional
+   * so older hosts remain compatible. */
   markCapturedMessagesRead?(
     messageIds: readonly string[],
   ): Promise<ReadMutationResult>;
@@ -3087,7 +3091,10 @@ export function createUnread({
           fence,
           // This sidebar hint is shared across windows, not owned by this set.
           messageKeys,
-          { preserveCapturedSet: true },
+          {
+            preserveCapturedSet: true,
+            undo: { keys: new Set(messageKeys), valid },
+          },
         );
         // The save succeeded; do not clear overlays from a visit that ended
         // while storage was committing.

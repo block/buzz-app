@@ -165,6 +165,7 @@ export function ClaudeSettings({
           open
           visit
           title="Connect Claude"
+          description={KEY_ONCE}
           headerGap="compact"
           preventClose={saving}
           onOpenChange={(open) => !open && setConnecting(false)}

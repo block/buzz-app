@@ -19,7 +19,7 @@ const NO_KEY =
   "Claude needs an Anthropic API key. Add one in Settings → Claude.";
 /** What setup says first: the key is one for all of Claude, not per agent. */
 export const KEY_ONCE =
-  "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once, and Buzz keeps it securely on this computer.";
+  "Claude requires an API key to connect to your account. Create one at console.anthropic.com and paste it below. You only have to set this up once.";
 const REJECTED_KEY =
   "Anthropic rejected the Claude API key. It may have been revoked or run out of credit. Paste a working key in Settings → Claude.";
 
@@ -358,7 +358,7 @@ function KeyForm({
       description={
         replace
           ? "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it."
-          : undefined
+          : "Your key will be stored securely on this computer."
       }
       value={key}
       onValueChange={setKey}

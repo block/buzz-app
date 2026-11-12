@@ -135,6 +135,9 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   expect(
     screen.getByRole("dialog", { name: "Connect Claude" }),
   ).toHaveAccessibleDescription(KEY_ONCE);
+  expect(add).toHaveAccessibleDescription(
+    "Your key will be stored securely on this computer.",
+  );
   await waitFor(() => expect(add).toHaveFocus());
   expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
     "aria-disabled",

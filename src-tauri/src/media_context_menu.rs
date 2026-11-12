@@ -499,11 +499,14 @@ fn hidden_items(items: &[Item], saves: bool) -> Vec<usize> {
 /// The loopback URL that serves the relay media `source` names, if it is the
 /// `buzz-media` URL an image shows: the listener's base URL, `stream`, then
 /// the source's path, as the page builds a `<video>`'s. Any other source has
-/// none.
+/// none. Neither has one whose loopback URL a URL parser would rewrite (dot
+/// segments, `\`, dropped or escaped characters): WebKit would then request
+/// a different path from the one checked here.
 fn loopback_source(source: &str, stream: &str) -> Option<String> {
     let path = source.strip_prefix("buzz-media://localhost/")?;
     crate::relay::download_target(source)?;
-    Some(format!("{stream}{path}"))
+    let loopback = format!("{stream}{path}");
+    (Url::parse(&loopback).ok()?.as_str() == loopback).then_some(loopback)
 }
 
 /// The Downloads name for a menu download of relay media: the loopback URL
@@ -631,6 +634,21 @@ mod tests {
         percent_encoding::utf8_percent_encode(url, percent_encoding::NON_ALPHANUMERIC).to_string()
     }
 
+    /// As the page's `encodeURIComponent` encodes a `buzz-media` path.
+    fn page_encode(url: &str) -> String {
+        const COMPONENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+            .remove(b'-')
+            .remove(b'_')
+            .remove(b'.')
+            .remove(b'!')
+            .remove(b'~')
+            .remove(b'*')
+            .remove(b'\'')
+            .remove(b'(')
+            .remove(b')');
+        percent_encoding::utf8_percent_encode(url, COMPONENT).to_string()
+    }
+
     #[test]
     fn menu_downloads_are_named_only_for_relay_media() {
         let base = "http://127.0.0.1:4321/token/";
@@ -679,7 +697,39 @@ mod tests {
             loopback_source(&format!("buzz-media://localhost/{page}"), base),
             Some(format!("{base}{page}"))
         );
+        // Every shape of relay media, in either encoding, behind a listener
+        // token of any base64url character: the source's path, unchanged.
+        let base = "http://127.0.0.1:49152/Zm9v-YmFy_QUJD/";
+        for target in [
+            format!("https://relay.test/media/{hash}"),
+            format!("https://relay.test/media/{hash}.webp"),
+            format!("https://relay.test/media/{hash}.thumb.jpg"),
+            format!("https://relay.example.org:8443/media/{hash}.jpeg"),
+            format!("https://xn--bcher-kva.example.org/media/{hash}.thumb.webp"),
+        ] {
+            for path in [encode(&target), page_encode(&target)] {
+                assert_eq!(
+                    loopback_source(&format!("buzz-media://localhost/{path}"), base),
+                    Some(format!("{base}{path}")),
+                    "{path}"
+                );
+            }
+        }
         for source in [
+            // A path WebKit would resolve to another one: `download_target`
+            // checks the relay URL with dot segments already removed.
+            format!("buzz-media://localhost/../{image}"),
+            format!("buzz-media://localhost/%2e%2e/{image}"),
+            format!("buzz-media://localhost/.%2E/{image}"),
+            format!("buzz-media://localhost/./{image}"),
+            format!("buzz-media://localhost/%2E/{image}"),
+            format!("buzz-media://localhost/other/../{image}"),
+            format!("buzz-media://localhost/../../{page}"),
+            // `\` separates segments only in the loopback URL.
+            format!("buzz-media://localhost/https:\\\\relay.test\\..\\..\\..\\media\\{hash}.png"),
+            // Characters a URL drops or escapes.
+            format!("buzz-media://localhost/{image} "),
+            format!("buzz-media://localhost/\t{image}"),
             // Another host, a port or credentials.
             format!("buzz-media://example.test/{image}"),
             format!("buzz-media://localhost.example.test/{image}"),

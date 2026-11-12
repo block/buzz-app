@@ -6,12 +6,9 @@ import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { createRoot } from "react-dom/client";
 import { PluginReadme } from "../../src/app/PluginReadme";
-import canvasStyles from "../../src/bundled/channels/Canvas.module.css";
-import templateStyles from "../../src/bundled/channels/ChannelTemplates.module.css";
-import {
-  CanvasMarkdown,
-  CanvasView,
-} from "../../src/bundled/channels/CanvasView";
+import { CanvasEditor } from "../../src/bundled/channels/CanvasEditor";
+import { CanvasMarkdown } from "../../src/bundled/channels/CanvasView";
+import type { ChannelCanvas } from "../../src/features/channel-templates/capability";
 import { GitHubBody } from "../../src/bundled/github/GitHubBody";
 import { NoteBody } from "../../src/bundled/relay-notes/NotesPage";
 import notesStyles from "../../src/bundled/relay-notes/NotesPage.module.css";
@@ -46,6 +43,30 @@ const SAMPLE = [
 const LONG_LINE = `\`\`\`\n${"abcdefghijklmnopqrstuvwxyz ".repeat(40)}\n\`\`\``;
 const LONG_CODE = `\`\`\`\n${Array.from({ length: 60 }, (_, line) => `${line} ${"x".repeat(160)}`).join("\n")}\n\`\`\``;
 const TOO_DEEP = `${">".repeat(120)} ${"deep ".repeat(200)}`;
+
+/** A saved Canvas holding content, with no relay behind it. */
+function canvasOf(content: string) {
+  const event = {
+    id: "c".repeat(64),
+    pubkey: "d".repeat(64),
+    created_at: 1,
+    kind: 40100,
+    tags: [],
+    content,
+    sig: "e".repeat(128),
+  };
+  return {
+    available: true,
+    read: async () => event,
+    save: async () => event,
+    history: async () => ({ revisions: [event], next: undefined }),
+  } as unknown as ChannelCanvas;
+}
+const profiles = {
+  snapshot: () => new Map(),
+  subscribe: () => () => {},
+  ensure: async () => {},
+};
 
 const params = new URLSearchParams(location.search);
 const html = document.documentElement;
@@ -150,28 +171,22 @@ createRoot(root).render(
         color: "var(--text-standard)",
       }}
     >
-      {/* The Canvas editor's view track, with its own classes. */}
-      <section
-        data-screen="canvas"
-        className={`${templateStyles.stack} ${canvasStyles.views}`}
-      >
-        <CanvasView
-          content={SAMPLE}
-          loaded
-          readError={undefined}
-          busy={false}
-          retry={() => {}}
-          openLink={() => false}
-          focusRef={null}
-          retryRef={null}
-          active
+      {/* The real Canvas editor, reading a local Canvas. */}
+      <section data-screen="canvas">
+        <CanvasEditor
+          canvas={canvasOf(SAMPLE)}
+          profiles={profiles}
+          scope="fixture"
+          channelId="11111111-1111-4111-8111-111111111111"
         />
       </section>
-      <section
-        data-screen="canvas-host"
-        className={`${templateStyles.stack} ${canvasStyles.views}`}
-      >
-        <CanvasMarkdown content={LONG_LINE} openLink={() => false} />
+      <section data-screen="canvas-host">
+        <CanvasEditor
+          canvas={canvasOf(LONG_LINE)}
+          profiles={profiles}
+          scope="fixture"
+          channelId="22222222-2222-4222-8222-222222222222"
+        />
       </section>
       <section data-screen="canvas-source">
         <CanvasMarkdown content={TOO_DEEP} openLink={() => false} />

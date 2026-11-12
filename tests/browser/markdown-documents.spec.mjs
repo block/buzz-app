@@ -78,6 +78,11 @@ const COPY = [
   "plugin-readme",
 ];
 const CODE = "const value = 1;";
+// The fixture's long transcript reply, as its copy action writes it.
+const LONG_CODE_TEXT = Array.from(
+  { length: 60 },
+  (_, line) => `${line} ${"x".repeat(160)}`,
+).join("\n");
 
 /** Opens the memory and transcript disclosures that hold the sample. */
 async function expand(page) {
@@ -182,6 +187,12 @@ test("document screens keep their roles, elements and code actions in their host
           if (["canvas", "notes", "repo", "github"].includes(screen))
             expect(read.nested, where).toBe("circle");
         }
+        // Screenshots come before any copy, so no notification covers them.
+        await expect(page.locator(".buzz-toast")).toHaveCount(0);
+        for (const screen of Object.keys(ROLES))
+          await page.locator(`[data-screen="${screen}"]`).screenshot({
+            path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
+          });
         // Copy: the actions show on hover and on keyboard focus, and both a
         // click and the keyboard copy the code exactly.
         for (const screen of COPY) {
@@ -208,19 +219,25 @@ test("document screens keep their roles, elements and code actions in their host
             .poll(() => page.evaluate(() => window.copied), { message: where })
             .toEqual([CODE, CODE]);
         }
-        // A line that cannot wrap scrolls inside its block, not the Canvas.
+        // In the real Canvas editor, a line that cannot wrap scrolls inside its
+        // block; the view panel and its article stay at the host's width.
         const host = await page
           .locator('[data-screen="canvas-host"]')
           .evaluate((section) => {
             const code = section.querySelector("pre code");
+            const width = (node) => node.getBoundingClientRect().width;
             return {
-              host: section.getBoundingClientRect().width,
-              article: section.firstElementChild.getBoundingClientRect().width,
+              host: width(section),
+              panel: width(section.querySelector('[role="tabpanel"]')),
+              article: width(code.closest("pre").parentElement),
+              contained: section.scrollWidth <= section.clientWidth,
               client: code.clientWidth,
               scroll: code.scrollWidth,
             };
           });
+        expect(host.panel, label).toBeLessThanOrEqual(host.host);
         expect(host.article, label).toBeLessThanOrEqual(host.host);
+        expect(host.contained, label).toBe(true);
         expect(host.scroll, label).toBeGreaterThan(host.client);
         // A rejected document's source still wraps.
         const source = page.locator('[data-screen="canvas-source"] pre code');
@@ -229,25 +246,48 @@ test("document screens keep their roles, elements and code actions in their host
           await source.evaluate((code) => code.scrollWidth <= code.clientWidth),
           label,
         ).toBe(true);
-        // A long transcript reply scrolls under a 24rem block, frame included.
-        const long = await page
+        // A long transcript reply wraps, scrolls under a 24rem block (frame
+        // included), and keeps its copy action pinned while it scrolls.
+        const longPre = page
           .locator('[data-screen="transcript"] pre')
-          .filter({ hasText: "59 xxx" })
-          .evaluate((pre) => ({
+          .filter({ hasText: "59 xxx" });
+        const long = await longPre.evaluate((pre) => {
+          const code = pre.querySelector("code");
+          const button = pre.querySelector("[aria-label='Copy code block']");
+          const offset = () =>
+            button.getBoundingClientRect().top -
+            pre.getBoundingClientRect().top;
+          const before = offset();
+          // Scroll whatever scrolls; only the code should.
+          code.scrollTop = code.scrollHeight;
+          pre.scrollTop = pre.scrollHeight;
+          const preScrolled = pre.scrollTop > 0;
+          return {
             outer: pre.getBoundingClientRect().height,
             rem: Number.parseFloat(
               getComputedStyle(document.documentElement).fontSize,
             ),
-            scrolls:
-              pre.querySelector("code").scrollHeight >
-              pre.querySelector("code").clientHeight,
-          }));
-        expect(long.outer, label).toBe(24 * long.rem);
-        expect(long.scrolls, label).toBe(true);
-        for (const screen of Object.keys(ROLES))
-          await page.locator(`[data-screen="${screen}"]`).screenshot({
-            path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
-          });
+            wraps: code.scrollWidth <= code.clientWidth,
+            scrolled: code.scrollTop > 0,
+            pinned: offset() === before,
+            preScrolled,
+          };
+        });
+        expect(long, label).toMatchObject({
+          outer: 24 * long.rem,
+          wraps: true,
+          scrolled: true,
+          pinned: true,
+          preScrolled: false,
+        });
+        await page.evaluate(() => {
+          window.copied = [];
+        });
+        await longPre.hover();
+        await longPre.getByRole("button", { name: "Copy code block" }).click();
+        await expect
+          .poll(() => page.evaluate(() => window.copied), { message: label })
+          .toEqual([LONG_CODE_TEXT]);
       }
   expect(errors.unexplained()).toEqual([]);
 });

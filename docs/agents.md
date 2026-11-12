@@ -597,7 +597,9 @@ conversation as session controls do: no root for a DM, a Solo chat or a
 channel-scoped agent. `path` is absolute or `~/…` and must be an existing
 directory; the call resolves with it as a real path. The folder is kept only on
 this device and is set once: the same folder again resolves, another rejects,
-because a session's history is found by the folder it ran in. If the folder
+because a session's history is found by the folder it ran in. For the same
+reason, a conversation that already has a session in the workspace rejects:
+the harness's `sessions` list names the conversations that do. If the folder
 later disappears, the conversation's next turn fails with an error naming it
 and never falls back to the workspace. `ctx.agents.conversationFolder(pubkey,
 place)` returns the folder. Claude and Codex (`conversationFolders` on the

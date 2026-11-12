@@ -1025,7 +1025,8 @@ export type AgentType<Config = unknown> = {
   execution?: true;
   /** Starts a conversation that `Agents.assignConversationFolder` gave a
    * folder in that folder, and refuses its turns while the folder is
-   * missing. Without it, its agents' conversations get no folder. */
+   * missing. `sessions` lists each conversation that has a session, which
+   * then gets no folder. Without it, its agents' conversations get none. */
   conversationFolders?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;
@@ -1572,8 +1573,9 @@ export type Agents = {
    * or Solo chat has no root. `path` is absolute or `~/…` and must be an
    * existing directory. Resolves with the folder, without symbolic links.
    * Kept on this device only, and set once: the same folder again resolves,
-   * another rejects. Requires `host.files`. Rejects for a harness without
-   * conversation folders, or an agent on an execution target. A folder that
+   * another rejects, as does a conversation that already has a session.
+   * Requires `host.files`. Rejects for a harness without conversation
+   * folders, or an agent on an execution target. A folder that
    * is later removed makes the conversation's next turn fail, naming it. */
   assignConversationFolder(
     agent: AgentKey,
@@ -4791,6 +4793,20 @@ export class AgentsService extends Service implements Agents {
       );
     // With the calling plugin's own file access, which the host checks.
     const folder = await host.resolveDirectory(path, { create: false });
+    // Its session's history stays where it began, so a folder given later
+    // would start it over.
+    if (
+      !storedFolder(this.storage, scope, key, conversation) &&
+      type.sessions
+        ?.list(key)
+        .some(
+          (session) =>
+            conversationKey(session.channelId, session.root) === conversation,
+        )
+    )
+      throw new Error(
+        "This conversation already started in the agent's workspace",
+      );
     return assignFolder(this.storage, scope, key, conversation, folder);
   }
   conversationFolder(key: AgentKey, place: SessionPlace) {

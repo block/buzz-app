@@ -11,7 +11,10 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { CodexSetup, explainTurn } from "./setup";
 import { describe, afterEach, expect, it, vi } from "vitest";
-import { assignConversationFolder } from "../../features/agents/conversation-folders";
+import {
+  assignConversationFolder,
+  conversationKey,
+} from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import {
@@ -7573,6 +7576,14 @@ describe("a conversation given its own folder", () => {
       f.sent.find((wire) => wire.method === "thread/start")?.params,
     ).toMatchObject({ cwd: "/tmp/codex-test" });
     expect(resolveDirectory).not.toHaveBeenCalled();
+    // Listed from its first turn, so Agents gives it no folder later.
+    await vi.waitFor(() =>
+      expect(
+        f.runtime
+          .conversations(pubkey)
+          .map(({ channelId, root }) => conversationKey(channelId, root)),
+      ).toEqual([`channel/${"d".repeat(64)}`]),
+    );
     f.complete(0, "DONE");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   });

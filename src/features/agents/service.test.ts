@@ -60,6 +60,7 @@ import type { AgentIdentity } from "./native";
 import {
   type Agent,
   type AgentHandle,
+  type AgentSession,
   AgentsService,
   type AgentType,
   type AgentVoiceSeat,
@@ -220,6 +221,7 @@ async function setup({
   /** The echo type's plugin revision: "bundled" for a bundled harness. */
   revision = "one",
   conversationFolders = undefined as true | undefined,
+  sessions = undefined as AgentType<Config>["sessions"],
 } = {}) {
   const ctx = new Context();
   let settled = false;
@@ -338,6 +340,7 @@ async function setup({
     ...(resumes ? { resumes } : {}),
     ...(syncedSettings ? { syncedSettings } : {}),
     ...(conversationFolders ? { conversationFolders } : {}),
+    ...(sessions ? { sessions } : {}),
   };
   plugin.agents.register(type);
   // The Attention plugin starts after the type, then startup is over.
@@ -1701,6 +1704,32 @@ describe("a conversation folder", () => {
     expect(JSON.stringify(f.native.publish.mock.calls)).not.toContain(
       "/home/me/work",
     );
+  });
+
+  it("is refused for a conversation that already has a session", async () => {
+    const list = vi.fn((): readonly AgentSession[] => [thread]);
+    const f = await ready({
+      conversationFolders: true,
+      sessions: { list, subscribe: () => () => {} },
+    });
+    const { agents } = f.plugin;
+    await expect(
+      agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+    ).rejects.toThrow(
+      "This conversation already started in the agent's workspace",
+    );
+    expect(agents.conversationFolder(f.agent.key, thread)).toBeUndefined();
+    // Another conversation of the agent still gets one, and keeps it once
+    // its session starts there.
+    const other = { channelId: channel, root: "f".repeat(64) };
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "~/work"),
+    ).resolves.toBe("/home/me/work");
+    list.mockReturnValue([thread, other]);
+    await expect(
+      agents.assignConversationFolder(f.agent.key, other, "~/work"),
+    ).resolves.toBe("/home/me/work");
+    expect(list).toHaveBeenCalledWith(f.agent.key);
   });
 
   it("is refused by a harness without folders, such as goose or Pi", async () => {

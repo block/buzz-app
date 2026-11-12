@@ -39,7 +39,10 @@ import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { AgentSessions, localSessions } from "./sessions";
 import { BASE_PROMPT } from "../../features/agent-harness/base-prompt";
-import { assignConversationFolder } from "../../features/agents/conversation-folders";
+import {
+  assignConversationFolder,
+  conversationKey,
+} from "../../features/agents/conversation-folders";
 import { quoted } from "../../features/agent-harness/turn-records";
 import { wake } from "../../features/agent-harness/wakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
@@ -3751,7 +3754,9 @@ describe("a conversation given its own folder", () => {
   it("leaves conversations without a folder in the workspace", async () => {
     const resolveDirectory = folders();
     const other = message("3", "Elsewhere");
-    const { deliver, claudes, data } = setup([other], { resolveDirectory });
+    const { deliver, claudes, data, runtime } = setup([other], {
+      resolveDirectory,
+    });
     await assign(data, "/repos/worktree");
     await deliver({
       type: "mention",
@@ -3769,6 +3774,12 @@ describe("a conversation given its own folder", () => {
     expect(claude?.options.cwd).toBe("~/.buzz");
     expect(claude?.options.args).not.toContain("/Users/me/.buzz");
     expect(resolveDirectory).not.toHaveBeenCalled();
+    // Listed from its first turn, so Agents gives it no folder later.
+    expect(
+      runtime
+        .conversations(self)
+        .map(({ channelId, root }) => conversationKey(channelId, root)),
+    ).toEqual([`${channel}/${other.id}`]);
   });
 
   it("reads its sessions' history from the folder without visiting it", async () => {

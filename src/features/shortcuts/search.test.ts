@@ -101,27 +101,30 @@ it.each<[string, boolean, readonly string[]]>([
   ["ctrl =", false, ["Increase interface size"]],
   // A single letter is a plain key and also finds names containing it.
   ["L", true, ["Add or edit link", "Edit selected message"]],
-  // Part of a chord as shown.
-  [
-    "⇧⌘",
-    true,
-    [
-      "Code",
-      "Increase interface size",
-      "Add or edit link",
-      "Open unread in Activity",
-    ],
-  ],
+  // Modifiers alone, whole or half-typed, find the shown chords holding them;
+  // the hidden ⇧⌘+ alias does not make "Increase interface size" a match.
+  ["⇧⌘", true, ["Code", "Add or edit link", "Open unread in Activity"]],
   [
     "Ctrl+Shift",
     false,
+    ["Code", "Add or edit link", "Open unread in Activity"],
+  ],
+  ["cmd shift", true, ["Code", "Add or edit link", "Open unread in Activity"]],
+  [
+    "ctrl+",
+    false,
     [
+      "Search Buzz",
       "Code",
       "Increase interface size",
       "Add or edit link",
       "Open unread in Activity",
     ],
   ],
+  // A whole chord never matches one that differs by Shift.
+  ["⇧⌘K", true, []],
+  ["⇧⌘=", true, ["Increase interface size"]],
+  ["⇧⌘E", true, []],
   ["nothing here", true, []],
   ["⌘X", true, []],
 ])("text %j (Apple %s) finds %j", (text, apple, expected) => {

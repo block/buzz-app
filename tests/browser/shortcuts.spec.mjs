@@ -582,7 +582,7 @@ test("Settings → Shortcuts search filters by name and keys, records keys, rebi
   await page.keyboard.press(`${modifier}+/`);
   const region = page.getByRole("region", { name: "Shortcuts", exact: true });
   const search = region.getByRole("searchbox", { name: "Search shortcuts" });
-  const results = region.locator("[aria-live=polite]");
+  const results = region.getByRole("status");
   const titles = () =>
     region
       .getByRole("article")
@@ -594,9 +594,13 @@ test("Settings → Shortcuts search filters by name and keys, records keys, rebi
   await search.focus();
   await page.keyboard.type("settings");
   await expect.poll(titles).toEqual(["Open Settings"]);
-  await expect(results).toHaveText("1 shortcut");
+  await expect(results).toHaveText("1 result");
   await expect(heading("Message formatting")).toHaveCount(0);
   await expect(heading("Sending messages")).toHaveCount(0);
+  // The message key switches match by their words.
+  await search.fill("send");
+  await expect(heading("Sending messages")).toBeVisible();
+  await expect(heading("Editing messages")).toHaveCount(0);
   // A typed chord, including the read-only formatting keys.
   await search.fill("mod shift u");
   await expect.poll(titles).toEqual(["Add or edit link"]);
@@ -614,7 +618,7 @@ test("Settings → Shortcuts search filters by name and keys, records keys, rebi
   await expect(search).toBeFocused();
   await expect(search).toHaveValue(apple ? "⌘K" : "Ctrl+K");
   await expect.poll(titles).toEqual(["Search Buzz", "Add or edit link"]);
-  await expect(results).toHaveText("2 shortcuts");
+  await expect(results).toHaveText("2 results");
   await expect(
     page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
   ).toHaveCount(0);
@@ -622,6 +626,9 @@ test("Settings → Shortcuts search filters by name and keys, records keys, rebi
   const row = region.getByRole("article", { name: "Search Buzz" });
   await button(row, "Change shortcut for Search Buzz").focus();
   await page.keyboard.press("Enter");
+  await expect(
+    row.getByRole("textbox", { name: "New shortcut for Search Buzz" }),
+  ).toBeFocused();
   await page.keyboard.press(`${modifier}+Alt+9`);
   await expect.poll(titles).toEqual(["Add or edit link"]);
   await expect(search).toBeFocused();
@@ -638,9 +645,11 @@ test("Settings → Shortcuts search filters by name and keys, records keys, rebi
   await expect(search).toHaveValue(apple ? "⌘K" : "Ctrl+K");
   // The rebound chord finds its row; an unbound one says so.
   await toggle.click();
+  await expect(recorder).toBeFocused();
   await page.keyboard.press(`${modifier}+Alt+9`);
   await expect.poll(titles).toEqual(["Search Buzz"]);
   await toggle.click();
+  await expect(recorder).toBeFocused();
   await page.keyboard.press(`${modifier}+Alt+8`);
   await expect.poll(titles).toEqual([]);
   const nothing = `Nothing is mapped to ${apple ? "⌥⌘8" : "Ctrl+Alt+8"}`;

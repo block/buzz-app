@@ -41,9 +41,9 @@ import {
 } from "../features/shortcuts/KeyCaptureControl";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import {
-  sameKeyOnLayout,
   searchEntry,
   shortcutFilter,
+  shownChords,
   type ShortcutSearch,
 } from "../features/shortcuts/search";
 import type { ShortcutsService } from "../features/shortcuts/service";
@@ -149,14 +149,6 @@ const DESKTOP_CHORDS: readonly KeyBinding[] = [
   { key: "Tab", mod: true },
   { key: "Tab", mod: true, shift: true },
 ];
-/** The distinct chords to show: each physical key once, in registration order. */
-const shownChords = (chords: readonly KeyBinding[]) =>
-  chords.filter(
-    (chord, index) =>
-      !chords
-        .slice(0, index)
-        .some((earlier) => sameKeyOnLayout(earlier, chord)),
-  );
 const includes = (chords: readonly KeyBinding[], binding: KeyBinding) =>
   chords.some((chord) => sameBinding(chord, binding));
 /** Every owner supplies order; identity and title make ties deterministic. */
@@ -430,14 +422,43 @@ export function ShortcutSettings({
         : shownGroups,
     [filter, shownGroups, entries],
   );
+  // The two switches match by their words, so "send" finds its setting.
+  const preferences = [
+    {
+      title: "Sending messages",
+      label: `Send with ${sendChord}`,
+      description: `Enter adds a new line. ${sendChord} sends your message.`,
+      preference: sendKeyPreference,
+    },
+    {
+      title: "Editing messages",
+      label: "Edit last message with Up Arrow",
+      description:
+        "When the composer is empty, Up Arrow edits your most recent editable message instead of selecting messages.",
+      preference: editKeyPreference,
+    },
+  ].filter(
+    ({ title, label }) =>
+      !filter || filter.matches(searchEntry(label, title, [], apple)),
+  );
   const found = visibleGroups.reduce(
     (count, group) => count + group.rows.length,
-    0,
+    preferences.length,
   );
-  // A rebind can take the focused row out of the results; keep focus here.
+  // A rebind or reset can take its row out of the results. Keep focus in the
+  // search, and drop the row's notice rather than show it when the row returns.
+  const rebound = useRef<string | null>(null);
   useEffect(() => {
-    if (filter && visibleGroups && document.activeElement === document.body)
-      searchInput.current?.focus();
+    const key = rebound.current;
+    rebound.current = null;
+    if (
+      !key ||
+      !filter ||
+      visibleGroups.some((group) => group.rows.some((row) => row.key === key))
+    )
+      return;
+    setNotice((current) => (current?.key === key ? null : current));
+    if (document.activeElement === document.body) searchInput.current?.focus();
   }, [filter, visibleGroups]);
 
   const start = useCallback((row: Row) => {
@@ -454,6 +475,7 @@ export function ShortcutSettings({
     (row: Row) => {
       cancel(row);
       setNotice(null);
+      rebound.current = row.key;
       bindings.set(row.key, null);
     },
     [cancel, bindings],
@@ -503,6 +525,7 @@ export function ShortcutSettings({
       const isDefault =
         target.defaults.length === 1 &&
         target.defaults.every((current) => sameBinding(current, binding));
+      rebound.current = target.key;
       bindings.set(target.key, isDefault ? null : binding);
       setEditing(null);
       // EditableInput handles Enter locally regardless of the held modifiers.
@@ -532,11 +555,11 @@ export function ShortcutSettings({
           onSearch={setSearch}
         />
         {/* The only result announcement: the count, or the empty state. */}
-        <div aria-live="polite">
+        <div role="status">
           {filter &&
             (found ? (
               <p className="sr-only">
-                {found === 1 ? "1 shortcut" : `${found} shortcuts`}
+                {found === 1 ? "1 result" : `${found} results`}
               </p>
             ) : (
               <EmptyState
@@ -554,23 +577,15 @@ export function ShortcutSettings({
               />
             ))}
         </div>
-        {/* Results come straight after the search; these switches match nothing. */}
-        {!filter && (
-          <>
-            <MessageKeyPreference
-              title="Sending messages"
-              label={`Send with ${sendChord}`}
-              description={`Enter adds a new line. ${sendChord} sends your message.`}
-              preference={sendKeyPreference}
-            />
-            <MessageKeyPreference
-              title="Editing messages"
-              label="Edit last message with Up Arrow"
-              description="When the composer is empty, Up Arrow edits your most recent editable message instead of selecting messages."
-              preference={editKeyPreference}
-            />
-          </>
-        )}
+        {preferences.map(({ title, label, description, preference }) => (
+          <MessageKeyPreference
+            key={title}
+            title={title}
+            label={label}
+            description={description}
+            preference={preference}
+          />
+        ))}
         {rows.length ? (
           <div className="grid gap-section-gap">
             {visibleGroups.map((group) => (
@@ -855,7 +870,7 @@ function ShortcutSearchBar({
           <SearchField
             inputRef={inputRef}
             label="Search shortcuts"
-            placeholder="Search by name or keys, like ⌘K"
+            placeholder={`Search by name or keys, like ${apple ? "⌘K" : "Ctrl+K"}`}
             value={value}
             onValueChange={(text) => onSearch({ kind: "text", text })}
             onKeyDown={(event) => {

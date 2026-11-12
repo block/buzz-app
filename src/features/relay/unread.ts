@@ -186,8 +186,9 @@ export interface UnreadCapability {
    * a channel prefix. Its one optional Undo restores only captured `msg:<id>`
    * journal markers the save cleared; it never rewinds frontiers or restores
    * forced overlays. No handle is returned unless a marker was cleared, and
-   * any later journal revision or lost action validity expires it. Optional
-   * so older hosts remain compatible. */
+   * pending force-unread intent for a captured ID also withholds it. Later
+   * journal revisions or lost action validity expire it. Optional so older
+   * hosts remain compatible. */
   markCapturedMessagesRead?(
     messageIds: readonly string[],
   ): Promise<ReadMutationResult>;
@@ -3068,6 +3069,17 @@ export function createUnread({
             channelOf(event) === channelId,
         );
       const messageKeys = selected.map(({ id }) => `msg:${id}`);
+      const capturedIdsByChannel = new Map<string, Set<string>>();
+      for (const { id, channelId } of selected) {
+        const ids = capturedIdsByChannel.get(channelId) ?? new Set<string>();
+        ids.add(id);
+        capturedIdsByChannel.set(channelId, ids);
+      }
+      const undoValid = () =>
+        valid() &&
+        [...capturedIdsByChannel].every(
+          ([channelId, ids]) => !hasPendingForcedMessages(channelId, ids),
+        );
       const fence = reads.captureLocalUnread([
         ...selected.map(({ id }) => `msg:${id}`),
         ...channelIds.map(messageForceKey),
@@ -3093,7 +3105,7 @@ export function createUnread({
           messageKeys,
           {
             preserveCapturedSet: true,
-            undo: { keys: new Set(messageKeys), valid },
+            undo: { keys: new Set(messageKeys), valid: undoValid },
           },
         );
         // The save succeeded; do not clear overlays from a visit that ended
@@ -3116,7 +3128,8 @@ export function createUnread({
           changed.add(channelId);
         }
         if (changed.size) publish(changed);
-        return result;
+        const { undo, ...savedResult } = result;
+        return undo && !undoValid() ? savedResult : result;
       });
     },
     leaveChannel(channelId) {

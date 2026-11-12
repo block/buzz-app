@@ -54,7 +54,9 @@ import tabStyles from "./ChannelTabs.module.css";
 /** The content-tab families whose visits follow explicit dismissal. */
 export const historyPanel = (entry: PanelOpening) =>
   !entry.channelContext &&
-  (profileContentPanel(entry) || entry.panel.key === "buzz.github/object");
+  (entry.panel.addressable === true ||
+    profileContentPanel(entry) ||
+    entry.panel.key === "buzz.github/object");
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({

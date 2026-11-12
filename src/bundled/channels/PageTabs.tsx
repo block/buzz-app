@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import type { RelaySession } from "../../features/relay/session";
 import type {
   ConversationExtensions,
+  ConversationWorkspaceProps,
   PageTabOptions,
   PageTabsProps,
   PageTabTarget,
@@ -29,6 +30,8 @@ import {
   type ConversationTab,
 } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
+import { ConversationTab as ConversationReader } from "./ConversationTab";
+import { panelOpening } from "../../features/panels/service";
 import { useCoveredByDock } from "./useCoveredByDock";
 import styles from "./Channels.module.css";
 
@@ -36,6 +39,21 @@ export type { PageTabOptions, PageTabsProps, PageTabTarget };
 
 // The tab each page's next plain open replaces, for as long as its tabs last.
 const previews = new WeakMap<RelaySession, Map<string, string>>();
+
+type HostProps = {
+  host: ConversationHostServices;
+  extensions?: ConversationExtensions | undefined;
+};
+
+export function ConversationWorkspace(
+  props: ConversationWorkspaceProps & HostProps,
+) {
+  return (
+    <PageTabs {...props} workspace={props}>
+      {() => null}
+    </PageTabs>
+  );
+}
 
 /** A page's content as the first tab, with conversations it opens beside it. */
 export function PageTabs({
@@ -48,10 +66,11 @@ export function PageTabs({
   host,
   extensions,
   visits,
-}: PageTabsProps & {
-  host: ConversationHostServices;
-  extensions?: ConversationExtensions | undefined;
-}) {
+  workspace,
+}: PageTabsProps &
+  HostProps & {
+    workspace?: ConversationWorkspaceProps;
+  }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);
   const { channels, profiles } = useChannelLabels(
@@ -108,6 +127,44 @@ export function PageTabs({
       const Icon = channelIcon(item);
       return <Icon size="1rem" />;
     },
+  });
+  const enteredDetail = useRef<
+    | {
+        session: RelaySession;
+        key: string;
+      }
+    | undefined
+  >(undefined);
+  const detailKey =
+    workspace?.detail &&
+    JSON.stringify([
+      scope,
+      id,
+      workspace.target.channelId,
+      workspace.target.threadId,
+      workspace.target.messageId,
+      workspace.detail.target,
+      workspace.detail.rootId,
+    ]);
+  useLayoutEffect(() => {
+    if (!workspace?.detail || !detailKey) {
+      enteredDetail.current = undefined;
+      return;
+    }
+    if (
+      enteredDetail.current?.session === session &&
+      enteredDetail.current.key === detailKey
+    )
+      return;
+    const entry = panelOpening(
+      host.panels,
+      workspace.target.channelId,
+      workspace.detail.target,
+      workspace.detail.rootId,
+    );
+    if (!entry) return;
+    enteredDetail.current = { session, key: detailKey };
+    secondary.open(entry, true);
   });
   // One stable opener, so a page's effects can depend on it; it reads the
   // live workspace when called.
@@ -278,6 +335,27 @@ export function PageTabs({
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
   const covered = useCoveredByDock(split.ref, fallbackFocus, showingPanel);
+  const primaryTarget = workspace?.target;
+  const primaryChannel =
+    primaryTarget &&
+    channels.find((channel) => channel.id === primaryTarget.channelId);
+  const primaryTab: ConversationTab | undefined = primaryTarget && {
+    id: "conversation",
+    channelId: primaryTarget.channelId,
+    ...(primaryTarget.threadId
+      ? {
+          kind: "thread" as const,
+          messageId: primaryTarget.messageId ?? primaryTarget.threadId,
+          rootId: primaryTarget.threadId,
+        }
+      : {
+          kind: "conversation" as const,
+          ...(primaryTarget.messageId && {
+            messageId: primaryTarget.messageId,
+          }),
+        }),
+    ...(primaryTarget.messageId ? { revealRequest: 1 } : { focusRequest: 1 }),
+  };
   // As in a plain channel visit, the page reads its visible selected side tab
   // while focus stays anywhere on the page, such as the row that opened it.
   // A conversation moved to the main pane still reads only by its own focus.
@@ -362,7 +440,48 @@ export function PageTabs({
                   id: "conversation",
                   label,
                   icon,
-                  content: children(open, close, isOpen),
+                  toolbar: workspace?.toolbar,
+                  actions: workspace?.actions,
+                  content: workspace ? (
+                    primaryTab &&
+                    primaryChannel &&
+                    secondary.canOpenConversation(primaryChannel.id) ? (
+                      <ConversationReader
+                        key={JSON.stringify(primaryTarget)}
+                        tab={primaryTab}
+                        active={
+                          secondary.selectedMain === "conversation" && !covered
+                        }
+                        channel={primaryChannel}
+                        session={session}
+                        scope={scope}
+                        extensions={extensions}
+                        openLink={(url, origin) =>
+                          secondary.openConversationLink(
+                            primaryChannel.id,
+                            url,
+                            origin,
+                          )
+                        }
+                        canOpenLink={(target) => !!host.panels.resolve(target)}
+                        openThread={(messageId, rootId, intent) =>
+                          secondary.openConversationThread(
+                            primaryChannel.id,
+                            messageId,
+                            rootId,
+                            intent,
+                          )
+                        }
+                        close={() => {}}
+                      />
+                    ) : (
+                      <p role="status" className={styles.empty}>
+                        This conversation is no longer available.
+                      </p>
+                    )
+                  ) : (
+                    children(open, close, isOpen)
+                  ),
                 },
                 ...secondary.mainItems,
               ]}

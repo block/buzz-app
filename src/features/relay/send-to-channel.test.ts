@@ -405,9 +405,19 @@ it("a host reply signs its chips once and retries the exact bytes; the public AP
     JSON.stringify(saved),
   );
   expect(h.writer.sign).toHaveBeenCalledTimes(1);
-  // Outside the host scope, extra arguments are ignored.
+  // Outside the host scope, an extra chip argument after routing candidates is ignored.
   const send = h.messages.send as (...args: unknown[]) => string;
-  const plain = send("channel", "Plain", [], [], undefined, [], {}, [token]);
+  const plain = send(
+    "channel",
+    "Plain",
+    [],
+    [],
+    undefined,
+    [],
+    {},
+    [],
+    [token],
+  );
   await vi.waitFor(() =>
     expect(h.writer.publish.mock.calls.at(-1)?.[0].id).toBe(plain),
   );

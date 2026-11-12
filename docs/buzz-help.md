@@ -1185,6 +1185,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
 
 ## Optional features and limits
 
+- Desktop packages include a `buzz` command line client. On macOS, use
+  `Buzz.app/Contents/Resources/bin/buzz`. Recognized CLI commands sent to the
+  old `Contents/MacOS/buzz` path fail with exit code 1 (bad input) instead of
+  running the command. Update scripts or PATH links to use the bundled CLI.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

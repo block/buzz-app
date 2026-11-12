@@ -49,11 +49,12 @@ if (import.meta.main) {
     : process.platform === "win32";
   const name = windows ? "buzz.exe" : "buzz";
   const target = cliTarget(root);
-  // A separate prefix per revision, target and profile lets Cargo skip an
-  // install that is already current without --force.
+  // Isolate both install metadata and build outputs: a shared target directory
+  // can retain another revision's named binary even when Cargo considers this
+  // revision fresh. v2 also avoids installs staged from that old shared cache.
   const prefix = join(
     target,
-    "buzz-cli",
+    "buzz-cli-v2",
     rev,
     triple ?? "host",
     dev ? "debug" : "release",
@@ -70,7 +71,7 @@ if (import.meta.main) {
       "--root",
       prefix,
       "--target-dir",
-      join(target, "buzz-cli-build"),
+      join(prefix, "build"),
       ...(dev ? ["--debug"] : ["--config", "profile.release.strip=true"]),
       ...(triple ? ["--target", triple] : []),
       "buzz-cli",

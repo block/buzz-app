@@ -1,6 +1,6 @@
 // Browser geometry and real scrolling cannot be established in jsdom.
 import { test, expect } from "./fixture.mjs";
-import { open, settle, anchor, expectAnchor } from "./timeline.mjs";
+import { open, settle, anchor, expectAnchor, wheel } from "./timeline.mjs";
 import {
   openSettings,
   closeSettings,
@@ -102,11 +102,8 @@ test("Bottom alignment: setting, upward growth, reload, themes and overflow", as
   expect((await geometry()).overflow).toBeGreaterThan(100);
   const bottom = (await geometry()).scroll;
   await history.hover();
-  await page.mouse.wheel(0, -500);
-  await expect
-    .poll(async () => (await geometry()).scroll)
-    .toBeLessThan(bottom - 100);
-  await settle(page);
+  await wheel(page, -500);
+  expect((await geometry()).scroll).toBeLessThan(bottom - 100);
   const reading = await anchor(page);
   app.append(
     "primary",

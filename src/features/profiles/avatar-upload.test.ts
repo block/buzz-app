@@ -4,6 +4,7 @@ import { pngChunks, snapshotChunk } from "../messages/image-metadata";
 import {
   avatarPictureError,
   avatarPreview,
+  profilePictureError,
   uploadAvatar,
 } from "./avatar-upload";
 
@@ -156,7 +157,7 @@ it("forwards the requested size so previews share the message-row thumbnail URL"
   expect(avatarPreview(picture, community)).toBe(proxied(picture));
 });
 
-it("saves Buzz mobile's emoji avatar as-is, like an HTTPS URL", () => {
+it("saves Buzz mobile's emoji avatar as-is in a personal profile only", () => {
   const emoji = `data:image/svg+xml,${encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="256" fill="#FFB84D"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🛹</text></svg>',
   )}`;
@@ -165,6 +166,9 @@ it("saves Buzz mobile's emoji avatar as-is, like an HTTPS URL", () => {
     ` ${emoji}\n`,
     " https://images.example/a.png ",
   ])
-    expect(avatarPictureError(picture)).toBeUndefined();
-  expect(avatarPictureError("data:image/svg+xml,%3Csvg%3E")).toBeDefined();
+    expect(profilePictureError(picture)).toBeUndefined();
+  expect(profilePictureError("data:image/svg+xml,%3Csvg%3E")).toBeDefined();
+  // Agents save HTTPS pictures only.
+  expect(avatarPictureError(emoji)).toBeDefined();
+  expect(avatarPictureError(" https://images.example/a.png ")).toBeUndefined();
 });

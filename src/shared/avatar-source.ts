@@ -41,6 +41,8 @@ export function legacyEmojiPicture(picture: string) {
   if (!svg.startsWith(head) || !svg.endsWith(emojiSvgTail)) return;
   const text = svg.slice(head.length, -emojiSvgTail.length);
   if (!/^(?:[^<>&]|&amp;|&lt;|&gt;){1,384}$/.test(text)) return;
+  // A lone surrogate cannot be encoded again, so it is not this template.
+  if (/\p{Cs}/u.test(text)) return;
   const emoji = text
     .replaceAll("&gt;", ">")
     .replaceAll("&lt;", "<")

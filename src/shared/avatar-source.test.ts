@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { avatarMedia, avatarSource } from "./avatar-source";
+import { avatarMedia, avatarSource, legacyEmojiPicture } from "./avatar-source";
 
 // Exact output of Buzz mobile's emojiAvatarDataUrl("🛹", 0xFFFFB84D).
 const mobile =
@@ -28,3 +28,13 @@ it.each([
 ])("still rejects other SVG: %s", (picture) => {
   expect(avatarSource(picture)).toBeUndefined();
 });
+
+it.each(["\ud83d", "\udef9", "🛹\ud83d"])(
+  "rejects ill-formed emoji text without throwing: %j",
+  (text) => {
+    // Left raw in the URL: a lone surrogate has no percent-encoding.
+    const picture = mobile.replace("%F0%9F%9B%B9", text);
+    expect(legacyEmojiPicture(picture)).toBeUndefined();
+    expect(avatarSource(picture)).toBeUndefined();
+  },
+);

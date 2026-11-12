@@ -7491,6 +7491,7 @@ describe("a conversation given its own folder", () => {
   const withFolder = async (
     resolveDirectory: ReturnType<typeof folders>,
     folder: string,
+    conversation = `channel/${root}`,
   ) => {
     const f = fixture(
       [],
@@ -7509,7 +7510,7 @@ describe("a conversation given its own folder", () => {
       f.store,
       scope,
       pubkey,
-      `channel/${root}`,
+      conversation,
       folder,
     );
     return f;
@@ -7548,6 +7549,18 @@ describe("a conversation given its own folder", () => {
     ).toMatchObject({ cwd: "/repos/worktree" });
     f.complete(1, "DONE AGAIN");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  });
+
+  it("starts a Solo chat's one thread in the folder it was given", async () => {
+    const f = await withFolder(folders(), "/repos/solo", "channel");
+    f.soloChannels.add("channel");
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({ cwd: "/repos/solo" });
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
   });
 
   it("refuses its turn, naming the folder, once the folder is gone", async () => {

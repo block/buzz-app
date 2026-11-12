@@ -3691,7 +3691,11 @@ describe("a conversation given its own folder", () => {
         throw new Error(`Could not find ${path}`);
       return path === "~/.buzz" ? "/Users/me/.buzz" : path;
     });
-  const assign = (data: Map<string, string>, folder: string) =>
+  const assign = (
+    data: Map<string, string>,
+    folder: string,
+    conversation = `${channel}/${root.id}`,
+  ) =>
     assignConversationFolder(
       localStore({
         getItem: (key: string) => data.get(key) ?? null,
@@ -3700,7 +3704,7 @@ describe("a conversation given its own folder", () => {
       } as Storage),
       scope,
       self,
-      `${channel}/${root.id}`,
+      conversation,
       folder,
     );
 
@@ -3727,6 +3731,48 @@ describe("a conversation given its own folder", () => {
       "Your persistent workspace is at `/Users/me/.buzz`, not in your working directory",
     );
     expect(published).toEqual([]);
+  });
+
+  it("starts there for a message from the owner's other client", async () => {
+    // The owner's phone signs as the owner, and its message reaches this
+    // device from the relay like any other; the folder is this device's.
+    const theirs = message("5", "Deploy failed", { pubkey: "b".repeat(64) });
+    const fromPhone = message("6", "@Claude take a look", {
+      created_at: 130,
+      tags: [
+        ["h", channel],
+        ["e", theirs.id, "", "reply"],
+        ["p", self],
+      ],
+    });
+    const { deliver, claudes, data } = setup([theirs, fromPhone], {
+      resolveDirectory: folders(),
+    });
+    await assign(data, "/repos/worktree", `${channel}/${theirs.id}`);
+    await deliver({ type: "mention", event: fromPhone });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/worktree");
+  });
+
+  it("starts a Solo chat's one session in the folder it was given", async () => {
+    const { deliver, claudes, data } = setup([], {
+      solo: new Set([channel]),
+      resolveDirectory: folders(),
+    });
+    await assign(data, "/repos/solo", channel);
+    await deliver({
+      type: "mention",
+      event: message("7", "@Claude hi", {
+        tags: [
+          ["h", channel],
+          ["p", self],
+        ],
+      }),
+    });
+    await flush(10);
+    const claude = claudes().find((process) => process.prompts.length);
+    expect(claude?.options.cwd).toBe("/repos/solo");
   });
 
   it("refuses its turn, naming the folder, once the folder is gone", async () => {

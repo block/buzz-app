@@ -195,6 +195,7 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
+import { isHuddleRoom } from "../huddle/lifecycle";
 import { soloChat } from "./solo-chat";
 import {
   readCheckpoints,
@@ -1570,7 +1571,8 @@ export type Agents = {
    * folder, before its first turn: its session starts there, with that
    * folder's repository configuration, and the agent's workspace stays
    * reachable. `place` names the conversation as session controls do; a DM
-   * or Solo chat has no root. `path` is absolute or `~/…` and must be an
+   * or Solo chat has no root, and rejects one, as a huddle room rejects any
+   * folder. `path` is absolute or `~/…` and must be an
    * existing directory. Resolves with the folder, without symbolic links.
    * Kept on this device only, and set once: the same folder again resolves,
    * another rejects, as does a conversation that already has a session.
@@ -4790,6 +4792,25 @@ export class AgentsService extends Service implements Agents {
     if (await this.executions.inspect(key))
       throw new Error(
         "Conversation folders are unavailable for agents on an execution target",
+      );
+    // Harnesses run a DM or Solo chat as one conversation, so a root would
+    // name a conversation that never runs. They key a huddle room's
+    // conversations differently, so none gets a folder.
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    const channel = await reads?.channel(place.channelId);
+    if (isHuddleRoom(channel?.about))
+      throw new Error("Conversation folders are unavailable in a huddle");
+    if (
+      place.root &&
+      (channel?.dm ||
+        (await reads?.soloChat(
+          agent.owner,
+          place.channelId,
+          new AbortController().signal,
+        )))
+    )
+      throw new Error(
+        "A DM or Solo chat is one conversation: give its folder without a root",
       );
     // With the calling plugin's own file access, which the host checks.
     const folder = await host.resolveDirectory(path, { create: false });

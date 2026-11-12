@@ -56,6 +56,7 @@ import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
 import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
+import { huddleDescription } from "../huddle/lifecycle";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
@@ -1730,6 +1731,51 @@ describe("a conversation folder", () => {
       agents.assignConversationFolder(f.agent.key, other, "~/work"),
     ).resolves.toBe("/home/me/work");
     expect(list).toHaveBeenCalledWith(f.agent.key);
+  });
+
+  it.each(["solo", "dm"] as const)(
+    "is given to a %s conversation whole, refusing a root",
+    async (channelType) => {
+      const f = await ready({ conversationFolders: true });
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel ? { ...row, channelType } : row,
+        ),
+      });
+      const { agents } = f.plugin;
+      await expect(
+        agents.assignConversationFolder(f.agent.key, thread, "~/work"),
+      ).rejects.toThrow(
+        "A DM or Solo chat is one conversation: give its folder without a root",
+      );
+      expect(agents.conversationFolder(f.agent.key, thread)).toBeUndefined();
+      await expect(
+        agents.assignConversationFolder(
+          f.agent.key,
+          { channelId: channel },
+          "~/work",
+        ),
+      ).resolves.toBe("/home/me/work");
+    },
+  );
+
+  it("is refused in a huddle room", async () => {
+    const f = await ready({ conversationFolders: true });
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, description: huddleDescription(crypto.randomUUID()) }
+          : row,
+      ),
+    });
+    for (const place of [thread, { channelId: channel }])
+      await expect(
+        f.plugin.agents.assignConversationFolder(f.agent.key, place, "~/work"),
+      ).rejects.toThrow("Conversation folders are unavailable in a huddle");
   });
 
   it("is refused by a harness without folders, such as goose or Pi", async () => {

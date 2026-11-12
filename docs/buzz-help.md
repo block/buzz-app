@@ -1043,8 +1043,9 @@ available rather than silently discarding it.
   again; a failed check keeps the previous permissions.
   Claude runs with an Anthropic API key pasted under **Anthropic API key**
   there, once for every local Claude agent. With the Claude plugin enabled,
-  **Settings → Claude** starts with a masked, read-only saved key. The
-  field opens its **Replace / Remove** menu when focused or clicked;
+  **Settings → Claude → Set** opens **Connect Claude** to add a key. Closing
+  the dialog discards its draft; saving returns to the masked, read-only saved
+  key. The field opens its **Replace / Remove** menu when focused or clicked;
   the chevron also opens it. **Replace** opens a blank, masked field with small
   **Cancel / Save** buttons inside it. When adding or replacing a key, **Save**
   stays visible inside the field and is disabled until you enter a key.

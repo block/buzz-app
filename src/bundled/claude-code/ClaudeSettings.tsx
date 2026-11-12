@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Header } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { KEY_ONCE, SignIn } from "./auth";
 import { SavedClaudeKey } from "./SavedClaudeKey";
@@ -28,8 +30,11 @@ export function ClaudeSettings({
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const section = useRef<HTMLElement>(null);
   const actionsButton = useRef<HTMLButtonElement>(null);
+  const setButton = useRef<HTMLButtonElement>(null);
+  const connectForm = useRef<HTMLDivElement>(null);
   const storage = isApplePlatform(navigator.platform)
     ? "this Mac’s Keychain"
     : "this device’s secure storage";
@@ -39,9 +44,15 @@ export function ClaudeSettings({
     setReadError("");
     try {
       const account = await setup.auth.check();
-      if (request.current === current) setConfigured(account !== undefined);
+      if (request.current === current) {
+        setConfigured(account !== undefined);
+        if (account !== undefined) setConnecting(false);
+      }
     } catch (error) {
-      if (request.current === current) setReadError(String(error));
+      if (request.current === current) {
+        setReadError(String(error));
+        setConnecting(false);
+      }
     } finally {
       if (request.current === current) setChecking(false);
     }
@@ -121,16 +132,58 @@ export function ClaudeSettings({
               />
             </SettingsGroup>
           ) : (
-            <SignIn
-              variant="settings"
-              setup={setup}
-              disabled={disabled || configured === undefined}
-              active={active}
-              onSavingChange={setSaving}
-            />
+            <SettingsGroup>
+              <PreferenceRow
+                title="Anthropic API key"
+                subtitle={
+                  configured === false && !readError
+                    ? "No key saved."
+                    : undefined
+                }
+                trailing={
+                  <Button
+                    ref={setButton}
+                    size="sm"
+                    disabled={disabled || configured === undefined}
+                    onClick={() => {
+                      if (active() && !disabled) setConnecting(true);
+                    }}
+                  >
+                    Set
+                  </Button>
+                }
+              />
+            </SettingsGroup>
           )}
         </LoadingRegion>
       </div>
+      {connecting && active() && (
+        <Dialog
+          open
+          visit
+          title="Connect Claude"
+          headerGap="compact"
+          preventClose={saving}
+          onOpenChange={(open) => !open && setConnecting(false)}
+          initialFocus={() =>
+            connectForm.current?.querySelector("input") ?? null
+          }
+          finalFocus={() =>
+            actionsButton.current ?? setButton.current ?? section.current
+          }
+        >
+          <div ref={connectForm}>
+            <SignIn
+              variant="dialog"
+              setup={setup}
+              disabled={disabled}
+              active={active}
+              onSavingChange={setSaving}
+              onSaved={() => setConnecting(false)}
+            />
+          </div>
+        </Dialog>
+      )}
       {confirm && (
         <AlertDialog
           title="Remove Claude API key?"
@@ -139,6 +192,7 @@ export function ClaudeSettings({
           onClose={() => setConfirm(false)}
           finalFocus={() =>
             actionsButton.current ??
+            setButton.current ??
             section.current?.querySelector<HTMLInputElement>("input") ??
             section.current
           }

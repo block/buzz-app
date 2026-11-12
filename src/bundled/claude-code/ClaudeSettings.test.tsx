@@ -101,14 +101,21 @@ async function removeKey(user = userEvent.setup()) {
   return screen.getByRole("alertdialog");
 }
 
+async function connectKey(user = userEvent.setup()) {
+  const set = await screen.findByRole("button", { name: "Set" });
+  await waitFor(() => expect(set).toBeEnabled());
+  await user.click(set);
+  const dialog = await screen.findByRole("dialog", { name: "Connect Claude" });
+  return within(dialog).getByLabelText("Anthropic API key");
+}
+
 it("adds, confirms removal, and adds again without an installed runtime", async () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   native.saved = false;
   const user = userEvent.setup();
   const { spawn } = fixture();
-  const add = await screen.findByLabelText("Anthropic API key");
-  await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
-  const card = add.closest(".buzz-settings-group");
+  const set = await screen.findByRole("button", { name: "Set" });
+  const card = set.closest(".buzz-settings-group");
   expect(card).not.toBeNull();
   expect(screen.getAllByText("Anthropic API key")).toHaveLength(1);
   expect(card).toContainElement(screen.getByText("Anthropic API key"));
@@ -122,6 +129,9 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
       .getByText(/^Claude requires an API key/)
       .closest(".buzz-content-header"),
   ).not.toBeNull();
+  expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+  let add = await connectKey(user);
+  await waitFor(() => expect(add).toHaveFocus());
   expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
     "aria-disabled",
     "true",
@@ -131,6 +141,10 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
     "aria-disabled",
     "true",
   );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(set).toHaveFocus());
+  add = await connectKey(user);
+  expect(add).toHaveValue("");
   expect(spawn).not.toHaveBeenCalled();
   await user.type(add, "sk-ant-first");
   expect(add.closest(".buzz-input-group")).toContainElement(
@@ -138,6 +152,7 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
   );
   await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
+  expect(screen.queryByRole("dialog")).toBeNull();
   const confirmation = await removeKey(user);
   expect(confirmation).toHaveAccessibleDescription(
     "This removes the key from this Mac’s Keychain. New local Claude sessions will need a key. A turn already running can finish.",
@@ -160,9 +175,9 @@ it("adds, confirms removal, and adds again without an installed runtime", async 
       name: "Remove key",
     }),
   );
-  await screen.findByLabelText("Anthropic API key");
+  const next = await connectKey(user);
   expect(native.saved).toBe(false);
-  await user.type(screen.getByLabelText("Anthropic API key"), "sk-ant-third");
+  await user.type(next, "sk-ant-third");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await savedKey();
   expect(native.saved).toBe(true);
@@ -206,10 +221,42 @@ it.each(["Save", "Remove key"])(
       );
     } else {
       expect(native.saved).toBe(false);
-      expect(screen.getByLabelText("Anthropic API key")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Set" })).toBeEnabled();
     }
   },
 );
+
+it("keeps setup open during a write and retains a failed draft until dismissal", async () => {
+  native.saved = false;
+  const user = userEvent.setup();
+  fixture();
+  const input = await connectKey(user);
+  const dialog = screen.getByRole("dialog", { name: "Connect Claude" });
+  let reject!: (reason: string) => void;
+  const pending = new Promise<void>((_, fail) => {
+    reject = fail;
+  });
+  native.invoke.mockImplementationOnce(() => pending);
+  await user.type(input, "sk-ant-draft");
+  try {
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(input).toHaveAttribute("readonly");
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await user.keyboard("{Escape}");
+    expect(dialog).toBeInTheDocument();
+  } finally {
+    await act(async () => reject("Keychain access was denied."));
+  }
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Keychain access was denied.",
+  );
+  expect(input).toHaveValue("sk-ant-draft");
+  expect(input).not.toHaveAttribute("readonly");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(await connectKey(user)).toHaveValue("");
+  expect(native.saved).toBe(false);
+});
 
 it("keeps a failed removal open for retry and prevents duplicate writes while pending", async () => {
   const user = userEvent.setup();
@@ -242,7 +289,7 @@ it("keeps a failed removal open for retry and prevents duplicate writes while pe
   );
   expect(native.saved).toBe(true);
   await user.click(remove);
-  await screen.findByLabelText("Anthropic API key");
+  await screen.findByRole("button", { name: "Set" });
   expect(native.saved).toBe(false);
 });
 
@@ -301,10 +348,8 @@ it("treats a credential read failure as unknown and offers retry", async () => {
   expect(
     screen.queryByRole("button", { name: "API key actions" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+  expect(screen.queryByText("No key saved.")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   await savedKey();
 });
@@ -347,11 +392,11 @@ it("ignores an older credential read that resolves after removal", async () => {
         name: "Remove key",
       }),
     );
-    await screen.findByLabelText("Anthropic API key");
+    await screen.findByRole("button", { name: "Set" });
   } finally {
     await act(async () => release());
   }
-  expect(screen.getByLabelText("Anthropic API key")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Set" })).toBeEnabled();
   expect(native.saved).toBe(false);
 });
 

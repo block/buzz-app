@@ -14,7 +14,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
-import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import type { Spawn } from "./claude";
 import type { ClaudeSetup } from "./setup";
@@ -245,31 +244,24 @@ export function SignIn({
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
-  variant?: "full" | "compact" | "settings";
+  variant?: "full" | "compact" | "dialog";
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
   onSavingChange?: ((saving: boolean) => void) | undefined;
 }) {
-  const form = (
-    <KeyForm
-      setup={setup}
-      disabled={disabled}
-      onSaved={onSaved}
-      active={active}
-      onSavingChange={onSavingChange}
-    />
-  );
   return (
     <div className="grid gap-3">
       {/* Settings puts the introduction in its shared page header. */}
-      {variant !== "settings" && (
+      {variant !== "dialog" && (
         <p className="m-0 text-body-sm text-secondary">{KEY_ONCE}</p>
       )}
-      {variant === "settings" ? (
-        <SettingsGroup layout="form">{form}</SettingsGroup>
-      ) : (
-        form
-      )}
+      <KeyForm
+        setup={setup}
+        disabled={disabled}
+        onSaved={onSaved}
+        active={active}
+        onSavingChange={onSavingChange}
+      />
     </div>
   );
 }

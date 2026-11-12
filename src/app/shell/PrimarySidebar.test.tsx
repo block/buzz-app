@@ -346,17 +346,17 @@ it("collapses the Solo and Team inventories independently in All", async () => {
   expect(section("team").panel).toHaveAttribute("hidden");
 });
 
-it("mounts no actions menu for the Solo and Team group headers", async () => {
+it("mounts an actions menu on the Solo and Team group headers only to move them", async () => {
   vi.useFakeTimers();
   try {
     fixture(true);
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const more = (title: string) =>
       document.querySelector(`button[aria-label="More actions for ${title}"]`);
-    // Both headers hide their actions, yet each channel update re-rendered a menu.
+    // The menu holds only Move up and Move down, so these headers take no other actions.
     expect(more("Channels")).not.toBeNull();
-    expect(more("Solo")).toBeNull();
-    expect(more("Team")).toBeNull();
+    expect(more("Solo")).not.toBeNull();
+    expect(more("Team")).not.toBeNull();
   } finally {
     vi.useRealTimers();
   }

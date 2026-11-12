@@ -54,10 +54,21 @@ import {
   type SoloNavigationService,
 } from "./solo-navigation";
 import type { SoloRegion } from "./solo-navigation-model";
+import type { SidebarGroupFrame } from "./SidebarGroupList";
 import type {
   SoloRegionAction,
   SoloRegionProps,
 } from "./solo-navigation-contract";
+
+/** The Solo group's own heading, which the primary region wears in the All view. */
+type GroupDisclosure = {
+  sectionKey: string;
+  title: string;
+  open: boolean;
+  onToggle(open: boolean): void;
+  /** Lets the person move the whole Solo group among the top-level groups. */
+  frame?: SidebarGroupFrame | undefined;
+};
 
 export function SoloRegions({
   session,
@@ -81,14 +92,7 @@ export function SoloRegions({
   composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
   fallback?: ReactNode;
   hidePrimaryHeading?: boolean;
-  groupDisclosure?:
-    | {
-        sectionKey: string;
-        title: string;
-        open: boolean;
-        onToggle(open: boolean): void;
-      }
-    | undefined;
+  groupDisclosure?: GroupDisclosure | undefined;
   pendingClick?: RefObject<ReturnType<typeof setTimeout> | undefined>;
 }) {
   const localPendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -140,11 +144,12 @@ export function SoloRegions({
   );
   const fallbackContents = groupDisclosure ? (
     <SidebarSection
+      {...groupDisclosure.frame}
       sectionKey={groupDisclosure.sectionKey}
       title={groupDisclosure.title}
       open={groupDisclosure.open}
       onToggle={groupDisclosure.onToggle}
-      hideMoreActions
+      hideMoreActions={!groupDisclosure.frame?.move}
       persistentChevron
     >
       {ordinary}
@@ -231,14 +236,7 @@ function RegionFrame({
   last: boolean;
   ordinary?: ReactNode;
   composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
-  groupDisclosure?:
-    | {
-        sectionKey: string;
-        title: string;
-        open: boolean;
-        onToggle(open: boolean): void;
-      }
-    | undefined;
+  groupDisclosure?: GroupDisclosure | undefined;
   groupSectionKey?: string | undefined;
   hideHeading?: boolean;
 }) {
@@ -479,6 +477,8 @@ function RegionFrame({
       ))
     : body;
   const hasActions = actions.length > 0;
+  // Moving the Solo group outranks moving the primary region that wears its heading.
+  const groupMove = groupDisclosure?.frame?.move;
   return (
     <RegionDestinationContext.Provider
       value={{
@@ -504,6 +504,7 @@ function RegionFrame({
           </>
         ) : (
           <SidebarSection
+            {...groupDisclosure?.frame}
             sectionKey={sectionKey}
             title={groupDisclosure?.title ?? region.title}
             icon={source?.icon}
@@ -514,11 +515,13 @@ function RegionFrame({
               groupDisclosure?.onToggle ??
               ((open) => sidebar.toggle(sectionKey, open))
             }
-            move={{
-              ...(!first ? { up: () => move(-1) } : {}),
-              ...(!last ? { down: () => move(1) } : {}),
-            }}
-            hideMoreActions={first && last}
+            move={
+              groupMove ?? {
+                ...(!first ? { up: () => move(-1) } : {}),
+                ...(!last ? { down: () => move(1) } : {}),
+              }
+            }
+            hideMoreActions={!groupMove && first && last}
             persistentChevron={!!groupDisclosure}
             headerActions={headerActions}
             headerNotice={headerNotice}

@@ -17,6 +17,14 @@ import {
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarFrame } from "../../features/channel-navigation/SidebarFrame";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
+import {
+  SidebarGroupList,
+  type SidebarGroupFrame,
+} from "../../features/channel-navigation/SidebarGroupList";
+import {
+  soloGroupKey,
+  teamGroupKey,
+} from "../../bundled/channels/sidebar-sections";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
 import { ResizableSidebar } from "../../features/channel-navigation/ResizableSidebar";
 import { SidebarUnread } from "../../bundled/channels/SidebarUnread";
@@ -308,86 +316,113 @@ function ScopedSidebar({
                 />
                 {before}
                 <SidebarUnread listRef={sidebar.list} dmPreviews={dmPreviews}>
-                  <section
-                    aria-label={soloTitle}
-                    className={styles.sidebarGroup}
-                    hidden={filter === "team"}
-                  >
-                    <SoloInventory
-                      key={`${scope}:${connection.generation}`}
-                      session={connection.session}
-                      scope={scope}
-                      navigator={props.navigator}
-                      target={props.target}
-                      chatIcons={props.chatIcons}
-                      chatMenus={props.chatMenus}
-                      sidebarRows={props.sidebarRows}
-                      renderContents={(
-                        ordinary,
-                        header,
-                        pendingClick,
-                        composeOrdinary,
-                      ) => (
-                        <SoloRegions
-                          key={`regions:${scope}:${connection.generation}`}
-                          session={connection.session}
-                          scope={scope}
-                          navigator={props.navigator}
-                          target={props.target}
-                          sidebar={sidebar}
-                          ordinary={ordinary}
-                          composeOrdinary={composeOrdinary}
-                          pendingClick={pendingClick}
-                          groupDisclosure={
-                            filter === "all"
-                              ? {
-                                  sectionKey: "scope:solo",
-                                  title: soloTitle,
-                                  open:
-                                    !sidebar.collapsed.includes("scope:solo"),
-                                  onToggle: (open) =>
-                                    sidebar.toggle("scope:solo", open),
+                  <SidebarGroupList
+                    savedOrder={sidebar.contributionOrder}
+                    onOrderChange={sidebar.setContributionOrder}
+                    reorderable={filter === "all"}
+                    groups={[
+                      {
+                        key: soloGroupKey,
+                        title: soloTitle,
+                        render: (frame) => (
+                          <section
+                            aria-label={soloTitle}
+                            className={styles.sidebarGroup}
+                            hidden={filter === "team"}
+                          >
+                            <SoloInventory
+                              key={`${scope}:${connection.generation}`}
+                              session={connection.session}
+                              scope={scope}
+                              navigator={props.navigator}
+                              target={props.target}
+                              chatIcons={props.chatIcons}
+                              chatMenus={props.chatMenus}
+                              sidebarRows={props.sidebarRows}
+                              renderContents={(
+                                ordinary,
+                                header,
+                                pendingClick,
+                                composeOrdinary,
+                              ) => (
+                                <SoloRegions
+                                  key={`regions:${scope}:${connection.generation}`}
+                                  session={connection.session}
+                                  scope={scope}
+                                  navigator={props.navigator}
+                                  target={props.target}
+                                  sidebar={sidebar}
+                                  ordinary={ordinary}
+                                  composeOrdinary={composeOrdinary}
+                                  pendingClick={pendingClick}
+                                  groupDisclosure={
+                                    filter === "all"
+                                      ? {
+                                          sectionKey: soloGroupKey,
+                                          title: soloTitle,
+                                          open:
+                                            !sidebar.collapsed.includes(
+                                              soloGroupKey,
+                                            ),
+                                          onToggle: (open) =>
+                                            sidebar.toggle(soloGroupKey, open),
+                                          frame,
+                                        }
+                                      : undefined
+                                  }
+                                  hidePrimaryHeading={filter === "solo"}
+                                  fallback={
+                                    <>
+                                      {header}
+                                      {ordinary}
+                                    </>
+                                  }
+                                />
+                              )}
+                            />
+                          </section>
+                        ),
+                      },
+                      {
+                        key: teamGroupKey,
+                        title: "Team",
+                        render: (frame) => (
+                          <div
+                            className={styles.sidebarGroup}
+                            hidden={filter === "solo"}
+                          >
+                            {filter === "all" ? (
+                              <InventoryGroup
+                                sidebar={sidebar}
+                                sectionKey={teamGroupKey}
+                                title="Team"
+                                ownsCurrent={
+                                  destination === "team" && !preserveSidebar
                                 }
-                              : undefined
-                          }
-                          hidePrimaryHeading={filter === "solo"}
-                          fallback={
-                            <>
-                              {header}
-                              {ordinary}
-                            </>
-                          }
-                        />
-                      )}
-                    />
-                  </section>
-                  <div
-                    className={styles.sidebarGroup}
-                    hidden={filter === "solo"}
-                  >
-                    {filter === "all" ? (
-                      <InventoryGroup
-                        sidebar={sidebar}
-                        sectionKey="scope:team"
-                        title="Team"
-                        ownsCurrent={destination === "team" && !preserveSidebar}
-                        location={sidebarLocation}
-                      >
-                        {content}
-                      </InventoryGroup>
-                    ) : (
-                      content
-                    )}
-                  </div>
-                  {groups.map((group) => (
-                    <div
-                      key={group.key}
-                      className={styles.sidebarGroup}
-                      hidden={filter !== "all"}
-                    >
-                      {group}
-                    </div>
-                  ))}
+                                location={sidebarLocation}
+                                frame={frame}
+                              >
+                                {content}
+                              </InventoryGroup>
+                            ) : (
+                              content
+                            )}
+                          </div>
+                        ),
+                      },
+                      ...groups.map((group) => ({
+                        ...group,
+                        render: (frame: SidebarGroupFrame) => (
+                          <div
+                            className={styles.sidebarGroup}
+                            hidden={filter !== "all"}
+                          >
+                            {group.render(frame)}
+                          </div>
+                        ),
+                      })),
+                    ]}
+                  />
                 </SidebarUnread>
                 {after}
               </SidebarFrame>
@@ -469,6 +504,7 @@ function InventoryGroup({
   title,
   ownsCurrent,
   location,
+  frame,
   children,
 }: {
   sidebar: Parameters<typeof SoloRegions>[0]["sidebar"];
@@ -476,6 +512,7 @@ function InventoryGroup({
   title: string;
   ownsCurrent: boolean;
   location: string | undefined;
+  frame: SidebarGroupFrame;
   children: ReactNode;
 }) {
   const open = !sidebar.collapsed.includes(sectionKey);
@@ -497,11 +534,12 @@ function InventoryGroup({
   );
   return (
     <SidebarSection
+      {...frame}
       sectionKey={sectionKey}
       title={title}
       open={open}
       onToggle={(next) => sidebar.toggle(sectionKey, next)}
-      hideMoreActions
+      hideMoreActions={!frame.move}
       persistentChevron
     >
       {children}

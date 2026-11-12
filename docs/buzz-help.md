@@ -837,11 +837,14 @@ for 30 days expires.
   Messages and plugin pages share the saved width within the same community
   and identity; narrow windows use a navigation drawer instead.
 - **Sidebar sections**: in **All**, use the arrow beside **Solo** or **Team** to
-  collapse either section independently. A plugin can add a section of its own
-  after **Team**, shown only in **All**. Buzz remembers the collapsed sections
-  for that community and identity. Collapsed section headings highlight when
-  their channels have unread messages or thread replies. Muted channels do not
-  highlight the heading.
+  collapse either section independently. A plugin can add a section of its own,
+  shown only in **All**. Drag the heading of **Solo**, **Team** or a plugin
+  section to reorder them, or choose **Move up** or **Move down** from the
+  heading's **More actions** menu. A plugin section starts after **Team**
+  unless the plugin asks for the top. Buzz remembers the collapsed sections and
+  the order for that community and identity on this device. Collapsed section
+  headings highlight when their channels have unread messages or thread
+  replies. Muted channels do not highlight the heading.
 - Saved sidebar groups, stars, mutes, sorting and filters from another device or
   a paired CLI update the open sidebar automatically while connected, in hosts
   that support saved sidebar preferences. A CLI section-only move keeps a

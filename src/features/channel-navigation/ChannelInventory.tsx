@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type ReactElement,
   type ReactNode,
   type ComponentProps,
 } from "react";
@@ -89,9 +88,11 @@ import {
   isChannelSectionKey,
   isChannelDropSectionKey,
   orderContributedSidebarSections,
+  reorderSavedSectionKeys,
 } from "../../bundled/channels/sidebar-sections";
 import { activityTranscript } from "../../bundled/channels/working-agents";
 import { SidebarContributionSection } from "./SidebarContributionSection";
+import type { SidebarGroup } from "./SidebarGroupList";
 import {
   ContributionBoundary,
   contributionKey,
@@ -127,7 +128,7 @@ type Inventory = {
   before: ReactNode;
   content: ReactNode;
   /** Plugin sections that are top-level groups beside Solo and Team. */
-  groups: readonly ReactElement[];
+  groups: readonly SidebarGroup[];
   after: ReactNode;
   dialogs: ReactNode;
 };
@@ -745,29 +746,13 @@ export function ChannelInventory({
     sidebar.contributionOrder,
   ).map(({ entry }) => entry);
   const reorderContributions = (sectionKey: string, overKey: string) => {
-    const ids = orderedContributions.map(({ key }) =>
-      contributedSidebarSectionKey(key),
+    const order = reorderSavedSectionKeys(
+      orderedContributions.map(({ key }) => contributedSidebarSectionKey(key)),
+      sidebar.contributionOrder,
+      sectionKey,
+      overKey,
     );
-    const from = ids.indexOf(sectionKey);
-    const to = ids.indexOf(overKey);
-    if (from < 0 || to < 0) return;
-    ids.splice(from, 1);
-    ids.splice(to, 0, sectionKey);
-    const activeKeys = new Set(ids);
-    const seenSavedKeys = new Set<string>();
-    const order: string[] = [];
-    let nextActive = 0;
-    for (const savedKey of sidebar.contributionOrder) {
-      if (!activeKeys.has(savedKey)) {
-        order.push(savedKey);
-        continue;
-      }
-      if (seenSavedKeys.has(savedKey)) continue;
-      seenSavedKeys.add(savedKey);
-      order.push(ids[nextActive++] ?? savedKey);
-    }
-    order.push(...ids.slice(nextActive));
-    sidebar.setContributionOrder(order);
+    if (order) sidebar.setContributionOrder(order);
   };
   const moveGroup = (sectionId: string, to: number) => {
     const ids = groupIds.filter((id) => id !== sectionId);
@@ -1669,23 +1654,29 @@ export function ChannelInventory({
         )}
       </>
     ),
-    groups: groupContributions.map((entry, index) => {
+    groups: groupContributions.map((entry) => {
       const sectionKey = contributedSidebarSectionKey(entry.key);
-      return (
-        <SidebarContributionSection
-          key={entry.key}
-          entry={entry}
-          registry={contributedSections ?? emptySidebarSections}
-          navigator={navigator}
-          target={target}
-          open={!sidebar.collapsed.includes(sectionKey)}
-          onToggle={(open) => sidebar.toggle(sectionKey, open)}
-          groupIndex={index}
-          reorderable={false}
-          move={undefined}
-          onRowsCommitted={sidebar.retryReveal}
-        />
-      );
+      return {
+        key: sectionKey,
+        title: entry.title,
+        position: entry.position ?? "end",
+        render: (frame) => (
+          <SidebarContributionSection
+            key={entry.key}
+            entry={entry}
+            registry={contributedSections ?? emptySidebarSections}
+            navigator={navigator}
+            target={target}
+            open={!sidebar.collapsed.includes(sectionKey)}
+            onToggle={(open) => sidebar.toggle(sectionKey, open)}
+            groupIndex={0}
+            reorderable={false}
+            move={undefined}
+            frame={frame}
+            onRowsCommitted={sidebar.retryReveal}
+          />
+        ),
+      };
     }),
     after: (
       <>

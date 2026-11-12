@@ -94,7 +94,7 @@ export function ChannelSidebarDnd({
   children,
 }: {
   writable: boolean;
-  onMove: (channelId: string, sectionKey: string) => void;
+  onMove?: (channelId: string, sectionKey: string) => void;
   onReorder: (sectionKey: string, overKey: string) => void;
   onCreateSection?: ((channelId: string) => void) | undefined;
   overlay: (id: string, group: boolean) => ReactNode;
@@ -124,7 +124,7 @@ export function ChannelSidebarDnd({
         } else if (over.id === CREATE_SECTION) {
           if (writable) onCreateSection?.(String(active.id));
         } else if (over.id !== active.data.current?.sectionKey)
-          onMove(String(active.id), String(over.id));
+          onMove?.(String(active.id), String(over.id));
       }}
     >
       <Writable.Provider value={writable}>{children}</Writable.Provider>
@@ -231,23 +231,28 @@ export function DraggableChannel({
   );
 }
 
-/** A reorderable saved group drags by its header, never its rows or actions. */
-export function DroppableSidebarSection({
+/** What a section's header needs from the surrounding drag and drop context. */
+export type ReorderableSectionFrame = Pick<
+  ComponentProps<typeof SidebarSection>,
+  "dropRef" | "dropTarget" | "dropEdge" | "dragHandle" | "dragging"
+>;
+
+/** A reorderable group drags by its header, never its rows or actions. */
+export function useReorderableSection({
+  sectionKey,
   disabled,
   reorderable,
   groupIndex,
   groupDomain = "channels",
-  createSectionTarget,
-  ...section
-}: ComponentProps<typeof SidebarSection> & {
+}: {
+  sectionKey: string;
   disabled: boolean;
   reorderable: boolean;
   groupIndex: number;
   groupDomain?: string;
-  createSectionTarget?: boolean;
-}) {
+}): ReorderableSectionFrame {
   const { setNodeRef, isOver, active } = useDroppable({
-    id: section.sectionKey,
+    id: sectionKey,
     data: { group: reorderable, groupIndex, groupDomain },
     disabled,
     // dnd-kit queues a re-measure of only the droppable that resized and clears
@@ -258,7 +263,7 @@ export function DroppableSidebarSection({
     resizeObserverConfig: { updateMeasurementsFor: [] },
   });
   const drag = useDraggable({
-    id: section.sectionKey,
+    id: sectionKey,
     data: { group: true, groupIndex, groupDomain },
     disabled: !reorderable,
   });
@@ -286,48 +291,66 @@ export function DroppableSidebarSection({
   }, [reorderable]);
   useDndMonitor({
     onDragStart: ({ active }) => {
-      if (active.id === section.sectionKey) suppressClick.current = true;
+      if (active.id === sectionKey) suppressClick.current = true;
     },
   });
   const group = !!active?.data.current?.group;
   const from = active?.data.current?.groupIndex;
+  return {
+    dropRef: setNodeRef,
+    dropTarget:
+      !group && isOver && active?.data.current?.sectionKey !== sectionKey,
+    dropEdge:
+      group && isOver && active?.id !== sectionKey
+        ? from !== undefined && from < groupIndex
+          ? "after"
+          : "before"
+        : undefined,
+    dragHandle: reorderable
+      ? {
+          ref: (node) => {
+            handle.current = node;
+            drag.setNodeRef(node);
+          },
+          listeners: {
+            ...drag.listeners,
+            onPointerDown: (event) => {
+              suppressClick.current = false;
+              drag.listeners?.onPointerDown?.(event);
+            },
+          },
+        }
+      : undefined,
+    dragging: drag.isDragging,
+  };
+}
+
+export function DroppableSidebarSection({
+  disabled,
+  reorderable,
+  groupIndex,
+  groupDomain,
+  createSectionTarget,
+  ...section
+}: ComponentProps<typeof SidebarSection> & {
+  disabled: boolean;
+  reorderable: boolean;
+  groupIndex: number;
+  groupDomain?: string;
+  createSectionTarget?: boolean;
+}) {
+  const frame = useReorderableSection({
+    sectionKey: section.sectionKey,
+    disabled,
+    reorderable,
+    groupIndex,
+    ...(groupDomain ? { groupDomain } : {}),
+  });
   return (
     <>
       {createSectionTarget && <CreateSectionDropTarget />}
-      <SidebarSection
-        {...section}
-        dropRef={setNodeRef}
-        dropTarget={
-          !group &&
-          isOver &&
-          active?.data.current?.sectionKey !== section.sectionKey
-        }
-        dropEdge={
-          group && isOver && active?.id !== section.sectionKey
-            ? from !== undefined && from < groupIndex
-              ? "after"
-              : "before"
-            : undefined
-        }
-        dragHandle={
-          reorderable
-            ? {
-                ref: (node) => {
-                  handle.current = node;
-                  drag.setNodeRef(node);
-                },
-                listeners: {
-                  ...drag.listeners,
-                  onPointerDown: (event) => {
-                    suppressClick.current = false;
-                    drag.listeners?.onPointerDown?.(event);
-                  },
-                },
-              }
-            : undefined
-        }
-        dragging={drag.isDragging}
-      />
+
+      <SidebarSection {...section} {...frame} />
     </>
   );
 }

@@ -29,12 +29,16 @@ export type SidebarSectionAction = Readonly<{
 /** `team` nests the section in the Team group; `group` makes it a group of its own. */
 export type SidebarSectionPlacement = "team" | "group";
 
+/** Where a group starts until the person moves it; `end` is after Team. */
+export type SidebarGroupPosition = "start" | "end";
+
 export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
   title: string;
   icon: ReactNode;
   placement?: SidebarSectionPlacement;
+  position?: SidebarGroupPosition;
   rows: Readonly<{
     snapshot: () => readonly SidebarSectionRow[];
     subscribe: (listener: () => void) => () => void;
@@ -59,6 +63,7 @@ declare module "@deepseek-ai/cordis" {
 }
 
 const placements: readonly SidebarSectionPlacement[] = ["team", "group"];
+const positions: readonly SidebarGroupPosition[] = ["start", "end"];
 const idPattern = /^[a-z0-9][a-z0-9._-]*$/;
 
 export class SidebarSectionsService extends Service implements SidebarSections {
@@ -86,6 +91,8 @@ export class SidebarSectionsService extends Service implements SidebarSections {
       section.icon == null ||
       (section.placement !== undefined &&
         !placements.includes(section.placement)) ||
+      (section.position !== undefined &&
+        !positions.includes(section.position)) ||
       !section.rows ||
       typeof section.rows.snapshot !== "function" ||
       typeof section.rows.subscribe !== "function" ||

@@ -641,13 +641,19 @@ renders its rows inside the existing Team sidebar using the same collapsible,
 reorderable, resizable section frame as built-in
 sections. It owns presentation and persists contributed section expansion and
 relative order; a plugin supplies row data and actions, not another sidebar.
-`placement: "group"` instead renders the section as its own top-level group
-after Team in the All view; it is hidden under the Solo and Team tabs, is
-collapsible but not reorderable, and persists its expansion like any other
-contributed section. The default `"team"` keeps the nested behavior. A row may
-set `depth` (a whole number from 0 to 4) to indent it one step per level under
-either placement. Any other value makes the rows invalid, which fails only that
-section.
+`placement: "group"` instead renders the section as its own top-level group in
+the All view, beside the built-in Solo and Team groups; it is hidden under the
+Solo and Team tabs and persists its expansion like any other contributed
+section. Solo, Team and every group-placed section form one ordered list. People
+reorder it by dragging a group heading, or with Move up and Move down in the
+heading's menu, and Buzz saves that order on the device for the community and
+identity. A section may set `position` to `"start"` (before the saved groups) or
+`"end"` (after them, the default, so after Team) to say where its group starts.
+`position` applies only until the person has moved that group, and only to
+group-placed sections. The default `"team"` placement keeps the nested behavior.
+A row may set `depth` (a whole number from 0 to 4) to indent it one step per
+level under either placement. Any other value makes the rows invalid, which
+fails only that section.
 
 Each registration is owned by the plugin's Cordis scope and is removed on
 disable, replacement, or teardown. Rows use an external-store snapshot and

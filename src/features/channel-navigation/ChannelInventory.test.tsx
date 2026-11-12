@@ -796,35 +796,55 @@ it("preserves disabled contribution positions when active sections reorder", asy
   );
 });
 
-it("shows a group-placed section beside Team, only in the All view", async () => {
-  const makeSection = (
-    id: string,
-    placement: "team" | "group",
-  ): RegisteredSidebarSection => {
-    const rows = [{ id: `${id}-row`, label: `${id} item` }];
-    return {
-      version: 1,
-      id,
-      title: id,
-      icon: "★",
-      placement,
-      rows: { snapshot: () => rows, subscribe: () => () => {} },
-      select: () => ({ version: 1, kind: "home" }),
-      key: `example.plugin/${id}`,
-      pluginId: "example.plugin",
-      revision: "one",
-    };
+function makeSidebarSection(
+  id: string,
+  extra: Partial<RegisteredSidebarSection> = {},
+): RegisteredSidebarSection {
+  const rows = [{ id: `${id}-row`, label: `${id} item` }];
+  return {
+    version: 1,
+    id,
+    title: id,
+    icon: "★",
+    rows: { snapshot: () => rows, subscribe: () => () => {} },
+    select: () => ({ version: 1, kind: "home" }),
+    key: `example.plugin/${id}`,
+    pluginId: "example.plugin",
+    revision: "one",
+    ...extra,
   };
-  const sections = [
-    makeSection("nested", "team"),
-    makeSection("projects", "group"),
-  ];
-  const registry: SidebarSections = {
+}
+
+function sidebarSectionsOf(
+  sections: readonly RegisteredSidebarSection[],
+): SidebarSections {
+  return {
     version: 1,
     snapshot: () => sections,
     subscribe: () => () => {},
     register: () => {},
   };
+}
+
+const topLevelGroupOrder = () =>
+  [
+    ...document.querySelectorAll<HTMLElement>(
+      [
+        "scope:solo",
+        "scope:team",
+        "plugin:example.plugin/projects",
+        "plugin:example.plugin/reports",
+      ]
+        .map((key) => `[data-sidebar-section="${key}"]`)
+        .join(","),
+    ),
+  ].map((section) => section.dataset.sidebarSection);
+
+it("shows a group-placed section beside Team, only in the All view", async () => {
+  const registry = sidebarSectionsOf([
+    makeSidebarSection("nested", { placement: "team" }),
+    makeSidebarSection("projects", { placement: "group" }),
+  ]);
   const h = fixture(undefined, "ready", undefined, registry);
   const user = userEvent.setup();
   render(h.view("alpha"));
@@ -859,6 +879,90 @@ it("shows a group-placed section beside Team, only in the All view", async () =>
   expect(readView(scope, "channel-sidebar", {})).toMatchObject({
     collapsed: ["plugin:example.plugin/projects"],
   });
+});
+
+it("renders top-level groups in the saved order, then by hint", async () => {
+  const registry = sidebarSectionsOf([
+    makeSidebarSection("projects", { placement: "group" }),
+    makeSidebarSection("reports", { placement: "group", position: "start" }),
+  ]);
+  const h = fixture(undefined, "ready", undefined, registry);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  const first = render(h.view("alpha"));
+  await waitFor(() =>
+    expect(topLevelGroupOrder()).toEqual([
+      "plugin:example.plugin/reports",
+      "scope:solo",
+      "scope:team",
+      "plugin:example.plugin/projects",
+    ]),
+  );
+  first.unmount();
+
+  writeView(scope, "channel-sidebar", {
+    contributionOrder: [
+      "plugin:example.plugin/projects",
+      "plugin:removed.plugin/gone",
+      "scope:team",
+      "scope:solo",
+    ],
+  });
+  render(h.view("alpha"));
+  await waitFor(() =>
+    expect(topLevelGroupOrder()).toEqual([
+      "plugin:example.plugin/reports",
+      "plugin:example.plugin/projects",
+      "scope:team",
+      "scope:solo",
+    ]),
+  );
+});
+
+it("moves a top-level group from its menu and saves the order", async () => {
+  const registry = sidebarSectionsOf([
+    makeSidebarSection("projects", { placement: "group" }),
+  ]);
+  const h = fixture(undefined, "ready", undefined, registry);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  const user = userEvent.setup();
+  render(h.view("alpha"));
+  await waitFor(() =>
+    expect(topLevelGroupOrder()).toEqual([
+      "scope:solo",
+      "scope:team",
+      "plugin:example.plugin/projects",
+    ]),
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: "More actions for projects" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
+
+  expect(topLevelGroupOrder()).toEqual([
+    "scope:solo",
+    "plugin:example.plugin/projects",
+    "scope:team",
+  ]);
+  expect(readView(scope, "channel-sidebar", {})).toMatchObject({
+    contributionOrder: [
+      "scope:solo",
+      "plugin:example.plugin/projects",
+      "scope:team",
+    ],
+  });
+
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Solo" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Move down" }));
+  expect(topLevelGroupOrder()).toEqual([
+    "plugin:example.plugin/projects",
+    "scope:solo",
+    "scope:team",
+  ]);
 });
 
 it("retries a contributed section after invalid rows recover", async () => {

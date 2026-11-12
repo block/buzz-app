@@ -73,6 +73,34 @@ it("accepts a group placement and rejects an unknown one", async () => {
   await root.fiber.dispose();
 });
 
+it("accepts a group position and rejects an unknown one", async () => {
+  const root = rootContext();
+  const registry = new SidebarSectionsService(root);
+  const register = (position: unknown, id: string) =>
+    root
+      .extend({ pluginOwner: { id: "example.plugin", revision: "one" } })
+      .plugin((ctx) =>
+        ctx.sidebarSections?.register({
+          ...section,
+          id,
+          placement: "group",
+          position,
+        } as never),
+      );
+
+  await register("start", "first").await();
+  await register("end", "last").await();
+  await expect(register("middle", "bad").await()).rejects.toThrow(
+    "A sidebar section needs",
+  );
+
+  expect(registry.snapshot().map(({ position }) => position)).toEqual([
+    "start",
+    "end",
+  ]);
+  await root.fiber.dispose();
+});
+
 it("ignores an unsupported contribution version without failing plugin activation", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const root = rootContext();

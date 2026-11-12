@@ -21,6 +21,7 @@ import {
   type SidebarSections,
 } from "./sidebar-sections-service";
 import { DroppableSidebarSection } from "./ChannelSidebarDnd";
+import type { SidebarGroupFrame } from "./SidebarGroupList";
 
 function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
   const selectedKey = targetKey(target);
@@ -54,20 +55,30 @@ function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
 }
 
 /**
- * A group-placed section is its own top-level group, which nothing reorders, so
- * it skips the drag-and-drop frame that only exists inside the Team group.
+ * A group-placed section is a top-level group, so the group list gives it its
+ * own frame; the Team group's drag and drop frame only exists inside Team.
  */
 function ContributionFrame({
   grouped,
+  frame,
   reorderable,
   groupIndex,
   ...section
 }: ComponentProps<typeof SidebarSection> & {
   grouped: boolean;
+  frame: SidebarGroupFrame | undefined;
   reorderable: boolean;
   groupIndex: number;
 }) {
-  if (grouped) return <SidebarSection {...section} persistentChevron />;
+  if (grouped)
+    return (
+      <SidebarSection
+        {...section}
+        {...frame}
+        hideMoreActions={!frame?.move}
+        persistentChevron
+      />
+    );
   return (
     <DroppableSidebarSection
       {...section}
@@ -89,6 +100,7 @@ export function SidebarContributionSection({
   groupIndex,
   reorderable,
   move,
+  frame,
   onRowsCommitted,
 }: {
   entry: RegisteredSidebarSection;
@@ -100,6 +112,8 @@ export function SidebarContributionSection({
   groupIndex: number;
   reorderable: boolean;
   move: { up?: () => void; down?: () => void } | undefined;
+  /** Only a group-placed section takes its frame from the group list. */
+  frame?: SidebarGroupFrame;
   onRowsCommitted?: () => void;
 }) {
   // A failed section stops observing its rows; Retry renders it again.
@@ -124,6 +138,7 @@ export function SidebarContributionSection({
       fallback={
         <ContributionFrame
           grouped={entry.placement === "group"}
+          frame={frame}
           reorderable={reorderable}
           groupIndex={groupIndex}
           sectionKey={sectionKey}
@@ -158,6 +173,7 @@ export function SidebarContributionSection({
           groupIndex={groupIndex}
           reorderable={reorderable}
           move={move}
+          frame={frame}
           onRowsCommitted={onRowsCommitted}
         />
       )}
@@ -175,6 +191,7 @@ function SectionContents({
   groupIndex,
   reorderable,
   move,
+  frame,
   onRowsCommitted,
 }: {
   entry: RegisteredSidebarSection;
@@ -186,6 +203,7 @@ function SectionContents({
   groupIndex: number;
   reorderable: boolean;
   move: { up?: () => void; down?: () => void } | undefined;
+  frame: SidebarGroupFrame | undefined;
   onRowsCommitted: (() => void) | undefined;
 }) {
   const subscribe = useCallback(
@@ -254,6 +272,7 @@ function SectionContents({
   return (
     <ContributionFrame
       grouped={entry.placement === "group"}
+      frame={frame}
       reorderable={reorderable}
       groupIndex={groupIndex}
       sectionKey={`plugin:${entry.key}`}

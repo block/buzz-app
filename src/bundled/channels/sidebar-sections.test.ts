@@ -1,9 +1,11 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import {
   orderContributedSidebarSections,
   isChannelDropSectionKey,
   isChannelSectionKey,
+  orderSidebarGroups,
+  reorderSavedSectionKeys,
   sidebarSections,
 } from "./sidebar-sections";
 
@@ -18,6 +20,76 @@ it("keeps contributed order stable and lets saved preferences lead", () => {
       ({ key }) => key,
     ),
   ).toEqual(["plugin/c", "plugin/a", "plugin/b"]);
+});
+
+describe("orderSidebarGroups", () => {
+  const solo = { key: "scope:solo" };
+  const team = { key: "scope:team" };
+  const first = { key: "plugin:first", position: "start" } as const;
+  const last = { key: "plugin:last", position: "end" } as const;
+  const keys = (groups: readonly { key: string }[]) =>
+    groups.map(({ key }) => key);
+
+  it("places unsaved groups by hint around the built-in groups", () => {
+    expect(keys(orderSidebarGroups([last, solo, first, team], []))).toEqual([
+      "plugin:first",
+      "scope:solo",
+      "scope:team",
+      "plugin:last",
+    ]);
+  });
+
+  it("lets the saved order win over every hint", () => {
+    const saved = ["plugin:last", "scope:team", "plugin:first", "scope:solo"];
+    expect(keys(orderSidebarGroups([solo, team, first, last], saved))).toEqual(
+      saved,
+    );
+  });
+
+  it("ignores saved keys that no longer exist and repeats", () => {
+    const saved = ["plugin:gone", "scope:team", "scope:team", "scope:solo"];
+    expect(keys(orderSidebarGroups([solo, team], saved))).toEqual([
+      "scope:team",
+      "scope:solo",
+    ]);
+  });
+
+  it("places a new group by hint around the saved ones", () => {
+    const saved = ["scope:team", "scope:solo"];
+    expect(keys(orderSidebarGroups([solo, team, first, last], saved))).toEqual([
+      "plugin:first",
+      "scope:team",
+      "scope:solo",
+      "plugin:last",
+    ]);
+  });
+});
+
+describe("reorderSavedSectionKeys", () => {
+  it("moves a key to its target's place and keeps inactive saved keys in their slots", () => {
+    expect(
+      reorderSavedSectionKeys(
+        ["a", "b", "c"],
+        ["a", "gone", "b", "c"],
+        "c",
+        "a",
+      ),
+    ).toEqual(["c", "gone", "a", "b"]);
+  });
+
+  it("saves keys the person has not placed yet", () => {
+    expect(reorderSavedSectionKeys(["a", "b", "c"], [], "c", "a")).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
+  });
+
+  it("refuses a move that names an inactive key", () => {
+    expect(
+      reorderSavedSectionKeys(["a", "b"], [], "a", "gone"),
+    ).toBeUndefined();
+  });
 });
 
 const row = (

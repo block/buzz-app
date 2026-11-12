@@ -14,11 +14,13 @@ import {
   nativeSignatureChecks,
   roster,
   profile,
+  signed,
 } from "./testing";
 import { connectSignedTransport } from "./transport";
-import type { RelayEvent } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 import { readJournal, type ReadJournal } from "./read-state-storage";
+import type { VerifiedProfileSink } from "./verified-profile";
 
 const viewer = keypair(),
   relay = keypair();
@@ -459,6 +461,130 @@ describe("device-local startup", () => {
       expect(next.channels.window("alpha").rows).toEqual([]);
     },
   );
+
+  it("shows saved verified names with the saved profiles, then rechecks and saves them", async () => {
+    const storage = disk();
+    const alice = keypair();
+    const verifiedHead = eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 1_700_000_000,
+        tags: [
+          ["d", alice.pubkey],
+          ["p", alice.pubkey],
+          ["active", "true"],
+          ["display_name", "Alice"],
+          ["username", "alice"],
+          ["issuer_label", "Example"],
+          ["verified_at", "1700000000"],
+        ],
+      }),
+    );
+    await storage.writeProfiles?.([
+      profile(alice, { name: "Self-chosen" }),
+      verifiedHead,
+    ]);
+    const syncs: { subjects: readonly string[]; sink: VerifiedProfileSink }[] =
+      [];
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async (filters) =>
+          filters.some((filter) => filter.kinds?.includes(39002))
+            ? discovery
+            : [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+        subscribe: () => ({
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles(filter, sink) {
+            syncs.push({ subjects: filter["#d"], sink });
+            return () => {};
+          },
+        }),
+      },
+      { persistence: storage, prepared: true },
+    );
+    owners.push(owner);
+    const { profiles } = owner.session;
+    const shown: (string | undefined)[] = [];
+    profiles.subscribe(() =>
+      shown.push(profiles.snapshot().get(alice.pubkey)?.name),
+    );
+    const written = vi.spyOn(storage, "writeProfiles");
+    written.mockClear();
+    await owner.restore();
+    // The self-chosen name never shows, not even for one publish.
+    expect(shown).not.toContain("Self-chosen");
+    expect(profiles.snapshot().get(alice.pubkey)).toMatchObject({
+      name: "Alice",
+      verified: { status: "cached" },
+    });
+    await vi.waitFor(() => expect(syncs).toHaveLength(1));
+    expect(syncs[0]?.subjects).toEqual([alice.pubkey]);
+    syncs[0]?.sink.event(verifiedHead);
+    syncs[0]?.sink.eose();
+    await vi.waitFor(() =>
+      expect(profiles.snapshot().get(alice.pubkey)?.verified?.status).toBe(
+        "checked",
+      ),
+    );
+    await vi.waitFor(() => expect(written).toHaveBeenCalled());
+    await vi.waitFor(
+      async () =>
+        expect(
+          (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+            (event) => event.kind,
+          ),
+        ).toEqual([0, 30382]),
+      { timeout: 3000 },
+    );
+    // The next launch's offline view gets the authority to show them with.
+    owner.session.channels.ensureList();
+    await vi.waitFor(
+      async () =>
+        expect(
+          (await storage.readStartup?.())?.discovery?.verifiedProfiles,
+        ).toEqual({ pubkey: relay.pubkey, multipleIssuers: false }),
+      { timeout: 3000 },
+    );
+  });
+
+  it("keeps saved verified names in the mirror while a session cannot check them", async () => {
+    const storage = disk();
+    const alice = keypair();
+    const verifiedHead = signed(relay, {
+      kind: 30382,
+      content: "",
+      tags: [
+        ["d", alice.pubkey],
+        ["p", alice.pubkey],
+        ["active", "true"],
+        ["display_name", "Alice"],
+        ["username", "alice"],
+        ["issuer_label", "Example"],
+        ["verified_at", "1700000000"],
+      ],
+    });
+    await storage.writeProfiles?.([
+      profile(alice, { name: "Self-chosen" }),
+      verifiedHead,
+    ]);
+    const written = vi.spyOn(storage, "writeProfiles");
+    written.mockClear();
+    const { owner } = setup(storage, true);
+    await owner.restore();
+    await vi.waitFor(() => expect(written).toHaveBeenCalled());
+    expect(
+      (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+        (event) => event.kind,
+      ),
+    ).toEqual([0, 30382]);
+  });
 
   it("restores names a previous session loaded", async () => {
     const storage = disk();

@@ -352,6 +352,39 @@ export function createVerifiedProfileDirectory(
     /** Whether a head is held for `subject`: its snapshot entry, or its absence
      * for an inactive or malformed head, is then the answer. */
     holds: (subject: string) => enabled && !!heads.peek(subject),
+    /** Up to `count` held heads, most recently ensured last, for the device mirror. */
+    heads: (count: number) =>
+      [...wanted.keys()]
+        .flatMap((subject) => {
+          const event = heads.peek(subject);
+          return event ? [event] : [];
+        })
+        .slice(-count),
+    /** Heads an earlier session saved, shown as cached until a sync answers.
+     * Restored subjects are the least recently ensured. A subject a sync has
+     * already answered keeps that answer, so a removed head cannot return. */
+    restore(events: readonly RelayEvent[]) {
+      const current = authority;
+      if (closed || !enabled || !current) return;
+      const restored = events.flatMap((event) => {
+        const subject = verifiedProfileSubject(event, current);
+        return subject && !checked.has(subject) ? [{ subject, event }] : [];
+      });
+      if (!restored.length) return;
+      const ensured = [...wanted];
+      wanted.clear();
+      for (const subject of [...restored.map((r) => r.subject), ...ensured]) {
+        wanted.delete(subject);
+        wanted.add(subject);
+      }
+      // Trim first: past the limit, the restored subjects go, and a restored
+      // head can never push out a head a sync already answered.
+      trim();
+      let shown = false;
+      for (const { event } of restored) shown = accept(event) || shown;
+      schedule();
+      if (shown) changed();
+    },
     /** Subjects whose head changed since the last call, held or since evicted. */
     takeAccepted() {
       const taken = [...accepted];

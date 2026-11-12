@@ -6,6 +6,9 @@ export type SavedStartup = {
     savedAt: number;
     relayAuthor: string;
     events: unknown[];
+    /** The verified-profile authority this session last used, so a cached
+     * session can show saved verified names before discovery. */
+    verifiedProfiles?: unknown;
   };
   preferences?: { savedAt: number; data: SidebarPreferences };
 };
@@ -21,7 +24,7 @@ export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
   readStartup?(): Promise<SavedStartup | undefined>;
   writeStartup?(patch: SavedStartup): Promise<void>;
-  /** Signed kind 0 events mirrored from the profile directory. */
+  /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
   writeProfiles?(events: readonly unknown[]): Promise<void>;
   write(head: SavedHead): Promise<void>;

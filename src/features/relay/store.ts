@@ -36,6 +36,7 @@ import {
   type Priority,
 } from "./reader";
 import type { ProfileDirectory } from "./profile-directory";
+import { VERIFIED_PROFILE_KIND } from "./verified-profile";
 import type { ReadTransport } from "./transport";
 import {
   NOTICE_PAGE_SIZE,
@@ -404,6 +405,9 @@ export function createChannelStore(
   let profilesRestored = false;
   // Event ids last written to the mirror; undefined when the disk copy is unknown.
   let mirrored: string | undefined;
+  // Verified heads read from the mirror, kept in it while this session has no
+  // verified-profile authority to hold them.
+  let savedVerified: readonly RelayEvent[] = [];
   let preparing = false;
   let warming = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
@@ -1407,6 +1411,7 @@ export function createChannelStore(
           savedAt: now(),
           relayAuthor: transport.relayAuthor,
           events: discovery.savedEvents(),
+          verifiedProfiles: directory.queries.verifiedAuthority?.(),
         },
       })
       .catch(() => {});
@@ -1417,7 +1422,12 @@ export function createChannelStore(
     clearTimeout(profileSave);
     profileSave = undefined;
     if (!persistence?.writeProfiles || !profilesRestored || disposed) return;
-    const events = directory.recent(PROFILE_CACHE_BASE);
+    const events = [
+      ...directory.recent(PROFILE_CACHE_BASE),
+      ...(directory.queries.verifiedAuthority?.()
+        ? directory.verifiedHeads(PROFILE_CACHE_BASE)
+        : savedVerified),
+    ];
     // Sorted, so reads that only reorder the LRU never rewrite the mirror.
     const signature = events
       .map((event) => event.id)
@@ -1441,19 +1451,18 @@ export function createChannelStore(
       return;
     }
     try {
-      if (!Array.isArray(saved) || saved.length > PROFILE_CACHE_BASE) return;
+      if (!Array.isArray(saved) || saved.length > 2 * PROFILE_CACHE_BASE)
+        return;
       const profiles: RelayEvent[] = [];
       // Any host failure or bad record falls back to checking one by one.
       const verified = await transport?.verifyStored?.(saved).catch(() => {});
       if (disposed || generation !== cleared) return;
-      if (verified)
-        profiles.push(...verified.filter((event) => event.kind === 0));
+      if (verified) profiles.push(...verified);
       else
         for (let index = 0; index < saved.length; index += 12) {
           for (const value of saved.slice(index, index + 12)) {
             try {
-              const event = eventDto(JSON.parse(JSON.stringify(value)));
-              if (event.kind === 0) profiles.push(event);
+              profiles.push(eventDto(JSON.parse(JSON.stringify(value))));
             } catch {
               /* One bad record cannot discard the other names. */
             }
@@ -1461,11 +1470,17 @@ export function createChannelStore(
           await yieldToHost();
           if (disposed || generation !== cleared) return;
         }
-      directory.accept(profiles);
-      if (!options.cachedOnly && profiles.length)
+      // Verified names first, so restored kind 0 names publish with them.
+      savedVerified = profiles
+        .filter((event) => event.kind === VERIFIED_PROFILE_KIND)
+        .slice(-PROFILE_CACHE_BASE);
+      directory.restoreVerified(savedVerified);
+      const names = profiles.filter((event) => event.kind === 0);
+      directory.accept(names);
+      if (!options.cachedOnly && names.length)
         void directory
           .ensure(
-            profiles.map((event) => event.pubkey),
+            names.map((event) => event.pubkey),
             "background",
             true,
           )
@@ -3241,6 +3256,7 @@ export function createChannelStore(
     clearTimeout(profileSave);
     profileSave = undefined;
     mirrored = undefined;
+    savedVerified = [];
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads

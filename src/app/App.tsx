@@ -299,19 +299,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],
   );
-  // macOS Buzz → Check for Updates… shows the result in Software updates.
-  useEffect(() => {
-    const check = () => {
-      void services.navigation.open({
-        version: 1,
-        kind: "settings",
-        section: "updates",
-      });
-      void services.updates.checkForUpdate();
-    };
-    window.addEventListener("buzz:check-for-updates", check);
-    return () => window.removeEventListener("buzz:check-for-updates", check);
-  }, [services]);
   const workspace = route.workspace;
   const presentation = workspace.page
     ? pagePresentation(workspace.page)

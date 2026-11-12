@@ -4,7 +4,7 @@
 //! Edit → Paste and Match Style (Cmd+Shift+V) pastes the clipboard as plain text.
 //! Buzz → Settings… runs the app's Open Settings shortcut. It has no native
 //! accelerator, so Cmd+, keeps the web shortcut's rebinding and IME rules.
-//! Buzz → Check for Updates… opens Settings → Software updates and checks.
+//! Buzz → Check for Updates… checks now and reports the result in a toast.
 //! Ctrl+Tab bypasses macOS menu highlighting latency. Menu commands and the
 //! native key handler both work while a raw guest webview owns keyboard focus.
 use std::{cell::RefCell, ptr::NonNull};

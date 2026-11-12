@@ -11,6 +11,7 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UpdateNotice } from "./UpdateNotice";
+import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import { createUpdates, type Updates } from "./updates";
 
 let updates: Updates | undefined;
@@ -158,5 +159,108 @@ it("stays dismissed when the notice remounts, e.g. during community restoration"
   void updates.checkForUpdate();
   expect(
     await screen.findByRole("dialog", { name: "Ready to update!" }),
+  ).toBeVisible();
+});
+
+it.each([
+  ["up to date", async () => null, "You're on the latest version."],
+  [
+    "failed",
+    async () => {
+      throw new Error("offline");
+    },
+    "Couldn't check for updates: offline",
+  ],
+])("reports a %s menu check in a toast", async (_name, result, message) => {
+  const background = deferred();
+  const check = vi
+    .fn<() => Promise<null>>()
+    .mockReturnValueOnce(background.promise.then(() => null))
+    .mockImplementation(result);
+  updates = createUpdates({ desktop: true, check, relaunch: async () => {} });
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
+  );
+  // The menu request joins the background check in flight; its result shows.
+  act(() => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  expect(updates.snapshot().state).toBe("checking");
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  if (_name === "up to date") background.resolve();
+  else background.reject(new Error("offline"));
+  expect(await screen.findByText(message)).toBeVisible();
+  expect(check).toHaveBeenCalledOnce();
+});
+
+it("follows a menu check's download with its progress, then updates from the notice", async () => {
+  const download = deferred();
+  let report!: (event: DownloadEvent) => void;
+  const update = {
+    version: "1.2.3",
+    download: (onEvent: (event: DownloadEvent) => void) => {
+      report = onEvent;
+      return download.promise;
+    },
+    install: vi.fn(async () => {}),
+    close: async () => {},
+  };
+  const check = vi
+    .fn<() => Promise<typeof update | null>>()
+    .mockResolvedValueOnce(null)
+    .mockResolvedValue(update);
+  const relaunch = vi.fn(async () => {});
+  updates = createUpdates({ desktop: true, check, relaunch });
+  await act(async () => {});
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
+  );
+  act(() => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  const notice = await screen.findByRole("dialog", {
+    name: "Update available",
+  });
+  expect(notice).toHaveTextContent("Downloading Buzz 1.2.3…");
+  act(() => {
+    report({ event: "Started", data: { contentLength: 200 } });
+    report({ event: "Progress", data: { chunkLength: 84 } });
+  });
+  expect(await screen.findByText("Downloading Buzz 1.2.3… 42%")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Update now" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  download.resolve();
+  await screen.findByRole("dialog", { name: "Ready to update!" });
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  await waitFor(() => expect(relaunch).toHaveBeenCalledOnce());
+  expect(update.install).toHaveBeenCalledOnce();
+  // The notice, not a second toast, carried the result.
+  expect(screen.queryByText("You're on the latest version.")).toBeNull();
+});
+
+it("reports a build without updates in a toast", async () => {
+  updates = createUpdates({
+    desktop: false,
+    check: async () => null,
+    relaunch: async () => {},
+  });
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
+  );
+  act(() => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  expect(
+    await screen.findByText(
+      "Automatic updates aren't available on this build.",
+    ),
   ).toBeVisible();
 });

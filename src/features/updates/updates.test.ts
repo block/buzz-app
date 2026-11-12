@@ -82,7 +82,7 @@ it("downloads a background update, offers restart, then installs and relaunches"
   (await check(0)).resolve(update);
   await vi.waitFor(() => expect(state()).toBe("downloading"));
   // The native download carries its own deadline; the check's does not apply.
-  expect(update.download).toHaveBeenCalledWith(undefined, {
+  expect(update.download).toHaveBeenCalledWith(expect.any(Function), {
     timeout: UPDATE_DOWNLOAD_TIMEOUT_MS,
   });
   download.resolve();

@@ -310,6 +310,7 @@ export function ProfileButton({
     </MenuItem>
   );
   const accountLabel = useId();
+  const previewId = useId();
   const statusUnavailable = useId();
   const avatar = (
     <Avatar
@@ -369,7 +370,8 @@ export function ProfileButton({
             if (open) previewFocusBlocked.current = false;
             setPreviewOpen(open);
           }}
-          aria-label="Your profile and status"
+          id={previewId}
+          aria-label={name}
           trigger={
             <div className={styles.trigger}>
               {previewSession && previewStatus && (
@@ -394,6 +396,9 @@ export function ProfileButton({
                   <IconButton
                     type="button"
                     aria-label="Your profile"
+                    aria-describedby={
+                      previewOpen && !menuOpen ? previewId : undefined
+                    }
                     ref={profileTrigger}
                     variant="avatar"
                     shape="round"

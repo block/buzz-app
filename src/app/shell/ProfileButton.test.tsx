@@ -573,7 +573,7 @@ it.each(["escape", "close button", "reopen", "scope switch"])(
         await waitFor(() =>
           expect(
             screen.queryByRole("tooltip", {
-              name: "Your profile and status",
+              name: "Local",
               hidden: true,
             }),
           ).toBeNull(),
@@ -664,7 +664,7 @@ it("shows the selected community's current status above the profile avatar", asy
     await user.tab();
     expect(screen.getByRole("button", { name: "Your profile" })).toHaveFocus();
     const preview = await screen.findByRole("tooltip", {
-      name: "Your profile and status",
+      name: "Alice",
       hidden: true,
     });
     expect(preview).toHaveTextContent("Alice");
@@ -716,7 +716,7 @@ it("shows the selected community's current status above the profile avatar", asy
     await waitFor(() =>
       expect(
         screen.queryByRole("tooltip", {
-          name: "Your profile and status",
+          name: "Alice",
           hidden: true,
         }),
       ).toBeNull(),
@@ -725,7 +725,7 @@ it("shows the selected community's current status above the profile avatar", asy
     await user.tab({ shift: true });
     expect(
       await screen.findByRole("tooltip", {
-        name: "Your profile and status",
+        name: "Alice",
         hidden: true,
       }),
     ).toHaveTextContent("Back soon");

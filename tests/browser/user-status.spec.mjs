@@ -107,7 +107,7 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       page.getByRole("button", { name: "Your profile", exact: true }),
     ).toBeFocused();
     const profilePreview = page.getByRole("tooltip", {
-      name: "Your profile and status",
+      name: "Alice",
     });
     await expect(profilePreview).toBeHidden();
     await profileButton.press("Enter");

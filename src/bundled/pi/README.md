@@ -48,8 +48,9 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 - Keys in Pi's `auth.json` must be literal: Buzz runs no `!command` key and
   reads no `$NAME` key. Set up a provider that needs more than a key with
   `pi`.
-- Pi packages load only from a local folder, and only their `pi.durable`
-  parts, when the host starts. See [`EXTENSIONS.md`](EXTENSIONS.md).
+- Pi packages load from a local folder or from where `pi install npm:…`
+  put them, never from git, and only their `pi.durable` parts, when the host
+  starts. See [`EXTENSIONS.md`](EXTENSIONS.md).
 - Runs left unfinished when the app quit continue at the next turn. A
   mention's run posts only what the agent sends, plus a report if it fails,
   and shows no steps; its thread's session controls interrupt it. An

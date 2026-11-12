@@ -629,6 +629,20 @@ export default () => ({
     "package.json":
       '{ "type": "module", "pi": { "extensions": ["./index.js"] } }',
   },
+  // Where `pi install npm:…` puts packages for the Pi folder `pi`: scoped,
+  // and TypeScript under node_modules, as published Pi packages are.
+  "pi/npm/node_modules/@example/pi-npm": {
+    "package.json":
+      '{ "name": "@example/pi-npm", "type": "module", "pi": { "extensions": ["./index.ts"], "durable": ["./durable.ts"] } }',
+    "durable.ts":
+      'export default (): { extensions: { name: string }[] } => ({ extensions: [{ name: "npm-scoped" }] });',
+  },
+  "pi/npm/node_modules/pi-unscoped": {
+    "package.json":
+      '{ "name": "pi-unscoped", "type": "module", "pi": { "durable": ["./durable.js"] } }',
+    "durable.js":
+      'export default () => ({ extensions: [{ name: "npm-unscoped" }] });',
+  },
   good: {
     "package.json":
       '{ "type": "module", "pi": { "durable": ["./durable.ts"] } }',
@@ -946,14 +960,20 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
         await mkdir(dirname(join(packages, name, file)), { recursive: true });
         await writeFile(join(packages, name, file), text);
       }
+    // Pi's own folder, which holds what `pi install npm:…` installed.
     const dir = join(packages, "pi");
-    await mkdir(dir);
+    await mkdir(dir, { recursive: true });
     // With a BOM, as an editor may save it, which Pi accepts.
     await writeFile(
       join(dir, "settings.json"),
       `\uFEFF${JSON.stringify({
         packages: [
           "npm:pi-example",
+          "npm:@example/pi-npm@^1.0.0",
+          // The same folder again, by its path: it loads once, as in `pi`.
+          "./npm/node_modules/@example/pi-npm",
+          "npm:pi-unscoped",
+          "git:github.com/example/pi-git",
           "../broken",
           "../clash",
           "../invalid",
@@ -995,7 +1015,13 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     expect(out.errors).toEqual([
       {
         source: "npm:pi-example",
-        error: "Buzz loads only Pi packages in a local folder",
+        error:
+          "It isn't installed. Run `pi install npm:pi-example`, then restart Buzz",
+      },
+      {
+        source: "git:github.com/example/pi-git",
+        error:
+          "Buzz loads only Pi packages in a local folder or installed with `pi install npm:…`",
       },
       { source: "../broken", error: "No token" },
       { source: "../clash", error: "Another extension is named coding-tools" },
@@ -1018,7 +1044,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       },
     ]);
     // Nothing from a package that failed, such as clash's first extension.
-    expect(out.extensions).toEqual(["good"]);
+    expect(out.extensions).toEqual(["npm-scoped", "npm-unscoped", "good"]);
     expect(out.providers).toEqual(["pkg"]);
     expect(out.turn).toMatchObject({ status: "done", text: "Done" });
     expect(out.sections["house-rules"]).toContain(
@@ -1040,7 +1066,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
       ["shout", false, [{ type: "text", text: "HI" }]],
     ]);
     expect(out.unknown).toContain(
-      "nope isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it. Pi could not load the package npm:pi-example: Buzz loads only Pi packages in a local folder. Pi could not load the package ../broken: No token.",
+      "nope isn't one of Pi's built-in providers, and no Pi package Buzz loaded adds it. Pi could not load the package npm:pi-example: It isn't installed. Run `pi install npm:pi-example`, then restart Buzz. Pi could not load the package git:github.com/example/pi-git: Buzz loads only Pi packages in a local folder or installed with `pi install npm:…`. Pi could not load the package ../broken: No token.",
     );
   }, 90_000);
 });

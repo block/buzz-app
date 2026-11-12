@@ -5,7 +5,7 @@
 // in the app, which holds the agent's key: a call to one here is a request
 // back to the plugin. `pi.sh` runs this with Node in the folder its packages
 // are installed in.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { homedir } from "node:os";
@@ -430,8 +430,10 @@ const PACKAGE_MS = 30_000;
  * package lists them as `"pi": { "durable": ["./durable.ts"] }` in its
  * package.json, which the `pi` command ignores. Each one's default export
  * returns the `extensions` every agent runs with and the `providers` added
- * to Pi's. A package that fails is left out, and said why. Only packages in
- * a local folder load for now. */
+ * to Pi's. A package that fails is left out, and said why. A package loads
+ * from a local folder, or, for an `npm:` source, from where `pi install` put
+ * it; Buzz installs nothing. Each folder loads once, however many sources
+ * name it. */
 export async function loadPackages(dir, limit = PACKAGE_MS) {
   const loaded = { extensions: [], providers: [], errors: [] };
   let settings;
@@ -454,13 +456,23 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
   const registry = createRegistry();
   registry.install(CodingTools);
   registry.install(createToolSearchExtension());
+  const seen = new Set();
   for (const item of sources) {
     const source = typeof item === "string" ? item : item?.source;
     const installed = [];
     try {
-      if (typeof source !== "string" || /^(?:npm|git|https?|ssh):/.test(source))
-        throw new Error("Buzz loads only Pi packages in a local folder");
-      const root = resolvePath(dir, source.replace(/^~(?=$|[\\/])/, homedir()));
+      if (typeof source !== "string" || /^(?:git|https?|ssh):/.test(source))
+        throw new Error(
+          "Buzz loads only Pi packages in a local folder or installed with `pi install npm:…`",
+        );
+      const root = source.startsWith("npm:")
+        ? npmPackageRoot(dir, source)
+        : resolvePath(dir, source.replace(/^~(?=$|[\\/])/, homedir()));
+      // `pi` loads a folder once, so a package listed both by its `npm:`
+      // source and by its folder's path is one package here too.
+      const real = existsSync(root) ? realpathSync(root) : root;
+      if (seen.has(real)) continue;
+      seen.add(real);
       // A timer the host waits for: a setup that never settles may hold
       // nothing else that keeps Node running.
       let timer;
@@ -506,6 +518,20 @@ export async function loadPackages(dir, limit = PACKAGE_MS) {
     }
   }
   return loaded;
+}
+
+/** The folder `pi install npm:<name>[@version]` installs a package in for
+ * Pi's settings folder `dir`, as `pi` resolves it. It throws when there's
+ * nothing there: Buzz runs no npm. */
+function npmPackageRoot(dir, source) {
+  const spec = source.slice("npm:".length).trim();
+  const name = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@.+)?$/)?.[1] ?? spec;
+  const root = join(dir, "npm", "node_modules", ...name.split("/"));
+  if (!existsSync(join(root, "package.json")))
+    throw new Error(
+      `It isn't installed. Run \`pi install ${source}\`, then restart Buzz`,
+    );
+  return root;
 }
 
 /** Whether a provider has what listing Pi's providers reads, which one made

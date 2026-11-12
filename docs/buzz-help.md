@@ -1348,6 +1348,8 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   When helping someone explore a community, use only your available access and
   say when information is incomplete or inaccessible. Never join, invite, share,
   or change community content merely to explain how Buzz works.
+- On macOS, Buzz checks spelling while you type by default. Turning it off from
+  the right-click **Spelling and Grammar** menu is remembered across restarts.
 
 On macOS, `just desktop me` debug builds keep their Keychain items through a local
 credential helper, so Keychain asks once per item rather than after each rebuild.

@@ -1,3 +1,4 @@
+import type { AgentSidebar } from "../features/agents/sidebar";
 import type { ProtectionAction } from "../features/agent-protection/service";
 // What the Buzz tools need from whoever holds the agent's key: the app's native
 // custody in Buzz Desktop, or a key in the environment of a standalone server.
@@ -188,6 +189,8 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  /** Owner sidebar access, supplied only to built-in tools in a run. */
+  sidebar?: AgentSidebar;
   /** Buzz settings on this device, in an agent's own run. Each call checks
    * the turn first, as the other tools do. */
   settings?: Readonly<{

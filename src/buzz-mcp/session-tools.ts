@@ -1,3 +1,4 @@
+import { SIDEBAR_TOOLS, isSidebarTool, callSidebarTool } from "./sidebar";
 // What one agent session gets of the Buzz tools, whatever harness runs it:
 // the tools to list, each loaded up front or on search, a note for the end of
 // each turn, and the handler for every call. The attention tools are among
@@ -67,6 +68,7 @@ export const BUZZ_SESSION: BuzzSession = Object.freeze({
     ...SOLO_WORKER_TOOLS,
     ...PLUGIN_TOOLS,
     ...SETTINGS_TOOLS,
+    ...SIDEBAR_TOOLS,
   ],
 });
 
@@ -92,6 +94,7 @@ export const sessionTools = (
   ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SIDEBAR_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
 
@@ -206,13 +209,14 @@ async function dispatchSessionTool(
 ): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
   if (tool) {
-    // A plugin's tool doesn't get the agent's device settings.
-    const { settings: _, ...plugin } = client;
+    // Owner preferences are available only to Buzz's built-in tools.
+    const { settings: _, sidebar: _sidebar, ...plugin } = client;
     return tool.call(plugin, context, args);
   }
   if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
   if (isPluginTool(name)) return callPluginTool(client, context, name, args);
   if (isSettingsTool(name)) return callSettingsTool(client, name, args);
+  if (isSidebarTool(name)) return callSidebarTool(client, name, args);
   if (!isAttentionTool(name)) return callTool(client, context, name, args);
   const { attention } = client;
   if (!attention) throw new Error(`No tool ${name}`);

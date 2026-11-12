@@ -1,3 +1,4 @@
+import type { AgentSidebar } from "./sidebar";
 import { interestPaused } from "./attention";
 import type {
   AgentSessionAssociation,
@@ -549,6 +550,7 @@ export type RunnerHost = {
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
+  sidebar?(agent: Agent): AgentSidebar;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -2915,6 +2917,7 @@ export class AgentRunners {
     const settings = run ? this.host.settings?.() : undefined;
     const workspaces = run ? this.host.soloWorkspaces?.(agent) : undefined;
     const creations = new Map<string, (event: RelayEvent) => void>();
+    const sidebar = run ? this.host.sidebar?.(agent) : undefined;
     const handle = guarded(
       {
         protection: protection && {
@@ -3074,6 +3077,22 @@ export class AgentRunners {
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),
+        ...(sidebar && {
+          sidebar: {
+            list: (signal: AbortSignal) =>
+              sidebar.list(AbortSignal.any([lifetime, signal])),
+            move: (
+              channel: string,
+              section: string | undefined,
+              signal: AbortSignal,
+            ) =>
+              sidebar.move(
+                channel,
+                section,
+                AbortSignal.any([lifetime, signal]),
+              ),
+          },
+        }),
         notes: (channelId: string, root?: string) => {
           const pending = runner.notes.get(channelId) ?? [];
           const matches = (note: { root: string | undefined }) =>

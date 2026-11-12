@@ -210,10 +210,39 @@ test("all-platform releases preserve candidate isolation and read-only installer
       "build-assets/macos-aarch64",
       "build-assets/macos-x64",
       "build-assets/windows",
-      "build-assets/linux",
+      "build-assets/linux-x64",
+      "build-assets/linux-arm64",
       "build-assets/signatures",
     ],
   );
+  // Each Linux leg builds natively on its own runner and pins its own AppImage tools.
+  assert.deepEqual(
+    jobs.linux.strategy.matrix.include.map(
+      ({ arch, runner, deb, appimage }) => ({
+        arch,
+        runner,
+        deb,
+        appimage,
+      }),
+    ),
+    [
+      {
+        arch: "x64",
+        runner: "ubuntu-latest",
+        deb: "amd64",
+        appimage: "x86_64",
+      },
+      {
+        arch: "arm64",
+        runner: "ubuntu-24.04-arm",
+        deb: "arm64",
+        appimage: "aarch64",
+      },
+    ],
+  );
+  for (const leg of jobs.linux.strategy.matrix.include)
+    for (const key of ["appimagetool_sha256", "runtime_sha256"])
+      assert.match(leg[key], /^[0-9a-f]{64}$/);
   assert.deepEqual(jobs.build.strategy.matrix.include, [
     { target: "aarch64-apple-darwin", arch: "aarch64", lipo: "arm64" },
     { target: "x86_64-apple-darwin", arch: "x64", lipo: "x86_64" },
@@ -248,9 +277,13 @@ test("all-platform releases preserve candidate isolation and read-only installer
       ...jobs.build.strategy.matrix.include.map(({ arch }) =>
         macos.replace(/\$\{\{ matrix\.arch \}\}/, arch),
       ),
-      ...[jobs.windows, jobs.linux, jobs.updater_signatures].map(
-        (job) => job.steps.at(-1).with.name,
+      jobs.windows.steps.at(-1).with.name,
+      ...jobs.linux.strategy.matrix.include.map(({ arch }) =>
+        jobs.linux.steps
+          .at(-1)
+          .with.name.replace(/\$\{\{ matrix\.arch \}\}/, arch),
       ),
+      jobs.updater_signatures.steps.at(-1).with.name,
     ],
   );
   const publication = jobs.publish.steps.at(-1).run;

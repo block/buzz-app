@@ -56,6 +56,8 @@ function fixture(dir, version = "0.0.0-preview.22", embedded = endpoint) {
     `Buzz_${version}_x64_unsigned.exe`,
     `Buzz_${version}_amd64.deb`,
     `Buzz_${version}_x86_64.AppImage`,
+    `Buzz_${version}_arm64.deb`,
+    `Buzz_${version}_aarch64.AppImage`,
   ].map((name) => join(assetDir, name));
   const [archive] = installers;
   const binary = join(dir, "buzz-foundation");
@@ -181,6 +183,8 @@ test("preview feed signs every desktop installer into its updater target", (t) =
     "windows-x86_64",
     "linux-x86_64-deb",
     "linux-x86_64-appimage",
+    "linux-aarch64-deb",
+    "linux-aarch64-appimage",
   ];
   // Linux has no generic target, so a deb install cannot select the AppImage.
   assert.deepEqual(Object.keys(platforms), targets);

@@ -40,6 +40,8 @@ const assets = {
   "windows-x86_64": "x64_unsigned.exe",
   "linux-x86_64-deb": "amd64.deb",
   "linux-x86_64-appimage": "x86_64.AppImage",
+  "linux-aarch64-deb": "arm64.deb",
+  "linux-aarch64-appimage": "aarch64.AppImage",
 };
 assert.deepEqual(
   Object.keys(manifest.platforms).sort(),

@@ -237,7 +237,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: linux-x64-candidates
-          path: build-assets/linux
+          path: build-assets/linux-x64
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-arm64-candidates
+          path: build-assets/linux-arm64
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: windows-linux-updater-signatures
@@ -248,7 +252,7 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          for platform in macos-aarch64 macos-x64 windows linux; do
+          for platform in macos-aarch64 macos-x64 windows linux-x64 linux-arm64; do
             (cd "build-assets/$platform" && sha256sum --check SHA256SUMS)
           done
           # Exact names also reject artifacts built as a different version.
@@ -259,9 +263,11 @@ jobs:
             done
           done
           cp "build-assets/windows/Buzz_${VERSION}_x64_unsigned.exe" release-assets/
-          cp "build-assets/linux/Buzz_${VERSION}_amd64.deb" release-assets/
-          cp "build-assets/linux/Buzz_${VERSION}_x86_64.AppImage" release-assets/
-          for installer in x64_unsigned.exe amd64.deb x86_64.AppImage; do
+          cp "build-assets/linux-x64/Buzz_${VERSION}_amd64.deb" release-assets/
+          cp "build-assets/linux-x64/Buzz_${VERSION}_x86_64.AppImage" release-assets/
+          cp "build-assets/linux-arm64/Buzz_${VERSION}_arm64.deb" release-assets/
+          cp "build-assets/linux-arm64/Buzz_${VERSION}_aarch64.AppImage" release-assets/
+          for installer in x64_unsigned.exe amd64.deb x86_64.AppImage arm64.deb aarch64.AppImage; do
             cp "build-assets/signatures/Buzz_${VERSION}_${installer}.sig" release-assets/
           done
           printf '%s\n' "$SOURCE_SHA" > release-assets/SOURCE_COMMIT
@@ -273,7 +279,7 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          platforms='Includes Apple Silicon and Intel macOS (signed and notarized), Windows x64 (unsigned NSIS installer), and Linux x64 (Ubuntu 24.04 deb and AppImage).'
+          platforms='Includes Apple Silicon and Intel macOS (signed and notarized), Windows x64 (unsigned NSIS installer), and Linux x64 and arm64 (Ubuntu 24.04 deb and AppImage).'
           # Previews create their tag at the built commit. Stable and beta
           # releases publish on their existing protected tag and never create one.
           case "$VERSION" in
@@ -403,8 +409,24 @@ jobs:
 
   linux:
     if: github.repository == 'block/buzz-app'
-    name: Linux x64 installers
-    runs-on: ubuntu-latest
+    name: Linux ${{ matrix.arch }} installers
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+            deb: amd64
+            appimage: x86_64
+            appimagetool_sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            runtime_sha256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            deb: arm64
+            appimage: aarch64
+            appimagetool_sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            runtime_sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
     # Shipped old-Buzz recipe, without its mesh/Kubernetes/updater dependencies.
     container: ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
     timeout-minutes: 120
@@ -442,12 +464,16 @@ jobs:
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
       - run: pnpm install --frozen-lockfile
       - name: Install pinned AppImage repacking tools
+        env:
+          APPIMAGE_ARCH: ${{ matrix.appimage }}
+          APPIMAGETOOL_SHA256: ${{ matrix.appimagetool_sha256 }}
+          RUNTIME_SHA256: ${{ matrix.runtime_sha256 }}
         run: |
-          wget -q -O /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /tmp/appimagetool' | sha256sum -c
+          wget -q -O /tmp/appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${APPIMAGE_ARCH}.AppImage"
+          echo "${APPIMAGETOOL_SHA256}  /tmp/appimagetool" | sha256sum -c
           install -m 755 /tmp/appimagetool /usr/local/bin/appimagetool
-          wget -q -O /tmp/appimage-runtime https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-          echo '2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  /tmp/appimage-runtime' | sha256sum -c
+          wget -q -O /tmp/appimage-runtime "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-${APPIMAGE_ARCH}"
+          echo "${RUNTIME_SHA256}  /tmp/appimage-runtime" | sha256sum -c
           install -D -m 644 /tmp/appimage-runtime /usr/local/lib/appimage-runtime
           echo 'APPIMAGETOOL_RUNTIME_FILE=/usr/local/lib/appimage-runtime' >> "$GITHUB_ENV"
       - name: Set candidate version
@@ -457,6 +483,8 @@ jobs:
       - name: Repair AppImage and verify packaged app executables
         env:
           CANDIDATES: ${{ inputs.candidates }}
+          DEB_ARCH: ${{ matrix.deb }}
+          APPIMAGE_ARCH: ${{ matrix.appimage }}
         run: |
           shopt -s nullglob
           debs=(target/release/bundle/deb/*.deb)
@@ -489,14 +517,14 @@ jobs:
             done
           fi
           mkdir release-assets
-          cp "${debs[0]}" "release-assets/Buzz_${VERSION}_amd64.deb"
-          cp "${images[0]}" "release-assets/Buzz_${VERSION}_x86_64.AppImage"
+          cp "${debs[0]}" "release-assets/Buzz_${VERSION}_${DEB_ARCH}.deb"
+          cp "${images[0]}" "release-assets/Buzz_${VERSION}_${APPIMAGE_ARCH}.AppImage"
           printf '%s\n' "$GITHUB_SHA" > release-assets/SOURCE_COMMIT
           cd release-assets
           sha256sum ./*.deb ./*.AppImage > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: linux-x64-candidates
+          name: linux-${{ matrix.arch }}-candidates
           path: release-assets/
           if-no-files-found: error
           retention-days: 7
@@ -522,18 +550,22 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: linux-x64-candidates
-          path: build-assets/linux
+          path: build-assets/linux-x64
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-arm64-candidates
+          path: build-assets/linux-arm64
       - name: Sign verified installers
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          for platform in windows linux; do
+          for platform in windows linux-x64 linux-arm64; do
             (cd "build-assets/$platform" && sha256sum --check SHA256SUMS)
           done
           mkdir signatures
-          for installer in build-assets/windows/*.exe build-assets/linux/*.deb build-assets/linux/*.AppImage; do
+          for installer in build-assets/windows/*.exe build-assets/linux-*/*.deb build-assets/linux-*/*.AppImage; do
             pnpm tauri signer sign "$installer"
             test -s "$installer.sig" || { echo '::error::Updater signing failed'; exit 1; }
             mv "$installer.sig" signatures/

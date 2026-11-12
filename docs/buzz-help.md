@@ -267,7 +267,10 @@ mention anyone. Explicit agent watches on that room can still receive them.
   there. Otherwise it pairs the phone with this identity by QR code and a
   verification code.
 - Set or clear your status from the profile menu, or with **Update status** /
-  **Set a status** on your own profile. On a profile or in the profile menu,
+  **Set a status** on your own profile. Your status emoji appears above your
+  avatar in the bottom-left dock; hover or focus it or your avatar to see your
+  name, availability, full status, and when it clears (if an expiration is set).
+  Text-only statuses show a speech bubble. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
 - Where a community verifies names, the profile check appears beside the verified
   full name, or the verified username when no full name is supplied. The profile

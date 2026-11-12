@@ -50,6 +50,15 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
       ).toBeVisible();
     };
     const editor = page.getByRole("dialog", { name: "Set a status" });
+    const profileButton = page.getByRole("button", {
+      name: "Your profile",
+      exact: true,
+    });
+    const dockStatus = profileButton
+      .locator("..")
+      .getByRole("img")
+      .filter({ hasNot: page.locator(".buzz-avatar") })
+      .first();
     await open();
     await expect(
       editor.getByRole("button", { name: "Save status", exact: true }),
@@ -106,6 +115,23 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       second.getByText("Design meeting", { exact: true }),
     ).toBeVisible();
+    await expect(dockStatus).toHaveAttribute("aria-label", "💬 Design meeting");
+    await expect(dockStatus).toHaveText("💬");
+    await dockStatus.hover();
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Design meeting",
+    );
+    await expect(page.locator('[role="tooltip"][data-open]')).toContainText(
+      "Alice",
+    );
+    await expect(page.locator('[role="tooltip"][data-open] time')).toHaveText(
+      /^Until /,
+    );
+    const indicatorBounds = await dockStatus.boundingBox();
+    const avatarBounds = await profileButton.boundingBox();
+    expect(indicatorBounds.y + indicatorBounds.height).toBeLessThanOrEqual(
+      avatarBounds.y,
+    );
     await page.getByRole("button", { name: "Reject next save" }).click();
     await open();
     await expect(editor.getByLabel("Status message")).toHaveValue(
@@ -154,9 +180,14 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       chat.getByRole("img", { name: ":party:", exact: true }),
     ).toBeVisible();
+    await expect(dockStatus.locator("img")).toHaveAttribute(
+      "src",
+      "https://emoji.test/party.svg",
+    );
     await open();
     await editor.getByRole("button", { name: "Clear status" }).click();
     await expect(editor).toBeHidden();
+    await expect(dockStatus).toHaveCount(0);
     await expect(second.getByRole("img")).toHaveCount(0);
     await expect(
       chat.getByRole("img", { name: ":party:", exact: true }),

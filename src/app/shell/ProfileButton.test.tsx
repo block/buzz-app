@@ -582,6 +582,133 @@ it.each(["escape", "close button", "reopen", "scope switch"])(
   },
 );
 
+it("shows the selected community's current status above the profile avatar", async () => {
+  const { createRelaySession } = await import("../../features/relay/session");
+  const owner = createRelaySession(null);
+  const user = userEvent.setup();
+  const viewer = "a".repeat(64);
+  const listeners = new Set<() => void>();
+  let status = {
+    userId: viewer,
+    text: "On vacation",
+    emoji: "✈️",
+    updatedAt: 1,
+    expiresAt: 1794546000 as number | undefined,
+  };
+  let statuses = new Map([[viewer, status]]);
+  const subscribe = () => () => {};
+  const profileMap = new Map([[viewer, { name: "Alice", picture: "" }]]);
+  const snapshot = {
+    profile: { name: "Alice", picture: "" },
+    viewer,
+    selected: "https://status.test" as string | undefined,
+  };
+  const connection = {
+    viewer,
+    session: {
+      ...owner.session,
+      profiles: { ...owner.session.profiles, snapshot: () => profileMap },
+      presence: {
+        status: () => "online",
+        limited: () => false,
+        subscribe: () => () => {},
+      },
+      statuses: {
+        ...owner.session.statuses,
+        snapshot: () => statuses,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    },
+  };
+  const presence = { status: "online", preference: "auto", error: null };
+  const actions: readonly [] = [];
+  const view = () => (
+    <ProfileButton
+      communities={
+        {
+          subscribe,
+          snapshot: () => snapshot,
+          presence: { subscribe, snapshot: () => presence },
+          relay: { subscribe, snapshot: () => connection },
+        } as unknown as Communities
+      }
+      accountActions={
+        {
+          subscribe,
+          snapshot: () => actions,
+        } as unknown as AccountActionsService
+      }
+      appearance={testAppearance}
+      settingsSelected={false}
+      onSettings={() => {}}
+    />
+  );
+  const rendered = render(view());
+  try {
+    const indicator = screen.getByRole("img", { name: "✈️ On vacation" });
+    expect(indicator).toHaveTextContent("✈️");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Your profile" })).toHaveFocus();
+    const preview = await screen.findByRole("tooltip", {
+      name: "Your profile and status",
+      hidden: true,
+    });
+    expect(preview).toHaveTextContent("Alice");
+    expect(preview).toHaveTextContent("On vacation");
+    expect(
+      within(preview).getByRole("img", {
+        name: "Presence: Active",
+        hidden: true,
+      }),
+    ).toHaveTextContent("●");
+    expect(preview.querySelector("time")).toHaveAttribute(
+      "datetime",
+      new Date(1794546000 * 1000).toISOString(),
+    );
+    expect(preview.querySelector("time")).toHaveTextContent(/^Until /);
+    act(() => {
+      status = {
+        ...status,
+        emoji: "",
+        text: "Back soon",
+        expiresAt: undefined,
+      };
+      statuses = new Map([[viewer, status]]);
+      for (const listener of listeners) listener();
+    });
+    expect(screen.getByRole("img", { name: "Back soon" })).toHaveTextContent(
+      "💬",
+    );
+    expect(screen.queryByRole("img", { name: "✈️ On vacation" })).toBeNull();
+    expect(preview).toHaveTextContent("Back soon");
+    expect(preview.querySelector("time")).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Your profile" })).toHaveFocus();
+    snapshot.selected = undefined;
+    rendered.rerender(view());
+    expect(screen.queryByRole("img", { name: "Back soon" })).toBeNull();
+    snapshot.selected = "https://status.test";
+    connection.viewer = "b".repeat(64);
+    rendered.rerender(view());
+    expect(screen.queryByRole("img", { name: "Back soon" })).toBeNull();
+    connection.viewer = viewer;
+    rendered.rerender(view());
+    expect(screen.getByRole("img", { name: "Back soon" })).toBeVisible();
+    act(() => {
+      statuses = new Map();
+      for (const listener of listeners) listener();
+    });
+    expect(screen.queryByRole("img", { name: "Back soon" })).toBeNull();
+  } finally {
+    rendered.unmount();
+    owner.dispose();
+  }
+});
+
 it("names the status emoji on hover in the menu's status row", async () => {
   const { createRelaySession } = await import("../../features/relay/session");
   const owner = createRelaySession(null);

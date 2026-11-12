@@ -1,12 +1,23 @@
 import { PluginUpdatesMenu } from "../PluginUpdates";
 import { formatPublicKey } from "../../shared/identity/public-key";
-import { usePresenceStatus } from "../../features/presence/react";
+import {
+  PresenceIndicator,
+  usePresenceStatus,
+} from "../../features/presence/react";
 import { useRelayConnection } from "../../features/relay/react";
 import { avatarMedia, avatarSource } from "../../shared/avatar-source";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { statusShortcut } from "../../features/user-status/status-shortcut";
 import { StatusEmoji } from "../../features/user-status/StatusEmoji";
+import type { UserStatus } from "../../features/relay/user-status";
+import type { RelaySession } from "../../features/relay/session";
+import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
+import { useClockFormat } from "../../shared/clock-preference";
 import { Button } from "../../shared/design-system/ui/Button";
 import { StatusEditor } from "../../features/user-status/StatusEditor";
 import {
@@ -58,6 +69,55 @@ import type { Communities } from "../../features/communities/service";
 import styles from "./ProfileButton.module.css";
 
 const noSubscription = () => () => {};
+
+function ProfileStatusDetails({
+  name,
+  session,
+  viewer,
+  status,
+}: {
+  name: string;
+  session: RelaySession | undefined;
+  viewer: string | undefined;
+  status: UserStatus | undefined;
+}) {
+  useClockFormat();
+  return (
+    <>
+      <div className={styles.previewName}>
+        <span className="text-label-sm">{name}</span>
+        {session?.presence && viewer && (
+          <PresenceIndicator
+            presence={session.presence}
+            pubkey={viewer}
+            compact
+          />
+        )}
+      </div>
+      {session && status && (
+        <>
+          <div className={styles.previewStatus}>
+            <StatusEmoji
+              session={session}
+              value={status.emoji}
+              url={status.emojiUrl}
+            />
+            <span className="text-body-sm">{status.text}</span>
+          </div>
+          {status.expiresAt !== undefined && (
+            <time
+              className="text-caption text-subtle"
+              dateTime={new Date(status.expiresAt * 1000).toISOString()}
+              title={formatFullTimestamp(status.expiresAt)}
+            >
+              Until {formatItemTimestamp(status.expiresAt, { withTime: true })}
+            </time>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 // The parent row retains the icon for the saved appearance preference.
 const colorModes = {
   light: { label: "Light", Icon: SunIcon },
@@ -214,6 +274,10 @@ export function ProfileButton({
   const appearanceTrigger = useRef<HTMLDivElement>(null);
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewSession =
+    selected && connection.viewer === viewer ? session : undefined;
+  const previewStatus = previewSession ? status : undefined;
   // Settings takes focus once the menu has closed.
   const handoff = useRef(false);
   const actions = useSyncExternalStore(
@@ -251,6 +315,7 @@ export function ProfileButton({
         onOpenChange={(open) => {
           setMenuOpen(open);
           if (open) {
+            setPreviewOpen(false);
             handoff.current = false;
             openingStatus.current = false;
           } else {
@@ -272,33 +337,67 @@ export function ProfileButton({
           }
         }}
       >
-        <MenuTrigger
-          render={
-            <IconButton
-              type="button"
-              aria-label="Your profile"
-              ref={profileTrigger}
-              title={name}
-              variant="avatar"
-              shape="round"
-              icon={
+        <PreviewCard
+          side="right"
+          align="end"
+          open={previewOpen && !menuOpen}
+          onOpenChange={(open) => setPreviewOpen(open && !menuOpen)}
+          aria-label="Your profile and status"
+          trigger={
+            <div className={styles.trigger}>
+              {previewSession && previewStatus && (
                 <span
-                  className={styles.triggerAvatar}
+                  className={styles.triggerStatus}
                   role="img"
-                  aria-label={
-                    viewer
-                      ? observed === "unknown"
-                        ? "Your status is unavailable"
-                        : `Your status: ${label}`
-                      : "Your avatar"
-                  }
+                  aria-label={[previewStatus.emoji, previewStatus.text]
+                    .filter(Boolean)
+                    .join(" ")}
                 >
-                  {avatar}
+                  <StatusEmoji
+                    session={previewSession}
+                    value={previewStatus.emoji}
+                    url={previewStatus.emojiUrl}
+                    decorative
+                    fallback="💬"
+                  />
                 </span>
-              }
-            />
+              )}
+              <MenuTrigger
+                render={
+                  <IconButton
+                    type="button"
+                    aria-label="Your profile"
+                    ref={profileTrigger}
+                    variant="avatar"
+                    shape="round"
+                    icon={
+                      <span
+                        className={styles.triggerAvatar}
+                        role="img"
+                        aria-label={
+                          viewer
+                            ? observed === "unknown"
+                              ? "Your status is unavailable"
+                              : `Your status: ${label}`
+                            : "Your avatar"
+                        }
+                      >
+                        {avatar}
+                      </span>
+                    }
+                  />
+                }
+              />
+            </div>
           }
-        />
+        >
+          <ProfileStatusDetails
+            name={name}
+            session={previewSession}
+            viewer={viewer}
+            status={previewStatus}
+          />
+        </PreviewCard>
         <MenuPopup
           data-profile-menu=""
           side="right"

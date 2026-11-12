@@ -472,6 +472,43 @@ it("looks for the catalog again after a discovery that listed nothing", async ()
   expect(sessions).toHaveLength(1);
 });
 
+it("looks for a stale catalog again, keeping the listed one meanwhile", async () => {
+  const { spawn, sessions } = discoverable();
+  const setup = new ClaudeSetup(spawn);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    await setup.catalog();
+    const listed = setup.snapshot().models;
+    expect(sessions).toHaveLength(1);
+    // Within the hour, the list is current.
+    vi.setSystemTime(Date.now() + 60 * 60_000 - 1);
+    await setup.loadModels();
+    expect(sessions).toHaveLength(1);
+    // A failed refresh neither hides nor faults the listed models.
+    vi.setSystemTime(Date.now() + 1);
+    spawn.mockRejectedValueOnce(new Error("probe failed"));
+    const failing = setup.loadModels();
+    expect(setup.snapshot().modelsChecking).toBe(false);
+    await failing;
+    expect(setup.snapshot()).toMatchObject({
+      models: listed,
+      modelsChecking: false,
+      modelsError: "",
+    });
+    // It waits another hour, then replaces the list.
+    await setup.loadModels();
+    expect(sessions).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 60 * 60_000);
+    await setup.catalog();
+    expect(sessions).toHaveLength(2);
+    expect(setup.snapshot().models).not.toBe(listed);
+    expect(setup.snapshot().models).toEqual(listed);
+  } finally {
+    setup.dispose();
+    vi.useRealTimers();
+  }
+});
+
 it("bounds a stalled discovery and releases it for an explicit retry", async () => {
   const checks = scripted({
     "claude --version": { stdout: "2.1.200" },

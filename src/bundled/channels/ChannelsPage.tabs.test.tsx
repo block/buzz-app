@@ -227,7 +227,7 @@ async function page(
         passThrough: () => () => {},
       }
     : undefined;
-  render(
+  const view = (navigation: PageNavigation | undefined) => (
     <ToastProvider>
       <ChannelsPage
         relay={relay}
@@ -238,8 +238,9 @@ async function page(
         }
         navigation={navigation}
       />
-    </ToastProvider>,
+    </ToastProvider>
   );
+  const mounted = render(view(navigation));
   const user = userEvent.setup();
   const composer = await screen.findByRole("textbox", {
     name: type === "solo" ? "Message your agents" : "Message #Alpha",
@@ -256,8 +257,91 @@ async function page(
     viewer: viewer.pubkey,
     panels,
     root: root?.id,
+    navigation,
+    events,
+    present: (request: PageNavigation) => mounted.rerender(view(request)),
   };
 }
+
+it.each(["channel", "message"])(
+  "Back and Forward preserve the selected thread after following a %s link to another channel",
+  async (link) => {
+    const host = createNavigationController(createMemoryHistory());
+    const h = await page("stream", host.navigation, true);
+    if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");
+    const initial = h.navigation;
+    const target = (channelId: string, messageId?: string): OpenTarget => ({
+      version: 1,
+      kind: "conversation",
+      scope: { viewer: h.viewer, communityOrigin: "https://relay.test" },
+      channelId,
+      ...(messageId && { messageId, threadRootId: messageId }),
+    });
+    const present = () => {
+      const { attempt } = host.navigation.snapshot();
+      h.present({
+        ...initial,
+        entryId: attempt.entry.id,
+        target: attempt.entry.target,
+        signal: attempt.signal,
+        ...(attempt.traversal && { traversal: attempt.traversal }),
+        complete: (result) => host.complete(attempt, result),
+        resolve: (target) => host.resolve(attempt, target),
+      });
+    };
+    const second = signed(keypair(), {
+      kind: 9,
+      tags: [["h", "alpha"]],
+      content: "Second thread",
+    });
+    const destination = signed(keypair(), {
+      kind: 9,
+      tags: [["h", "beta"]],
+      content: "Destination thread",
+    });
+    h.events.push(second, destination);
+    act(() => void host.navigation.open(target("alpha", h.root)));
+    present();
+    await screen.findByRole("tab", { name: "Initiating thread" });
+    const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+    act(() => {
+      tabs.result.current.leaveVisit();
+      tabs.result.current.openThreadTab("alpha", second.id, second.id);
+      void host.navigation.open(target("alpha", second.id));
+    });
+    present();
+    const selected = `thread:alpha:${second.id}`;
+    expect(tabs.result.current.selected).toBe(selected);
+    act(() => {
+      expect(
+        h.panels.requestOpen({
+          channelId: "alpha",
+          target:
+            link === "channel"
+              ? "buzz://channel/beta"
+              : `buzz://message?channel=beta&id=${destination.id}&thread=${destination.id}`,
+        }),
+      ).toBe(true);
+    });
+    present();
+    await screen.findByRole("textbox", { name: "Message #Beta" });
+    for (let visit = 0; visit < 2; visit++) {
+      act(() => host.navigation.back());
+      present();
+      expect(tabs.result.current.selected).toBe(selected);
+      expect(
+        document.querySelector(`[role="tab"][data-tab-value="${selected}"]`),
+      ).toHaveAttribute("aria-selected", "true");
+      expect(tabs.result.current.tabs).toHaveLength(2);
+      act(() => host.navigation.forward());
+      present();
+      expect(host.navigation.snapshot().entry.target).toEqual(
+        target("beta", link === "message" ? destination.id : undefined),
+      );
+    }
+    host.dispose();
+  },
+);
 
 it.each(["side", "main"] as const)(
   "agent-opened apps preserve their routed %s thread",

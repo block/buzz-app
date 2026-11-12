@@ -145,9 +145,10 @@ export function DecisionsSettings({
         title="Decisions API"
         subtitle={
           <>
-            Agents and plugins use this service to ask quick yes/no, choice, and
-            scoring questions. Choose which account handles those requests.{" "}
-            {DISCLOSURE}
+            Features such as <strong>Attention</strong> can use this API to
+            check watched events, and <strong>agents</strong> and{" "}
+            <strong>plugins</strong> can ask their own focused questions. Choose
+            which account handles those requests. {DISCLOSURE}
           </>
         }
       />

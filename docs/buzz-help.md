@@ -349,7 +349,9 @@ for 30 days expires.
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds
   or removes your reaction. Capsules you reacted with take your solid accent
-  color; on your own messages they take a neutral gray instead.
+  color; on your own messages they take a neutral gray instead. A reaction
+  never shows a `:shortcode:` as text: it draws the community's custom emoji
+  with that name, or a neutral smiley when there is none or its image can't load.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
 - With **Voice Notes** enabled, use the microphone in the composer to record
@@ -359,16 +361,17 @@ for 30 days expires.
 - Long message bubbles use the available conversation width, stopping 32px
   before the opposite speaker’s avatar column. Short messages hug their text.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,
-  copy its link, forward it, or open More. **Copy message** is in More. Keyboard
-  focus also reveals these actions; touch layouts keep actions inline.
+  copy its link, or open More. **Copy message** and **Forward message** are in
+  More. Keyboard focus also reveals these actions; touch layouts keep actions
+  inline.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
-- **Forward message** in a message's hover actions or message menu sends its link
-  to one person in the current community, with an optional note. Buzz sends it
-  in your direct message with them, starting one if needed, and you stay where
-  you are; select the confirmation notice while it's showing to open the
-  forwarded message in that DM. The link previews the original message; the
+- **Forward message** in a message's menu sends its link to one person in the
+  current community, with an optional note. Buzz sends it in your direct
+  message with them, starting one if needed, and you stay where you are;
+  select the confirmation notice while it's showing to open the forwarded
+  message in that DM. The link previews the original message; the
   recipient still needs access to its conversation. Forwarding is unavailable
   when the connection cannot start DMs or the message has no link yet.
 
@@ -478,13 +481,17 @@ for 30 days expires.
   read, reveal another message, or receive new messages. In a channel with more
   history than loads on entry, it appears when the oldest unread message is
   among the rows loaded on entry, below a message you read by reaching the
-  bottom of the channel or marking the channel read. When the unread messages
+  bottom of the channel or marking the channel read. The same rule applies to
+  a channel whose messages load as you enter it, such as the first time you
+  open it after starting Buzz. When the unread messages
   start at the first loaded row or further up, or the messages above them were
   only read one by one as you scrolled past, there is no divider for that visit,
   even if older rows load later. While Buzz is still checking such a channel's
   older history for unread messages, the channel waits to mark anything read,
   so opening it then does not hide its own divider; if that check fails, there
-  is no divider for that visit and reading resumes. It may also be absent when
+  is no divider for that visit and reading resumes. The channel waits in the
+  same way while it loads or refreshes the messages you entered on, however
+  slow the connection; if that fails, reading resumes. It may also be absent when
   unread evidence is incomplete, or when
   read intent or the read evidence needed to locate the boundary changes
   elsewhere before it is established.
@@ -717,7 +724,10 @@ for 30 days expires.
   follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
-- **Back and Forward**: in the macOS app, mouse back/forward buttons and
+- **Back and Forward**: after following a channel or message link to another
+  channel, Back and Forward restore the thread tab you last selected in the
+  channel you left.
+  In the macOS app, mouse back/forward buttons and
   three-finger trackpad swipes go back and forward like the ← → arrows in the
   header. Swipes need System Settings → Trackpad → More Gestures → Swipe
   between pages set to three fingers (or two or three fingers). Two-finger
@@ -1443,6 +1453,11 @@ lists the plotted values as text.
   attribution under the chart; it is not verified. `note` adds a caveat line.
 - An invalid chart shows its error and source instead of drawing.
 
+Code blocks draw the same way, through plugins such as Charts and Mermaid, in
+Canvas, shared notes and repository pages. Those, plus the memory panel, agent
+transcript replies and plugin READMEs, offer **Copy code block** on each code
+block.
+
 ### Saved External apps approval
 
 External apps can request saved approval. The app can renew valid approval
@@ -1455,6 +1470,13 @@ even when no session is connected; it asks you to confirm first. Full access req
 ### Reconnecting an old agent in a DM
 
 On desktop, **Connect [agent name]** may appear inside a DM with an old agent you own that is available to import from this computer. It preselects compatible saved harness, provider and model choices, and preserves saved effort settings. Choose another harness if the old type is unavailable or does not support inline connection setup; settings that were not saved use the selected type’s defaults. Review the inline controls; **Connect** stays disabled until the harness has a resolved model and provider, including usable defaults. If a saved Codex model is unavailable, choose another model or harness to continue. Complete installation or sign-in if prompted, stop the agent in old Buzz, then choose **Connect**. Your agent keeps its identity and conversation. This does not resend earlier messages. The same private card can appear in a channel or thread after you send a new mention of an eligible agent you own while that conversation is open, if that agent is still a member of the channel. Loading older mentions does not show cards, and known-archived agents are excluded. Only you see it, once per agent in the loaded conversation. Choose the **X** in the card’s top-right corner to hide that agent’s card in this conversation; the dismissal survives reopening and reloads. After connecting, **Ask the agent to respond** explicitly queues a follow-up addressed only to that agent in the original message’s thread; it does not automatically replay your request. If no prompt appears, use **Agents → New agent → Import an agent**.
+
+## Choosing a channel for a workflow
+
+When creating a workflow, direct-message choices use participant names when available. Search
+matches the displayed participant name. When no participant name is available, Buzz shows a short
+public-key prefix. A direct message with yourself is labeled **Notes to self**.
+These labels only help identify the conversation you select.
 
 ## Deleting an agent’s workflow
 

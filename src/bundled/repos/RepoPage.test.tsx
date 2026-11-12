@@ -35,7 +35,7 @@ import type { GitSnapshot } from "../../features/repos/git";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import { matchesEvent } from "../../features/relay/projection";
-import { RepoPage } from "./RepoPage";
+import { Body, RepoPage } from "./RepoPage";
 
 const key = new Uint8Array(32).fill(5),
   owner = getPublicKey(key);
@@ -634,4 +634,39 @@ it("reads a repository refused while signed out again once the organization sign
     ).not.toBeInTheDocument(),
   );
   expect(t.readGit).toHaveBeenCalledTimes(2);
+});
+
+it("routes each README's Buzz links in its own scope, and follows a changed scope", async () => {
+  const other = {
+    viewer: "e".repeat(64),
+    communityOrigin: "https://other.example",
+  };
+  const href = `buzz://repo?owner=${owner}&d=repo&tab=issues`;
+  const route = { type: "repo", owner, dtag: "repo", tab: "issues" } as const;
+  const opened: unknown[] = [];
+  const open = async (target: unknown) => {
+    opened.push(target);
+    return { status: "opened" } as const;
+  };
+  const readme = (name: string) => `[${name}](${href})`;
+  const view = render(
+    <>
+      <Body text={readme("First")} open={open} scope={scope} />
+      <Body text={readme("Second")} open={open} scope={other} />
+    </>,
+  );
+  await userEvent.click(screen.getByRole("link", { name: "First" }));
+  await userEvent.click(screen.getByRole("link", { name: "Second" }));
+  view.rerender(
+    <>
+      <Body text={readme("First")} open={open} scope={other} />
+      <Body text={readme("Second")} open={open} scope={other} />
+    </>,
+  );
+  await userEvent.click(screen.getByRole("link", { name: "First" }));
+  expect(opened).toEqual([
+    entityTarget(route, scope),
+    entityTarget(route, other),
+    entityTarget(route, other),
+  ]);
 });

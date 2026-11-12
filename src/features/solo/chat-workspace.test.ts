@@ -7,24 +7,42 @@ import { newChat, useRegionWorkspace } from "./chat-workspace";
 
 const navigation = vi.hoisted(() => {
   const listeners = new Set<() => void>();
-  const filed = { id: "workspace", file: async () => {} };
+  let filed = { id: "workspace", file: async () => {} };
+  const source = { workspace: () => filed };
+  let reason: string | undefined;
+  const region = (snapshot: object) => ({
+    channels: [{ id: "chat" }],
+    source,
+    snapshot,
+    ...(reason ? { reason } : {}),
+  });
+  let read = { revision: 1 };
   let value = {
-    regions: [
-      {
-        channels: [{ id: "chat" }],
-        source: { workspace: () => filed },
-      },
-    ],
+    regions: [region(read)],
     excluded: new Set<string>(),
     binding: { scope: "scope", viewer: "viewer", incarnation: "1" },
   };
   return {
-    filed,
+    get filed() {
+      return filed;
+    },
     listeners,
-    // A channel-list change publishes a new snapshot with the same regions.
+    // A channel-list change rebuilds the regions around the same source
+    // snapshot.
     publish() {
-      value = { ...value };
+      value = { ...value, regions: [region(read)] };
       for (const listener of listeners) listener();
+    },
+    // A failed read keeps the accepted snapshot and marks the region failed.
+    fail() {
+      reason = "failed";
+      this.publish();
+    },
+    // A source's workspace change shows through its next snapshot revision.
+    refile(id: string) {
+      filed = { id, file: async () => {} };
+      read = { revision: read.revision + 1 };
+      this.publish();
     },
     reader: {
       subscribe(listener: () => void) {
@@ -80,7 +98,7 @@ it("never calls a chat new before its history is known", () => {
     expect(newChat(window(extra as Partial<ChannelWindow>))).toBe(false);
 });
 
-it("renders again for Solo navigation only while it is given a chat", () => {
+it("renders again for Solo navigation only when the chat's source or its snapshot changes", () => {
   const session = {} as RelaySession;
   let renders = 0;
   const { result, rerender } = renderHook(
@@ -99,8 +117,14 @@ it("renders again for Solo navigation only while it is given a chat", () => {
   expect(result.current).toBe(navigation.filed);
   const before = renders;
   act(() => navigation.publish());
+  expect(renders).toBe(before);
+  act(() => navigation.refile("other"));
   expect(renders).toBe(before + 1);
   expect(result.current).toBe(navigation.filed);
+  expect(result.current?.id).toBe("other");
+  const failing = renders;
+  act(() => navigation.fail());
+  expect(renders).toBe(failing + 1);
 
   rerender({ channelId: undefined });
   expect(navigation.listeners.size).toBe(0);

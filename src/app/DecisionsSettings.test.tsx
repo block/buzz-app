@@ -404,3 +404,33 @@ it("offers Builderlab first and reveals key setup without switching until ready"
   expect(decisions.chosen()).toBe(builderlab);
   expect(screen.queryByText("Settings for typesafe")).toBeNull();
 });
+
+it("explains lost Builderlab access only while it is selected and confirmed unavailable", async () => {
+  const user = userEvent.setup();
+  const builderlab = "block.builderlab/builderlab";
+  const decisions = fake(
+    [
+      { key: builderlab, status: "ready" },
+      { key: TYPESAFE, status: "ready" },
+    ],
+    builderlab,
+  );
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  const unavailable = () => screen.queryByRole("status");
+  expect(unavailable()).toBeNull();
+  act(() => decisions.setStatus(builderlab, "needs-setup"));
+  expect(unavailable()).toHaveTextContent(
+    "Decisions API isn’t available for this Builderlab account. Use your own TypeSafe key or contact your account administrator.",
+  );
+  expect(screen.queryByText(`Settings for ${builderlab}`)).toBeNull();
+  expect(decisions.chosen()).toBe(builderlab);
+  act(() => decisions.setStatus(builderlab, "checking"));
+  expect(unavailable()).toBeNull();
+  act(() => decisions.setStatus(builderlab, "ready"));
+  expect(unavailable()).toBeNull();
+  act(() => decisions.setStatus(builderlab, "needs-setup"));
+  await user.click(screen.getByRole("combobox", { name: "Decision provider" }));
+  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
+  expect(unavailable()).toBeNull();
+  expect(decisions.chosen()).toBe(TYPESAFE);
+});

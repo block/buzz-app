@@ -75,6 +75,14 @@ export function DecisionsSettings({
   );
   const ownKey = providers.find((p) => p.key === DEFAULT_DECISION_PROVIDER);
   const combined = !!builderlab && !!ownKey && providers.length === 2;
+  const builderlabStatus = useSyncExternalStore(
+    decisions.subscribe,
+    () =>
+      combined && current?.key === builderlab.key
+        ? statusOf(builderlab)
+        : undefined,
+    () => undefined,
+  );
   const shown = combined ? current : (selected ?? current);
   const choose = (value: string) => {
     if (!active()) return;
@@ -241,6 +249,17 @@ export function DecisionsSettings({
                     },
                   ]}
                 />
+                {shown?.key === builderlab.key &&
+                  builderlabStatus === "needs-setup" && (
+                    <p
+                      role="status"
+                      className="m-0 py-4 text-body-sm text-secondary"
+                    >
+                      Decisions API isn’t available for this Builderlab account.
+                      Use your own TypeSafe key or contact your account
+                      administrator.
+                    </p>
+                  )}
                 {shown?.key === ownKey.key && shown.Settings && (
                   <div className="grid gap-4 py-4">
                     <OwnedContribution

@@ -362,6 +362,11 @@ export function PageTabs({
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
   const covered = useCoveredByDock(split.ref, fallbackFocus, showingPanel);
+  const [primaryFocus] = useState(() =>
+    document.activeElement?.closest('input, textarea, [contenteditable="true"]')
+      ? undefined
+      : 1,
+  );
   const primaryTarget = workspace?.target;
   const primaryChannel =
     primaryTarget &&
@@ -382,7 +387,9 @@ export function PageTabs({
           }),
         }),
     // A delayed workspace mount must not take focus from a sidebar name edit.
-    ...(primaryTarget.messageId ? { revealRequest: 1 } : {}),
+    ...(primaryTarget.messageId
+      ? { revealRequest: 1 }
+      : { focusRequest: primaryFocus }),
   };
   // As in a plain channel visit, the page reads its visible selected side tab
   // while focus stays anywhere on the page, such as the row that opened it.

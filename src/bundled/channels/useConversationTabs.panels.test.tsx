@@ -188,6 +188,12 @@ it.each([
       draft,
     );
     expect(draft).toHaveValue("Unfinished reply");
+    act(() => state.moveEntry("app:target-49", "main"));
+    act(() => workspace.open(entries[49], true, "side"));
+    expect(
+      document.querySelector("[data-panel-workspace]")?.contains(draft),
+    ).toBe(true);
+    expect(draft).toHaveValue("Unfinished reply");
     view.rerender(
       <StrictMode>
         <Harness channelId="beta" />

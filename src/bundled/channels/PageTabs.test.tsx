@@ -451,3 +451,32 @@ it("a workspace owns its main reader, intro, menu, and no initial detail", async
   );
   expect(source).toHaveBeenCalledOnce();
 });
+
+it.each([false, true])(
+  "a workspace requests composer focus unless another editor owns it (editing=%s)",
+  (editing) => {
+    const f = fixture();
+    cleanup();
+    render(
+      editing ? (
+        <input aria-label="Chat name" />
+      ) : (
+        <button type="button">Open task</button>
+      ),
+    );
+    screen.getByRole(editing ? "textbox" : "button").focus();
+    render(
+      <ConversationWorkspace
+        id="task"
+        session={f.session}
+        scope="origin:viewer"
+        target={{ channelId: "alpha" }}
+        label="Task"
+        host={f.host}
+      />,
+    );
+    const reader = screen.getByText("conversation in alpha", { exact: false });
+    if (editing) expect(reader).not.toHaveAttribute("data-focus");
+    else expect(reader).toHaveAttribute("data-focus", "1");
+  },
+);

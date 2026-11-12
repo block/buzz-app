@@ -1,3 +1,7 @@
+import {
+  setThreadOpeningPreference,
+  useThreadOpeningPreference,
+} from "../features/messages/thread-opening-preference";
 import { Select } from "../shared/design-system/ui/Select";
 import { ACCENTS, accentButtonStyle } from "../shared/theme/accent";
 
@@ -76,6 +80,7 @@ export function AppearanceSettings({
   autocorrectAvailable?: boolean;
   communities?: Pick<Communities, "relay"> | undefined;
 }) {
+  const threadOpening = useThreadOpeningPreference();
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
@@ -466,6 +471,30 @@ export function AppearanceSettings({
                 />
               }
             />
+            <PreferenceRow
+              title="Open threads at"
+              subtitle="Choose where newly opened threads start. Message links and saved reading positions take priority."
+              trailing={
+                <Select
+                  variant="compact"
+                  label="Open threads at"
+                  value={threadOpening.opening}
+                  groups={[
+                    {
+                      label: "Starting position",
+                      options: [
+                        { value: "latest", label: "Latest reply" },
+                        { value: "first", label: "First message" },
+                      ],
+                    },
+                  ]}
+                  onValueChange={(value) => {
+                    if (value === "first" || value === "latest")
+                      setThreadOpeningPreference(value);
+                  }}
+                />
+              }
+            />
             {autocorrectAvailable && (
               <SwitchPreferenceRow
                 label="Allow automatic spelling correction"
@@ -549,6 +578,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && threadOpening.unsaved && (
+          <ToastNotice
+            title="Thread starting position wasn’t saved"
+            description="This choice is active, but could not be saved on this device. Try again."
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setThreadOpeningPreference(threadOpening.opening)}
+            >
+              Retry saving thread starting position
             </Button>
           </ToastNotice>
         )}

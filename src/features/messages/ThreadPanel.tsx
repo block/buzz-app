@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { threadOpeningPreference } from "./thread-opening-preference";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -719,7 +720,7 @@ function ThreadMessages({
   const shown = useRef(active);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
-  const follow = useRef(true);
+  const follow = useRef(threadOpeningPreference() === "latest");
   const resizePosition = useRef<
     | {
         width: number;
@@ -924,7 +925,7 @@ function ThreadMessages({
     if (!focused || focused === document.body)
       element.focus({ preventScroll: true });
   }, [navigation?.signal]);
-  // Ordinary opens follow the latest reply after bounded history finishes.
+  // Ordinary opens use the preferred starting position after history finishes.
   // Keep that first positioning invisible; exact-message navigation reveals itself.
   const positioning =
     !revealSelected &&

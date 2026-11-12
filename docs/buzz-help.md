@@ -693,6 +693,11 @@ for 30 days expires.
   grammar checker, adds its own wavy underlines; right-click one, or put the
   caret in it and press ⌘. (Ctrl+. elsewhere), to see what it found and pick a
   replacement. ⌘Z undoes the change.
+- **Thread starting position**: choose **First message** or **Latest reply** in
+  **Settings → Appearance → Conversations → Open threads at**. Latest reply is
+  the default. This applies when opening a new thread; message links still open
+  their target, and Back/Forward restores your reading position. Already-open
+  threads keep their place.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus

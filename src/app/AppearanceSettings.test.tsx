@@ -1,3 +1,7 @@
+import {
+  setThreadOpeningPreference,
+  threadOpeningPreference,
+} from "../features/messages/thread-opening-preference";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
@@ -53,6 +57,7 @@ afterEach(() => {
   for (const appearance of preferenceAppearances.splice(0))
     appearance.dispose();
   setThreadPlacementPreference("side");
+  setThreadOpeningPreference("latest");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);
@@ -783,4 +788,75 @@ it("offers a choice between usernames and full names only where the community ve
   await user.click(await screen.findByRole("option", { name: "Full name" }));
   expect(namePreference()).toBe("full-name");
   setNamePreference("username");
+});
+
+it("saves thread starting position, restores it, and follows another window", async () => {
+  const user = userEvent.setup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  const choice = () =>
+    screen.getByRole("combobox", { name: "Open threads at" });
+  expect(
+    screen.getByText(
+      "Choose where newly opened threads start. Message links and saved reading positions take priority.",
+    ),
+  ).toBeVisible();
+  expect(choice()).toHaveTextContent("Latest reply");
+  await user.click(choice());
+  await user.click(
+    await screen.findByRole("option", { name: "First message" }),
+  );
+  expect(threadOpeningPreference()).toBe("first");
+  cleanup();
+  render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  expect(choice()).toHaveTextContent("First message");
+  act(() => {
+    localStorage.setItem("buzz-thread-opening.v1", "latest");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "buzz-thread-opening.v1" }),
+    );
+  });
+  expect(choice()).toHaveTextContent("Latest reply");
+});
+
+it("keeps unsaved thread starting position and recovery through remount, then retries the same choice", async () => {
+  const user = userEvent.setup();
+  const view = render(preferencesPage(), {
+    wrapper: ToastProvider,
+  });
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(screen.getByRole("combobox", { name: "Open threads at" }));
+  await user.click(
+    await screen.findByRole("option", { name: "First message" }),
+  );
+  expect(threadOpeningPreference()).toBe("first");
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Thread starting position wasn’t saved",
+  );
+  // The app keeps its toast host while the settings destination unmounts.
+  view.rerender(null);
+  view.rerender(preferencesPage());
+  expect(
+    screen.getByRole("combobox", { name: "Open threads at" }),
+  ).toHaveTextContent("First message");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Thread starting position wasn’t saved",
+  );
+  // Re-enter through the preference before invoking its recovery action.
+  screen.getByRole("combobox", { name: "Open threads at" }).focus();
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", {
+      name: "Retry saving thread starting position",
+    }),
+  );
+  expect(localStorage.getItem("buzz-thread-opening.v1")).toBe("first");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

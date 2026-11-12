@@ -322,6 +322,7 @@ it("presents actual host registrations in navigation, interface sizing, search/s
       "Set a status",
       "Focus message box",
       "Focus next pane",
+      "Attach files",
       "Edit selected message",
       "React to selected message",
       "React to latest message",

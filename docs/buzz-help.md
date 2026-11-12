@@ -634,7 +634,8 @@ for 30 days expires.
   choice starts off. On macOS, Command+Up Arrow keeps editing directly from an
   empty composer with either choice.
 - **File sharing** is available through **Attach files** in the composer when
-  uploads are available. Files and media are shared with the conversation's
+  uploads are available. ⌘U or ⌘O (Ctrl elsewhere) opens the same picker for
+  the composer you're typing in, or else the pane's composer. Files and media are shared with the conversation's
   members. If some of the files you pick, paste or drop can't be attached, such
   as an empty file or any past 10 per message, the rest still attach and a
   notice says how many were left out and why, naming the first few.

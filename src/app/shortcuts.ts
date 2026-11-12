@@ -11,6 +11,7 @@ import {
   selectNewestMessage,
 } from "../features/messages/message-selection";
 import {
+  attachFilesTrigger,
   composerFocusTarget,
   focusKeyboardTarget,
   paneFocusTarget,
@@ -34,9 +35,10 @@ export const HOST_SHORTCUT_ORDER = {
   previousTab: 84,
   close: 85,
   focus: 86,
-  editMessage: 87,
-  reactToMessage: 88,
-  reactToLatest: 89,
+  attachFiles: 87,
+  editMessage: 88,
+  reactToMessage: 89,
+  reactToLatest: 90,
   replyToMessage: 91,
   markMessageUnread: 92,
   deleteMessage: 93,
@@ -60,6 +62,21 @@ export function registerAppShortcuts(
       when: () =>
         !document.activeElement?.closest(".xterm") && !!composerFocusTarget(),
       run: () => focusKeyboardTarget(composerFocusTarget()),
+    }),
+    shortcuts.registerHost({
+      id: "attach-files",
+      title: "Attach files",
+      // Slack's attach chord, then the common Open chord.
+      binding: [
+        { key: "u", mod: true },
+        { key: "o", mod: true },
+      ],
+      order: HOST_SHORTCUT_ORDER.attachFiles,
+      allowInEditable: true,
+      // A shell keeps Ctrl+U and Ctrl+O in the terminal.
+      when: () =>
+        !document.activeElement?.closest(".xterm") && !!attachFilesTrigger(),
+      run: () => attachFilesTrigger()?.click(),
     }),
     ...(apple ? (["main", "side"] as const) : [undefined]).map((pane) =>
       shortcuts.registerHost({

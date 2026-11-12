@@ -1,6 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
 import { openPage } from "./navigation.mjs";
+import { hoverMessage } from "./message-actions.mjs";
 import { open } from "./timeline.mjs";
 import { createHash } from "node:crypto";
 
@@ -70,6 +71,65 @@ test("a successful picker image upload returns focus with the existing caret", a
   } finally {
     release();
   }
+});
+
+// Browser boundary: a key press through the app's dispatcher must open the
+// real file chooser, whose files reach the focused composer, not another one.
+// Which composer is chosen, and when the key does nothing, is in
+// src/app/shortcuts.test.tsx.
+test("Mod+U and Mod+O open the focused composer's file picker", async ({
+  page,
+  app,
+}) => {
+  await page.route("**/api/relay/**/upload", async (route) => {
+    const bytes = route.request().postDataBuffer() ?? Buffer.alloc(0);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await route.fulfill({
+      json: {
+        url: `https://primary.example/media/${sha256}.txt`,
+        sha256,
+        type: "text/plain",
+        size: bytes.length,
+      },
+    });
+  });
+  await open(page, app);
+  const channel = page.getByRole("form", {
+    name: "Send a message to Alpha",
+    exact: true,
+  });
+  const pick = async (key, name) => {
+    const choosing = page.waitForEvent("filechooser");
+    await page.keyboard.press(`ControlOrMeta+${key}`);
+    await (await choosing).setFiles({
+      name,
+      mimeType: "text/plain",
+      buffer: Buffer.from(name),
+    });
+  };
+  await channel.getByRole("textbox").focus();
+  await pick("u", "channel.txt");
+  await expect(
+    channel.getByRole("button", { name: "Remove channel.txt", exact: true }),
+  ).toBeVisible();
+  const row = page
+    .getByRole("region", { name: "Channel message history" })
+    .locator("[data-message-id]")
+    .last();
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const thread = page.getByRole("form", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await thread.getByRole("textbox").focus();
+  await pick("o", "thread.txt");
+  await expect(
+    thread.getByRole("button", { name: "Remove thread.txt", exact: true }),
+  ).toBeVisible();
+  await expect(
+    channel.getByRole("button", { name: /^Remove / }),
+  ).toHaveAccessibleName("Remove channel.txt");
 });
 
 // Browser boundary: real sidebar navigation must hand focus to the mounted

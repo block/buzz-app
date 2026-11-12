@@ -119,12 +119,21 @@ type Ranked = {
   blockLabel: string;
   recent: number;
   online: number;
+  bestie: boolean;
 };
 const byRank = (a: Ranked, b: Ranked) => {
   for (let i = 0; i < a.tier.length; i += 1) {
     const d = (a.tier[i] ?? 0) - (b.tier[i] ?? 0);
     if (d) return d;
   }
+  // Equal tiers, so both or neither are the viewer's own agents.
+  if (a.c.agent && a.c.owned)
+    return (
+      Number(b.bestie) - Number(a.bestie) ||
+      b.recent - a.recent ||
+      compare(a.label, b.label) ||
+      compare(a.c.recipient.pubkey, b.c.recipient.pubkey)
+    );
   return (
     compare(a.blockLabel, b.blockLabel) ||
     compare(a.block, b.block) ||
@@ -162,10 +171,12 @@ function first<T>(items: T[], order: (a: T, b: T) => number, limit: number) {
 }
 /**
  * Sorts by per-choice keys, so the order is transitive for any mix of people
- * and agents. Another community's agents follow everyone here. After match quality, your own agents come first. Agents that
- * share a name form one block at its first visible label; recency, managed,
- * and presence order only that block. With `limit` (a whole number, 0 or
- * more), only the first `limit` choices of that order are returned.
+ * and agents. Another community's agents follow everyone here. After match
+ * quality, your own agents come first, ordered by `bestie` (the viewer's
+ * default agent), then recency, then label. Other agents that share a name
+ * form one block at its first visible label; recency, managed, and presence
+ * order only that block. With `limit` (a whole number, 0 or more), only the
+ * first `limit` choices of that order are returned.
  */
 export function rankMentions(
   choices: readonly MentionChoice[],
@@ -173,6 +184,7 @@ export function rankMentions(
   history?: ReadonlyMap<string, number>,
   presence: (key: string) => string = () => "unknown",
   limit = Infinity,
+  bestie?: string,
 ) {
   const needle = normalized(query);
   const key = typedPublicKey(query);
@@ -191,13 +203,16 @@ export function rankMentions(
       c,
       tier,
       label: normalized(c.label),
-      // People never join a block. On an equal label they sort first.
-      block: c.agent
-        ? `1${JSON.stringify([tier, normalized(c.recipient.name)])}`
-        : `0${c.recipient.pubkey}`,
+      // People and your own agents never join a block. On an equal label
+      // people sort first.
+      block:
+        c.agent && !c.owned
+          ? `1${JSON.stringify([tier, normalized(c.recipient.name)])}`
+          : `0${c.recipient.pubkey}`,
       blockLabel: "",
       recent: history?.get(c.recipient.pubkey) ?? 0,
       online: { online: 0, away: 1 }[presence(c.recipient.pubkey)] ?? 2,
+      bestie: c.recipient.pubkey === bestie,
     });
   }
   const blockLabels = new Map<string, string>();

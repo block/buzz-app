@@ -9,6 +9,8 @@ export type ComposerSession = Pick<
   "viewer" | "media" | "scope"
 > & {
   names?: import("../identity-names/service").IdentityNameView | undefined;
+  /** The account's saved Bestie, which leads the viewer's agents in mentions. */
+  mainAgent?: RelaySession["mainAgent"] | undefined;
   recovery?: RelaySession["recovery"];
   repositories: Pick<
     RelaySession["repositories"],

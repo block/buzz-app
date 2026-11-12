@@ -24,6 +24,10 @@ import type { CompletionEditor } from "../../features/conversation/useCompletion
 import type { ComposerInputElement } from "../../features/messages/composer-dom";
 import type { Contribution } from "../../plugins/contributions";
 import { mentionQuery } from "./mention-query";
+import {
+  forgetDefaultAgent,
+  setDefaultAgent,
+} from "../../features/solo/default-agent";
 import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
@@ -1760,6 +1764,60 @@ it("prioritizes the viewer-owned namesake in both menus and selects the exact ow
   names.dispose();
   library.dispose();
   test.library.dispose();
+});
+
+it("leads the viewer's own agents with their saved Bestie", () => {
+  const test = setup();
+  const viewer = "1".repeat(64),
+    alpha = "a".repeat(64),
+    zed = "c".repeat(64);
+  const profiles = new Map([
+    [viewer, { name: "Logan" }],
+    [alpha, { name: "Alpha", isAgent: true as const, ownerPubkey: viewer }],
+    [zed, { name: "Zed", isAgent: true as const, ownerPubkey: viewer }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [{ id: "parent", name: "Parent", members: [alpha, zed] }],
+  };
+  const session = {
+    ...test.session,
+    viewer,
+    scope: "bestie-test",
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: async () => {},
+      owner: (key: string) => profiles.get(key)?.ownerPubkey,
+    },
+    channels: { ...test.session.channels, list: () => list },
+  };
+  const order = () => {
+    const publish = vi.fn();
+    const view = render(
+      <MentionCompletion
+        scope="scope"
+        session={session}
+        channelId="parent"
+        observation={{ revision: 1, text: "@", start: 1, end: 1 }}
+        query={{ start: 0, end: 1, query: "" }}
+        publish={publish}
+      />,
+    );
+    const ids = (
+      publish.mock.lastCall?.[0] as CompletionResult | undefined
+    )?.items.map(({ id }) => id);
+    view.unmount();
+    return ids;
+  };
+  try {
+    expect(order()).toEqual([alpha, zed]);
+    setDefaultAgent(session.scope, zed);
+    expect(order()).toEqual([zed, alpha]);
+  } finally {
+    forgetDefaultAgent(zed);
+    test.library.dispose();
+  }
 });
 
 it("names a manager only once ownership is attested and the owner has a real name", async () => {

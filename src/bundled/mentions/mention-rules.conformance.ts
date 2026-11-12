@@ -27,6 +27,7 @@ export type MentionConformance = {
     choices: FixtureChoice[];
     history?: Record<string, number>;
     presence?: Record<string, string>;
+    bestie?: string;
     expected: string[];
   }[];
   space: {

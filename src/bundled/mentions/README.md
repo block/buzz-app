@@ -12,7 +12,7 @@ Find and mention people, agents, and teams while you write.
 
 # Mention rules
 
-`version 3` · `client contract` · `uses existing tags`
+`version 4` · `client contract` · `uses existing tags`
 
 ## Abstract
 
@@ -178,10 +178,18 @@ Remove choices that do not match. Sort the rest by the first rule that differs:
 4. Lower best alias tier (the **base match**). This lets `Fizz` rank above
    `Fast Fizz` when both labels match at the same tier.
 5. Agents that the viewer owns before all other choices, people included.
-6. Block label, by UTF-16 code unit order of normalized labels. Agents with the
-   same values for rules 1 to 5 and the same normalized name form one **block**.
-   A block's label is the lowest normalized label among its agents. A person, or
-   an agent with a name of its own, is a block by itself.
+   Among the viewer's own agents with the same values for rules 1 to 4:
+   1. the viewer's **Bestie** (their saved default agent) first;
+   2. more recent explicit choice in this channel first;
+   3. normalized label, by UTF-16 code unit order;
+   4. key.
+
+   Rules 6 to 10 order the remaining choices.
+6. Block label, by UTF-16 code unit order of normalized labels. Agents that the
+   viewer does not own, with the same values for rules 1 to 5 and the same
+   normalized name, form one **block**. A block's label is the lowest normalized
+   label among its agents. A person, or an agent with a name of its own, is a
+   block by itself.
 7. On an equal block label: a person before an agent block. Two agent blocks
    are ordered by normalized name, and two people by key.
 8. Inside a block:
@@ -192,8 +200,10 @@ Remove choices that do not match. Sort the rest by the first rule that differs:
 10. Key.
 
 Every rule is a key of one choice, so the order is the same for any input order.
-A person or another name never sorts between two agents of one block. Ownership
-and recency never override membership or match. Recency is the
+A person or another name never sorts between two agents of one block. The
+viewer's own agents form no blocks, so recency can separate two of them that
+share a name. Ownership, the Bestie and recency never override membership or
+match. Recency is the
 client's memory of explicit selections in this channel. The desktop keeps it in
 memory for 100 channels and 100 keys each.
 
@@ -406,6 +416,7 @@ each choice supplies its own label.
 
 Choice defaults: `label` is `name`, `aliases` is `[name]`, and `agent`, `owned`,
 and `managed` are false. `elsewhere` (the host of another community) is absent. `history` maps a key to recency (higher is newer).
+`bestie` is the viewer's Bestie key; absent means none.
 `presence` maps a key to `online` or `away`; a missing key is unknown.
 
 Section 6 and the prompt in section 7 are interaction rules. Test them with

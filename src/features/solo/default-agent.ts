@@ -15,6 +15,8 @@ import {
 // picks stay on the device and never write the account's.
 const KEY = "solo:default-agent";
 type Account = NonNullable<RelaySession["mainAgent"]>;
+/** What reading the saved choice needs: the account record, when it has one. */
+type SavedAgentSession = { mainAgent?: RelaySession["mainAgent"] | undefined };
 const adopted = new WeakMap<Account, Promise<void>>();
 const revisions = new WeakMap<Account, number>();
 const revision = (account: Account) => revisions.get(account) ?? 0;
@@ -254,7 +256,7 @@ function adopt(account: Account, scope: string) {
 }
 
 /** Whether the account read settled, its saved choice, and recoverable failure. */
-function useAdopted(session: RelaySession, scope: string) {
+function useAdopted(session: SavedAgentSession, scope: string) {
   const account = session.mainAgent;
   useEffect(() => {
     if (account) void adopt(account, scope);
@@ -291,7 +293,7 @@ function useAdopted(session: RelaySession, scope: string) {
 
 /** The account-saved choice and its read state. Without an account capability,
  * the local explicit choice is already authoritative. */
-export function useSavedAgentState(session: RelaySession, scope: string) {
+export function useSavedAgentState(session: SavedAgentSession, scope: string) {
   const local = useChosenAgent(scope);
   const account = useAdopted(session, scope);
   return session.mainAgent
@@ -301,7 +303,7 @@ export function useSavedAgentState(session: RelaySession, scope: string) {
 
 /** The agent saved as main on the viewer's account, when it has one; without
  * an account record, the agent saved on this device. */
-export function useSavedAgent(session: RelaySession, scope: string) {
+export function useSavedAgent(session: SavedAgentSession, scope: string) {
   return useSavedAgentState(session, scope).agent;
 }
 

@@ -15,6 +15,7 @@ import type { ComposerSession } from "../../features/messages/composer-session";
 import type { MentionRecipient } from "../../features/messages/mention-draft";
 import type { Agent } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
+import { useSavedAgent } from "../../features/solo/default-agent";
 import { AgentsContext, useAgentsSnapshot } from "../../features/agents/react";
 import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
 import { SelectedMentionContext } from "../../features/messages/selected-mention-context";
@@ -253,6 +254,7 @@ export function useMentionChoices(
   const roster = draft?.recipients;
   const selected = useContext(SelectedMentionContext);
   const agents = useAgentChoices(session, !!invite && open);
+  const bestie = useSavedAgent(session, session.scope);
   // The owner's agents in their other communities; the snapshot is the revision.
   const community = useContext(AgentsContext);
   const revision = useAgentsSnapshot(community);
@@ -448,6 +450,7 @@ export function useMentionChoices(
       mentionHistory(session, channelId),
       (key) => session.presence?.status(key) ?? "unknown",
       MENTION_ROWS,
+      bestie,
     );
   // Ranked only when read: a full set of installed rows never needs outside choices.
   let outsideRows: readonly MentionChoice[] | undefined;

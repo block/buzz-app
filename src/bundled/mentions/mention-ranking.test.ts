@@ -218,7 +218,7 @@ it("a known longer name continues the query, except an identity's own beside its
   ).toBe(false);
 });
 it("validates the portable mention fixture version and case lists", () => {
-  expect(mentionConformance.version).toBe(3);
+  expect(mentionConformance.version).toBe(4);
   expect(mentionConformance.matching.length).toBeGreaterThan(0);
   expect(mentionConformance.ranking.length).toBeGreaterThan(0);
   expect(mentionConformance.space.length).toBeGreaterThan(0);
@@ -239,6 +239,8 @@ it.each(mentionConformance.ranking)(
       fixture.query,
       new Map(Object.entries(fixture.history ?? {})),
       (key) => fixture.presence?.[key] ?? "unknown",
+      Infinity,
+      fixture.bestie,
     );
     expect(ranked.map((c) => c.recipient.pubkey)).toEqual(fixture.expected);
   },

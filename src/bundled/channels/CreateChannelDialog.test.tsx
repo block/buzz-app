@@ -1190,7 +1190,9 @@ it("applies the naming rules and guidelines link only in a listed community", as
   );
   await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
   expect(screen.getByRole("button", { name: "Create channel" })).toBeDisabled();
-  expect(screen.getByRole("link", { name: "Why these rules?" })).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "How channel names work" }),
+  ).toBeVisible();
   unmount();
   render(
     <CreateChannelDialog
@@ -1203,5 +1205,7 @@ it("applies the naming rules and guidelines link only in a listed community", as
   );
   await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
   expect(screen.getByRole("button", { name: "Create channel" })).toBeEnabled();
-  expect(screen.queryByRole("link", { name: "Why these rules?" })).toBeNull();
+  expect(
+    screen.queryByRole("link", { name: "How channel names work" }),
+  ).toBeNull();
 });

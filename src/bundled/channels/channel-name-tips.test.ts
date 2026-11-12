@@ -39,3 +39,24 @@ describe("channelNameTips", () => {
     expect(r.blockers).toEqual([]);
   });
 });
+
+describe("normalization and wording", () => {
+  const check = (name: string) =>
+    channelNameTips({ name, temporary: false, description: "x" }).blockers;
+  it("ignores case and treats _ and spaces as separators", () => {
+    expect(check("Payments-Team")).toEqual([]);
+    expect(check("payments_team")).toEqual([]);
+    expect(check("Proj-Foo")).toEqual([]);
+    expect(check("foo-Proj-x")).toEqual([
+      "Move proj- to the start, like proj-checkout.",
+    ]);
+  });
+  it("requires a topic alongside the type word", () => {
+    expect(check("alerts")).not.toEqual([]);
+  });
+  it("points a mid-name type word to the end", () => {
+    expect(check("team-payments")).toEqual([
+      "Put the type word at the end, like payments-team.",
+    ]);
+  });
+});

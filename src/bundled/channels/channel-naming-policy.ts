@@ -17,7 +17,7 @@ export function namingRulesApply(community: string | undefined): boolean {
   }
 }
 
-/** The page the create dialog's "Why these rules?" link opens, if the build sets one. */
+/** The page the create dialog's "How channel names work" link opens, if the build sets one. */
 export function namingGuidelinesUrl(): string | undefined {
   return import.meta.env.VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL || undefined;
 }

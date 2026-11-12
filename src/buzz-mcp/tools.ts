@@ -5,7 +5,10 @@ import { messageAuthor } from "../features/relay/fold";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import buzzHelp from "../../docs/buzz-help.md?raw";
 import { namingRulesApply } from "../bundled/channels/channel-naming-policy";
-import { channelNameTips } from "../bundled/channels/channel-name-tips";
+import {
+  channelNameTips,
+  TYPE_WORDS_HELP,
+} from "../bundled/channels/channel-name-tips";
 import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import {
   canonicalDetailsName,
@@ -1768,7 +1771,7 @@ class Tools {
       });
       if (blockers.length)
         throw new Error(
-          `Channel name "${name}" needs a fix: ${blockers.join(" ")} Names look like team-purpose or proj-name.`,
+          `Channel name "${name}" needs a fix: ${blockers.join(" ")} Examples: payments-team, checkout-help, proj-checkout. ${TYPE_WORDS_HELP}`,
         );
     }
     const members = keys(args, "members").filter(

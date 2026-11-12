@@ -132,10 +132,10 @@ Add `"host"` to `inject`, then:
   Check that it exists before use. Channels supplies it through
   `registerWorkspace`, with the same provider lifetime as `ui.Tabs`.
   Set the page's `layout` to `"workspace"`. Pass
-  `{ id, session, scope, target, label, toolbar?, actions?, detail? }`.
+  `{ id, session, scope, target, label, intro?, actions?, detail? }`.
   `target` is `{ channelId, threadId?, messageId? }`: omit `threadId` for the
   channel timeline, or supply it for a thread. `messageId` selects a message.
-  `toolbar` supplies content controls below the header. `actions` supplies
+  `intro` supplies content at the start of history. It scrolls with the messages. `actions` supplies
   entries in the header's three-dot menu and the tab's context menu, with
   `{ label, run() }`. `detail: { target, rootId? }` initially selects a panel
   in the right pane. The host owns the reader, composer, tabs, and panel frame.

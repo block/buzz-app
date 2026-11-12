@@ -67,6 +67,7 @@ import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
 
 export type ThreadPanelProps = {
+  intro?: ReactNode;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -265,7 +266,6 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
     else retry((value) => value + 1);
   }, [navigation, onRetryNavigation]);
   // A new request never clears a previously opened editor while evidence loads.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt retries the selected request; outer identity owns session/channel lifetime.
   useEffect(() => {
     if (navigation?.signal.aborted) return;
     const request = new AbortController();
@@ -406,6 +406,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   );
 }
 function OwnedThreadPanel({
+  intro,
   session,
   extensions,
   scope,
@@ -432,7 +433,6 @@ function OwnedThreadPanel({
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   // Allocate in the effect, not render/useMemo: StrictMode must not leak owned views.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
   useEffect(() => {
     try {
       if (navigation?.signal.aborted) return;
@@ -482,6 +482,7 @@ function OwnedThreadPanel({
     </div>
   ) : view ? (
     <ThreadMessages
+      intro={intro}
       soloConversation={soloConversation}
       disabled={disabled}
       extensions={extensions}
@@ -510,6 +511,7 @@ function OwnedThreadPanel({
   );
 }
 function ThreadMessages({
+  intro,
   session,
   extensions,
   scope,
@@ -537,6 +539,7 @@ function ThreadMessages({
   onResolvedRoot,
   routePending,
 }: {
+  intro?: ReactNode;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
    * shown stays hidden and unread rather than showing a place the route
@@ -785,7 +788,6 @@ function ThreadMessages({
   >(undefined);
   const olderDemand = useRef(false);
   const targetAnchor = useRef<number | undefined>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
     targetAnchor.current = undefined;
   }, [messageId, navigation?.signal, revealRequest]);
@@ -902,7 +904,6 @@ function ThreadMessages({
   // The signal identifies one request; the navigation object is re-bound per
   // relay snapshot, so a re-render of the same request must not refocus.
   const handledRequest = useRef(navigation?.signal);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new request moves focus; the others merely qualify it.
   useLayoutEffect(() => {
     if (handledRequest.current === navigation?.signal) return;
     handledRequest.current = navigation?.signal;
@@ -932,7 +933,6 @@ function ThreadMessages({
     (!navigation || positionedVisit) &&
     snapshot.status !== "error";
   const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
   useEffect(() => {
     if (!revealSelected) return;
     const request = new AbortController();
@@ -973,7 +973,6 @@ function ThreadMessages({
   const leftTree = useRef(tree);
   leftTree.current = tree;
   const withdrawn = useRef<() => void>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: hiding or showing the reader again records its place too.
   useLayoutEffect(() => {
     if (!navigation) return withdrawn.current;
     withdrawn.current = undefined;
@@ -1176,7 +1175,6 @@ function ThreadMessages({
     if (arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
   }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element || navigation?.signal.aborted) return;
@@ -1365,7 +1363,6 @@ function ThreadMessages({
   // Main's retained presentation can be usable before the initial history walk
   // finishes. That is not yet automatic reading intent. Exact revealed targets
   // remain individually readable; later background refreshes keep earned readiness.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: active can complete an exact background visit in the preceding layout effect without changing the snapshot.
   useLayoutEffect(() => {
     if (
       !positioned.current ||
@@ -1383,7 +1380,6 @@ function ThreadMessages({
     }
   }, [active, navigation, routePending, rootTarget, revealed, snapshot]);
   // An own send can land in the middle of a branch, not at the list bottom.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
   useLayoutEffect(() => {
     if (!sent) return;
     const row = [
@@ -1875,6 +1871,7 @@ function ThreadMessages({
           data-activity-history-scope=""
           inert={positioning}
         >
+          {snapshot.root && intro}
           {snapshot.root ? (
             <MessageRow
               viewer={session.viewer}

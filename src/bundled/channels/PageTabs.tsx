@@ -497,7 +497,6 @@ export function PageTabs({
                   actions: workspace?.actions,
                   content: workspace ? (
                     <div className={styles.conversation}>
-                      {workspace.toolbar}
                       <div className={styles.workspaceReader}>
                         {primaryTab &&
                         primaryChannel &&
@@ -505,6 +504,7 @@ export function PageTabs({
                           <ConversationReader
                             key={JSON.stringify(primaryTarget)}
                             tab={primaryTab}
+                            intro={workspace.intro}
                             active={
                               secondary.selectedMain === "conversation" &&
                               !covered

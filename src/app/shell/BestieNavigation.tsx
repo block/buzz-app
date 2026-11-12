@@ -1,11 +1,19 @@
-import { useContext, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useContext,
+  useEffect,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { bestieChat } from "../../bundled/bestie/chat";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RegisteredPage } from "../../features/pages/service";
-import { useRelayConnection } from "../../features/relay/react";
+import {
+  useProfileGeneration,
+  useRelayConnection,
+} from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import { useSavedAgentState } from "../../features/solo/default-agent";
 import { pagePresentation } from "./presentation";
@@ -56,9 +64,22 @@ export function BestieNavigationProvider({
     session.channels.list,
   );
   const channel = bestieChat(channels.channels, viewer, promoted);
-  const pack = agentAvatars.find((item) => item.url === agent?.avatar);
+  // The published profile picture wins, as in DM rows and message avatars; the
+  // agent definition's art covers only the wait for that profile.
+  const bestie = agent?.pubkey;
+  const generation = useProfileGeneration(session.profiles);
+  useEffect(() => {
+    void generation;
+    if (bestie)
+      void session.profiles.ensure([bestie], "background").catch(() => {});
+  }, [session, bestie, generation]);
+  const profilePicture = useSyncExternalStore(session.profiles.subscribe, () =>
+    bestie ? session.profiles.snapshot().get(bestie)?.picture : undefined,
+  );
+  const picture = profilePicture ?? agent?.avatar;
+  const pack = agentAvatars.find((item) => item.url === picture);
   const preview = useAvatarPreview(
-    pack ? "" : (agent?.avatar ?? ""),
+    pack ? "" : (picture ?? ""),
     connection.origin,
     "small",
     session.media,

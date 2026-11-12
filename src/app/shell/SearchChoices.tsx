@@ -316,7 +316,14 @@ export function SearchChoices({
             if (rows.length <= limit && !group.count)
               return { ...group, destinations: rows };
             truncated.set(group.label, rows.length);
-            return { ...group, destinations: rows.slice(0, limit) };
+            // Each row is read as one of the whole group: "1 of 37", or of
+            // an open set when more may follow ("20+").
+            const count = countOf(group);
+            return {
+              ...group,
+              destinations: rows.slice(0, limit),
+              total: /^\d+$/.test(count) ? Number(count) : -1,
+            };
           });
   const showScope = (label: string | undefined) => {
     setPeekScope(label);
@@ -614,7 +621,7 @@ export function SearchChoices({
           if (event.key === "ArrowDown" || event.key === "ArrowUp")
             restore.current = 0;
           if (
-            ranked.length > 1 &&
+            ranked.length > 0 &&
             event.key === "Tab" &&
             !event.ctrlKey &&
             !event.metaKey &&
@@ -792,6 +799,8 @@ export function SearchChoices({
                                     destinations,
                                   },
                                 )}
+                                {/* Names the group; flex drops the space. */}{" "}
+                                <span className="sr-only">{label}</span>
                                 <CaretRightIcon size={12} aria-hidden="true" />
                               </button>
                             )}
@@ -1047,7 +1056,9 @@ export function SearchChoices({
         </div>
         {peek?.ranked && (
           <aside className="search-peek-side" aria-label="Preview">
-            <div className="search-peek-preview" aria-live="polite">
+            {/* Not live: the highlighted row is already announced, and the
+              preview changes with every keystroke. */}
+            <div className="search-peek-preview">
               {(() => {
                 const row =
                   destinations.find(({ key }) => key === selected) ??
@@ -1107,7 +1118,9 @@ export function SearchChoices({
                         {group?.label ??
                           (query.trim() ? "Top results" : "Jump back in")}
                         {index === 1 && !!query.trim() && (
-                          <small className="search-peek-best">Best match</small>
+                          <small className="search-peek-best">
+                            <span className="sr-only">, </span>Best match
+                          </small>
                         )}
                       </span>
                       <span className="search-peek-count">
@@ -1138,12 +1151,12 @@ export function SearchChoices({
             <kbd>↑</kbd>
             <kbd>↓</kbd> Move
           </span>
-          {ranked.length > 1 && (
+          {ranked.length > 0 && (
             <span>
               <kbd>Tab</kbd> Next group
             </span>
           )}
-          {ranked.length > 1 && (
+          {ranked.length > 0 && (
             <span>
               <kbd>⇧</kbd>
               <kbd>Tab</kbd> Previous

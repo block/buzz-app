@@ -97,13 +97,13 @@ export function useMessageRerank(
 ) {
   const hold = useRef(held);
   hold.current = held;
-  const key = enabled
-    ? JSON.stringify([
-        query,
-        messages.slice(0, RERANK_LIMIT).map(({ id }) => id),
-      ])
-    : "";
-  const [result, setResult] = useState<{ key: string; order: string[] }>();
+  const ids = messages.slice(0, RERANK_LIMIT).map(({ id }) => id);
+  const key = enabled ? JSON.stringify([query, ids]) : "";
+  const [result, setResult] = useState<{
+    query: string;
+    ids: readonly string[];
+    order: string[];
+  }>();
   const [pending, setPending] = useState("");
   // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the request; facts are read as it starts.
   useEffect(() => {
@@ -118,7 +118,11 @@ export function useMessageRerank(
           if (!live) return;
           setPending((current) => (current === key ? "" : current));
           if (reply.outcome !== "answered" || hold.current) return;
-          setResult({ key, order: rerankOrder(messages, reply.answers) });
+          setResult({
+            query,
+            ids,
+            order: rerankOrder(messages, reply.answers),
+          });
         });
     }, RERANK_DELAY);
     return () => {
@@ -126,7 +130,14 @@ export function useMessageRerank(
       clearTimeout(timer);
     };
   }, [key, decisions, community]);
-  const order = result?.key === key ? result.order : undefined;
+  // A later page extends the hits it ordered: that order stays, so the rows
+  // above don't move.
+  const order =
+    key &&
+    result?.query === query &&
+    result.ids.every((id, index) => ids[index] === id)
+      ? result.order
+      : undefined;
   const ordered = useMemo(() => {
     if (!order) return messages;
     const byId = new Map(messages.map((message) => [message.id, message]));

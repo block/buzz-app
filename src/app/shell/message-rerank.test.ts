@@ -69,3 +69,31 @@ it("drops an answer that lands after the person moved, keeping the relay order",
   expect(result.current.reranked).toBe(false);
   expect(result.current.messages.map(({ id }) => id)).toEqual(["a", "b"]);
 });
+
+it("keeps an applied order while a later page extends the hits", async () => {
+  vi.useFakeTimers();
+  const decide = vi.fn(async () => ({
+    outcome: "answered",
+    backend: "test",
+    model: "test",
+    answers: {
+      m1: { type: "yes_no", probability: 0.1 },
+      m2: { type: "yes_no", probability: 0.9 },
+    },
+  }));
+  const decisions = { decide, status: () => "ready" } as unknown as Decisions;
+  const facts = () => ({ where: "#c", author: "A", mine: false });
+  const { result, rerender } = renderHook(
+    ({ messages, held }) =>
+      useMessageRerank(decisions, undefined, "q", messages, true, facts, held),
+    { initialProps: { messages: ["a", "b"].map(message), held: false } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(500);
+  });
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a"]);
+  // The person moves, then loads the next page.
+  rerender({ messages: ["a", "b", "c"].map(message), held: true });
+  expect(result.current.reranked).toBe(true);
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a", "c"]);
+});

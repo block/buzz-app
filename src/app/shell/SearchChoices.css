@@ -33,8 +33,10 @@
     cursor: pointer;
   }
 
-  .search-palette-author-chip:hover {
-    background: var(--affordance-subtle-hover);
+  @media (hover: hover) and (pointer: fine) {
+    .search-palette-author-chip:hover {
+      background: var(--affordance-subtle-hover);
+    }
   }
 
   .search-palette-scope-row {
@@ -364,8 +366,10 @@
     position: absolute;
     inset: calc(-1 * var(--space-1h)) calc(-1 * var(--space-2));
   }
-  .search-peek-see-all:hover {
-    color: var(--text-standard);
+  @media (hover: hover) and (pointer: fine) {
+    .search-peek-see-all:hover {
+      color: var(--text-standard);
+    }
   }
 
   .search-peek-body {
@@ -515,11 +519,20 @@
     text-align: start;
     cursor: pointer;
   }
-  .search-peek-rail-item:hover {
-    background: var(--affordance-row-hover);
+  @media (hover: hover) and (pointer: fine) {
+    .search-peek-rail-item:hover {
+      background: var(--affordance-row-hover);
+    }
   }
   .search-peek-rail-item[aria-pressed="true"] {
     background: var(--affordance-selected);
+  }
+  /* Forced colors drop the fill; an outline keeps the group shown marked. */
+  @media (forced-colors: active) {
+    .search-peek-rail-item[aria-pressed="true"] {
+      outline: 1px solid ButtonText;
+      outline-offset: -1px;
+    }
   }
   .search-peek-rail-label {
     flex: 1;
@@ -566,8 +579,10 @@
     border-radius: 50%;
     background: var(--peek-ink);
   }
-  .search-peek-hint:hover {
-    background: var(--affordance-subtle-hover);
+  @media (hover: hover) and (pointer: fine) {
+    .search-peek-hint:hover {
+      background: var(--affordance-subtle-hover);
+    }
   }
   .search-peek-hint span {
     color: var(--text-secondary);
@@ -585,8 +600,10 @@
     font-weight: var(--type-weight-medium);
     cursor: pointer;
   }
-  .search-peek-ask-chip:hover {
-    background: var(--surface-categorical-amber-hover);
+  @media (hover: hover) and (pointer: fine) {
+    .search-peek-ask-chip:hover {
+      background: var(--surface-categorical-amber-hover);
+    }
   }
   .search-peek-start {
     display: inline-flex;

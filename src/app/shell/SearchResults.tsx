@@ -1596,7 +1596,10 @@ export function SearchResults({
           icon: RobotIcon,
           trailing: (
             <span className="search-peek-start text-body-sm text-subtle">
-              Start chat <kbd>↵</kbd>
+              Start chat{" "}
+              <span aria-hidden="true">
+                <kbd>↵</kbd>
+              </span>
             </span>
           ),
           run: () => {
@@ -1623,7 +1626,7 @@ export function SearchResults({
         type="button"
         tabIndex={-1}
         className="search-peek-ask-chip text-body-sm"
-        aria-label="Remove ask:"
+        aria-label={`Remove Ask ${askAgent?.name ?? "your agent"}`}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           onQueryChange(question);

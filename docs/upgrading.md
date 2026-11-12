@@ -25,17 +25,6 @@ core of the app is made of plugins too:
 Plugins you add use the same building blocks, so they can go as far as the
 built-in ones.
 
-To get and manage plugins:
-
-1. Open **Settings → Plugins → Manage plugins**. Use the **All plugins** and
-   **Essentials** tabs or the search field to find a plugin. Built-in plugins
-   are turned on and off here.
-2. To add a plugin, choose **Add**. To add from a folder, drop the plugin
-   folder in or choose **Browse**. To add from Git, fill in
-   **Git or GitHub repository** and choose **Find**.
-3. Buzz shows the access the plugin asks for. Review it, then choose
-   **Install plugin**.
-
 Plugins are trusted code that runs inside the app, so add only ones you trust.
 
 To write your own, read the [plugin authoring guide](plugin-authoring-guide.md)

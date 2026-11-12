@@ -293,6 +293,7 @@ import {
   defaultAgentControl,
   type DefaultAgentControl,
   forgetDefaultAgent,
+  readSavedAgent,
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
 import type { DeviceSettings } from "../../shared/device-settings";
@@ -3488,8 +3489,13 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       sections: (agent) => {
-        const session = this.bindingOf(agent)?.session;
-        return session && sidebarSections(session);
+        const binding = this.bindingOf(agent);
+        if (!binding) return undefined;
+        const { session, scope } = binding;
+        return sidebarSections(
+          session,
+          async () => (await readSavedAgent(session, scope)) === agent.pubkey,
+        );
       },
       settings: () => this.deviceSettings,
       bestie: (agent) => {

@@ -26,7 +26,7 @@ const tool = (
 export const SECTIONS_TOOLS: readonly Tool[] = [
   tool(
     "sections_list",
-    "Your owner's sidebar sections, in order, with each one's channels, and their starred channels. Channels in neither are in Channels.",
+    "Your owner's sidebar sections, in order, with each one's channels, and their starred channels. Channels in neither are in Channels. Only your owner's Bestie can change sections.",
     {},
     [],
     { readOnlyHint: true },

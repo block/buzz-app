@@ -106,6 +106,19 @@ test("statuses edit, synchronize, clear, reject stale traffic and retain failed 
     await expect(
       page.getByRole("button", { name: "Your profile", exact: true }),
     ).toBeFocused();
+    const profilePreview = page.getByRole("tooltip", {
+      name: "Your profile and status",
+    });
+    await expect(profilePreview).toBeHidden();
+    await profileButton.press("Enter");
+    await expect(page.getByRole("menu", { name: "Alice" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(profileButton).toBeFocused();
+    await expect(profilePreview).toBeHidden();
+    await profileButton.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(profileButton).toBeFocused();
+    await expect(profilePreview).toBeVisible();
     await expect(
       chat.locator('[aria-label="💬 Design meeting"]'),
     ).toBeVisible();

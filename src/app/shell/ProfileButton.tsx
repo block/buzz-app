@@ -281,6 +281,14 @@ export function ProfileButton({
   const openingStatus = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const previewFocusBlocked = useRef(false);
+  useEffect(() => {
+    const deliberateFocus = (event: KeyboardEvent) => {
+      if (event.key === "Tab") previewFocusBlocked.current = false;
+    };
+    window.addEventListener("keydown", deliberateFocus, true);
+    return () => window.removeEventListener("keydown", deliberateFocus, true);
+  }, []);
   const previewSession =
     selected && connection.viewer === viewer ? session : undefined;
   const previewStatus = previewSession ? status : undefined;
@@ -319,6 +327,7 @@ export function ProfileButton({
         modal={false}
         open={menuOpen}
         onOpenChange={(open) => {
+          previewFocusBlocked.current = true;
           setMenuOpen(open);
           if (open) {
             setPreviewOpen(false);
@@ -347,7 +356,19 @@ export function ProfileButton({
           side="right"
           align="end"
           open={previewOpen && !menuOpen}
-          onOpenChange={(open) => setPreviewOpen(open && !menuOpen)}
+          onOpenChange={(open, details) => {
+            if (
+              open &&
+              (menuOpen ||
+                (details.reason === "trigger-focus" &&
+                  previewFocusBlocked.current))
+            ) {
+              details.cancel();
+              return;
+            }
+            if (open) previewFocusBlocked.current = false;
+            setPreviewOpen(open);
+          }}
           aria-label="Your profile and status"
           trigger={
             <div className={styles.trigger}>
@@ -662,7 +683,10 @@ export function ProfileButton({
           scope={connection.scope}
           current={statusEditor.editor.current}
           viewer={statusEditor.editor.viewer}
-          close={statusEditor.close}
+          close={() => {
+            previewFocusBlocked.current = true;
+            statusEditor.close();
+          }}
           finalFocus={profileTrigger}
         />
       )}

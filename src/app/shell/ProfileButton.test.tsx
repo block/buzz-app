@@ -569,6 +569,16 @@ it.each(["escape", "close button", "reopen", "scope switch"])(
         await screen.findByRole("menu", { name: "Local" });
       }
       await act(async () => release());
+      if (dismiss !== "reopen") {
+        await waitFor(() =>
+          expect(
+            screen.queryByRole("tooltip", {
+              name: "Your profile and status",
+              hidden: true,
+            }),
+          ).toBeNull(),
+        );
+      }
       expect(
         screen.queryByRole("dialog", { name: "Set a status" }),
       ).not.toBeInTheDocument();
@@ -695,6 +705,31 @@ it("shows the selected community's current status above the profile avatar", asy
     expect(preview.querySelector("time")).toBeNull();
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "Your profile" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("menu", { name: "Alice" });
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Your profile" }),
+      ).toHaveFocus(),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("tooltip", {
+          name: "Your profile and status",
+          hidden: true,
+        }),
+      ).toBeNull(),
+    );
+    await user.tab();
+    await user.tab({ shift: true });
+    expect(
+      await screen.findByRole("tooltip", {
+        name: "Your profile and status",
+        hidden: true,
+      }),
+    ).toHaveTextContent("Back soon");
+    await user.keyboard("{Escape}");
     snapshot.selected = undefined;
     rendered.rerender(view());
     expect(screen.queryByRole("img", { name: "Back soon" })).toBeNull();

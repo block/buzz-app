@@ -238,8 +238,11 @@ test.describe("Conversation surfaces", () => {
     await expect(
       page.getByRole("textbox", { name: "Message your agents", exact: true }),
     ).toBeVisible();
+    const soloMessage = app.histories.get("primary/beta")[0];
     await expect(
-      mainHistory.locator("[data-message-id]").first(),
+      mainHistory
+        .locator(`[data-message-id="${soloMessage.id}"]`)
+        .getByText(/^primary beta message 0/),
     ).toBeVisible();
     await settle(page);
     await expectEndAligned(mainHistory);

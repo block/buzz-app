@@ -29,6 +29,7 @@ export {
  * so its environment carries only this agent's Buzz credential. */
 export class AgentProcess {
   private ready: Promise<GooseProcess> | undefined;
+  private refreshing: Promise<void> | undefined;
   /** The process `ready` started, kept until it exits, even when its start
    * failed. */
   private process: GooseProcess | undefined;
@@ -41,12 +42,14 @@ export class AgentProcess {
     private readonly agent: () =>
       | Readonly<{ pubkey: string; relay: string }>
       | undefined = () => undefined,
+    private readonly voiceEnabled: () => boolean = () => false,
   ) {}
 
   /** The running process. One that failed to start is started again on the
    * next call once it has exited. */
   get(): Promise<GooseProcess> {
     this.protection?.assertAvailable();
+    if (this.refreshing) return this.refreshing.then(() => this.get());
     if (this.ready) return this.ready;
     const agent = this.agent();
     const ready = (async () => {
@@ -62,6 +65,7 @@ export class AgentProcess {
           {
             cwd: await this.host.resolveDirectory("~"),
             serve: this.serve,
+            env: { GOOSE_LIVE_VOICE_ENABLED: String(this.voiceEnabled()) },
             onProcess: (goose) => (this.process = goose),
             ...(agent && {
               agent: { pubkey: agent.pubkey, relay: agent.relay },
@@ -70,6 +74,7 @@ export class AgentProcess {
               protected: true,
               env: {
                 ...bridge.env,
+                GOOSE_LIVE_VOICE_ENABLED: String(this.voiceEnabled()),
                 BASH_ENV: null,
                 ENV: null,
                 DYLD_INSERT_LIBRARIES: null,
@@ -100,6 +105,18 @@ export class AgentProcess {
     );
     this.ready = ready;
     return ready;
+  }
+  /** Retires the launch environment. New sessions wait for the old process
+   * to exit; a failed shutdown refuses admission until refresh is retried. */
+  refresh() {
+    const refreshing = this.shutdown();
+    this.refreshing = refreshing;
+    void refreshing.then(
+      () => {
+        if (this.refreshing === refreshing) this.refreshing = undefined;
+      },
+      () => undefined,
+    );
   }
   /** Stops it, failing every session in it. */
   stop() {

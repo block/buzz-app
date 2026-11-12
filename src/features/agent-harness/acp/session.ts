@@ -119,8 +119,37 @@ export class AcpSession {
     private preamble = "",
   ) {}
 
+  /** A retained voice session can run work initiated by the harness. */
+  private externalRuns = false;
+  private externalReserved = false;
+  private externalIdlers: (() => void)[] = [];
+  /** Goose reserves the whole live interaction, including gaps between runs. */
+  reserveExternal() {
+    if (!this.externalRuns || !this.quiet() || this.closed)
+      throw new Error("The session is not idle for voice");
+    this.externalReserved = true;
+  }
+  /** Teardown waits for delegated work, not text waiting behind the reservation. */
+  externalIdle(): Promise<void> {
+    if (this.closed || !this.externalRun) return Promise.resolve();
+    return new Promise((resolve) => this.externalIdlers.push(resolve));
+  }
+  observeExternalRuns(enabled: boolean) {
+    if (!enabled) {
+      // A canceled opening can release its lease while pre-existing typed
+      // work still runs. That work keeps its tool authority.
+      if (this.externalReserved || this.externalRun) this.generation++;
+      this.externalReserved = false;
+    }
+    this.externalRuns = enabled;
+    this.wake();
+    void this.pump();
+  }
+  private get externalRun() {
+    return this.externalRuns && !!this.runId && !this.prompting;
+  }
   get busy() {
-    return this.pending > 0;
+    return this.pending > 0 || this.externalRun;
   }
   get working() {
     return !this.quiet();
@@ -190,9 +219,12 @@ export class AcpSession {
   /** Whether the work running now, if any, still runs unstopped and
    * unfinished when asked later; work after it is not that work. */
   current(): () => boolean {
-    const generation = this.stopped || this.quiet() ? -1 : this.generation;
-    return () =>
-      this.generation === generation && !this.stopped && !this.quiet();
+    const active = () =>
+      !this.stopped &&
+      !this.quiet() &&
+      (!this.externalReserved || this.externalRun);
+    const generation = active() ? this.generation : -1;
+    return () => this.generation === generation && active();
   }
 
   /** A final message succeeded: the work counts as done at once, and the
@@ -217,6 +249,15 @@ export class AcpSession {
       waiters: [...this.waiters],
       receipts: new Set(this.active.values()),
     };
+    this.acp.notify("session/cancel", { sessionId: this.id });
+  }
+
+  /** Leaving voice cancels only its delegated work. Typed work, including
+   * messages queued behind that delegation, keeps its turn. */
+  interruptExternalRun() {
+    if (!this.externalRun || this.closed || this.stopped) return;
+    this.generation++;
+    this.stopped = { waiters: [], receipts: new Set() };
     this.acp.notify("session/cancel", { sessionId: this.id });
   }
 
@@ -257,8 +298,22 @@ export class AcpSession {
     const { steering } = this.acp.hooks;
     const runId = steering ? steering.runId(update) : null;
     if (runId !== null) {
+      if (this.externalRuns && !this.prompting && runId !== this.runId) {
+        // A queued tool from an earlier delegated run has no authority in
+        // its successor, even when the harness skips the idle notification.
+        this.generation++;
+        // Delegated results belong to voice, not the next queued text turn.
+        this.acted = false;
+        this.written = "";
+        this.lastStep = "";
+        if (!runId) this.stopped = undefined;
+      }
       this.runId = runId;
       if (runId) this.ranAs(runId);
+      if (this.externalRuns && !runId) {
+        this.wake();
+        void this.pump();
+      }
     }
     if (kind === "session_info_update" || runId !== null) return;
     const step = stepLabel(update);
@@ -377,7 +432,13 @@ export class AcpSession {
   }
 
   private async pump() {
-    if (this.prompting || this.handingOff) return;
+    if (
+      this.prompting ||
+      this.handingOff ||
+      this.externalReserved ||
+      this.externalRun
+    )
+      return;
     this.prompting = true;
     try {
       while (this.queue.length && !this.handingOff && !this.closed) {
@@ -464,7 +525,7 @@ export class AcpSession {
   /** Puts the session on the provider, model and thinking level chosen now,
    * or `model` of that provider and level `effort`. A steer joins the running
    * turn, so a change waits for the next. */
-  private async select(model?: string, effort?: string) {
+  async select(model?: string, effort?: string) {
     const chosen = this.choice?.();
     if (!chosen) return;
     const want = {
@@ -593,13 +654,16 @@ export class AcpSession {
   private quiet() {
     return (
       this.closed ||
-      (!this.prompting &&
+      (!this.externalRun &&
+        !this.prompting &&
         !this.steering.size &&
         !this.pending &&
         !this.queue.length)
     );
   }
   private wake() {
+    if (this.closed || !this.externalRun)
+      for (const resolve of this.externalIdlers.splice(0)) resolve();
     if (!this.quiet()) return;
     this.generation++;
     for (const resolve of this.idlers.splice(0)) resolve();

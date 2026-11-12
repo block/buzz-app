@@ -14,6 +14,8 @@ import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { fakeSpawn, flush, gated } from "./goose-testing";
 import { REQUEST_TIMEOUT_MS } from "./goose";
+import { openVoice } from "./voice";
+vi.mock("./voice", () => ({ openVoice: vi.fn() }));
 import { AcpSession } from "../../features/agent-harness/acp/session";
 import { AgentSessions, AgentProcess } from "./sessions";
 import {
@@ -2328,4 +2330,327 @@ it("keeps foreign-channel roots out of conversation context", async () => {
     ],
     expect.anything(),
   );
+});
+
+it("refreshes the process after a voice switch change only once typed model work is idle", async () => {
+  const f = setup({ hold: true });
+  try {
+    await f.deliver(message("1", "Working"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const old = f.goose();
+    const turn = old?.turns[0];
+    if (!old || !turn) throw new Error("Expected typed turn");
+    await f.runtime.voiceSettings.setEnabled(true);
+    expect(old.killed).toBe(false);
+    // A final send answers Buzz, but goose's model can still be running.
+    await old.mcp(turn.sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Done", final: true },
+    });
+    expect(old.killed).toBe(false);
+    turn.finish();
+    await vi.waitFor(() => expect(old.killed).toBe(true));
+    await f.deliver(message("2", "Next"));
+    await vi.waitFor(() => expect(f.fake.geese[1]?.turns).toHaveLength(1));
+    expect(f.fake.geese[1]?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("true");
+    f.fake.geese[1]?.turns[0]?.finish();
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("holds typed admission until a voice-settings process refresh has exited", async () => {
+  let release!: () => void;
+  let stopping!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const stopped = new Promise<void>((resolve) => {
+    stopping = resolve;
+  });
+  let spawned = 0;
+  const f = setup({
+    scope: "channel",
+    wrap: (spawn) => async (id, options) => {
+      const process = await spawn(id, options);
+      if (++spawned !== 1) return process;
+      return {
+        ...process,
+        kill: async () => {
+          stopping();
+          await gate;
+          await process.kill();
+        },
+      };
+    },
+  });
+  try {
+    await f.deliver(message("1", "First"));
+    await vi.waitFor(() =>
+      expect(f.runtime.sessions(self)).toMatchObject([{ busy: false }]),
+    );
+    const old = f.fake.geese[0];
+    if (!old) throw new Error("Expected the old process");
+    await f.runtime.voiceSettings.setEnabled(true);
+    await stopped;
+    const next = f.deliver(message("2", "During shutdown"));
+    await flush(30);
+    expect(old.turns).toHaveLength(1);
+    expect(f.fake.geese).toHaveLength(1);
+    release();
+    await next;
+    await vi.waitFor(() => expect(f.fake.geese[1]?.turns).toHaveLength(1));
+    expect(old.turns).toHaveLength(1);
+    expect(f.fake.geese[1]?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("true");
+    expect(f.fake.geese[1]?.turns[0]?.text).toContain("During shutdown");
+  } finally {
+    release();
+    f.runtime.dispose();
+  }
+});
+
+it("releases a canceled pre-start voice lease while typed work continues", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  const retain = AgentSessions.prototype.retain;
+  let retained!: () => void;
+  let barrier = new Promise<void>((resolve) => {
+    retained = resolve;
+  });
+  const released = vi.fn();
+  const spy = vi
+    .spyOn(AgentSessions.prototype, "retain")
+    .mockImplementation(async function (this: AgentSessions, ...args) {
+      const lease = await retain.apply(this, args);
+      retained();
+      return {
+        ...lease,
+        release: () => {
+          released();
+          lease.release();
+        },
+      };
+    });
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    await f.deliver(message("1", "keep working"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    // A replacement seat must also be able to acquire and release this lease.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const abort = new AbortController();
+      const opening = f.runtime.voice(
+        {
+          agent: f.agent,
+          config: { ...DEFAULT_CONFIG, scope: "channel" },
+          conversation: { channelId: channel },
+          signal: abort.signal,
+          ended: vi.fn(),
+          output: vi.fn(),
+          transcript: vi.fn(),
+        } as never,
+        f.agent as never,
+      );
+      const failed = expect(opening).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      await barrier;
+      abort.abort();
+      await failed;
+      expect(released).toHaveBeenCalledTimes(attempt + 1);
+      expect(f.goose()?.killed).toBe(false);
+      expect(f.goose()?.cancelled).toEqual([]);
+      expect(f.goose()?.turns).toHaveLength(1);
+      const process = f.goose();
+      const turn = process?.turns[0];
+      if (!process || !turn) throw new Error("Typed turn did not start");
+      await process.mcp(turn.sessionId, "tools/call", {
+        name: "send",
+        arguments: { audience: "everyone", text: "Still working" },
+      });
+      expect(f.published.at(-1)?.content).toBe("Still working");
+      barrier = new Promise<void>((resolve) => {
+        retained = resolve;
+      });
+    }
+  } finally {
+    f.goose()?.turns[0]?.finish();
+    f.runtime.dispose();
+    spy.mockRestore();
+  }
+});
+
+it("switching voice off closes its live seat and releases queued typed work", async () => {
+  const f = setup({ scope: "channel", hold: true });
+  const ended = vi.fn();
+  let liveSignal!: AbortSignal;
+  const stopped = vi.fn();
+  vi.mocked(openVoice).mockImplementation(
+    async (process, sessionId, seat, _instructions, start) => {
+      liveSignal = seat.signal;
+      const result = (await start(() =>
+        process.request("_goose/unstable/session/live-voice/start", {
+          sessionId,
+          offerSdp: "offer",
+        }),
+      )) as { interactionId: string };
+      return {
+        input: vi.fn(),
+        close: async () => {
+          await process.request("_goose/unstable/session/live-voice/stop", {
+            sessionId,
+            interactionId: result.interactionId,
+          });
+          stopped();
+        },
+      };
+    },
+  );
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended,
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    await f.deliver(message("1", "after voice"));
+    expect(f.fake.geese[0]?.turns).toHaveLength(0);
+    await f.runtime.voiceSettings.setEnabled(false);
+    await vi.waitFor(() => expect(stopped).toHaveBeenCalledOnce());
+    expect(liveSignal.aborted).toBe(true);
+    expect(ended).toHaveBeenCalledOnce();
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(1),
+    );
+    const process = f.goose();
+    const turn = process?.turns[0];
+    if (!process || !turn) throw new Error("Typed turn did not start");
+    await process.mcp(turn.sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Typed answer" },
+    });
+    expect(f.published.at(-1)?.content).toBe("Typed answer");
+    turn.finish();
+  } finally {
+    await seat?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("selects the agent's model and thinking level before opening voice", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockImplementation(async () => {
+    expect(f.fake.geese[0]?.configured).toEqual([
+      "session-1 model=o3",
+      "session-1 thinking_effort=high",
+    ]);
+    return { input: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: {
+          ...DEFAULT_CONFIG,
+          provider: "openai",
+          model: "o3",
+          effort: "high",
+          scope: "channel",
+        },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    expect(openVoice).toHaveBeenCalledOnce();
+  } finally {
+    await seat?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("gives the voice model the agent's instructions, team and core memory", async () => {
+  const f = setup({ scope: "channel", core: "I am Gander." });
+  vi.mocked(openVoice).mockImplementation(async () => ({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  }));
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config: {
+          ...DEFAULT_CONFIG,
+          instructions: "Speak like a pirate.",
+          scope: "channel",
+        },
+        team: '<team name="Crew">\nSail.\n</team>',
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    expect(vi.mocked(openVoice).mock.calls[0]?.[3]).toBe(
+      "You are Gander.\n\n<agent-instructions>\nSpeak like a pirate.\n</agent-instructions>\n\n" +
+        '<team name="Crew">\nSail.\n</team>\n\n<core-memory>\nI am Gander.\n</core-memory>',
+    );
+  } finally {
+    await seat?.close();
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
+});
+
+it("releases the voice reservation when model selection fails", async () => {
+  const f = setup({ scope: "channel" });
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    await f.deliver(message("1", "preflight"));
+    await flush(100);
+    const process = f.fake.geese[0];
+    if (!process) throw new Error("No preflight process");
+    const selecting = vi.spyOn(AcpSession.prototype, "select");
+    selecting.mockRejectedValueOnce(new Error("Model unavailable"));
+    await expect(
+      f.runtime.voice(
+        {
+          agent: f.agent,
+          config: { ...DEFAULT_CONFIG, model: "o3", scope: "channel" },
+          conversation: { channelId: channel },
+          signal: new AbortController().signal,
+          ended: vi.fn(),
+          output: vi.fn(),
+          transcript: vi.fn(),
+        } as never,
+        f.agent as never,
+      ),
+    ).rejects.toThrow("Model unavailable");
+    expect(openVoice).not.toHaveBeenCalled();
+    selecting.mockRestore();
+    await f.deliver(message("2", "after failed voice"));
+    await vi.waitFor(() =>
+      expect(f.fake.geese.flatMap((p) => p.turns)).toHaveLength(2),
+    );
+  } finally {
+    f.runtime.dispose();
+    vi.mocked(openVoice).mockReset();
+  }
 });

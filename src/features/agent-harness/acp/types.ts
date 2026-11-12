@@ -94,6 +94,10 @@ export type AcpHooks = Readonly<{
   /** Whether the harness names an untitled session itself, read once per
    * process. Without it, a session opened to be named keeps its title. */
   names?(process: AcpProcess): Promise<boolean>;
+  /** Harness extensions advertised during initialize. */
+  clientCapabilities?: Record<string, unknown>;
+  /** Keeps auxiliary updates out of typed turn state; raw subscribers still receive them. */
+  acceptSessionUpdate?(update: Record<string, unknown>): boolean;
   /** `session/new`'s `_meta`. */
   newSessionMeta?(
     buzz: McpServer | undefined,

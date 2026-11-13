@@ -400,7 +400,7 @@ function Browse({
       ) : (
         <SwitchPreferenceRow
           label="Record my plugins in this community"
-          description="Members of this community can see which plugins you installed and liked. Nobody outside it can. Turning this off removes yours."
+          description="Members of this community can see which plugins you installed and upvoted. Nobody outside it can. Turning this off removes yours."
           checked={counts.recording}
           disabled={changing || !ready}
           onCheckedChange={(on: boolean) => {

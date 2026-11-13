@@ -134,14 +134,8 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   sources = () => this.contributions.snapshot();
   reveal = (channelId: string, explicit = true) => {
     const target = this.ctx.navigation?.snapshot().entry.target;
-    const disabled = this.value.regions.some(
-      (region) =>
-        region.reason === "disabled" &&
-        region.channels.some((channel) => channel.id === channelId),
-    );
     if (
-      !this.value.managed.has(channelId) ||
-      disabled ||
+      !this.value.excluded.has(channelId) ||
       (explicit &&
         (target?.kind !== "conversation" ||
           target.channelId !== channelId ||
@@ -401,13 +395,12 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         }
         const plugins = this.plugins?.snapshot();
         const configuration = plugins?.configuration;
-        const disabledPluginIds = new Set(
+        const pluginForRegionLabel = (label: string) =>
           configuration?.status === "ready"
-            ? configuration.catalog.plugins
-                .filter((plugin) => !plugin.enabled)
-                .map((plugin) => plugin.manifest.id)
-            : [],
-        );
+            ? configuration.catalog.plugins.find((plugin) =>
+                label.startsWith(`${REGION_PREFIX}${plugin.manifest.id}:`),
+              )
+            : undefined;
         const placement = projectSoloRegions(
           this.session.channels.list().channels,
           connection.viewer ?? this.session.viewer ?? "",
@@ -427,7 +420,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
               this.titles.get(cacheKey) ?? readView(scope, key, "Plugin chats");
             return typeof saved === "string" ? saved : "Plugin chats";
           },
-          disabledPluginIds,
+          (label) => pluginForRegionLabel(label)?.enabled === false,
         );
         const next: SoloNavigationSnapshot = {
           ...placement,
@@ -436,9 +429,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
             if (configuration?.status === "loading")
               return { ...region, reason: "loading" as const };
             if (configuration?.status !== "ready") return region;
-            const plugin = configuration.catalog.plugins.find((plugin) =>
-              region.label.startsWith(`${REGION_PREFIX}${plugin.manifest.id}:`),
-            );
+            const plugin = pluginForRegionLabel(region.label);
             if (!plugin) return { ...region, reason: "not-installed" as const };
             if (
               plugin.source === "external" &&

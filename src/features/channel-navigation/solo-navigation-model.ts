@@ -44,7 +44,7 @@ export function projectSoloRegions(
     failed: boolean;
   }>[],
   title: (label: string, value?: string) => string,
-  disabledPluginIds: ReadonlySet<string> = new Set(),
+  isPluginDisabled: (label: string) => boolean = () => false,
 ): SoloPlacement {
   const groups = new Map<string, ChannelSummary[]>();
   for (const source of sources)
@@ -63,8 +63,7 @@ export function projectSoloRegions(
       const current = sources.find(
         (item) => soloRegionLabelOf(item.source) === label,
       );
-      const pluginId = label.slice(REGION_PREFIX.length).split(":", 1)[0] ?? "";
-      const disabled = disabledPluginIds.has(pluginId);
+      const disabled = isPluginDisabled(label);
       const reason = disabled
         ? "disabled"
         : !current

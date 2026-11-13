@@ -1358,8 +1358,10 @@ it("shows explicitly disabled region chats once in the ordinary Solo inventory",
     },
     channelId: "owned",
   } as const;
-  h.navigate(target);
-  h.plugins(configuration);
+  await act(async () => {
+    await h.navigate(target);
+    h.plugins(configuration);
+  });
   const ordinary = (
     <SoloInventory
       session={h.session}
@@ -1390,9 +1392,12 @@ it("shows explicitly disabled region chats once in the ordinary Solo inventory",
   );
 
   expect(screen.getByRole("button", { name: "Owned" })).toBeInTheDocument();
-  expect(
-    document.querySelectorAll('[data-solo-channel-id="owned"]'),
-  ).toHaveLength(1);
+  for (const id of ["owned", "shared"]) {
+    expect(
+      document.querySelectorAll(`[data-solo-channel-id="${id}"]`),
+    ).toHaveLength(1);
+  }
+  expect(screen.getByRole("button", { name: "Shared" })).toBeInTheDocument();
   expect(
     document
       .querySelector('[data-solo-project="personal"]')
@@ -1402,6 +1407,11 @@ it("shows explicitly disabled region chats once in the ordinary Solo inventory",
     document
       .querySelector('[data-solo-project=""]')
       ?.querySelector('[data-solo-channel-id="owned"]'),
+  ).not.toBeNull();
+  expect(
+    document
+      .querySelector('[data-solo-project=""]')
+      ?.querySelector('[data-solo-channel-id="shared"]'),
   ).not.toBeNull();
   expect(saved.assignments).toEqual({ owned: "personal" });
   expect(

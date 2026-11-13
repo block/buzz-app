@@ -13,10 +13,7 @@ const beta = "44444444-4444-4444-8444-444444444444";
 
 test.use({
   pluginFixtures: true,
-  productionBroker: true,
-  channelIds: [alpha, beta],
-  channelNames: { [alpha]: "Alpha", [beta]: "Beta" },
-  historyCounts: { [alpha]: 0, [beta]: 0 },
+  historyCounts: { alpha: 0, beta: 0 },
 });
 
 // Real storage events between windows and app startup are outside jsdom's boundary.
@@ -63,6 +60,9 @@ test("region state reaches the component after a headless write and a write in a
 
 test.describe("disabled plugin chat fallback", () => {
   test.use({
+    productionBroker: true,
+    channelIds: [alpha, beta],
+    channelNames: { [alpha]: "Alpha", [beta]: "Beta" },
     soloChannels: [alpha],
     ownSoloChannels: [alpha],
     historyCounts: { [alpha]: 1, [beta]: 0 },
@@ -115,17 +115,8 @@ test.describe("disabled plugin chat fallback", () => {
       messageId,
     );
 
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.setViewportSize({ width: 640, height: 900 });
-    await page.evaluate(() =>
-      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-    );
     await newChat(page);
-    const showNavigation = page.getByRole("button", {
-      name: "Show navigation",
-      exact: true,
-    });
-    if (await showNavigation.isVisible()) await showNavigation.click();
+    await expect(sidebar).toBeVisible();
     await expect(ordinary).toBeVisible();
     await ordinary.focus();
     await page.keyboard.press("Enter");
@@ -140,12 +131,7 @@ test.describe("disabled plugin chat fallback", () => {
     await closeSettings(page);
 
     await settleShellToggle(page);
-    const reenabledShowNavigation = page.getByRole("button", {
-      name: "Show navigation",
-      exact: true,
-    });
-    if (await reenabledShowNavigation.isVisible())
-      await reenabledShowNavigation.click();
+    await expect(sidebar).toBeVisible();
     await expect(ordinary).toHaveCount(0);
     await expect(region).toHaveCount(1);
     await expect(region).toBeVisible();

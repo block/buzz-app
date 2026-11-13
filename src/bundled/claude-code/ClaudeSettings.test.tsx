@@ -10,10 +10,10 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Spawn } from "./claude";
-import { ClaudeSettings, type ClaudeConnection } from "./ClaudeSettings";
+import { ClaudeSettings } from "./ClaudeSettings";
 import { ClaudeSetup } from "./setup";
 
 const native = vi.hoisted(() => ({
@@ -62,17 +62,29 @@ function fixture(active = () => true) {
   const Settings = setup.auth.Settings;
   if (!Settings)
     throw new Error("API-key auth must supply its Settings component");
-  const surface = (connection?: ClaudeConnection) => (
+  let present!: (open: boolean) => void;
+  const onOpenChange = vi.fn((open: boolean): void => present(open));
+  const Surface = () => {
+    const [open, setOpen] = useState<boolean>();
+    present = setOpen;
+    return (
+      <>
+        <button type="button">Before settings</button>
+        <Settings
+          setup={setup}
+          active={active}
+          connection={open === undefined ? undefined : { open, onOpenChange }}
+        />
+        <button type="button">After settings</button>
+      </>
+    );
+  };
+  render(
     <StrictMode>
-      <button type="button">Before settings</button>
-      <Settings setup={setup} active={active} connection={connection} />
-      <button type="button">After settings</button>
-    </StrictMode>
+      <Surface />
+    </StrictMode>,
   );
-  const view = render(surface());
-  const present = (open: boolean) =>
-    view.rerender(surface({ open, onOpenChange: present }));
-  return { setup, spawn, present };
+  return { setup, spawn, present, onOpenChange };
 }
 
 async function savedKey() {
@@ -237,9 +249,9 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
     await user.keyboard("{Escape}");
     expect(dialog).toBeInTheDocument();
     // Back/Forward hides and restores the pending form without replaying Save.
-    present(false);
+    act(() => present(false));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    present(true);
+    act(() => present(true));
     dialog = await screen.findByRole("dialog", { name: "Connect Claude" });
     input = within(dialog).getByLabelText("Anthropic API key");
     expect(input).toHaveAttribute("readonly");
@@ -263,6 +275,34 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
   expect(await connectKey(user)).toHaveValue("");
   expect(native.saved).toBe(false);
 });
+
+it.each(["saved elsewhere", "read failure"] as const)(
+  "retires restored setup after %s",
+  async (outcome) => {
+    native.saved = false;
+    const { setup, present, onOpenChange } = fixture();
+    await connectKey();
+    act(() => present(false));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const read = vi.spyOn(setup.auth, "check");
+    if (outcome === "saved elsewhere") native.saved = true;
+    else read.mockRejectedValueOnce("Secure storage is unavailable");
+
+    act(() => present(true));
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(read).toHaveBeenCalledOnce();
+    if (outcome === "saved elsewhere") await savedKey();
+    else {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Secure storage is unavailable",
+      );
+      expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+    }
+  },
+);
 
 it("keeps a failed removal open for retry and prevents duplicate writes while pending", async () => {
   const user = userEvent.setup();

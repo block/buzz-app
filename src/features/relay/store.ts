@@ -780,10 +780,12 @@ export function createChannelStore(
     rows = state.snapshot.rows.filter((row) => row.membership),
   ) {
     if (!rows.length) return;
+    const head = heads.peek(state.channelId);
+    const named = head && profileSignature(state.channelId, head);
     void fetchProfiles(rows).then(() => {
-      const head = heads.peek(state.channelId);
-      if (head?.notices?.length && windows.get(state.channelId) === state)
-        save(state.channelId, head);
+      const current = heads.peek(state.channelId);
+      if (current?.notices?.length && windows.get(state.channelId) === state)
+        save(state.channelId, current, current === head ? named : undefined);
     });
   }
   /** Keep the newest notices among a window's head rows with the head, so a
@@ -914,6 +916,23 @@ export function createChannelStore(
       if (state.noticeRead === current) state.noticeRead = undefined;
     }
   }
+  /** The known profiles of a head's row and notice authors. */
+  function headProfiles(channelId: string, head: Head) {
+    const notices =
+      head.notices && transport
+        ? foldChannelMessages(channelId, transport.relayAuthor, head.notices)
+        : [];
+    const authors = new Set([...head.rows, ...notices].flatMap(rowProfileIds));
+    return [...authors].flatMap((id) => {
+      const event = directory.event(id);
+      return event ? [event] : [];
+    });
+  }
+  function profileSignature(channelId: string, head: Head) {
+    return headProfiles(channelId, head)
+      .map((event) => event.id)
+      .join(":");
+  }
   function save(channelId: string, head: Head, previousProfiles?: string) {
     if (
       !persistence ||
@@ -922,15 +941,7 @@ export function createChannelStore(
       heads.peek(channelId) !== head
     )
       return;
-    const notices =
-      head.notices && transport
-        ? foldChannelMessages(channelId, transport.relayAuthor, head.notices)
-        : [];
-    const authors = new Set([...head.rows, ...notices].flatMap(rowProfileIds));
-    const profiles = [...authors].flatMap((id) => {
-      const event = directory.event(id);
-      return event ? [event] : [];
-    });
+    const profiles = headProfiles(channelId, head);
     const signature = profiles.map((event) => event.id).join(":");
     if (signature === previousProfiles) return signature;
     const record: SavedHead = {

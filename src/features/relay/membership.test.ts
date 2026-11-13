@@ -541,6 +541,63 @@ it("saves a head's notices with it and restores only relay-signed ones", async (
   }
 });
 
+it("does not rewrite a restored head whose notice names are already saved", async () => {
+  const hello = message(viewer, "a", "Hello", 20);
+  const joined = addition(pinky.pubkey, 21);
+  let writes = 0;
+  const disk: HeadPersistence = {
+    read: async () => [
+      {
+        channelId: "a",
+        savedAt: Date.now(),
+        events: [hello, end()],
+        notices: [joined],
+        profiles: [
+          profile(viewer, { name: "Wes" }),
+          profile(pinky, { name: "Pinky" }),
+        ],
+      },
+    ],
+    write: async () => {
+      writes++;
+    },
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const owner = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+    persistence: disk,
+  });
+  try {
+    owner.session.channels.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    await flush();
+    owner.session.channels.ensure("a");
+    await vi.waitFor(() =>
+      expect(owner.session.channels.window("a").rows.map((r) => r.id)).toEqual([
+        hello.id,
+        joined.id,
+      ]),
+    );
+    await flush();
+    expect(writes).toBe(0);
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("opens a channel over the established stream with its notices read beside the head, saved with their names", async () => {
   let saved: SavedHead[] = [];
   const disk: HeadPersistence = {

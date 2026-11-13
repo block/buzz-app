@@ -472,8 +472,9 @@ function reconnectHarness(
       if (entry.filters[0]?.kinds?.includes(0)) entry.respond([]);
       else wire.pending.push(entry);
     }
-    expect(wire.pending.map((entry) => entry.filters)).toMatchObject([
-      [{ "#h": [channelId], top_level: true }],
+    // A head read carries its notice filter second (see `readPage`).
+    expect(wire.pending.map((entry) => entry.filters[0])).toMatchObject([
+      { "#h": [channelId], top_level: true },
     ]);
     return wire.next();
   };
@@ -2064,9 +2065,14 @@ describe("a reconnect whose replay was continuous", () => {
       await flush();
       expect(h.rows()).toEqual([seen.id, missed.id]);
       expect(h.window().freshness).toBe("verified");
-      // The head read also asks for the newest membership notices.
+      // The head read also asks for the newest membership notices, in the
+      // same request (see `readPage`).
       expect(
-        channelReads(h).filter((filters) => filters[0]?.kinds?.[0] === 40099),
+        channelReads(h).filter(
+          (filters) =>
+            filters[0]?.top_level === true &&
+            filters.some((filter) => filter.kinds?.[0] === 40099),
+        ),
       ).toHaveLength(1);
     } finally {
       h.owner.dispose();
@@ -2237,10 +2243,17 @@ describe("a reconnect whose replay was continuous", () => {
       h.live.state({ status: "connected", routes: [] });
       h.live.established("c");
       await flush();
-      h.read().respond(h.page("head", [seen], seen));
+      // The catch-up head's notices are refused: one is not the relay's. A
+      // separate notice read follows, and it fails: its notices are still owed.
+      const forged = signed(h.alice, {
+        kind: 40099,
+        content: JSON.stringify({ type: "member_left", actor: h.alice.pubkey }),
+        created_at: 11,
+        tags: [["h", "c"]],
+      });
+      h.read().respond([...h.page("head", [seen], seen), forged]);
       await flush();
       expect(h.window().freshness).toBe("verified");
-      // The catch-up's notice read fails: its notices are still owed.
       const owed = notices();
       expect(owed).toHaveLength(1);
       owed[0]?.fail(new Error("Membership notices did not advance"));

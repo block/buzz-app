@@ -124,18 +124,23 @@ const owner = createRelaySession(
             metadata(authority, "general", "General"),
             metadata(authority, "other", "Other"),
           ];
-        if (filter["#h"])
-          return [
-            ...events.filter((e) =>
-              e.tags.some(
-                (t) => t[0] === "h" && filter["#h"]?.includes(t[1] ?? ""),
-              ),
+        if (filter["#h"]) {
+          const inChannel = events.filter((e) =>
+            e.tags.some(
+              (t) => t[0] === "h" && filter["#h"]?.includes(t[1] ?? ""),
             ),
+          );
+          // As the relay does: only a window filter gets bounds.
+          if (filter.top_level !== true)
+            return inChannel.filter((e) => filter.kinds?.includes(e.kind));
+          return [
+            ...inChannel,
             bounds(authority, filter["#h"][0] ?? "general", "head", {
               has_more: false,
               next_cursor: null,
             }),
           ];
+        }
         return [];
       });
     },

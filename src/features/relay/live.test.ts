@@ -6265,6 +6265,7 @@ it.each(["complete", "cut", "closed", "renewed"] as const)(
         ]);
         expect(reads).toContainEqual([
           expect.objectContaining({ "#h": ["a"], top_level: true }),
+          expect.objectContaining({ "#h": ["a"], kinds: [40099] }),
         ]);
       }
     } finally {

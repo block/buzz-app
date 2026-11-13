@@ -255,6 +255,40 @@ describe("channel store", () => {
     expect(pending.length).toBe(0);
     expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
+  it("names an older page's people when its window holds more people than the profile cache", async () => {
+    const { store, queries, next, pending } = setup();
+    queries.ensure("c");
+    const newer = message(alice, "c", "newer", 20);
+    next().respond([
+      newer,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: newer.id },
+      }),
+    ]);
+    await flush();
+    next().respond([profile(alice, { name: "Alice" })]);
+    await flush();
+    // One older message mentions as many people as the cache holds.
+    const limit = store.session.profiles.limit?.() ?? 0;
+    expect(limit).toBeGreaterThan(0);
+    const crowd = Array.from({ length: limit }, (_, n) => ["p", id(n + 1)]);
+    const bob = keypair();
+    queries.loadOlder("c");
+    next().respond([
+      message(bob, "c", "older", 10, crowd),
+      bounds(relay, "c", `20:${newer.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    // The window's names exceed one request; the missing ones are asked for,
+    // up to what the cache holds, the older page's author among them.
+    const names = pending.find((entry) => entry.filters[0]?.kinds?.[0] === 0);
+    expect(names?.filters[0]?.authors).toContain(bob.pubkey);
+    expect(names?.filters[0]?.authors).not.toContain(alice.pubkey);
+  });
   it("keeps rows older than a paged window's history bound out until a page reaches them", async () => {
     // Agents, search and previews read single old messages through the
     // session. Merging one into an open window above its loaded history makes

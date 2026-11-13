@@ -88,7 +88,7 @@ test("Channels renders grouped history and live membership without turning activ
     );
   });
   expect(centered).toBeLessThan(2);
-  // Pages leave notices out; the history activity came from its own read.
+  // Pages leave notices out; the history activity came from its own filter.
   expect(
     app.report.queries
       .filter(({ filter }) => filter.top_level)
@@ -151,6 +151,54 @@ test("Channels renders grouped history and live membership without turning activ
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await expect(groups).toHaveCount(2);
   await expect(groups.last()).toBeVisible();
+});
+
+test("a channel's newest messages and their membership activity appear together", async ({
+  page,
+  app,
+}) => {
+  // Hold any read of notices alone: activity that waits on one would leave
+  // the messages on screen without it until the read is released.
+  const held = [];
+  await page.route("**/api/relay/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      filters.every(
+        (filter) => filter.kinds?.length === 1 && filter.kinds[0] === 40099,
+      )
+    )
+      held.push(route);
+    else await route.fallback();
+  });
+  // Each DOM change is a state the reader can see; count those showing the
+  // messages without their activity.
+  await page.addInitScript(() => {
+    window.apart = 0;
+    new MutationObserver(() => {
+      const feed = document.querySelector(
+        '[aria-label="Channel message history"]',
+      );
+      if (
+        feed?.querySelector("[data-message-id]:not([data-membership-row])") &&
+        !feed.querySelector("[data-membership-row]")
+      )
+        window.apart++;
+    }).observe(document, { subtree: true, childList: true });
+  });
+  try {
+    await openMessages(page, app);
+    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    const groups = feed.locator("[data-membership-row]");
+    await expect
+      .poll(async () => held.length > 0 || (await groups.count()) > 0)
+      .toBe(true);
+    expect(held, "the head's activity waited on a notice read").toEqual([]);
+    await expect(groups).toContainText("Pinky added by you, along with Brain");
+    expect(await page.evaluate(() => window.apart)).toBe(0);
+  } finally {
+    for (const route of held.splice(0)) await route.fallback().catch(() => {});
+  }
 });
 
 // Keep this reader-intent journey out of the older-page zone, as scroll.spec
@@ -296,7 +344,8 @@ test("a restored membership anchor follows delayed group growth through resize a
 });
 
 // A burst of joins newer than every message must not hold messages back:
-// pages leave notices out, and the notices follow in their own reads.
+// pages leave notices out, the head brings the newest page of notices, and
+// the rest follow in their own reads.
 const burstTest = test.extend({ membershipBurst: 600 });
 burstTest(
   "a join burst longer than a page shows the newest messages first, then its joins",

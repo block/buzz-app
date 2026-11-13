@@ -107,6 +107,9 @@ const owners = ["a", "b"].map((community) => {
           if (filter.ids)
             return events.filter((event) => filter.ids?.includes(event.id));
           if (filter.depth_limit) return [];
+          // As the relay does: only a window filter gets bounds.
+          if (filter["#h"]?.includes("general") && filter.top_level !== true)
+            return events.filter((event) => filter.kinds?.includes(event.kind));
           if (filter["#h"]?.includes("general"))
             return [
               ...events,

@@ -1377,14 +1377,16 @@ guarantee of general profile retry after every cache clear/network failure. See
 
 The live route includes relay-signed kind-40099 `member_joined`, `member_left` and
 `member_removed` summaries. History pages do not: a NIP-CW page counts every row kind
-against its limit, so a burst of joins could fill pages and hold messages back. After
-each page or head read, the window reads the relay's notices apart, newest first in
-pages of 500, down to its oldest loaded message, so the messages show first and the
-activity between them follows. A head read re-reads the newest notices; when they do
-not meet the ones held, the descent starts over. A window holds at most 2,000 notices
-read this way, outside its row budget; older pages past that show without activity.
-A failed notice read leaves activity out until the next page or head read and never
-errors the window. Saved heads carry no notices. Only recognized,
+against its limit, so a burst of joins could fill pages and hold messages back. A head
+read instead carries a second filter in the same request for the newest 500 notices,
+under their own limit, so the newest messages and the activity between them show
+together; when it fills, and after each older page, the window reads further notices
+apart, newest first in pages of 500, down to its oldest loaded message. Each head read
+re-reads the newest notices; when they do not meet the ones held, the descent starts
+over. A window holds at most 2,000 notices read this way, outside its row budget;
+older pages past that show without activity. A failed notice read, or notices in a
+head that fail the checks below, leave activity out until the next page or head read
+and never error the window. Saved heads carry no notices. Only recognized,
 channel-scoped payloads from the connected relay become activity rows; malformed,
 unknown and other authors' summaries are not rendered as JSON. These events do not
 grant/revoke access: the existing signed roster remains authoritative.

@@ -422,7 +422,16 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
-        if (filters.length !== 1) {
+        // A channel head asks for the newest membership notices second; the
+        // relay's /query serves the window filter, then the plain one.
+        const notice =
+          filters.length === 2 &&
+          filters[0].top_level === true &&
+          filters[1].kinds?.length === 1 &&
+          filters[1].kinds[0] === 40099
+            ? filters[1]
+            : undefined;
+        if (filters.length !== 1 && !notice) {
           // Sidebar preferences read only these five exact own-author coordinates.
           expect(filters).toHaveLength(5);
           expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
@@ -449,6 +458,12 @@ export function policyRelay({
         const filter = filters[0],
           community = communityOf(url);
         report.queries.push({ community, filter, at: performance.now() });
+        if (notice)
+          report.queries.push({
+            community,
+            filter: notice,
+            at: performance.now(),
+          });
         if (filter.kinds?.includes(20001)) {
           expect(Object.keys(filter).sort()).toEqual([
             "authors",
@@ -523,7 +538,9 @@ export function policyRelay({
         const result =
           emptyRoster && filter.kinds?.includes(39002)
             ? []
-            : answer(community, filter);
+            : notice
+              ? [...answer(community, filter), ...answer(community, notice)]
+              : answer(community, filter);
         if (
           heldUnread &&
           filter.kinds?.includes(9) &&

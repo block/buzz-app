@@ -219,6 +219,7 @@ const CATCH_UP_PAGES = 5;
 /** Membership notices a window reads below its head. Past it, older pages show
  * without their notices. */
 const MAX_NOTICES = 2000;
+const isNotice = (event: RelayEvent) => event.kind === 40099;
 /** Relay query order: time descending, then ID ascending at ties. */
 const newestFirst = (a: RelayEvent, b: RelayEvent) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);
@@ -726,7 +727,17 @@ export function createChannelStore(
     warmChannelId?: string,
   ) {
     try {
-      const ids = rows.flatMap(rowProfileIds);
+      // One ensure may ask for at most what the cache holds, and a window can
+      // show more people than that. Past it, ask for the ones still missing,
+      // oldest rows first, rather than none at all.
+      const unique = [...new Set(rows.flatMap(rowProfileIds))];
+      const limit = directory.queries.limit?.() ?? unique.length;
+      const ids =
+        unique.length > limit
+          ? unique
+              .filter((id) => !directory.queries.event?.(id))
+              .slice(0, limit)
+          : unique;
       relayDebug("profiles warm", ids.length, "ids");
       await directory.ensure(ids, "background");
       if (!disposed && intent) prepareMedia(intent);
@@ -750,7 +761,10 @@ export function createChannelStore(
    * than any gap, not overlap with it. The head replaces the rows, so it
    * replaces the snapshot too (a cached head adopted on revisit is re-read). */
   function adoptHead(state: WindowState, head: Head) {
-    state.events = head.events;
+    const notices = head.events.filter(isNotice);
+    state.events = notices.length
+      ? head.events.filter((event) => !isNotice(event))
+      : head.events;
     attached(state);
     moveCursor(state, head.cursor);
     state.atHead = true;
@@ -761,15 +775,93 @@ export function createChannelStore(
       state.keptLive = false;
     }
     if (state.grantKept) state.grantKept = rowIds(state);
+    const read = takeHeadNotices(state, notices, !head.restored);
     setWindow(state, patchFromHead(head));
-    void fillNotices(state, true);
+    void fillNotices(state, !read);
+  }
+  /** Hold the newest notices a head read carried (see `readPage`) before the
+   * head shows, so its messages and their activity land together. Saved
+   * notices only show: they say nothing about the relay's newest ones, so
+   * the next head read still asks. False when the window still needs a read
+   * from the top. */
+  function takeHeadNotices(
+    state: WindowState,
+    notices: readonly RelayEvent[],
+    read: boolean,
+  ) {
+    if (!transport || state.ceiling !== undefined) return false;
+    try {
+      if (!read) {
+        checkNotices(state.channelId, transport.relayAuthor, notices);
+        for (const event of notices) state.notices.set(event.id, event);
+        return false;
+      }
+      const cursor = state.noticeCursor;
+      takeNotices(state, notices, null, transport.relayAuthor);
+      // A restarted descent drops a page still reading below the old cursor,
+      // which would otherwise move the new one past the notices between.
+      if (state.noticeCursor !== cursor) state.noticeRead?.controller.abort();
+      state.noticeHead = false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function checkNotices(
+    channelId: string,
+    relayAuthor: string,
+    events: readonly RelayEvent[],
+  ) {
+    if (
+      events.some(
+        (event) =>
+          event.kind !== 40099 ||
+          event.pubkey !== relayAuthor ||
+          !hasTag(event, "h", channelId),
+      )
+    )
+      throw new Error("Membership notices are outside their channel");
+  }
+  /** Hold one notice page read below `cursor` (null: the newest) and move the
+   * descent's cursor past it. */
+  function takeNotices(
+    state: WindowState,
+    events: readonly RelayEvent[],
+    cursor: WindowCursor | null,
+    relayAuthor: string,
+  ) {
+    checkNotices(state.channelId, relayAuthor, events);
+    let known: RelayEvent | undefined;
+    for (const event of state.notices.values())
+      if (!known || newestFirst(event, known) < 0) known = event;
+    for (const event of events) state.notices.set(event.id, event);
+    const last = [...events].sort(newestFirst).at(-1);
+    const next =
+      last && events.length >= NOTICE_PAGE_SIZE
+        ? { createdAt: last.created_at, eventId: last.id }
+        : null;
+    if (
+      cursor &&
+      next &&
+      (next.createdAt > cursor.createdAt ||
+        (next.createdAt === cursor.createdAt && next.eventId <= cursor.eventId))
+    )
+      throw new Error("Membership notices did not advance");
+    // A head read that reaches the notices held continues their descent.
+    const met =
+      known !== undefined &&
+      last !== undefined &&
+      (last.created_at < known.created_at ||
+        events.some((event) => event.id === known?.id));
+    if (cursor || !next || !met || state.noticeCursor === undefined)
+      state.noticeCursor = next;
   }
   /** Read a window's membership notices newest first, down to the oldest page
-   * read. Pages leave notices out (see `WINDOW_KINDS`), so the messages show
-   * first and the notices between them follow. A head read asks for the newest
-   * notices again; when those do not meet the notices held, the descent starts
-   * over from them. A failed read only leaves notices out until the next page
-   * or head read. */
+   * read. Pages leave notices out (see `WINDOW_KINDS`); a head read asks for
+   * the newest notices in the same request (see `readPage`), and this reads
+   * the rest. A head read asks for the newest notices again; when those do
+   * not meet the notices held, the descent starts over from them. A failed
+   * read only leaves notices out until the next page or head read. */
   async function fillNotices(state: WindowState, head: boolean) {
     // Notices are read down from the head; a detached segment shows none.
     if (state.ceiling !== undefined) return;
@@ -812,40 +904,7 @@ export function createChannelStore(
           controller.signal,
         );
         if (!live(state, generation) || controller.signal.aborted) return;
-        if (
-          events.some(
-            (event) =>
-              event.kind !== 40099 ||
-              event.pubkey !== source.relayAuthor ||
-              !hasTag(event, "h", channelId),
-          )
-        )
-          throw new Error("Membership notices are outside their channel");
-        let known: RelayEvent | undefined;
-        for (const event of state.notices.values())
-          if (!known || newestFirst(event, known) < 0) known = event;
-        for (const event of events) state.notices.set(event.id, event);
-        const last = [...events].sort(newestFirst).at(-1);
-        const next =
-          last && events.length >= NOTICE_PAGE_SIZE
-            ? { createdAt: last.created_at, eventId: last.id }
-            : null;
-        if (
-          cursor &&
-          next &&
-          (next.createdAt > cursor.createdAt ||
-            (next.createdAt === cursor.createdAt &&
-              next.eventId <= cursor.eventId))
-        )
-          throw new Error("Membership notices did not advance");
-        // A head read that reaches the notices held continues their descent.
-        const met =
-          known !== undefined &&
-          last !== undefined &&
-          (last.created_at < known.created_at ||
-            events.some((event) => event.id === known?.id));
-        if (!top || !next || !met || state.noticeCursor === undefined)
-          state.noticeCursor = next;
+        takeNotices(state, events, cursor, source.relayAuthor);
         setWindow(state, {});
         // The page's name read ran before these rows existed.
         const added = new Set(events.map((event) => event.id));
@@ -854,8 +913,9 @@ export function createChannelStore(
         );
       }
     } catch (error) {
-      // The next page read retries a failed head read from the top.
-      if (top) state.noticeHead = true;
+      // The next page read retries a failed head read from the top. A read
+      // aborted for a head that already brought the newest notices doesn't.
+      if (top && !controller.signal.aborted) state.noticeHead = true;
       if (!isAbort(error))
         relayDebug(
           "notices failed",
@@ -885,7 +945,7 @@ export function createChannelStore(
     const record: SavedHead = {
       channelId,
       savedAt: head.savedAt,
-      events: [...head.events],
+      events: head.events.filter((event) => !isNotice(event)),
       profiles,
     };
     void persistence.write(record).catch(() => {});
@@ -989,8 +1049,16 @@ export function createChannelStore(
   ) {
     if (!transport) throw new Error("Relay is unavailable");
     const source = transport;
+    // A head read asks for the newest membership notices in the same request,
+    // under their own limit, so they land with the messages (see `fillNotices`).
+    const filters = cursor
+      ? [windowFilter(channelId, cursor)]
+      : [
+          windowFilter(channelId, null),
+          noticeFilter(channelId, source.relayAuthor, null),
+        ];
     const read = (signal?: AbortSignal) =>
-      source.read([windowFilter(channelId, cursor)], {
+      source.read(filters, {
         ...settings,
         ...(signal ? { signal } : {}),
       });
@@ -999,9 +1067,16 @@ export function createChannelStore(
     const events = cursor
       ? await retryRead(read, settings.signal ?? new AbortController().signal)
       : await read();
+    const notices = cursor ? [] : events.filter(isNotice);
     return {
       events,
-      page: parseWindow(channelId, cursor, transport.relayAuthor, events),
+      notices,
+      page: parseWindow(
+        channelId,
+        cursor,
+        source.relayAuthor,
+        notices.length ? events.filter((event) => !isNotice(event)) : events,
+      ),
     };
   }
   async function requestHead(
@@ -1017,7 +1092,7 @@ export function createChannelStore(
     try {
       if (disposed || !transport || !canReadRemote(channelId))
         throw new DOMException("Stale request", "AbortError");
-      const { events, page } = await readPage(channelId, null, {
+      const { events, notices, page } = await readPage(channelId, null, {
         signal: controller.signal,
         priority,
       });
@@ -1031,8 +1106,12 @@ export function createChannelStore(
       const retained = heads.peek(channelId);
       if (retained?.events === events) return retained;
       head = {
+        // As a head refold does, so its notices' people get names with it.
         rows: Object.freeze(
-          foldChannelMessages(channelId, transport.relayAuthor, page.events),
+          foldChannelMessages(channelId, transport.relayAuthor, [
+            ...page.events,
+            ...notices,
+          ]),
         ),
         cursor: page.cursor,
         hasMore: page.hasMore,
@@ -1041,9 +1120,11 @@ export function createChannelStore(
         readAt: startedAt,
         cached: false,
       };
+      // The budget is for messages, as a page read's is; notices come along.
+      const messages = head.rows.filter((row) => !row.membership);
       if (
-        head.rows.length > maxHistoryRows ||
-        byteSize(head.rows) > maxHistoryBytes
+        messages.length > maxHistoryRows ||
+        byteSize(messages) > maxHistoryBytes
       )
         throw new Error("Channel head exceeds the read budget");
     } catch (error) {
@@ -1095,7 +1176,7 @@ export function createChannelStore(
         adoptHead(state, head);
         return;
       }
-      const { page } = await readPage(state.channelId, cursor, {
+      const { page, notices } = await readPage(state.channelId, cursor, {
         signal: controller.signal,
       });
       // A settled catch-up aborts an older read that has already resolved.
@@ -1129,6 +1210,7 @@ export function createChannelStore(
         state.keptLive = false;
       }
       if (state.grantKept && !cursor) state.grantKept = rowIds(state);
+      const read = !cursor && takeHeadNotices(state, notices, true);
       setWindow(state, {
         status: "ready",
         rows,
@@ -1137,8 +1219,9 @@ export function createChannelStore(
         error: undefined,
         freshness: "verified",
       });
-      void fillNotices(state, !cursor);
-      void fetchProfiles(rows);
+      void fillNotices(state, !cursor && !read);
+      // The snapshot holds the notices an older page reveals, too.
+      void fetchProfiles(state.snapshot.rows);
     } catch (error) {
       if (isAbort(error) || !live(state, generation)) return;
       // A denied revalidation must not keep exposing a cached head.
@@ -4416,7 +4499,14 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         retained.restored = false;
         retained.readAt = head.readAt;
-        accept(head.events);
+        // Live replay covers minutes; notices from a longer drop come with
+        // the head, and the rest by read.
+        const read = takeHeadNotices(
+          retained,
+          head.events.filter(isNotice),
+          true,
+        );
+        accept(head.events.filter((event) => !isNotice(event)));
         page = head;
         const reached = (last: Page) =>
           !last.hasMore ||
@@ -4444,8 +4534,7 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         if (retained.atHead) moveCursor(retained, page.cursor);
         retained.kept = keptAfter();
-        // Live replay covers minutes; notices from a longer drop come by read.
-        void fillNotices(retained, true);
+        void fillNotices(retained, !read);
         // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),

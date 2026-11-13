@@ -51,6 +51,12 @@ behavior on the label, so a rename touches copy only.
   account/community-scoped `groups:me` preference record. Messages groups remain
   independent. Records from before the label also list a `channels` placement
   array; it is ignored and dropped on the next workspace write.
+- Reorder workspaces by dragging their headers, expanded or collapsed, onto
+  another workspace. The landing line and Escape cancellation match Team
+  sections. **Move up** and **Move down** in the workspace menu provide the
+  keyboard and single-pointer path. Chats stays fixed below workspaces.
+  Order saves in the existing `groups:me` array, preserving defaults, filing
+  and collapsed state. Failed saves restore the previous order and offer Retry.
 - Deleting a workspace tombstones its `me-section-<sha256(id)>` defaults record,
   emptied and renamed, best effort after the groups write. If that write fails,
   the record stays live but unreachable. A delete retried after a groups write

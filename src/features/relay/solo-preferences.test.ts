@@ -141,6 +141,100 @@ function fixture(lane?: ReturnType<typeof createApiAdmission>) {
   };
 }
 
+it("reorders Solo workspaces through the existing groups record and preserves fresh defaults and filing", async () => {
+  const f = fixture();
+  const solo = f.session.soloPreferences;
+  const personal = { id: "personal", name: "Personal", defaultTemplateId: "p" };
+  const added = {
+    id: "added",
+    name: "Added elsewhere",
+    defaultTemplateId: "a",
+  };
+  try {
+    f.install({ ...groups, groups: [...groups.groups, personal] });
+    await solo.ensure();
+    expect(solo.sectionOrderWritable).toBe(true);
+    const fresh = {
+      ...groups,
+      groups: [
+        { id: "work", defaultTemplateId: "template", name: "Updated work" },
+        personal,
+        added,
+      ],
+      assignments: { [channel]: "personal", [other]: "work" },
+    };
+    f.install(fresh);
+    await solo.reorderSections("personal", ["personal", "gone", "work"]);
+    const event = f.publish.mock.calls.at(-1)?.[0];
+    expect(event).toBeDefined();
+    const record = JSON.parse(event?.content ?? "null");
+    expect(record.value).toEqual({
+      ...fresh,
+      groups: [personal, fresh.groups[0], added],
+    });
+    expect(solo.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+      "personal",
+      "work",
+      "added",
+    ]);
+    const writes = f.publish.mock.calls.length;
+    await solo.reorderSections("personal", ["personal", "work", "added"]);
+    expect(f.publish).toHaveBeenCalledTimes(writes);
+    for (const write of [f.assignment, f.removal, f.sort, f.star])
+      expect(write).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("rolls back a failed Solo workspace order and retries through the same store", async () => {
+  const f = fixture();
+  const solo = f.session.soloPreferences;
+  try {
+    f.install({
+      ...groups,
+      groups: [
+        ...groups.groups,
+        { id: "home", name: "Home", defaultTemplateId: "h" },
+      ],
+    });
+    await solo.ensure();
+    f.prepare.mockRejectedValueOnce(new Error("Order could not save"));
+    const saving = solo.reorderSections("home", ["home", "work"]);
+    expect(solo.snapshot().data?.sections[0]?.id).toBe("home");
+    await expect(saving).rejects.toThrow("Order could not save");
+    expect(solo.snapshot().data?.sections[0]?.id).toBe("work");
+    const failed = solo.snapshot().orderError;
+    if (!failed) throw new Error("Missing failed order");
+    expect(failed.sectionIds).toEqual(["home", "work"]);
+    await solo.reorderSections(failed.sectionId, failed.sectionIds);
+    expect(solo.snapshot().orderError).toBeUndefined();
+    expect(solo.snapshot().data?.sections[0]?.id).toBe("home");
+  } finally {
+    f.dispose();
+  }
+});
+
+it("refuses workspace order writes without a fresh catalog and rejects duplicate ids", async () => {
+  const f = fixture();
+  const solo = f.session.soloPreferences;
+  try {
+    f.install(groups);
+    await solo.ensure();
+    await expect(
+      solo.reorderSections("work", ["work", "work"]),
+    ).rejects.toThrow("Invalid Solo workspace order");
+    f.query.mockRejectedValueOnce(new Error("offline"));
+    await expect(solo.reorderSections("work", ["work"])).rejects.toThrow(
+      "offline",
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(solo.snapshot().data?.sections[0]?.id).toBe("work");
+  } finally {
+    f.dispose();
+  }
+});
+
 it("retries a catalog read cancelled by initial roster authority", async () => {
   const viewer = keypair(),
     relay = keypair();

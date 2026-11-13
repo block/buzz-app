@@ -8,6 +8,7 @@ import {
 } from "../channel-templates/model";
 import { projectTemplateId, templateEntry } from "../solo/workspace";
 import { ReadError } from "./errors";
+import { validSidebarSectionOrder } from "./sidebar-edits";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import type {
   SidebarAssignmentIntent,
@@ -195,6 +196,24 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
         return saved;
       }),
     groupsOnly: true,
+    writeOrder: (sectionIds, signal) =>
+      serialize(async () => {
+        if (!validSidebarSectionOrder(sectionIds))
+          throw new Error("Invalid Solo workspace order");
+        const { value, entry, active } = await current(signal);
+        const byId = new Map(value.groups.map((group) => [group.id, group]));
+        const wanted = new Set(sectionIds);
+        const groups = [
+          ...sectionIds.flatMap((id) => {
+            const group = byId.get(id);
+            return group ? [group] : [];
+          }),
+          ...value.groups.filter((group) => !wanted.has(group.id)),
+        ];
+        if (groups.every((group, index) => group === value.groups[index]))
+          return project(value);
+        return save({ ...value, groups }, entry, active);
+      }),
     createSection: (section, signal) =>
       serialize(async () => {
         const { value, entry, active } = await current(signal);

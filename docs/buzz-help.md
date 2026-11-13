@@ -475,6 +475,9 @@ and are asked to sign in again in Buzz.
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
+  Drag a workspace header onto another workspace to reorder it, or use **Move up**
+  and **Move down** in its **…** menu. Escape cancels a drag; **Chats** stays below
+  the workspaces. A failed save restores the previous order and offers **Retry move**.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.
   Creating a workspace selects it so you can start a conversation with its Lead.

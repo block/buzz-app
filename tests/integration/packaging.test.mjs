@@ -88,6 +88,17 @@ test("previews build main daily and after each stable release, with one version 
     source.if,
     /!contains\(github\.event\.workflow_run\.head_branch, '-'\)/,
   );
+  // Runs the source job skips must stay out of the shared preview queue.
+  const eligible = (expr) =>
+    expr
+      .replace(/\s+/g, " ")
+      .match(/\(github\.event_name != 'workflow_run' \|\| .*?'-'\)\)\)/)?.[0];
+  assert.ok(eligible(source.if));
+  assert.equal(eligible(caller.concurrency.group), eligible(source.if));
+  assert.match(
+    caller.concurrency.group.replace(/\s+/g, " "),
+    /\$\{\{ !\(github\.event_name.*\) && format\('skipped-\{0\}', github\.run_id\) \|\| \(inputs\.candidates && github\.ref \|\| 'macos-prerelease'\) \}\}$/,
+  );
   // The release only gates the run: main's head is built, with its own scripts.
   const [checkout, derive] = source.steps;
   assert.equal(checkout.with.ref, undefined);

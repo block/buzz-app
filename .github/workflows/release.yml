@@ -25,7 +25,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-preview-${{ inputs.candidates && github.ref || 'macos-prerelease' }}
+  # Stable completions the source job skips get their own group, so they can't
+  # replace a legitimate preview waiting in the shared one. Keep this test
+  # identical to the source job's.
+  group: >-
+    desktop-preview-${{ !(github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' && !contains(github.event.workflow_run.head_branch, '-'))) &&
+      format('skipped-{0}', github.run_id) || (inputs.candidates && github.ref || 'macos-prerelease') }}
   cancel-in-progress: false
 
 jobs:

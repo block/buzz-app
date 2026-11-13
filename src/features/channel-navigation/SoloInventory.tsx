@@ -169,12 +169,12 @@ export function SoloInventory({
     [navigator, scope],
   );
   const openMessage = useCallback(
-    (channelId: string, messageId?: string) => {
+    (channelId: string, messageId?: string, threadRootId?: string) => {
       if (handoff && handoff.session !== session) return;
       const destination =
         messageId && session.viewer
           ? buzzLinkTarget(
-              `buzz://message?channel=${channelId}&id=${messageId}`,
+              `buzz://message?channel=${channelId}&id=${messageId}${threadRootId ? `&thread=${threadRootId}` : ""}`,
               {
                 viewer: session.viewer,
                 communityOrigin: scope.slice(0, -(session.viewer.length + 1)),
@@ -224,7 +224,9 @@ export function SoloInventory({
         Icon={ChatIcon}
         onSelect={() => void open(item.id)}
         onRename={rename}
-        onOpenThread={(thread) => openMessage(thread.channelId, thread.rootId)}
+        onOpenThread={(thread) =>
+          openMessage(thread.channelId, thread.latestMessageId, thread.rootId)
+        }
         onOpenMention={(mention) =>
           openMessage(mention.channelId, mention.messageId)
         }

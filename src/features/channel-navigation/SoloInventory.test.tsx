@@ -543,11 +543,13 @@ it("offers unread thread navigation and mark-read through the shared activity po
       name: "Open unread thread from Owned Agent: Needs review",
     }),
   );
+  // The row opens the reply it previews, in its thread, not the thread root.
   expect(f.open).toHaveBeenLastCalledWith(
     expect.objectContaining({
       kind: "conversation",
       channelId: id,
-      messageId: root,
+      messageId: "e".repeat(64),
+      threadRootId: root,
     }),
   );
 });

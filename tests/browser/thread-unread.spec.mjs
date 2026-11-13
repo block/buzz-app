@@ -1,13 +1,14 @@
 import { pauseClock } from "./clock.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 import { test, expect } from "./fixture.mjs";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { clickRow, open, virtuaIdle } from "./timeline.mjs";
 import {
   holdReadingFocus,
   readJournal,
   releaseReadingFocus,
 } from "./reading.mjs";
-import { openPage } from "./navigation.mjs";
+import { newChat, openPage } from "./navigation.mjs";
 import { channelUnread } from "./unread-state.mjs";
 
 test.use({
@@ -418,6 +419,325 @@ test.describe("mentioned reply priority", () => {
   });
 });
 
+// Browser-only: a collapsed branch mounts no rows, so real layout and focus
+// show whether Activity's nested reply is revealed in view and then read.
+test("opening a nested reply from Activity reveals it in its collapsed branch, then reads it", async ({
+  page,
+  app,
+}) => {
+  await holdReadingFocus(page);
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const previews = () =>
+    page.evaluate(() =>
+      window.fixtureRelay
+        .snapshot()
+        .session.unread.activity("alpha")
+        .items?.map((item) => item.preview),
+    );
+  await alpha.hover();
+  const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+  const item = (text) =>
+    popover
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: text });
+  // Nested under the top-level "Broadcast reply", whose branch starts collapsed.
+  await expect(item("Broadcast descendant")).toBeVisible();
+  await releaseReadingFocus(page);
+  await item("Broadcast descendant").click();
+  const target = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().entry.target,
+  );
+  expect(target).toMatchObject({ channelId: "alpha", threadRootId: root.id });
+  expect(target.messageId).not.toBe(root.id);
+  const reply = page
+    .getByRole("complementary", { name: "Thread", exact: true })
+    .locator(`[data-message-id="${target.messageId}"]`);
+  await expect(reply).toContainText("Broadcast descendant");
+  await expect(reply).toBeInViewport();
+  await expect(reply).toBeFocused();
+  await expect.poll(previews).not.toContain("Broadcast descendant");
+  await alpha.hover();
+  await expect(item("Unread reply 1")).toBeVisible();
+  await expect(item("Broadcast descendant")).toHaveCount(0);
+});
+
+// An agent's public failure right after its agent-only update folds into that
+// update's collapsed activity history, while Activity previews the failure
+// itself. Opening it must expand the history before the reveal looks for its
+// row; otherwise the row never mounts and the visit cannot complete.
+test("opening an absorbed failure from Activity expands its activity history, then reads it", async ({
+  page,
+  app,
+}) => {
+  const key = generateSecretKey();
+  app.serveProfile(key, { name: "Remote tester", is_agent: true });
+  await holdReadingFocus(page);
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const failure = publishAbsorbedFailure(app, "alpha", root.id, key);
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const previews = () =>
+    page.evaluate(() =>
+      window.fixtureRelay
+        .snapshot()
+        .session.unread.activity("alpha")
+        .items?.map((item) => item.preview),
+    );
+  await alpha.hover();
+  const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+  const item = popover
+    .getByRole("button", { name: /Open unread thread from/ })
+    .filter({ hasText: failure.content });
+  await expect(item).toBeVisible();
+  await releaseReadingFocus(page);
+  await item.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${failure.id}"]`);
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+  await expect(
+    thread.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect.poll(previews).not.toContain(failure.content);
+  await alpha.hover();
+  await expect(item).toHaveCount(0);
+});
+
+// A cold exact visit verifies the failure before it reads the thread window,
+// so the thread first shows the failure alone and only then the update that
+// absorbs it. The expansion must still happen once that group forms; otherwise
+// the revealed failure vanishes into the collapsed history.
+test("a cold link to an absorbed failure expands its activity history once the window arrives, then reads it", async ({
+  page,
+  app,
+}) => {
+  const key = generateSecretKey();
+  app.serveProfile(key, { name: "Remote tester", is_agent: true });
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const failure = publishAbsorbedFailure(app, "alpha", root.id, key, {
+    live: false,
+  });
+  // The fixture's head reads carry recent replies, which would load the
+  // update before the thread read. Keep the update to the thread read, and
+  // hold that read until the thread has shown the verified failure.
+  const agent = getPublicKey(key);
+  const windowRead = Promise.withResolvers();
+  const held = Promise.withResolvers();
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON() ?? [];
+    if (
+      filters.some(
+        (filter) => filter.depth_limit && filter["#e"]?.includes(root.id),
+      )
+    ) {
+      windowRead.resolve();
+      await held.promise;
+      return route.continue().catch(() => {});
+    }
+    const response = await route.fetch();
+    const events = await response.json();
+    const kept = Array.isArray(events)
+      ? events.filter(
+          (event) => !(event.kind === 40002 && event.pubkey === agent),
+        )
+      : events;
+    await route.fulfill({ response, json: kept }).catch(() => {});
+  });
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${failure.id}"]`);
+  try {
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(
+        JSON.stringify({
+          version: 1,
+          kind: "conversation",
+          channelId: "alpha",
+          messageId: failure.id,
+          threadRootId: root.id,
+          scope: {
+            viewer: app.viewer,
+            communityOrigin: "https://primary.example",
+          },
+        }),
+      )}`,
+    );
+    await windowRead.promise;
+    // The verified failure shows alone: no history has absorbed it yet.
+    await expect(row).toBeAttached();
+    await expect(
+      thread.getByRole("button", { name: /^Collapse activity history:/ }),
+    ).toHaveCount(0);
+  } finally {
+    held.resolve();
+  }
+  await expect(
+    thread.getByRole("button", { name: /^Collapse activity history:/ }),
+  ).toBeVisible();
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.fixtureRelay
+          .snapshot()
+          .session.unread.activity("alpha")
+          .items?.map((item) => item.preview),
+      ),
+    )
+    .not.toContain(failure.content);
+});
+
+// A normal agent send signs the request it answers but links its reply to the
+// thread root. The first agent's update claims a request nested under another
+// reply, which the thread has not received yet, so one history holds that
+// update with the second agent's update and failure. When the request
+// arrives, the claim moves the first update to a history of its own. The
+// reader collapsed nothing, so the opened failure must stay shown and focused
+// in the history that now starts at the second agent's update.
+test("a late request that splits an opened failure's activity history leaves the failure shown and focused", async ({
+  page,
+  app,
+}) => {
+  const [first, second, requester] = [0, 1, 2].map(() => generateSecretKey());
+  app.serveProfile(first, { name: "First agent", is_agent: true });
+  app.serveProfile(second, { name: "Remote tester", is_agent: true });
+  app.serveProfile(requester, { name: "Requester" });
+  await holdReadingFocus(page);
+  await open(page, app);
+  const history = app.histories.get("primary/alpha");
+  const root = history.find((row) => row.content === "Thread root 0");
+  const sibling = history.find((row) => row.content === "Broadcast reply");
+  const request = finalizeEvent(
+    {
+      kind: 9,
+      content: "Check the headings too.",
+      tags: [
+        ["h", "alpha"],
+        ["e", root.id, "", "root"],
+        ["e", sibling.id, "", "reply"],
+      ],
+      created_at: Math.floor(Date.now() / 1000) - 2,
+    },
+    requester,
+  );
+  publishReply(
+    app,
+    "alpha",
+    root.id,
+    first,
+    "Checked the headings.",
+    [
+      ["audience", "agents"],
+      ["buzz:request", request.id],
+    ],
+    -1,
+  );
+  const failure = publishAbsorbedFailure(app, "alpha", root.id, second);
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  await alpha.hover();
+  const item = page
+    .getByRole("dialog", { name: "Activity in Alpha" })
+    .getByRole("button", { name: /Open unread thread from/ })
+    .filter({ hasText: failure.content });
+  await expect(item).toBeVisible();
+  await releaseReadingFocus(page);
+  await item.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${failure.id}"]`);
+  const histories = (state) =>
+    thread.getByRole("button", {
+      name: new RegExp(`^${state} activity history:`),
+    });
+  await expect(row).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  // One history holds both agents' updates and the failure.
+  await expect(histories("Collapse")).toHaveCount(1);
+  await expect(histories("Show")).toHaveCount(0);
+  history.push(request);
+  app.relay.publish("primary", request);
+  // The first agent's update left for its own, collapsed history.
+  await expect(histories("Show")).toHaveCount(1);
+  await expect(histories("Collapse")).toHaveCount(1);
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+});
+
+/** One reply to a thread root, in history and, once the page has a live
+ * stream, published to it. Tags with an audience make it an agent-only update. */
+function publishReply(
+  app,
+  channel,
+  rootId,
+  key,
+  content,
+  tags,
+  offset,
+  live = true,
+) {
+  const event = finalizeEvent(
+    {
+      kind: tags.some(([name]) => name === "audience") ? 40002 : 9,
+      content,
+      tags: [["h", channel], ["e", rootId, "", "reply"], ...tags],
+      created_at: Math.floor(Date.now() / 1000) + offset,
+    },
+    key,
+  );
+  app.histories.get(`primary/${channel}`).push(event);
+  if (live) app.relay.publish("primary", event);
+  return event;
+}
+
+/** An agent-only update, then the same agent's public execution failure, as
+ * direct replies to the viewer's thread root. The failure is unread; the
+ * thread folds it into the update's activity history. Before the page loads
+ * there is no live stream to publish to: history alone serves a cold load. */
+function publishAbsorbedFailure(
+  app,
+  channel,
+  rootId,
+  key,
+  { live = true } = {},
+) {
+  const publish = (content, tags, offset) =>
+    publishReply(app, channel, rootId, key, content, tags, offset, live);
+  publish(
+    "Read the release notes and checked the headings.",
+    [["audience", "agents"]],
+    0,
+  );
+  return publish(
+    "The selected model could not complete this request.",
+    [["buzz:notice", "execution-failure"]],
+    1,
+  );
+}
+
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({
   page,
   app,
@@ -733,85 +1053,124 @@ test("thread buttons show observed unread independently, clear only after readin
   ).toEqual([]);
 });
 
-// Browser focus plus actual controller/React wiring: a same-target open must not
-// leave the timeline's trigger installed merely because the history entry is reused.
-test("same-thread sidebar activity replaces timeline focus return", async ({
-  page,
-  app,
-}) => {
-  await holdReadingFocus(page);
-  await open(page, app);
-  const root = app.histories
-    .get("primary/alpha")
-    .find((row) => row.content === "Thread root 0");
-  const alpha = page.locator('button[data-channel-id="alpha"]');
-  // The open channel's row is quiet; its activity popover still lists threads.
-  await expect
-    .poll(async () => (await channelUnread(page, "alpha")).threads)
-    .toBeGreaterThan(0);
-  let release;
-  const held = new Promise((resolve) => {
-    release = resolve;
-  });
-  let requested = false;
-  await page.route("**/api/relay/**/query", async (route) => {
-    if (
-      route
-        .request()
-        .postDataJSON()
-        .some((filter) => filter.depth_limit)
-    ) {
-      requested = true;
-      await held;
+// Browser focus plus actual controller/React wiring: Activity retargeting the
+// thread the timeline is still opening must not leave the timeline's trigger.
+// An unread reply is a new visit; a working agent's top-level message reuses
+// the timeline's history entry.
+for (const source of ["unread reply", "working agent"]) {
+  test(`same-thread sidebar activity (${source}) replaces timeline focus return`, async ({
+    page,
+    app,
+  }) => {
+    await holdReadingFocus(page);
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((row) => row.content === "Thread root 0");
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    if (source === "working agent") {
+      await expect
+        .poll(() => app.relay.hasRoute("primary", "observer"))
+        .toBe(true);
+      app.observer(
+        {
+          kind: "turn_started",
+          seq: 1,
+          timestamp: new Date().toISOString(),
+          channelId: "alpha",
+          sessionId: "S",
+          turnId: "focus-return",
+          payload: { triggeringEventIds: [root.id] },
+        },
+        generateSecretKey(),
+      );
+      await expect(
+        alpha.getByRole("img", { name: /working in Alpha/ }),
+      ).toBeVisible();
+    } else {
+      // The open channel's row is quiet; its activity popover still lists
+      // threads.
+      await expect
+        .poll(async () => (await channelUnread(page, "alpha")).threads)
+        .toBeGreaterThan(0);
     }
-    await route.continue().catch(() => {});
-  });
-  try {
-    const trigger = page
-      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-      .getByRole("button", { name: /^View thread:/ });
-    await virtuaIdle(page);
-    await releaseReadingFocus(page);
-    await trigger.click();
-    await expect.poll(() => requested).toBe(true);
-    const before = await page.evaluate(() => {
-      const { entry, attempt } = window.fixtureNavigation.snapshot();
-      return { entry: entry.id, attempt: attempt.id };
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
     });
-    await alpha.hover();
-    const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
-    await activity
-      .getByRole("button", {
-        name: /Open unread thread from.*Broadcast descendant/,
-      })
-      .click();
-    await expect
-      .poll(() =>
-        page.evaluate((before) => {
-          const { entry, attempt } = window.fixtureNavigation.snapshot();
-          return {
-            sameEntry: entry.id === before.entry,
-            freshAttempt: attempt.id !== before.attempt,
-          };
-        }, before),
-      )
-      .toEqual({ sameEntry: true, freshAttempt: true });
-    release();
-    await expect
-      .poll(() =>
-        page.evaluate(() => window.fixtureNavigation.snapshot().status),
-      )
-      .toBe("opened");
-    await page
-      .locator(
-        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
-      )
-      .click();
-    await expect(alpha).toBeFocused();
-  } finally {
-    release();
-  }
-});
+    let requested = false;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.depth_limit)
+      ) {
+        requested = true;
+        await held;
+      }
+      await route.continue().catch(() => {});
+    });
+    try {
+      const trigger = page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ });
+      await virtuaIdle(page);
+      await releaseReadingFocus(page);
+      await trigger.click();
+      await expect.poll(() => requested).toBe(true);
+      const before = await page.evaluate(() => {
+        const { entry, attempt } = window.fixtureNavigation.snapshot();
+        return { entry: entry.id, attempt: attempt.id };
+      });
+      await alpha.hover();
+      const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
+      await activity
+        .getByRole("button", {
+          name:
+            source === "working agent"
+              ? /^Open thread for .* in Alpha$/
+              : /Open unread thread from.*Broadcast descendant/,
+        })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ before, rootId }) => {
+              const { entry, attempt } = window.fixtureNavigation.snapshot();
+              return {
+                sameEntry: entry.id === before.entry,
+                rootTarget: entry.target.messageId === rootId,
+                sameThread: entry.target.threadRootId === rootId,
+                freshAttempt: attempt.id !== before.attempt,
+              };
+            },
+            { before, rootId: root.id },
+          ),
+        )
+        .toEqual({
+          sameEntry: source === "working agent",
+          rootTarget: source === "working agent",
+          sameThread: true,
+          freshAttempt: true,
+        });
+      release();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureNavigation.snapshot().status),
+        )
+        .toBe("opened");
+      await page
+        .locator(
+          '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+        )
+        .click();
+      await expect(alpha).toBeFocused();
+    } finally {
+      release();
+    }
+  });
+}
 
 // Browser-only contract: fitting rows generate no scroll/resize when an empty
 // legacy continuation finishes. Opening alone must still earn reading dwell.
@@ -1312,5 +1671,71 @@ test.describe("top-level mention activity", () => {
     await openPage(page, "Activity");
     await expect(row).toBeVisible();
     await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
+  });
+});
+
+// The Solo sidebar opens the same exact target through its buzz://message link.
+const soloChannel = "33333333-3333-4333-8333-333333333333";
+test.describe("Solo Activity", () => {
+  test.use({
+    threadUnread: false,
+    threadUnreadJoined: false,
+    channelIds: ["beta", soloChannel],
+    channelNames: { [soloChannel]: "Alpha" },
+    soloChannels: [soloChannel],
+    ownSoloChannels: [soloChannel],
+    historyCounts: { beta: 1, [soloChannel]: 1 },
+  });
+
+  test("opening an absorbed failure from a Solo chat's Activity expands its activity history, then reads it", async ({
+    page,
+    app,
+  }) => {
+    const key = generateSecretKey();
+    app.serveProfile(key, { name: "Remote tester", is_agent: true });
+    await page.goto(app.origin);
+    await newChat(page);
+    const chat = page
+      .getByRole("navigation", { name: "Solo conversations" })
+      .locator(`[data-solo-channel-id="${soloChannel}"]`);
+    await expect(chat).toBeVisible();
+    const root = app.append(
+      "primary",
+      soloChannel,
+      "Summarize the release notes.",
+    );
+    const failure = publishAbsorbedFailure(app, soloChannel, root.id, key);
+    await chat.hover();
+    const popover = page.getByRole("dialog", {
+      name: "Activity in Alpha",
+      exact: true,
+    });
+    const item = popover
+      .getByRole("button", { name: /Open unread thread from/ })
+      .filter({ hasText: failure.content });
+    await expect(item).toBeVisible();
+    await item.click();
+    const thread = page.getByRole("region", {
+      name: "Thread messages",
+      exact: true,
+    });
+    const row = thread.locator(`[data-message-id="${failure.id}"]`);
+    await expect(row).toBeInViewport();
+    await expect(row).toBeFocused();
+    await expect(
+      thread.getByRole("button", { name: /^Collapse activity history:/ }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    await expect
+      .poll(async () => (await channelUnread(page, soloChannel)).threads)
+      .toBe(0);
+    await chat.hover();
+    await expect(
+      popover.getByRole("button", { name: /Open unread thread from/ }),
+    ).toHaveCount(0);
   });
 });

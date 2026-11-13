@@ -8,7 +8,6 @@ import {
   useChannelActivitySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
-import { activityRuns } from "./activity-groups";
 import { DayDivider } from "./MessageTimestamp";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
@@ -58,7 +57,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
-import { useMessageReveal } from "./use-message-reveal";
+import { beginReveal, useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -298,7 +297,11 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
         return;
       }
       if (prior?.view.snapshot().root) {
-        if (navigation) setRouting(navigation);
+        if (navigation) {
+          setRouting(navigation);
+          // The request starts now; its reveal waits for the retarget.
+          beginReveal(navigation.signal);
+        }
         let result: ThreadRetarget;
         try {
           result = await prior.view.retarget(messageId, signal);
@@ -659,25 +662,27 @@ function ThreadMessages({
     [session.unread, channelId, snapshot.root?.id, messageId],
   );
   useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
+  // Histories the reader opened, by their first row.
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const activityVisit = useRef<unknown[]>([]);
+  // Exact targets whose activity history a visit opened. The disclosure
+  // follows the target, not the group that held it when the visit began:
+  // later evidence regroups a level while the reader collapses nothing. A cold
+  // visit's window forms the group that absorbs a failure, and a late request
+  // splits it. The reader's collapse drops the target until the next request.
+  const [disclosedTargets, setDisclosedTargets] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each request discloses its target once, so a reader's collapse holds.
   useLayoutEffect(() => {
-    const request = [messageId, navigation?.signal, revealRequest];
-    if (
-      !messageId ||
-      request.every((part, index) => part === activityVisit.current[index]) ||
-      !snapshot.replies.some((row) => row.id === messageId)
-    )
-      return;
-    activityVisit.current = request;
-    const group = [...tree.children.values()]
-      .flatMap((rows) => activityRuns(rows))
-      .find((group) => group.some((row) => row.id === messageId));
-    const first = group?.[0]?.id;
-    if (first) setExpandedActivity((current) => new Set([...current, first]));
-  }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
+    setDisclosedTargets((current) =>
+      current.has(messageId) ? current : new Set([...current, messageId]),
+    );
+  }, [messageId, navigation?.signal, revealRequest]);
+  const activityExpanded = (ids: readonly string[]) =>
+    expandedActivity.has(ids[0] ?? "") ||
+    ids.some((id) => disclosedTargets.has(id));
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
@@ -1506,9 +1511,7 @@ function ThreadMessages({
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
     const hidden = new Set(
-      groups.flatMap((group) =>
-        expandedActivity.has(group.ids[0] ?? "") ? [] : group.ids,
-      ),
+      groups.flatMap((group) => (activityExpanded(group.ids) ? [] : group.ids)),
     );
     return siblings.map((row, index) => {
       const group = groupsByFirst.get(row.id);
@@ -1644,17 +1647,25 @@ function ThreadMessages({
                 profiles={profiles}
                 media={session.media}
                 layout="thread"
-                expanded={expandedActivity.has(group.ids[0] ?? "")}
+                expanded={activityExpanded(group.ids)}
                 onToggle={() => {
                   follow.current = false;
                   targetAnchor.current = undefined;
+                  const open = activityExpanded(group.ids);
                   setExpandedActivity((current) => {
                     const next = new Set(current);
                     const first = group.ids[0] ?? row.id;
-                    if (next.has(first)) next.delete(first);
+                    if (open) next.delete(first);
                     else next.add(first);
                     return next;
                   });
+                  if (open)
+                    setDisclosedTargets(
+                      (current) =>
+                        new Set(
+                          [...current].filter((id) => !group.ids.includes(id)),
+                        ),
+                    );
                 }}
               />
             </>

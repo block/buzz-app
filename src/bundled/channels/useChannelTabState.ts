@@ -8,7 +8,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readThreadTabName,
+  saveThreadTabName,
+} from "../../features/messages/thread-tab-names";
 import type { PanelOpening } from "../../features/panels/service";
 import type { ChannelDrawerOpening } from "./useChannelPanels";
 import {
@@ -246,50 +249,9 @@ const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
 const forgetVisits = (scope: string) => {
   visitOwners.delete(scope);
 };
-// Thread tab names are durable view intent for an account/community, unlike
-// the layout: a thread's tab takes its name again when it reopens after a
-// restart. One record keeps the 256 newest names, "" for a cleared one,
-// oldest first. Deleting the thread here, deleting or leaving the channel, or
-// leaving the community forgets them.
+// Thread tab names persist in `thread-tab-names`, keyed by channel and root.
 type ThreadTab = Extract<ConversationTab, { kind: "thread" }>;
-const NAMES = "tab-names";
-const MAX_NAMES = 256;
 const nameKey = (tab: ThreadTab) => `${tab.channelId}:${rootOfTab(tab)}`;
-const savedNames = (scope: string) => {
-  const names = readView<unknown>(scope, NAMES, undefined);
-  return new Map(
-    names && typeof names === "object" && !Array.isArray(names)
-      ? Object.entries(names)
-      : [],
-  );
-};
-const readName = (scope: string, key: string) => {
-  const name = savedNames(scope).get(key);
-  return typeof name === "string" ? name : undefined;
-};
-/** Applies `edit`, which reports whether it changed the names. */
-const editNames = (
-  scope: string,
-  edit: (names: Map<string, unknown>) => boolean,
-) => {
-  const names = savedNames(scope);
-  if (edit(names))
-    writeView(scope, NAMES, Object.fromEntries([...names].slice(-MAX_NAMES)));
-};
-/** Saves a name as the newest; undefined forgets it. */
-const saveName = (scope: string, key: string, name: string | undefined) =>
-  editNames(scope, (names) => {
-    const existed = names.delete(key);
-    if (name !== undefined) names.set(key, name);
-    return existed || name !== undefined;
-  });
-const forgetChannelNames = (scope: string, channelId: string) =>
-  editNames(scope, (names) => {
-    const before = names.size;
-    for (const key of names.keys())
-      if (key.startsWith(`${channelId}:`)) names.delete(key);
-    return names.size !== before;
-  });
 function withSavedNames(scope: string, previous: State, next: State): State {
   if (next.tabs === previous.tabs) return next;
   let restored = false;
@@ -302,7 +264,8 @@ function withSavedNames(scope: string, previous: State, next: State): State {
     if (prior && nameKey(prior) === key) {
       // A cleared name is kept as "" so a stale provisional name cannot
       // replace it later.
-      if (prior.name !== tab.name) saveName(scope, key, tab.name ?? "");
+      if (prior.name !== tab.name)
+        saveThreadTabName(scope, key, tab.name ?? "");
       return tab;
     }
     if (tab.name) {
@@ -310,17 +273,17 @@ function withSavedNames(scope: string, previous: State, next: State): State {
       // unless that root has its own name or clear, as when it merges into
       // its tab.
       if (prior) {
-        saveName(scope, nameKey(prior), undefined);
-        const saved = readName(scope, key);
+        saveThreadTabName(scope, nameKey(prior), undefined);
+        const saved = readThreadTabName(scope, key);
         if (saved !== undefined) {
           restored = true;
           return { ...tab, name: saved || undefined };
         }
-        saveName(scope, key, tab.name);
+        saveThreadTabName(scope, key, tab.name);
       }
       return tab;
     }
-    const name = readName(scope, key);
+    const name = readThreadTabName(scope, key);
     if (!name) return tab;
     restored = true;
     return { ...tab, name };
@@ -383,11 +346,11 @@ function createTabStore(scope?: string) {
     },
     /** A thread's saved name, "" once cleared, or undefined if never named. */
     savedName: (tab: ThreadTab) =>
-      scope ? readName(scope, nameKey(tab)) : undefined,
+      scope ? readThreadTabName(scope, nameKey(tab)) : undefined,
     /** A provisional tab merged into its root's tab gives up its hint's name. */
     forgetName(tab: ThreadTab, owner: ThreadTab) {
       if (scope && !tab.rootId && nameKey(tab) !== nameKey(owner))
-        saveName(scope, nameKey(tab), undefined);
+        saveThreadTabName(scope, nameKey(tab), undefined);
     },
     snapshot: () => channels,
     subscribe(listener: () => void) {
@@ -422,24 +385,8 @@ const keyOf = (page: string, channelId: string) =>
 function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    const scope = session.viewer ? session.scope : undefined;
-    store = createTabStore(scope);
+    store = createTabStore(session.viewer ? session.scope : undefined);
     sessions.set(session, store);
-    if (scope) {
-      session.channelLifecycle?.observeRemoval((channelId) =>
-        forgetChannelNames(scope, channelId),
-      );
-      // Only once the relay has the deletion, so a refused one keeps the name.
-      session.outbox?.observeSend((event) => {
-        const channelId = event.tags.find(([key]) => key === "h")?.[1];
-        if (event.kind !== 5 || !channelId) return;
-        return () => {
-          for (const [key, id] of event.tags)
-            if (key === "e" && id)
-              saveName(scope, `${channelId}:${id}`, undefined);
-        };
-      });
-    }
   }
   return store;
 }
@@ -553,7 +500,7 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
     /** A thread an agent deleted forgets its tab's saved name. */
     forget(channelId: string, rootId: string) {
       if (session.viewer)
-        saveName(session.scope, `${channelId}:${rootId}`, undefined);
+        saveThreadTabName(session.scope, `${channelId}:${rootId}`, undefined);
     },
     /** Names thread `rootId`'s tab; an empty name restores its automatic
      * title. False when it has no tab there. */

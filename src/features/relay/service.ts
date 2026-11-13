@@ -5,6 +5,7 @@ import type { IdentityNames } from "../identity-names/service";
 import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
+import { retainThreadTabNames } from "../messages/thread-tab-names";
 import { createHeadPersistence } from "./persistence";
 import {
   relayPartition,
@@ -379,6 +380,8 @@ export function provideRelay(
             successor.session.channels.ensure(id);
           store.dispose();
           store = successor;
+          // Before anything can send in this session.
+          retainThreadTabNames(store.session);
           if (refused) {
             await refuse(refused);
             return;

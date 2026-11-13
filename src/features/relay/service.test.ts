@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
+import { retainThreadTabNames } from "../messages/thread-tab-names";
 import { provideRelay } from "./service";
 import type { ReadTransport } from "./transport";
 import {
@@ -10,6 +11,10 @@ import {
   bounds,
   scriptedTransport,
 } from "./testing";
+
+vi.mock("../messages/thread-tab-names", () => ({
+  retainThreadTabNames: vi.fn(),
+}));
 
 const roots: Context[] = [];
 function root() {
@@ -49,6 +54,8 @@ it("shares a session above plugin lifetimes, rather than one store per consumer"
   });
   await other.await();
   expect(received[0]).toBe(received[1]);
+  // The connected session retains thread tab names before it is shared.
+  expect(retainThreadTabNames).toHaveBeenCalledWith(received[0]);
   await consumer.dispose();
   expect(data.snapshot().status).toBe("ready");
   expect(connect).toHaveBeenCalledTimes(1);

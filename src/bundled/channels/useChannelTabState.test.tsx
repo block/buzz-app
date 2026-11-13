@@ -1449,66 +1449,17 @@ test("a scope keeps its 256 newest tab names", () => {
   ]);
 });
 
-test("deleting a thread or channel here forgets its tab names", () => {
+test("an agent's deleted thread forgets its tab name", () => {
   const scope = crypto.randomUUID();
-  const removals = new Set<(channelId: string) => void>();
-  const sends = new Set<
-    (event: { kind: number; tags: string[][] }) => (() => void) | undefined
-  >();
-  const session = {
-    ...tabSession(),
-    scope,
-    viewer: "viewer",
-    channelLifecycle: {
-      observeRemoval(listener: (channelId: string) => void) {
-        removals.add(listener);
-        return () => removals.delete(listener);
-      },
-    },
-    outbox: {
-      observeSend(listener: typeof sends extends Set<infer T> ? T : never) {
-        sends.add(listener);
-        return () => sends.delete(listener);
-      },
-    },
-  } as unknown as RelaySession;
-  const send = (kind: number, tags: string[][]) =>
-    [...sends].map((listener) => listener({ kind, tags }));
-  const tabs = channelTabs(session);
+  const first = launch(scope);
   act(() => {
-    tabs.open("alpha", "r1");
-    tabs.open("alpha", "r2");
-    tabs.rename("alpha", "r1", "Launch plan");
-    tabs.rename("alpha", "r2", "Retro");
+    first.tabs.open("alpha", "r1");
+    first.tabs.open("alpha", "r2");
   });
-  writeView(scope, "tab-names", {
-    ...readView(scope, "tab-names", {}),
-    "beta:r1": "Elsewhere",
-  });
-  // A deletion is forgotten only once the relay has it; an agent's is
-  // forgotten after it publishes.
-  const received = send(5, [
-    ["h", "alpha"],
-    ["e", "r1"],
-  ]);
-  send(9, [
-    ["h", "alpha"],
-    ["e", "r2"],
-  ]);
-  expect(Object.keys(readView(scope, "tab-names", {}))).toHaveLength(3);
-  for (const done of received) done?.();
-  expect(readView(scope, "tab-names", {})).toEqual({
-    "alpha:r2": "Retro",
-    "beta:r1": "Elsewhere",
-  });
-  tabs.forget("beta", "r1");
+  first.rename("thread:alpha:r1", "Launch plan");
+  first.rename("thread:alpha:r2", "Retro");
+  first.tabs.forget("alpha", "r1");
   expect(readView(scope, "tab-names", {})).toEqual({ "alpha:r2": "Retro" });
-  writeView(scope, "tab-names", {
-    ...readView(scope, "tab-names", {}),
-    "beta:r1": "Elsewhere",
-  });
-  for (const listener of removals) listener("alpha");
-  expect(readView(scope, "tab-names", {})).toEqual({ "beta:r1": "Elsewhere" });
 });
 
 test("sessions without a viewer keep tab names in memory only", () => {

@@ -5,7 +5,7 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import type { ComposerInputElement } from "./composer-dom";
-import { channelTabs } from "../../bundled/channels/useChannelTabState";
+import { retainThreadTabNames } from "./thread-tab-names";
 import { readView, writeView } from "../../shared/view-state";
 import { MessageComposer } from "./MessageComposer";
 import {
@@ -542,7 +542,7 @@ it("offers deletion for an empty edit, permits cancel and then confirms deletion
   const { session } = h.owner;
   const id = session.channels.window("room").rows[0]?.id;
   const names = { [`room:${id}`]: "Launch plan" };
-  channelTabs(session);
+  retainThreadTabNames(session);
   writeView(session.scope, "tab-names", names);
   submit();
   fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
@@ -889,7 +889,7 @@ it("keeps deletion recovery outside the optimistically removed row", async () =>
   const names = {
     [`room:${session.channels.window("room").rows[0]?.id}`]: "Launch plan",
   };
-  channelTabs(session);
+  retainThreadTabNames(session);
   writeView(session.scope, "tab-names", names);
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Delete message" }),

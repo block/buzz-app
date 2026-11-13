@@ -742,6 +742,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
     a.title === b.title &&
     a.checks === b.checks &&
     a.conflicts === b.conflicts &&
+    a.review === b.review &&
     a.head === b.head &&
     a.settled === b.settled &&
     a.running === b.running &&

@@ -4202,6 +4202,63 @@ it("marks a reply sent in the same second as the viewer's last post", async () =
   }
 });
 
+it("places the line above arrivals while the document was hidden", async () => {
+  const { h, mounted, read } = await settledReader();
+  const visibility = vi.spyOn(document, "visibilityState", "get");
+  const setVisible = (visible: boolean) => {
+    visibility.mockReturnValue(visible ? "visible" : "hidden");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  };
+  try {
+    setVisible(false);
+    await arriveWhileAway(
+      h,
+      mounted,
+      [read],
+      [{ content: "Arrived while hidden", at: 11 }],
+    );
+    expect(h.catchUp).not.toHaveBeenCalled();
+    setVisible(true);
+    expect(precedes(divider(), screen.getByText("Arrived while hidden"))).toBe(
+      true,
+    );
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalled();
+  } finally {
+    visibility.mockRestore();
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("does not hold reading on return behind an older-page read that never finishes", async () => {
+  const { h, mounted, read } = await settledReader();
+  try {
+    setDocumentActive(false);
+    const { rows } = await arriveWhileAway(
+      h,
+      mounted,
+      [read],
+      [{ content: "Arrived while paging", at: 11 }],
+    );
+    // A cancelled older-page read can leave its flag set after a resume.
+    mounted.rerender(
+      h.tree("c", rows, false, true, true, { loadingOlder: true }),
+    );
+    setDocumentActive(true);
+    expect(precedes(divider(), screen.getByText("Arrived while paging"))).toBe(
+      true,
+    );
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalled();
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it("holds reading on return while a reconnect head read is owed, then places the line above what it delivers", async () => {
   const { h, mounted, read } = await settledReader();
   try {

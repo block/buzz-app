@@ -1,3 +1,4 @@
+import type { WindowFailure } from "./window-failure";
 import type { VerifiedProfile } from "./verified-profile";
 import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
@@ -218,7 +219,11 @@ export type ChannelWindow = Readonly<{
   /** False only after the relay's window bounds reported no more history. */
   hasMore: boolean;
   loadingOlder: boolean;
-  error: string | undefined;
+  error: WindowFailure | undefined;
+  /** `older` when `error` came from an older page (`loadOlder`). Head
+   * revalidation, catch-up and seek failures leave it unset, so they never
+   * read as older history failing or hide older paging. */
+  errorSource?: "older" | undefined;
   /** Cached rows are immediately readable, but not claimed fresh until revalidated. */
   freshness?: "cached" | "verified";
   historyLimited?: boolean;

@@ -858,13 +858,60 @@ it("keeps the saved Bestie visible through reconnect and offers connection recov
     screen.queryByRole("button", { name: "Set up Bestie" }),
   ).not.toBeInTheDocument();
   act(() =>
-    f.updateRelay({ status: "error", error: "Community temporarily offline" }),
+    f.updateRelay({
+      status: "error",
+      error: {
+        kind: "connection",
+        details: "ReadError: Relay read failed (502)",
+      },
+    }),
   );
-  expect(screen.getByText("Community temporarily offline")).toBeVisible();
+  expect(
+    screen.getByText("Check your connection, then try again."),
+  ).toBeVisible();
+  expect(screen.queryByText(/ReadError|502/)).not.toBeInTheDocument();
   await userEvent.click(
     screen.getByRole("button", { name: "Retry connection" }),
   );
   expect(f.retryConnection).toHaveBeenCalledOnce();
+});
+
+it("offers Check for updates, not Retry connection, for an answer Buzz can't use", async () => {
+  const f = await fixture({ existing: true });
+  f.choose(pollen);
+  const open = vi.fn(async () => ({ status: "opened" }) as const);
+  render(
+    f.element({
+      renderedNavigator: Object.create(f.navigator, { open: { value: open } }),
+    }),
+  );
+  await screen.findByRole("textbox", { name: "Message Pollen" });
+  act(() =>
+    f.updateRelay({
+      status: "error",
+      error: {
+        kind: "unusable",
+        details: "ReadError: Relay response is not an event array",
+      },
+    }),
+  );
+  expect(
+    screen.getByText("Buzz couldn’t connect to this community."),
+  ).toBeVisible();
+  expect(screen.queryByText(/try again/i)).not.toBeInTheDocument();
+  // Reconnecting gets the same answer; an update may not.
+  expect(
+    screen.queryByRole("button", { name: "Retry connection" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Check for updates" }),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "updates",
+  });
+  expect(f.retryConnection).not.toHaveBeenCalled();
 });
 
 it("recovers a saved agent missing from a partial inventory through refresh", async () => {

@@ -1,3 +1,4 @@
+import { ReadError } from "./errors";
 import { CHANNEL_ROW_KINDS } from "./membership";
 import { isObject, objectBody } from "./body";
 import { hasTag, type ReadFilter, type RelayEvent } from "./events";
@@ -69,11 +70,21 @@ export function parseWindow(
   );
   const [bound] = bounds;
   if (bounds.length !== 1 || !bound)
-    throw new Error("Channel history response has invalid window bounds");
+    throw new ReadError(
+      "invalid-response",
+      "Channel history response has invalid window bounds",
+    );
   const body = objectBody(bound.content);
-  if (!body) throw new Error("Channel history bounds are malformed");
+  if (!body)
+    throw new ReadError(
+      "invalid-response",
+      "Channel history bounds are malformed",
+    );
   if (typeof body.has_more !== "boolean")
-    throw new Error("Channel history bounds omit has_more");
+    throw new ReadError(
+      "invalid-response",
+      "Channel history bounds omit has_more",
+    );
   const next = body.next_cursor;
   let nextCursor: WindowCursor | null = null;
   if (next != null) {
@@ -85,7 +96,10 @@ export function parseWindow(
       typeof next.id !== "string" ||
       !/^[0-9a-f]{64}$/.test(next.id)
     )
-      throw new Error("Channel history cursor is malformed");
+      throw new ReadError(
+        "invalid-response",
+        "Channel history cursor is malformed",
+      );
     nextCursor = { createdAt: next.created_at, eventId: next.id };
     // History order is descending timestamp, then ascending id. Equal-time
     // pages must move to a lexically greater id; a repeated cursor is not progress.
@@ -95,10 +109,16 @@ export function parseWindow(
         (nextCursor.createdAt === cursor.createdAt &&
           nextCursor.eventId <= cursor.eventId))
     )
-      throw new Error("Channel history cursor does not advance");
+      throw new ReadError(
+        "invalid-response",
+        "Channel history cursor does not advance",
+      );
   }
   if (body.has_more !== (nextCursor !== null))
-    throw new Error("Channel history bounds contradict their cursor");
+    throw new ReadError(
+      "invalid-response",
+      "Channel history bounds contradict their cursor",
+    );
   return {
     events: events.filter((event) => event.kind !== 39006),
     hasMore: body.has_more,

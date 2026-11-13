@@ -5,6 +5,7 @@ import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { refusalOfError } from "./http-admission";
+import { windowFailure } from "./window-failure";
 import type {
   ChannelReference,
   ChannelList,
@@ -585,8 +586,16 @@ export function createChannelStore(
         state.projection.reconcile([...combined.values()], operations),
       );
     }
+    // A failure's source belongs to the failure that set it.
+    const source =
+      "error" in patch &&
+      !("errorSource" in patch) &&
+      state.snapshot.errorSource !== undefined
+        ? { errorSource: undefined }
+        : {};
     const next = {
       ...state.snapshot,
+      ...source,
       ...patch,
       rows,
       hasNewer: state.ceiling !== undefined || undefined,
@@ -925,7 +934,7 @@ export function createChannelStore(
   function denyOmitted(omitted: ReadonlyMap<string, RelayEvent | undefined>) {
     for (const [id, version] of omitted)
       if (!discovery?.authorized(id) && unchangedPreview(id, version))
-        denyChannel(id, new Error("Conversation is unavailable"));
+        denyChannel(id, new ReadError("denied", "Conversation is unavailable"));
   }
   /** Ends a window's reads and leaves it showing only the refusal. */
   function closeWindow(state: WindowState, error: unknown) {
@@ -940,7 +949,7 @@ export function createChannelStore(
     setWindow(state, {
       status: "error",
       rows: EMPTY_ROWS,
-      error: describe(error),
+      error: windowFailure(error),
       loadingOlder: false,
       refreshing: undefined,
     });
@@ -1150,12 +1159,18 @@ export function createChannelStore(
       setWindow(
         state,
         cursor || state.snapshot.rows.length
-          ? { loadingOlder: false, error: describe(error), freshness: "cached" }
+          ? {
+              loadingOlder: false,
+              error: windowFailure(error),
+              // Only `loadOlder` reads with a cursor.
+              ...(cursor ? { errorSource: "older" as const } : {}),
+              freshness: "cached",
+            }
           : {
               status: "error",
               rows: EMPTY_ROWS,
               loadingOlder: false,
-              error: describe(error),
+              error: windowFailure(error),
             },
       );
     } finally {
@@ -2348,7 +2363,7 @@ export function createChannelStore(
             hasTag(event, "p", transport.viewer),
         )
       )
-        denyChannel(id, new Error("Conversation is unavailable"));
+        denyChannel(id, new ReadError("denied", "Conversation is unavailable"));
       if (
         !events.some(
           (event) =>
@@ -2358,7 +2373,10 @@ export function createChannelStore(
         )
       ) {
         if (omittedPreview(id, events, started))
-          denyChannel(id, new Error("Conversation is unavailable"));
+          denyChannel(
+            id,
+            new ReadError("denied", "Conversation is unavailable"),
+          );
       } else if (!discovery.named(id))
         throw new Error("Channel metadata capacity unavailable");
     }
@@ -3206,7 +3224,7 @@ export function createChannelStore(
           state &&
           authorized(channelId)
         )
-          setWindow(state, { error: describe(error) });
+          setWindow(state, { error: windowFailure(error) });
       })
       .finally(() => {
         controllers.delete(controller);
@@ -3820,7 +3838,10 @@ export function createChannelStore(
           void fetchProfiles(state.snapshot.rows);
         } catch (error) {
           if (isAbort(error) || !live(state, generation)) return;
-          setWindow(state, { loadingNewer: undefined, error: describe(error) });
+          setWindow(state, {
+            loadingNewer: undefined,
+            error: windowFailure(error),
+          });
         } finally {
           if (state.controller === controller) {
             state.controller = undefined;
@@ -4471,7 +4492,7 @@ export function createChannelStore(
           setWindow(retained, {
             status: retained.snapshot.rows.length ? "ready" : "error",
             freshness: "cached",
-            error: describe(error),
+            error: windowFailure(error),
           });
         throw error;
       } finally {
@@ -4486,7 +4507,7 @@ export function createChannelStore(
       setWindow(state, {
         status: state.snapshot.rows.length ? "ready" : "error",
         freshness: "cached",
-        error: describe(error),
+        error: windowFailure(error),
       });
     },
     /** The stream re-established a channel whose replay was continuous: it

@@ -27,6 +27,7 @@ import { useChannelWindow } from "../relay/react";
 import { readView, viewRevision } from "../../shared/view-state";
 import { writeClipboardText } from "../../shared/clipboard";
 import { Button } from "../../shared/design-system/ui/Button";
+import { historyFailure, UPDATES_LINK } from "../messages/history-failure";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   PanelHeader,
@@ -304,8 +305,12 @@ function DraftChannel({
   onSaved(): void;
   onSend(id: string): void;
 }) {
-  const { session, channelId } = useConversation();
+  const { session, channelId, onOpenLink } = useConversation();
   const channelWindow = useChannelWindow(session.channels, channelId);
+  const failure =
+    channelWindow.status === "error" || channelWindow.error
+      ? historyFailure(channelWindow.error, "Messages didn’t load.")
+      : undefined;
   const [seekError, setSeekError] = useState(false);
   const [noticeHeight, setNoticeHeight] = useState(0);
   const [outgoing, setOutgoing] = useState<string>();
@@ -375,17 +380,24 @@ function DraftChannel({
               inlineTarget={reveal}
             />
           )}
-          {channelWindow.status === "error" || channelWindow.error ? (
+          {failure ? (
             <div className={styles.draftUnavailable}>
               <p role="alert" className="text-body-sm">
-                {channelWindow.error ?? "Could not load conversation."}
+                {failure.text}
               </p>
-              <Button
-                size="sm"
-                onClick={() => session.channels.refresh?.(channelId)}
-              >
-                Retry conversation
-              </Button>
+              {failure.retry && (
+                <Button
+                  size="sm"
+                  onClick={() => session.channels.refresh?.(channelId)}
+                >
+                  Try again
+                </Button>
+              )}
+              {failure.update && (
+                <Button size="sm" onClick={() => onOpenLink(UPDATES_LINK)}>
+                  Check for updates
+                </Button>
+              )}
             </div>
           ) : (
             !channelWindow.rows.length &&

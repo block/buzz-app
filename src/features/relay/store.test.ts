@@ -365,8 +365,13 @@ describe("channel store", () => {
     await flush();
     expect(queries.window("c")).toMatchObject({
       status: "error",
-      error: expect.stringMatching(/window bounds/),
+      error: expect.objectContaining({
+        kind: "invalid-response",
+        message: expect.stringMatching(/window bounds/),
+      }),
     });
+    // A head read's failure is not an older page's.
+    expect(queries.window("c").errorSource).toBeUndefined();
     queries.ensure("c");
     expect(queries.window("c").status).toBe("loading");
     next().respond([
@@ -382,9 +387,20 @@ describe("channel store", () => {
     expect(queries.window("c")).toMatchObject({
       status: "ready",
       loadingOlder: false,
-      error: "relay down",
+      error: expect.objectContaining({ message: "relay down" }),
+      errorSource: "older",
       hasMore: true,
     });
+    // Retrying clears the failure and its source together.
+    queries.loadOlder("c");
+    expect(queries.window("c")).toMatchObject({
+      loadingOlder: true,
+      error: undefined,
+    });
+    expect(queries.window("c").errorSource).toBeUndefined();
+    next().fail(new Error("relay down again"));
+    await flush();
+    expect(queries.window("c").errorSource).toBe("older");
   });
 });
 

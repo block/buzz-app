@@ -49,6 +49,7 @@ import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import {
   admittedApiRequest,
+  ApiCapacity,
   ApiPaused,
   ApiNotSent,
   readApiFailure,
@@ -475,6 +476,28 @@ async function readResponseError(response: Response) {
   );
 }
 
+/** A body that stops arriving after its headers did is the network, not a
+ * bug, whatever the browser calls it: read it as an unavailable read, so the
+ * copy and the retry agree. Reading a used body stays the bug it is. */
+function networkBody(response: Response): Response {
+  for (const method of ["json", "text", "arrayBuffer", "blob"] as const) {
+    const read = response[method] as (() => Promise<unknown>) | undefined;
+    if (typeof read !== "function") continue;
+    Object.defineProperty(response, method, {
+      configurable: true,
+      value: () => {
+        if (response.bodyUsed) return read.call(response);
+        return read.call(response).catch((error: unknown) => {
+          throw error instanceof TypeError
+            ? new ReadError("unavailable", error.message)
+            : error;
+        });
+      },
+    });
+  }
+  return response;
+}
+
 /** The broker marks any response whose upstream relay request met a community
  * refusal with `x-buzz-refusal` (`relay-broker.mjs`), whatever its route does
  * with the relay's body. Every broker request below goes through here. */
@@ -490,7 +513,7 @@ function brokerRefusals() {
       const kind = response.headers.get(BROKER_REFUSAL_HEADER);
       if (kind === "sign-in" || kind === "access")
         for (const listener of [...listeners]) listener(kind);
-      return response;
+      return networkBody(response);
     },
   };
 }
@@ -1509,7 +1532,16 @@ export async function connectSignedTransport(
             false,
             refusalText,
           ).catch((error) => {
-            if (error instanceof ApiPaused || error instanceof ApiNotSent)
+            // A paused or full lane asked to wait; keep that, and its hint.
+            if (error instanceof ApiPaused)
+              throw new PublishNotSent(error.message, undefined, {
+                ...(error.retryAfterMs !== undefined && {
+                  retryAfterMs: error.retryAfterMs,
+                }),
+              });
+            if (error instanceof ApiCapacity)
+              throw new PublishNotSent(error.message, undefined, {});
+            if (error instanceof ApiNotSent)
               throw new PublishNotSent(error.message);
             throw error;
           }),
@@ -1587,7 +1619,7 @@ async function signedPost(
     return dispatch(() => {
       signal?.throwIfAborted();
       return profiling.measureAsync("http.fetch", id, () =>
-        signer.request(url, body, signal),
+        signer.request(url, body, signal).then(networkBody),
       );
     });
   });
@@ -1684,7 +1716,17 @@ export async function acceptPublish(response: Response, id: string) {
         return publicationRefusal(failure.error);
     });
     if (body.sent === false || body.quota === "api")
-      throw new PublishNotSent(body.error);
+      throw new PublishNotSent(
+        body.error,
+        undefined,
+        body.quota === "api" || body.paused
+          ? {
+              ...(body.retryAfterMs !== undefined && {
+                retryAfterMs: body.retryAfterMs,
+              }),
+            }
+          : undefined,
+      );
     throw new Error(
       `Relay delivery could not be confirmed (${response.status})`,
     );

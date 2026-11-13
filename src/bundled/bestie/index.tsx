@@ -7,6 +7,11 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import type { Agents } from "../../features/agents/service";
 import type { RelayData } from "../../features/relay/service";
+import {
+  connectionFailureAction,
+  connectionFailureText,
+  openUpdatesWith,
+} from "../../features/relay/ConnectionFailed";
 import { useRelayConnection } from "../../features/relay/react";
 import { BestieIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -128,14 +133,15 @@ function BestieDestination({
           description={
             connection.status === "connecting"
               ? "Your Bestie opens once this community is connected."
-              : (connection.error ??
-                "Choose a community to continue with your Bestie.")
+              : connection.error
+                ? connectionFailureText(connection)
+                : "Choose a community to continue with your Bestie."
           }
-          action={
-            connection.status === "error" ? (
-              <Button onClick={relay.tryAgain}>Retry connection</Button>
-            ) : undefined
-          }
+          action={connectionFailureAction({
+            connection,
+            relay,
+            openUpdates: openUpdatesWith(props.navigation),
+          })}
         />
       </BestieStatus>
     );

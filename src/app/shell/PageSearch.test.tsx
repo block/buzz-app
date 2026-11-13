@@ -1034,7 +1034,7 @@ it("finds and opens saved conversations while the community is unreachable or st
   );
   let connection: RelaySnapshot = {
     status: "error",
-    error: "Relay broker session is malformed",
+    error: { kind: "connection", details: "Relay broker session is malformed" },
     cached: true,
     generation: 1,
     scope: "s",

@@ -230,7 +230,7 @@ test("an open image gallery follows host appearance while retaining its dark sta
 });
 
 // Browser boundary: ChannelsPage's real opener must retain the collapsed batch;
-// native focus and key bubbling must survive Retry removing its own button.
+// native focus and key bubbling must survive Try again removing its own button.
 test("primary gallery keeps hidden media and keyboard navigation through thread retry", async ({
   page,
   app,
@@ -314,7 +314,7 @@ test("primary gallery keeps hidden media and keyboard navigation through thread 
     await expect(dialog.getByText("5 / 6", { exact: true })).toBeVisible();
     releaseFirst();
     const retryButton = dialog.getByRole("button", {
-      name: "Retry",
+      name: "Try again",
       exact: true,
     });
     await expect(retryButton).toBeVisible();

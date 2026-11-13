@@ -109,7 +109,7 @@ it("quietly retries a transient relay inventory failure before merging", async (
     const identity = { pubkey: "b".repeat(64), name: "Relay" };
     const relay = vi
       .fn()
-      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
       .mockResolvedValue({ definitions: [], identities: [identity] });
     const pending = inventoryReader(
       async () => ({ definitions: [], identities: [] }),

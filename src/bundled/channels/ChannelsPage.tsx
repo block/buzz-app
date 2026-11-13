@@ -86,13 +86,11 @@ import {
 import {
   SidebarRightIcon,
   PlugIcon,
-  CloudOffIcon,
-  LockIcon,
   ChatCircleIcon,
   GearIcon,
 } from "../../shared/design-system/icons/index";
 import { channelIcon } from "../../features/channels/channel-icon";
-import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
+import { ConnectionFailed } from "../../features/relay/ConnectionFailed";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -256,39 +254,22 @@ export function ChannelsPage({
                 </Button>
               )}
             </div>
-          ) : session.status === "error" && session.denied ? (
-            // The community refused this account. Its notice, on every page,
-            // says what fixes it and offers that; this only says why it's empty.
-            <div className={styles.failed}>
-              <EmptyState
-                icon={<LockIcon />}
-                title={communityRefusalTitle(session.refusal)}
-              />
-            </div>
           ) : session.status === "error" &&
-            (!session.retrying || visitSettled) ? (
+            (session.denied || !session.retrying || visitSettled) ? (
             // Usually a failed visit's card covers this page, but a visit that
             // already opened from cached content keeps it: say so plainly.
-            <div role="alert" className={styles.failed}>
-              <EmptyState
-                icon={<CloudOffIcon />}
-                title="Can’t connect"
-                description={
-                  session.retrying
-                    ? "Check your connection. We’ll keep trying."
-                    : "Check your connection, then try again."
-                }
-                action={
-                  <Button
-                    type="button"
-                    variant="primary"
-                    onClick={() => relay.tryAgain()}
-                  >
-                    Try again
-                  </Button>
-                }
-              />
-            </div>
+            <ConnectionFailed
+              connection={session}
+              relay={relay}
+              className={styles.failed}
+              openUpdates={() =>
+                void navigator.open({
+                  version: 1,
+                  kind: "settings",
+                  section: "updates",
+                })
+              }
+            />
           ) : (
             // Only real connection work animates.
             <div className={styles.connect}>

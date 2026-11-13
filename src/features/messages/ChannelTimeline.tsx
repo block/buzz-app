@@ -59,6 +59,7 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { moveMessageSelection } from "./message-selection";
+import { historyFailure, UPDATES_LINK } from "./history-failure";
 import { useMessageSelection } from "./use-message-selection";
 import { useMessageVisit } from "./MessageManagement";
 
@@ -776,8 +777,14 @@ function Timeline({
   // While the connection recovers, its notice is the one report, so the
   // history edge does not repeat the reason. Recovery does not retry older
   // history, and paging stops on a failed read, so Retry stays either way.
+  // Only an older page's failure is reported here; a head, catch-up or seek
+  // failure leaves older paging as it was.
   const { recovering } = useRecovery(queries.recovery);
-  const edgeError = recovering ? undefined : window.error;
+  const failure =
+    window.error && window.errorSource === "older"
+      ? historyFailure(window.error, "Older messages didn’t load.")
+      : undefined;
+  const edgeError = recovering ? undefined : failure;
   // Keep pagination space through EOF so removing its control cannot change
   // Virtua's start margin in the same measurement cycle as a prepend.
   const [reserveHistorySpace, setReserveHistorySpace] = useState(false);
@@ -1943,12 +1950,21 @@ function Timeline({
         data-intro={!!shownIntro || undefined}
       >
         {shownIntro}
-        {edgeError && <span role="alert">{edgeError}</span>}
+        {edgeError && <span role="alert">{edgeError.text}</span>}
+        {edgeError?.update && (
+          <Button type="button" onClick={() => onOpenLink(UPDATES_LINK)}>
+            Check for updates
+          </Button>
+        )}
         {window.historyLimited ? (
           <span>History window limit reached</span>
         ) : window.hasMore && queries.channels.cachedOnly ? (
           <span>You can load older messages once Buzz reconnects.</span>
-        ) : window.hasMore && (historyControl === "button" || window.error) ? (
+        ) : window.hasMore &&
+          (failure
+            ? failure.retry
+            : // Any failed read stops automatic paging, so offer the button.
+              historyControl === "button" || !!window.error) ? (
           <Button
             type="button"
             disabled={window.loadingOlder}
@@ -1961,8 +1977,8 @@ function Timeline({
           >
             {window.loadingOlder
               ? "Loading older…"
-              : window.error
-                ? "Retry older messages"
+              : failure
+                ? "Try again"
                 : "Load older messages"}
           </Button>
         ) : window.loadingOlder ? (

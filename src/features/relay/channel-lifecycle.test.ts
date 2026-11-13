@@ -208,7 +208,7 @@ describe("bounded visibility recovery", () => {
     ]);
     await h.owner.capability.refreshVisibility();
     h.read.mockClear();
-    h.read.mockRejectedValueOnce(new TypeError("fetch failed"));
+    h.read.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const pending = h.owner.capability.refreshVisibility();
     await vi.advanceTimersByTimeAsync(0);
     expect(h.owner.capability.snapshot()).toEqual({
@@ -309,7 +309,7 @@ describe("bounded visibility recovery", () => {
     expect(concurrent).toBe(first);
     await vi.advanceTimersByTimeAsync(0);
     expect(h.read).toHaveBeenCalledOnce();
-    gate.reject(new TypeError("offline"));
+    gate.reject(new TypeError("Failed to fetch"));
     await vi.advanceTimersByTimeAsync(0);
     expect(h.owner.capability.refreshVisibility()).toBe(first);
     await vi.advanceTimersByTimeAsync(750);
@@ -323,7 +323,7 @@ describe("bounded visibility recovery", () => {
     async (action) => {
       const h = harness();
       const caller = new AbortController();
-      h.read.mockRejectedValue(new TypeError("offline"));
+      h.read.mockRejectedValue(new TypeError("Failed to fetch"));
       const pending = h.owner.capability.refreshVisibility(caller.signal);
       await vi.advanceTimersByTimeAsync(0);
       if (action === "caller") caller.abort();

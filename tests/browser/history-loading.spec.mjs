@@ -175,7 +175,7 @@ test.describe("quota retry without threshold-driven continuation", () => {
     await history(page).hover();
     await page.mouse.wheel(0, -100000);
     await expect(history(page).getByRole("alert")).toContainText(
-      "rate-limited",
+      "Buzz is busy. Try again in a few seconds.",
     );
     const count = cursors().length;
     expect(count).toBe(1);
@@ -187,7 +187,7 @@ test.describe("quota retry without threshold-driven continuation", () => {
     // Only the broker lane holds older-page retries; it reopens at this bound.
     await expect.poll(() => app.relay.brokerCooldownOver()).toBe(true);
     await history(page)
-      .getByRole("button", { name: "Retry older messages", exact: true })
+      .getByRole("button", { name: "Try again", exact: true })
       .click();
     await expect.poll(() => app.pending.length).toBe(1);
     expect(cursors()).toHaveLength(count + 1);
@@ -738,7 +738,7 @@ test.describe("pages inside one second", () => {
     // alert does not prove the reader left the bottom. upper() does.
     await upper(page);
     await expect(history(page).getByRole("alert")).toContainText(
-      "rate-limited",
+      "Buzz is busy. Try again in a few seconds.",
     );
     await settle(page);
     const { filter } = app.report.queries.find(

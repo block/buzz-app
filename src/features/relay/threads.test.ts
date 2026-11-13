@@ -943,7 +943,9 @@ it("keeps a failed establishment repair visible and drops the older page request
   await flush();
   expect(h.pending).toHaveLength(0);
   expect(h.view.snapshot()).toMatchObject({ status: "error" });
-  expect(h.view.snapshot().error).toContain("offline");
+  expect(h.view.snapshot().error).toEqual(
+    expect.objectContaining({ message: "offline" }),
+  );
 });
 
 it("offers retry on failures and rejects a non-advancing cursor without erasing readable rows", async () => {
@@ -963,7 +965,11 @@ it("offers retry on failures and rejects a non-advancing cursor without erasing 
   const more = h.view.loadMore();
   h.next().respond([root, one]);
   await more;
-  expect(h.view.snapshot().error).toContain("did not advance");
+  expect(h.view.snapshot().error).toEqual(
+    expect.objectContaining({
+      message: expect.stringContaining("did not advance"),
+    }),
+  );
   expect(h.view.snapshot().replies).toHaveLength(1);
 });
 

@@ -71,7 +71,10 @@ it("a failed post-stream cold head leaves loading and exposes a retryable window
     await flush();
     expect(h.owner.session.channels.window("z")).toMatchObject({
       status: "error",
-      error: "Relay read timed out",
+      error: expect.objectContaining({
+        kind: "unavailable",
+        message: "Relay read timed out",
+      }),
       rows: [],
     });
     h.owner.session.channels.ensure("z");
@@ -114,7 +117,11 @@ it("quota refusal settles queued cold windows without another request and ensure
     await flush();
     expect(h.owner.session.channels.window("z")).toMatchObject({
       status: "error",
-      error: "Relay requests paused",
+      error: expect.objectContaining({
+        kind: "unavailable",
+        message: "Relay requests paused",
+        status: 429,
+      }),
       rows: [],
     });
     h.owner.session.channels.ensure("z");

@@ -145,6 +145,9 @@ const test = base.extend({
             ];
           reads.push(...body);
           if (body.some((filter) => filter.top_level)) await historyReady;
+          // An outage, not a malformed answer: only an outage offers Try again.
+          if (failHistory && body.some((filter) => filter.top_level))
+            return Response.json({ error: "offline" }, { status: 503 });
           if (body.some((filter) => filter.kinds?.includes(0) && filter.page))
             await directoryReady;
           if (
@@ -914,8 +917,10 @@ test("existing DM previews inline and opens its exact thread", async ({
   await open(page, app);
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
   const body = page.locator("[data-new-message-body]");
-  const retry = body.getByRole("button", { name: "Retry messages" });
-  await expect(retry).toBeVisible();
+  const retry = body.getByRole("button", { name: "Try again" });
+  // The head read retries quietly for a few seconds before it surfaces.
+  await expect(retry).toBeVisible({ timeout: 20_000 });
+  await expect(body.getByRole("alert")).toContainText("Messages didn’t load.");
   await page
     .getByRole("combobox", { name: "Message recipients" })
     .press("Escape");

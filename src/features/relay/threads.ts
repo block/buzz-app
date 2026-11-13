@@ -1,4 +1,5 @@
 import { isRetryableRead, retryRead } from "./read-retry";
+import { windowFailure, type WindowFailure } from "./window-failure";
 import {
   canonicalChannel,
   MissingThreadBounds,
@@ -37,7 +38,7 @@ export type ThreadSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";
   root: ChannelMessage | undefined;
   replies: readonly ChannelMessage[];
-  error: string | undefined;
+  error: WindowFailure | undefined;
   /** Continuation is possible, not a claim about total thread size or exhaustion. */
   canLoadMore: boolean;
   limited: boolean;
@@ -914,7 +915,7 @@ export function createThreadView({
           shown = undefined;
           publish();
         }
-        publishStatus({ status: "error", error: String(error) });
+        publishStatus({ status: "error", error: windowFailure(error) });
       }
     } finally {
       if (controller === owned) {

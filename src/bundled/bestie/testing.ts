@@ -322,6 +322,7 @@ export async function bestieFixture(
   const notify = () => {
     for (const listener of [...listeners]) listener();
   };
+  const retryConnection = vi.fn();
   const relay = {
     snapshot: () => snapshot,
     subscribe(listener: () => void) {
@@ -331,7 +332,7 @@ export async function bestieFixture(
       };
     },
     retry() {},
-    tryAgain() {},
+    tryAgain: retryConnection,
     disconnect() {},
     async clearCache() {},
   };
@@ -448,6 +449,13 @@ export async function bestieFixture(
     query,
     viewer: identity.pubkey,
     agent: remote.pubkey,
+    /** The relay connection's Retry connection. */
+    retryConnection,
+    /** Moves the relay connection on, as its service would. */
+    updateRelay(patch: Partial<RelaySnapshot>) {
+      snapshot = { ...snapshot, ...patch } as RelaySnapshot;
+      notify();
+    },
     /** Each request the native session forwarded to Builderlab. */
     forwarded: federated.request,
     /** The bodies of what Builderlab was sent at `path`, in order. */

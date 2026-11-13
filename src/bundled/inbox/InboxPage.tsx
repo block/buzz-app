@@ -10,6 +10,11 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelayData } from "../../features/relay/service";
+import {
+  connectionFailureAction,
+  connectionFailureText,
+  openUpdatesWith,
+} from "../../features/relay/ConnectionFailed";
 import type { RelaySession } from "../../features/relay/session";
 import type { InboxItem } from "../../features/relay/inbox";
 import type {
@@ -229,12 +234,15 @@ export function InboxPage({
                   : connection.denied
                     ? // Its notice, on every page, offers what fixes it.
                       communityRefusalTitle(connection.refusal)
-                    : (connection.error ??
-                      "Choose a community to see your activity.")}
+                    : connection.error
+                      ? connectionFailureText(connection)
+                      : "Choose a community to see your activity."}
               </p>
-              {connection.status === "error" && !connection.denied && (
-                <Button onClick={relay.tryAgain}>Retry connection</Button>
-              )}
+              {connectionFailureAction({
+                connection,
+                relay,
+                openUpdates: openUpdatesWith(navigator),
+              })}
             </div>
           </div>
         )}

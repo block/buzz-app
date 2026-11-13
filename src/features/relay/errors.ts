@@ -48,6 +48,20 @@ const NATIVE_TRANSIENT = new Set([
   "network-unavailable",
   "network-timeout",
 ]);
+/** The messages fetch rejects with when the request never reached the host:
+ * Chromium, WebKit (current, then the platform's own wording it surfaced
+ * before), Gecko. Then the ones a body read rejects with when the connection
+ * drops after the headers arrived: Chromium, Gecko (WebKit says "Load failed"
+ * again). Any other TypeError is a bug, not the network. */
+export const FETCH_FAILURES: ReadonlySet<string> = new Set([
+  "Failed to fetch",
+  "Load failed",
+  "The network connection was lost.",
+  "The Internet connection appears to be offline.",
+  "NetworkError when attempting to fetch resource.",
+  "network error",
+  "Error in input stream",
+]);
 /** True when trying the same read again can succeed without anyone acting:
  * the relay or network was unavailable, slow, or the read was cancelled. A
  * denial, an invalid response or a deterministic local check is not. */
@@ -57,7 +71,7 @@ export function isTransientFailure(error: unknown): boolean {
   if (typeof error === "string") return NATIVE_TRANSIENT.has(error);
   // fetch rejects with TypeError when the network is unreachable.
   if (
-    error instanceof TypeError ||
+    (error instanceof TypeError && FETCH_FAILURES.has(error.message)) ||
     (error instanceof Error &&
       (error.name === "AbortError" ||
         error.name === "TimeoutError" ||

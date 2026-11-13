@@ -32,6 +32,7 @@ import type { Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
+import { ConnectionFailed } from "../../features/relay/ConnectionFailed";
 import type { RelaySession } from "../../features/relay/session";
 import {
   ArrowLeftIcon,
@@ -217,16 +218,26 @@ export function NotesPage({
     );
   return (
     <NotesPanel>
-      <p role="status">
-        {connection.status === "connecting"
-          ? "Connecting to your community…"
-          : "Connect to a community to read notes."}
-      </p>
-      {connection.status === "error" && (
-        <>
-          <p role="alert">{connection.error}</p>
-          <Button onClick={() => relay.tryAgain()}>Retry connection</Button>
-        </>
+      {connection.status === "error" ? (
+        <ConnectionFailed
+          connection={connection}
+          relay={relay}
+          openUpdates={
+            navigator &&
+            (() =>
+              void navigator.open({
+                version: 1,
+                kind: "settings",
+                section: "updates",
+              }))
+          }
+        />
+      ) : (
+        <p role="status">
+          {connection.status === "connecting"
+            ? "Connecting to your community…"
+            : "Connect to a community to read notes."}
+        </p>
       )}
     </NotesPanel>
   );

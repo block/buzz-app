@@ -9,6 +9,10 @@ import { useChannelWindow } from "../../features/relay/react";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
 import { headRecovering } from "../../features/relay/live-recovery";
 import { clientMetrics } from "../../features/developer/client-metrics";
+import {
+  historyFailure,
+  UPDATES_LINK,
+} from "../../features/messages/history-failure";
 import { Button } from "../../shared/design-system/ui/Button";
 import styles from "./Channels.module.css";
 
@@ -45,6 +49,7 @@ export const ChannelBody = memo(function ChannelBody({
     session: queries,
     channelId,
     ownSoloConversation: solo,
+    onOpenLink,
   } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
@@ -94,21 +99,30 @@ export const ChannelBody = memo(function ChannelBody({
   }, [cached, navigation, window.status]);
   // While recovery retries this timeline's head read, its notice is the one
   // report, after the quiet delay; the empty timeline waits.
-  if (window.status === "error" && !window.rows.length && !headRecovers)
+  if (window.status === "error" && !window.rows.length && !headRecovers) {
+    const failure = historyFailure(window.error, "Messages didn’t load.");
     return (
       <div
         className={`${styles.empty} ${styles.timelinePlaceholder}`}
         role="alert"
       >
-        <p>{window.error}</p>
-        <Button
-          type="button"
-          onClick={() => queries.channels.ensure(channelId)}
-        >
-          Retry messages
-        </Button>
+        <p>{failure.text}</p>
+        {failure.retry && (
+          <Button
+            type="button"
+            onClick={() => queries.channels.ensure(channelId)}
+          >
+            Try again
+          </Button>
+        )}
+        {failure.update && (
+          <Button type="button" onClick={() => onOpenLink(UPDATES_LINK)}>
+            Check for updates
+          </Button>
+        )}
       </div>
     );
+  }
   if (holding || (window.status !== "ready" && !window.rows.length))
     return (
       <div

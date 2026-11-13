@@ -11,7 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { DraftsSentBadge } from "./DraftsSentBadge";
 import { DraftPreview } from "./DraftPreview";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
@@ -19,6 +19,7 @@ import { mentionQuery } from "../../bundled/mentions/mention-query";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { DraftsSentPage } from "./DraftsSentPage";
 import { PublishRejected } from "../relay/outbox";
+import { ReadError } from "../relay/errors";
 import type { ComposerInputElement } from "../messages/composer-dom";
 import { attachmentDraft } from "../messages/attachment-draft";
 import type { UploadedAttachment } from "../relay/attachments";
@@ -98,6 +99,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
   let fail = false;
   let gate: Promise<void> | undefined;
   let historyGate: Promise<void> | undefined;
+  let historyError: Error | undefined;
   let historyStarted = () => {};
   const published: RelayEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
@@ -116,6 +118,7 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
         (
           await Promise.all(
             filters.map(async (filter) => {
+              if (historyError && filter.top_level) throw historyError;
               if (
                 historyGate &&
                 (filter.top_level ||
@@ -249,6 +252,9 @@ function fixture(upload?: () => Promise<UploadedAttachment>) {
           release();
         },
       };
+    },
+    failHistory: (error: Error | undefined) => {
+      historyError = error;
     },
     liveMessage: () => {
       const next = message(other, "room", "New live message", 1000000);
@@ -929,6 +935,58 @@ it("opens a cold sent channel preview with an empty composer and locates the mes
     ).toBeInTheDocument(),
   );
   expect(within(region).queryByText(/could not be found/)).toBeNull();
+});
+
+async function openFailedSentPreview(error: Error) {
+  const h = fixture();
+  h.seedSent(false);
+  h.failHistory(error);
+  h.render();
+  fireEvent.click(screen.getByRole("tab", { name: "Sent" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /View message.*Already sent/ }),
+  );
+  const region = screen.getByRole("region", {
+    name: "Sent message in #Design",
+  });
+  // The preview's own notice; a loaded timeline may add its edge notice.
+  const notice = (await within(region).findAllByRole("alert")).find(
+    (alert) => alert.tagName === "P",
+  )?.parentElement;
+  assert.exists(notice);
+  return { h, notice };
+}
+
+it("says a transient history failure didn’t load and retries on Try again", async () => {
+  const { h, notice } = await openFailedSentPreview(
+    new ReadError("unavailable", "Relay read failed (503)", 503),
+  );
+  expect(within(notice).getByRole("alert")).toHaveTextContent(
+    "Messages didn’t load.",
+  );
+  expect(within(notice).getByRole("alert")).not.toHaveTextContent(/relay|503/i);
+  expect(within(notice).queryByText("Details")).toBeNull();
+  h.failHistory(undefined);
+  fireEvent.click(within(notice).getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(notice).not.toBeInTheDocument());
+});
+
+it("offers only Check for updates when the history answer can never be used", async () => {
+  const { h, notice } = await openFailedSentPreview(
+    new ReadError("invalid-response", "Relay response is not an event array"),
+  );
+  expect(within(notice).getByRole("alert")).toHaveTextContent(
+    "Messages didn’t load.",
+  );
+  expect(
+    within(notice).queryByRole("button", { name: "Try again" }),
+  ).toBeNull();
+  fireEvent.click(
+    within(notice).getByRole("button", { name: "Check for updates" }),
+  );
+  expect(h.open).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "settings", section: "updates" }),
+  );
 });
 
 it("reveals and highlights an off-screen Sent reply in its visible preview", async () => {

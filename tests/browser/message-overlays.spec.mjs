@@ -254,8 +254,8 @@ test("video speed options escape the thread and restore focus after selection an
   await expect(selected).toBeFocused();
 });
 
-// Retry is a Button under the viewer's unavailable-media branch, not its header.
-test("unavailable dark media review keeps Retry readable in a light host", async ({
+// Try again is a Button under the viewer's unavailable-media branch, not its header.
+test("unavailable dark media review keeps Try again readable in a light host", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/media-review.html?photo&missing-root");
@@ -264,7 +264,7 @@ test("unavailable dark media review keeps Retry readable in a light host", async
     document.documentElement.dataset.colorMode = "light";
   });
   const dialog = page.getByRole("dialog", { name: "Image viewer" });
-  const retry = dialog.getByRole("button", { name: "Retry", exact: true });
+  const retry = dialog.getByRole("button", { name: "Try again", exact: true });
   await expect(dialog.getByRole("alert").first()).toContainText(
     "Original message unavailable.",
   );

@@ -10,6 +10,8 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
 import { PublishRejected } from "./outbox";
+import { isTransientFailure, ReadError } from "./errors";
+import { userCopy } from "./user-copy";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
@@ -313,6 +315,47 @@ it.each([
     expect(
       fetcher.mock.calls.filter(([url]) => url.endsWith("/publish")),
     ).toHaveLength(1);
+  },
+);
+it.each([
+  "network error",
+  "Error in input stream",
+  // Wording no browser list has yet is still the network once headers came.
+  "terminated",
+])(
+  "reads a body that stops arriving after its headers as the network: %s",
+  async (message) => {
+    // The headers arrive, then the connection drops mid-body.
+    const cut = () =>
+      new Response(
+        new ReadableStream({
+          pull: (controller) => controller.error(new TypeError(message)),
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    const expectNetwork = (failure: unknown) => {
+      expect(failure).toBeInstanceOf(ReadError);
+      expect(failure).toMatchObject({ kind: "unavailable", message });
+      // Copy and automatic retry agree on what the network did.
+      expect(isTransientFailure(failure)).toBe(true);
+      expect(userCopy(failure, "Couldn’t load this.").kind).toBe("connection");
+    };
+    vi.stubGlobal("fetch", async () => cut());
+    // The broker's session body (`response.json()`).
+    expectNetwork(
+      await connectBrokerTransport().catch((reason: unknown) => reason),
+    );
+    // A signed read's body (`response.text()`).
+    const signedTransport = await connectSignedTransport(
+      hostSigner(key),
+      "https://relay.test",
+      "relay",
+    );
+    expectNetwork(
+      await signedTransport
+        .query([{ kinds: [9], limit: 1 }], new AbortController().signal)
+        .catch((reason: unknown) => reason),
+    );
   },
 );
 it("the broker advertises and supplies writes through the same connection", async () => {

@@ -284,13 +284,13 @@ test("unavailable media keeps its explanation readable and recovery visible", as
   await page.setViewportSize({ width: 320, height: 720 });
   await page.goto("/tests/fixtures/media-review.html?photo&missing-root");
   const dialog = page.getByRole("dialog", { name: "Image viewer" });
-  const message = dialog
-    .getByRole("alert")
-    .filter({ has: page.getByRole("button", { name: "Retry", exact: true }) });
+  const message = dialog.getByRole("alert").filter({
+    has: page.getByRole("button", { name: "Try again", exact: true }),
+  });
   await expect(message).toContainText("Original message unavailable.");
   await expect(message).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(
-    message.getByRole("button", { name: "Retry", exact: true }),
+    message.getByRole("button", { name: "Try again", exact: true }),
   ).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Comments" })).toBeVisible();
 });

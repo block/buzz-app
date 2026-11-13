@@ -183,7 +183,7 @@ it("retains a timed-out cached startup, rejects the late handshake and promotes 
   expect(data.snapshot()).toMatchObject({
     status: "error",
     cached: true,
-    error: expect.stringContaining("timed out"),
+    error: { kind: "timeout", details: expect.stringContaining("timed out") },
     // A timeout reconnects by itself; navigation waits instead of failing.
     retrying: true,
   });

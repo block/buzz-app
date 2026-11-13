@@ -64,6 +64,7 @@ import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { ShellBackdrops } from "../features/backdrops/ShellBackdrops";
 import { PanelCard } from "../features/panels/PanelCard";
 import { communityDestination } from "../features/communities/destination";
+import { UNUSABLE_CONNECTION } from "../features/relay/ConnectionFailed";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import {
@@ -454,6 +455,9 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     route.reconnecting &&
     !route.state.ingress &&
     (failureReason === "timeout" || failureReason === "unavailable");
+  // An answer this Buzz can't use comes back the same on Try again.
+  const unusableConnection =
+    connection.status === "error" && connection.error?.kind === "unusable";
   const retryButton = (variant: "primary" | "quiet") => (
     <Button
       type="button"
@@ -536,18 +540,20 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           icon={<CloudOffIcon />}
           title="Can’t connect"
           description={
-            retriedEntry === route.state.entry.id
-              ? keepTrying
-                ? "Still can’t connect. We’ll keep trying."
-                : "Still can’t connect. Check your connection, then try again."
-              : keepTrying
-                ? "Check your connection. We’ll keep trying."
-                : "Check your connection, then try again."
+            unusableConnection
+              ? UNUSABLE_CONNECTION
+              : retriedEntry === route.state.entry.id
+                ? keepTrying
+                  ? "Still can’t connect. We’ll keep trying."
+                  : "Still can’t connect. Check your connection, then try again."
+                : keepTrying
+                  ? "Check your connection. We’ll keep trying."
+                  : "Check your connection, then try again."
           }
           action={
             <>
-              {retryButton("primary")}
               {messagesButton("quiet")}
+              {!unusableConnection && retryButton("primary")}
             </>
           }
         />
@@ -559,6 +565,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           description="Turn it on in Manage plugins to open this page."
           action={
             <>
+              {messagesButton("quiet")}
               <Button
                 type="button"
                 variant="primary"
@@ -568,7 +575,6 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
               >
                 Manage plugins
               </Button>
-              {messagesButton("quiet")}
             </>
           }
         />
@@ -579,8 +585,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           description="It may have been removed, or you may need to update Buzz."
           action={
             <>
-              {messagesButton("primary")}
               {retryButton(leaveForMessages ? "quiet" : "primary")}
+              {messagesButton("primary")}
             </>
           }
         />
@@ -591,8 +597,8 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           description="It didn’t load this time. Try again in a moment."
           action={
             <>
-              {retryButton("primary")}
               {messagesButton("quiet")}
+              {retryButton("primary")}
             </>
           }
         />

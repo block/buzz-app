@@ -9,6 +9,7 @@ import {
   useStableRowActivity,
 } from "./activity-presentation";
 import { activityRuns } from "./activity-groups";
+import { historyFailure, UPDATES_LINK } from "./history-failure";
 import { DayDivider } from "./MessageTimestamp";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
@@ -124,6 +125,33 @@ export type ThreadPanelProps = {
 
 // Read errors are diagnostics, not copy; the notice says what happened.
 const THREAD_FAILED = "This thread didn’t load.";
+
+function OlderRepliesFailure({
+  error,
+  onRetry,
+  onOpenLink,
+}: {
+  error: unknown;
+  onRetry(): void;
+  onOpenLink(url: string): boolean;
+}) {
+  const failure = historyFailure(error, "Older replies didn’t load.");
+  return (
+    <>
+      <p role="alert">{failure.text}</p>
+      {failure.retry && (
+        <Button type="button" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
+      {failure.update && (
+        <Button type="button" onClick={() => onOpenLink(UPDATES_LINK)}>
+          Check for updates
+        </Button>
+      )}
+    </>
+  );
+}
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
@@ -1941,10 +1969,11 @@ function ThreadMessages({
           <ol>
             {showOlderPageStatus && snapshot.error && (
               <li className={styles.threadHistoryPageStatus}>
-                <p role="alert">{snapshot.error}</p>
-                <Button type="button" onClick={retryThread}>
-                  Try again
-                </Button>
+                <OlderRepliesFailure
+                  error={snapshot.error}
+                  onRetry={retryThread}
+                  onOpenLink={onOpenLink}
+                />
               </li>
             )}
             {renderReplies(undefined)}

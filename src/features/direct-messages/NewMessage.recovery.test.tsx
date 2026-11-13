@@ -17,6 +17,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useChannelList } from "../relay/react";
 import { createRelaySession } from "../relay/session";
+import { ReadError } from "../relay/errors";
 import {
   keypair,
   profile,
@@ -200,6 +201,7 @@ function setup(
     return owner;
   };
   const onStarted = vi.fn();
+  const navigate = vi.fn();
   function Draft({
     owner,
     extensions,
@@ -229,7 +231,7 @@ function setup(
                 scope,
               }),
             },
-            navigation: { open: vi.fn() },
+            navigation: { open: navigate },
           } as unknown as ConversationHostServices
         }
         onOpenThread={vi.fn()}
@@ -251,6 +253,7 @@ function setup(
   };
   return {
     storage,
+    navigate,
     query,
     events,
     openDirectMessage,
@@ -1123,11 +1126,10 @@ it.each([false, true])(
       if (filters.some((filter) => filter.kinds?.includes(9))) {
         started = true;
         await pending;
+        if (broken)
+          throw new ReadError("unavailable", "Relay read failed (503)", 503);
       }
-      const result = await read(filters);
-      return broken && filters.some((filter) => filter.kinds?.includes(9))
-        ? result.filter((event) => event.kind === 9)
-        : result;
+      return read(filters);
     });
     const owner = t.create();
     t.mount(owner);
@@ -1136,7 +1138,12 @@ it.each([false, true])(
       expect(owner.session.channels.window(channel).status).toBe("error"),
     );
     await t.user.type(screen.getByRole("textbox"), "Keep this draft");
-    const retry = screen.getByRole("button", { name: "Retry messages" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Messages didn’t load.",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/relay|503/i);
+    expect(screen.queryByText("Details")).toBeNull();
+    const retry = screen.getByRole("button", { name: "Try again" });
     const recipients = screen.getByRole("combobox", {
       name: "Message recipients",
     });
@@ -1190,6 +1197,32 @@ it.each([false, true])(
     expect(t.publish).not.toHaveBeenCalled();
   },
 );
+
+it("says an unusable history answer can't be retried and offers updates instead", async () => {
+  const t = setup();
+  const read = t.query.getMockImplementation();
+  assert.exists(read);
+  // A history answer without its window bounds: the same read fails every time.
+  t.query.mockImplementation(async (filters) => {
+    const result = await read(filters);
+    return filters.some((filter) => filter.kinds?.includes(9))
+      ? result.filter((event) => event.kind === 9)
+      : result;
+  });
+  const owner = t.create();
+  t.mount(owner);
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Messages didn’t load.");
+  expect(alert).not.toHaveTextContent(/relay|bounds/i);
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  await t.user.click(screen.getByRole("button", { name: "Check for updates" }));
+  expect(t.navigate).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "updates",
+  });
+});
 
 const photo = {
   name: "photo.png",

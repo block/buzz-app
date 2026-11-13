@@ -360,12 +360,14 @@ test.describe("public preview recovery", () => {
         "error: Preview stream interrupted",
       );
       // Both failures are outages: recovery owns them, quietly at first, with
-      // no per-panel Retry messages.
+      // no per-panel Try again.
       const warning = notice(page);
       await expect
         .poll(() => app.report.startupFailures?.length ?? 0)
         .toBeGreaterThan(0);
-      await expect(page.getByRole("button", { name: /Retry/ })).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: /Retry|Try again/ }),
+      ).toHaveCount(0);
       const history = page.locator("[data-channel-history]");
       await expect(history.locator("[data-message-scroller]")).toHaveCount(0);
       failHead = false;

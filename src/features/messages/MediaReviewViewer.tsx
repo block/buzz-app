@@ -11,6 +11,8 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
+import { historyFailure, UPDATES_LINK } from "./history-failure";
+import { windowFailure, type WindowFailure } from "../relay/window-failure";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
@@ -85,7 +87,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
     request: 0,
   }));
   const [view, setView] = useState<ThreadView>();
-  const [threadError, setThreadError] = useState<string>();
+  const [threadError, setThreadError] = useState<WindowFailure>();
   useEffect(() => {
     try {
       const owned = session.thread(channelId, messageId, { exact: true });
@@ -94,7 +96,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
       void owned.refresh();
       return () => owned.dispose();
     } catch (error) {
-      setThreadError(String(error));
+      setThreadError(windowFailure(error));
     }
   }, [session, channelId, messageId]);
   const activeProps = {
@@ -142,7 +144,7 @@ function ResolvedReview({
   ...props
 }: ActiveReviewProps & {
   view: ThreadView | undefined;
-  threadError: string | undefined;
+  threadError: WindowFailure | undefined;
 }) {
   const snapshot = useSyncExternalStore(
     view?.subscribe ?? noThreadSubscription,
@@ -181,28 +183,34 @@ function ResolvedReview({
     ? knownRows.flatMap((row) => row.attachments)
     : props.initialAttachments;
   const pendingProps = { ...props, galleryAttachments };
-  if (threadError) return <ReviewShell {...pendingProps} error={threadError} />;
+  if (threadError)
+    return (
+      <ReviewShell
+        {...pendingProps}
+        {...failureProps(threadError, props.onOpenLink)}
+      />
+    );
   if (!view || !snapshot) return <ReviewShell {...pendingProps} loading />;
   if (invalidated || (blockedView === view && !authoritative))
     return (
       <ReviewShell
         {...props}
-        error={
-          snapshot.error ??
-          (snapshot.root
-            ? "Attachment unavailable."
-            : "Original message unavailable.")
-        }
+        {...(snapshot.error
+          ? failureProps(snapshot.error, props.onOpenLink, view.refresh)
+          : {
+              error: snapshot.root
+                ? "Attachment unavailable."
+                : "Original message unavailable.",
+              retry: view.refresh,
+            })}
         unavailable
-        retry={view.refresh}
       />
     );
   if (snapshot.error)
     return (
       <ReviewShell
         {...pendingProps}
-        error={snapshot.error}
-        retry={view.refresh}
+        {...failureProps(snapshot.error, props.onOpenLink, view.refresh)}
       />
     );
   if (snapshot.status === "loading" || snapshot.status === "idle")
@@ -239,6 +247,20 @@ function ResolvedReview({
   );
 }
 
+/** The shell's error, retry and update for a failed thread read. */
+function failureProps(
+  error: unknown,
+  onOpenLink: (url: string) => boolean,
+  refresh?: () => void | Promise<void>,
+) {
+  const failure = historyFailure(error, "This attachment didn’t load.");
+  return {
+    error: failure.text,
+    ...(failure.retry && refresh ? { retry: refresh } : {}),
+    ...(failure.update ? { update: () => void onOpenLink(UPDATES_LINK) } : {}),
+  };
+}
+
 function ReviewShell({
   attachment,
   galleryAttachments = [],
@@ -262,6 +284,7 @@ function ReviewShell({
   unavailable = false,
   error,
   retry,
+  update,
   restoreFocus,
   selectAttachment,
   selectionRequest,
@@ -276,6 +299,8 @@ function ReviewShell({
   unavailable?: boolean;
   error?: string;
   retry?: () => void | Promise<void>;
+  /** Offered when this Buzz can't use the answer and a retry fails again. */
+  update?: () => void;
 }) {
   const source = session.media(attachment.url);
   // Listener unavailability is not a playback error the selection resets.
@@ -288,6 +313,13 @@ function ReviewShell({
     frame.current?.focus({ preventScroll: true });
     void retry?.();
   };
+  // Like Try again, shown once: beside the media when it is unavailable,
+  // otherwise beside the comments.
+  const updateButton = update && (
+    <Button size="sm" type="button" onClick={update}>
+      Check for updates
+    </Button>
+  );
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
@@ -547,9 +579,10 @@ function ReviewShell({
                 {error ?? "Loading comments…"}
                 {retry && !unavailable && (
                   <Button size="sm" type="button" onClick={retryThread}>
-                    Retry
+                    Try again
                   </Button>
                 )}
+                {!unavailable && updateButton}
               </p>
             )}
           </div>
@@ -568,9 +601,10 @@ function ReviewShell({
           {error ?? (loading ? "Loading media…" : "Media unavailable")}
           {retry && unavailable && (
             <Button size="sm" type="button" onClick={retryThread}>
-              Retry
+              Try again
             </Button>
           )}
+          {unavailable && updateButton}
         </p>
       ) : attachment.kind === "video" && source ? (
         <VideoPlayer

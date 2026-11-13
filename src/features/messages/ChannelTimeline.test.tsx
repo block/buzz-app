@@ -18,6 +18,10 @@ import {
 import type { LiveCallbacks } from "../relay/live";
 import type { RelaySession } from "../relay/session";
 import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
+import { ReadError } from "../relay/errors";
+import { ApiPaused } from "../relay/http-admission";
+import type { WindowFailure } from "../relay/window-failure";
+import { UPDATES_LINK } from "./history-failure";
 
 // Boundary test, not a browser renderer. Capture this production component's
 // effects/refs and invoke its returned DOM handlers. Deliberately stale Virtua
@@ -134,7 +138,10 @@ function setup({
   hasMore = false,
   loadingOlder = false,
   historyLimited = false,
-  error = undefined as string | undefined,
+  error = undefined as WindowFailure | undefined,
+  /** Where `error` came from: an older page unless a test says otherwise. */
+  errorFrom = "older" as "older" | "elsewhere",
+  openLink = (() => false) as (url: string) => boolean,
   recovering = false,
   initial = undefined as unknown,
   mounted = [] as { id: string; y: number }[],
@@ -259,6 +266,9 @@ function setup({
     loadingOlder: loadingOlder || accepted,
     historyLimited,
     error,
+    ...(error && errorFrom === "older"
+      ? { errorSource: "older" as const }
+      : {}),
   });
   const loadOlder = vi.fn(() => {
     if (!blocked && !accepted && !loadingOlder) {
@@ -321,12 +331,15 @@ function setup({
         status,
         freshness,
         error,
+        ...(error && errorFrom === "older"
+          ? { errorSource: "older" as const }
+          : {}),
         rows,
         hasMore,
         loadingOlder,
         historyLimited,
       },
-      onOpenLink: () => false,
+      onOpenLink: openLink,
       revealMessageId,
     });
     if (key !== null && key !== scoped.key) {
@@ -2072,8 +2085,8 @@ it.each(["button", "scroll"] as const)(
       historyControl,
       error: "Read failed",
     });
-    expect(failed.alert()).toBe("Read failed");
-    expect(failed.historyButton()).toBe("Retry older messages");
+    expect(failed.alert()).toBe("Older messages didn’t load.");
+    expect(failed.historyButton()).toBe("Try again");
     failed.unmount();
     // Recovery does not retry older history, and paging stops on a failed
     // read, so hiding Retry would strand paging until recovery settles.
@@ -2084,8 +2097,89 @@ it.each(["button", "scroll"] as const)(
       recovering: true,
     });
     expect(recovering.alert()).toBeUndefined();
-    expect(recovering.historyButton()).toBe("Retry older messages");
+    expect(recovering.historyButton()).toBe("Try again");
     recovering.unmount();
+  },
+);
+
+it.each([
+  {
+    name: "a paused queue",
+    error: new ApiPaused(3000),
+    alert:
+      "Older messages didn’t load. Buzz is busy. Try again in a few seconds.",
+  },
+  {
+    name: "a native timeout",
+    error: "network-timeout",
+    alert: "Older messages didn’t load.",
+  },
+  {
+    name: "a server error",
+    error: new ReadError("unavailable", "Relay read failed (503)", 503),
+    alert: "Older messages didn’t load.",
+  },
+])(
+  "says older messages didn’t load and offers Try again for $name",
+  ({ error, alert }) => {
+    const h = setup({ hasMore: true, error });
+    expect(h.alert()).toBe(alert);
+    expect(h.historyButton()).toBe("Try again");
+    expect(JSON.stringify(h.alert())).not.toMatch(/Relay|503|network-timeout/);
+    h.retry();
+    expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+    h.unmount();
+  },
+);
+
+it("offers only Check for updates when older messages can never load here", () => {
+  const openLink = vi.fn(() => true);
+  const h = setup({
+    hasMore: true,
+    error: new ReadError("unavailable", "Relay read failed (400)", 400),
+    openLink,
+  });
+  expect(h.alert()).toBe("Older messages didn’t load.");
+  expect(h.historyButton()).toBe("Check for updates");
+  h.retry();
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  expect(openLink).toHaveBeenCalledExactlyOnceWith(UPDATES_LINK);
+  h.unmount();
+});
+
+it("offers no button when the community refused the read", () => {
+  const h = setup({
+    hasMore: true,
+    error: new ReadError("denied", "Relay read failed (403)", 403),
+  });
+  expect(h.alert()).toBe(
+    "Older messages didn’t load. You don’t have access to this conversation.",
+  );
+  expect(h.hasHistoryButton()).toBe(false);
+  h.unmount();
+});
+
+it.each([
+  ["a head revalidation", "Head revalidation failed"],
+  ["a cached-metadata resolve", new ReadError("unavailable", "down", 503)],
+  ["a newer-page seek", new ReadError("invalid-response", "bad page")],
+  ["a refused head read", new ReadError("denied", "Relay read failed (403)")],
+] as const)(
+  "keeps older paging for %s failure and does not blame older messages",
+  (_, error) => {
+    for (const historyControl of ["button", "scroll"] as const) {
+      const h = setup({
+        hasMore: true,
+        historyControl,
+        error,
+        errorFrom: "elsewhere",
+      });
+      expect(h.alert()).toBeUndefined();
+      expect(h.historyButton()).toBe("Load older messages");
+      h.retry();
+      expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+      h.unmount();
+    }
   },
 );
 

@@ -347,7 +347,7 @@ it("waits for a queued catch-up retry instead of deciding on its earlier failure
     expect(channels.window("a")).toMatchObject({
       status: "ready",
       freshness: "cached",
-      error: expect.any(String),
+      error: expect.any(ReadError),
     });
     // The target arrived while the stream was down.
     const target = message(alice, "a", "target", 20);

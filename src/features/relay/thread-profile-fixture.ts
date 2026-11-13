@@ -338,7 +338,7 @@ export async function threadSample(
         )
           firstRowsMs = performance.now() - start;
         if (snapshot.status === "error")
-          done.reject(fixtureError ?? new Error(snapshot.error));
+          done.reject(fixtureError ?? new Error(String(snapshot.error)));
         if (
           snapshot.status === "ready" &&
           !snapshot.canLoadMore &&

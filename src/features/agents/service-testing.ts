@@ -265,7 +265,12 @@ export function fakeRelay(origin = "https://relay.example.test") {
     },
     /** Fails the connection, as a first connect that timed out does. */
     fail() {
-      snapshot = { status: "error", generation: 4, session, error: "down" };
+      snapshot = {
+        status: "error",
+        generation: 4,
+        session,
+        error: { kind: "timeout", details: "down" },
+      };
       for (const listener of changes) listener();
     },
     /** Replaces the session, as after the transport was lost. */

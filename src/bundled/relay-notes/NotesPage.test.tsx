@@ -1288,3 +1288,89 @@ it.each([false, true])(
     ).toHaveFocus();
   },
 );
+
+function unavailable(snapshot: Partial<RelaySnapshot>) {
+  const current = { generation: 1, ...snapshot } as RelaySnapshot;
+  const relay = {
+    snapshot: () => current,
+    subscribe: () => () => {},
+    tryAgain: vi.fn(),
+  } as unknown as RelayData;
+  render(<NotesPage relay={relay} />);
+  return relay;
+}
+
+it("says it can't connect, with Try again, when the community session fails", async () => {
+  const relay = unavailable({
+    status: "error",
+    retrying: true,
+    error: {
+      kind: "connection",
+      details: "ReadError: Relay read failed (502)",
+    },
+  });
+  expect(
+    screen.getByRole("heading", { name: "Can’t connect" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText("Check your connection. We’ll keep trying."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/ReadError|502/)).toBeNull();
+  expect(screen.queryByText("Details")).toBeNull();
+  expect(screen.queryByText(/Connect to a community/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry connection" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(relay.tryAgain).toHaveBeenCalledOnce();
+});
+
+it("says only that Buzz couldn't connect, beside Check for updates, for an answer it can't use", async () => {
+  const open = vi.fn(async () => ({ status: "opened" }) as const);
+  const current = {
+    generation: 1,
+    status: "error",
+    error: { kind: "unusable", details: "ReadError: Relay read failed (400)" },
+  } as RelaySnapshot;
+  const relay = {
+    snapshot: () => current,
+    subscribe: () => () => {},
+    tryAgain: vi.fn(),
+  } as unknown as RelayData;
+  render(
+    <NotesPage relay={relay} navigator={{ open } as unknown as Navigation} />,
+  );
+  const alert = screen.getByRole("alert");
+  expect(alert).toHaveTextContent(
+    "Can’t connectBuzz couldn’t connect to this community.",
+  );
+  // Its only action is Check for updates, so nothing asks to try again.
+  expect(alert).not.toHaveTextContent(/try again|check your connection/i);
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Check for updates" }),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "updates",
+  });
+  expect(relay.tryAgain).not.toHaveBeenCalled();
+});
+
+it("shows the refusal, and no Try again, when the community refused the account", () => {
+  unavailable({
+    status: "error",
+    denied: true,
+    refusal: "sign-in",
+    error: { kind: "refused", details: "Federated sign-in is required" },
+  });
+  expect(screen.getByRole("heading", { name: /Sign in/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(screen.queryByText(/Federated/)).toBeNull();
+});
+
+it("keeps asking for a community only when none is connected", () => {
+  unavailable({ status: "disconnected" });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Connect to a community to read notes.",
+  );
+});

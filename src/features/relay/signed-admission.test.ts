@@ -2,6 +2,7 @@ import { beforeEach, afterEach, assert, expect, it, vi } from "vitest";
 import { connectSignedTransport } from "./transport";
 import { createOutbox, PublishNotSent, PublishRejected } from "./outbox";
 import { hostSigner } from "./testing";
+import { userCopy } from "./user-copy";
 
 const filters = [{ kinds: [0], limit: 1 }];
 beforeEach(() => {
@@ -110,6 +111,49 @@ it("explicit quota rejection is retryable; missing response stays unknown with n
   ).rejects.not.toBeInstanceOf(PublishRejected);
   await vi.advanceTimersByTimeAsync(500);
   expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it("a publish held for quota reads as busy with the relay's wait, answered or paused", async () => {
+  const identity = signer();
+  const transport = await connectSignedTransport(
+    identity,
+    "https://wait.test",
+    "relay",
+  );
+  const event = await identity.signEvent({
+    kind: 9,
+    content: "exact",
+    tags: [["h", "c"]],
+  });
+  assert.exists(transport.writer);
+  const fetcher = vi.fn(async () =>
+    Response.json(
+      { error: "rate-limited: quota exceeded; retry in 600s" },
+      { status: 429 },
+    ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const publish = () =>
+    transport.writer?.publish(event, new AbortController().signal).then(
+      () => assert.fail("published"),
+      (error: unknown) => error,
+    );
+  // The relay's own answer, then the lane it paused: both wait, neither is offline.
+  const answered = await publish();
+  expect(answered).toBeInstanceOf(PublishNotSent);
+  expect(userCopy(answered, "Couldn’t send.")).toMatchObject({
+    kind: "busy",
+    retry: true,
+    text: "Couldn’t send. Buzz is busy. Try again in about 10 minutes.",
+  });
+  await vi.advanceTimersByTimeAsync(60_000);
+  const held = await publish();
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(held).toBeInstanceOf(PublishNotSent);
+  expect(userCopy(held, "Couldn’t send.")).toMatchObject({
+    kind: "busy",
+    retry: true,
+    text: "Couldn’t send. Buzz is busy. Try again in about 9 minutes.",
+  });
 });
 it.each([
   [

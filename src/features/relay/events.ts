@@ -6,6 +6,7 @@ import {
   type VerifiedEvent,
 } from "nostr-tools";
 import { ByteLru } from "./budget.ts";
+import { ReadError } from "./errors.ts";
 /** A relay event whose signature has been verified at the transport boundary. */
 export type RelayEvent = VerifiedEvent;
 /** Event payload shared by locally authored intent and verified relay records.
@@ -62,7 +63,10 @@ export function eventDto(value: unknown): RelayEvent {
 /** A whole query response; one bad event rejects it, as relay reads do. */
 export function eventsDto(value: unknown): RelayEvent[] {
   if (!Array.isArray(value))
-    throw new Error("Relay response is not an event array");
+    throw new ReadError(
+      "invalid-response",
+      "Relay response is not an event array",
+    );
   return value.map(eventDto);
 }
 

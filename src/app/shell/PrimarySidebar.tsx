@@ -273,7 +273,7 @@ function ScopedSidebar({
           cached={!!connection.cached}
           layoutReady={filter === "team" || soloReady}
           preserveSidebar={preserveSidebar}
-          connectionError={connection.error}
+          connectionError={connection.error?.details}
           render={({
             sidebar,
             dmPreviews,
@@ -426,7 +426,7 @@ function ScopedSidebar({
                           props.federatedIdentity,
                           connection.origin,
                         )}
-                        error={connection.error}
+                        error={connection.error?.details}
                         retry={props.relay.tryAgain}
                         relay={connection.origin}
                         memberships={props.memberships}

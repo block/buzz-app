@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
+import { ReadError } from "../relay/errors";
 import { retryRead } from "../relay/read-retry";
 
 function mediaFailure(element: HTMLMediaElement): Error {
+  // MEDIA_ERR_NETWORK: the bytes stopped arriving, so a reload can recover.
   return element.error?.code === 2
-    ? new TypeError("Media network read failed")
+    ? new ReadError("unavailable", "Media network read failed")
     : new Error("Media could not be decoded");
 }
 

@@ -14,7 +14,7 @@ afterEach(() => {
 it("retries transient reads at the backoff boundaries and returns success", async () => {
   const read = vi
     .fn()
-    .mockRejectedValueOnce(new TypeError("offline"))
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
     .mockResolvedValue("loaded");
   const pending = retryRead(read, new AbortController().signal);
   await vi.advanceTimersByTimeAsync(749);
@@ -122,7 +122,7 @@ it.each([
 
 it("aborts backoff and releases the timer", async () => {
   const controller = new AbortController();
-  const read = vi.fn().mockRejectedValue(new TypeError("offline"));
+  const read = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
   const pending = retryRead(read, controller.signal);
   const rejected = expect(pending).rejects.toMatchObject({
     name: "AbortError",

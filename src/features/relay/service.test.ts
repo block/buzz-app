@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
+import { ReadError } from "./errors";
 import { provideRelay } from "./service";
 import type { ReadTransport } from "./transport";
 import {
@@ -218,6 +219,219 @@ it("makes Try again on a ready connection retry what failed, without reconnectin
   expect(recovery?.snapshot().reauthorized).toBe(1);
   expect(connect).toHaveBeenCalledTimes(1);
 });
+it("keeps what a failed connection means, not an exception's words, in the snapshot", async () => {
+  vi.useFakeTimers();
+  const connect = vi
+    .fn<() => Promise<ReadTransport>>()
+    .mockRejectedValueOnce(
+      new ReadError("unavailable", "Relay read failed (502)", 502),
+    )
+    .mockRejectedValueOnce(
+      new ReadError("denied", "Relay read failed (403)", 403),
+    );
+  const data = provideRelay(root(), connect);
+  await vi.advanceTimersByTimeAsync(0);
+  // A 502 can clear without anyone acting, so the service keeps trying.
+  expect(data.snapshot()).toMatchObject({
+    status: "error",
+    retrying: true,
+    error: {
+      kind: "connection",
+      details: "ReadError: Relay read failed (502)",
+    },
+  });
+  expect(data.snapshot().denied).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(30_000);
+  // A refusal waits for the person.
+  expect(data.snapshot()).toMatchObject({
+    status: "error",
+    denied: true,
+    error: { kind: "refused", details: "ReadError: Relay read failed (403)" },
+  });
+  expect(data.snapshot().retrying).toBeUndefined();
+});
+it("asks again slowly, and on focus, after an answer this Buzz can't use", async () => {
+  vi.useFakeTimers();
+  // Hints arrive from the window; this file runs without a DOM.
+  vi.stubGlobal("window", new EventTarget());
+  try {
+    const notFound = () =>
+      new ReadError("unavailable", "Relay read failed (404)", 404);
+    const connect = vi
+      .fn<() => Promise<ReadTransport>>()
+      .mockRejectedValueOnce(notFound())
+      .mockRejectedValueOnce(notFound())
+      .mockResolvedValue(transport("viewer"));
+    const data = provideRelay(root(), connect);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(data.snapshot()).toMatchObject({
+      status: "error",
+      error: {
+        kind: "unusable",
+        details: "ReadError: Relay read failed (404)",
+      },
+    });
+    // Its copy says an update may fix it, never "We’ll keep trying".
+    expect(data.snapshot().retrying).toBeUndefined();
+    // An edge answering during a relay deploy clears, so it is asked again,
+    // first after 30 s, then less often.
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(connect).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(data.snapshot()).toMatchObject({
+      status: "error",
+      error: { kind: "unusable" },
+    });
+    expect(data.snapshot().retrying).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(connect).toHaveBeenCalledTimes(2);
+    // Coming back to the window asks now, with nothing cached.
+    expect(data.snapshot().cached).toBeUndefined();
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).toHaveBeenCalledTimes(3);
+    expect(data.snapshot().status).toBe("ready");
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+it.each([
+  { asked: "after 30 s", ask: () => vi.advanceTimersByTimeAsync(30_000) },
+  {
+    asked: "on focus",
+    ask: async () => {
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  },
+])(
+  "keeps an answer Buzz can't use on screen while it is asked again $asked",
+  async ({ ask }) => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", new EventTarget());
+    try {
+      let answer!: {
+        resolve(transport: ReadTransport): void;
+        reject(error: unknown): void;
+      };
+      const connect = vi
+        .fn<() => Promise<ReadTransport>>()
+        .mockRejectedValueOnce(
+          new ReadError("unavailable", "Relay read failed (404)", 404),
+        )
+        .mockImplementation(
+          () =>
+            new Promise((resolve, reject) => {
+              answer = { resolve, reject };
+            }),
+        );
+      const data = provideRelay(root(), connect);
+      await vi.advanceTimersByTimeAsync(0);
+      const failed = data.snapshot();
+      expect(failed).toMatchObject({
+        status: "error",
+        error: { kind: "unusable" },
+      });
+      const published: string[] = [];
+      data.subscribe(() => published.push(data.snapshot().status));
+      await ask();
+      expect(connect).toHaveBeenCalledTimes(2);
+      // The card, and Check for updates on it, stay put: not "connecting",
+      // and not retrying for the App's failed-visit card either.
+      expect(data.snapshot()).toBe(failed);
+      expect(published).toEqual([]);
+      // Another hint while it is asked waits for that answer.
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(connect).toHaveBeenCalledTimes(2);
+      expect(data.snapshot()).toBe(failed);
+      // The answer replaces it: the same failure again, then success.
+      answer.reject(
+        new ReadError("unavailable", "Relay read failed (421)", 421),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(published).toEqual(["error"]);
+      expect(data.snapshot()).toMatchObject({
+        status: "error",
+        error: {
+          kind: "unusable",
+          details: "ReadError: Relay read failed (421)",
+        },
+      });
+      expect(data.snapshot().retrying).toBeUndefined();
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(connect).toHaveBeenCalledTimes(3);
+      expect(data.snapshot().status).toBe("error");
+      answer.resolve(transport("viewer"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(published).toEqual(["error", "ready"]);
+      expect(data.snapshot()).toMatchObject({
+        status: "ready",
+        viewer: "viewer",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
+it("says it is connecting when the person retries an answer Buzz can't use", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("window", new EventTarget());
+  try {
+    const answers: ((transport: ReadTransport) => void)[] = [];
+    const connect = vi
+      .fn<() => Promise<ReadTransport>>()
+      .mockRejectedValueOnce(
+        new ReadError("unavailable", "Relay read failed (404)", 404),
+      )
+      .mockImplementation(
+        () => new Promise((resolve) => answers.push(resolve)),
+      );
+    const data = provideRelay(root(), connect);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(data.snapshot().status).toBe("error");
+    // Asked again in the background, then by the person, who sees it.
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(data.snapshot().status).toBe("error");
+    data.tryAgain();
+    expect(data.snapshot().status).toBe("connecting");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect).toHaveBeenCalledTimes(3);
+    // The background attempt it replaced answers too late to count.
+    answers[0]?.(transport("stale"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(data.snapshot().status).toBe("connecting");
+    answers[1]?.(transport("viewer"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(data.snapshot()).toMatchObject({
+      status: "ready",
+      viewer: "viewer",
+    });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+it("leaves a refusal to the person, even on focus", async () => {
+  vi.stubGlobal("window", new EventTarget());
+  try {
+    const connect = vi
+      .fn<() => Promise<ReadTransport>>()
+      .mockRejectedValue(
+        new ReadError("denied", "Relay read failed (403)", 403),
+      );
+    const data = provideRelay(root(), connect);
+    await flush();
+    expect(data.snapshot()).toMatchObject({ status: "error", denied: true });
+    window.dispatchEvent(new Event("focus"));
+    await flush();
+    expect(connect).toHaveBeenCalledOnce();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 it("asks a live socket that may have died during sleep to answer", async () => {
   vi.useFakeTimers();
   const check = vi.fn();
@@ -261,7 +475,7 @@ it("turns a community refusal heard after connecting into one denied connection"
     denied: true,
     refusal: "sign-in",
     viewer: "viewer",
-    error: "Federated sign-in is required",
+    error: { kind: "refused", details: "Federated sign-in is required" },
   });
   expect(data.snapshot().retrying).toBeUndefined();
   expect(data.snapshot().session).not.toBe(ready);

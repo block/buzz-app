@@ -123,7 +123,17 @@ export class PublishRejected extends Error {
 
 /** Proven not delivered, but not refused: the request never left this
  * device, or the relay asked it to wait. Retrying may succeed. */
-export class PublishNotSent extends PublishRejected {}
+export class PublishNotSent extends PublishRejected {
+  constructor(
+    message: string,
+    reason?: string,
+    /** Set when the relay or Buzz asked to wait (a quota, or a paused or full
+     * request queue), with the wait in milliseconds when it named one. */
+    readonly wait?: Readonly<{ retryAfterMs?: number }>,
+  ) {
+    super(message, reason);
+  }
+}
 
 export { browserOutboxStorage } from "./outbox-storage";
 const abortError = () => new DOMException("Relay session closed", "AbortError");

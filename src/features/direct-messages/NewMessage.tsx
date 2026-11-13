@@ -31,6 +31,7 @@ import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
+import { historyFailure } from "../messages/history-failure";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -634,14 +635,15 @@ function ExistingDiscussion({
     if (document.activeElement === retry.current) onRecovered();
     setRecovering(false);
   }, [waiting, recovering, onRecovered]);
-  if (waiting || recovering)
+  if (waiting || recovering) {
+    const failure =
+      window.status === "error"
+        ? historyFailure(window.error, "Messages didn’t load.")
+        : undefined;
     return (
-      <div
-        className={styles.feedback}
-        role={window.status === "error" ? "alert" : "status"}
-      >
-        <p>{window.status === "error" ? window.error : "Loading messages…"}</p>
-        {(window.status === "error" || recovering) && (
+      <div className={styles.feedback} role={failure ? "alert" : "status"}>
+        <p>{failure ? failure.text : "Loading messages…"}</p>
+        {(failure?.retry || recovering) && (
           <Button
             ref={retry}
             type="button"
@@ -651,11 +653,26 @@ function ExistingDiscussion({
               session.channels.ensure(channel.id);
             }}
           >
-            Retry messages
+            Try again
+          </Button>
+        )}
+        {failure?.update && (
+          <Button
+            type="button"
+            onClick={() =>
+              void host.navigation.open({
+                version: 1,
+                kind: "settings",
+                section: "updates",
+              })
+            }
+          >
+            Check for updates
           </Button>
         )}
       </div>
     );
+  }
   return (
     <ConversationChannel
       session={session}

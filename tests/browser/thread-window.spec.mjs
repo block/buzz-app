@@ -119,7 +119,7 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Try again" });
-    await expect(error).toContainText("Older page failed");
+    await expect(error).toContainText("Older replies didn’t load.");
     await expect(retry).toBeInViewport();
     await retry.click();
     await expect
@@ -127,7 +127,7 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(4);
-    await expect(error).toContainText("Older page failed");
+    await expect(error).toContainText("Older replies didn’t load.");
     await expect(retry).toBeInViewport();
     await retry.click();
     await expect
@@ -399,7 +399,9 @@ test("older-page retry reparents a visible reply under its late parent", async (
     // The wheel may demand history at the top without moving the scroller.
     await page.mouse.wheel(0, -4000);
     const retry = history.getByRole("button", { name: "Try again" });
-    await expect(history.getByRole("alert")).toContainText("Older page failed");
+    await expect(history.getByRole("alert")).toContainText(
+      "Older replies didn’t load.",
+    );
     await child.scrollIntoViewIfNeeded();
     await expect(child).toBeInViewport();
     await page.evaluate(() => window.messagesFixture.holdOlderPage());

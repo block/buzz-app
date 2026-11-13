@@ -21,6 +21,8 @@ import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
+import { ReadError } from "../relay/errors";
+import { UPDATES_LINK } from "./history-failure";
 import { ThreadPanel } from "./ThreadPanel";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
@@ -209,6 +211,66 @@ function deferredRead() {
 }
 
 it.each([
+  ["with its media", (url: string) => url],
+  // The media and the comments both show the failure; the button shows once.
+  ["before its media resolves", () => undefined],
+])(
+  "offers one Check for updates, not Try again, when the thread read can never succeed (%s)",
+  async (_, media) => {
+    const viewer = keypair();
+    const relay = keypair();
+    let traffic!: LiveCallbacks;
+    const item = {
+      kind: "image" as const,
+      url: "https://fixture.test/item.png",
+    };
+    const root = message(viewer, "one", "One attachment", 1, [
+      ["imeta", `url ${item.url}`, `m ${mime(item.kind)}`],
+    ]);
+    const query = vi.fn(async (): Promise<RelayEvent[]> => {
+      throw new ReadError(
+        "invalid-response",
+        "Thread window bounds are invalid",
+      );
+    });
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media,
+      query,
+      subscribe(callbacks) {
+        traffic = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    owners.push(owner);
+    traffic.receive([roster(relay, "one", [viewer.pubkey], 10)]);
+    const onOpenLink = vi.fn(() => true);
+    render(
+      <MediaReviewViewer
+        attachment={item}
+        initialAttachments={[item]}
+        session={owner.session}
+        scope="unusable-thread"
+        channelId="one"
+        channelName="One"
+        messageId={root.id}
+        initialTime={0}
+        onOpenLink={onOpenLink}
+        close={() => {}}
+      />,
+    );
+    await screen.findAllByText("This attachment didn’t load.");
+    expect(screen.queryByText(/Relay|400/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    // One button, as with Try again.
+    const update = screen.getByRole("button", { name: "Check for updates" });
+    fireEvent.click(update);
+    expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(UPDATES_LINK);
+  },
+);
+
+it.each([
   { firstKind: "image", outcome: "ready" },
   { firstKind: "video", outcome: "ready" },
   { firstKind: "image", outcome: "missing" },
@@ -279,12 +341,13 @@ it.each([
     ).toBeEnabled();
     await waitFor(() => expect(query).toHaveBeenCalled());
     await act(async () => gate?.reject(new Error("thread offline")));
-    await screen.findByText("Error: thread offline");
+    await screen.findByText("This attachment didn’t load.");
+    expect(screen.queryByText(/thread offline/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: nextLabel }));
     fireEvent.click(screen.getByRole("button", { name: nextLabel }));
     expect(selectedMedia()).toHaveAttribute("src", last.url);
     gate = deferredRead();
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(selectedMedia()).toHaveAttribute("src", last.url);
     const edit = (items: typeof attachments, time: number) =>
       signed(viewer, {
@@ -326,7 +389,7 @@ it.each([
       expect(screen.queryByRole("button", { name: nextLabel })).toBeNull();
       gate = deferredRead();
       const readsBeforeRetry = query.mock.calls.length;
-      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       await waitFor(() =>
         expect(query.mock.calls.length).toBeGreaterThan(readsBeforeRetry),
       );

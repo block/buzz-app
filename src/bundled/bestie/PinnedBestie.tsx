@@ -10,6 +10,11 @@ import { useAgentChoices } from "../../features/agents/use-choices";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayData } from "../../features/relay/service";
+import {
+  connectionFailureAction,
+  connectionFailureText,
+  openUpdatesWith,
+} from "../../features/relay/ConnectionFailed";
 import type { RelaySession } from "../../features/relay/session";
 import { useSavedAgent } from "../../features/solo/default-agent";
 import { RobotIcon } from "../../shared/design-system/icons";
@@ -91,14 +96,15 @@ export function PinnedBestie({
         description={
           connection.status === "connecting"
             ? "Your bestie conversation opens once this community is connected."
-            : (connection.error ??
-              "Choose a community to chat with your bestie.")
+            : connection.error
+              ? connectionFailureText(connection)
+              : "Choose a community to chat with your bestie."
         }
-        action={
-          connection.status === "error" ? (
-            <Button onClick={relay.tryAgain}>Retry connection</Button>
-          ) : undefined
-        }
+        action={connectionFailureAction({
+          connection,
+          relay,
+          openUpdates: openUpdatesWith(navigator),
+        })}
       />
     );
   } else if (channel && saved) {

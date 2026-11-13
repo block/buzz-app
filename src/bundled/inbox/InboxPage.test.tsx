@@ -817,7 +817,10 @@ it("retries the card's connection, activity and read-state failures", async () =
 
   act(() => h.failConnection("relay offline"));
   render(previewAt(h));
-  expect(await screen.findByText("relay offline")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Check your connection, then try again."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("relay offline")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Retry connection" }));
   expect(h.retryConnection).toHaveBeenCalledOnce();
   // A refusal is the community's, not the connection's: its notice on every
@@ -833,6 +836,35 @@ it("retries the card's connection, activity and read-state failures", async () =
   expect(
     screen.queryByRole("button", { name: "Retry connection" }),
   ).not.toBeInTheDocument();
+});
+
+it("offers Check for updates, not Retry connection, for an answer Buzz can't use", async () => {
+  const h = fixture();
+  const unusable = {
+    kind: "unusable",
+    details: "ReadError: Relay response is not an event array",
+  } as const;
+  act(() => h.failConnection(unusable.details, { error: unusable }));
+  const sentence = "Buzz couldn’t connect to this community.";
+  for (const view of [h.view, previewAt(h)]) {
+    const shown = render(view);
+    expect(await screen.findByText(sentence)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/event array|try again/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry connection" }),
+    ).not.toBeInTheDocument();
+    h.open.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    expect(h.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "updates",
+    });
+    shown.unmount();
+  }
+  expect(h.retryConnection).not.toHaveBeenCalled();
 });
 
 function fixture(
@@ -1467,7 +1499,7 @@ function fixture(
       connection = {
         ...connection,
         status: "error",
-        error,
+        error: { kind: "connection", details: error },
         generation: 2,
         ...refused,
       };

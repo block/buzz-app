@@ -13,6 +13,9 @@ import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
+import { UPDATES_LINK } from "./history-failure";
+import { ReadError } from "../relay/errors";
+import { ApiPaused } from "../relay/http-admission";
 import { selectNewestMessage } from "./message-selection";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -270,7 +273,7 @@ function messagesHarness(
     messageId: row.id,
     navigation,
     close,
-    onOpenLink: () => false,
+    onOpenLink: vi.fn((_url: string) => false),
     ...(onOpenMediaReview ? { onOpenMediaReview } : {}),
   };
   let mounted: ReturnType<typeof render> | undefined;
@@ -919,7 +922,8 @@ it("keeps older-page loading quiet and retry between root and replies", () => {
   h.snapshot.error = "offline";
   h.render();
   const alert = within(section).getByRole("alert");
-  expect(alert).toHaveTextContent("offline");
+  expect(alert).toHaveTextContent("Older replies didn’t load.");
+  expect(alert).not.toHaveTextContent("offline");
   expect(
     root.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
@@ -935,6 +939,49 @@ it("keeps older-page loading quiet and retry between root and replies", () => {
   h.render();
   expect(within(section).queryByText("Loading older replies…")).toBeNull();
 });
+it.each([
+  {
+    name: "a server error",
+    error: new ReadError("unavailable", "Relay read failed (503)", 503),
+    alert: "Older replies didn’t load.",
+    retry: true,
+  },
+  {
+    name: "a paused queue",
+    error: new ApiPaused(3000),
+    alert:
+      "Older replies didn’t load. Buzz is busy. Try again in a few seconds.",
+    retry: true,
+  },
+  {
+    name: "a request this Buzz can't make",
+    error: new ReadError("unavailable", "Relay read failed (400)", 400),
+    alert: "Older replies didn’t load.",
+    retry: false,
+  },
+])(
+  "maps a failed older-replies read for $name without raw text",
+  ({ error, alert, retry }) => {
+    const h = messagesHarness();
+    h.snapshot.direction = "older";
+    h.snapshot.readKind = "older";
+    h.snapshot.status = "error";
+    h.snapshot.error = error;
+    const section = h.render();
+    expect(within(section).getByRole("alert")).toHaveTextContent(alert);
+    expect(within(section).getByRole("alert")).not.toHaveTextContent(
+      /relay|\b(400|503)\b/i,
+    );
+    expect(!!within(section).queryByRole("button", { name: "Try again" })).toBe(
+      retry,
+    );
+    if (retry) return;
+    fireEvent.click(
+      within(section).getByRole("button", { name: "Check for updates" }),
+    );
+    expect(h.props.onOpenLink).toHaveBeenCalledExactlyOnceWith(UPDATES_LINK);
+  },
+);
 it("keeps retained-range repair quiet and retry after the replies", () => {
   const h = messagesHarness();
   h.snapshot.direction = "older";

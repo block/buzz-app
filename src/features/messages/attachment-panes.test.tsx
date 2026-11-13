@@ -309,7 +309,7 @@ it.each([false, true])(
     });
     expect(view.container.contains(pane)).toBe(false); // Actual document.body portal.
     const target = unavailable
-      ? within(pane).getByText("Error: Unavailable review")
+      ? within(pane).getByText("This attachment didn’t load.")
       : await within(pane).findByText("Existing review comment");
     expect(target.closest("form")).toBeNull();
     if (!unavailable)

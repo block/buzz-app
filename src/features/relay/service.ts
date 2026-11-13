@@ -15,12 +15,26 @@ import { isTransientFailure, ReadError, readErrorKind } from "./errors";
 import { RECOVERY_DELAYS_MS } from "./recovery";
 import type { ReadTransport } from "./transport";
 import { refusalOfError, type CommunityRefusal } from "./http-admission";
-/** The snapshot's error for a refusal heard after connecting, for logs and
+import { failureKind, rawText, type FailureKind } from "./user-copy";
+/** What went wrong connecting, without the words: screens say what it means
+ * from `kind` and keep `details` for diagnostics and sign-in recovery that
+ * reads the community's own refusal. */
+export type RelayFailure = Readonly<{ kind: FailureKind; details: string }>;
+const failureOf = (error: unknown): RelayFailure => ({
+  kind: failureKind(error),
+  details: rawText(error) || "Connection failed",
+});
+/** The snapshot's failure for a refusal heard after connecting, for logs and
  * diagnostics; what it offers follows `refusal`, never this text. */
-const REFUSAL_ERRORS: Record<CommunityRefusal, string> = {
-  "sign-in": "Federated sign-in is required",
-  access: "restricted: authorization denied",
+const REFUSAL_ERRORS: Record<CommunityRefusal, RelayFailure> = {
+  "sign-in": { kind: "refused", details: "Federated sign-in is required" },
+  access: { kind: "refused", details: "restricted: authorization denied" },
 };
+/** An answer this Buzz can't use (a 4xx, a reply it can't read) usually comes
+ * back the same until Buzz is updated, but an edge answering while the relay
+ * deploys clears on its own. So it is asked again slowly in the background,
+ * without the "We’ll keep trying" of a transient failure. */
+const UNUSABLE_DELAYS_MS = Object.freeze([30_000, 60_000, 120_000, 300_000]);
 const WAKE_TICK_MS = 5_000;
 const WAKE_GAP_MS = 15_000;
 
@@ -33,7 +47,7 @@ export type RelaySnapshot = Readonly<{
   origin?: string;
   session: RelaySession;
   viewer?: string;
-  error?: string;
+  error?: RelayFailure;
   /** A usable device snapshot while the real transport is connecting/unavailable. */
   cached?: true;
   /** Only local disk bootstrap is pending; never waits for the network. */
@@ -81,6 +95,9 @@ export function provideRelay(
   let generation = 0;
   let controller: AbortController | undefined;
   let connecting = false;
+  /** The attempt under way is a background one that left the failure on
+   * screen (see `quietly` below); an explicit retry may replace it. */
+  let quiet = false;
   let clearing: Promise<void> | undefined;
   /** This community's origin, once a connection named it; a reconnect's
    * snapshot does not until it is ready again. */
@@ -96,16 +113,24 @@ export function provideRelay(
   });
   const listeners = new Set<() => void>();
   // A connection that failed for a transient reason (network, timeout) always
-  // tries again. Only disconnect() stops trying. A denial or a deterministic
+  // tries again. Only disconnect() stops trying. An answer this Buzz can't use
+  // is asked again too, slowly and without saying so (UNUSABLE_DELAYS_MS),
+  // its failure staying on screen meanwhile. A denial or a deterministic
   // failure keeps its error visible and waits for the user.
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnects = 0;
+  let unusableRetries = 0;
   /** Whether the latest connection failure can clear without anyone acting.
    * Later publishes of the same failure (cache handoff) keep it. */
   let transientFailure = false;
+  /** Whether it was an answer this Buzz can't use, kept the same way. */
+  let unusableFailure = false;
   const publish = ({ retrying: _retrying, ...next }: RelaySnapshot) => {
     if (next.origin) origin = next.origin;
-    if (next.status !== "error") transientFailure = false;
+    if (next.status !== "error") {
+      transientFailure = false;
+      unusableFailure = false;
+    }
     snapshot = Object.freeze(
       transientFailure && !disposed
         ? { ...next, retrying: true as const }
@@ -113,19 +138,29 @@ export function provideRelay(
     );
     clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
-    if (next.status === "ready" && !next.cached) reconnects = 0;
-    else if (next.status === "error" && transientFailure && !disposed)
+    if (next.status === "ready" && !next.cached) {
+      reconnects = 0;
+      unusableRetries = 0;
+    } else if (next.status === "error" && transientFailure && !disposed)
       reconnectTimer = setTimeout(
         () => service.retry(),
         RECOVERY_DELAYS_MS[
           Math.min(reconnects++, RECOVERY_DELAYS_MS.length - 1)
         ] ?? 30_000,
       );
+    else if (next.status === "error" && unusableFailure && !disposed)
+      reconnectTimer = setTimeout(
+        () => connectAgain(true),
+        UNUSABLE_DELAYS_MS[
+          Math.min(unusableRetries++, UNUSABLE_DELAYS_MS.length - 1)
+        ] ?? 300_000,
+      );
     for (const listener of listeners) listener();
   };
   const reset = () => {
     generation++;
     connecting = false;
+    quiet = false;
     controller?.abort();
     clearTimeout(deadline);
     store.dispose();
@@ -217,7 +252,7 @@ export function provideRelay(
   async function deny(
     current: number,
     signal: AbortSignal,
-    error: string,
+    error: RelayFailure,
     kind?: CommunityRefusal,
     /** The connection it refused, once one was made. */
     refused?: { viewer: string; origin: string },
@@ -244,6 +279,7 @@ export function provideRelay(
     store.dispose();
     store = createRelaySession(null, { identityNames });
     transientFailure = false;
+    unusableFailure = false;
     publish({
       status: "error",
       generation,
@@ -254,6 +290,174 @@ export function provideRelay(
       // Sign-in recovery looks up this community's own sign-in by origin.
       ...refused,
     });
+  }
+  function connectAgain(background: boolean) {
+    // A person's Try again asks the sign-in server within this attempt.
+    const ask = asking;
+    asking = undefined;
+    if (disposed || !connect) return;
+    // Only an explicit retry replaces an attempt under way, and only a
+    // background one that left the failure on screen.
+    if (clearing || (connecting && (background || !quiet))) {
+      // A press joins the attempt under way (or the one after a clear)
+      // but still asks now, so that attempt or the next one doesn't
+      // repeat a cached refusal. Asking twice only forgets twice.
+      void ask?.().catch(() => {});
+      return;
+    }
+    const retained = snapshot.cached;
+    // Asked again by itself, an answer this Buzz can't use stays on screen
+    // until the new one arrives: "connecting" in its place would swap the
+    // card, and Check for updates with it, every time the window gains
+    // focus. Like the retained path, it keeps its store until then.
+    const quietly =
+      background && !retained && snapshot.status === "error" && unusableFailure;
+    if (!retained && !quietly) reset();
+    connecting = true;
+    quiet = quietly;
+    const current = generation;
+    controller = new AbortController();
+    const signal = controller.signal;
+    if (retained) {
+      const { error: _error, ...retainedSnapshot } = snapshot;
+      publish({ ...retainedSnapshot, status: "connecting" });
+    } else if (!quietly)
+      publish({
+        status: "connecting",
+        generation,
+        session: store.session,
+        // Only the first attempt bootstraps from disk behind the launch
+        // surface; a retry after a failure keeps the app on screen.
+        ...(resume && snapshot.status !== "error"
+          ? { restoring: true as const }
+          : {}),
+      });
+    // A quiet attempt's failure stays published until the attempt settles.
+    // A quiet attempt found nothing saved the first time.
+    const restoring =
+      retained || quietly ? Promise.resolve() : restoreLocal(current, signal);
+    const timer = setTimeout(() => {
+      if (disposed || current !== generation || signal !== controller?.signal)
+        return;
+      controller.abort();
+      connecting = false;
+      transientFailure = true;
+      unusableFailure = false;
+      publish({
+        ...snapshot,
+        status: "error",
+        error: {
+          kind: "timeout",
+          details: "Relay connection timed out. Try again.",
+        },
+      });
+    }, 8_000);
+    deadline = timer;
+    void Promise.resolve()
+      // Asking again is best effort: the attempt still connects.
+      .then(() => ask?.().catch(() => {}))
+      .then(() => connect(signal))
+      .then(async (transport) => {
+        clearTimeout(timer);
+        // A request can be refused while this connection is still being
+        // prepared, or at any time after: either way the community is.
+        let refused: CommunityRefusal | undefined;
+        let ready = false;
+        const refuse = (kind: CommunityRefusal) =>
+          deny(current, signal, REFUSAL_ERRORS[kind], kind, {
+            viewer: transport.viewer,
+            origin: transportOrigin(transport),
+          });
+        const stopRefusals = transport.observeRefusal?.((kind) => {
+          if (refused || disposed || current !== generation) return;
+          refused = kind;
+          if (ready) void refuse(kind);
+        });
+        if (stopRefusals)
+          signal.addEventListener("abort", stopRefusals, { once: true });
+        await restoring;
+        if (
+          disposed ||
+          signal.aborted ||
+          current !== generation ||
+          signal !== controller?.signal
+        )
+          return;
+        const successor = createRelaySession(transport, {
+          identityNames,
+          agentChoices,
+          localAgents,
+          ...(presenceActivity ? { presenceActivity } : {}),
+          prepared: true,
+          // Keep intent preparation, but do not fetch every unopened channel.
+          warm: false,
+          initialChannelId: readView<string | undefined>(
+            transportPartition(transport),
+            "selected-channel",
+            undefined,
+          ),
+          persistence: createHeadPersistence(
+            transport.viewer,
+            transportOrigin(transport),
+          ),
+        });
+        await successor.restore();
+        if (
+          disposed ||
+          signal.aborted ||
+          current !== generation ||
+          signal !== controller?.signal
+        ) {
+          successor.dispose();
+          return;
+        }
+        // Materialize retained readers before publishing so React never sees
+        // an idle window between two already-hydrated owners.
+        for (const id of store.retainedChannels())
+          successor.session.channels.ensure(id);
+        store.dispose();
+        store = successor;
+        if (refused) {
+          await refuse(refused);
+          return;
+        }
+        publish({
+          status: "ready",
+          generation,
+          viewer: transport.viewer,
+          origin: transportOrigin(transport),
+          scope: transportPartition(transport),
+          session: store.session,
+        });
+        ready = true;
+        store.session.channels.ensureList();
+      })
+      .catch(async (error) => {
+        await restoring;
+        if (
+          disposed ||
+          signal.aborted ||
+          current !== generation ||
+          signal !== controller?.signal
+        )
+          return;
+        if (readErrorKind(error) === "denied")
+          await deny(current, signal, failureOf(error), refusalOfError(error));
+        else {
+          const failure = failureOf(error);
+          // An answer this Buzz can't use is asked again only slowly.
+          unusableFailure = failure.kind === "unusable";
+          transientFailure = !unusableFailure && isTransientFailure(error);
+          publish({ ...snapshot, status: "error", error: failure });
+        }
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (current === generation && signal === controller?.signal) {
+          connecting = false;
+          quiet = false;
+        }
+      });
   }
   const service: RelayData & {
     /** The federated session changed to signed in: retry what it refused. */
@@ -266,160 +470,7 @@ export function provideRelay(
         listeners.delete(listener);
       };
     },
-    retry() {
-      // A person's Try again asks the sign-in server within this attempt.
-      const ask = asking;
-      asking = undefined;
-      if (disposed || !connect) return;
-      if (connecting || clearing) {
-        // A press joins the attempt under way (or the one after a clear)
-        // but still asks now, so that attempt or the next one doesn't
-        // repeat a cached refusal. Asking twice only forgets twice.
-        void ask?.().catch(() => {});
-        return;
-      }
-      const retained = snapshot.cached;
-      if (!retained) reset();
-      connecting = true;
-      const current = generation;
-      controller = new AbortController();
-      const signal = controller.signal;
-      if (!retained)
-        publish({
-          status: "connecting",
-          generation,
-          session: store.session,
-          // Only the first attempt bootstraps from disk behind the launch
-          // surface; a retry after a failure keeps the app on screen.
-          ...(resume && snapshot.status !== "error"
-            ? { restoring: true as const }
-            : {}),
-        });
-      else {
-        const { error: _error, ...retainedSnapshot } = snapshot;
-        publish({ ...retainedSnapshot, status: "connecting" });
-      }
-      const restoring = retained
-        ? Promise.resolve()
-        : restoreLocal(current, signal);
-      const timer = setTimeout(() => {
-        if (disposed || current !== generation || signal !== controller?.signal)
-          return;
-        controller.abort();
-        connecting = false;
-        transientFailure = true;
-        publish({
-          ...snapshot,
-          status: "error",
-          error: "Relay connection timed out. Try again.",
-        });
-      }, 8_000);
-      deadline = timer;
-      void Promise.resolve()
-        // Asking again is best effort: the attempt still connects.
-        .then(() => ask?.().catch(() => {}))
-        .then(() => connect(signal))
-        .then(async (transport) => {
-          clearTimeout(timer);
-          // A request can be refused while this connection is still being
-          // prepared, or at any time after: either way the community is.
-          let refused: CommunityRefusal | undefined;
-          let ready = false;
-          const refuse = (kind: CommunityRefusal) =>
-            deny(current, signal, REFUSAL_ERRORS[kind], kind, {
-              viewer: transport.viewer,
-              origin: transportOrigin(transport),
-            });
-          const stopRefusals = transport.observeRefusal?.((kind) => {
-            if (refused || disposed || current !== generation) return;
-            refused = kind;
-            if (ready) void refuse(kind);
-          });
-          if (stopRefusals)
-            signal.addEventListener("abort", stopRefusals, { once: true });
-          await restoring;
-          if (
-            disposed ||
-            signal.aborted ||
-            current !== generation ||
-            signal !== controller?.signal
-          )
-            return;
-          const successor = createRelaySession(transport, {
-            identityNames,
-            agentChoices,
-            localAgents,
-            ...(presenceActivity ? { presenceActivity } : {}),
-            prepared: true,
-            // Keep intent preparation, but do not fetch every unopened channel.
-            warm: false,
-            initialChannelId: readView<string | undefined>(
-              transportPartition(transport),
-              "selected-channel",
-              undefined,
-            ),
-            persistence: createHeadPersistence(
-              transport.viewer,
-              transportOrigin(transport),
-            ),
-          });
-          await successor.restore();
-          if (
-            disposed ||
-            signal.aborted ||
-            current !== generation ||
-            signal !== controller?.signal
-          ) {
-            successor.dispose();
-            return;
-          }
-          // Materialize retained readers before publishing so React never sees
-          // an idle window between two already-hydrated owners.
-          for (const id of store.retainedChannels())
-            successor.session.channels.ensure(id);
-          store.dispose();
-          store = successor;
-          if (refused) {
-            await refuse(refused);
-            return;
-          }
-          publish({
-            status: "ready",
-            generation,
-            viewer: transport.viewer,
-            origin: transportOrigin(transport),
-            scope: transportPartition(transport),
-            session: store.session,
-          });
-          ready = true;
-          store.session.channels.ensureList();
-        })
-        .catch(async (error) => {
-          await restoring;
-          if (
-            disposed ||
-            signal.aborted ||
-            current !== generation ||
-            signal !== controller?.signal
-          )
-            return;
-          if (readErrorKind(error) === "denied")
-            await deny(current, signal, String(error), refusalOfError(error));
-          else {
-            transientFailure = isTransientFailure(error);
-            publish({
-              ...snapshot,
-              status: "error",
-              error: String(error),
-            });
-          }
-        })
-        .finally(() => {
-          clearTimeout(timer);
-          if (current === generation && signal === controller?.signal)
-            connecting = false;
-        });
-    },
+    retry: () => connectAgain(false),
     reauthorize() {
       if (disposed) return;
       if (snapshot.status === "error") service.retry();
@@ -485,8 +536,13 @@ export function provideRelay(
     // Network, focus and wake are hints that the relay may answer again, and
     // that a socket which still looks open may have died while asleep.
     // Failed background reads retry now; a live socket is asked to answer.
+    // A failed connection that may clear is asked again now, cached or not.
     const hint = (network: boolean) => {
-      if (snapshot.cached) service.retry();
+      if (
+        snapshot.cached ||
+        (snapshot.status === "error" && (transientFailure || unusableFailure))
+      )
+        connectAgain(true);
       else {
         store.session.recovery?.retryNow();
         store.session.checkLive(network);

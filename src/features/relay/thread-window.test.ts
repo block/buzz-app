@@ -832,8 +832,12 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
     replies: [],
     canLoadMore: false,
   });
-  expect(h.view.snapshot().error).toContain(
-    "original thread message is unavailable",
+  expect(h.view.snapshot().error).toEqual(
+    expect.objectContaining({
+      message: expect.stringContaining(
+        "original thread message is unavailable",
+      ),
+    }),
   );
   missing = false;
   await h.view.refresh();

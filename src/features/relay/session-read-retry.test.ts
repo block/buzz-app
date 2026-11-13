@@ -53,7 +53,7 @@ it("retains observed data and coalesces refreshes during finite recovery", async
   h.query.mockResolvedValueOnce([row]);
   const view = h.owner.session.observe(h.filter);
   await view.refresh();
-  h.query.mockRejectedValueOnce(new TypeError("offline"));
+  h.query.mockRejectedValueOnce(new TypeError("Failed to fetch"));
   const pending = view.refresh();
   await vi.advanceTimersByTimeAsync(0);
   await view.refresh();
@@ -132,7 +132,7 @@ it.each(["caller", "clearCache", "dispose"] as const)(
   async (action) => {
     const h = setup();
     const caller = new AbortController();
-    h.query.mockRejectedValue(new TypeError("offline"));
+    h.query.mockRejectedValue(new TypeError("Failed to fetch"));
     const pending = h.owner.session.read(h.filter, { signal: caller.signal });
     const rejected = expect(pending).rejects.toMatchObject({
       name: "AbortError",
@@ -162,7 +162,7 @@ it("surfaces a cached-only inbox failure without retrying it", async () => {
 
 it("retries a transient inbox read through the session", async () => {
   const h = setup();
-  h.query.mockRejectedValueOnce(new TypeError("offline"));
+  h.query.mockRejectedValueOnce(new TypeError("Failed to fetch"));
   const pending = h.owner.session.inboxFeed.ensure();
   await vi.advanceTimersByTimeAsync(750);
   await pending;

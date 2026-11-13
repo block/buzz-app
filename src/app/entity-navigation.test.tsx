@@ -11,7 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { App } from "./App";
 import { createServices, type AppServices } from "./services";
@@ -502,7 +502,8 @@ function bindCommunityLinks(
   return { current, ping: () => ping() };
 }
 
-function offlineMessagesFixture() {
+/** Messages opened while the session read answers `status`, until `online`. */
+function offlineMessagesFixture(status = 503) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -527,7 +528,7 @@ function offlineMessagesFixture() {
       if (url.endsWith("/identity")) return Response.json({ viewer });
       if (url.endsWith("/session"))
         return offline
-          ? Response.json({ error: "offline" }, { status: 503 })
+          ? Response.json({ error: "offline" }, { status })
           : Response.json({ viewer, relayAuthor: viewer, relayUrl: origin });
       if (url.endsWith("/query")) return Response.json([]);
       return Response.json({});
@@ -593,6 +594,42 @@ it("reopens a visit that timed out while connecting once the connection is live"
     expect(
       screen.getByRole("button", { name: "Try again" }).dataset.variant,
     ).toBe("prominent");
+    online();
+    await act(() => vi.advanceTimersByTimeAsync(31_000));
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    expect(screen.queryByText(pageFailure)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("says only that Buzz couldn't connect, with no Try again, when the session answer can't be used", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    // An edge answering 400 during a relay deploy.
+    const { current, online } = offlineMessagesFixture(400);
+    await waitFor(() =>
+      expect(current.relay.snapshot()).toMatchObject({
+        status: "error",
+        error: { kind: "unusable" },
+      }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    const heading = await screen.findByRole("heading", {
+      name: "Can’t connect",
+    });
+    const card = heading.closest<HTMLElement>('[role="alert"]');
+    assert.exists(card);
+    expect(
+      within(card).getByText("Buzz couldn’t connect to this community."),
+    ).toBeVisible();
+    // Trying again gets the same answer, so the card doesn't ask for it.
+    expect(
+      within(card).queryByRole("button", { name: "Try again" }),
+    ).toBeNull();
+    expect(card).not.toHaveTextContent(/try again|check your connection/i);
+    // The relay still asks again by itself, and the visit reopens.
     online();
     await act(() => vi.advanceTimersByTimeAsync(31_000));
     await waitFor(() =>
@@ -783,11 +820,11 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
     document.querySelector('[data-channel-timeline="alpha"]');
   while (!timeline()) {
     await userEvent.click(
-      await screen.findByRole("button", { name: "Retry messages" }),
+      await screen.findByRole("button", { name: "Try again" }),
     );
     await waitFor(() =>
       expect(
-        timeline() ?? screen.queryByRole("button", { name: "Retry messages" }),
+        timeline() ?? screen.queryByRole("button", { name: "Try again" }),
       ).not.toBeNull(),
     );
   }
@@ -798,7 +835,7 @@ it("keeps a failed message read in place until its own Retry succeeds", async ()
       .session.channels.window("alpha")
       .rows.map((row) => row.content),
   ).toEqual(["Back again"]);
-  expect(screen.queryByRole("button", { name: "Retry messages" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(current.navigation.snapshot().attempt.signal.aborted).toBe(false);
   expect(failures).toBe(0);
   expect(current.relay.snapshot().generation).toBe(generation);
@@ -1298,7 +1335,7 @@ async function activityTurnedOff() {
     within(card)
       .getAllByRole("button")
       .map((button) => button.textContent),
-  ).toEqual(["Manage plugins", "Go to Messages"]);
+  ).toEqual(["Go to Messages", "Manage plugins"]);
   return card;
 }
 
@@ -1392,7 +1429,7 @@ it("turning a plugin back on over its failed page offers Try again, which opens 
     within(card)
       .getAllByRole("button")
       .map((button) => button.textContent),
-  ).toEqual(["Try again", "Go to Messages"]);
+  ).toEqual(["Go to Messages", "Try again"]);
   expect(
     screen.queryByRole("heading", { name: "Activity is turned off" }),
   ).not.toBeInTheDocument();

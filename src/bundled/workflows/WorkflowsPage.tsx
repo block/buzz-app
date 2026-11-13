@@ -9,6 +9,8 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { WorkflowDefinition } from "../../features/workflows/types";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import { ConnectionFailed } from "../../features/relay/ConnectionFailed";
+import type { Navigation } from "../../features/navigation/controller";
 import {
   ArrowsClockwiseIcon,
   LightningIcon,
@@ -36,7 +38,14 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import "./workflows.css";
 
-export function WorkflowsPage({ relay }: { relay: RelayData }) {
+export function WorkflowsPage({
+  relay,
+  navigator,
+}: {
+  relay: RelayData;
+  /** Opens Settings → Software updates when the community can't be used. */
+  navigator?: Navigation | undefined;
+}) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
     <WorkflowCommunity
@@ -47,19 +56,31 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
   ) : (
     <WorkflowsPanel>
       <WorkflowPageHeader />
-      <div className="workflow-page-state">
-        <p>
-          {connection.status === "connecting"
-            ? "Connecting to your community…"
-            : "Connect to a community to browse workflows."}
-        </p>
-        {connection.status === "error" && (
-          <>
-            <p role="alert">{connection.error}</p>
-            <Button onClick={() => relay.tryAgain()}>Retry connection</Button>
-          </>
-        )}
-      </div>
+      {connection.status === "error" ? (
+        <div className="workflows-body">
+          <ConnectionFailed
+            connection={connection}
+            relay={relay}
+            openUpdates={
+              navigator &&
+              (() =>
+                void navigator.open({
+                  version: 1,
+                  kind: "settings",
+                  section: "updates",
+                }))
+            }
+          />
+        </div>
+      ) : (
+        <div className="workflow-page-state">
+          <p>
+            {connection.status === "connecting"
+              ? "Connecting to your community…"
+              : "Connect to a community to browse workflows."}
+          </p>
+        </div>
+      )}
     </WorkflowsPanel>
   );
 }

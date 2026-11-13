@@ -23,6 +23,11 @@ import {
 } from "../../features/relay/react";
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
+import {
+  connectionFailureAction,
+  connectionFailureText,
+  openUpdatesWith,
+} from "../../features/relay/ConnectionFailed";
 import type { RelaySession } from "../../features/relay/session";
 import { ArrowRightIcon, ChecksIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -80,6 +85,12 @@ export function InboxPreview({
         close={close}
       />
     );
+  const action = connectionFailureAction({
+    connection,
+    relay,
+    openUpdates: openUpdatesWith(navigator),
+    size: "sm",
+  });
   return (
     <Card navigator={navigator} close={close}>
       <p className={`text-body text-subtle ${styles.notice}`} role="status">
@@ -88,15 +99,11 @@ export function InboxPreview({
           : connection.denied
             ? // Its notice, on every page, offers what fixes it.
               communityRefusalTitle(connection.refusal)
-            : (connection.error ?? "Choose a community to see your activity.")}
+            : connection.error
+              ? connectionFailureText(connection)
+              : "Choose a community to see your activity."}
       </p>
-      {connection.status === "error" && !connection.denied && (
-        <div className={styles.notice}>
-          <Button size="sm" onClick={relay.tryAgain}>
-            Retry connection
-          </Button>
-        </div>
-      )}
+      {action && <div className={styles.notice}>{action}</div>}
     </Card>
   );
 }

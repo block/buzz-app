@@ -790,6 +790,61 @@ function staticPage(connection: () => unknown) {
   );
 }
 
+it.each([
+  {
+    failure: "an answer this Buzz can't use",
+    error: {
+      kind: "unusable",
+      details: "ReadError: Relay response is not an event array",
+    },
+    sentence: "Buzz couldn’t connect to this community.",
+    action: "Check for updates",
+  },
+  {
+    failure: "a connection that failed",
+    error: { kind: "connection", details: "TypeError: Failed to fetch" },
+    sentence: "Check your connection, then try again.",
+    action: "Retry connection",
+  },
+] as const)(
+  "offers what the other pages do beside $failure",
+  ({ error, sentence, action }) => {
+    const connection = { status: "error", error };
+    const retry = vi.fn();
+    const open = vi.fn(() => Promise.resolve({ status: "opened" }));
+    render(
+      <RemindersPage
+        relay={
+          {
+            snapshot: () => connection,
+            subscribe: () => () => {},
+            tryAgain: retry,
+          } as unknown as RelayData
+        }
+        navigator={{ open } as unknown as Navigation}
+        clock={{ subscribe: () => () => {}, read: () => now }}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(sentence);
+    // Only one of them: retrying an answer Buzz can't use gets the same one.
+    expect(
+      screen.getAllByRole("button").map((button) => button.textContent),
+    ).toEqual([action]);
+    fireEvent.click(screen.getByRole("button", { name: action }));
+    if (error.kind === "unusable") {
+      expect(open).toHaveBeenCalledExactlyOnceWith({
+        version: 1,
+        kind: "settings",
+        section: "updates",
+      });
+      expect(retry).not.toHaveBeenCalled();
+    } else {
+      expect(retry).toHaveBeenCalledOnce();
+      expect(open).not.toHaveBeenCalled();
+    }
+  },
+);
+
 it("keeps focus on a control that claims it in the commit that removes Retry", () => {
   // A store that changes only when the test re-renders, so the failure clears
   // and the claim opens in one commit.

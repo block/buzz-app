@@ -4,6 +4,7 @@ import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { Delivery } from "../relay/outbox";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { avatarMedia, avatarSource } from "../../shared/avatar-source";
+import { userCopy } from "../relay/user-copy";
 
 export type HuddleDiscussion = {
   composer?: string | undefined;
@@ -148,7 +149,12 @@ export function createHuddleDiscussion(
             : !resolved || window.status !== "ready"
               ? "loading"
               : "ready",
-        error: error ?? window.error,
+        error:
+          error ??
+          (window.error
+            ? userCopy(window.error, "Couldn’t load this Huddle conversation.")
+                .text
+            : undefined),
         writable: writable(),
         sending,
         sent,

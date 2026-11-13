@@ -41,6 +41,38 @@ const renderPage = (h: Awaited<ReturnType<typeof bestieFixture>>) => {
   return render(<Page />);
 };
 
+it("offers Check for updates, not Retry connection, for an answer Buzz can't use", async () => {
+  const h = await bestieFixture(native.invoke);
+  act(() =>
+    h.updateRelay({
+      status: "error",
+      generation: 2,
+      error: {
+        kind: "unusable",
+        details: "ReadError: Relay response is not an event array",
+      },
+    }),
+  );
+  renderPage(h);
+  expect(
+    await screen.findByText("Buzz couldn’t connect to this community."),
+  ).toBeVisible();
+  expect(screen.queryByText(/try again/i)).not.toBeInTheDocument();
+  // Reconnecting gets the same answer; an update may not.
+  expect(
+    screen.queryByRole("button", { name: "Retry connection" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Check for updates" }),
+  );
+  expect(h.open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+    section: "updates",
+  });
+  expect(h.retryConnection).not.toHaveBeenCalled();
+});
+
 it("waits for the account choice before showing the chooser", async () => {
   const choice = deferred<string | undefined>();
   const h = await bestieFixture(native.invoke, {

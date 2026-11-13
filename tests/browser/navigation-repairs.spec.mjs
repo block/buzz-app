@@ -68,19 +68,30 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   page,
   app,
 }) => {
-  let requests = 0;
+  let failing = true;
+  let retries = 0;
   let release;
   const held = new Promise((resolve) => {
     release = resolve;
   });
-  await page.route("**/api/relay/primary/session", async (route) => {
-    requests++;
-    if (requests === 1) return route.fulfill({ json: {} });
+  // Registration fails for a reason the service leaves for the user, so the
+  // card offers Try again. (An empty session is an answer Buzz can’t use: that
+  // card offers Check for updates and asks again by itself.) Every caller
+  // registers the community, so every registration fails until the user acts.
+  await page.route("**/api/relay/register", async (route) => {
+    if (failing) {
+      app.report.startupFailures ??= [];
+      app.report.startupFailures.push(route.request().url());
+      return route.fulfill({
+        status: 502,
+        json: { error: "Registration failed" },
+      });
+    }
+    retries++;
     await held;
     return route.continue();
   });
   // Start outside Messages so its header activation owns preserve-focus intent.
-  // Settings also reads the community profile through /session, racing this gate.
   await page.goto(
     `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify({ version: 1, kind: "page", pluginId: "buzz.workflows", pageId: "workflows" }))}`,
   );
@@ -97,15 +108,15 @@ test("keyboard Retry hands off focus while reconnecting a failed Messages tab op
   await expect(
     page.getByText("Check your connection, then try again."),
   ).toBeVisible();
-  expect(requests).toBe(1);
   const visit = await entry(page);
   const main = page.getByRole("main");
   // The sidebar offers its own Try again for the channel list.
   const retry = button(main, "Try again");
+  failing = false;
   try {
     await retry.focus();
     await retry.press("Enter");
-    await expect.poll(() => requests, { timeout: 1500 }).toBe(2);
+    await expect.poll(() => retries, { timeout: 1500 }).toBeGreaterThan(0);
     await expect(retry).toHaveCount(0);
     await expect(main).toBeFocused();
   } finally {

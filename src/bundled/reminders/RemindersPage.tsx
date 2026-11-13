@@ -19,6 +19,11 @@ import {
   useReducedMotion,
 } from "motion/react";
 import type { RelayData } from "../../features/relay/service";
+import {
+  connectionFailureAction,
+  connectionFailureText,
+  openUpdatesWith,
+} from "../../features/relay/ConnectionFailed";
 import type { RelaySession } from "../../features/relay/session";
 import type { Reminder, Reminders } from "../../features/relay/reminders";
 import type { Navigation } from "../../features/navigation/controller";
@@ -135,7 +140,7 @@ export function RemindersPage({
   };
   const status = !reminders
     ? connection.status === "error"
-      ? (connection.error ?? "Could not connect.")
+      ? connectionFailureText(connection)
       : "Connect to a community to see your reminders."
     : state.status === "loading" && !state.hydrated
       ? "Loading reminders…"
@@ -193,9 +198,18 @@ export function RemindersPage({
             </div>
           )}
           {status || !reminders ? (
-            <p role="status" className={styles.notice}>
-              {status}
-            </p>
+            <div className={styles.notice}>
+              <p role="status">{status}</p>
+              {/* Beside a failed connection, what the other pages offer:
+                  Retry connection, or Check for updates for an answer this
+                  Buzz can't use. */}
+              {!reminders &&
+                connectionFailureAction({
+                  connection,
+                  relay,
+                  openUpdates: openUpdatesWith(navigator),
+                })}
+            </div>
           ) : (failed && !state.hydrated && !state.reminders.length) ||
             connection.status !== "ready" ? null : (
             <ReminderSections

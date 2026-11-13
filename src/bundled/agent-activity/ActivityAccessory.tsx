@@ -73,12 +73,14 @@ export type ActivityAgents = WorkStopAgents;
 type ActivityProps = ComposerAccessoryProps & { agents?: ActivityAgents };
 const noWork: RequestWork[] = [];
 /** A settled request that stays under its message: an error, a stop, or a
- * finished turn with a notice about how it ran. */
+ * finished or superseded turn with a notice about how it ran. */
 const settledOutcome = ({
   state,
   notice,
 }: Pick<RequestWork, "state" | "notice">) =>
-  state === "error" || state === "stopped" || (state === "done" && !!notice);
+  state === "error" ||
+  state === "stopped" ||
+  ((state === "done" || state === "superseded") && !!notice);
 /** Activity belongs to the exact triggering message, not the composer. Once an
  * agent has publicly replied, its outcome follows that reply instead. */
 export function ActivityAccessory(props: ActivityProps) {
@@ -646,7 +648,7 @@ function ActivityBubble({
               <p className="text-body-sm">
                 {/* A notice says how the turn ran, kept beside its outcome. */}
                 {[
-                  entry.state === "done"
+                  entry.state === "done" || entry.state === "superseded"
                     ? undefined
                     : activityOutcomeReason(entry.state, entry.reason),
                   entry.notice,

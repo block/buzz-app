@@ -147,10 +147,13 @@ object with exactly these keys:
 The descriptor is public routing data with no credential, and this code
 carries no default for any of its values. Both the frontend build and the
 plugin-manager native build read it from the process environment only, never
-from `.env` files, and validate all of it, in the same order, before using any
-of it. An invalid value, including a version 1 descriptor, fails either build
-with a fixed message that never echoes it; the shared cases in
-`src/features/agents/gateway/descriptor-vectors.json` pin both validators.
+from `.env` files. Only the frontend (Vite) build validates all of it, against
+the shared cases in `src/features/agents/gateway/descriptor-vectors.json`. The
+native build checks the version, the eight keys and the gateway origin, which
+is all its network grant needs, and nothing more. An invalid value, including
+a version 1 descriptor, fails the build that rejects it with a fixed message
+that never echoes it. A descriptor that is still invalid at runtime fails
+open: no harness gets an upstream, so turns run unchanged, with no notice.
 Leave it unset or blank (the release default) to keep every membership on its
 existing behavior.
 
@@ -161,13 +164,19 @@ an upstream, the gateway's access check succeeds, and the check's `harnesses`
 list names that harness. Any other field in the check's answer is the
 gateway's to enforce and is ignored. A type with no declared harness, no
 upstream, or a harness the gateway doesn't list keeps its existing behavior.
-A turn never waits on the gateway. When the route is blocked (auth, network,
-gateway error or still checking), the harness runs with the user's own
-configuration and none of the Buzz request context, and the turn is noted
-"Ran without the agent gateway" with the reason: under the request for a
+While an access check is in flight, such as the first one at startup or the
+re-check after the gateway refuses a request, a turn waits for it for up to 5
+seconds. A check that fails with anything but a 401 or 403 is tried once more
+after a short pause. If the gateway refuses access (a 401 or 403), the turn
+fails with a message asking the user to sign in again; it never falls back.
+When the route is otherwise blocked (network, gateway error, still checking
+after the wait, or a community or identity problem), the harness runs with the
+user's own configuration and none of the Buzz request context, and the turn is
+noted "Ran without the agent gateway" with the reason: under the request for a
 mention, and in the harness's own turn activity for other turns, which receive
-it as `delivery.gatewayFallback`. That choice is made before dispatch; a turn
-whose gateway access is revoked after dispatch fails visibly and is never
+it as `delivery.gatewayFallback`. The note stays under the request even when a
+later message supersedes it. That choice is made before dispatch; a turn whose
+gateway access is revoked after dispatch fails visibly and is never
 replayed. Memberships in other communities and hosted agents are unchanged.
 See `src/features/agents/gateway/` for the shared route, session and request
 context contract that harnesses consume.

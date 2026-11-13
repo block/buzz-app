@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostRequest, HostResponse } from "../../host/service";
 import type { AgentKey } from "../membership";
-import { GatewayRoutes, type GatewayMembership } from "./route";
+import {
+  GatewayRoutes,
+  PROBE_RETRY_DELAY_MS,
+  type GatewayMembership,
+} from "./route";
 import type { GatewayDescriptor } from "./descriptor";
 import { VECTOR_PROFILE } from "./vectors";
 
@@ -75,7 +79,17 @@ function setup(descriptor: GatewayDescriptor | null = DESCRIPTOR) {
   return { routes, ...net };
 }
 
+/** Fakes the probe's retry pause; `retry()` lets it pass. */
+function retryClock() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  return () => vi.advanceTimersByTimeAsync(PROBE_RETRY_DELAY_MS);
+}
+
 describe("GatewayRoutes", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("is external for every membership without a descriptor", () => {
     const { routes, request } = setup(null);
     routes.setMembership(member("b1", {}));
@@ -166,22 +180,92 @@ describe("GatewayRoutes", () => {
     ["", 500, { kind: "blocked", reason: "gateway_error" }],
     ["not json", 200, { kind: "blocked", reason: "gateway_error" }],
   ])("maps %s (%i) to its route", async (body, status, route) => {
-    const { routes, answer } = setup();
+    const retry = retryClock();
+    const { routes, answer, request } = setup();
     routes.setMembership(member("b1", {}));
     await answer(body, status);
+    // A failure other than a 401/403 is tried once more; the second stands.
+    const retried = "reason" in route && route.reason === "gateway_error";
+    if (retried) {
+      await retry();
+      await answer(body, status);
+    }
+    expect(request).toHaveBeenCalledTimes(retried ? 2 : 1);
     expect(routes.routeFor(key("b1"))).toMatchObject(route);
   });
 
-  it("blocks on a network failure, never external", async () => {
-    const { routes, pending } = setup();
+  it("blocks on a network failure that persists through its retry, never external", async () => {
+    const retry = retryClock();
+    const { routes, pending, request } = setup();
     routes.setMembership(member("b1", {}));
     pending.shift()?.respond(new Error("offline"));
-    await vi.waitFor(() =>
+    await retry();
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      reason: "readiness_pending",
+    });
+    pending.shift()?.respond(new Error("offline"));
+    await retry();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(routes.routeFor(key("b1"))).toMatchObject({
+      kind: "blocked",
+      reason: "network",
+    });
+  });
+
+  it("retries a failed probe exactly once, and never a 401 or 403", async () => {
+    const retry = retryClock();
+    {
+      const { routes, answer, request } = setup();
+      routes.setMembership(member("b1", {}));
+      await answer("", 500);
+      await retry();
+      await answer('{"harnesses":["pi"]}');
+      expect(request).toHaveBeenCalledTimes(2);
       expect(routes.routeFor(key("b1"))).toMatchObject({
-        kind: "blocked",
-        reason: "network",
-      }),
-    );
+        kind: "eligible",
+        revision: 2,
+        harnesses: ["pi"],
+      });
+    }
+    {
+      const { routes, answer, request, pending } = setup();
+      routes.setMembership(member("b1", {}));
+      await answer("", 500);
+      await retry();
+      await answer("", 502);
+      await retry();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(pending).toHaveLength(0);
+      expect(routes.routeFor(key("b1"))).toMatchObject({
+        reason: "gateway_error",
+      });
+    }
+    for (const status of [401, 403]) {
+      const { routes, answer, request } = setup();
+      routes.setMembership(member("b1", {}));
+      await answer("", status);
+      await retry();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(routes.routeFor(key("b1"))).toMatchObject({ reason: "auth" });
+    }
+  });
+
+  it("discards a retried probe's result when the revision moved during the retry", async () => {
+    const retry = retryClock();
+    const { routes, answer } = setup();
+    routes.setMembership(member("b1", {}));
+    await answer("", 500);
+    routes.setMembership(member("b1", {}, { owner: "c".repeat(64) }));
+    await retry();
+    // The new membership's probe went out first, then the old one's retry.
+    const fresh = await answer('{"harnesses":[]}');
+    expect(fresh.headers?.["x-gw-ctx-human-pubkey"]).toBe("c".repeat(64));
+    const eligible = routes.routeFor(key("b1"));
+    expect(eligible).toMatchObject({ kind: "eligible", revision: 3 });
+    const stale = await answer("", 500);
+    expect(stale.headers?.["x-gw-ctx-human-pubkey"]).toBe(OWNER);
+    await retry();
+    expect(routes.routeFor(key("b1"))).toEqual(eligible);
   });
 
   it("decides each membership on its own: external, mismatched, missing and eligible side by side", async () => {
@@ -318,33 +402,106 @@ describe("GatewayRoutes", () => {
     });
   });
 
-  it("gives a turn its current route without waiting, retrying a failed probe in the background", async () => {
+  it("gives a turn a failed route at once, retrying the probe in the background", async () => {
+    const retry = retryClock();
     const { routes, answer, pending } = setup();
     routes.setMembership(member("b1", {}));
-    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+    // Without a wait signal, a turn takes the route as it stands.
+    await expect(routes.routeForTurn(key("b1"))).resolves.toMatchObject({
       kind: "blocked",
       reason: "readiness_pending",
     });
     await answer("", 500);
-    expect(routes.routeForTurn(key("b1"))).toMatchObject({
-      kind: "blocked",
-      reason: "gateway_error",
-    });
+    await retry();
+    await answer("", 500);
+    await expect(
+      routes.routeForTurn(key("b1"), new AbortController().signal),
+    ).resolves.toMatchObject({ kind: "blocked", reason: "gateway_error" });
     expect(pending).toHaveLength(1);
     expect(routes.routeFor(key("b1"))).toMatchObject({
       reason: "readiness_pending",
     });
     await answer('{"harnesses":[]}');
-    expect(routes.routeForTurn(key("b1"))).toMatchObject({
+    await expect(routes.routeForTurn(key("b1"))).resolves.toMatchObject({
       kind: "eligible",
       revision: 4,
     });
     expect(pending).toHaveLength(0);
   });
 
+  it("keeps a failed 403 standing for later turns while no request path is bound", async () => {
+    const { routes, answer, request } = setup();
+    const unbind = routes.bindRequest(request);
+    routes.setMembership(member("b1", {}));
+    await answer("", 403);
+    unbind();
+    for (let turn = 0; turn < 2; turn++)
+      await expect(
+        routes.routeForTurn(key("b1"), new AbortController().signal),
+      ).resolves.toMatchObject({ kind: "blocked", reason: "auth" });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a turn wait for a probe in flight that settles before its wait ends", async () => {
+    const { routes, answer } = setup();
+    routes.setMembership(member("b1", {}));
+    const turn = routes.routeForTurn(key("b1"), new AbortController().signal);
+    await answer('{"harnesses":["pi"]}');
+    await expect(turn).resolves.toMatchObject({
+      kind: "eligible",
+      harnesses: ["pi"],
+    });
+  });
+
+  it("gives a turn the pending route once its wait ends before the probe settles", async () => {
+    const { routes, pending } = setup();
+    routes.setMembership(member("b1", {}));
+    const wait = new AbortController();
+    const turn = routes.routeForTurn(key("b1"), wait.signal);
+    wait.abort(new Error("cap"));
+    await expect(turn).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "readiness_pending",
+    });
+    // The probe goes on for later turns.
+    expect(pending).toHaveLength(1);
+  });
+
+  it("fails the next turn on a 403 re-probe after invalidate, instead of letting it pass while pending", async () => {
+    const { routes, answer } = setup();
+    routes.setMembership(member("b1", {}));
+    await answer('{"harnesses":["pi"]}');
+    routes.invalidate(key("b1"));
+    const turn = routes.routeForTurn(key("b1"), new AbortController().signal);
+    await answer("", 403);
+    await expect(turn).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "auth",
+    });
+  });
+
+  it("doesn't wait when no probe is in flight, and never starts one to wait on", async () => {
+    const routes = new GatewayRoutes(() => DESCRIPTOR);
+    routes.setMembership(member("b1", {}));
+    // No request bound: nothing is in flight.
+    await expect(
+      routes.routeForTurn(key("b1"), new AbortController().signal),
+    ).resolves.toMatchObject({ reason: "readiness_pending" });
+    // No relay session yet: pending without a probe.
+    const { routes: bound, request } = setup();
+    bound.setMembership(member("b2", undefined));
+    await expect(
+      bound.routeForTurn(key("b2"), new AbortController().signal),
+    ).resolves.toMatchObject({ reason: "readiness_pending" });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("waits for readiness under an explicit operation's signal and retries a failed probe once", async () => {
+    const retry = retryClock();
     const { routes, answer, pending } = setup();
     routes.setMembership(member("b1", {}));
+    await answer("", 500);
+    await retry();
     await answer("", 500);
     const ready = routes.routeReady(key("b1"), new AbortController().signal);
     expect(pending).toHaveLength(1);

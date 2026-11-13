@@ -40,12 +40,15 @@ function describe(
 ): TurnContext {
   const uuid = (value: string | undefined) =>
     value !== undefined && isBuzzUuid(value) ? value : null;
+  // Event IDs are hex, compared case-insensitively where they're read (a
+  // thread's `e` tag may be uppercase), so the context carries the
+  // contract's lowercase form.
   const where = (channel: string | undefined, root: string | undefined) => ({
     channel_id: uuid(channel),
     thread_id:
       root === undefined || (channel !== undefined && flat(channel))
         ? null
-        : root,
+        : root.toLowerCase(),
   });
   switch (trigger.type) {
     case "mention": {
@@ -55,7 +58,7 @@ function describe(
           channelId ?? channelOf(event),
           threadReference(event)?.rootId ?? event.id,
         ),
-        message_id: event.id,
+        message_id: event.id.toLowerCase(),
       };
     }
     case "plugin":
@@ -68,7 +71,7 @@ function describe(
           wake?.channel ?? channelId ?? channelOf(trigger.event),
           wake?.root,
         ),
-        message_id: trigger.event.id,
+        message_id: trigger.event.id.toLowerCase(),
       };
     case "catch-up":
     case "source":

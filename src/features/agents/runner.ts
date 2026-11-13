@@ -105,7 +105,11 @@ import {
 } from "./catch-up";
 import type { Interrupted } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
-import { fallbackNotice, gatewayRoutes } from "./gateway/route";
+import {
+  fallbackNotice,
+  gatewayRoutes,
+  TURN_READINESS_WAIT_MS,
+} from "./gateway/route";
 import { turnContextFor } from "./gateway/turn";
 
 /** Jobs waiting in each lane: mentions, and watch work (catch-up included),
@@ -2697,29 +2701,38 @@ export class AgentRunners {
     return timer && { lane: lane(timer), job: timer };
   }
   /** The membership's gateway route, this turn's context and its harness's
-   * upstream base, frozen before the type is asked to run, as `gateway`. It
-   * never waits on the gateway. A type that names no harness, whose harness
-   * this build gives no upstream, or whose harness the gateway doesn't
-   * enable for this membership keeps its existing behavior, without a
-   * notice. A blocked membership, including one whose readiness is still
-   * pending, runs it with its own configuration and none of the Buzz
-   * context, as `gatewayFallback`, and notes that on a mention's request.
-   * The choice is made here, before dispatch, so nothing is ever replayed. A
-   * turn whose access is revoked after dispatch is the harness's to fail
-   * visibly. */
-  private gatewayRouting(
+   * upstream base, frozen before the type is asked to run, as `gateway`. A
+   * type that names no harness, whose harness this build gives no upstream
+   * (including any harness under an invalid runtime descriptor, which fails
+   * open), or whose harness the gateway doesn't enable for this membership
+   * keeps its existing behavior, without a notice. While an access check is
+   * in flight, such as the first one at cold start, the turn waits for it
+   * for up to `TURN_READINESS_WAIT_MS`, or until the turn is cancelled. A
+   * blocked `auth` route (a 401 or 403) then fails the turn. Any other
+   * blocked route, including one still pending after the wait, runs it with
+   * its own configuration and none of the Buzz context, as
+   * `gatewayFallback`, and notes that on a mention's request. The choice is
+   * made here, before dispatch, so nothing is ever replayed. A turn whose
+   * access is revoked after dispatch is the harness's to fail visibly. */
+  private async gatewayRouting(
     agent: Agent,
     type: RegisteredAgentType,
     job: Job,
     anchor: ConversationWake | undefined,
+    signal: AbortSignal,
   ) {
     const harness = type.gateway?.harness;
     const upstream = harness && gatewayRoutes.upstream(harness);
     if (!upstream) return {};
-    const route = gatewayRoutes.routeForTurn(agent.key);
+    const route = await gatewayRoutes.routeForTurn(
+      agent.key,
+      AbortSignal.any([signal, AbortSignal.timeout(TURN_READINESS_WAIT_MS)]),
+    );
+    signal.throwIfAborted();
     if (route.kind === "external") return {};
     if (route.kind === "blocked") {
-      const notice = fallbackNotice(route);
+      if (route.reason === "auth") throw new Error(route.message);
+      const notice = fallbackNotice(route.reason);
       job.work?.notice(notice);
       return {
         gatewayFallback: Object.freeze({ reason: route.reason, notice }),
@@ -2787,7 +2800,13 @@ export class AgentRunners {
     const completion = Promise.resolve().then(async () => {
       this.assertProtected(agent, type, handle);
       // Before any type code (its models included) runs for this turn.
-      const routing = this.gatewayRouting(agent, type, job, anchor);
+      const routing = await this.gatewayRouting(
+        agent,
+        type,
+        job,
+        anchor,
+        signal,
+      );
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);

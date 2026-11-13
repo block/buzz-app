@@ -892,6 +892,38 @@ it("notes a finished local request that ran without its gateway, and nothing for
   }
 });
 
+it("keeps a fallback turn's notice when a later message supersedes it, without calling it stopped", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+  try {
+    act(() => {
+      const work = local.begin({
+        scope: "test",
+        channelId: "c",
+        threadRootId: root,
+        messageId: root,
+        agent: A,
+      });
+      work.notice(NOTICE);
+      work.started();
+      work.supersede();
+    });
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(screen.queryByText(/stopped/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /activity history: Blossom, Continued on a later message/,
+      }),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it("keeps a fallback turn's outcome beside its notice when it is stopped or fails", () => {
   const local = createLocalAgentActivity();
   const f = fixture(local);

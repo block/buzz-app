@@ -184,3 +184,38 @@ it("keeps a finished request noted only when it carries a notice", () => {
     { agent: "agent", state: "done", notice: "Ran without the gateway." },
   ]);
 });
+
+it("keeps a superseded request's notice, which says where its turn ran", () => {
+  const local = {
+    scope: "scope",
+    agent: "agent",
+    channelId: "channel",
+    messageId: request,
+    threadRootId: request,
+    startedAt: 1000,
+    state: "superseded",
+  } as const;
+  const source = (row: NonNullable<Snapshot["local"]>[number]): Snapshot => ({
+    ...fixture(),
+    records: [],
+    turns: [],
+    local: [row],
+  });
+  expect(messageWork(source(local), "channel", request)).toEqual({
+    live: [],
+    stopped: [],
+  });
+  const noted = messageWork(
+    source({ ...local, notice: "Ran without the gateway." }),
+    "channel",
+    request,
+  );
+  expect(noted.live).toEqual([]);
+  expect(noted.stopped).toMatchObject([
+    {
+      agent: "agent",
+      state: "superseded",
+      notice: "Ran without the gateway.",
+    },
+  ]);
+});

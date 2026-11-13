@@ -61,9 +61,11 @@ const GATEWAY_KEY: &str = "BUZZ_AGENT_GATEWAY";
 
 /// The gateway origin the `BUZZ_AGENT_GATEWAY` descriptor names, or empty
 /// when it is unset. Like the FI descriptor, it is read from the process
-/// only. This checks the version 2 shape and the origin, which is all the
-/// grant needs; Vite validates the whole descriptor for the frontend. Errors
-/// never echo the descriptor.
+/// only. This checks the version, the eight keys and the gateway origin,
+/// which is all the grant needs, and nothing more: only the frontend (Vite)
+/// build validates the whole descriptor, against
+/// `src/features/agents/gateway/descriptor-vectors.json`. Errors never echo
+/// the descriptor.
 fn descriptor_gateway(process: Option<String>) -> Result<String, &'static str> {
     let Some(raw) = process.filter(|raw| !raw.trim().is_empty()) else {
         return Ok(String::new());

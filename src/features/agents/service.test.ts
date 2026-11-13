@@ -104,6 +104,7 @@ import {
   type EligibleRoute,
   GatewayRoutes,
   gatewayRoutes,
+  TURN_READINESS_WAIT_MS,
 } from "./gateway/route";
 import { VECTOR_PROFILE } from "./gateway/vectors";
 import {
@@ -19345,10 +19346,10 @@ describe("agent gateway gate", () => {
     "Ran without the agent gateway: Buzz couldn't reach the gateway.";
 
   it("runs a blocked membership's harness with its own configuration and notes that on the turn", async () => {
-    ready.mockReturnValue(blockedRoute);
+    ready.mockResolvedValue(blockedRoute);
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(ready).toHaveBeenCalledWith(bot);
+    expect(ready).toHaveBeenCalledWith(bot, expect.any(AbortSignal));
     const delivery = f.run.mock.calls[0]?.[0];
     expect(delivery).not.toHaveProperty("gateway");
     expect(delivery?.gatewayFallback).toEqual({
@@ -19362,7 +19363,8 @@ describe("agent gateway gate", () => {
     });
   });
 
-  it("falls back at once while a readiness probe hangs, never waiting on the gateway", async () => {
+  /** Live routes for `bot`, probing through a request the test answers. */
+  function liveRoutes() {
     const id = "22222222-2222-4222-8222-222222222222";
     const routes = new GatewayRoutes(() => ({
       version: 2,
@@ -19372,7 +19374,20 @@ describe("agent gateway gate", () => {
       ...VECTOR_PROFILE,
       upstreams: { pi: { base: "/upstream/pi" } },
     }));
-    const request = vi.fn(() => new Promise<never>(() => {}));
+    const answers: ((response: { status: number; body: string }) => void)[] =
+      [];
+    const request = vi.fn(
+      () =>
+        new Promise<{
+          status: number;
+          headers: Record<string, string>;
+          body: string;
+        }>((resolve) =>
+          answers.push(({ status, body }) =>
+            resolve({ status, headers: {}, body }),
+          ),
+        ),
+    );
     routes.bindRequest(request);
     routes.setMembership({
       key: bot as never,
@@ -19381,19 +19396,114 @@ describe("agent gateway gate", () => {
       pubkey: bot,
       community: { id, session: {} },
     });
-    expect(request).toHaveBeenCalledTimes(1);
-    ready.mockImplementation((key) => routes.routeForTurn(key));
+    ready.mockImplementation((key, wait) => routes.routeForTurn(key, wait));
+    const answer = (status: number, body = "") => {
+      const next = answers.shift();
+      if (!next) throw new Error("No request pending");
+      next({ status, body });
+    };
+    return { routes, request, answer };
+  }
+  /** Ends the turn's readiness wait at once, as its cap would. */
+  function capReached() {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    return vi
+      .spyOn(AbortSignal, "timeout")
+      .mockImplementation((ms) =>
+        ms === TURN_READINESS_WAIT_MS
+          ? AbortSignal.abort(new Error("cap"))
+          : timeout(ms),
+      );
+  }
+  const AUTH =
+    "The agent gateway didn't accept your sign-in or denied this agent. Sign in again, then retry.";
+
+  it("falls back once a readiness probe outlasts the turn's wait, with the pending notice", async () => {
+    const cap = capReached();
+    try {
+      const { request } = liveRoutes();
+      expect(request).toHaveBeenCalledTimes(1);
+      const f = await mentioned(true);
+      await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
+      expect(cap).toHaveBeenCalledWith(TURN_READINESS_WAIT_MS);
+      expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
+      expect(f.run.mock.calls[0]?.[0]?.gatewayFallback).toEqual({
+        reason: "readiness_pending",
+        notice:
+          "Ran without the agent gateway: gateway access was still being checked.",
+      });
+    } finally {
+      cap.mockRestore();
+    }
+  });
+
+  it("routes a turn through the gateway once a probe in flight settles inside the wait", async () => {
+    const { answer } = liveRoutes();
     const f = await mentioned(true);
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+    expect(f.run).not.toHaveBeenCalled();
+    expect(f.models).not.toHaveBeenCalled();
+    answer(200, '{"harnesses":["relay"]}');
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
-    expect(f.run.mock.calls[0]?.[0]?.gatewayFallback).toEqual({
-      reason: "readiness_pending",
-      notice:
-        "Ran without the agent gateway: gateway access was still being checked.",
+    const delivery = f.run.mock.calls[0]?.[0];
+    expect(delivery?.gateway?.route).toMatchObject({
+      kind: "eligible",
+      harnesses: ["relay"],
     });
+    expect(delivery).not.toHaveProperty("gatewayFallback");
+  });
+
+  it("fails a turn on a 401 or 403, before any type code runs, with no fallback", async () => {
+    for (const status of [401, 403]) {
+      const { answer } = liveRoutes();
+      answer(status);
+      const f = await mentioned(
+        true,
+        event(`auth-${status}`, {
+          pubkey: viewer,
+          tags: [
+            ["h", channel],
+            ["p", bot],
+            ["model", bot, "deep"],
+          ],
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]).toMatchObject({
+          state: "error",
+          error: AUTH,
+        }),
+      );
+      expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
+      expect(f.run).not.toHaveBeenCalled();
+      expect(f.models).not.toHaveBeenCalled();
+      gatewayRoutes.removeMembership(bot as never);
+    }
+  });
+
+  it("fails the next turn when a 403 from inference re-probes as 403, instead of falling back while pending", async () => {
+    const { routes, answer, request } = liveRoutes();
+    answer(200, '{"harnesses":["relay"]}');
+    await vi.waitFor(() =>
+      expect(routes.routeFor(bot as never).kind).toBe("eligible"),
+    );
+    // Inference got a 403: the route goes pending and re-probes.
+    routes.invalidate(bot as never);
+    expect(request).toHaveBeenCalledTimes(2);
+    const f = await mentioned(true);
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+    answer(403);
+    await vi.waitFor(() =>
+      expect(f.activity.reader.work()[0]).toMatchObject({
+        state: "error",
+        error: AUTH,
+      }),
+    );
+    expect(f.run).not.toHaveBeenCalled();
   });
 
   it("hands a blocked watch turn the fallback, keeping its one signed event", async () => {
-    ready.mockReturnValue(blockedRoute);
+    ready.mockResolvedValue(blockedRoute);
     const f = await setup();
     f.plugin.agents.register({
       ...f.type,
@@ -19425,7 +19535,7 @@ describe("agent gateway gate", () => {
   it("hands a blocked timer turn the fallback without inventing a message", async () => {
     vi.useFakeTimers({ now: 1_000_000 });
     try {
-      ready.mockReturnValue(blockedRoute);
+      ready.mockResolvedValue(blockedRoute);
       const f = await setup();
       f.plugin.agents.register({
         ...f.type,
@@ -19465,7 +19575,7 @@ describe("agent gateway gate", () => {
   });
 
   it("asks a blocked membership's type for its own models for a model request", async () => {
-    ready.mockReturnValue(blockedRoute);
+    ready.mockResolvedValue(blockedRoute);
     const f = await mentioned(
       true,
       event("a2", {
@@ -19485,7 +19595,7 @@ describe("agent gateway gate", () => {
 
   it("notes nothing on a turn that routes through the gateway or keeps its behavior", async () => {
     for (const route of [eligible, external, { ...eligible, harnesses: [] }]) {
-      ready.mockReturnValue(route);
+      ready.mockResolvedValue(route);
       const f = await mentioned(true);
       await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
       expect(f.activity.reader.work()[0]).not.toHaveProperty("notice");
@@ -19495,7 +19605,7 @@ describe("agent gateway gate", () => {
   });
 
   it("runs a type that names no harness unchanged, without waiting on the gateway", async () => {
-    ready.mockReturnValue(blockedRoute);
+    ready.mockResolvedValue(blockedRoute);
     const f = await mentioned(false);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
@@ -19504,7 +19614,7 @@ describe("agent gateway gate", () => {
   });
 
   it("runs a harness this build gives no upstream unchanged, without a notice or asking for a route", async () => {
-    ready.mockReturnValue(blockedRoute);
+    ready.mockResolvedValue(blockedRoute);
     upstream.mockReturnValue(undefined);
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
@@ -19516,7 +19626,7 @@ describe("agent gateway gate", () => {
   });
 
   it("runs a harness the gateway doesn't enable for the membership unchanged", async () => {
-    ready.mockReturnValue({ ...eligible, harnesses: ["pi"] });
+    ready.mockResolvedValue({ ...eligible, harnesses: ["pi"] });
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");
@@ -19524,7 +19634,7 @@ describe("agent gateway gate", () => {
   });
 
   it("hands an eligible route and the turn's frozen context to a type that routes through the gateway", async () => {
-    ready.mockReturnValue(eligible);
+    ready.mockResolvedValue(eligible);
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     const delivery = f.run.mock.calls[0]?.[0];
@@ -19546,7 +19656,7 @@ describe("agent gateway gate", () => {
     channelId: string,
     prepare?: (f: Awaited<ReturnType<typeof setup>>) => void,
   ) => {
-    ready.mockReturnValue(eligible);
+    ready.mockResolvedValue(eligible);
     const f = await mentioned(true, asked, channelId, prepare);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     return f.run.mock.calls[0]?.[0].gateway?.turn;
@@ -19619,7 +19729,7 @@ describe("agent gateway gate", () => {
   });
 
   it("adds no gateway field for an external membership, even for a harness", async () => {
-    ready.mockReturnValue(external);
+    ready.mockResolvedValue(external);
     const f = await mentioned(true);
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(1));
     expect(f.run.mock.calls[0]?.[0]).not.toHaveProperty("gateway");

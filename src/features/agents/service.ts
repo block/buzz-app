@@ -229,8 +229,8 @@ import type { AgentPlugins } from "../../plugins/requests";
 import type { DeviceSettings } from "../../shared/device-settings";
 import type { TurnContext } from "./gateway/contract";
 import {
-  type BlockedReason,
   type EligibleRoute,
+  type FallbackReason,
   gatewayRoutes,
 } from "./gateway/route";
 
@@ -826,10 +826,14 @@ export type Delivery<Config = unknown> = Readonly<{
     upstream: Readonly<{ base: string }>;
   }>;
   /** A blocked route sent this turn to the type's own configuration, decided
-   * before dispatch; never with `gateway`. The host owns the decision and
-   * `notice`; a type shows `notice` in this turn's visible activity where the
-   * host can't (any turn but a mention, whose request it already notes). */
-  gatewayFallback?: Readonly<{ reason: BlockedReason; notice: string }>;
+   * before dispatch, after waiting up to `TURN_READINESS_WAIT_MS` for an
+   * access check in flight; never with `gateway`. Every blocked reason but
+   * `auth` falls back this way, including a route still pending after the
+   * wait; a 401 or 403 (`auth`) fails the turn before dispatch instead. The
+   * host owns the decision and `notice`; a type shows `notice` in this turn's
+   * visible activity where the host can't (any turn but a mention, whose
+   * request it already notes). */
+  gatewayFallback?: Readonly<{ reason: FallbackReason; notice: string }>;
   /** Whether the trigger should still run, asked again now. False once the
    * agent is removed or its type replaced; for a watch or timer, also once
    * attention was turned off or its object disabled or removed; and for a

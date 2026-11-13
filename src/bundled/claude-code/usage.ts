@@ -174,6 +174,10 @@ function digester() {
       observe(read.entries, seen, unkeyed);
       names.push(...spawned(read.entries));
     },
+    /** Counts a line left unread. */
+    skip() {
+      unreadable += 1;
+    },
     digest(): Digest {
       return {
         start: buzzStart(first ? [first] : []),
@@ -197,14 +201,18 @@ function digest(file: string): Digest {
 }
 
 /** The digest of a file in `~/.claude/projects` too large for the app to read
- * whole, read a page at a time, so only a page's text is held at once. Like
- * the app's read, it is not stopped: other reads may be waiting on it. */
+ * whole, read a page at a time. A line larger than the app's read is not
+ * decoded: it counts as unreadable, so a page and a line the app could read
+ * are the most held at once. Like the app's read, it is not stopped: other
+ * reads may be waiting on it. */
 async function digestPages(spawn: Spawn, path: string) {
   const digesting = digester();
   // A page ends partway through a line, which the next page finishes.
   let rest = new Uint8Array();
+  // Within a line too large to read, dropped up to its end.
+  let skipping = false;
   for (let page = 0; ; page++) {
-    const chunk = await readFile(
+    let chunk = await readFile(
       spawn,
       "~/.claude/projects",
       path,
@@ -213,16 +221,36 @@ async function digestPages(spawn: Spawn, path: string) {
       "read-page",
       [String(page * PAGE_MIB), String(PAGE_MIB)],
     );
+    const last = chunk.length < PAGE_MIB << 20;
+    if (skipping) {
+      const end = chunk.indexOf(10);
+      if (end < 0) {
+        if (last) return digesting.digest();
+        continue;
+      }
+      skipping = false;
+      chunk = chunk.subarray(end + 1);
+    }
     const bytes = new Uint8Array(rest.length + chunk.length);
     bytes.set(rest);
     bytes.set(chunk, rest.length);
-    const last = chunk.length < PAGE_MIB << 20;
+    // Only the line carried from the page before can be too large: the
+    // lines after it are within this page.
+    const first = bytes.indexOf(10);
+    const large = (first < 0 ? bytes.length : first) > READ_LIMIT;
+    if (large) digesting.skip();
+    if (large && first < 0) {
+      if (last) return digesting.digest();
+      skipping = true;
+      rest = new Uint8Array();
+      continue;
+    }
     const end = last ? bytes.length : bytes.lastIndexOf(10) + 1;
-    digesting.add(new TextDecoder().decode(bytes.subarray(0, end)));
+    digesting.add(
+      new TextDecoder().decode(bytes.subarray(large ? first + 1 : 0, end)),
+    );
     if (last) return digesting.digest();
     rest = bytes.slice(end);
-    if (rest.length > READ_LIMIT)
-      throw new Error(`${path} has a line larger than 50 MB`);
   }
 }
 

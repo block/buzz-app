@@ -64,20 +64,29 @@ export function BestieNavigationProvider({
     session.channels.list,
   );
   const channel = bestieChat(channels.channels, viewer, promoted);
-  // The published profile picture wins, as in DM rows and message avatars; the
-  // agent definition's art covers the wait for that profile, or a profile
-  // without a picture (as ChannelMemberAvatars does).
+  // The published profile wins, as in DM rows and message avatars, including a
+  // profile without a picture (initials). The agent definition's art covers
+  // only the wait for that profile, or an agent that never published one.
   const bestie = agent?.pubkey;
   const generation = useProfileGeneration(session.profiles);
+  // Evictions also count cancelled background reads, so a cache shrink while
+  // this read is pending asks again.
+  const readEvictions = () => session.profiles.evictions?.() ?? 0;
+  const evictions = useSyncExternalStore(
+    session.profiles.subscribe,
+    readEvictions,
+    readEvictions,
+  );
   useEffect(() => {
     void generation;
+    void evictions;
     if (bestie)
       void session.profiles.ensure([bestie], "background").catch(() => {});
-  }, [session, bestie, generation]);
-  const profilePicture = useSyncExternalStore(session.profiles.subscribe, () =>
-    bestie ? session.profiles.snapshot().get(bestie)?.picture : undefined,
+  }, [session, bestie, generation, evictions]);
+  const profile = useSyncExternalStore(session.profiles.subscribe, () =>
+    bestie ? session.profiles.snapshot().get(bestie) : undefined,
   );
-  const picture = profilePicture ?? agent?.avatar;
+  const picture = profile ? profile.picture : agent?.avatar;
   const pack = agentAvatars.find((item) => item.url === picture);
   const preview = useAvatarPreview(
     pack ? "" : (picture ?? ""),

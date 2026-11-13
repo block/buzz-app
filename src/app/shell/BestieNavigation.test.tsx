@@ -116,9 +116,11 @@ async function fixture(firstAgent = false) {
   await choices.refresh(false);
   let profileMap: ReadonlyMap<string, Profile> = new Map();
   const profileListeners = new Set<() => void>();
+  let evictions = 0;
   const ensured = vi.fn<ProfileQueries["ensure"]>(async () => {});
   const profiles: ProfileQueries = {
     snapshot: () => profileMap,
+    evictions: () => evictions,
     subscribe(listener) {
       profileListeners.add(listener);
       return () => {
@@ -161,6 +163,10 @@ async function fixture(firstAgent = false) {
     ensured,
     publishProfile(pubkey: string, profile: Profile) {
       profileMap = new Map([...profileMap, [pubkey, profile]]);
+      for (const listener of profileListeners) listener();
+    },
+    cancelProfileReads() {
+      evictions++;
       for (const listener of profileListeners) listener();
     },
     update(patch: Partial<RelaySnapshot>) {
@@ -226,6 +232,56 @@ it("shows the Bestie's published profile picture over its agent definition art",
   expect(
     screen.getByRole("tab", { name: "Pollen" }).querySelector("img"),
   ).toHaveAttribute("src", published.preview);
+});
+
+it("shows initials once the Bestie's published profile drops its picture", async () => {
+  const f = await fixture();
+  const published = agentAvatars[1];
+  if (!published) throw new Error("Expected a second bundled avatar");
+  setDefaultAgent(scope, pollen);
+  render(
+    <BestieNavigationProvider pages={[page]} relay={f.relay}>
+      <PageNavigation
+        pages={[page]}
+        selected={page.key}
+        onSelect={() => {}}
+        placement="dock"
+      />
+    </BestieNavigationProvider>,
+  );
+  await screen.findByRole("tab", { name: "Pollen" });
+  act(() =>
+    f.publishProfile(pollen, { name: "Pollen", picture: published.url }),
+  );
+  act(() => f.publishProfile(pollen, { name: "Pollen" }));
+  const tab = screen.getByRole("tab", { name: "Pollen" });
+  expect(tab.querySelector("img")).toBeNull();
+  expect(tab).toHaveTextContent("P");
+});
+
+it("asks again for the Bestie's profile after a cache shrink cancels the read", async () => {
+  const f = await fixture();
+  setDefaultAgent(scope, pollen);
+  render(
+    <BestieNavigationProvider pages={[page]} relay={f.relay}>
+      <PageNavigation
+        pages={[page]}
+        selected={page.key}
+        onSelect={() => {}}
+        placement="dock"
+      />
+    </BestieNavigationProvider>,
+  );
+  await screen.findByRole("tab", { name: "Pollen" });
+  await waitFor(() =>
+    expect(f.ensured).toHaveBeenCalledWith([pollen], "background"),
+  );
+  const before = f.ensured.mock.calls.length;
+  act(() => f.cancelProfileReads());
+  await waitFor(() =>
+    expect(f.ensured.mock.calls.length).toBeGreaterThan(before),
+  );
+  expect(f.ensured).toHaveBeenLastCalledWith([pollen], "background");
 });
 
 it("offers first-agent creation, then shows the exact Bestie in navigation and search", async () => {

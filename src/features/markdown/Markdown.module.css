@@ -129,6 +129,11 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Inline snippets follow the table's non-wrapping column policy. */
+.document table code {
+  white-space: inherit;
+  overflow-wrap: inherit;
+}
 /* A rejected document remains a wrapping source view, rather than a code fence. */
 .document pre.source code {
   max-height: none;

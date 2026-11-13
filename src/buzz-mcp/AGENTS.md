@@ -19,6 +19,10 @@ deliberately.
 - `settings.ts`: the settings tools (`settings_list`, `settings_get`,
   `settings_set`). The settings themselves are the host's catalog
   (`src/app/device-settings.ts`); the tools never name one.
+- `sections.ts`: the sidebar section tools (`sections_list`, `section_create`,
+  `section_rename`, `section_remove`, `section_assign`). The host backs them
+  with the session's sidebar preferences (`src/features/relay/sidebar-agent-sections.ts`),
+  in an agent's own run only.
 - `session-tools.ts`: what a session lists, each tool's `load` (`always` or
   `search`), and the server instructions that cover the whole tool set.
 - `prompt.md`: the posting conventions every agent gets after the shared base

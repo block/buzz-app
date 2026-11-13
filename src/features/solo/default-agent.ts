@@ -305,6 +305,15 @@ export function useSavedAgent(session: RelaySession, scope: string) {
   return useSavedAgentState(session, scope).agent;
 }
 
+/** The saved Bestie, reading the account's choice first when it hasn't been
+ * read this session. */
+export async function readSavedAgent(session: RelaySession, scope: string) {
+  const account = session.mainAgent;
+  if (!account) return chosenAgent(scope);
+  await adopt(account, scope);
+  return saved.get(account);
+}
+
 /** `useSavedAgent` outside React. Subscribing starts the account's
  * once-per-session read, as the hook does when it mounts. */
 export function savedAgentStore(session: RelaySession, scope: string) {

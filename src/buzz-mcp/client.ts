@@ -79,6 +79,26 @@ export type ThreadTabs = Readonly<{
   /** An empty name restores the automatic title; false when it has no tab. */
   rename(channel: string, root: string, name: string): boolean;
 }>;
+/** The owner's sidebar sections in the agent's community. A write resolves
+ * once the relay confirms it. */
+export type SidebarSections = Readonly<{
+  list(): Promise<
+    Readonly<{
+      sections: readonly Readonly<{
+        id: string;
+        name: string;
+        channels: readonly Readonly<{ id: string; name: string }>[];
+      }>[];
+      starred: readonly Readonly<{ id: string; name: string }>[];
+    }>
+  >;
+  create(name: string): Promise<Readonly<{ id: string; name: string }>>;
+  rename(id: string, name: string): Promise<void>;
+  /** Its channels go back to Channels. */
+  remove(id: string): Promise<void>;
+  /** No section moves the channel back to Channels. */
+  assign(channel: string, section: string | undefined): Promise<void>;
+}>;
 export type Memory = Readonly<{
   slug: string;
   body: string;
@@ -188,6 +208,8 @@ export interface BuzzClient {
   readonly attention?: AgentAttention;
   /** The owner's thread tabs, where the host shows them. */
   tabs?: ThreadTabs;
+  /** The owner's sidebar sections, in an agent's own run. */
+  sections?: SidebarSections;
   /** Buzz settings on this device, in an agent's own run. Each call checks
    * the turn first, as the other tools do. */
   settings?: Readonly<{

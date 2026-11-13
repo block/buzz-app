@@ -191,8 +191,41 @@ fn member_commands_sign_only_the_broker_shape() {
         command(9031, "", &[&["role", "member"], p]),
         command(9030, "", &[p, &["role", "member"], &["h", "channel"]]),
         command(9031, "", &[]),
-        // Workspace profile edits stay outside this surface.
-        command(9033, "", &[]),
+    ] {
+        assert!(validate_event("https://relay.test", &rejected).is_err());
+    }
+}
+
+#[test]
+fn icon_commands_sign_only_a_bounded_inline_image_or_clear() {
+    let command = |content: &str, tags: Vec<Vec<String>>| EventTemplate {
+        kind: 9033,
+        created_at: 1,
+        content: content.into(),
+        tags,
+    };
+    let icon = |value: &str| vec![vec!["icon".to_string(), value.to_string()]];
+    let png = |body: usize| format!("data:image/png;base64,{}", "A".repeat(body));
+    let limit = 49_152 - "data:image/png;base64,".len();
+    for accepted in [
+        command("", icon("")),
+        command("", icon("data:image/webp;base64,AAA=")),
+        command("", icon(&png(limit))),
+    ] {
+        assert!(validate_event("https://relay.test", &accepted).is_ok());
+    }
+    for rejected in [
+        command("", icon(&png(limit + 1))),
+        command("", icon("https://cdn.test/icon.png")),
+        command("", icon("data:image/svg+xml;base64,AAA=")),
+        command("", icon("data:image/png;base64,")),
+        command("", icon("data:image/png;base64,AA A")),
+        command("", icon("data:image/png;base64,A===")),
+        command("note", icon("")),
+        command("", vec![]),
+        command("", vec![vec!["name".into(), "Renamed".into()]]),
+        command("", vec![vec!["icon".into(), "".into(), "extra".into()]]),
+        command("", [icon(""), icon("")].concat()),
     ] {
         assert!(validate_event("https://relay.test", &rejected).is_err());
     }

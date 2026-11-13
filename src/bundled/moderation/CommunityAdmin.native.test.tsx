@@ -190,7 +190,7 @@ afterEach(() => {
   vi.mocked(invoke).mockClear();
 });
 
-it("keeps the Membership card registered in a native build", () => {
+it("keeps the Membership and Community icon cards registered in a native build", () => {
   expect(nativeIdentityEnabled()).toBe(true);
   const settingsCards = { register: vi.fn() };
   const data = relay(owner).relay;
@@ -201,14 +201,24 @@ it("keeps the Membership card registered in a native build", () => {
     settingsCards,
     effect: vi.fn(),
   } as unknown as Parameters<typeof apply>[0]);
-  expect(settingsCards.register).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({
-      id: "membership",
-      title: "Membership",
-      section: "administration",
-      component: expect.any(Function),
-    }),
-  );
+  expect(settingsCards.register.mock.calls).toEqual([
+    [
+      expect.objectContaining({
+        id: "membership",
+        title: "Membership",
+        section: "administration",
+        component: expect.any(Function),
+      }),
+    ],
+    [
+      expect.objectContaining({
+        id: "community-icon",
+        title: "Community icon",
+        section: "administration",
+        component: expect.any(Function),
+      }),
+    ],
+  ]);
   membership.dispose();
 });
 

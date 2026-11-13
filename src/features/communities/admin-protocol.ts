@@ -64,6 +64,26 @@ export function memberCommand(
   };
 }
 
+/** Inline icons stay inside the 64 KiB native signing bound. */
+export const COMMUNITY_ICON_MAX_DATA_URL = 49_152;
+
+/** Unsigned kind 9033 command setting the community's NIP-11 icon to an inline image; "" clears it. */
+export function iconCommand(
+  value: unknown,
+  now = Math.floor(Date.now() / 1000),
+) {
+  const { icon } = (value ?? {}) as { icon?: unknown };
+  if (
+    typeof icon !== "string" ||
+    icon.length > COMMUNITY_ICON_MAX_DATA_URL ||
+    (icon !== "" && !ICON.test(icon))
+  )
+    throw new Error("Invalid community icon");
+  return { kind: 9033, content: "", created_at: now, tags: [["icon", icon]] };
+}
+
+const ICON = /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
 // Exact relay refusals (buzz-relay relay_admin.rs, ingest.rs, api/invites.rs).
 // Anything else, including database/internal text, stays a generic summary.
 const REASONS = new Set([

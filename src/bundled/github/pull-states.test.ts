@@ -95,7 +95,8 @@ it("reads every watched pull request together, once, then again each minute whil
 it("keeps the state object, and tells no one, when a poll reads the same state", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let checks = "PENDING";
-  const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, checks) }));
+  let approval = {};
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", approval, checks) }));
   const states = createPullStates(gh);
   const changed = vi.fn();
   states.watch(pull, changed);
@@ -112,6 +113,11 @@ it("keeps the state object, and tells no one, when a poll reads the same state",
   expect(states.get(pull)).not.toBe(before);
   expect(states.get(pull)).toMatchObject({ checks: "success" });
   expect(changed).toHaveBeenCalledTimes(2);
+  // An approval alone, with nothing else changed, is news too.
+  approval = { reviewDecision: "APPROVED" };
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(states.get(pull)).toMatchObject({ review: "approved" });
+  expect(changed).toHaveBeenCalledTimes(3);
 });
 
 it("keeps one reader that throws from failing the read, or keeping it from the rest", async () => {

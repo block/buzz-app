@@ -221,9 +221,9 @@ export function createIdentityArchives(
     /** For an identity the caller owns: a fresh owner proof (NIP-OA), used
      * when no consent path is usable now, as when its profile has none. */
     issue?: (target: string, signal: AbortSignal) => Promise<readonly string[]>,
-    /** For an identity whose key the caller holds: publishes its profile
-     * again, as the identity, carrying `auth`. The relay also needs the
-     * proof on the latest profile, so one missing there is added first. */
+    /** For an identity whose key the caller holds: republishes its own
+     * profile with its saved owner proof. The relay also needs a proof naming
+     * the owner on the latest profile, so a missing one is restored first. */
     attest?: IdentityAttest,
   ): Promise<void> {
     if (!writer) throw new Error("Archive is unavailable on this connection");

@@ -15,8 +15,8 @@ export type OwnerProof = (
 ) => Promise<readonly string[]>;
 
 /** How the caller proves it owns an agent: `issue`, a fresh owner proof
- * (NIP-OA); `attest`, only with the agent's key, republishes its profile
- * carrying that proof when the profile has none. */
+ * (NIP-OA); `attest`, only with the agent's key, republishes its own profile
+ * with its saved owner proof when the profile has none. */
 export type OwnerConsent = { issue: OwnerProof; attest?: IdentityAttest };
 
 /** Archives the agent unless a read started now finds it archived already, so

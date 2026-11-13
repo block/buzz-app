@@ -251,13 +251,14 @@ function mergeability(pull: Checklist) {
   // A queue-required branch can report BLOCKED until enqueued; GitHub
   // validates its prerequisites when accepting the enqueue request. Missing
   // reviews and unfinished or failing checks would be rejected, so those wait
-  // for auto-merge to enqueue instead.
+  // for auto-merge to enqueue instead, as do checks that could not be read.
   if (pull.queueRequired) {
     const waiting =
       pull.review.decision === "REVIEW_REQUIRED" ||
       pull.review.decision === "CHANGES_REQUESTED" ||
       pull.checks.state === "failure" ||
-      pull.checks.state === "pending";
+      pull.checks.state === "pending" ||
+      pull.checks.state === "unavailable";
     return {
       now:
         ["CLEAN", "HAS_HOOKS", "UNSTABLE"].includes(pull.merge) ||

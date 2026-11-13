@@ -706,13 +706,17 @@ it.each([
   },
 );
 
-const waitingChecks = (conclusion: string, status = "COMPLETED") => ({
+const waitingChecks = (
+  conclusion: string,
+  status = "COMPLETED",
+  totalCount = 1,
+) => ({
   nodes: [
     {
       commit: {
         statusCheckRollup: {
           contexts: {
-            totalCount: 1,
+            totalCount,
             nodes: [
               { __typename: "CheckRun", name: "unit", status, conclusion },
             ],
@@ -742,6 +746,11 @@ const notReady = [
   {
     mergeStateStatus: "BEHIND",
     commits: waitingChecks("", "IN_PROGRESS"),
+  },
+  // Checks past the page read are unknown, so they may still be required.
+  {
+    mergeStateStatus: "BLOCKED",
+    commits: waitingChecks("SUCCESS", "COMPLETED", 2),
   },
 ];
 

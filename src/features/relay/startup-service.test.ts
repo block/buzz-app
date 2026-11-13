@@ -43,12 +43,8 @@ function setup({
   ];
   let startup: SavedStartup | undefined = saved
     ? {
-        discovery: {
-          savedAt: Date.now(),
-          relayAuthor: relay.pubkey,
-          events,
-          ...(verifiedProfiles ? { verifiedProfiles } : {}),
-        },
+        discovery: { savedAt: Date.now(), relayAuthor: relay.pubkey, events },
+        ...(verifiedProfiles ? { verifiedProfiles } : {}),
       }
     : undefined;
   let heads: SavedHead[] = !saved

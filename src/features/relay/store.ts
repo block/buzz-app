@@ -405,9 +405,11 @@ export function createChannelStore(
   let profilesRestored = false;
   // Event ids last written to the mirror; undefined when the disk copy is unknown.
   let mirrored: string | undefined;
-  // Verified heads read from the mirror, kept in it while this session has no
-  // verified-profile authority to hold them.
+  // Verified heads last mirrored, kept while this session has no
+  // verified-profile authority to hold newer ones.
   let savedVerified: readonly RelayEvent[] = [];
+  // The authority last saved for cached sessions; undefined when unknown.
+  let savedAuthority: string | undefined;
   let preparing = false;
   let warming = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
@@ -1411,7 +1413,6 @@ export function createChannelStore(
           savedAt: now(),
           relayAuthor: transport.relayAuthor,
           events: discovery.savedEvents(),
-          verifiedProfiles: directory.queries.verifiedAuthority?.(),
         },
       })
       .catch(() => {});
@@ -1422,12 +1423,18 @@ export function createChannelStore(
     clearTimeout(profileSave);
     profileSave = undefined;
     if (!persistence?.writeProfiles || !profilesRestored || disposed) return;
-    const events = [
-      ...directory.recent(PROFILE_CACHE_BASE),
-      ...(directory.queries.verifiedAuthority?.()
-        ? directory.verifiedHeads(PROFILE_CACHE_BASE)
-        : savedVerified),
-    ];
+    const authority = directory.queries.verifiedAuthority?.();
+    const observed = JSON.stringify(authority ?? null);
+    if (observed !== savedAuthority && persistence.writeStartup) {
+      savedAuthority = observed;
+      void persistence
+        .writeStartup({ verifiedProfiles: authority ?? null })
+        .catch(() => {
+          savedAuthority = undefined;
+        });
+    }
+    if (authority) savedVerified = directory.verifiedHeads(PROFILE_CACHE_BASE);
+    const events = [...directory.recent(PROFILE_CACHE_BASE), ...savedVerified];
     // Sorted, so reads that only reorder the LRU never rewrite the mirror.
     const signature = events
       .map((event) => event.id)
@@ -2166,6 +2173,7 @@ export function createChannelStore(
           discoverySave = undefined;
           // The kept directory is saved again after the clear.
           mirrored = undefined;
+          savedAuthority = undefined;
           profileSave ??= setTimeout(saveProfiles, 1000);
           void persistence?.clear().catch(() => {});
           setList({
@@ -3257,6 +3265,7 @@ export function createChannelStore(
     profileSave = undefined;
     mirrored = undefined;
     savedVerified = [];
+    savedAuthority = undefined;
     await persistence?.clear().catch(() => {});
   }
   /** One background head read at a time; warm never competes with demand reads

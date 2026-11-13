@@ -544,13 +544,128 @@ describe("device-local startup", () => {
       { timeout: 3000 },
     );
     // The next launch's offline view gets the authority to show them with.
-    owner.session.channels.ensureList();
     await vi.waitFor(
       async () =>
-        expect(
-          (await storage.readStartup?.())?.discovery?.verifiedProfiles,
-        ).toEqual({ pubkey: relay.pubkey, multipleIssuers: false }),
+        expect((await storage.readStartup?.())?.verifiedProfiles).toEqual({
+          pubkey: relay.pubkey,
+          multipleIssuers: false,
+        }),
       { timeout: 3000 },
+    );
+  });
+
+  it("keeps the newest saved verified name and records a disable without renewing the roster", async () => {
+    const storage = disk();
+    const savedAt = (await storage.readStartup?.())?.discovery?.savedAt;
+    const alice = keypair();
+    const head = (name: string, at: number) =>
+      eventDto(
+        signed(relay, {
+          kind: 30382,
+          content: "",
+          created_at: at,
+          tags: [
+            ["d", alice.pubkey],
+            ["p", alice.pubkey],
+            ["active", "true"],
+            ["display_name", name],
+            ["username", "alice"],
+            ["issuer_label", "Example"],
+            ["verified_at", String(at)],
+          ],
+        }),
+      );
+    const renamed = head("Alice Renamed", 1_700_000_001);
+    await storage.writeProfiles?.([head("Alice", 1_700_000_000)]);
+    let live: import("./live").LiveCallbacks | undefined;
+    let sink: VerifiedProfileSink | undefined;
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+        readVerifiedProfileAuthority: async () => null,
+        subscribe(callbacks) {
+          live = callbacks;
+          return {
+            update() {},
+            retry() {},
+            dispose() {},
+            syncVerifiedProfiles(_filter, next) {
+              sink = next;
+              return () => {};
+            },
+          };
+        },
+      },
+      { persistence: storage, prepared: true },
+    );
+    owners.push(owner);
+    const { profiles } = owner.session;
+    live?.state({ status: "connected", routes: [] });
+    await owner.restore();
+    await vi.waitFor(() => expect(sink).toBeDefined());
+    sink?.event(renamed);
+    sink?.eose();
+    const mirrored = async () =>
+      (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+        (event) => event.id,
+      );
+    await vi.waitFor(
+      async () => expect(await mirrored()).toEqual([renamed.id]),
+      {
+        timeout: 3000,
+      },
+    );
+    // A reconnect rereads discovery, which now disables verified names.
+    live?.state({ status: "connecting", routes: [] });
+    live?.state({ status: "connected", routes: [] });
+    await vi.waitFor(() =>
+      expect(profiles.verifiedAuthority?.()).toBeUndefined(),
+    );
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+    expect(await mirrored()).toEqual([renamed.id]);
+    expect((await storage.readStartup?.())?.discovery?.savedAt).toBe(savedAt);
+  });
+
+  it("publishes a mirror of verified names alone before restore returns", async () => {
+    const storage = disk();
+    const alice = keypair();
+    await storage.writeProfiles?.([
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        tags: [
+          ["d", alice.pubkey],
+          ["p", alice.pubkey],
+          ["active", "true"],
+          ["display_name", "Alice"],
+          ["username", "alice"],
+          ["issuer_label", "Example"],
+          ["verified_at", "1700000000"],
+        ],
+      }),
+    ]);
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+      },
+      { persistence: storage, prepared: true, cachedOnly: true },
+    );
+    owners.push(owner);
+    await owner.restore();
+    expect(owner.session.profiles.snapshot().get(alice.pubkey)?.name).toBe(
+      "Alice",
     );
   });
 

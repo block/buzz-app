@@ -6,10 +6,10 @@ export type SavedStartup = {
     savedAt: number;
     relayAuthor: string;
     events: unknown[];
-    /** The verified-profile authority this session last used, so a cached
-     * session can show saved verified names before discovery. */
-    verifiedProfiles?: unknown;
   };
+  /** The verified-profile authority last observed, `null` once disabled, so
+   * a cached session can show saved verified names before discovery. */
+  verifiedProfiles?: unknown;
   preferences?: { savedAt: number; data: SidebarPreferences };
 };
 /** Signed wire records only. The owner re-verifies before displaying cached history.

@@ -138,7 +138,8 @@ export function provideRelay(
     let cached: ReturnType<typeof createRelaySession> | undefined;
     let handedOff = false;
     try {
-      const saved = (await persistence.readStartup?.())?.discovery;
+      const startup = await persistence.readStartup?.();
+      const saved = startup?.discovery;
       if (
         !saved ||
         !/^[0-9a-f]{64}$/.test(saved.relayAuthor) ||
@@ -153,7 +154,7 @@ export function provideRelay(
           scope: resume.scope,
           relayAuthor: saved.relayAuthor,
           verifiedProfiles: savedVerifiedProfileAuthority(
-            saved.verifiedProfiles,
+            startup?.verifiedProfiles,
           ),
           query: () =>
             Promise.reject(

@@ -51,6 +51,8 @@ export type LocalWork = Readonly<{
   /** The synthetic request text supplied to the harness, without truncation. */
   requestText?: string;
   threadRootId: string;
+  /** Canonical evidence source: a thread root, or null for a flat conversation. */
+  sourceRootId?: string | null;
   /** The request is in this thread; absent means channel-level work. */
   thread?: true;
   /** The request is in a relay-verified Solo chat, not a DM or channel. */
@@ -233,6 +235,10 @@ export function createLocalAgentActivity() {
       }
       const id = Symbol();
       const lifecycleId = crypto.randomUUID();
+      const sourceRootId =
+        input.sourceRootId === undefined
+          ? (localWorkRoot(input) ?? null)
+          : input.sourceRootId;
       let accepted = false;
       const retain = (item: LocalVisibleMessage) => {
         const omitted = omissions.get(id) ?? { messages: 0, characters: 0 };
@@ -267,8 +273,7 @@ export function createLocalAgentActivity() {
             row.scope === current.scope &&
             row.agent === current.agent &&
             row.channelId === current.channelId &&
-            (row.thread ? row.threadRootId : undefined) ===
-              (current.thread ? current.threadRootId : undefined) &&
+            row.sourceRootId === current.sourceRootId &&
             row.session?.sessionKey === current.session?.sessionKey,
         );
         const all = matching
@@ -353,6 +358,7 @@ export function createLocalAgentActivity() {
         id,
         Object.freeze({
           ...input,
+          sourceRootId,
           evidence: null,
           state: "waiting",
           startedAt,
@@ -409,6 +415,7 @@ export function createLocalAgentActivity() {
         channelId: input.channelId,
         threadRootId: input.threadRootId,
         thread: input.thread,
+        sourceRootId,
         requestText: (requestText: string) => {
           const current = entries.get(id);
           if (

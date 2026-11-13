@@ -99,7 +99,10 @@ stale async results. Publication and step changes do not change this snapshot.
 
 `messages` contains ordered accepted input and attempted kind-9 output for the
 same agent, community and source conversation. When a session association is
-present, its logical session key also isolates the history. Synthetic input
+present, its logical session key also isolates the history. The row
+uses `sourceRootId` as the canonical source boundary: a thread root, or null
+for a flat Solo/DM conversation or rootless wake. The `thread` flag describes
+message presentation and does not group evidence. Synthetic input
 has `synthetic: true` and author `host`. Outgoing text has a local ID and a
 `delivery` state: `pending`, `published`, or `failed`. A pending or failed
 attempt is not proof of delivery. An uncertain acknowledgement stays `pending`.

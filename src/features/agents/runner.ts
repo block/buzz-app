@@ -2544,6 +2544,12 @@ export class AgentRunners {
             }
           : {}),
         threadRootId: threadRootId ?? event.id,
+        sourceRootId:
+          channel?.channelType === "solo" ||
+          channel?.channelType === "dm" ||
+          (wake && !wake.root)
+            ? null
+            : (threadRootId ?? event.id),
         ...(thread ? { thread: true } : {}),
         ...(soloChat ? { soloChat: true } : {}),
         ...(soloChat && conversationName ? { conversationName } : {}),
@@ -2963,8 +2969,9 @@ export class AgentRunners {
           const inSource =
             work &&
             (reference
-              ? reference.rootId === work.threadRootId
-              : !work.thread && !event.tags?.some(([name]) => name === "e"));
+              ? reference.rootId === work.sourceRootId
+              : work.sourceRootId === null &&
+                !event.tags?.some(([name]) => name === "e"));
           const sent = ownReply
             ? work.sending(inSource ? event.content : undefined)
             : undefined;

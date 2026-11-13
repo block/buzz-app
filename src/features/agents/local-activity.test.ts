@@ -15,6 +15,49 @@ const scope = "https://relay.test:viewer",
   agent = "a".repeat(64),
   root = "b".repeat(64),
   reply = "c".repeat(64);
+it.each([false, true])(
+  "keeps source history across initial and threaded input (flat: %s)",
+  (flat) => {
+    const local = createLocalAgentActivity();
+    const input = {
+      scope,
+      agent,
+      channelId: "channel",
+      ...(flat ? { sourceRootId: null } : {}),
+    };
+    const a = local.begin(
+      { ...input, messageId: root, threadRootId: root },
+      undefined,
+      { author: "owner", text: "Request A" },
+    );
+    a.acknowledged();
+    a.sending("Reply A")(true);
+    a.finish({ ok: true });
+    const b = local.begin(
+      { ...input, messageId: reply, threadRootId: reply },
+      undefined,
+      { author: "owner", text: "Request B" },
+    );
+    b.acknowledged();
+    expect(
+      local.reader.work()[1]?.evidence?.messages.map(({ text }) => text),
+    ).toEqual(flat ? ["Request A", "Reply A", "Request B"] : ["Request B"]);
+    const followUp = local.begin(
+      { ...input, messageId: "d".repeat(64), threadRootId: root, thread: true },
+      undefined,
+      { author: "owner", text: "Follow up A" },
+    );
+    followUp.acknowledged();
+    expect(
+      local.reader.work()[2]?.evidence?.messages.map(({ text }) => text),
+    ).toEqual(
+      flat
+        ? ["Request A", "Reply A", "Request B", "Follow up A"]
+        : ["Request A", "Reply A", "Follow up A"],
+    );
+  },
+);
+
 it("captures accepted boundaries independently of steps and publication, rejecting stale callbacks", () => {
   const local = createLocalAgentActivity();
   const input = {

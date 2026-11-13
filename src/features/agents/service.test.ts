@@ -1849,6 +1849,7 @@ describe("a plugin's wake", () => {
           agent: bot,
           channelId: channel,
           threadRootId: root,
+          sourceRootId: channelType ? null : root,
           syntheticMessage: true,
           requestText: "Read the task request",
           state: "working",
@@ -2178,6 +2179,7 @@ it("publishes an agent's reply in a chat its owner is still starting once the st
 
 it("captures runner handoff with a pending publication and a background watch", async () => {
   const f = await setup();
+  const sourceRootId = "a".repeat(64);
   await f.service.create({ type: "example/echo", name: "Echo" });
   const publication = runnerGate<RelayEvent>();
   const turn = runnerGate();
@@ -2203,14 +2205,17 @@ it("captures runner handoff with a pending publication and a background watch", 
       reply = agent.publish({
         kind: 9,
         content: "Choose the next scope",
-        tags: [["h", channel]],
+        tags: [
+          ["h", channel],
+          ["e", sourceRootId, "", "reply"],
+        ],
       });
       workingUntil(turn.promise);
     },
   );
   f.emit({
     events: [
-      event("local-evidence", {
+      event(sourceRootId, {
         pubkey: viewer,
         content: "Test the change",
         tags: [

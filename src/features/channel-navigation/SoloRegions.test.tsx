@@ -2767,8 +2767,12 @@ it("3,000 channel groups share roster reads and retain the complete native menu"
   expect(ensureProfiles).not.toHaveBeenCalled();
   expect(nativeActions).not.toHaveBeenCalled();
   const user = userEvent.setup();
+  const group = view.container.querySelector<HTMLElement>(
+    '[data-solo-channel-group="source-2999"]',
+  );
+  assert(group);
   await user.click(
-    screen.getByRole("button", {
+    within(group).getByRole("button", {
       name: "Actions for Source 2999",
     }),
   );

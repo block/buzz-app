@@ -635,6 +635,15 @@ test("input before deferred chips render edits and undoes as usual", async ({
   await input.press("ControlOrMeta+z");
   await expect(input).toHaveJSProperty("value", "");
 
+  // Complete a link before the pasted text; its chip shortens the document.
+  await input.fill(`[${"a".repeat(2000)}](`);
+  await input.press("End");
+  await paste([`https://example.com) ${"https://example.org/x ".repeat(60)}`]);
+  await expect(input.locator("[data-source]")).toHaveCount(1);
+  await release();
+  await expect(input.locator("[data-source]")).toHaveCount(61);
+  await input.fill("");
+
   // Paste an identity inside the pasted text.
   await paste([long]);
   await pending();

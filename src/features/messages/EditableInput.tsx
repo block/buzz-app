@@ -572,6 +572,14 @@ export function EditableInput({
     // Input and history commands adopt them first: a history step inside the
     // unconverted text would lose its inverse positions to the conversion.
     let pendingTokens: { from: number; to: number }[] = [];
+    const mapPending = (mapping: Transaction["mapping"]) => {
+      pendingTokens = pendingTokens
+        .map(({ from, to }) => ({
+          from: mapping.map(from, 1),
+          to: mapping.map(to, -1),
+        }))
+        .filter(({ from, to }) => from < to);
+    };
     const flushTokens = () => {
       if (editor.isDestroyed || editor.composing || !pendingTokens.length)
         return;
@@ -591,12 +599,7 @@ export function EditableInput({
       },
       appendTransaction(transactions, old, state) {
         for (const tr of transactions) {
-          pendingTokens = pendingTokens
-            .map(({ from, to }) => ({
-              from: tr.mapping.map(from, 1),
-              to: tr.mapping.map(to, -1),
-            }))
-            .filter(({ from, to }) => from < to);
+          mapPending(tr.mapping);
           const pasted = tr.getMeta("composer-defer-tokens");
           if (!pasted) continue;
           if (!pendingTokens.length)
@@ -755,6 +758,8 @@ export function EditableInput({
             composerSchema.text(token.node.attrs.source, token.node.marks),
           );
         if (!tr.docChanged) return;
+        // ProseMirror never passes a plugin its own appended transaction.
+        mapPending(tr.mapping);
         if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
         return tr.setMeta("composer-normalized", true);
       },

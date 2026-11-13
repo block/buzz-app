@@ -98,10 +98,8 @@ export function paneFocusTarget(pane?: "main" | "side") {
 }
 
 // Places a click keeps for itself: editing, embedded apps, terminals, overlays,
-// find, stateful controls, tab strips (tab selection focuses its content) and
-// links, which open their own destination (a media review returns to its tile).
+// find, stateful controls and tab strips (tab selection focuses its content).
 const OWNS_CLICK = [
-  "a[href]",
   "input",
   "textarea",
   "select",
@@ -123,6 +121,9 @@ const OWNS_CLICK = [
   "[data-open][data-side]",
   '[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]',
 ].join(", ");
+
+// A modal open now; one still mounted for its closing motion has let focus go.
+const OPEN_MODAL = '[aria-modal="true"]:not([data-closed])';
 
 // Open layers a click outside dismisses; their own close returns focus. A layer
 // still mounted for its closing motion has already returned it.
@@ -184,6 +185,9 @@ export function installComposerClickFocus() {
       if (
         !target.isConnected ||
         target.closest(OWNS_CLICK) ||
+        // A click that opened a modal (a media review, say) leaves focus to it,
+        // even before the modal's own focus effect has run.
+        document.querySelector(OPEN_MODAL) ||
         (selection && !selection.isCollapsed) ||
         !passiveFocus(document.activeElement)
       )

@@ -8,6 +8,7 @@ import {
   screen,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { installComposerClickFocus } from "./focus-navigation";
 
@@ -243,32 +244,53 @@ it("a modal still closing does not hold back the click after it", async () => {
   expect(screen.getByRole("textbox", { name: "Main draft" })).toHaveFocus();
 });
 
-it("a link click leaves focus to what the link opens", async () => {
-  const user = userEvent.setup();
-  render(
+function Tile() {
+  const [open, setOpen] = useState(false);
+  return (
     <main id="main-content">
       <div data-main-workspace="">
         <section data-message-scroller="">
           <div data-message-id="a" tabIndex={-1}>
             <a
               href="https://example.test/photo.png"
-              onClick={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.preventDefault();
+                setOpen(true);
+              }}
             >
               <span>Open image attachment</span>
+            </a>
+            <a href="https://example.test/article">
+              <span>An external link</span>
             </a>
           </div>
         </section>
         <textarea data-tab-focus="" aria-label="Main draft" />
       </div>
-    </main>,
+      {/* Its focus effect has not run by the next frame. */}
+      {open && (
+        <div role="dialog" aria-modal="true" aria-label="Image viewer" />
+      )}
+    </main>
   );
-  const tile = screen.getByRole("link", { name: "Open image attachment" });
+}
+
+it("a click that opens a modal leaves focus to the modal", async () => {
+  const user = userEvent.setup();
+  render(<Tile />);
   // WebKit focuses the row, not the link, when a pointer activates it.
-  tile.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-    tile.closest<HTMLElement>("[data-message-id]")?.focus();
-  });
+  for (const link of screen.getAllByRole("link"))
+    link.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      link.closest<HTMLElement>("[data-message-id]")?.focus();
+    });
+  const draft = screen.getByRole("textbox", { name: "Main draft" });
+  // A link that leaves the app resumes typing, like any other click.
+  await user.click(screen.getByText("An external link"));
+  await settle();
+  expect(draft).toHaveFocus();
+  draft.blur();
   await user.click(screen.getByText("Open image attachment"));
   await settle();
-  expect(screen.getByRole("textbox", { name: "Main draft" })).not.toHaveFocus();
+  expect(draft).not.toHaveFocus();
 });

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { pauseClock } from "./clock.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import {
   closeSettings,
@@ -72,6 +73,7 @@ test.describe("disabled plugin chat fallback", () => {
     page,
     app,
   }) => {
+    await page.clock.install();
     await page.goto(`${app.origin}/?solo-region-fixture`);
     await newChat(page);
     await page.evaluate(async (id) => {
@@ -132,7 +134,14 @@ test.describe("disabled plugin chat fallback", () => {
       steps: 8,
     });
     await expect(sidebar.locator("[data-drop-target]")).toHaveCount(1);
-    await page.mouse.up();
+    await pauseClock(page);
+    try {
+      await page.mouse.up();
+      // dnd-kit retires its document capture click blocker after pointer-up.
+      await page.clock.runFor(50);
+    } finally {
+      await page.clock.resume();
+    }
     await expect(sidebar.getByRole("alert")).toContainText(
       "This chat is managed by",
     );

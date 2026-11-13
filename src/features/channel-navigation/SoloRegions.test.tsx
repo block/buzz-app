@@ -1499,7 +1499,7 @@ it.each([
       screen.queryByRole("button", { name: "Open plugin settings" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "In Plugin chats" }),
+      screen.queryByRole("button", { name: "In Work" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Workspace: Personal" }),

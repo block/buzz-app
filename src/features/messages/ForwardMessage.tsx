@@ -17,6 +17,7 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { BuzzLinkPreview } from "../conversation/BuzzLinkPreview";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { agentUnavailable, canMessageAgent } from "../agents/choices";
+import { channelText } from "../channels/channel-icon";
 import { RecipientPicker } from "../direct-messages/RecipientPicker";
 import type { Recipient } from "../direct-messages/usePeople";
 import {
@@ -25,7 +26,7 @@ import {
 } from "../profiles/useVerifiedNames";
 import type { Navigation } from "../navigation/controller";
 import type { OpenTarget } from "../navigation/targets";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, ChannelSummary } from "../relay/contracts";
 import type { OutgoingEvent } from "../relay/outbox";
 import { splitPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
@@ -47,13 +48,33 @@ const noOperations = () => emptyOperations;
 
 const recoveryKey = "message:forward";
 const hex64 = /^[0-9a-f]{64}$/;
+/** A person's DM, or a channel the viewer can post in. */
+type ForwardTarget =
+  | { kind: "person"; person: Recipient }
+  | {
+      kind: "channel";
+      channel: { id: string; name: string; private?: true };
+    };
 type PendingForward = {
   id: string;
   channelId: string;
   source: { channelId: string; forward: string };
-  person: Recipient;
+  target: ForwardTarget;
   note: string;
 };
+/** Channels a forward can post into: current, writable, ordinary conversations. */
+const forwardChannel = (channel: ChannelSummary) =>
+  (channel.channelType === "stream" || channel.channelType === "forum") &&
+  !channel.huddle &&
+  !channel.metadataPending &&
+  !channel.pending &&
+  !channel.cached &&
+  !channel.readOnly &&
+  !channel.archived;
+const targetName = (target: ForwardTarget) =>
+  target.kind === "person"
+    ? target.person.name
+    : channelText({ ...target.channel, channelType: "stream" });
 // The durable outbox, not component state, owns an uncertain forward: a reload
 // must restore and confirm the original event rather than publish another.
 function pendingForward(
@@ -64,28 +85,45 @@ function pendingForward(
     if (item.recovery?.key !== recoveryKey || item.event.kind !== 9) continue;
     const channelId = item.event.tags.find(([name]) => name === "h")?.[1];
     try {
-      const { source, person, note } = JSON.parse(item.recovery.value);
+      const { source, person, channel, note } = JSON.parse(item.recovery.value);
       if (
-        channelId &&
-        typeof source?.channelId === "string" &&
-        source.channelId &&
-        typeof source.forward === "string" &&
-        hex64.test(source.forward) &&
+        !channelId ||
+        typeof source?.channelId !== "string" ||
+        !source.channelId ||
+        typeof source.forward !== "string" ||
+        !hex64.test(source.forward) ||
+        typeof note !== "string"
+      )
+        continue;
+      const target: ForwardTarget | undefined =
         typeof person?.pubkey === "string" &&
         hex64.test(person.pubkey) &&
         person.pubkey !== viewer &&
-        typeof person.name === "string" &&
-        typeof note === "string"
-      )
+        typeof person.name === "string"
+          ? {
+              kind: "person",
+              person: {
+                pubkey: person.pubkey,
+                name: person.name.slice(0, 500),
+                ...(person.isAgent === true ? { isAgent: true } : {}),
+              },
+            }
+          : channel?.id === channelId && typeof channel.name === "string"
+            ? {
+                kind: "channel",
+                channel: {
+                  id: channelId,
+                  name: channel.name.slice(0, 500),
+                  ...(channel.private === true ? { private: true } : {}),
+                },
+              }
+            : undefined;
+      if (target)
         return {
           id: item.event.id,
           channelId,
           source: { channelId: source.channelId, forward: source.forward },
-          person: {
-            pubkey: person.pubkey,
-            name: person.name.slice(0, 500),
-            ...(person.isAgent === true ? { isAgent: true } : {}),
-          },
+          target,
           note: note.slice(0, 4096),
         };
     } catch {
@@ -281,17 +319,32 @@ function ForwardMessageDialog({
   finalFocus: React.RefObject<HTMLElement | null>;
   lock(value: boolean): void;
 }) {
+  const recoveredPeople = (pending?: PendingForward) =>
+    pending?.target.kind === "person" ? [pending.target.person] : [];
+  const recoveredChannel = (pending?: PendingForward) =>
+    pending?.target.kind === "channel" ? pending.target.channel.id : "";
   const [people, setPeople] = useState<Recipient[]>(() =>
-    recovered ? [recovered.person] : [],
+    recoveredPeople(recovered),
   );
+  const [channelId, setChannelId] = useState(() => recoveredChannel(recovered));
   const [note, setNote] = useState(() => recovered?.note ?? "");
   const restored = useRef(recovered?.id);
   // The outbox can finish loading after the dialog mounts.
   if (recovered && restored.current !== recovered.id) {
     restored.current = recovered.id;
-    setPeople([recovered.person]);
+    setPeople(recoveredPeople(recovered));
+    setChannelId(recoveredChannel(recovered));
     setNote(recovered.note);
   }
+  const channelList = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const channels = useMemo(
+    () => channelList.channels.filter(forwardChannel),
+    [channelList],
+  );
   const [typed, setTyped] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -325,9 +378,26 @@ function ForwardMessageDialog({
     [people, verified, profiles],
   );
   const person = people[0];
+  const channel = channels.find((item) => item.id === channelId);
+  // A recovered channel keeps its saved label until the list names it.
+  const target: ForwardTarget | undefined = person
+    ? { kind: "person", person }
+    : channel
+      ? {
+          kind: "channel",
+          channel: {
+            id: channel.id,
+            name: channel.name,
+            ...(channel.private ? { private: true } : {}),
+          },
+        }
+      : recovered?.target.kind === "channel" &&
+          recovered.target.channel.id === channelId
+        ? recovered.target
+        : undefined;
   const locked = pending || !!recovered;
   const submit = async () => {
-    if (!open || !person || typed || operation.current) return;
+    if (!open || !target || typed || operation.current) return;
     const controller = new AbortController();
     operation.current = controller;
     lock(true);
@@ -335,13 +405,15 @@ function ForwardMessageDialog({
     setError("");
     setNotice(undefined);
     try {
-      // The confirmed record names its recipient: the outbox can turn up a
-      // saved forward to someone other than the person picked.
+      // The confirmed record names its destination: the outbox can turn up a
+      // saved forward to somewhere other than the one picked.
       let sent:
-        | Pick<PendingForward, "id" | "channelId" | "person">
+        | Pick<PendingForward, "id" | "channelId" | "target">
         | undefined = recovered;
       if (!sent) {
         const validateRecipient = () => {
+          if (target.kind !== "person") return;
+          const { person } = target;
           if (
             agentUnavailable(session, person.pubkey) ||
             ((person.isAgent ||
@@ -358,10 +430,14 @@ function ForwardMessageDialog({
             );
         };
         validateRecipient();
-        const channelId = await session.directMessages.open(
-          [person.pubkey],
-          controller.signal,
-        );
+        // A channel is posted to directly; sending checks write access.
+        const channelId =
+          target.kind === "person"
+            ? await session.directMessages.open(
+                [target.person.pubkey],
+                controller.signal,
+              )
+            : target.channel.id;
         controller.signal.throwIfAborted();
         await session.outbox?.ready();
         controller.signal.throwIfAborted();
@@ -391,17 +467,29 @@ function ForwardMessageDialog({
                   channelId: source.channelId,
                   forward: source.forward,
                 },
-                person: {
-                  pubkey: person.pubkey,
-                  name: person.name.slice(0, 500),
-                  ...(person.isAgent === true ? { isAgent: true } : {}),
-                },
+                ...(target.kind === "person"
+                  ? {
+                      person: {
+                        pubkey: target.person.pubkey,
+                        name: target.person.name.slice(0, 500),
+                        ...(target.person.isAgent === true
+                          ? { isAgent: true }
+                          : {}),
+                      },
+                    }
+                  : {
+                      channel: {
+                        id: target.channel.id,
+                        name: target.channel.name.slice(0, 500),
+                        ...(target.channel.private ? { private: true } : {}),
+                      },
+                    }),
                 note,
               }),
             },
           ),
           channelId,
-          person,
+          target,
         };
       }
       await session.directMessages.delivered(
@@ -415,15 +503,19 @@ function ForwardMessageDialog({
       controller.signal.throwIfAborted();
       lock(false);
       setPeople([]);
+      setChannelId("");
       setNote("");
       close();
-      const { id, channelId, person: to } = sent;
+      const { id, channelId, target: to } = sent;
       // You stay where you forwarded from; the notice opens what you sent.
       setNotice({
-        text: `Message forwarded to ${to.name}`,
+        text: `Message forwarded to ${targetName(to)}`,
         error: false,
         navigation: {
-          label: `Open your DM with ${to.name}`,
+          label:
+            to.kind === "person"
+              ? `Open your DM with ${to.person.name}`
+              : `Open ${targetName(to)}`,
           open: () => {
             setNotice(undefined);
             void navigation.open({
@@ -459,7 +551,7 @@ function ForwardMessageDialog({
       <Dialog
         open={open}
         title="Forward message"
-        description="Send this message to a person, with an optional note."
+        description="Send this message to a person or channel, with an optional note."
         headerGap="compact"
         footerGap="compact"
         preventClose={pending}
@@ -483,7 +575,7 @@ function ForwardMessageDialog({
             <Button
               variant="prominent"
               loading={pending}
-              disabled={pending || !person || typed}
+              disabled={pending || !target || typed}
               onClick={() => void submit()}
             >
               {recovered ? "Retry forward" : "Forward"}
@@ -501,6 +593,9 @@ function ForwardMessageDialog({
             maxRecipients={1}
             appearance="field"
             initiallyOpen={false}
+            channels={channels}
+            channel={target?.kind === "channel" ? target.channel : undefined}
+            onChannel={(item) => setChannelId(item?.id ?? "")}
             onChange={setPeople}
             onTyped={setTyped}
             onComplete={() => noteField.current?.focus()}
@@ -525,7 +620,7 @@ function ForwardMessageDialog({
             </section>
           )}
           <p className="text-body-sm text-subtle">
-            The recipient can open the original only if they have access to its
+            Recipients can open the original only if they have access to its
             conversation.
           </p>
           {error && (

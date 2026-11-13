@@ -374,13 +374,14 @@ and are asked to sign in again in Buzz.
 - Plugins can add actions to this toolbar. A link to an active plugin panel
   opens that panel in the conversation. If the plugin is removed, its actions
   and panel links become unavailable.
-- **Forward message** in a message's menu sends its link to one person in the
-  current community, with an optional note. Buzz sends it in your direct
-  message with them, starting one if needed, and you stay where you are;
-  select the confirmation notice while it's showing to open the forwarded
-  message in that DM. The link previews the original message; the
-  recipient still needs access to its conversation. Forwarding is unavailable
-  when the connection cannot start DMs or the message has no link yet.
+- **Forward message** in a message's menu sends its link to one person or one
+  channel in the current community, with an optional note. Typing in To finds
+  both people and the channels you can post in. For a person, Buzz sends it in
+  your direct message with them, starting one if needed. You stay where you
+  are; select the confirmation notice while it's showing to open the forwarded
+  message. The link previews the original message; recipients still need
+  access to its conversation. Forwarding is unavailable when the connection
+  cannot start DMs or the message has no link yet.
 
 - Only explicit additions by another member and removals appear as centered
   channel notices; self-joins and voluntary leaves are hidden.

@@ -137,12 +137,18 @@ import {
 } from "../host/service";
 import { avatarSource } from "../../shared/avatar-source";
 import { publicKeyLabels } from "../../shared/identity/public-key";
-import { newer, type EventData, type RelayEvent } from "../relay/events";
+import {
+  hasEventProof,
+  newer,
+  type EventData,
+  type RelayEvent,
+} from "../relay/events";
 import { relayPartition } from "../relay/partition";
 import { threadReference } from "../relay/thread-reference";
 import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import {
   parseSlug,
   type AttentionObject,
@@ -221,6 +227,8 @@ import { nameSoloChat } from "./solo-chat-name";
 import { visibleTeams } from "./visible-teams";
 import {
   clearDeletedDefaultAgent,
+  defaultAgentControl,
+  type DefaultAgentControl,
   forgetDefaultAgent,
 } from "../solo/default-agent";
 import type { AgentPlugins } from "../../plugins/requests";
@@ -604,6 +612,9 @@ export type AgentHandle = Readonly<{
   }>;
   /** On a run's handle only: Buzz settings on this device. */
   settings?: DeviceSettings;
+  /** On a run's handle only: the owner's Bestie in its community; undefined
+   * while it is not connected. */
+  bestie?(): DefaultAgentControl | undefined;
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
@@ -1266,6 +1277,13 @@ export type TeamUpdateRequest = Readonly<{
   name?: string;
   instructions?: string;
 }>;
+/** A mention an interrupted agent was working on. */
+export type InterruptedTurn = Readonly<{
+  id: string;
+  /** Its channel, or "" without one. */
+  channelId: string;
+  channel?: ChannelSummary | undefined;
+}>;
 export type AgentsSnapshot = Readonly<{
   status: "unavailable" | "loading" | "ready" | "error";
   /** Whether a watch's classifier can run on this device now. */
@@ -1447,6 +1465,12 @@ export type Agents = {
   resumeInterrupted(): void;
   /** Forgets the turns `interrupted` agents were working on. */
   dismissInterrupted(): void;
+  /** Each mention an `interrupted` agent was working on, with its channel
+   * when this device knows it. */
+  interruptedTurns(agent: Agent): readonly InterruptedTurn[];
+  /** Reads an `interrupted` agent's mentions from the relay, as Resume reads
+   * them. Resume reads them again, so what it finds can differ. */
+  readInterrupted(agent: Agent, signal: AbortSignal): Promise<RelayEvent[]>;
   /** The agent of this pubkey in the selected community, if it is an agent. */
   find(pubkey: string): Agent | undefined;
   /** The agent as `run` holds it, outside any run: for one of the calling
@@ -2770,6 +2794,10 @@ export class AgentsService extends Service implements Agents {
         return session && channelTabs(session, ctx.navigation);
       },
       settings: () => this.deviceSettings,
+      bestie: (agent) => {
+        const binding = this.bindingOf(agent);
+        return binding && defaultAgentControl(binding.session, binding.scope);
+      },
       classifier: () => this.classifier(),
       decisions: () => this.decisions,
       context: (agent, event) => this.context(agent, event),
@@ -3528,6 +3556,24 @@ export class AgentsService extends Service implements Agents {
   dismissInterrupted = () => {
     this.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
+  };
+  interruptedTurns = (agent: Agent) =>
+    Object.entries(this.runners.interruptedTurns(agent.key)).map(
+      ([id, channelId]) => ({
+        id,
+        channelId,
+        channel: this.channelOf(agent, { tags: [["h", channelId]] }),
+      }),
+    );
+  readInterrupted = async (agent: Agent, signal: AbortSignal) => {
+    const session = this.bindingOf(agent)?.session;
+    if (!session) throw new Error(`${agent.name}'s community isn't connected`);
+    const ids = Object.keys(this.runners.interruptedTurns(agent.key));
+    const events = await session.readRemote([{ ids, limit: ids.length }], {
+      signal,
+      fresh: true,
+    });
+    return events.filter(hasEventProof) as RelayEvent[];
   };
   /** The agents the notice names, and only they, are resumed or forgotten. */
   private interruptedKeys() {

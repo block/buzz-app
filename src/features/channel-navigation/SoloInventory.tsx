@@ -253,8 +253,9 @@ export function SoloInventory({
     session.unread,
     JSON.stringify(conversations.map((item) => item.id)),
   );
-  const composing = !!regions.regions.find((region) => region.source)?.source
-    ?.composeWorkspaces;
+  const composing = !!regions.regions.find(
+    (region) => region.source && !region.hidden && region.reason !== "disabled",
+  )?.source?.composeWorkspaces;
   const empty =
     list.status === "ready" &&
     preferences.status === "ready" &&
@@ -346,6 +347,7 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         sidebarRows={rowEntries}
+        dormantAssignments={regions.managed}
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
@@ -405,7 +407,7 @@ export function SoloInventory({
   return (
     <nav
       className={styles.sidebarContents}
-      aria-label={`${regions.regions.find((region) => region.source)?.title ?? "Solo"} conversations`}
+      aria-label={`${regions.regions.find((region) => region.source && !region.hidden)?.title ?? "Solo"} conversations`}
     >
       {renderContents ? (
         renderContents(content(), header, pendingClick, content)

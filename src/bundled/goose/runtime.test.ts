@@ -2736,13 +2736,29 @@ describe("goose turns through the agent gateway", () => {
     expect(g.calls).toEqual(["associate 1 session-1", "seal 1", "close 1"]);
   });
 
-  it("keeps failing to retire an agent whose conversation's generation native could not close", async () => {
+  it("keeps failing to retire an agent whose conversation's generation native could not close, without blocking the conversation", async () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const g = gateway(enabled, new Error("close refused"));
-    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    const again = message("2", "Again", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+      ],
+    });
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      thread: [root, again],
+    });
     await f.deliver(root, dispatched());
     await vi.waitFor(() => expect(f.published).toHaveLength(1));
     expect(f.published[0]?.content).toContain("couldn't confirm");
+    // Its goose exited, so the conversation's next message still runs,
+    // resuming its session.
+    await f.deliver(again, dispatched());
+    await vi.waitFor(() => expect(g.calls).toContain("close 2"));
+    expect(f.fake.geese[1]?.loaded).toEqual(["session-1"]);
+    expect(f.fake.geese[1]?.turns).toHaveLength(1);
     await expect(f.runtime.retire(self)).rejects.toThrow("close refused");
     // Never forgotten as clean: a later retirement fails the same way.
     await expect(f.runtime.retire(self)).rejects.toThrow("close refused");

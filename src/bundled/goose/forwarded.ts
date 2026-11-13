@@ -50,9 +50,10 @@ export type ForwardedTurn = Readonly<{
   keep?(session: string): boolean;
   /** Told of a new session once it is kept, before its first prompt. */
   started?(session: string): void;
-  /** Told the turn's retirement before it ends: it settles once the process
-   * has exited and native has closed the generation. */
-  outlives(retired: Promise<void>): void;
+  /** Told the turn's retirement before it ends: `retired` settles once the
+   * process has exited and native has closed the generation, `exited` once
+   * the process has, and never rejects. */
+  outlives(retired: Promise<void>, exited: Promise<void>): void;
   /** Ends the turn: interrupt or dispose. */
   signal: AbortSignal;
   activity?: ActivityReceipt;
@@ -97,6 +98,9 @@ export async function forwardedTurn(
         DATABRICKS_HOST: generation.url,
         // Its one prompt is the turn's: no model call names the session.
         GOOSE_DISABLE_SESSION_NAMING: "true",
+        // A delegate runs on these, not a provider the model or config names
+        // (goose 1.57.0 `resolve_provider_config`); a recipe's own still wins.
+        ...subagent(turn),
       },
       (goose) => {
         process = goose;
@@ -177,7 +181,7 @@ export async function forwardedTurn(
       );
   if (process) await process.stop(STOP_TIMEOUT_MS);
   const retired = exit.then(() => generation.close());
-  turn.outlives(retired);
+  turn.outlives(retired, exit);
   let retirement: string | undefined;
   if (!exited) retirement = NOT_STOPPED;
   else
@@ -193,6 +197,16 @@ export async function forwardedTurn(
 }
 
 const noop = () => {};
+
+/** Pins a delegate's provider and model to the turn's. */
+function subagent(turn: ForwardedTurn): Record<string, string> {
+  const { provider, model } = turn.choice();
+  const chosen = turn.model || model;
+  return {
+    ...(provider ? { GOOSE_SUBAGENT_PROVIDER: provider } : {}),
+    ...(chosen ? { GOOSE_SUBAGENT_MODEL: chosen } : {}),
+  };
+}
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);

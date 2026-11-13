@@ -73,6 +73,7 @@ function setup(
   const fake = fakeSpawn({ load: true, ...options });
   const controller = new AbortController();
   const retirements: Promise<void>[] = [];
+  const exits: Promise<void>[] = [];
   const kept: string[] = [];
   const order = native.calls;
   const run = (changes: Partial<ForwardedTurn> = {}) =>
@@ -99,14 +100,17 @@ function setup(
           kept.push(session);
           return true;
         },
-        outlives: (retired) => void retirements.push(retired),
+        outlives: (retired, exited) => {
+          retirements.push(retired);
+          exits.push(exited);
+        },
         signal: controller.signal,
         ...turn,
         ...changes,
       },
       CHANGED,
     );
-  return { fake, controller, retirements, kept, native, order, run };
+  return { fake, controller, retirements, exits, kept, native, order, run };
 }
 
 afterEach(() => {
@@ -125,7 +129,11 @@ describe("a forwarded goose turn", () => {
     expect(goose?.env).toMatchObject({
       DATABRICKS_HOST: "http://127.0.0.1:4100/g1",
       GOOSE_DISABLE_SESSION_NAMING: "true",
+      // A delegate stays on the gateway's provider.
+      GOOSE_SUBAGENT_PROVIDER: "databricks",
     });
+    // On the provider's default model, a delegate takes the parent's.
+    expect(goose?.env).not.toHaveProperty("GOOSE_SUBAGENT_MODEL");
     expect(goose?.opened).toHaveLength(1);
     expect(goose?.turns.map((turn) => turn.text)).toEqual(["hello"]);
     // Saved and named before its prompt; closed only after its exit.
@@ -143,6 +151,23 @@ describe("a forwarded goose turn", () => {
     expect(native.value.close).toHaveBeenCalledOnce();
   });
 
+  it("pins a delegate's model to the turn's, else the agent's", async () => {
+    const choice = () => ({ provider: "databricks", model: "m-agent" });
+    const { fake, run } = setup({}, { choice });
+    await expect(run()).resolves.toMatchObject({ ok: true });
+    await expect(run({ model: "m-turn" })).resolves.toMatchObject({ ok: true });
+    expect(fake.geese.map((goose) => goose.env)).toEqual([
+      expect.objectContaining({
+        GOOSE_SUBAGENT_PROVIDER: "databricks",
+        GOOSE_SUBAGENT_MODEL: "m-agent",
+      }),
+      expect.objectContaining({
+        GOOSE_SUBAGENT_PROVIDER: "databricks",
+        GOOSE_SUBAGENT_MODEL: "m-turn",
+      }),
+    ]);
+  });
+
   it("resumes the saved session it is given, never a new one", async () => {
     const started = vi.fn();
     const { fake, order, run } = setup({}, { load: "s-saved", started });
@@ -152,12 +177,29 @@ describe("a forwarded goose turn", () => {
     // A resumed session's prompt was recorded when it was new.
     expect(started).not.toHaveBeenCalled();
     expect(goose?.opened).toEqual([]);
+    // Put back on the gateway's provider, whatever it was saved with.
+    expect(goose?.configured).toEqual(["s-saved provider=databricks"]);
     expect(goose?.prompts.get("s-saved")).toBe("prompt");
     expect(order.slice(0, 3)).toEqual([
       "keep s-saved",
       "associate s-saved",
       "prompt false",
     ]);
+  });
+
+  it("fails a resumed turn goose can't put back on its provider, prompting nothing", async () => {
+    const { fake, native, run } = setup({}, { load: "s-saved" });
+    const result = await run({
+      launch: async () => {
+        const [goose] = fake.geese;
+        if (goose) goose.configError = "Unknown provider";
+        return { cwd: "/work", systemPrompt: "prompt" };
+      },
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain("goose could not switch its provider");
+    expect(fake.geese[0]?.turns).toEqual([]);
+    expect(native.calls.slice(-2)).toEqual(["seal", "close"]);
   });
 
   it("fails a session goose can't resume, prompting nothing, and still retires", async () => {
@@ -288,7 +330,8 @@ describe("a forwarded goose turn", () => {
     goose?.update("session-1", {
       sessionUpdate: "tool_call",
       toolCallId: "call-1",
-      title: "delegate",
+      title: "delegate · reviewer",
+      _meta: { goose: { toolCall: { toolName: "delegate" } } },
     });
     goose?.update("session-1", {
       sessionUpdate: "tool_call_update",
@@ -320,7 +363,8 @@ describe("a forwarded goose turn", () => {
     goose?.update("session-1", {
       sessionUpdate: "tool_call",
       toolCallId: "call-1",
-      title: "delegate",
+      title: "delegate · reviewer",
+      _meta: { goose: { toolCall: { toolName: "delegate" } } },
     });
     goose?.update("session-1", {
       sessionUpdate: "tool_call_update",
@@ -376,11 +420,13 @@ describe("a forwarded goose turn", () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const refused = new Error("close refused");
     const native = generation(() => Promise.reject(refused));
-    const { fake, retirements, run } = setup({}, {}, native);
+    const { fake, retirements, exits, run } = setup({}, {}, native);
     await expect(run()).resolves.toEqual({ ok: false, error: NOT_CLOSED });
     expect(fake.geese[0]?.turns).toHaveLength(1);
-    // The barrier it leaves fails too: nothing confirms the generation ended.
+    // Its retirement fails too: nothing confirms the generation ended. Its
+    // process did exit, so the conversation is free.
     await expect(retirements[0]).rejects.toBe(refused);
+    await expect(exits[0]).resolves.toBeUndefined();
     expect(warned).toHaveBeenCalled();
   });
 });

@@ -36,6 +36,10 @@ export const STOP_TIMEOUT_MS = 5_000;
 
 const STDERR_LIMIT = 4_000;
 
+/** What a resumed session runs on, as far as Buzz knows: no provider a
+ * choice names, so a harness's `select` reapplies the choice's. */
+const SAVED: Choice = { provider: "\u0000saved", model: "" };
+
 /** Never reaches a harness, whatever its hooks or launch say: its Buzz tools
  * come over HTTP MCP, never a Buzz key. */
 export const PROTECTED_ENV: Readonly<Record<string, null>> = {
@@ -312,11 +316,12 @@ export class AcpProcess {
       // not yet in `sessions`, so none of it reaches the session.
       if (load !== undefined) {
         sessionId = load;
-        opened = (await this.request(
+        // ACP's load answer may be `null`: it offers no settings.
+        opened = ((await this.request(
           "session/load",
           { sessionId, cwd: launch.cwd, mcpServers: buzz ? [buzz] : [] },
           REQUEST_TIMEOUT_MS,
-        )) as ConfigOptions;
+        )) ?? {}) as ConfigOptions;
       } else
         ({ sessionId, ...opened } = (await this.request(
           "session/new",
@@ -347,7 +352,9 @@ export class AcpProcess {
       sessionId,
       server,
       launch.choice,
-      { provider, model: "" },
+      // A resumed session runs on whatever it was saved with (goose 1.57.0
+      // keeps its saved provider), so its first turn puts it on the choice.
+      load === undefined ? { provider, model: "" } : { ...SAVED },
       // A resumed conversation already opens with it.
       prompting && !standard && load === undefined ? systemPrompt : "",
     );

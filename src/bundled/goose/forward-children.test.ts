@@ -4,10 +4,11 @@ import type { ForwardChildRegistered } from "../../features/host/forward";
 import { forwardChildren } from "./forward-children";
 import { flush } from "./goose-testing";
 
-const announced = (call: string, title = "delegate") => ({
+const announced = (call: string, toolName = "delegate", title = toolName) => ({
   sessionUpdate: "tool_call",
   toolCallId: call,
   title,
+  _meta: { goose: { toolCall: { toolName } } },
 });
 const completed = (call: string, child: unknown = "20261104_2") => ({
   sessionUpdate: "tool_call_update",
@@ -33,7 +34,8 @@ describe("forwardChildren", () => {
     observe(announced("call-1"), true);
     observe({ ...completed("call-1"), status: "in_progress" }, true);
     observe(completed("call-1"), true);
-    observe(announced("call-2"), true);
+    // Titled by its source, as goose titles a delegate that names one.
+    observe(announced("call-2", "delegate", "delegate · reviewer"), true);
     observe(completed("call-2"), true);
     await flush();
     expect(register.mock.calls).toEqual([
@@ -52,6 +54,11 @@ describe("forwardChildren", () => {
     observe(completed("call-1"), true);
     observe(announced("call-2", "shell"), true);
     observe(completed("call-2"), true);
+    // Another tool titled as a delegate is not one.
+    observe(announced("call-4", "shell", "delegate"), true);
+    observe(completed("call-4"), true);
+    observe({ ...announced("call-5"), _meta: undefined }, true);
+    observe(completed("call-5"), true);
     observe(announced("call-3"), true);
     observe(completed("call-3", 7), true);
     observe({ ...completed("call-3"), _meta: undefined }, true);

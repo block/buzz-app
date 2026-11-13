@@ -815,7 +815,11 @@ export class GooseRuntime {
    * binding saved with it, or, without, as a one-off turn with a binding of
    * its own. A turn that can't be forwarded fails visibly before anything
    * spawns; it never runs on goose's own configuration instead, and is
-   * never retried. */
+   * never retried. Unlike an ordinary session, which reopens when the
+   * agent's instructions, team or memory change, a conversation's forwarded
+   * turns keep resuming its saved session, history and all, until New
+   * session. Each turn sets its system prompt again, built from the
+   * agent's current settings. */
   private forward(
     entry: Entry,
     agent: AgentKey,
@@ -911,7 +915,7 @@ export class GooseRuntime {
               conversation: held ? key : null,
             },
           ),
-        outlives: (retirement) => {
+        outlives: (retirement, exited) => {
           // Before the turn ends: by then, one whose process exited is
           // confirmed retired or failed.
           owned.retiring = true;
@@ -921,7 +925,10 @@ export class GooseRuntime {
               owned.failed = error;
             },
           );
-          held?.outlives(retirement);
+          // The conversation waits only for the process: a generation native
+          // didn't close fails this turn and the agent's retirement, but no
+          // later turn runs on it.
+          held?.outlives(exited);
         },
         signal: AbortSignal.any([
           held?.signal ?? turn.signal ?? entry.lifetime.signal,

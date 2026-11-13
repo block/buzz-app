@@ -64,6 +64,8 @@ function fakeHarness(
     stopReason?: string;
     /** Every `session/load` is answered with this error. */
     loadError?: { code: number; message: string };
+    /** Every `session/load` is answered with this result; `{}` by default. */
+    loadResult?: unknown;
     /** Each `session/close` waits in `closes` to be answered. */
     holdClose?: boolean;
     /** Every `session/close` is answered with this error. */
@@ -167,7 +169,7 @@ function fakeHarness(
                   update: { sessionUpdate, toolCallId: "call-1" },
                 },
               });
-            reply(id, {});
+            reply(id, "loadResult" in options ? options.loadResult : {});
           } else if (method === "session/prompt" && rejectPrompts > 0) {
             rejectPrompts--;
             send({ id, error: { code: -32000, message: "Sign in first" } });
@@ -523,6 +525,22 @@ describe("a session without hooks", () => {
       ["tool_call_update", false],
     ]);
   });
+  it("handles each update and answer even when its observer throws", async () => {
+    const harness = fakeHarness();
+    const acp = await start(harness);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    session.observe = () => {
+      throw new Error("observer broke");
+    };
+    try {
+      await expect(session.send("first")).resolves.toMatchObject({ ok: true });
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("leads the first prompt with the instructions, once, when ACP's systemPrompt is not advertised", async () => {
     const harness = fakeHarness();
     const acp = await start(harness);
@@ -820,6 +838,24 @@ describe("resuming a saved session", () => {
       "This Harness cannot resume a session with its system prompt",
     );
     expect(harness.sent("session/load")).toEqual([]);
+  });
+
+  it("resumes a session whose load answers null, keeping its tools", async () => {
+    const harness = fakeHarness({ capabilities: LOADS, loadResult: null });
+    const acp = await start(harness);
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      tools,
+      load: "saved-1",
+    });
+    expect(session.id).toBe("saved-1");
+    expect(session.open).toBe(true);
+    // Its tools' server stays up with it.
+    let stopped = false;
+    void session.server?.closed.then(() => (stopped = true));
+    await flush();
+    expect(stopped).toBe(false);
   });
 
   it("lets one open own a saved session at a time", async () => {
@@ -1480,6 +1516,33 @@ describe("saved sessions under holds", () => {
       binding: { session: "g2", value: "C" },
     });
     expect(saved.get("chat")).not.toHaveProperty("next");
+  });
+
+  it("keeps the open session when New session cannot be saved", async () => {
+    // A store that keeps the old record once frozen.
+    let frozen = false;
+    const saved = new (class extends Map<string, SavedConversation> {
+      override set(key: string, value: SavedConversation) {
+        if (!frozen) super.set(key, value);
+        return this;
+      }
+    })();
+    const { sessions, harness } = sessionsWith(saved);
+    await expect(sessions.deliver("chat", "first", 1)).resolves.toMatchObject({
+      ok: true,
+    });
+    frozen = true;
+    await expect(sessions.reset("chat", "new")).resolves.toEqual({
+      ok: false,
+      error: "Harness could not save New session",
+    });
+    // Nothing was closed: the next message runs in the same session.
+    expect(harness.sent("session/close")).toEqual([]);
+    await expect(sessions.deliver("chat", "again", 2)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(harness.sent("session/new")).toHaveLength(1);
+    expect(harness.turns.map((turn) => turn.text)).toEqual(["first", "again"]);
   });
 
   it("lets an ordinary session that replaces the newest end New session, and nothing else", async () => {

@@ -735,21 +735,20 @@ export class AgentSessions {
           return { ok: true };
         return await this.handOff(key, mine, forwarded);
       }
-      if (live) {
-        await live.session.idle();
-        // Interrupted while it waited: it does nothing more.
-        if (signal.aborted || this.disposed) return this.stopped;
-        if (this.live.get(key) === live) this.drop(key, live);
-      }
+      if (live) await live.session.idle();
+      // Interrupted while it waited: it does nothing more.
       if (signal.aborted || this.disposed) return this.stopped;
+      // Saved before the session goes, so a failed save leaves it as it was.
       const saved = savedConversation(store?.get(key));
-      if (!store || !saved?.sessions?.length) return { ok: true };
-      store.set(key, { ...saved, next: "new" });
-      // Done only once it reads back so: a store that kept the old record
-      // would have the next held work resume what was left.
-      const read = savedConversation(store.get(key));
-      if (read?.next !== "new" || read.sessions?.[0] !== saved.sessions[0])
-        return { ok: false, error: `${label} could not save New session` };
+      if (store && saved?.sessions?.length) {
+        store.set(key, { ...saved, next: "new" });
+        // Done only once it reads back so: a store that kept the old record
+        // would have the next held work resume what was left.
+        const read = savedConversation(store.get(key));
+        if (read?.next !== "new" || read.sessions?.[0] !== saved.sessions[0])
+          return { ok: false, error: `${label} could not save New session` };
+      }
+      if (live && this.live.get(key) === live) this.drop(key, live);
       return { ok: true };
     } catch (error) {
       return { ok: false, error: message(error) };

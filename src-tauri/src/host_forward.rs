@@ -22,6 +22,11 @@
 //! - Inference must name the generation's harness session in the harness's own
 //!   header. A Claude generation is opened with its session; a goose one opens
 //!   for discovery only and is associated once, before its first prompt.
+//! - A goose generation also admits the children its parent session delegates
+//!   to, each registered from a live delegate call that named it.
+//!   Inference naming an unregistered child parks until it is registered, at
+//!   most `PENDING_CAP` at once and `RENDEZVOUS_DEADLINE` each; expiry,
+//!   sealing, revocation and close refuse it, never admit it.
 //! - Sealing is terminal: later requests get 410, which harnesses don't retry,
 //!   while admitted streams finish. Closing forgets the handle (404) and aborts
 //!   its streams. Neither leaves a record behind.

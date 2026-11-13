@@ -103,7 +103,8 @@ export function associateForward(
 }
 
 /** Registers the goose child a live delegate `call` named, admitting its
- * requests. Rejects on contract, owner or transport errors. */
+ * requests. A sealed, closed or unknown generation resolves `refused`
+ * (`generation_ended`); it rejects only on contract or transport errors. */
 export function registerForwardChild(
   owner: ForwardOwner,
   generation: number,

@@ -1,6 +1,8 @@
 import type { ForwardChildRegistered } from "../../features/host/forward";
 
-/** goose's native delegate tool, as its `tool_call` titles it (goose 1.57.0). */
+/** goose's native delegate tool, as its `tool_call` names it in
+ * `_meta.goose.toolCall.toolName`; its title may add a source or be
+ * generated (goose 1.57.0 `conversion.rs`). */
 const DELEGATE = "delegate";
 
 export type ForwardChildren = Readonly<{
@@ -42,7 +44,10 @@ export function forwardChildren({ register, failed }: ForwardChildren) {
     const call = update.toolCallId;
     if (typeof call !== "string") return;
     if (update.sessionUpdate === "tool_call") {
-      if (update.title === DELEGATE) delegates.add(call);
+      const meta = update._meta as {
+        goose?: { toolCall?: { toolName?: unknown } };
+      };
+      if (meta?.goose?.toolCall?.toolName === DELEGATE) delegates.add(call);
       return;
     }
     const meta = update._meta as { goose?: { subagentSessionId?: unknown } };

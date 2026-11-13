@@ -2735,7 +2735,8 @@ it("3,000 channel groups share roster reads and retain the complete native menu"
   const list = vi.spyOn(h.session.channels, "list");
   const ensureList = vi.spyOn(h.session.channels, "ensureList");
   const ensureChannel = vi.spyOn(h.session.channels, "ensure");
-  const ensureProfiles = vi.spyOn(h.session.profiles, "ensure");
+  const ensureProfiles = vi.fn(h.session.profiles.ensure);
+  h.session.profiles = { ...h.session.profiles, ensure: ensureProfiles };
   const offered = Array.from(
     { length: 12 },
     (_, index) => `Native action ${index + 1}`,

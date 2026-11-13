@@ -752,6 +752,11 @@ const notReady = [
     mergeStateStatus: "BLOCKED",
     commits: waitingChecks("SUCCESS", "COMPLETED", 2),
   },
+  // The branch may require conversations to be resolved first.
+  {
+    mergeStateStatus: "BLOCKED",
+    reviewThreads: { totalCount: 1, nodes: [{ isResolved: false }] },
+  },
 ];
 
 it.each(

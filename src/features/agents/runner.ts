@@ -2969,9 +2969,8 @@ export class AgentRunners {
           const inSource =
             work &&
             (reference
-              ? reference.rootId === work.sourceRootId
-              : work.sourceRootId === null &&
-                !event.tags?.some(([name]) => name === "e"));
+              ? reference.rootId === work.threadRootId
+              : !event.tags?.some(([name]) => name === "e"));
           const sent = ownReply
             ? work.sending(inSource ? event.content : undefined)
             : undefined;

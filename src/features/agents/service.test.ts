@@ -2177,6 +2177,71 @@ it("publishes an agent's reply in a chat its owner is still starting once the st
   expect(await published(native, 9)).toHaveLength(1);
 });
 
+it.each(["dm", "huddle"] as const)(
+  "retains supported %s reply placement in local evidence",
+  async (kind) => {
+    const f = await setup();
+    const destination = kind === "dm" ? dm : channel;
+    const root = "e".repeat(64);
+    if (kind === "huddle") {
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) =>
+          row.id === channel
+            ? {
+                ...row,
+                huddle: true,
+                description: huddleDescription(crypto.randomUUID()),
+              }
+            : row,
+        ),
+      });
+    }
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    f.run.mockImplementationOnce(async ({ agent, acknowledged }) => {
+      acknowledged?.();
+      await agent.publish({
+        kind: 9,
+        content: "Reply",
+        tags: [
+          ["h", destination],
+          ...(kind === "dm" ? [["e", root, "", "reply"]] : []),
+        ],
+      });
+    });
+    f.emit({
+      events: [
+        event("f".repeat(64), {
+          pubkey: viewer,
+          content: "Request",
+          tags: [
+            ["h", destination],
+            ["e", root, "", "reply"],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: destination,
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(f.activity.reader.work()[0]?.evidence?.lifecycle.phase).toBe(
+          "handoff",
+        ),
+      );
+      expect(f.activity.reader.work()[0]?.sourceRootId).toBe(
+        kind === "dm" ? null : root,
+      );
+      expect(
+        f.activity.reader.work()[0]?.evidence?.messages.map(({ text }) => text),
+      ).toEqual(["Request", "Reply"]);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  },
+);
+
 it("captures runner handoff with a pending publication and a background watch", async () => {
   const f = await setup();
   const sourceRootId = "a".repeat(64);

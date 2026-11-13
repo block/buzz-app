@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ForwardEvent, ForwardOpened } from "../../features/host/forward";
+import type { HostProcess } from "../../features/host/service";
 import type {
   GatewayBinding,
   TurnContext,
@@ -399,16 +400,41 @@ describe("ClaudeForwarding.open", () => {
 
   it("keeps an agent's native route key across instances", async () => {
     const other = "d".repeat(64);
+    const newer = "9".repeat(64);
+    const keyOf = (call: string | undefined) => call?.split(" ")[1];
     const first = harness();
     await first.forwarding.open(other, eligible(2), turn, signal);
+    // A new instance, as after the plugin is disabled and enabled again:
+    // the agent keeps its key, and a new agent never takes it.
     const second = harness();
-    // A new instance, as after the plugin is disabled and enabled again.
-    await second.forwarding.open(AGENT, eligible(2), turn, signal);
+    await second.forwarding.open(newer, eligible(2), turn, signal);
     await second.forwarding.open(other, eligible(2), turn, signal);
-    const keyOf = (call: string | undefined) => call?.split(" ")[1];
-    expect(keyOf(second.calls[0])).toBe("route-1");
     expect(keyOf(second.calls[2])).toBe(keyOf(first.calls[0]));
-    expect(keyOf(first.calls[0])).not.toBe("route-1");
+    expect(keyOf(second.calls[0])).not.toBe(keyOf(first.calls[0]));
+  });
+
+  it("counts only model requests as admitted, and only the attempt that opened", async () => {
+    const h = harness([], { delays: [1] });
+    const open = vi.mocked(h.native.open);
+    const opening = open.getMockImplementation();
+    // The first invoke fails after native made a generation.
+    open.mockImplementationOnce(async (owner, options) => {
+      await opening?.(owner, options);
+      throw new Error("lost answer");
+    });
+    const generation = await h.forwarding.open(
+      AGENT,
+      eligible(2),
+      turn,
+      signal,
+    );
+    const [orphan, own] = [nth(h.events, 0), nth(h.events, 1)];
+    orphan({ type: "admitted", request: 1, class: "inference" });
+    expect(generation.admitted()).toBe(false);
+    own({ type: "admitted", request: 1, class: "discovery" });
+    expect(generation.admitted()).toBe(false);
+    own({ type: "admitted", request: 2, class: "inference" });
+    expect(generation.admitted()).toBe(true);
   });
 
   it("seals once and never after closing; a close native already did resolves", async () => {
@@ -477,6 +503,8 @@ function pool(
   failure?: (session: string) => string,
   fingerprint: () => string = () => "same",
   spawned: (process: FakeClaude) => void = () => {},
+  wrap: (process: HostProcess, fake: FakeClaude) => HostProcess = (process) =>
+    process,
 ) {
   const fake = fakeSpawn(new Set(), failure);
   const all = new Map<string, SavedSession>();
@@ -487,14 +515,14 @@ function pool(
   };
   let ids = 0;
   const sessions = new AgentSessions({
-    spawn: (id, options) => {
+    spawn: async (id, options) => {
       const process = fake.spawn(id, options);
       const started = fake.processes.at(-1);
       if (started) {
         started.hold = true;
         spawned(started);
       }
-      return process;
+      return started ? wrap(await process, started) : process;
     },
     store,
     launch: async () => ({ cwd: "/work", systemPrompt: "prompt" }),
@@ -598,6 +626,135 @@ describe("forwarded turns in a conversation", () => {
     expect(await second).toEqual({ ok: true });
     await flush();
     expect(log).toEqual(["open g1", "seal g1", "close g1", "closed g1"]);
+  });
+
+  it("runs a steer again in a turn of its own when the running turn ended before Claude took it", async () => {
+    // Claude reports the running turn's end before it reads the steer.
+    const { sessions, log, opened, forward, claudes } = pool(
+      undefined,
+      undefined,
+      undefined,
+      (process, fake) => ({
+        ...process,
+        write: async (data: string) => {
+          if (data.includes("steer: two")) fake.finish();
+          return process.write(data);
+        },
+      }),
+    );
+    const first = sessions.deliver("c", "one", 1, { forward });
+    await flush();
+    const second = sessions.deliver("c", "two", 2, {
+      forward,
+      steer: "steer: two",
+    });
+    expect(await first).toEqual({ ok: true });
+    await flush();
+    expect(nth(claudes()).prompts).toEqual(["one"]);
+    expect(nth(claudes()).killed).toBe(true);
+    expect(opened).toHaveLength(2);
+    const next = nth(claudes(), 1);
+    expect(next.prompts).toEqual(["two"]);
+    expect(settingsOf(next)).toContain("/g2");
+    next.finish();
+    expect(await second).toEqual({ ok: true });
+    await flush();
+    expect(log).toEqual([
+      "open g1",
+      "seal g1",
+      "close g1",
+      "closed g1",
+      "open g2",
+      "seal g2",
+      "close g2",
+      "closed g2",
+    ]);
+  });
+
+  it("never steers a message into a running forwarded compaction", async () => {
+    const { sessions, all, opened, forward, claudes } = pool();
+    const first = sessions.deliver("c", "one", 1, { forward });
+    await flush();
+    nth(claudes()).finish();
+    await first;
+    await flush();
+    expect(all.has("c")).toBe(true);
+    const compacting = sessions.compact("c", forward);
+    await flush();
+    const compactor = nth(claudes(), 1);
+    expect(compactor.prompts).toEqual(["/compact"]);
+    const message = sessions.deliver("c", "two", 2, {
+      forward,
+      steer: "steer: two",
+    });
+    await flush();
+    expect(compactor.prompts).toEqual(["/compact"]);
+    compactor.finish();
+    expect(await compacting).toEqual({ ok: true });
+    await flush();
+    const next = nth(claudes(), 2);
+    expect(next.prompts).toEqual(["two"]);
+    next.finish();
+    expect(await message).toEqual({ ok: true });
+    expect(opened).toHaveLength(3);
+  });
+
+  it("stops a message queued two deep at once, keeping the order of those behind it", async () => {
+    const { sessions, forward, claudes } = pool();
+    const later = Object.assign(
+      (session: string, saved: unknown) => forward(session, saved),
+      { revision: 3 },
+    );
+    const first = sessions.deliver("c", "one", 1, { forward });
+    await flush();
+    // Waits behind the running turn's barrier, holding the handover.
+    const second = sessions.deliver("c", "two", 2, { forward: later });
+    const stop = new AbortController();
+    const third = sessions.deliver("c", "three", 3, {
+      forward: later,
+      signal: stop.signal,
+    });
+    const fourth = sessions.deliver("c", "four", 4, { forward: later });
+    await flush();
+    stop.abort();
+    expect(await third).toEqual({ ok: true, undelivered: true });
+    nth(claudes()).finish();
+    expect(await first).toEqual({ ok: true });
+    await flush();
+    nth(claudes(), 1).finish();
+    expect(await second).toEqual({ ok: true });
+    await flush();
+    nth(claudes(), 2).finish();
+    expect(await fourth).toEqual({ ok: true });
+    expect(claudes().map((process) => process.prompts)).toEqual([
+      ["one"],
+      ["two"],
+      ["four"],
+    ]);
+  });
+
+  it("settles a forwarded turn stopped before any request as stopped, not bypassed", async () => {
+    const { sessions, log, claudes } = pool();
+    const delivered = sessions.deliver("c", "hi", 1, {
+      forward: async () => ({
+        generation: generation("g", log, undefined, { admitted: false }),
+        binding,
+      }),
+    });
+    await flush();
+    await sessions.interrupt("c");
+    // Claude ends a turn stopped mid-tool as aborted tools.
+    const process = nth(claudes());
+    process.emit({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      terminal_reason: "aborted_tools",
+      result: "Tool use was interrupted",
+      session_id: "new-1",
+    });
+    sessionState(process, "idle");
+    expect(await delivered).toEqual({ ok: true, stopped: true });
   });
 
   it("queues a message whose routing doesn't match the busy forwarded turn", async () => {

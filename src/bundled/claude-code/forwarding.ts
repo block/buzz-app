@@ -161,9 +161,15 @@ export class ClaudeForwarding {
       closed = resolve;
     });
     let admitted = false;
-    const onEvent = (event: ForwardEvent) => {
+    // Only the attempt that opened is heard: one whose invoke failed after
+    // native made a generation never speaks for this one.
+    let attempt = 0;
+    const listener = (mine: number) => (event: ForwardEvent) => {
+      if (mine !== attempt) return;
       if (event.type === "closed") closed();
-      if (event.type === "admitted") admitted = true;
+      // Model requests: discovery alone isn't Claude's turn reaching it.
+      if (event.type === "admitted" && event.class === "inference")
+        admitted = true;
       // The gateway ended this revision's access: the next turn reads the
       // route again. The turn fails as its process ends on the revocation.
       if (
@@ -173,7 +179,7 @@ export class ClaudeForwarding {
         this.routes.invalidateRoute(agent, route.revision);
     };
     let opened: ForwardOpened | undefined;
-    for (let attempt = 0; ; attempt++) {
+    for (; ; attempt++) {
       try {
         if (moved()) throw new Error(CHANGED);
         await this.push(agent, route);
@@ -187,7 +193,7 @@ export class ClaudeForwarding {
             session: turn.session,
             inference: inference.value,
             discovery: discovery.value,
-            onEvent,
+            onEvent: listener(attempt),
           });
         break;
       } catch (error) {

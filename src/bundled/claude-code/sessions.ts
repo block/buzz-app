@@ -283,8 +283,23 @@ export class AgentSessions {
       release();
       if (this.handing.get(key) === pending) this.handing.delete(key);
     };
-    const send = () => this.submit(key, text, seen, options, handed);
-    return (prior ? prior.then(send) : send()).finally(handed);
+    let started = false;
+    const send = () => {
+      started = true;
+      return this.submit(key, text, seen, options, handed);
+    };
+    // Order holds: a later delivery still waits for the one ahead of this.
+    const run = (prior ? prior.then(send) : send()).finally(handed);
+    const { signal } = options;
+    if (!signal) return run;
+    // Stopped while still queued behind another delivery's handover, it
+    // settles at once; once it is submitting, the submission settles it.
+    return Promise.race([
+      run,
+      aborted(signal).then(() =>
+        started ? run : { ok: true as const, undelivered: true as const },
+      ),
+    ]);
   }
 
   private async submit(
@@ -450,7 +465,19 @@ export class AgentSessions {
         continue;
       }
       this.touch(key, live, seen, contextRoot);
+      // Claude replays each message it takes. A steer the running turn
+      // ended before taking was never Claude's: its process stops at that
+      // idle, so the message runs again, in a turn of its own.
+      let taken = false;
+      const rejoin = joined && !!forward;
       const activity = {
+        ...(rejoin
+          ? {
+              taken: () => {
+                taken = true;
+              },
+            }
+          : {}),
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
@@ -467,7 +494,9 @@ export class AgentSessions {
       );
       // Later messages may steer this turn once its prompt has been submitted.
       handed();
-      const delivered = bypassed(live, await answering);
+      const answered = await answering;
+      if (rejoin && answered.ok && !taken && !answered.stopped) continue;
+      const delivered = bypassed(live, answered);
       // A saved session that no longer loads starts over rather than failing
       // every message in the conversation, shown the conversation so far.
       // An eligible one starts over only when Claude said the session is
@@ -924,6 +953,8 @@ function joinable(live: Live, forward: Forward | undefined) {
   const { process, forwarded } = live;
   if (!process.running || !process.busy) return false;
   if (!forward) return !forwarded;
+  // A compaction runs under its own context, not a message's.
+  if (process.compacts) return false;
   const generation = forwarded?.generation;
   return (
     !!generation &&
@@ -938,7 +969,7 @@ function joinable(live: Live, forward: Forward | undefined) {
  * requests went to an endpoint Claude's own settings chose: it fails. */
 function bypassed(live: Live, settled: Settled): Settled {
   const generation = live.forwarded?.generation;
-  return settled.ok && generation && !generation.admitted()
+  return settled.ok && !settled.stopped && generation && !generation.admitted()
     ? { ok: false, error: BYPASSED }
     : settled;
 }

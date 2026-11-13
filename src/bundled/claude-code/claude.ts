@@ -27,6 +27,8 @@ export type ActivityReceipt = Readonly<{
   /** Told the message's id once Claude has taken it: the id its transcript
    * gives the prompt. A message Claude never took has none. */
   submitted?: (uuid: string) => void;
+  /** Told once Claude has taken the message into a turn, as it replays it. */
+  taken?: () => void;
 }>;
 
 export type Spawn = (
@@ -547,6 +549,10 @@ export class ClaudeProcess {
   get idle() {
     return this.quiesced;
   }
+  /** Running a `/compact` it was sent. */
+  get compacts() {
+    return this.compacting;
+  }
   /** Whether Claude said the session it was to resume doesn't exist. */
   get missingSession() {
     return this.missing;
@@ -831,6 +837,7 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        receipt.taken?.();
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";

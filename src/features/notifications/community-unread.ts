@@ -110,6 +110,23 @@ export function observeCommunityUnread(
   };
 }
 
+/** Starts `session`'s unread repair once its roster has loaded or failed. */
+function repairOnRoster(session: RelaySession) {
+  const settled = () => {
+    const { status } = session.channels.list();
+    return status === "ready" || status === "error";
+  };
+  let stop = () => {};
+  const check = () => {
+    if (!settled()) return;
+    stop();
+    void session.unread.ensure().catch(() => {});
+  };
+  stop = session.channels.subscribeList(check);
+  check();
+  return () => stop();
+}
+
 /** Background sessions opened for unread. The native host refuses a 33rd
  * relay socket (`socket.rs`), and each session holds one; the remainder keeps
  * room for the selected community, agents' communities and visits. */
@@ -129,6 +146,7 @@ export function createCommunityUnreads(
     stopRelay: () => void;
     session?: RelaySession | undefined;
     stop?: (() => void) | undefined;
+    stopRoster?: (() => void) | undefined;
   };
   const entries = new Map<string, Entry>();
   // Selected communities are retained already; observing them costs no socket.
@@ -161,10 +179,14 @@ export function createCommunityUnreads(
     if (session === entry.session) return;
     entry.stop?.();
     entry.stop = undefined;
+    entry.stopRoster?.();
+    entry.stopRoster = undefined;
     entry.session = session;
     set(id, undefined);
     // Without it, unread holds only messages that arrived since connecting.
-    if (session) void session.unread.ensure().catch(() => {});
+    // Repair reads the roster's channels, so it waits for the roster, as the
+    // sidebar does: one started earlier would settle with no channels read.
+    if (session) entry.stopRoster = repairOnRoster(session);
     if (session && viewer)
       entry.stop = observeCommunityUnread(
         session,
@@ -178,6 +200,7 @@ export function createCommunityUnreads(
   const drop = (id: string, entry: Entry) => {
     entry.stopRelay();
     entry.stop?.();
+    entry.stopRoster?.();
     entries.delete(id);
     set(id, undefined);
   };

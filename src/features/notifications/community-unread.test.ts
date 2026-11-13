@@ -43,6 +43,7 @@ function fakeSession() {
     data: { muted: [] },
   };
   let channels: { id: string; members: string[]; huddle?: true }[] = [];
+  let listStatus = "loading";
   const unread = new Map<string, Partial<UnreadSnapshot>>();
   let liveStatus = "connected";
   const ensure = vi.fn(async () => {});
@@ -60,7 +61,7 @@ function fakeSession() {
       subscribe: prefs.subscribe,
     },
     channels: {
-      list: () => ({ channels }),
+      list: () => ({ status: listStatus, channels }),
       subscribeList: list.subscribe,
     },
     unread: {
@@ -89,6 +90,7 @@ function fakeSession() {
     },
     join(...ids: string[]) {
       channels = ids.map((id) => ({ id, members: [viewer] }));
+      listStatus = "ready";
       list.emit();
     },
     set(id: string, snapshot: Partial<UnreadSnapshot>) {
@@ -220,6 +222,8 @@ it("keys every joined community's unread, opening its session and repair once", 
   } as unknown as Communities;
   const unreads = createCommunityUnreads(communities);
   cleanups.push(unreads.dispose);
+  // Repair reads the roster's channels, so it waits for the roster.
+  expect(first.ensure).not.toHaveBeenCalled();
   first.join("a");
   first.set("a", { observedCount: 1, attentionCount: 1 });
   expect([...unreads.snapshot()]).toEqual([

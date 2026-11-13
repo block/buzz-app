@@ -100,11 +100,24 @@ while its binding is no longer admitted, and when its record is another
 conversation's. A request whose task carries no Buzz request, or one never
 bound through the gateway, runs on Pi's own provider, dispatched as it is.
 
-New session is recorded as an intent, with what the next turn is shown,
-before its reset is written by a request ID, so a host that stops between
-them writes it at the next turn and writing it again adds nothing. The
-intent is cleared only with the binding that replaces the session, before
-that turn is submitted.
+An agent's conversation with no gateway work runs as without the gateway:
+its turns, New session and Compact are Pi's own. For a conversation key
+with gateway state, New session is recorded as an intent, with what the next
+turn is shown, before its reset is written by a request ID, so a host that
+stops between them writes it at the next turn and writing it again adds
+nothing. The intent stays until the binding that replaces the session,
+before that turn is submitted, so the key's next gateway turn starts a new
+Buzz session. An owner's Compact while the route is blocked runs on Pi's own
+provider and model, as a blocked turn does.
+
+A turn steers only a run in its own mode, through the gateway or not. A turn
+in the other mode waits until Pi holds no work in that mode, read from Pi's
+storage. Its own wait for that work continues work a stopped host left. It
+fails visibly ("The previous run didn't finish") once that work shows no
+progress for 15 minutes. Interrupt withdraws every turn of the conversation
+that Pi doesn't have yet, and Stop on a waiting turn's Activity withdraws
+that turn alone. A withdrawn turn is never submitted, and its record and
+reply destination are removed.
 
 Responses transport is verified. Black-box probes saw no effect of affinity
 on upstream caching, and none is documented.

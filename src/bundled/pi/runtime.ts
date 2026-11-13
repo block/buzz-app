@@ -763,6 +763,12 @@ export class PiRuntime {
     // Stop on its activity stops the run the request is in.
     interruptible?.(async () => {
       interrupted = true;
+      // A gateway turn Pi doesn't have yet, waiting for a run in the other
+      // mode, is withdrawn rather than submitted once that run ends.
+      if (!submitted)
+        await this.pi
+          .request("cancel", { agent: agent.key, key, request })
+          .catch(() => undefined);
       await handed;
       if (!submitted) return;
       await this.pi.request("abort", {

@@ -867,6 +867,38 @@ it("stops a mention's run when the owner stops it, and posts nothing", async () 
   expect(published).toEqual([]);
 });
 
+it("withdraws a mention Pi doesn't have yet when the owner stops it, and stops no run", async () => {
+  const held = deferred<unknown>();
+  let delivers = 0;
+  const { host, deliver, settled, published } = setup({
+    // The second waits in the host, as for a run in the other mode.
+    deliver: () =>
+      ++delivers === 1
+        ? { submission: 1, conversation: CONVERSATION }
+        : held.promise,
+    cancel: () => {
+      held.resolve(false);
+      return {};
+    },
+  });
+  await deliver({ type: "mention", event: reply("2", "@Pi look") }).run;
+  const interruptible = vi.fn<NonNullable<Delivery["interruptible"]>>();
+  const turn = deliver(
+    { type: "mention", event: reply("3", "@Pi and this") },
+    { interruptible },
+  );
+  await turn.run;
+  await vi.waitFor(() => expect(host.requests("deliver")).toHaveLength(2));
+  await interruptible.mock.calls[0]?.[0]();
+  const sent = host.requests("deliver")[1]?.params;
+  expect(host.requests("cancel").map((r) => r.params)).toEqual([
+    { agent: self, key: sent?.key, request: sent?.request },
+  ]);
+  expect(host.requests("abort")).toEqual([]);
+  await expect(settled(turn)).resolves.toEqual({ ok: true });
+  expect(published).toEqual([]);
+});
+
 it("settles a run that finishes despite the owner's stop as done, not stopped", async () => {
   const answered = deferred<unknown>();
   const { deliver, settled } = setup({

@@ -40,6 +40,8 @@ const ORIGIN='https://gateway.test', ROOT=ORIGIN+BASE, result={};
 // adds its query, and OpenAI Responses.
 const CLAUDE={provider:'anthropic',model:'claude-sonnet-4-5'}, GPT={provider:'openai',model:'gpt-4o-mini'};
 const PATHS=[[CLAUDE,'anthropic/v1/messages?beta=true'],[GPT,'openai/v1/responses']];
+/** The promise, or a failure naming what it is once 5s pass without it settling. */
+const within=(promise,what)=>{let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('still waiting: '+what)),5000);})]).finally(()=>clearTimeout(timer));};
 const until=async test=>{const end=Date.now()+5000;while(!test()){if(Date.now()>end)throw new Error('timed out');await new Promise(r=>setTimeout(r,5));}};
 // The stand-in gateway: scripted streams in the protocol each request's path names.
 const events=list=>new Response(list.map(([type,data])=>'event: '+type+'\ndata: '+JSON.stringify({type,...data})+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});
@@ -81,6 +83,8 @@ let harness, crashReset=false;const resets=[];
 // starts its watch is told of; and what it is told once a delivery has read
 // the work Pi holds and the requests it holds them for.
 let modeRead, runStart, modeChecked;
+/** How often a host read what Pi holds, and the gateway's records. */
+const reads={inspect:0,gateway:0};
 /** Armed before a delivery: settles once it has read the other mode's work
  * and waits for it, every step it takes before waiting having run. */
 const parking=()=>{const read=Promise.withResolvers();modeChecked=()=>{modeChecked=undefined;read.resolve();};return read.promise.then(()=>new Promise(r=>setImmediate(r)));};
@@ -92,8 +96,8 @@ Harness.open=async(...a)=>{
  const opened=await open.call(Harness,...a);harness=opened;
  // A mode check reads what Pi holds, then the gateway's records.
  const inspect=opened.inspect.bind(opened),snapshot=opened.snapshot.bind(opened);let inspected=false;
- opened.inspect=async(...b)=>{const value=await inspect(...b);await modeRead?.();inspected=Boolean(modeChecked);return value;};
- opened.snapshot=async(doc,...b)=>{const value=await snapshot(doc,...b);if(inspected&&doc.definition?.kind==='buzz.gateway'){inspected=false;modeChecked?.();}return value;};
+ opened.inspect=async(...b)=>{reads.inspect++;const value=await inspect(...b);await modeRead?.();inspected=Boolean(modeChecked);return value;};
+ opened.snapshot=async(doc,...b)=>{if(doc.definition?.kind==='buzz.gateway')reads.gateway++;const value=await snapshot(doc,...b);if(inspected&&doc.definition?.kind==='buzz.gateway'){inspected=false;modeChecked?.();}return value;};
  const conversation=opened.conversation.bind(opened);
  opened.conversation=async(...a)=>{
   const found=await conversation(...a);
@@ -109,6 +113,8 @@ Harness.open=async(...a)=>{
  return opened;
 };
 const records=async()=>(await harness.snapshot(GatewayRuns,context))?.requests??{};
+const Replies=defineDoc({kind:'buzz.replies',version:1,scope:'session',initial:()=>({})});
+const destinations=async()=>(await harness.snapshot(Replies,context))??{};
 // The plugin: Buzz tools, protection, and the shared gateway contract answering
 // as answerGateway does, with Buzz sessions numbered in the order minted.
 let gate=Promise.resolve(), sessions=0;
@@ -126,7 +132,7 @@ const identityOf=who=>({...IDENTITY,agent_pubkey:who});
 const admitted=(binding,who=agent)=>{const r=bindingAdmits({kind:'eligible',identity:identityOf(who),revision},binding);return r.ok?{ok:true,revision:r.revision,root:ROOT,profile:P}:{ok:false,message:r.message};};
 let admit=admitted;
 const binds=[], actions=[], denies=[], toolCalls=[];
-function start(protectedAgent) {
+function start(protectedAgent,options={}) {
  const input=new PassThrough(),output=new PassThrough(),pending=new Map();let id=0;
  const answer=(m,value)=>input.write(JSON.stringify({id:m.id,result:value})+'\n');
  createInterface({input:output}).on('line',async line=>{
@@ -148,7 +154,7 @@ function start(protectedAgent) {
   else if(m.id!==undefined){const p=pending.get(m.id);pending.delete(m.id);m.error?p?.reject(new Error(m.error)):p?.resolve(m.result);}
  });
  const rpc=(method,params)=>new Promise((resolve,reject)=>{pending.set(++id,{resolve,reject});input.write(JSON.stringify({id,method,params})+'\n');});
- const server=serve({data,models,dir:data,protectedAgent,input,output,exit:()=>{}});
+ const server=serve({data,models,dir:data,protectedAgent,input,output,exit:()=>{},...options});
  return {rpc,stop:()=>server.stop()};
 }
 const tools=[{name:'send',description:'Post',inputSchema:{type:'object',properties:{text:{type:'string'}}},load:'always'}];
@@ -160,9 +166,17 @@ const run=async(pi,request,extra)=>{const {submission}=await pi.rpc('deliver',tu
 // Composition: native headers kept, every name the profile reserves replaced
 // whatever its case or underscores, conflicting sessions refused.
 assert.deepEqual(composeGateway(P,{'User-Agent':'pi/1','X-GW-CTX-Channel-Id':'stale','X_GW-LAUNCHER_SESSION':'stale','x-gw-custom':'kept',session_id:'s',  'x-client-request-id':'s','x-session-affinity':'s','x-gone':null},{[H.launcher_session]:'u'},'s'),
- {'User-Agent':'pi/1','x-gw-custom':'kept',session_id:'s','x-client-request-id':'s','x-gone':null,[H.launcher_session]:'u','x-session-affinity':'s'});
-for(const name of ['x-session-affinity','X-LiteLLM-Session-Id','x-litellm-trace-id','x-claude-code-session-id','agent-session-id','session-id'])
- assert.throws(()=>composeGateway(P,{[name]:'other'},{},'s'),/conflicting/);
+ {'User-Agent':'pi/1','x-gw-custom':'kept','x-client-request-id':'s','x-gone':null,[H.launcher_session]:'u','x-session-affinity':'s'});
+// Correlation names are compared folded, as the gateway reads them: each
+// form, '_' or '-', any case, is dropped with the session's value and
+// refused with another, even beside an agreeing form of the same name.
+for(const name of ['x-session-affinity','X-LiteLLM-Session-Id','x-litellm-trace-id','x-claude-code-session-id','agent-session-id','session-id','x-session-id',
+ 'session_id','Session_Id','x_litellm_session_id','X_LITELLM_TRACE_ID','agent_session_id','x_session_id','x_session_affinity','x_claude_code_session_id']){
+ assert.throws(()=>composeGateway(P,{[name]:'other'},{},'s'),/conflicting/,name);
+ assert.deepEqual(composeGateway(P,{[name]:'s'},{},'s'),{'x-session-affinity':'s'},name);
+}
+assert.throws(()=>composeGateway(P,{'session-id':'s',session_id:'other'},{},'s'),/conflicting session-id/);
+assert.throws(()=>composeGateway(P,{x_litellm_session_id:'other','x-litellm-session-id':'s'},{},'s'),/conflicting x-litellm-session-id/);
 assert.throws(()=>composeGateway(P,{},{},undefined),/no session/);
 assert.throws(()=>composeGateway(undefined,{},{},'s'),/no header profile/);
 // A gateway request's deferred and one-shot operations fail closed.
@@ -276,12 +290,12 @@ replies.push(()=>new Response('',{status:400}));
 assert.equal((await run(pi,'d4')).status,'unanswered');
 assert.equal(denies.length,told);
 result.denied=true;
-// A new session rotates the binding. The next turn asks for its reset again, by its request: nothing more is written.
+// A new session rotates the binding. Its write, once submitted, is noted as written: the next turn submits nothing more.
 await pi.rpc('session',{agent,key:'chan/root',action:'new'});
 assert.equal(resets.length,1);assert.match(resets[0].request,/^reset\//);
 from=requests.length;
 assert.equal((await run(pi,'e4')).status,'done');
-assert.deepEqual(resets,[resets[0],resets[0]]);
+assert.deepEqual(resets,[resets[0]]);
 assert.ok(!requests[from].body.input.some(m=>m.role==='assistant'));
 assert.equal(binds.at(-1).event,'reset');
 assert.equal((await harness.snapshot(GatewayRuns,context)).resets['chan/root'],undefined);
@@ -432,6 +446,22 @@ assert.equal((await pi.rpc('wait',{agent,submission:left.submission,request:'e5'
 assert.ok(requests.length>after);
 for(const h of sent(after)){assert.equal(msg(h),'e5');assert.equal(h['x-session-affinity'],sent(from)[0]['x-session-affinity']);}
 assert.equal(binds.length,bound+1);
+// Restarted after a tool call, before the request that sends its result:
+// that continuation, sent by the next host, still carries its Buzz request.
+{const asked=Promise.withResolvers();
+ replies.push(send(),init=>{asked.resolve();return new Promise((_,reject)=>init.signal?.addEventListener('abort',()=>reject(init.signal.reason)));});
+ const from=requests.length,calls=toolCalls.length;
+ await pi.rpc('deliver',turn('e8'));
+ await asked.promise;
+ assert.equal(toolCalls.length,calls+1);
+ await pi.stop();
+ pi=start();await pi.rpc('open',{agent,tools});
+ const left=(await pi.rpc('unfinished',{agent})).submissions.find(s=>s.request==='e8');assert.ok(left);
+ const after=requests.length;
+ assert.equal((await pi.rpc('wait',{agent,submission:left.submission,request:'e8'})).status,'done');
+ const continued=requests.slice(after);
+ assert.ok(continued.length>0&&toolResult(continued[0].body)?.text.includes(POSTED));
+ for(const r of continued){assert.equal(msg(r.headers),'e8');assert.equal(r.headers['x-session-affinity'],requests[from].headers['x-session-affinity']);}}
 result.restart=true;// Restarted while access is revoked: the run it left continues, and its
 // next request is refused visibly, sent nowhere. Access back, the key's next
 // turn resumes its binding through the gateway.
@@ -481,6 +511,15 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
    assert.equal(r.url,ROOT+'/'+path);assert.equal(r.body.stream,true);assert.equal(r.body.model,id);
    assert.equal(r.headers['x-gw-launcher-session'],'u/'+session);assert.equal(r.headers['x-session-affinity'],session);
   }
+  // A caller's own credential, environment and headers, as an extension or
+  // setting may pass them, never reach the gateway's origin.
+  {const from=requests.length;replies.push(say('stray'));
+   const reply=await routed.completeSimple(model,input,{sessionId:id,telemetry:requestTelemetry('r'),apiKey:'sk-vendor-key',env:{OPENAI_API_KEY:'sk-vendor-env',ANTHROPIC_API_KEY:'sk-vendor-env'},headers:{'x-api-key':'sk-vendor-header',authorization:'Bearer sk-vendor-header'}});
+   assert.equal(reply.stopReason,'stop',reply.errorMessage);
+   assert.equal(requests.length,from+1);const [r]=requests.slice(from);
+   assert.equal(r.url,ROOT+'/'+path);
+   assert.ok(!JSON.stringify(r.headers).includes('sk-vendor'),JSON.stringify(r.headers));
+   assert.ok(JSON.stringify(r.headers).includes('buzz-gateway'));}
   replies.push(refusal);
   const failed=await routed.completeSimple(model,input,{sessionId:id,telemetry:requestTelemetry('r')});
   assert.equal(failed.stopReason,'error');assert.match(failed.errorMessage,/401/);
@@ -678,8 +717,8 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   assert.equal(seen.length,1);assert.ok(!seen[0].includes('gateway work'));
   assert.deepEqual(sent(from).map(msg),['b2']);
   // The gateway's first, an ordinary turn while it works.
-  const gate=Promise.withResolvers(),asked=Promise.withResolvers();
-  replies.push(async(init,url)=>{asked.resolve();await gate.promise;return say('gateway again')(init,url);});
+  const gating=Promise.withResolvers(),asked=Promise.withResolvers();
+  replies.push(async(init,url)=>{asked.resolve();await gating.promise;return say('gateway again')(init,url);});
   from=requests.length;
   const c=await pi.rpc('deliver',turn('b3',{agent:who,key}));
   await asked.promise;
@@ -688,7 +727,7 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   const d=pi.rpc('deliver',turn('b4',{agent:who,...ordinary,text:'ordinary private work',steer:'ordinary private work'})).then(v=>{handed=true;return v;});
   await parked;
   assert.equal(handed,false);
-  gate.resolve();
+  gating.resolve();
   assert.equal((await pi.rpc('wait',{agent:who,submission:c.submission,request:'b3'})).status,'done');
   assert.equal((await pi.rpc('wait',{agent:who,submission:(await d).submission,request:'b4'})).text,'ordinary after');
   assert.ok(requests.slice(from).every(r=>!JSON.stringify(r.body).includes('ordinary private work')));
@@ -733,6 +772,42 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
    assert.equal(refused.status,'unanswered');assert.match(refused.detail,/Sign in again/);
    assert.equal(requests.length,from);assert.equal(elsewhere.length,0);
    admit=admitted;}
+  // Stop on a waiting turn's Activity withdraws that turn alone: Pi never
+  // has it, nothing is sent for it, its record and reply destination go,
+  // and the run it waited for continues.
+  {const holding=Promise.withResolvers(),busy=Promise.withResolvers();
+   faux.setResponses([async()=>{busy.resolve();await holding.promise;return fauxAssistantMessage('kept');}]);
+   from=requests.length;
+   const g=await pi.rpc('deliver',turn('b13',{agent:who,...ordinary}));
+   await busy.promise;
+   parked=parking();
+   const late=pi.rpc('deliver',turn('b14',{agent:who,key,reply:{channel:'chan',root:'r'}}));
+   await parked;
+   assert.ok((await records()).b14);assert.ok((await destinations()).b14);
+   await pi.rpc('cancel',{agent:who,key,request:'b14'});
+   assert.equal(await within(late,'a stopped turn'),false);
+   assert.equal((await records()).b14,undefined);assert.equal((await destinations()).b14,undefined);
+   holding.resolve();
+   assert.equal((await pi.rpc('wait',{agent:who,submission:g.submission,request:'b13'})).text,'kept');
+   assert.equal(requests.length,from);
+   assert.ok(!(await pi.rpc('unfinished',{agent:who})).submissions.some(s=>s.request==='b14'));}
+  // Interrupt while a gateway turn is still binding, before it reads the
+  // other mode's work, withdraws it too.
+  {const holding=Promise.withResolvers(),busy=Promise.withResolvers(),binding=Promise.withResolvers();
+   faux.setResponses([async()=>{busy.resolve();await holding.promise;return fauxAssistantMessage('interrupted');}]);
+   from=requests.length;
+   const g=await pi.rpc('deliver',turn('b15',{agent:who,...ordinary}));
+   await busy.promise;
+   const bound=binds.length;gate=binding.promise;
+   const late=pi.rpc('deliver',turn('b16',{agent:who,key}));
+   await until(()=>binds.length>bound);
+   const interrupting=pi.rpc('session',{agent:who,key,action:'interrupt'});
+   await new Promise(r=>setImmediate(r));
+   binding.resolve();gate=Promise.resolve();
+   assert.equal(await within(late,'a turn interrupted as it binds'),false);
+   holding.resolve();await interrupting;
+   assert.equal((await pi.rpc('wait',{agent:who,submission:g.submission,request:'b15'})).status,'unanswered');
+   assert.equal(requests.length,from);assert.equal((await records()).b16,undefined);}
   // Closed while a turn waits for the other mode's run: it fails, and stays
   // unsubmitted for the next open.
   const late=Promise.withResolvers(),stuck=Promise.withResolvers();
@@ -793,6 +868,69 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   assert.deepEqual(entries.map(e=>[e.kind,e.notice,/has no model/.test(e.error),'model' in e,typeof e.at]),[['buzz.notice',NOTICE,true,false,'number']]);
   await pi.rpc('close',{agent:who});
   result.held=true;}
+ // A turn never waits with no way on. Work in the other mode that a host
+ // left, which nothing here waits for, is continued by the waiting turn's
+ // own wait for it, and the turn starts once it settles.
+ {const who='6'.repeat(64),key='chan/left';
+  await pi.rpc('open',{agent:who,tools});
+  const ordinary={key,provider:'faux',model:'faux-1',gatewayTurn:undefined};
+  const asked=Promise.withResolvers();
+  replies.push(init=>{asked.resolve();return new Promise((_,reject)=>init.signal?.addEventListener('abort',()=>reject(init.signal.reason)));});
+  let from=requests.length;
+  await pi.rpc('deliver',turn('l1',{agent:who,key}));
+  await asked.promise;
+  await pi.stop();
+  pi=start();await pi.rpc('open',{agent:who,tools});
+  replies.push(say('continued'));faux.setResponses([fauxAssistantMessage('after it')]);
+  const b=await within(pi.rpc('deliver',turn('l2',{agent:who,...ordinary})),'a turn after work a host left');
+  assert.equal((await pi.rpc('wait',{agent:who,submission:b.submission,request:'l2'})).text,'after it');
+  assert.deepEqual(sent(from).map(msg),['l1','l1']);
+  const left=(await pi.rpc('unfinished',{agent:who})).submissions;
+  assert.ok(!left.some(s=>s.request==='l1'));
+  await pi.rpc('close',{agent:who});
+  result.left=true;}
+ // Work in the other mode that shows no progress for the host's bound fails
+ // the turn waiting for it visibly, and its record goes with it.
+ {await pi.stop();pi=start(undefined,{parkMs:300});
+  const who='7'.repeat(64),key='chan/stuck';
+  await pi.rpc('open',{agent:who,tools});
+  const ordinary={key,provider:'faux',model:'faux-1',gatewayTurn:undefined};
+  const asked=Promise.withResolvers();
+  faux.setResponses([async(c,options)=>{asked.resolve();await new Promise((_,reject)=>options?.signal?.addEventListener('abort',()=>reject(new Error('aborted'))));}]);
+  const from=requests.length;
+  const g=await pi.rpc('deliver',turn('s1',{agent:who,...ordinary}));
+  await asked.promise;
+  const started=Date.now();
+  await assert.rejects(within(pi.rpc('deliver',turn('s2',{agent:who,key})),'a turn after stuck work'),/previous run didn't finish/);
+  assert.ok(Date.now()-started>=250);
+  assert.equal(requests.length,from);assert.equal((await records()).s2,undefined);
+  await pi.rpc('session',{agent:who,key,action:'interrupt'});
+  assert.equal((await pi.rpc('wait',{agent:who,submission:g.submission,request:'s1'})).status,'unanswered');
+  await pi.rpc('close',{agent:who});
+  result.bounded=true;}
+ // An ordinary agent's turns and sessions are as on main: nothing reads the
+ // gateway's records, what Pi holds is read only as main's first-turn check
+ // does, and New resets its conversation at once, with no intent.
+ {const who='8'.repeat(64),key='chan/plain';
+  await pi.rpc('open',{agent:who,tools});
+  const ordinary={key,provider:'faux',model:'faux-1',gatewayTurn:undefined};
+  const shown=[];faux.setResponses([fauxAssistantMessage('first answer 41c'),c=>{shown.push(JSON.stringify(c));return fauxAssistantMessage('two');}]);
+  const before={...reads};
+  const a=await pi.rpc('deliver',turn('o1',{agent:who,...ordinary}));
+  assert.deepEqual(reads,{...before,inspect:before.inspect+1});
+  assert.equal((await pi.rpc('wait',{agent:who,submission:a.submission,request:'o1'})).text,'first answer 41c');
+  const written=resets.length;
+  await pi.rpc('session',{agent:who,key,action:'new'});
+  assert.equal(resets.length,written);
+  const after={...reads};
+  const b=await pi.rpc('deliver',turn('o2',{agent:who,...ordinary}));
+  assert.deepEqual(reads,{...after,inspect:after.inspect+1});
+  assert.equal((await pi.rpc('wait',{agent:who,submission:b.submission,request:'o2'})).text,'two');
+  assert.equal(shown.length,1);assert.ok(!shown[0].includes('first answer 41c'));
+  // The gateway's records were never written for it.
+  assert.equal(await harness.snapshot(GatewayRuns,context),undefined);
+  await pi.rpc('close',{agent:who});
+  result.ordinary=true;}
  await pi.stop();}
 // PI_WIRE_CAPTURE names a file for every model request's headers, as evidence.
 if(process.env.PI_WIRE_CAPTURE){const {writeFileSync}=await import('node:fs');writeFileSync(process.env.PI_WIRE_CAPTURE,JSON.stringify(requests.map(r=>({url:r.url.replace(ORIGIN,'<gateway>'),compaction:summary(r.body),stream:r.body.stream,body:Object.keys(r.body).sort(),headers:Object.fromEntries(Object.entries(r.headers).filter(([k])=>!/authorization|api-key/i.test(k)))})),null,1));}
@@ -854,6 +992,9 @@ it.skipIf(!deps)(
             "fallback",
             "boundary",
             "held",
+            "left",
+            "bounded",
+            "ordinary",
           ].map((key) => [key, true]),
         ),
       );

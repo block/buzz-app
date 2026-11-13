@@ -5,6 +5,7 @@ import {
 } from "../../features/agents/activity-transcript";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import { pubkeyOf } from "../../features/agents/membership";
+import { PROMPTS_PREFIX } from "../../features/agents/session-prompts";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
@@ -1888,7 +1889,14 @@ it("runs a standalone turn in a one-off conversation", async () => {
   expect(published).toEqual([]);
 });
 
-it("reads a standalone turn's conversation as the agent's usage, with no channel", async () => {
+/** A standalone turn run for `timer/t1` whose answer comes at `answered`
+ * (by when it started), and the agent's usage since `since` (likewise) after
+ * every saved prompt is dropped. */
+async function standaloneUsage(
+  answered: (started: number) => number,
+  since: (started: number) => number,
+) {
+  const started = Date.now();
   const answer = {
     id: 1,
     kind: "pi.assistant",
@@ -1896,7 +1904,7 @@ it("reads a standalone turn's conversation as the agent's usage, with no channel
       {
         role: "assistant",
         content: [],
-        timestamp: Date.now(),
+        timestamp: answered(started),
         model: "claude-x",
         responseId: "resp-1",
         usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 },
@@ -1921,19 +1929,49 @@ it("reads a standalone turn's conversation as the agent's usage, with no channel
       entries: conversation === 99 ? [answer] : [],
     }),
   });
-  let sessions: Awaited<ReturnType<typeof runtime.usage>>;
   try {
     runtime.sync([
       { key: self, pubkey: self, config: DEFAULT_CONFIG },
     ] as never);
     await runOnce("timer/t1", "Run t1");
-    sessions = await runtime.usage(self, 0, new AbortController().signal);
+    // Later sessions push every saved prompt out; the turn stays the agent's.
+    for (const key of [...kept.keys()])
+      if (key.startsWith(PROMPTS_PREFIX)) kept.delete(key);
+    return await runtime.usage(
+      self,
+      since(started),
+      new AbortController().signal,
+    );
   } finally {
     vi.unstubAllGlobals();
   }
+}
+
+it("reads a standalone turn's conversation as the agent's usage, with no channel", async () => {
+  const sessions = await standaloneUsage(
+    (started) => started,
+    () => 0,
+  );
   expect(sessions.map((session) => session.id)).toEqual(["99"]);
   expect(sessions[0]).not.toHaveProperty("channelId");
   expect(sessions[0]?.observations).toHaveLength(1);
+});
+
+it("reads a standalone turn begun before the cutoff by when it answered", async () => {
+  // Begun before the cutoff, it answered after it: that answer is counted.
+  const crossing = await standaloneUsage(
+    (started) => started + 2000,
+    (started) => started + 1000,
+  );
+  expect(crossing.map((session) => session.id)).toEqual(["99"]);
+  expect(crossing[0]?.observations).toHaveLength(1);
+  // One that last answered before the cutoff is not.
+  expect(
+    await standaloneUsage(
+      (started) => started,
+      (started) => started + 1000,
+    ),
+  ).toEqual([]);
 });
 
 it("starts no standalone turn once its prompt is no longer wanted", async () => {

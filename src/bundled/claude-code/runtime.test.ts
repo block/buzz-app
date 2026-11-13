@@ -13,6 +13,10 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { localStore } from "../../features/agents/state";
+import {
+  PROMPTS_BUDGET,
+  sessionPrompts,
+} from "../../features/agents/session-prompts";
 import type {
   Agent,
   AgentHandle,
@@ -359,6 +363,7 @@ function setup(
     memoryRead,
     core,
     data,
+    storage,
     agent,
     workingUntil,
     interruptible,
@@ -2430,13 +2435,24 @@ it("runs a timer as a one-off turn that is never saved", async () => {
 });
 
 it("records a one-off turn's session as the agent's, for its usage", async () => {
-  const { deliver, claudes, runtime } = setup();
+  const { deliver, claudes, runtime, storage } = setup();
   await deliver(timer("daily", "ops"));
   await flush(10);
   const claude = claudes().find((process) => process.prompts.length);
   const args = claude?.options.args ?? [];
   const session = args[args.indexOf("--session-id") + 1];
   expect(session).toBeTruthy();
+  expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
+    { place: "~/.buzz", saved: [], standalone: [session] },
+  ]);
+  // Later sessions' prompts push its prompt out of the saved prompts, and
+  // it is still the agent's.
+  const prompts = sessionPrompts(storage, "claude-code", self);
+  for (const later of ["l1", "l2", "l3"])
+    await prompts.save(later, [
+      { label: "", text: later.repeat(PROMPTS_BUDGET / 6) },
+    ]);
+  expect(prompts.sessions().map(({ id }) => id)).not.toContain(session);
   expect(runtime.sessionPlaces(self, "~/.buzz")).toEqual([
     { place: "~/.buzz", saved: [], standalone: [session] },
   ]);

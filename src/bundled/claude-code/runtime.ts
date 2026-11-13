@@ -86,6 +86,7 @@ import {
   type SessionsPlace,
 } from "./transcript";
 import { sessionPrompts } from "../../features/agents/session-prompts";
+import { standaloneSessions } from "../../features/agents/standalone-sessions";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -295,7 +296,7 @@ export class ClaudeRuntime {
   /** Where each of the agent's sessions ran, with the ids this app saved
    * there, for its usage: its workspace and every folder its conversations
    * were given. A one-off turn runs in the workspace, so its sessions, which
-   * `started` recorded as outside any conversation, are listed there. */
+   * `started` recorded, are listed there. */
   sessionPlaces(agent: AgentKey, workspace: string) {
     const scope = this.reads(agent)?.scope;
     const folders = scope
@@ -310,9 +311,8 @@ export class ClaudeRuntime {
         {
           place: workspace,
           saved: [],
-          standalone: this.prompts(agent)
-            .sessions()
-            .filter(({ conversation }) => conversation === null)
+          standalone: standaloneSessions(this.storage, "claude-code", agent)
+            .list()
             .map(({ id }) => id),
         },
       ],
@@ -1632,14 +1632,18 @@ export class ClaudeRuntime {
         delete: (key) => saved.delete(key),
       },
       started: (session, text, once) => {
-        if (!this.target)
-          void this.prompts(agent).save(
+        if (this.target) return;
+        void this.prompts(agent).save(
+          session,
+          [{ label: "", text }],
+          // A one-off turn's session is outside any conversation.
+          once ? { at: Date.now(), title: "", conversation: null } : undefined,
+        );
+        // Its transcript names no conversation, so only this says it is the
+        // agent's, for its usage; the saved prompts drop old sessions.
+        if (once)
+          void standaloneSessions(this.storage, "claude-code", agent).add(
             session,
-            [{ label: "", text }],
-            // A one-off turn's session is outside any conversation.
-            once
-              ? { at: Date.now(), title: "", conversation: null }
-              : undefined,
           );
       },
       onChange: () => this.notify(),

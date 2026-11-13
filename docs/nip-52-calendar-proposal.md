@@ -33,17 +33,35 @@ information document. For example, a production relay currently reports:
 
 NIP-52 is not advertised, and the calendar event kinds (`31922` date-based,
 `31923` time-based) are not among the kinds a session may write. The desktop
-client, by contrast, is already effectively kind-agnostic where it matters:
+client is already kind-agnostic on the read path:
 
 - Reads pass any kind through the access model (`src/features/relay/event-access.ts`
   resolves visibility from channel `h` tags, independent of kind).
-- The plugin-facing read model and outbox accept whichever kinds the relay's
-  session `writeKinds` includes; plugins can already publish arbitrary
-  admitted kinds through `session.outbox`.
 
-So the relay is the gating layer; the app needs little more than
-feature-detection (the same pattern as the NIP-29 check in
-`src/features/relay/native.ts`) and, eventually, first-class UI.
+The write and routing paths, however, are not kind-agnostic yet:
+
+- The desktop's native relay writer advertises a fixed client-side kind list
+  (`nativeWriteKinds`, `src/features/relay/native.ts`; plus 9007 when NIP-29 is
+  advertised). A broker-session writer does honor the relay session's
+  `writeKinds` (`src/features/relay/transport.ts`), but neither path means
+  "no client-side kind list".
+- Channel subscriptions and routing use fixed kind lists too
+  (`CHANNEL_KINDS` / `channelSourceKind`, `src/features/relay/channel-kinds.ts`),
+  so `31922` and `31923` would not reach community timelines without app
+  changes.
+
+So authorization is relay-side, but adopting NIP-52 does require client code
+changes: admitting the kinds in the writer lists and in channel routing.
+
+## Scope
+
+The initial proposal covers the event kinds only: `31922` (date-based) and
+`31923` (time-based). NIP-52 also defines calendars (`31924`) and RSVPs
+(`31925`); those are deliberately out of scope here and would follow the same
+path later if wanted. Note the NIP's format requirements, since a relay-side
+validation profile needs them: date-based events carry `start`/`end` in ISO
+`YYYY-MM-DD`; time-based events carry `start`/`end` as unix seconds plus the
+required `D` day tag (day-granularity unix days).
 
 ## Proposal
 
@@ -53,16 +71,20 @@ feature-detection (the same pattern as the NIP-29 check in
    scoped like other content: require an `h` channel tag (or an explicit
    community scope tag) so community ACLs keep applying, and authorize the
    author like an ordinary kind-9 post.
-2. Treat them as parameterized-replaceable (`d` tag), with the same
-   dedup/replace semantics the relay already applies to other catalogs.
+2. NIP-52 events are addressable: one stored version per (kind, author, `d`),
+   with the same dedup/replace semantics the relay already applies to other
+   catalogs.
 3. Include the kinds in the session `writeKinds` payload so clients and
    plugins discover writability without hard-coding.
 4. Advertise `52` in `supported_nips`.
 
 ### Desktop app (this repository)
 
-1. Feature-detect: honor the relay's `writeKinds`/`supported_nips` when
-   deciding whether to offer event publishing (no client-side kind list).
+1. Feature-detect: offer event publishing only when the relay advertises NIP-52
+   (`supported_nips`) and the kinds are writable. Where the broker-session
+   writer applies, honor the session `writeKinds`; the native writer's
+   `nativeWriteKinds` and the `channel-kinds.ts` routing lists need the new
+   kinds added, gated on the relay's advertisement.
 2. Expose calendar events through the plugin read model so plugins (including
    the community calendar above) can switch from `localStorage` to relay
    storage behind a capability check, staying local-only on relays without
@@ -71,13 +93,18 @@ feature-detection (the same pattern as the NIP-29 check in
 
 ### Open questions
 
-- NIP-52 events are parameterized by a `d` tag, not channel-scoped. For Buzz
-  ACLs we propose requiring an `h` tag in addition to `d` (a Buzz profile of
-  NIP-52), or introducing a community-scope tag — feedback welcome.
-- Should repeated events (NIP-52 recurrence) be supported from day one or
-  deferred?
-- Retention: parameterized replaceable events can grow without bound; suggest
-  a per-`d`-tag replace and a bounded history window per calendar.
+- NIP-52 events are addressable by (kind, author, `d`), and the NIP's `a`
+  coordinate has no channel dimension. For Buzz ACLs we propose requiring an
+  `h` tag in addition to `d` (a Buzz profile of NIP-52), or embedding the
+  channel scope in the `d` value — otherwise one author reusing the same `d`
+  in two channels would silently overwrite across them. Feedback welcome.
+- Retention: addressable events are bounded per (kind, author, `d`), so
+  growth comes from the number of distinct `d` values, not history; suggest a
+  bounded count of distinct calendar events per channel.
+- Recurrence: NIP-52 intentionally omits recurring events ("Intentionally
+  Unsupported Scenarios") and pushes clients to publish separate events per
+  occurrence. Proposal: follow the NIP and treat recurrence as out of scope;
+  a Buzz extension (or plugin-side expansion) can revisit it later.
 
 ## Alternatives considered
 

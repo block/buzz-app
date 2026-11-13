@@ -48,8 +48,12 @@ strike.peek = () => "~";
 /** Plain portions are authored Markdown, not rich-editor literal text. Keeping
  * their source verbatim avoids normalizing formats this slice does not edit.
  * Marked content uses CommonMark/GFM delimiter escaping and flanking rules.
- * A chip is its label as literal text in place. */
-export function composerMarkdown(draft: MentionDraft): string {
+ * A chip is its label as literal text in place. Copy passes `authored` to keep
+ * the typed source without the namesake qualifiers a send adds. */
+export function composerMarkdown(
+  draft: MentionDraft,
+  { authored = false }: { authored?: boolean } = {},
+): string {
   const project = (node: EditorNode): EditorNode =>
     node.type.name === "token" && node.attrs.semantic
       ? node.mark(composerSchema.marks.literal.create().addToSet(node.marks))
@@ -61,7 +65,7 @@ export function composerMarkdown(draft: MentionDraft): string {
     [...(draft.chatCards ?? []), blocksMarkdown(body), ...(draft.gifs ?? [])]
       .filter(Boolean)
       .join("\n\n");
-  const qualified = qualifyNamesakes(doc);
+  const qualified = authored ? doc : qualifyNamesakes(doc);
   if (qualified === doc) return wire(doc);
   // The timeline renders a too-deep or too-long body as plain text, where no
   // span binds, so qualifiers there would only add characters.

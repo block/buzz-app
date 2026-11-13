@@ -1160,6 +1160,43 @@ it("is not settled while a check runs, more are unread, or the rollup waits", as
   }
 });
 
+it("reads what a pull request's reviews come to with its state, and asks the panel's reviews the panel's way", async () => {
+  const approved = { state: "APPROVED" };
+  const changes = { state: "CHANGES_REQUESTED" };
+  for (const [decision, reviews, review] of [
+    ["APPROVED", [approved], "approved"],
+    ["CHANGES_REQUESTED", [approved, changes], "changes requested"],
+    // Stamped, but a required review, such as a code owner's, is missing.
+    ["REVIEW_REQUIRED", [approved, null], "partly approved"],
+    ["REVIEW_REQUIRED", [], undefined],
+    // A repository that requires no review leaves the decision to GitHub's
+    // page, where each reviewer's latest verdict counts.
+    [null, [approved], "approved"],
+    [null, [approved, changes], "changes requested"],
+    [null, [], undefined],
+  ] as const) {
+    const answer = full();
+    const gh = ghFor(() => ({
+      r0: {
+        ...answer,
+        pullRequest: {
+          ...answer.pullRequest,
+          reviewDecision: decision,
+          latestOpinionatedReviews: { nodes: reviews },
+        },
+      },
+    }));
+    const states = createPullStates(gh);
+    const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+    expect(typeof state === "object" && state.review).toBe(review);
+    // GraphQL refuses one field asked twice with different arguments.
+    const query = String(gh.mock.calls[0]?.[0]);
+    expect(new Set(query.match(/latestOpinionatedReviews\([^)]*\)/g))).toEqual(
+      new Set(["latestOpinionatedReviews(first:50)"]),
+    );
+  }
+});
+
 it("reads the text of feedback it does not hold, newest first, and keeps it while listed", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let comments = ["I1"];

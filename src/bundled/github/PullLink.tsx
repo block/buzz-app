@@ -16,6 +16,7 @@ import {
   describePull,
   issueIcons,
   issueState,
+  reviewIcons,
   stateIcons,
 } from "./pull-state-view";
 import type { PullStates } from "./pull-states";
@@ -47,6 +48,12 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
   const Icon = issue
     ? issueIcons[state ? issueState(state) : "open"]
     : stateIcons[state?.state ?? "open"];
+  const review =
+    !issue && (state?.state === "open" || state?.state === "draft")
+      ? state.review
+      : undefined;
+  const ReviewIcon =
+    review && review !== "partly approved" ? reviewIcons[review] : undefined;
   const words = (issue ? describeIssue : describePull)({
     state,
     failed: read === "failed",
@@ -77,6 +84,13 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
           title={words}
         >
           <Icon aria-hidden="true" className={inlineStyles.icon} />
+          {ReviewIcon && (
+            <ReviewIcon
+              aria-hidden="true"
+              className={`${inlineStyles.icon} ${styles.pullReview}`}
+              data-review={review}
+            />
+          )}
         </span>
       }
     />

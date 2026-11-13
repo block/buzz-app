@@ -94,6 +94,10 @@ export type PullState = Readonly<{
   /** The head commit's combined checks, when read with `gh`. */
   checks?: "success" | "failure" | "pending" | undefined;
   conflicts?: boolean | undefined;
+  /** Its reviews, when read with `gh`: approved as the repository requires,
+   * changes requested, or approved by someone while a required review, such
+   * as a code owner's, is still missing. */
+  review?: "approved" | "changes requested" | "partly approved" | undefined;
   /** The head commit, when read with `gh`, as are `settled` and `failed`. */
   head?: string | undefined;
   /** Whether every check on the head is done, and none is still expected. */
@@ -227,6 +231,8 @@ type StateData = {
   isDraft: boolean;
   mergeStateStatus?: string;
   headRefOid?: string;
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  latestOpinionatedReviews?: { nodes?: ({ state?: string } | null)[] };
   commits?: {
     nodes?: ({
       commit?: {
@@ -272,7 +278,10 @@ const FAILED = new Set([
   "STALE",
 ]);
 
+// The panel reads the same reviews with its details, and GraphQL refuses one
+// field asked for twice with different arguments.
 const STATE = `state title isDraft mergeStateStatus headRefOid
+reviewDecision latestOpinionatedReviews(first:50){nodes{state}}
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
 ... on CheckRun{name status conclusion}
@@ -304,8 +313,29 @@ function idsOf(pull: StateData) {
   ];
 }
 
+/** What `pull`'s reviews come to. GitHub decides only where the repository
+ * requires reviews; elsewhere each reviewer's latest verdict does, as
+ * GitHub's own page shows it. */
+function reviewOf(pull: StateData): PullState["review"] {
+  const verdicts = (pull.latestOpinionatedReviews?.nodes ?? []).map(
+    (review) => review?.state,
+  );
+  const approvedBySomeone = verdicts.includes("APPROVED");
+  switch (pull.reviewDecision) {
+    case "APPROVED":
+      return "approved";
+    case "CHANGES_REQUESTED":
+      return "changes requested";
+    case "REVIEW_REQUIRED":
+      return approvedBySomeone ? "partly approved" : undefined;
+  }
+  if (verdicts.includes("CHANGES_REQUESTED")) return "changes requested";
+  return approvedBySomeone ? "approved" : undefined;
+}
+
 /** The state in `pull`, an alias's answer, without its feedback or details. */
 function stateOf(pull: StateData): PullState {
+  const review = reviewOf(pull);
   const rollup = pull.commits?.nodes?.[0]?.commit?.statusCheckRollup;
   const contexts = (rollup?.contexts?.nodes ?? []).filter(
     (node): node is Node => !!node && typeof node === "object",
@@ -335,6 +365,7 @@ function stateOf(pull: StateData): PullState {
     title: pull.title,
     checks: checksOf(rollup?.state),
     conflicts: pull.mergeStateStatus === "DIRTY",
+    ...(review && { review }),
     ...(pull.headRefOid && {
       head: pull.headRefOid,
       settled:

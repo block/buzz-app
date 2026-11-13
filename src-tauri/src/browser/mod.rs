@@ -152,14 +152,19 @@ impl BrowserSession {
         Ok(())
     }
 
-    fn set_bounds(&self, bounds: BrowserBounds, visible: bool) -> Result<(), String> {
+    fn set_bounds(
+        &self,
+        bounds: BrowserBounds,
+        visible: bool,
+        scale: Option<f64>,
+    ) -> Result<(), String> {
         self.guest
             .set_visible(false)
             .map_err(|error| error.to_string())?;
         if !visible {
             return Ok(());
         }
-        platform::resize_guest(&self.guest, &self.host, bounds)?;
+        platform::resize_guest(&self.guest, &self.host, bounds, scale)?;
         self.guest
             .set_visible(true)
             .map_err(|error| error.to_string())
@@ -218,6 +223,12 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
     match event {
         tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+            // Child webviews track window resizes asynchronously on
+            // macOS/Windows; hiding them until the host sends fresh bounds
+            // masks the flicker. Linux guests are placed synchronously on the
+            // GTK overlay, so hiding only risks leaving a guest stuck
+            // invisible when a bounds update is lost.
+            #[cfg(not(target_os = "linux"))]
             BROWSERS.with(|browsers| {
                 for browser in browsers.borrow().iter() {
                     if let Err(error) = browser.guest.set_visible(false) {
@@ -424,6 +435,7 @@ fn build_contents(
     bounds: BrowserBounds,
     storage: Option<&str>,
     defer_navigation: bool,
+    scale: Option<f64>,
 ) -> Result<BrowserSession, String> {
     let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
     let target = policy.validate(target)?;
@@ -509,7 +521,7 @@ fn build_contents(
         handoff,
         media_suspended: Cell::new(false),
     };
-    platform::resize_guest(&browser.guest, &browser.host, bounds)?;
+    platform::resize_guest(&browser.guest, &browser.host, bounds, scale)?;
     if !defer_navigation {
         browser.navigate(target.as_str(), false)?;
     }
@@ -523,6 +535,7 @@ pub async fn browser_attach(
     bounds: BrowserBounds,
     storage: Option<String>,
     builderlab: Option<builderlab::ViewerAuth>,
+    scale: Option<f64>,
     federated_identity: tauri::State<'_, crate::federated_identity::FederatedIdentity>,
 ) -> Result<String, builderlab::ViewerError> {
     let generation = DOCUMENT_GENERATION.load(Ordering::SeqCst);
@@ -534,8 +547,14 @@ pub async fn browser_attach(
     let handle = app.clone();
     let (session_id, pending) = on_main_thread(&app, move || {
         with_current_document(&DOCUMENT_GENERATION, generation, || {
-            let browser =
-                build_contents(&handle, &url, bounds, storage.as_deref(), defer_navigation)?;
+            let browser = build_contents(
+                &handle,
+                &url,
+                bounds,
+                storage.as_deref(),
+                defer_navigation,
+                scale,
+            )?;
             let pending = bootstrap
                 .as_ref()
                 .map(|value| platform::install_builderlab_cookie(&browser.guest, value))
@@ -587,9 +606,12 @@ pub async fn browser_set_bounds(
     session_id: String,
     bounds: BrowserBounds,
     visible: bool,
+    scale: Option<f64>,
 ) -> Result<(), String> {
     on_main_thread(&app, move || {
-        with_browser(&session_id, |browser| browser.set_bounds(bounds, visible))
+        with_browser(&session_id, |browser| {
+            browser.set_bounds(bounds, visible, scale)
+        })
     })
     .await
 }

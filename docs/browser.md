@@ -10,6 +10,8 @@ import type { Context } from "@buzz/author";
 export const inject = ["react", "panels", "browser"];
 
 export function apply(ctx: Context) {
+  // Cordis wraps service functions on access; keep React's component identity.
+  const View = ctx.browser.View;
   ctx.panels.register({
     id: "documentation",
     title: "Documentation",
@@ -18,14 +20,14 @@ export function apply(ctx: Context) {
     // Catch-all band: a panel specific to one site on this host wins by default.
     order: 100,
     component: ({ target }) =>
-      ctx.react.createElement(ctx.browser.View, { url: target }),
+      ctx.react.createElement(View, { url: target }),
   });
 }
 ```
 
-`browser.View` is a host-provided React component accepting `{ url: string; storage?: string }`. It owns the controls, website viewport and native session for its mounted lifetime. It needs a flex container with available height, as supplied by Buzz's panel card. Plugins do not import internal host modules or invoke native commands directly. This preview API is not a stable compatibility contract.
+`browser.View` is a host-provided React component accepting `{ url: string; storage?: string }`. It owns the controls, website viewport and native session for its mounted lifetime. Read it once in `apply`, as above: every `ctx.browser.View` access returns a new proxy function, so reading it inside the component gives React a new component type per render — each parent re-render then remounts the view, which ends the website session and reloads the page. It needs a flex container with available height, as supplied by Buzz's panel card. Plugins do not import internal host modules or invoke native commands directly. This preview API is not a stable compatibility contract.
 
-`browser.available` is currently true only in the macOS desktop application. Web, Windows and Linux builds leave existing link handling unchanged. The Windows native positioning path is unverified; Linux needs a different embedding implementation. URLs must use HTTP(S), contain no credentials, and fit the 2,048-byte limit after URL normalization. Native validation also rejects Buzz's own application and development origins. Invalid addresses leave the existing page visible and show an error.
+`browser.available` is currently true only in the macOS and Linux desktop applications. Web and Windows builds leave existing link handling unchanged; the Windows native positioning path is unverified. On Linux the guest is a WebKitGTK view placed in its own `gtk::Fixed` frame on a `gtk::Overlay` above the window's content, with the frame's allocation set exactly to the guest's bounds through the overlay's `get-child-position` signal — an overlay child receives events everywhere inside its allocation, so a window-spanning container would swallow clicks meant for the app. URLs must use HTTP(S), contain no credentials, and fit the 2,048-byte limit after URL normalization. Native validation also rejects Buzz's own application and development origins. Invalid addresses leave the existing page visible and show an error.
 
 The example only matches links when the capability is available. It declares the catch-all `order: 100`, so a default-band panel such as GitHub handles the links it recognises regardless of which plugin activated first; see [resolution order](plugin-architecture.md#resolution-order). Modifier-key clicks retain the host's existing behavior. This does not replace every external-link call site or the operating system's default browser.
 
@@ -67,7 +69,7 @@ Normal website views retain the storage behavior above.
 
 The controls are ordinary trusted React UI in Buzz's main webview. Website content is a separate raw Wry child view positioned over the panel's website viewport, created without a Tauri IPC handler, custom protocols or host initialization scripts. It uses a nonpersistent data store, or the named persistent store described above. The main window's content-security policy is unchanged.
 
-The mounted view reports its viewport bounds and visibility to native code. Native code validates and clips bounds to the main webview. Resizing, scrolling, hiding the document and opening application overlays update guest placement or visibility. Session identifiers prevent delayed callbacks or cleanup from controlling a replacement view.
+The mounted view reports its viewport bounds and visibility to native code, in CSS pixels and with the host webview's pixel ratio. Native code validates and clips bounds to the main webview; on Linux it maps them from CSS pixels into GTK's integer-scaled widget units, which differ under fractional display scaling. Resizing, scrolling, hiding the document and opening application overlays update guest placement or visibility. Session identifiers prevent delayed callbacks or cleanup from controlling a replacement view.
 
 This distinction is required by the locked Tauri implementation: its built-in channel-data fetch command bypasses ordinary command ACL checks. Empty Tauri capabilities alone would not establish a guest with no native IPC. The raw guest has no Tauri bridge to invoke that command.
 
@@ -85,7 +87,7 @@ Host tests cover view ownership, browser controls and generated native permissio
 
 ## Try the capability with a local plugin
 
-Start the macOS desktop app from a checkout containing this capability with `bin/just desktop`. Create a local folder containing these two files. This JavaScript example needs no build step or additional repository.
+Start the macOS or Linux desktop app from a checkout containing this capability with `bin/just desktop`. Create a local folder containing these two files. This JavaScript example needs no build step or additional repository.
 
 `manifest.json`:
 
@@ -103,6 +105,8 @@ Start the macOS desktop app from a checkout containing this capability with `bin
 export const inject = ["react", "panels", "browser"];
 
 export function apply(ctx) {
+  // Cordis wraps service functions on access; keep React's component identity.
+  const View = ctx.browser.View;
   ctx.panels.register({
     id: "example-site",
     title: "Example site",
@@ -110,11 +114,11 @@ export function apply(ctx) {
       ctx.browser.available && target.startsWith("https://example.org/"),
     order: 100,
     component: ({ target }) =>
-      ctx.react.createElement(ctx.browser.View, { url: target }),
+      ctx.react.createElement(View, { url: target }),
   });
 }
 ```
 
 In Settings → Plugins → Manage plugins → Load from folder, select that folder and enable **Browser example**. Click `https://example.org/` in a message. The website and navigation controls should appear beside the conversation; a default-band panel that also matches the link, such as GitHub for a GitHub URL, wins instead. Other links keep their existing behavior.
 
-Check address entry, Back/Forward/Reload, resizing, opening an account menu, closing/reopening the panel, and disabling the plugin. Web, Windows and Linux keep their existing link handling. The example requires a host that provides `browser`; older hosts cannot activate it.
+Check address entry, Back/Forward/Reload, resizing, opening an account menu, closing/reopening the panel, and disabling the plugin. Web and Windows keep their existing link handling. The example requires a host that provides `browser`; older hosts cannot activate it.

@@ -75,11 +75,13 @@ describe("addressInputUrl", () => {
 });
 
 describe("createBrowserPlatform", () => {
-  it("is available only in the macOS desktop host", () => {
+  it("is available only in the macOS and Linux desktop hosts", () => {
     native.value = true;
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     expect(createBrowserPlatform().available).toBe(true);
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    expect(createBrowserPlatform().available).toBe(true);
+    vi.stubGlobal("navigator", { platform: "Win32" });
     expect(createBrowserPlatform().available).toBe(false);
     native.value = false;
     vi.stubGlobal("navigator", { platform: "MacIntel" });
@@ -111,6 +113,7 @@ describe("createBrowserPlatform", () => {
           bounds,
           storage: null,
           builderlab: null,
+          scale: null,
         },
       ],
       [
@@ -120,9 +123,13 @@ describe("createBrowserPlatform", () => {
           bounds,
           storage: "builderlab-apps",
           builderlab: null,
+          scale: null,
         },
       ],
-      ["browser_set_bounds", { sessionId: "session-1", bounds, visible: true }],
+      [
+        "browser_set_bounds",
+        { sessionId: "session-1", bounds, visible: true, scale: null },
+      ],
       [
         "browser_set_media_suspended",
         { sessionId: "session-1", suspended: true },
@@ -208,6 +215,7 @@ describe("createBrowserPlatform", () => {
         bounds,
         storage: "account",
         builderlab: { federated: "revision-1" },
+        scale: null,
       },
     ]);
   });
@@ -259,6 +267,21 @@ describe("createBrowserPlatform", () => {
     sdk.invoke.mockClear();
     await expect(platform.openExternal("file:///etc/passwd")).rejects.toThrow();
     expect(sdk.invoke).not.toHaveBeenCalled();
+  });
+
+  it("sends the host pixel ratio for Linux's GTK unit mapping", async () => {
+    native.value = true;
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    vi.stubGlobal("window", { devicePixelRatio: 2.25 });
+    const platform = createBrowserPlatform();
+    const bounds = { x: 1, y: 2, width: 300, height: 400 };
+    await platform.setBounds("session-1", bounds, true);
+    expect(sdk.invoke).toHaveBeenCalledWith("browser_set_bounds", {
+      sessionId: "session-1",
+      bounds,
+      visible: true,
+      scale: 2.25,
+    });
   });
 
   it("rejects an invalid URL before native invocation", async () => {

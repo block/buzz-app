@@ -288,7 +288,9 @@ it("opens Command-clicked panel links in the desktop browser", async () => {
       ),
   );
   const target = "https://github.com/block/buzz-app/pull/629";
-  render(<GitHubPanel target={target} close={() => {}} />);
+  render(<GitHubPanel target={target} close={() => {}} />, {
+    wrapper: ToastProvider,
+  });
   const title = await screen.findByRole("link", {
     name: "A small improvement #629",
   });
@@ -318,6 +320,18 @@ it("opens Command-clicked panel links in the desktop browser", async () => {
       undefined,
     );
   }
+  expect(
+    screen.queryByText("Couldn’t open the link in your browser."),
+  ).not.toBeInTheDocument();
+  // A failed open says so, as message links do.
+  invoke.mockRejectedValueOnce(new Error("denied"));
+  fireEvent(
+    title,
+    new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }),
+  );
+  expect(
+    await screen.findByText("Couldn’t open the link in your browser."),
+  ).toBeVisible();
 });
 
 it.each([

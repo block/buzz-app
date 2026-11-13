@@ -1172,8 +1172,9 @@ it("reads what a pull request's reviews come to with its state, and asks the pan
   for (const [decision, reviews, review] of [
     ["APPROVED", [approved], "approved"],
     ["CHANGES_REQUESTED", [approved, changes], "changes requested"],
-    // Stamped, but a required review, such as a code owner's, is missing.
-    ["REVIEW_REQUIRED", [approved, null], "partly approved"],
+    // Stamped, but a required review, such as a code owner's, is missing:
+    // no different from not stamped at all.
+    ["REVIEW_REQUIRED", [approved, null], undefined],
     ["REVIEW_REQUIRED", [], undefined],
     // A repository that requires no review leaves the decision to GitHub's
     // page, where each reviewer's latest verdict counts.

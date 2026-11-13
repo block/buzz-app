@@ -2,12 +2,10 @@
 // panel and links in messages, and an issue's in links.
 import {
   CheckCircleIcon,
-  CheckIcon,
   CircleDashedIcon,
   GitHubIssueIcon,
   GitMergeIcon,
   GitPullRequestIcon,
-  PencilSimpleIcon,
   XCircleIcon,
 } from "../../shared/design-system/icons/index";
 import type { PullState } from "./pull-states";
@@ -17,13 +15,6 @@ export const stateIcons = {
   draft: CircleDashedIcon,
   closed: XCircleIcon,
   merged: GitMergeIcon,
-};
-
-/** The mark beside an open or draft pull request's icon for its reviews.
- * One only partly approved has none: it still waits on a review. */
-export const reviewIcons = {
-  approved: CheckIcon,
-  "changes requested": PencilSimpleIcon,
 };
 
 /** An issue's: one completed is checked off, as on GitHub, and one not

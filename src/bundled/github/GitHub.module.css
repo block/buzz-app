@@ -396,20 +396,14 @@
 .pullState[data-pr-state="completed"] {
   color: var(--message-icon-categorical-purple, var(--icon-categorical-purple));
 }
-/* An open pull request's review mark, smaller than its state icon and pulled
-   in to it, so the two read as one. The bubble hands no danger pair, so
-   inside your own bubble changes requested takes its quiet ink. */
-.pullState .pullReview {
+/* An open pull request's approval mark, smaller than its state icon and
+   pulled in to it, so the two read as one. */
+.pullState .pullApproved {
   width: 0.75em;
   height: 0.75em;
   margin-left: calc(-1 * var(--space-half));
   vertical-align: 0;
-}
-.pullReview[data-review="approved"] {
   color: var(--message-icon-success, var(--icon-success));
-}
-.pullReview[data-review="changes requested"] {
-  color: var(--message-icon-subtle, var(--text-danger));
 }
 .soloLink {
   display: flex;

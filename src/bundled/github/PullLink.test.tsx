@@ -27,7 +27,8 @@ import { apply as applyLinks } from "../links/index";
 import { apply } from "./index";
 import styles from "./GitHub.module.css";
 import { PullLink } from "./PullLink";
-import { issueIcons, reviewIcons, stateIcons } from "./pull-state-view";
+import { CheckIcon } from "../../shared/design-system/icons/index";
+import { issueIcons, stateIcons } from "./pull-state-view";
 import type { PullState, PullStates } from "./pull-states";
 
 afterEach(() => {
@@ -70,16 +71,12 @@ const glyph = (
   renderToStaticMarkup(
     <Icon aria-hidden="true" className={inlineStyles.icon} />,
   );
-const reviewGlyph = (review: keyof typeof reviewIcons) => {
-  const Icon = reviewIcons[review];
-  return renderToStaticMarkup(
-    <Icon
-      aria-hidden="true"
-      className={`${inlineStyles.icon} ${styles.pullReview}`}
-      data-review={review}
-    />,
-  );
-};
+const approvedGlyph = renderToStaticMarkup(
+  <CheckIcon
+    aria-hidden="true"
+    className={`${inlineStyles.icon} ${styles.pullApproved}`}
+  />,
+);
 const icon = (container: HTMLElement) =>
   container.querySelector("[data-pr-state]");
 
@@ -125,7 +122,7 @@ it("shows the authored label with the plain pull request glyph until read, then 
   expect(describe).toHaveBeenLastCalledWith(undefined);
 });
 
-it("marks an open or draft pull request approved or with changes requested, and says how far its reviews got", () => {
+it("marks an open or draft pull request only when approved, and says when changes are requested", () => {
   const states = fakeStates();
   const describe = vi.fn();
   const { container } = render(
@@ -133,34 +130,29 @@ it("marks an open or draft pull request approved or with changes requested, and 
       <PullLink url={pull} states={states} />
     </LinkDescriptionContext>,
   );
-  for (const [state, mark, words] of [
+  for (const [state, marked, words] of [
     [
       { state: "open", review: "approved" },
-      "approved",
+      true,
       "Pull request, open, approved",
     ],
     [
+      { state: "draft", review: "approved" },
+      true,
+      "Pull request, draft, approved",
+    ],
+    [
       { state: "draft", review: "changes requested", checks: "failure" },
-      "changes requested",
+      false,
       "Pull request, draft, changes requested, checks failing",
     ],
-    // Stamped, but still waiting on a required review: words, no mark.
-    [
-      { state: "open", review: "partly approved" },
-      undefined,
-      "Pull request, open, partly approved",
-    ],
-    // Read without gh: nothing about reviews.
-    [{ state: "open" }, undefined, "Pull request, open"],
+    // Not yet approved, or read without gh: nothing about reviews.
+    [{ state: "open" }, false, "Pull request, open"],
     // Once merged or closed, its reviews no longer matter.
-    [
-      { state: "merged", review: "approved" },
-      undefined,
-      "Pull request, merged",
-    ],
+    [{ state: "merged", review: "approved" }, false, "Pull request, merged"],
     [
       { state: "closed", review: "changes requested" },
-      undefined,
+      false,
       "Pull request, closed",
     ],
   ] as const) {
@@ -168,7 +160,7 @@ it("marks an open or draft pull request approved or with changes requested, and 
     expect(icon(container)).toHaveAttribute("title", words);
     expect(describe).toHaveBeenLastCalledWith(words);
     expect(icon(container)?.innerHTML).toBe(
-      glyph(stateIcons[state.state]) + (mark ? reviewGlyph(mark) : ""),
+      glyph(stateIcons[state.state]) + (marked ? approvedGlyph : ""),
     );
   }
 });

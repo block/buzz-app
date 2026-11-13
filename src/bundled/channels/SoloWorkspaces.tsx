@@ -17,7 +17,7 @@ import {
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Collapsible } from "@base-ui/react/collapsible";
-import { useDroppable } from "@dnd-kit/core";
+import { useDraggable, useDndMonitor, useDroppable } from "@dnd-kit/core";
 import {
   ChannelSidebarDnd,
   DraggableChannel,
@@ -489,6 +489,14 @@ export function SoloWorkspaces({
     const frame = (children: ReactNode) => (
       <DropProject
         projectKey={DROP + project.id}
+        groupIndex={groupIndex}
+        reorderable={
+          !!project.id &&
+          groups.length > 1 &&
+          preferences.sectionOrderWritable &&
+          !renaming &&
+          !deleting
+        }
         key={project.id}
         className={`${styles.project} ${channelStyles.channelSection}`}
         data-project={project.id ? "" : undefined}
@@ -519,26 +527,6 @@ export function SoloWorkspaces({
         content={
           <>
             {actions}
-            {(
-              [
-                ["Move to top", 0],
-                ["Move up", groupIndex - 1],
-                ["Move down", groupIndex + 1],
-              ] as const
-            ).map(([label, position]) => (
-              <MenuItem
-                key={label}
-                disabled={
-                  !preferences.sectionOrderWritable ||
-                  position < 0 ||
-                  position >= groups.length ||
-                  groups[position]?.id === project.id
-                }
-                onClick={() => reorder(project.id, position)}
-              >
-                {label}
-              </MenuItem>
-            ))}
             <MenuItem onClick={() => setSettingsFor(project)}>
               Workspace settings
             </MenuItem>
@@ -726,6 +714,7 @@ export function SoloWorkspaces({
         {header(
           <Collapsible.Trigger
             type="button"
+            data-workspace-drag-handle=""
             className={styles.projectHeading}
             aria-expanded={
               !collapsed.includes(project.id) || renamingProject === project.id
@@ -813,14 +802,22 @@ export function SoloWorkspaces({
       <ChannelSidebarDnd
         writable={preferences.writable}
         onMove={(id, key) => move(id, key.slice(DROP.length) || undefined)}
-        // Solo projects keep their saved order; only chats drag.
-        onReorder={() => {}}
-        overlay={(id) => {
-          const item = chats.find((item) => item.id === id);
+        onReorder={(key, overKey) => {
+          const id = key.slice(DROP.length);
+          const position = groups.findIndex(
+            (group) => DROP + group.id === overKey,
+          );
+          if (position >= 0 && groups.some((group) => group.id === id))
+            reorder(id, position);
+        }}
+        overlay={(id, group) => {
+          const title = group
+            ? groups.find((item) => DROP + item.id === id)?.name
+            : chats.find((item) => item.id === id)?.title;
           return (
-            item && (
+            title && (
               <div className={channelStyles.channelDragOverlay}>
-                <span>{item.title}</span>
+                <span>{title}</span>
               </div>
             )
           );
@@ -1125,15 +1122,75 @@ function ContributedSoloRow({
 /** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({
   projectKey,
+  groupIndex,
+  reorderable,
   ...props
-}: ComponentProps<typeof Collapsible.Root> & { projectKey: string }) {
-  const { setNodeRef, isOver, active } = useDroppable({ id: projectKey });
+}: ComponentProps<typeof Collapsible.Root> & {
+  projectKey: string;
+  groupIndex: number;
+  reorderable: boolean;
+}) {
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: projectKey,
+    data: { group: reorderable, groupIndex },
+    resizeObserverConfig: { updateMeasurementsFor: [] },
+  });
+  const drag = useDraggable({
+    id: projectKey,
+    data: { group: true, groupIndex },
+    disabled: !reorderable,
+  });
+  const suppressClick = useRef(false);
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node);
+      drag.setNodeRef(node);
+    },
+    [setNodeRef, drag.setNodeRef],
+  );
+  useDndMonitor({
+    onDragStart: ({ active }) => {
+      if (active.id === projectKey) suppressClick.current = true;
+    },
+  });
+  const group = !!active?.data.current?.group;
   return (
     <Collapsible.Root
       {...props}
-      ref={setNodeRef}
+      ref={setRef}
+      onPointerDown={(event) => {
+        if (
+          !(event.target instanceof Element) ||
+          !event.target.closest("[data-workspace-drag-handle]")
+        )
+          return;
+        suppressClick.current = false;
+        drag.listeners?.onPointerDown?.(event);
+      }}
+      onClickCapture={(event) => {
+        // The headings are controlled buttons, so stopping their click also
+        // prevents a completed drag from selecting or collapsing a workspace.
+        if (
+          suppressClick.current &&
+          event.detail > 0 &&
+          event.target instanceof Element &&
+          event.target.closest("[data-workspace-drag-handle]")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      data-section-dragging={drag.isDragging || undefined}
+      data-drop-edge={
+        group && isOver && active?.id !== projectKey
+          ? active?.data.current?.groupIndex < groupIndex
+            ? "after"
+            : "before"
+          : undefined
+      }
       data-drop-target={
-        (isOver && active?.data.current?.sectionKey !== projectKey) || undefined
+        (!group && isOver && active?.data.current?.sectionKey !== projectKey) ||
+        undefined
       }
     />
   );

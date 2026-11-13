@@ -72,6 +72,7 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
         label={title}
         selected={!!props.selected}
         data-solo-workspace-id={workspace.id}
+        data-workspace-drag-handle=""
         onClick={() => props.onSelect?.()}
       />
       {disclosure}

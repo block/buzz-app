@@ -2,6 +2,8 @@ import { RailPinPicker } from "./RailPinPicker";
 import { RailEntryArtwork } from "./RailEntryArtwork";
 import { railSections } from "./rail-sections";
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -156,10 +158,13 @@ export function RailNavigation({
     session.archives.subscribe,
     session.archives.snapshot,
   );
-  const navigation = useSyncExternalStore(
+  // Only the shown entry draws the rail. An opening visit's other steps,
+  // its start and its settling, change nothing here and render nothing.
+  const shownEntry = useSyncExternalStore(
     directNavigator.subscribe,
-    directNavigator.snapshot,
+    useCallback(() => directNavigator.snapshot().entry, [directNavigator]),
   );
+  const navigation = { entry: shownEntry };
   const sectionRoute =
     navigation.entry.target.kind === "page"
       ? navigation.entry.target.route?.params
@@ -174,12 +179,18 @@ export function RailNavigation({
   const pending = useRef<AbortController>(undefined);
   const pinTrigger = useRef<HTMLButtonElement>(null);
   const hidden = useSavedHiddenDmIds(partition);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: A new visit cancels a previous person-open attempt.
+  // A new visit cancels a previous person-open attempt.
   useEffect(() => {
-    pending.current?.abort();
-    pending.current = undefined;
-    setOpening(undefined);
-  }, [navigation.attempt.id]);
+    let attempt = directNavigator.snapshot().attempt.id;
+    return directNavigator.subscribe(() => {
+      const next = directNavigator.snapshot().attempt.id;
+      if (next === attempt) return;
+      attempt = next;
+      pending.current?.abort();
+      pending.current = undefined;
+      setOpening(undefined);
+    });
+  }, [directNavigator]);
   useEffect(() => () => pending.current?.abort(), []);
 
   const channels = useMemo(
@@ -611,30 +622,15 @@ export function RailNavigation({
         />
       );
     }
-    /** Unread conversations in one Team view; nothing when all are read. */
-    const teamCount = (filter: ActivityView["filter"]) => {
-      const counted = { ...messageView, filter, unread: true };
-      return (
-        <ConversationList
-          session={session}
-          navigator={navigator}
-          scope={scope}
-          target={navigation.entry.target}
-          view={counted}
-          // A list keeps its open row under Unread only; a count does not.
-          isOpen={() => false}
-          includeChannel={(channel) => includeMessagesChannel(channel, counted)}
-          renderEntries={(items) =>
-            items.length ? (
-              <>
-                {items.length > 99 ? "99+" : items.length}
-                <span className="sr-only"> unread</span>
-              </>
-            ) : null
-          }
-        />
-      );
-    };
+    const teamCount = (filter: ActivityView["filter"]) => (
+      <TeamCount
+        session={session}
+        navigator={navigator}
+        scope={scope}
+        view={messageView}
+        filter={filter}
+      />
+    );
     const activityPage = teamPages.find(
       (page) => page.key === "buzz.inbox/inbox",
     );
@@ -1033,6 +1029,56 @@ export function RailNavigation({
   );
 }
 
+/** Unread conversations in one Team view; nothing when all are read. It
+ * follows the conversations themselves, not the visit the rail is showing. */
+const TeamCount = memo(function TeamCount({
+  session,
+  navigator,
+  scope,
+  view,
+  filter,
+}: {
+  session: RelaySession;
+  navigator: Navigation;
+  scope: NavigationScope;
+  view: ActivityView;
+  filter: ActivityView["filter"];
+}) {
+  const counted = useMemo(
+    () => ({ ...view, filter, unread: true }),
+    [view, filter],
+  );
+  const target = useMemo(
+    () => sidebarSectionTarget(scope, "messages"),
+    [scope],
+  );
+  const includeChannel = useCallback(
+    (channel: Parameters<typeof includeMessagesChannel>[0]) =>
+      includeMessagesChannel(channel, counted),
+    [counted],
+  );
+  return (
+    <ConversationList
+      session={session}
+      navigator={navigator}
+      scope={scope}
+      target={target}
+      view={counted}
+      // A list keeps its open row under Unread only; a count does not.
+      isOpen={neverOpen}
+      includeChannel={includeChannel}
+      renderEntries={renderCount}
+    />
+  );
+});
+const neverOpen = () => false;
+const renderCount = (items: readonly unknown[]) =>
+  items.length ? (
+    <>
+      {items.length > 99 ? "99+" : items.length}
+      <span className="sr-only"> unread</span>
+    </>
+  ) : null;
 const noSubscription = () => () => {};
 const pluginCatalog: RailEntry = {
   id: "settings:plugins",

@@ -27,6 +27,8 @@ export type ActivityReceipt = Readonly<{
   /** Told the message's id once Claude has taken it: the id its transcript
    * gives the prompt. A message Claude never took has none. */
   submitted?: (uuid: string) => void;
+  /** Told once Claude has taken the message into a turn, as it replays it. */
+  taken?: () => void;
 }>;
 
 export type Spawn = (
@@ -113,6 +115,39 @@ const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
  * Claude session that started the app. */
+/** What has Claude (2.1.323's strings) send its requests to a provider other
+ * than Anthropic's API: on only for "1", "true", "yes" or "on". */
+export const PROVIDERS = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_GATEWAY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+] as const;
+/** What names the endpoint of Anthropic's API or a provider; an empty one
+ * falls back to the default. */
+export const ENDPOINTS = [
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_API_BASE_URL",
+  "ANTHROPIC_UNIX_SOCKET",
+  "ANTHROPIC_BEDROCK_BASE_URL",
+  "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+  "ANTHROPIC_VERTEX_BASE_URL",
+  "ANTHROPIC_FOUNDRY_BASE_URL",
+  "ANTHROPIC_AWS_BASE_URL",
+  "ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+] as const;
+/** A forwarded process's `--settings` env: its generation's URL, and every
+ * provider and other endpoint blanked. Flag settings outrank the user's,
+ * the project's and the local ones, whose `env` would otherwise apply after
+ * launch; only managed settings outrank them. */
+export const forwardEnv = (url: string): Record<string, string> => ({
+  ...Object.fromEntries([...PROVIDERS, ...ENDPOINTS].map((name) => [name, ""])),
+  ANTHROPIC_BASE_URL: url,
+});
+
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
@@ -299,10 +334,7 @@ export class ClaudeProcess {
           : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.forward
-          ? [
-              "--settings",
-              JSON.stringify({ env: { ANTHROPIC_BASE_URL: launch.forward } }),
-            ]
+          ? ["--settings", JSON.stringify({ env: forwardEnv(launch.forward) })]
           : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
@@ -354,6 +386,19 @@ export class ClaudeProcess {
               DYLD_FRAMEWORK_PATH: null,
               LD_PRELOAD: null,
               LD_LIBRARY_PATH: null,
+            }
+          : {}),
+        // A forwarded process's endpoint is its generation's alone: what
+        // would pick another provider or endpoint is cleared here and blanked
+        // in its flag settings. Managed settings, which outrank those, are
+        // checked before its generation opens; a turn none of whose requests
+        // reach the generation still fails.
+        ...(launch.forward
+          ? {
+              ...Object.fromEntries(
+                [...PROVIDERS, ...ENDPOINTS].map((name) => [name, null]),
+              ),
+              CLAUDE_CODE_REMOTE_SESSION_ID: null,
             }
           : {}),
         ...(launch.review
@@ -528,6 +573,10 @@ export class ClaudeProcess {
   get idle() {
     return this.quiesced;
   }
+  /** Running a `/compact` it was sent. */
+  get compacts() {
+    return this.compacting;
+  }
   /** Whether Claude said the session it was to resume doesn't exist. */
   get missingSession() {
     return this.missing;
@@ -559,7 +608,9 @@ export class ClaudeProcess {
   /** Sends one user message. Resolves when it, and anything sent after it, has
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
-   * folded into a running turn changes only what it asks for. */
+   * folded into a running turn keeps the turn's model and effort, whatever
+   * it asks for, so a turn never switches model (and misses its prompt
+   * cache) partway. */
   send(
     text: string,
     { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
@@ -570,8 +621,8 @@ export class ClaudeProcess {
         error: "Claude is not running",
       });
     // The model first: effort applies to whichever model runs.
-    this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
-    this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    if (!this.busy) this.setModel(model);
+    if (!this.busy) this.setEffort(effort);
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;
@@ -810,6 +861,7 @@ export class ClaudeProcess {
       const receipt = this.receipts.get(message.uuid);
       if (receipt) {
         this.receipts.delete(message.uuid);
+        receipt.taken?.();
         // Watches/timers have no message activity: they must not hide a mention.
         if (receipt.step) {
           const scope = receipt.activityScope ?? "conversation";

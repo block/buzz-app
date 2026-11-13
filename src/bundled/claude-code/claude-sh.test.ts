@@ -537,3 +537,41 @@ it.skipIf(process.platform !== "darwin")(
     });
   },
 );
+
+it("prints each managed settings file Claude reads, then its drop-ins in name order", async () => {
+  const { home } = await disk([]);
+  // As macOS's own, a folder whose path has a space.
+  const folder = join(home, "Claude Code");
+  // A locale that orders "B" after "a", unlike Claude.
+  const read = () =>
+    run("bash", ["-c", script, "claude.sh", "managed", folder], {
+      env: { PATH: process.env.PATH ?? "", HOME: home, LC_ALL: "en_US.UTF-8" },
+    });
+  const lines = async () =>
+    (await read()).stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => Buffer.from(line, "base64").toString("utf8"));
+  // No folder, or one without settings: nothing, so nothing is refused.
+  expect(await lines()).toEqual([]);
+  await mkdir(join(folder, "managed-settings.d"), { recursive: true });
+  expect(await lines()).toEqual([]);
+  const main = JSON.stringify(
+    { env: { CLAUDE_CODE_USE_BEDROCK: "1" } },
+    null,
+    2,
+  );
+  await writeFile(join(folder, "managed-settings.d", "20-b.json"), '{"b":"é"}');
+  await writeFile(join(folder, "managed-settings.d", "10-a.json"), "{}");
+  await writeFile(join(folder, "managed-settings.d", "notes.txt"), "skip");
+  await writeFile(join(folder, "managed-settings.d", ".hidden.json"), "skip");
+  await writeFile(join(folder, "managed-settings.d", "B.json"), "[]");
+  await writeFile(join(folder, "managed-settings.d", "a.json"), "0");
+  const dropIns = ["{}", '{"b":"é"}', "[]", "0"];
+  expect(await lines()).toEqual(dropIns);
+  await writeFile(join(folder, "managed-settings.json"), main);
+  expect(await lines()).toEqual([main, ...dropIns]);
+  // One it can't read fails the step rather than passing it over.
+  await chmod(join(folder, "managed-settings.json"), 0o000);
+  if (process.getuid?.() !== 0) await expect(read()).rejects.toThrow();
+});

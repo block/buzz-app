@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ClaudeProcess, stepLabel } from "./claude";
+import { ClaudeProcess, ENDPOINTS, PROVIDERS, stepLabel } from "./claude";
 import {
   backgroundTasks,
   fakeSpawn,
@@ -226,6 +226,78 @@ it("runs a turn on the model asked for, and the next without one on the session'
       .filter((request) => request?.subtype === "set_model")
       .map((request) => request.model),
   ).toEqual(["haiku", "opus"]);
+});
+
+it("keeps the running turn's model and effort for a steer that picks others", async () => {
+  const { spawn, processes } = fakeSpawn();
+  const claude = await ClaudeProcess.start(spawn, {
+    ...launch,
+    model: "opus",
+    sessionId: "s1",
+  });
+  const fake = processes[0];
+  if (!fake) throw new Error("no process");
+  fake.hold = true;
+  const first = claude.send("first", { model: "haiku", effort: "low" });
+  const steer = claude.send("also", { model: "opus", effort: "xhigh" });
+  await flush();
+  fake.finish();
+  await Promise.all([first, steer]);
+  fake.hold = false;
+  // The pick holds again for a turn of its own.
+  await claude.send("after", { model: "opus", effort: "xhigh" });
+  expect(fake.models).toEqual(["haiku", "haiku", "opus"]);
+  expect(fake.efforts).toEqual(["low", "low", "xhigh"]);
+  expect(
+    fake.received
+      .map((message) => message.request as { subtype?: string; model?: string })
+      .filter((request) => request?.subtype === "set_model")
+      .map((request) => request.model),
+  ).toEqual(["haiku", "opus"]);
+});
+
+it("clears what would pick another provider or endpoint for a forwarded process", async () => {
+  const { spawn, processes } = fakeSpawn();
+  await ClaudeProcess.start(spawn, {
+    ...launch,
+    sessionId: "s1",
+    forward: "http://127.0.0.1:9/h",
+  });
+  const env = processes[0]?.options.env ?? {};
+  for (const name of [
+    "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_API_BASE_URL",
+    "ANTHROPIC_UNIX_SOCKET",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_FOUNDRY",
+  ])
+    expect(env).toHaveProperty(name, null);
+  // The person's own sign-in still reaches the gateway.
+  expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  // Their settings' `env` applies after launch; flag settings outrank it,
+  // blanking every provider and endpoint but the generation's.
+  const args = processes[0]?.options.args ?? [];
+  const settings = JSON.parse(args[args.indexOf("--settings") + 1] ?? "{}");
+  expect(settings).toEqual({
+    env: {
+      ...Object.fromEntries(
+        [...PROVIDERS, ...ENDPOINTS].map((name) => [name, ""]),
+      ),
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:9/h",
+    },
+  });
+  for (const name of [
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "CLAUDE_CODE_API_BASE_URL",
+  ])
+    expect(settings.env).toHaveProperty(name, "");
+  const { spawn: plain, processes: own } = fakeSpawn();
+  await ClaudeProcess.start(plain, { ...launch, sessionId: "s2" });
+  expect(own[0]?.options.env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");
 });
 
 it("moves activity only when the exact follow-up is acknowledged, without ending the turn", async () => {

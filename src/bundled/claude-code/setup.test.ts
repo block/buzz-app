@@ -8,7 +8,14 @@ import { fakeSpawn, MODELS, sessionState } from "./claude-testing";
 import script from "./claude.sh?raw";
 import manifest from "./manifest.json";
 import { PROTECTED_CLAUDE_ROOT, PROTECTED_CLAUDE_VERSION } from "./security";
-import { checkClaude, ClaudeSetup, MIN_VERSION, withScript } from "./setup";
+import {
+  checkClaude,
+  ClaudeSetup,
+  MIN_VERSION,
+  managedFolder,
+  readManaged,
+  withScript,
+} from "./setup";
 
 it("declares protected file reads through the bundled helper with a positional path", () => {
   expect(
@@ -1015,4 +1022,36 @@ it("tries the first download again when a mention finds no copy", async () => {
   await setup.installed(new AbortController().signal);
   expect(disk.state.fetched).toHaveLength(2);
   expect(disk.state.used).toEqual(["2.1.300"]);
+});
+
+it("reads managed settings files from claude.sh, and fails when it can't", async () => {
+  const answering =
+    (code: number, stdout: string, stderr = ""): Spawn =>
+    async (id, options) => {
+      expect([id, options?.args]).toEqual(["managed", ["/managed"]]);
+      queueMicrotask(() => {
+        options?.onStdout?.(stdout);
+        if (stderr) options?.onStderr?.(stderr);
+      });
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise((resolve) => setTimeout(() => resolve(code))),
+      };
+    };
+  const encode = (text: string) =>
+    btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+  await expect(
+    readManaged(
+      answering(0, `${encode('{"a":"é"}')}\n${encode("{}")}\n`),
+      "/managed",
+    ),
+  ).resolves.toEqual(['{"a":"é"}', "{}"]);
+  await expect(readManaged(answering(0, ""), "/managed")).resolves.toEqual([]);
+  await expect(
+    readManaged(answering(1, "", "Permission denied\n"), "/managed"),
+  ).rejects.toThrow("Permission denied");
+  expect(managedFolder(true)).toBe("/Library/Application Support/ClaudeCode");
+  expect(managedFolder(false)).toBe("/etc/claude-code");
 });

@@ -3009,6 +3009,10 @@ function gateway(
     }),
     open: vi.fn(async (_owner, options) => {
       opens.push(options);
+      // Claude's requests reach the generation.
+      queueMicrotask(() =>
+        options.onEvent({ type: "admitted", request: 1, class: "inference" }),
+      );
       return {
         type: "opened" as const,
         id: opens.length,
@@ -3025,8 +3029,13 @@ function gateway(
   };
   const forwarding = new ClaudeForwarding(
     { id: "buzz.claude-code", revision: "r1" },
+    async () => [],
     native,
-    { routeFor: () => route, subscribeRoute: () => () => {} },
+    {
+      routeFor: () => route,
+      subscribeRoute: () => () => {},
+      invalidateRoute: () => {},
+    },
   );
   return { forwarding, opens, calls, native };
 }
@@ -3248,33 +3257,77 @@ it("fails a gateway turn visibly once the route moved past its dispatch, running
   expect(f.claudes().flatMap((claude) => claude.prompts)).toEqual([]);
 });
 
-it("fails a protected agent's gateway turn visibly, never running it unforwarded", async () => {
+it("forwards a protected agent's gateway turn on its protected launch, reviews included", async () => {
   const g = gateway(enabled);
-  const f = setup([], { forwarding: g.forwarding, hold: true });
-  f.runtime.sync([
-    {
-      key: self,
-      pubkey: self,
-      config: DEFAULT_CONFIG,
-      protection: { provider: "test", policy: {} },
+  const f = setup([], {
+    forwarding: g.forwarding,
+    hold: true,
+    nativeHistory: [
+      { type: "user", message: { role: "user", content: "@Claude hi" } },
+    ],
+  });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
     },
-  ] as Agent[]);
-  await f.deliver(
-    { type: "mention", event: message("1", "@Claude hi") },
-    dispatched(),
+  };
+  await f.deliver({ type: "mention", event: message("1", "@Claude hi") }, {
+    ...dispatched(),
+    agent: { ...f.agent, protection } as unknown as Delivery["agent"],
+  } as Partial<Delivery>);
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1),
   );
-  const results = await Promise.all(
-    f.workingUntil.mock.calls.map(([done]) => done),
+  expect(g.opens.map((open) => open.routeRevision)).toEqual([2]);
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  if (!worker) throw new Error("Claude did not start");
+  // The pinned protected release, not Buzz's own copy.
+  expect(worker.id).toBe("claude-protected-arm64");
+  const args = worker.options.args ?? [];
+  // The forwarding URL rides on the protected launch, which reads no
+  // settings files.
+  expect(args[args.indexOf("--settings") + 1]).toContain(
+    "http://127.0.0.1:9/h",
   );
-  expect(results).toEqual([
-    expect.objectContaining({
-      ok: false,
-      error:
-        "Protected agents can't run through the agent gateway yet, so this turn didn't run.",
-    }),
-  ]);
-  expect(g.native.push).not.toHaveBeenCalled();
-  expect(f.claudes().flatMap((claude) => claude.prompts)).toEqual([]);
+  expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
+  expect(args).toContain("--strict-mcp-config");
+  try {
+    worker.emit({
+      type: "control_request",
+      request_id: "incoming-review",
+      request: {
+        subtype: "hook_callback",
+        callback_id: "security-incoming",
+        input: {
+          transcript_path: "/native/transcript",
+          hook_event_name: "UserPromptSubmit",
+          prompt: "@Claude hi",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(worker.received).toContainEqual(
+        expect.objectContaining({
+          type: "control_response",
+          response: expect.objectContaining({
+            request_id: "incoming-review",
+            subtype: "success",
+          }),
+        }),
+      ),
+    );
+    expect(check).toHaveBeenCalled();
+  } finally {
+    worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await f.runtime.retire(self);
+  }
 });
 
 it("runs a fallen-back turn on Claude's own configuration, opening nothing", async () => {
@@ -3294,6 +3347,101 @@ it("runs a fallen-back turn on Claude's own configuration, opening nothing", asy
   expect(JSON.stringify(args)).not.toContain("127.0.0.1:9");
   f.claudes()[0]?.finish();
   await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+});
+
+/** A thread's root and a reply in it, for a second turn in one conversation. */
+const threadPair = () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude also", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  return { root, reply };
+};
+const fallenBack = {
+  gatewayFallback: { reason: "network", notice: "Ran without the gateway." },
+} as unknown as Partial<Delivery>;
+
+it("runs a forwarded message queued past the handover deadline once the turn ahead ends", async () => {
+  const g = gateway(enabled);
+  const { root, reply } = threadPair();
+  const f = setup([root, reply], { forwarding: g.forwarding, hold: true });
+  // A fallen-back turn runs, so the forwarded one can't join it.
+  await f.deliver({ type: "mention", event: root }, fallenBack);
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+  const handover = new AbortController();
+  await f.deliver(
+    { type: "mention", event: reply },
+    { ...dispatched(), signal: handover.signal },
+  );
+  await flush(10);
+  // The runner's handover deadline passes while it waits.
+  handover.abort(new DOMException("timed out", "TimeoutError"));
+  await flush(10);
+  f.claudes()[0]?.finish();
+  await vi.waitFor(() => expect(g.opens).toHaveLength(1));
+  await vi.waitFor(() => expect(f.claudes()[1]?.prompts).toHaveLength(1));
+  f.claudes()[1]?.finish();
+  const results = await Promise.all(
+    f.workingUntil.mock.calls.map(([done]) => done),
+  );
+  expect(results).toEqual([{ ok: true }, { ok: true }]);
+});
+
+it("stops a queued forwarded message alone, leaving the running turn", async () => {
+  const g = gateway(enabled);
+  const { root, reply } = threadPair();
+  const f = setup([root, reply], { forwarding: g.forwarding, hold: true });
+  await f.deliver({ type: "mention", event: root }, fallenBack);
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+  await f.deliver({ type: "mention", event: reply }, dispatched());
+  await flush(10);
+  const stop = f.interruptible.mock.calls[1]?.[0];
+  if (!stop) throw new Error("no stopper");
+  await stop();
+  await flush(10);
+  const running = f.claudes()[0];
+  expect(
+    running?.received.filter(
+      (item) =>
+        item.type === "control_request" &&
+        (item.request as { subtype?: string }).subtype === "interrupt",
+    ),
+  ).toEqual([]);
+  // The stopped message's wait ended: it is settled, undelivered.
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+    ok: true,
+    undelivered: true,
+  });
+  running?.finish();
+  await flush(10);
+  expect(g.opens).toEqual([]);
+  expect(f.claudes()).toHaveLength(1);
+});
+
+it("steers a forwarded message into the running forwarded turn, on its generation", async () => {
+  const g = gateway(enabled);
+  const { root, reply } = threadPair();
+  const f = setup([root, reply], { forwarding: g.forwarding, hold: true });
+  await f.deliver({ type: "mention", event: root }, dispatched());
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+  await f.deliver({ type: "mention", event: reply }, dispatched());
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(2));
+  expect(g.opens).toHaveLength(1);
+  f.claudes()[0]?.finish();
+  const results = await Promise.all(
+    f.workingUntil.mock.calls.map(([done]) => done),
+  );
+  expect(results).toEqual([{ ok: true }, { ok: true }]);
+  expect(f.claudes()).toHaveLength(1);
 });
 
 it("shows a wake's fallback notice in Activity beside its own prompt only", async () => {

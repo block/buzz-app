@@ -41,6 +41,9 @@ function generation(
   const revocation = new Promise<void>((resolve) => (revoke = resolve));
   const value: Generation = {
     url: "http://127.0.0.1:4100/g1",
+    revision: 1,
+    isSealed: () => false,
+    admitted: () => false,
     seal: () => void calls.push("seal"),
     close: vi.fn(() => {
       calls.push("close");

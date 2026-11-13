@@ -71,7 +71,6 @@ import {
 import {
   compactRefusal,
   controlTurn,
-  FORWARDING_PROTECTED,
 } from "../../features/agents/gateway/forwarding";
 import {
   type EligibleRoute,
@@ -512,7 +511,6 @@ export class ClaudeRuntime {
           key,
           route &&
             this.forward(
-              entry,
               agent.key,
               { route, turn: controlTurn(place, config(agent.config).scope) },
               signal,
@@ -644,6 +642,11 @@ export class ClaudeRuntime {
         const wait = prior && (same ? prior.handed : prior.settled);
         let delivered!: Promise<Settled>;
         let interrupted = false;
+        // The accepted turn's own lifetime, not the handover deadline: a
+        // turn queued behind a running one still opens its generation once
+        // that one ends. Stopping it ends a wait it is still in.
+        const accepted = new AbortController();
+        let sent = false;
         const handed = (async () => {
           await wait;
           if (interrupted) {
@@ -702,7 +705,11 @@ export class ClaudeRuntime {
               ...(effort ? { effort } : {}),
             },
             admit,
-            ...forwarded(this.forward(entry, agent.key, gateway, signal)),
+            signal: accepted.signal,
+            sending: () => {
+              sent = true;
+            },
+            ...forwarded(this.forward(agent.key, gateway, accepted.signal)),
             // A mention's request shows its own; a wake's shows in Activity.
             ...(wake && gatewayFallback
               ? {
@@ -743,9 +750,12 @@ export class ClaudeRuntime {
         if (!wait) await handed;
         // The turn outlives `run`, which the host is told so it shows it as working.
         workingUntil(done);
-        interruptible?.(() => {
+        // A turn still waiting stops alone; the process's turn is stopped
+        // only once this one was sent into it.
+        interruptible?.(async () => {
           interrupted = true;
-          return entry.sessions.interrupt(key);
+          accepted.abort(new Error("Stopped"));
+          if (sent) await entry.sessions.interrupt(key);
         });
         this.notify();
         this.watch(done, async (error) => {
@@ -816,13 +826,7 @@ export class ClaudeRuntime {
     entry.team = team ?? "";
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
-    const forward = this.forward(
-      entry,
-      agent.key,
-      delivery.gateway,
-      signal,
-      true,
-    );
+    const forward = this.forward(agent.key, delivery.gateway, signal, true);
     const done = entry.sessions.runOnce(key, prompt, signal, forward);
     this.notify();
     return done.finally(() => this.notify());
@@ -834,17 +838,17 @@ export class ClaudeRuntime {
    * anything spawns; it never runs on Claude's own configuration instead,
    * and is never retried or replayed. */
   private forward(
-    entry: Entry,
     agent: AgentKey,
     gateway: Readonly<{ route: EligibleRoute; turn: TurnContext }> | undefined,
     signal: AbortSignal,
     standalone = false,
   ): Forward | undefined {
     if (!gateway) return undefined;
-    return async (session, saved) => {
+    const open = async (session: string, saved: unknown) => {
+      // A protected agent forwards on its own protected launch: the gate,
+      // pinned release, containment and hooks are the same, and forwarding
+      // adds only the generation's URL and session (`sessions.ts` `start`).
       if (!this.forwarding) throw new Error(UNAVAILABLE);
-      // A protected run through the gateway is not yet proven to work.
-      if (entry.protected) throw new Error(FORWARDING_PROTECTED);
       const bound = bindSession(
         gateway.route,
         saved,
@@ -859,6 +863,7 @@ export class ClaudeRuntime {
       );
       return { generation, binding: bound.binding };
     };
+    return Object.assign(open, { revision: gateway.route.revision });
   }
 
   /** Why a new process can't run a synced effort, which is the agent's on

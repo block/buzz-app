@@ -47,6 +47,7 @@ const STEPS: Readonly<Record<string, string>> = {
   use: "use",
   review: "review",
   "review-token": "review-token",
+  managed: "managed",
 };
 /** Starts `claude` and its other steps as steps of `claude.sh`, which the
  * manifest grants as `bash -c`; other processes start as declared. */
@@ -158,6 +159,27 @@ async function reviewSignIn(spawn: Spawn) {
   const [home, token] = stdout.split("\n");
   if (!home?.startsWith("/") || !token) throw new Error(NO_REVIEW_SIGN_IN);
   return { home, token };
+}
+
+/** Where Claude reads managed settings on macOS, else on Linux. */
+export const managedFolder = (mac: boolean) =>
+  mac ? "/Library/Application Support/ClaudeCode" : "/etc/claude-code";
+
+/** The managed settings files Claude reads in `folder`, as text, in the
+ * order they merge. One that can't be read fails rather than passing. */
+export async function readManaged(spawn: Spawn, folder: string) {
+  const { code, stdout, stderr } = await collect(spawn, "managed", [folder]);
+  if (code !== 0)
+    throw new Error(
+      stderr.trim() || "Claude's managed settings are unreadable",
+    );
+  const decoder = new TextDecoder();
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) =>
+      decoder.decode(Uint8Array.from(atob(line), (char) => char.charCodeAt(0))),
+    );
 }
 
 export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {

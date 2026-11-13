@@ -433,6 +433,33 @@ it("recorded keys find editor rows by physical key, and Escape anywhere in the s
   }
 });
 
+it("a chord recorded with the Windows key off Apple platforms lists no shortcut", async () => {
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple={false}
+      />,
+    );
+    const user = userEvent.setup();
+    // The dispatcher ignores Ctrl+Win+K, so it must not list Ctrl+K's rows.
+    await user.click(screen.getByRole("button", { name: "Search by keys" }));
+    fireEvent.keyDown(
+      screen.getByRole("textbox", { name: "Keys to search for" }),
+      { key: "k", code: "KeyK", ctrlKey: true, metaKey: true },
+    );
+    expect(screen.queryAllByRole("article")).toEqual([]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No shortcuts use the Windows key",
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
 it("orders plugin rows by metadata then contribution key without merging duplicate titles", async () => {
   const h = await harness();
   try {

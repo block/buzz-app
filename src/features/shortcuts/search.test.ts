@@ -162,3 +162,23 @@ it("recorded keys find chords only, not names containing the key", () => {
       .map(({ title }) => title),
   ).toEqual(["Increase interface size"]);
 });
+
+it("a chord recorded with the Windows key off Apple platforms finds nothing", () => {
+  const found = (otherPrimary: boolean) => {
+    const { matches } = shortcutFilter(
+      {
+        kind: "keys",
+        chord: { key: "k", mod: true },
+        code: "KeyK",
+        otherPrimary,
+      },
+      false,
+    );
+    return rows(false)
+      .filter(({ entry }) => matches(entry))
+      .map(({ title }) => title);
+  };
+  expect(found(false)).toContain("Search Buzz");
+  // Ctrl+Win+K never fires Ctrl+K's shortcut, so it is not listed as one.
+  expect(found(true)).toEqual([]);
+});

@@ -474,6 +474,7 @@ export function ShortcutSettings({
     ({ title, label }) =>
       !filter || filter.matches(searchEntry(label, title, [], apple)),
   );
+  const windowsKey = search.kind === "keys" && !!search.otherPrimary;
   const found = visibleGroups.reduce(
     (count, group) => count + group.rows.length,
     preferences.length,
@@ -608,14 +609,18 @@ export function ShortcutSettings({
               <EmptyState
                 icon={<KeyboardIcon size={24} />}
                 title={
-                  filter.chord
-                    ? `Nothing is mapped to ${formatBinding(filter.chord, apple).text}`
-                    : "No shortcuts match"
+                  windowsKey
+                    ? "No shortcuts use the Windows key"
+                    : filter.chord
+                      ? `Nothing is mapped to ${formatBinding(filter.chord, apple).text}`
+                      : "No shortcuts match"
                 }
                 description={
-                  filter.chord
-                    ? "Try other keys, or search by name."
-                    : "Try another name, or search by keys."
+                  windowsKey
+                    ? "Shortcuts on this device use Control or Alt. Try other keys, or search by name."
+                    : filter.chord
+                      ? "Try other keys, or search by name."
+                      : "Try another name, or search by keys."
                 }
               />
             ))}
@@ -903,9 +908,9 @@ function ShortcutSearchBar({
             apple={apple}
             layout="field"
             label="Keys to search for"
-            onCapture={({ binding, code }) => {
+            onCapture={({ binding, code, otherPrimary }) => {
               setRecording(false);
-              onSearch({ kind: "keys", chord: binding, code });
+              onSearch({ kind: "keys", chord: binding, code, otherPrimary });
             }}
             onCancel={() => setRecording(false)}
           />

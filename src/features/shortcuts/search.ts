@@ -171,7 +171,13 @@ export const searchEntry = (
 
 export type ShortcutSearch =
   | Readonly<{ kind: "text"; text: string }>
-  | Readonly<{ kind: "keys"; chord: KeyBinding; code: string }>;
+  | Readonly<{
+      kind: "keys";
+      chord: KeyBinding;
+      code: string;
+      /** Off Apple platforms, the Windows key was held: no shortcut fires then. */
+      otherPrimary?: boolean;
+    }>;
 
 /**
  * Text finds names, groups and chords. A whole chord matches chords exactly,
@@ -189,8 +195,9 @@ export function shortcutFilter(
     return {
       chord: search.chord,
       matches: (entry) =>
-        entry.chords.some((c) => sameChord(c, search.chord)) ||
-        !!entry.presses?.(search),
+        !search.otherPrimary &&
+        (entry.chords.some((c) => sameChord(c, search.chord)) ||
+          !!entry.presses?.(search)),
     };
   const text = search.text.trim().toLowerCase();
   const keys = parseKeys(text, apple);

@@ -178,9 +178,7 @@ it("moves workspaces from their menu and restores the saved order", async () => 
       await user.click(
         screen.getByRole("button", { name: "Actions for Third" }),
       );
-      await user.click(
-        await screen.findByRole("menuitem", { name: label, exact: true }),
-      );
+      await user.click(await screen.findByRole("menuitem", { name: label }));
     };
     await move("Move to top");
     await waitFor(() =>
@@ -192,7 +190,7 @@ it("moves workspaces from their menu and restores the saved order", async () => 
     );
     await user.click(screen.getByRole("button", { name: "Actions for Third" }));
     expect(
-      await screen.findByRole("menuitem", { name: "Move up", exact: true }),
+      await screen.findByRole("menuitem", { name: "Move up" }),
     ).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Escape}");
     await move("Move down");

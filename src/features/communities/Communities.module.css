@@ -47,5 +47,6 @@
   box-shadow: 0 0 0 2px var(--bg-app);
 }
 .unreadDot {
-  flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: middle;
 }

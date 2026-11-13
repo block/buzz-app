@@ -18,9 +18,9 @@ export type CommunityUnread = Readonly<{ unread: boolean; attention: number }>;
  * owner. `publish` gets `undefined` until confirmed mutes are known, so an
  * unknown community never reads as all read. With `known`, it also gets
  * `undefined` while the session's live connection is not up (HTTP reads can
- * still succeed without it), while its unread is stale (its connection dropped,
- * until the reconnect's read finishes) or no counted channel has observed
- * evidence; channels without it are left out of the count. */
+ * still succeed without it), while its unread is stale (its connection dropped
+ * and no fresh evidence has arrived since, which the reconnect's read or a newly
+ * arrived event provides) or no counted channel has observed evidence; channels without it are left out of the count. */
 export function observeCommunityUnread(
   session: RelaySession,
   viewer: string,

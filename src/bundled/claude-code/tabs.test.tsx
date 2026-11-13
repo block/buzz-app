@@ -57,11 +57,20 @@ const nativeKey = vi.hoisted(() => {
     if (!/^sk-ant-[A-Za-z0-9_-]+$/.test(value.trim()))
       throw "That is not an Anthropic API key. Create one at console.anthropic.com and paste it here.";
   };
-  return { saved: true, saves: [] as string[], check, save: check };
+  return {
+    saved: true,
+    saves: [] as string[],
+    workspaces: [] as (string | undefined)[],
+    check,
+    save: check,
+  };
 });
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => desktop.tauri,
-  invoke: async (command: string, args?: { value?: string }) => {
+  invoke: async (
+    command: string,
+    args?: { value?: string; workspace?: string },
+  ) => {
     // An IPC round trip, as the host's process steps answer after a turn.
     await new Promise((resolve) => setTimeout(resolve, 0));
     if (command === "claude_api_key_status") return nativeKey.saved;
@@ -69,6 +78,7 @@ vi.mock("@tauri-apps/api/core", () => ({
       const value = args?.value ?? "";
       nativeKey.saves.push(value);
       await nativeKey.save(value);
+      nativeKey.workspaces.push(args?.workspace);
       nativeKey.saved = true;
     }
     return null;
@@ -161,10 +171,10 @@ const CATALOG = [
     description: "Opus 5.5 · Best for everyday, complex tasks",
   },
   {
-    value: "claude-fable-5-1[1m]",
-    resolvedModel: "claude-fable-5-1",
+    value: "claude-fable-5-2[1m]",
+    resolvedModel: "claude-fable-5-2",
     displayName: "Fable",
-    description: "Fable 5.1 · Most capable for your hardest tasks",
+    description: "Fable 5.2 · Most capable for your hardest tasks",
   },
   {
     value: "sonnet",
@@ -213,6 +223,7 @@ function applied({
   let type: AgentType<Config> | undefined;
   nativeKey.saved = keySaved;
   nativeKey.saves = [];
+  nativeKey.workspaces = [];
   nativeKey.save = nativeKey.check;
   const home = mkdtempSync(join(tmpdir(), "claude-tabs-"));
   homes.push(home);
@@ -945,7 +956,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   await user.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
-    await screen.findByRole("menuitemradio", { name: "Fable 5.1" }),
+    await screen.findByRole("menuitemradio", { name: "Fable 5.2" }),
   );
   cleanup();
   const Settings = tab(installedType, 0);
@@ -953,7 +964,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Fable 5.1",
+      "Fable 5.2",
     ),
   );
   expect(save).not.toHaveBeenCalled();
@@ -975,7 +986,7 @@ it("keeps the saved default and shows the error while a default could not be sav
     fireEvent.click(control);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
     fireEvent.click(
-      await screen.findByRole("menuitemradio", { name: "Fable 5.1" }),
+      await screen.findByRole("menuitemradio", { name: "Fable 5.2" }),
     );
   };
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -990,7 +1001,7 @@ it("keeps the saved default and shows the error while a default could not be sav
   await waitFor(() =>
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
   );
-  expect(control).toHaveTextContent("Fable 5.1");
+  expect(control).toHaveTextContent("Fable 5.2");
   expect(storage.get("buzz.claude-code.provider-defaults.v1")).toContain(
     "fable",
   );
@@ -1043,6 +1054,36 @@ it("asks for an API key and is ready once one is saved", async () => {
   expect(JSON.stringify(spawn.mock.calls)).not.toContain("sk-ant-api03-pasted");
   // The key is all the dialog edits, so saving it closes the dialog.
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("saves the Anthropic workspace with the key using Enter without submitting its host form", async () => {
+  const { type } = installed({ keySaved: false });
+  const Setup = providerSetup(type);
+  const outer = vi.fn((event: { preventDefault(): void }) =>
+    event.preventDefault(),
+  );
+  const onClose = vi.fn();
+  render(
+    <form onSubmit={outer}>
+      <Setup onClose={onClose} />
+    </form>,
+  );
+  const user = userEvent.setup();
+  await user.type(
+    await screen.findByLabelText("Anthropic API key"),
+    "sk-ant-api03-pasted",
+  );
+  const workspace = screen.getByLabelText("Anthropic workspace ID");
+  expect(workspace).toHaveAccessibleDescription(
+    /Required for organization-scoped API keys/,
+  );
+  expect(workspace).toHaveAccessibleDescription(
+    /Save the ID together with the API key, including when replacing it/,
+  );
+  await user.type(workspace, "  wrkspc_example  {Enter}");
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  expect(nativeKey.workspaces).toEqual(["wrkspc_example"]);
+  expect(outer).not.toHaveBeenCalled();
 });
 
 it("closes the configuration once a replacement key is saved", async () => {
@@ -2533,6 +2574,34 @@ it("keeps focus in the field through a save started there", async () => {
   );
   expect(saves).toHaveLength(1);
   expect(document.activeElement).toBe(field());
+});
+
+it("keeps both credential fields through a refused workspace save and retries", async () => {
+  const { saves, field, onClose } = await heldKeySaves();
+  const user = userEvent.setup();
+  const workspace = screen.getByLabelText("Anthropic workspace ID");
+  await user.type(field(), "sk-ant-api03-secret");
+  await user.type(workspace, "not-a-workspace{Enter}");
+  await waitFor(() => expect(saves).toHaveLength(1));
+  expect(workspace).toHaveAttribute("readonly");
+  expect(workspace).toHaveAttribute("aria-disabled", "true");
+  await user.keyboard("{Enter}");
+  act(() => saves[0]?.settle("That is not an Anthropic workspace ID."));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "That is not an Anthropic workspace ID.",
+  );
+  expect(saves).toHaveLength(1);
+  expect(field()).toHaveValue("sk-ant-api03-secret");
+  expect(workspace).toHaveValue("not-a-workspace");
+  expect(document.activeElement).toBe(workspace);
+  expect(onClose).not.toHaveBeenCalled();
+  await user.clear(workspace);
+  await user.type(workspace, "wrkspc_example{Enter}");
+  await waitFor(() => expect(saves).toHaveLength(2));
+  act(() => saves[1]?.settle());
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  expect(workspace).toHaveValue("");
+  expect(nativeKey.workspaces).toEqual(["wrkspc_example"]);
 });
 
 it("keeps focus on Save when a keyboard save clears the field", async () => {

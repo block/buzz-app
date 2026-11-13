@@ -12,11 +12,15 @@ const state = vi.hoisted(() => ({
   asked: 0,
   saves: [] as string[],
   clears: 0,
+  workspaces: [] as (string | undefined)[],
   refusals: [] as string[],
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
-  invoke: async (command: string, args?: { value: string }) => {
+  invoke: async (
+    command: string,
+    args?: { value: string; workspace?: string },
+  ) => {
     if (command === "claude_api_key_status") {
       state.asked += 1;
       return state.saved;
@@ -32,6 +36,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     const refusal = state.refusals.shift();
     if (refusal) throw refusal;
     state.saves.push(args.value);
+    state.workspaces.push(args.workspace);
     state.saved = true;
     return null;
   },
@@ -43,6 +48,7 @@ function store(saved = true) {
     asked: 0,
     saves: [],
     clears: 0,
+    workspaces: [],
     refusals: [],
   });
 }
@@ -150,6 +156,18 @@ it("saves the key with native code alone and tells listeners, but not of a refus
   stopped.abort();
   await expect(auth.save(KEY, stopped.signal)).rejects.toThrow();
   expect(state.saves).toEqual([KEY]);
+});
+
+it("saves an optional workspace with the key through native code and restarts listeners", async () => {
+  const { spawn } = host();
+  const auth = new ClaudeAuth(spawn);
+  const told = vi.fn();
+  auth.subscribe(told);
+  await auth.save(KEY, undefined, "  wrkspc_example  ");
+  expect(state.workspaces).toEqual(["wrkspc_example"]);
+  await auth.save(KEY, undefined, "  ");
+  expect(state.workspaces).toEqual(["wrkspc_example", undefined]);
+  expect(told).toHaveBeenCalledTimes(2);
 });
 
 it("gives a review its own folder, the key coming from native code", async () => {

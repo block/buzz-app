@@ -10,6 +10,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { type ComponentType, useEffect, useState } from "react";
 import { ClaudeSettings } from "./ClaudeSettings";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import { ApiKeyForm } from "../../features/settings/ApiKeyForm";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import type { Spawn } from "./claude";
@@ -58,14 +60,15 @@ const nativeStore = ():
       /** Whether a key is saved. */
       status(): Promise<boolean>;
       /** Saves the key without echoing it. */
-      save(key: string): Promise<void>;
+      save(key: string, workspace?: string): Promise<void>;
       clear(): Promise<void>;
     }>
   | undefined =>
   isTauri()
     ? {
         status: async () => (await invoke("claude_api_key_status")) === true,
-        save: (value) => invoke("claude_api_key_set", { value }),
+        save: (value, workspace) =>
+          invoke("claude_api_key_set", { value, workspace }),
         clear: () => invoke("claude_api_key_clear"),
       }
     : undefined;
@@ -144,12 +147,12 @@ export class ClaudeAuth {
   /** Saves `key` for every `claude` started from now on; what to say. A
    * save can't be stopped once it reaches the store, so `signal` only
    * stops one that hasn't. */
-  async save(key: string, signal?: AbortSignal) {
+  async save(key: string, signal?: AbortSignal, workspace?: string) {
     const store = this.store;
     if (!store) throw new Error("Claude runs only in the desktop app");
     signal?.throwIfAborted();
     try {
-      await store.save(key);
+      await store.save(key, workspace?.trim() || undefined);
     } finally {
       // A refused save leaves the key as it was; anything else may not.
       this.saved = undefined;
@@ -324,6 +327,7 @@ function KeyForm({
   onSavingChange?: ((saving: boolean) => void) | undefined;
 }) {
   const [key, setKey] = useState("");
+  const [workspace, setWorkspace] = useState("");
   const [saving, setSaving] = useState<AbortController>();
   // Kept until the form closes.
   const [saved, setSaved] = useState<{ ok: boolean; text: string }>();
@@ -336,11 +340,18 @@ function KeyForm({
     onSavingChange?.(true);
     setSaved(undefined);
     try {
-      const text = await setup.auth.save(key.trim(), controller.signal);
+      const text = await setup.auth.save(
+        key.trim(),
+        controller.signal,
+        workspace,
+      );
+      if (!active() || controller.signal.aborted) return;
       setKey("");
+      setWorkspace("");
       setSaved({ ok: true, text });
-      await setup.check();
       onSaved?.();
+      // A runtime refresh cannot undo the completed credential save.
+      await setup.check().catch(() => undefined);
     } catch (error) {
       if (!controller.signal.aborted)
         setSaved({ ok: false, text: message(error) });
@@ -350,31 +361,54 @@ function KeyForm({
     }
   };
   return (
-    <ApiKeyForm
-      label={replace ? "Replace API key" : "Anthropic API key"}
-      description={
-        replace
-          ? "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it."
-          : undefined
-      }
-      value={key}
-      onValueChange={setKey}
-      onSave={() => void save()}
-      disabled={disabled}
-      saving={!!saving}
-      variant={replace ? "subtle" : "prominent"}
-      feedback={
-        saved && (
-          <p
-            role={saved.ok ? "status" : "alert"}
-            className={
-              saved.ok ? "m-0 text-body-sm text-subtle" : "buzz-field-error m-0"
-            }
-          >
-            {saved.text}
-          </p>
-        )
-      }
-    />
+    <div className="grid gap-4">
+      <Field
+        label="Anthropic workspace ID"
+        description="Required for organization-scoped API keys. Copy the wrkspc_ ID of the workspace Claude should use from the Claude Console's Workspaces page. Save the ID together with the API key, including when replacing it."
+      >
+        <Input
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          value={workspace}
+          readOnly={!!saving}
+          aria-disabled={saving || disabled ? true : undefined}
+          onValueChange={setWorkspace}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            void save();
+          }}
+        />
+      </Field>
+      <ApiKeyForm
+        label={replace ? "Replace API key" : "Anthropic API key"}
+        description={
+          replace
+            ? "Create a key at console.anthropic.com. Buzz keeps it securely on this computer and gives it only to Claude, so commands your Claude agents run can read it."
+            : undefined
+        }
+        value={key}
+        onValueChange={setKey}
+        onSave={() => void save()}
+        disabled={disabled}
+        saving={!!saving}
+        variant={replace ? "subtle" : "prominent"}
+        feedback={
+          saved && (
+            <p
+              role={saved.ok ? "status" : "alert"}
+              className={
+                saved.ok
+                  ? "m-0 text-body-sm text-subtle"
+                  : "buzz-field-error m-0"
+              }
+            >
+              {saved.text}
+            </p>
+          )
+        }
+      />
+    </div>
   );
 }

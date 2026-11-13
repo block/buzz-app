@@ -105,7 +105,6 @@ export function ClaudeSettings({
               {configured === true ? (
                 <SavedApiKey
                   credential={setup.auth}
-                  onSaved={() => setup.check()}
                   active={active}
                   disabled={disabled}
                   conceal={confirm || clearing || !!readError || !active()}
@@ -117,6 +116,24 @@ export function ClaudeSettings({
                       setConfirm(true);
                     }
                   }}
+                  renderReplacement={(controls) => (
+                    <div className="grid gap-3">
+                      <SignIn
+                        setup={setup}
+                        active={active}
+                        disabled={
+                          checking || clearing || !!readError || !active()
+                        }
+                        onSaved={controls.onSaved}
+                        onSavingChange={controls.onSavingChange}
+                      />
+                      <div>
+                        <Button disabled={saving} onClick={controls.onCancel}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 />
               ) : (
                 <SignIn

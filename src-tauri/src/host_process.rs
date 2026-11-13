@@ -540,7 +540,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             return Err("That secret is not available to this process".into());
         }
         if let Some(key) = app.state::<crate::claude_key::ClaudeKey>().key().await? {
-            command.env(crate::claude_key::ENV, &*key);
+            key.apply(&mut command);
         }
     }
     if let Some(mcp) = mcp {

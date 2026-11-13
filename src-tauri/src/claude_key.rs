@@ -38,6 +38,87 @@ pub(crate) const ENV: &str = "ANTHROPIC_API_KEY";
 const PLUGIN: &str = "buzz.claude-code";
 const NOT_A_KEY: &str =
     "That is not an Anthropic API key. Create one at console.anthropic.com and paste it here.";
+const NOT_A_WORKSPACE: &str =
+    "That is not an Anthropic workspace ID. Copy the wrkspc_ ID from the Workspaces page in the Claude Console.";
+
+/// The workspace belongs to the key, so both are replaced in one store write.
+#[derive(Clone)]
+pub(crate) struct ApiKey {
+    value: Zeroizing<String>,
+    workspace: Option<String>,
+}
+
+impl ApiKey {
+    fn new(value: &str, workspace: Option<&str>) -> Result<Self, String> {
+        let value = value.trim();
+        if value.len() <= "sk-ant-".len()
+            || value.len() > KEY_LIMIT
+            || !value.starts_with("sk-ant-")
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(NOT_A_KEY.into());
+        }
+        let workspace = workspace.map(str::trim).filter(|id| !id.is_empty());
+        if workspace.is_some_and(|id| {
+            id.len() <= "wrkspc_".len()
+                || id.len() > 128
+                || !id.starts_with("wrkspc_")
+                || !id["wrkspc_".len()..]
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric())
+        }) {
+            return Err(NOT_A_WORKSPACE.into());
+        }
+        Ok(Self {
+            value: Zeroizing::new(value.to_owned()),
+            workspace: workspace.map(str::to_owned),
+        })
+    }
+
+    fn read(value: Zeroizing<String>) -> Result<Self, String> {
+        // Existing installs stored only the key. Keep reading that format.
+        if !value.starts_with('{') {
+            return Self::new(&value, None).map_err(|_| "The saved key is damaged".to_string());
+        }
+        #[derive(serde::Deserialize)]
+        struct Stored {
+            key: String,
+            workspace: String,
+        }
+        let stored: Stored =
+            serde_json::from_str(&value).map_err(|_| "The saved key is damaged".to_string())?;
+        let key = Zeroizing::new(stored.key);
+        Self::new(&key, Some(&stored.workspace)).map_err(|_| "The saved key is damaged".to_string())
+    }
+
+    pub(crate) fn apply(&self, command: &mut tokio::process::Command) {
+        command.env(ENV, &*self.value);
+        let Some(workspace) = &self.workspace else {
+            return;
+        };
+        // Preserve unrelated custom headers, replacing any inherited workspace.
+        let headers = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == "ANTHROPIC_CUSTOM_HEADERS")
+            .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| std::env::var("ANTHROPIC_CUSTOM_HEADERS").ok())
+            .unwrap_or_default();
+        let mut headers = headers
+            .lines()
+            .filter(|line| {
+                !line.split_once(':').is_some_and(|(name, _)| {
+                    name.trim().eq_ignore_ascii_case("anthropic-workspace-id")
+                })
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        headers.push(format!("anthropic-workspace-id: {workspace}"));
+        command.env("ANTHROPIC_CUSTOM_HEADERS", headers.join("\n"));
+    }
+}
 
 /// Whether `process_id` of `plugin` may be given the key: Buzz's Claude,
 /// which starts its copy through `claude-sh`, and the protected release.
@@ -61,7 +142,7 @@ pub(crate) struct ClaudeKey {
     /// The key last read or saved. Only a key is kept: with none, every ask
     /// reads the store again, because another Buzz on this computer, or a
     /// development copy sharing its item, may save one.
-    key: Mutex<Option<Zeroizing<String>>>,
+    key: Mutex<Option<ApiKey>>,
 }
 
 impl ClaudeKey {
@@ -76,21 +157,20 @@ impl ClaudeKey {
     }
     /// Reads the store into the kept key. A store that cannot be read is an
     /// error, not a missing key, and leaves the kept key as it was.
-    async fn reread(
-        &self,
-        key: &mut Option<Zeroizing<String>>,
-    ) -> Result<Option<Zeroizing<String>>, String> {
+    async fn reread(&self, key: &mut Option<ApiKey>) -> Result<Option<ApiKey>, String> {
         // The store can block on a consent dialog.
         let store = self.store.clone();
         let read = tokio::task::spawn_blocking(move || store.read())
             .await
-            .map_err(|_| "Secure storage is unavailable".to_string())??;
+            .map_err(|_| "Secure storage is unavailable".to_string())??
+            .map(ApiKey::read)
+            .transpose()?;
         key.clone_from(&read);
         Ok(read)
     }
     /// The key a Claude process starts with: the kept one, or else the
     /// store's, or `None` when there is none.
-    pub(crate) async fn key(&self) -> Result<Option<Zeroizing<String>>, String> {
+    pub(crate) async fn key(&self) -> Result<Option<ApiKey>, String> {
         let mut key = self.key.lock().await;
         if key.is_some() {
             return Ok(key.clone());
@@ -105,21 +185,26 @@ impl ClaudeKey {
         Ok(self.reread(&mut key).await?.is_some())
     }
     /// Saves `value`, loosely checked as Anthropic's form: one `sk-ant-` word.
-    pub(crate) async fn set(&self, value: &str) -> Result<(), String> {
-        let value = value.trim();
-        if value.len() <= "sk-ant-".len()
-            || value.len() > KEY_LIMIT
-            || !value.starts_with("sk-ant-")
-            || !value
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        {
-            return Err(NOT_A_KEY.into());
-        }
+    pub(crate) async fn set(&self, value: &str, workspace: Option<&str>) -> Result<(), String> {
+        let saved = ApiKey::new(value, workspace)?;
         let mut key = self.key.lock().await;
         let store = self.store.clone();
-        let saved = Zeroizing::new(value.to_owned());
-        let write = saved.clone();
+        #[derive(serde::Serialize)]
+        struct Stored<'a> {
+            key: &'a str,
+            workspace: &'a str,
+        }
+        // Retain the original storage format for keys that need no workspace.
+        let write = match &saved.workspace {
+            Some(workspace) => Zeroizing::new(
+                serde_json::to_string(&Stored {
+                    key: &saved.value,
+                    workspace,
+                })
+                .map_err(|_| "The key could not be saved".to_string())?,
+            ),
+            None => saved.value.clone(),
+        };
         tokio::task::spawn_blocking(move || store.replace(&write))
             .await
             .map_err(|_| "Secure storage is unavailable".to_string())??;
@@ -219,9 +304,10 @@ pub(crate) async fn claude_api_key_status(
 pub(crate) async fn claude_api_key_set(
     key: tauri::State<'_, ClaudeKey>,
     value: String,
+    workspace: Option<String>,
 ) -> Result<(), String> {
     let value = Zeroizing::new(value);
-    key.set(&value).await
+    key.set(&value, workspace.as_deref()).await
 }
 
 #[tauri::command]

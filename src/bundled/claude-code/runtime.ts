@@ -294,17 +294,31 @@ export class ClaudeRuntime {
   }
   /** Where each of the agent's sessions ran, with the ids this app saved
    * there, for its usage: its workspace and every folder its conversations
-   * were given. */
+   * were given. A one-off turn runs in the workspace, so its sessions, which
+   * `started` recorded as outside any conversation, are listed there. */
   sessionPlaces(agent: AgentKey, workspace: string) {
     const scope = this.reads(agent)?.scope;
     const folders = scope
       ? agentFolders(this.storage, scope, agent)
       : new Map();
-    const places = new Map<string, { place: SessionsPlace; saved: string[] }>([
-      ["", { place: workspace, saved: [] }],
+    const places = new Map<
+      string,
+      { place: SessionsPlace; saved: string[]; standalone: string[] }
+    >([
+      [
+        "",
+        {
+          place: workspace,
+          saved: [],
+          standalone: this.prompts(agent)
+            .sessions()
+            .filter(({ conversation }) => conversation === null)
+            .map(({ id }) => id),
+        },
+      ],
     ]);
     for (const folder of folders.values())
-      places.set(folder, { place: { folder }, saved: [] });
+      places.set(folder, { place: { folder }, saved: [], standalone: [] });
     for (const saved of this.conversations(agent))
       places.get(folders.get(saved.key) ?? "")?.saved.push(saved.sessionId);
     return [...places.values()];
@@ -1617,9 +1631,16 @@ export class ClaudeRuntime {
           }),
         delete: (key) => saved.delete(key),
       },
-      started: (session, text) => {
+      started: (session, text, once) => {
         if (!this.target)
-          void this.prompts(agent).save(session, [{ label: "", text }]);
+          void this.prompts(agent).save(
+            session,
+            [{ label: "", text }],
+            // A one-off turn's session is outside any conversation.
+            once
+              ? { at: Date.now(), title: "", conversation: null }
+              : undefined,
+          );
       },
       onChange: () => this.notify(),
       fingerprint: (key) =>

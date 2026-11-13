@@ -407,11 +407,26 @@ export class PiRuntime {
         };
       });
   }
-  /** The usage of the agent's Buzz conversations since `since`. */
+  /** The usage of the agent's Buzz conversations and standalone turns'
+   * conversations since `since`. */
   async usage(agent: AgentKey, since: number, signal: AbortSignal) {
     // Reading opens its storage, which only an agent running here may hold.
     if (!this.running.has(agent)) return [];
-    return readUsage(this.pi, agent, await this.places(agent), since, signal);
+    // A standalone turn's conversation is in no place: `runOnce` recorded it.
+    const standalone = this.prompts(agent)
+      .sessions()
+      .flatMap(({ id, at, conversation }) =>
+        conversation === null && at !== undefined
+          ? [{ conversation: Number(id), at }]
+          : [],
+      );
+    return readUsage(
+      this.pi,
+      agent,
+      [...(await this.places(agent)), ...standalone],
+      since,
+      signal,
+    );
   }
   /** The conversations a Buzz request of the agent's is working in. */
   working(agent: AgentKey) {
@@ -786,6 +801,12 @@ export class PiRuntime {
         submission: number;
         conversation: number;
       }>("once", { agent: agent.key, text, request, ...turn });
+      // Outside any conversation, so no place lists it for its usage.
+      void this.prompts(agent.key).save(String(conversation), [], {
+        at: Date.now(),
+        title: "",
+        conversation: null,
+      });
       // A removed agent's storage is closed, and stays so.
       stop = () => {
         if (!entry.closed)

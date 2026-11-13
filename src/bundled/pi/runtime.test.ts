@@ -1888,6 +1888,54 @@ it("runs a standalone turn in a one-off conversation", async () => {
   expect(published).toEqual([]);
 });
 
+it("reads a standalone turn's conversation as the agent's usage, with no channel", async () => {
+  const answer = {
+    id: 1,
+    kind: "pi.assistant",
+    model: [
+      {
+        role: "assistant",
+        content: [],
+        timestamp: Date.now(),
+        model: "claude-x",
+        responseId: "resp-1",
+        usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 },
+      },
+    ],
+  };
+  const kept = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => void kept.set(key, value),
+    removeItem: (key: string) => void kept.delete(key),
+    key: (index: number) => [...kept.keys()][index] ?? null,
+    get length() {
+      return kept.size;
+    },
+  });
+  const { runtime, runOnce } = setup({
+    wait: () => ({ status: "done", answer: 5, text: "" }),
+    places: () => ({ places: [] }),
+    recorded: () => ({ models: {} }),
+    entries: ({ conversation }) => ({
+      entries: conversation === 99 ? [answer] : [],
+    }),
+  });
+  let sessions: Awaited<ReturnType<typeof runtime.usage>>;
+  try {
+    runtime.sync([
+      { key: self, pubkey: self, config: DEFAULT_CONFIG },
+    ] as never);
+    await runOnce("timer/t1", "Run t1");
+    sessions = await runtime.usage(self, 0, new AbortController().signal);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+  expect(sessions.map((session) => session.id)).toEqual(["99"]);
+  expect(sessions[0]).not.toHaveProperty("channelId");
+  expect(sessions[0]?.observations).toHaveLength(1);
+});
+
 it("starts no standalone turn once its prompt is no longer wanted", async () => {
   const { host, runOnce } = setup();
   await expect(runOnce("watch/w1", undefined)).resolves.toEqual({ ok: true });

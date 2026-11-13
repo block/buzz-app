@@ -17,7 +17,8 @@ type Json = Record<string, unknown>;
 /** A Buzz conversation's Pi conversation, as `places` lists it. */
 type Place = Readonly<{
   conversation: number;
-  channelId: string;
+  /** Absent for a standalone turn's conversation. */
+  channelId?: string;
   root?: string;
   at: number;
 }>;
@@ -127,7 +128,7 @@ export function conversationUsage(
   const asked = title(entries);
   return {
     id: String(place.conversation),
-    channelId: place.channelId,
+    ...(place.channelId ? { channelId: place.channelId } : {}),
     ...(place.root ? { root: place.root } : {}),
     ...(asked ? { title: asked } : {}),
     startedAt: Math.min(...times),
@@ -158,7 +159,8 @@ async function entries(
   return found.reverse();
 }
 
-/** The agent's Buzz conversations used since `since`. A conversation's
+/** The agent's Buzz conversations, and conversations of its standalone turns,
+ * used since `since`. A conversation's
  * requests follow the newest message it was shown. */
 export async function readUsage(
   pi: Pick<Pi, "request">,

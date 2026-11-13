@@ -121,6 +121,8 @@ type Head = {
   cursor: WindowCursor | null;
   hasMore: boolean;
   events: readonly RelayEvent[];
+  /** The newest membership notices among its rows, shown with them. */
+  notices?: readonly RelayEvent[];
   savedAt: number;
   /** When the relay read that produced it started; none for a saved head. */
   readAt?: number;
@@ -748,9 +750,11 @@ export function createChannelStore(
   /** Show a head as the window's rows. Read while the stream is down, they
    * are what its catch-up must reach: the replay that precedes it is newer
    * than any gap, not overlap with it. The head replaces the rows, so it
-   * replaces the snapshot too (a cached head adopted on revisit is re-read). */
-  function adoptHead(state: WindowState, head: Head) {
+   * replaces the snapshot too (a cached head adopted on revisit is re-read).
+   * `noticeHead` is false when its newest notices are already being read. */
+  function adoptHead(state: WindowState, head: Head, noticeHead = true) {
     state.events = head.events;
+    for (const event of head.notices ?? []) state.notices.set(event.id, event);
     attached(state);
     moveCursor(state, head.cursor);
     state.atHead = true;
@@ -762,7 +766,30 @@ export function createChannelStore(
     }
     if (state.grantKept) state.grantKept = rowIds(state);
     setWindow(state, patchFromHead(head));
-    void fillNotices(state, true);
+    // Notices that landed before the head show with it, and so do their names.
+    keepNotices(state);
+    if (state.notices.size)
+      void fetchProfiles(state.snapshot.rows.filter((row) => row.membership));
+    void fillNotices(state, noticeHead);
+  }
+  /** Keep the newest notices among a window's head rows with the head, so a
+   * later adoption shows them with its rows. */
+  function keepNotices(state: WindowState) {
+    const head = heads.peek(state.channelId);
+    if (!head || head.events !== state.events) return;
+    const floor = head.hasMore ? (head.cursor?.createdAt ?? 0) : 0;
+    const notices = [...state.notices.values()]
+      .filter((event) => event.created_at >= floor)
+      .sort(newestFirst)
+      .slice(0, NOTICE_PAGE_SIZE);
+    if (
+      notices.length === (head.notices?.length ?? 0) &&
+      notices.every((event, index) => event === head.notices?.[index])
+    )
+      return;
+    const kept = { ...head, notices };
+    heads.set(state.channelId, kept);
+    save(state.channelId, kept);
   }
   /** Read a window's membership notices newest first, down to the oldest page
    * read. Pages leave notices out (see `WINDOW_KINDS`), so the messages show
@@ -846,6 +873,9 @@ export function createChannelStore(
             events.some((event) => event.id === known?.id));
         if (!top || !next || !met || state.noticeCursor === undefined)
           state.noticeCursor = next;
+        if (top) keepNotices(state);
+        // Read beside the head, notices wait for its rows (see `adoptHead`).
+        if (state.snapshot.status !== "ready") continue;
         setWindow(state, {});
         // The page's name read ran before these rows existed.
         const added = new Set(events.map((event) => event.id));
@@ -875,7 +905,11 @@ export function createChannelStore(
       heads.peek(channelId) !== head
     )
       return;
-    const authors = new Set(head.rows.flatMap(rowProfileIds));
+    const notices =
+      head.notices && transport
+        ? foldChannelMessages(channelId, transport.relayAuthor, head.notices)
+        : [];
+    const authors = new Set([...head.rows, ...notices].flatMap(rowProfileIds));
     const profiles = [...authors].flatMap((id) => {
       const event = directory.event(id);
       return event ? [event] : [];
@@ -886,6 +920,7 @@ export function createChannelStore(
       channelId,
       savedAt: head.savedAt,
       events: [...head.events],
+      ...(head.notices ? { notices: [...head.notices] } : {}),
       profiles,
     };
     void persistence.write(record).catch(() => {});
@@ -1037,6 +1072,8 @@ export function createChannelStore(
         cursor: page.cursor,
         hasMore: page.hasMore,
         events,
+        // Until a notice read replaces them, the last head's notices stand.
+        ...(retained?.notices ? { notices: retained.notices } : {}),
         savedAt: now(),
         readAt: startedAt,
         cached: false,
@@ -1088,16 +1125,22 @@ export function createChannelStore(
     // Shown rows wait on this head read; a seek must not treat it as the end.
     if (!cursor && state.snapshot.status === "ready")
       setWindow(state, { refreshing: true });
+    // The newest notices are read beside the head rather than after it.
+    const besideHead = !cursor && state.ceiling === undefined;
     try {
       if (prepared && !cursor) {
-        const head = await requestHead(state.channelId, "foreground");
+        const reading = requestHead(state.channelId, "foreground");
+        if (besideHead) void fillNotices(state, true);
+        const head = await reading;
         if (!live(state, generation)) return;
-        adoptHead(state, head);
+        adoptHead(state, head, !besideHead);
         return;
       }
-      const { page } = await readPage(state.channelId, cursor, {
+      const reading = readPage(state.channelId, cursor, {
         signal: controller.signal,
       });
+      if (besideHead) void fillNotices(state, true);
+      const { page } = await reading;
       // A settled catch-up aborts an older read that has already resolved.
       if (!live(state, generation) || controller.signal.aborted) return;
       const combined = new Map(
@@ -1137,7 +1180,7 @@ export function createChannelStore(
         error: undefined,
         freshness: "verified",
       });
-      void fillNotices(state, !cursor);
+      void fillNotices(state, !cursor && !besideHead);
       void fetchProfiles(rows);
     } catch (error) {
       if (isAbort(error) || !live(state, generation)) return;
@@ -1306,16 +1349,20 @@ export function createChannelStore(
         // cached verification symbol. Reconstruct only wire fields before verification.
         const verifySaved = (value: unknown) =>
           eventDto(JSON.parse(JSON.stringify(value)));
-        const events: RelayEvent[] = [];
-        for (let index = 0; index < record.events.length; index += 8) {
+        const saved = [
+          ...record.events,
+          ...(Array.isArray(record.notices) ? record.notices : []),
+        ];
+        const verified: RelayEvent[] = [];
+        for (let index = 0; index < saved.length; index += 8) {
           const started = performance.now();
-          const batch = record.events.slice(index, index + 8).map(verifySaved);
+          const batch = saved.slice(index, index + 8).map(verifySaved);
           clientMetrics.cpu(
             "verify.restore",
             performance.now() - started,
             batch.length,
           );
-          events.push(...batch);
+          verified.push(...batch);
           await yieldToHost();
           if (
             disposed ||
@@ -1326,6 +1373,15 @@ export function createChannelStore(
             return;
         }
         if (heads.peek(record.channelId)) continue;
+        const events = verified.slice(0, record.events.length);
+        const notices = transport
+          .visible(verified.slice(record.events.length))
+          .filter(
+            (event) =>
+              event.kind === 40099 &&
+              event.pubkey === transport?.relayAuthor &&
+              hasTag(event, "h", record.channelId),
+          );
         const accessibleEvents = transport.visible(events);
         const page = parseWindow(
           record.channelId,
@@ -1343,6 +1399,7 @@ export function createChannelStore(
         const head: Head = {
           rows,
           events: accessibleEvents,
+          ...(notices.length ? { notices } : {}),
           cursor: page.cursor,
           hasMore: page.hasMore,
           savedAt: record.savedAt,

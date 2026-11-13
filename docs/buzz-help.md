@@ -684,8 +684,10 @@ and are asked to sign in again in Buzz.
   uses only the clipboard's plain text.
 - **Large text pastes**, over 10,000 characters or 200 lines, attach as a
   `pasted-text-…txt` file where uploads are available (not while editing a
-  sent message), instead of filling the message. The notice that follows
-  offers **Paste inline instead**. Other pastes that would exceed the message
+  sent message), instead of filling the message. The file stays on this
+  device until you send; removing it first uploads nothing. The notice that
+  follows offers **Paste inline instead**, and plain-text paste always pastes
+  inline. Other pastes that would exceed the message
   limit show an error and leave your draft unchanged; shorten the text or
   attach it as a file.
 - In the composer, Enter sends and Shift+Enter adds a new line by default.

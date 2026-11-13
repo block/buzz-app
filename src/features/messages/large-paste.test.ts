@@ -16,6 +16,12 @@ it("converts text past either limit, not at it", () => {
   // Windows clipboards end lines with CRLF; each still counts once.
   expect(isLargeTextPaste(lines(LARGE_PASTE_MAX_LINES, "\r\n"))).toBe(false);
   expect(isLargeTextPaste(lines(LARGE_PASTE_MAX_LINES + 1, "\r\n"))).toBe(true);
+  // A copy of whole lines ends with a newline; it ends the last line.
+  expect(isLargeTextPaste(`${lines(LARGE_PASTE_MAX_LINES)}\n`)).toBe(false);
+  expect(isLargeTextPaste(`${lines(LARGE_PASTE_MAX_LINES, "\r\n")}\r\n`)).toBe(
+    false,
+  );
+  expect(isLargeTextPaste(`${lines(LARGE_PASTE_MAX_LINES)}\n\n`)).toBe(true);
   expect(isLargeTextPaste("")).toBe(false);
 });
 

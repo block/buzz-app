@@ -9,7 +9,8 @@ export const LARGE_PASTE_MAX_LINES = 200;
 export function isLargeTextPaste(text: string): boolean {
   return (
     text.length > LARGE_PASTE_MAX_CHARS ||
-    text.split("\n").length > LARGE_PASTE_MAX_LINES
+    // A final newline ends the last line rather than starting another.
+    text.replace(/\r?\n$/, "").split("\n").length > LARGE_PASTE_MAX_LINES
   );
 }
 

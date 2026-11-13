@@ -3424,22 +3424,38 @@ function Composer({
             attachFiles(files);
             return;
           }
-          // A large plain-text paste into the message becomes a text file.
-          // Where attaching is unavailable or refused, the editor pastes it
+          // A large ordinary paste into the message becomes a text file, kept
+          // on this device until Send. Plain-text paste always inserts. Where
+          // attaching is unavailable or refused, the editor pastes the text
           // as before, without an attachment error.
           const text = event.clipboardData.getData("text/plain");
           if (
             !isLargeTextPaste(text) ||
             !(event.target instanceof Node) ||
             !input.current?.contains(event.target) ||
+            input.current.pastingPlain ||
+            !permitted.current ||
+            editingDisabled ||
+            voice.isCapturing() ||
             !canAttach ||
             editing.target
           )
             return;
-          const [id] = attachFiles([largePasteFile(text, new Date())]) ?? [];
+          const before = attachments.store.snapshot().length;
+          try {
+            attachments.store.add(
+              [largePasteFile(text, new Date())],
+              undefined,
+              { onSend: true },
+            );
+          } catch {
+            return;
+          }
+          const id = attachments.store.snapshot()[before]?.id;
           if (!id) return;
           event.preventDefault();
           event.stopPropagation();
+          setAttachmentError(undefined);
           setLargePaste({ id, text });
         }}
         aria-label={
@@ -3523,36 +3539,36 @@ function Composer({
             onDismiss={() => setAttachmentError(undefined)}
           />
         )}
-        {largePaste && (
-          <ToastNotice
-            key={largePaste.id}
-            title="Pasted as a text file"
-            tone="info"
-            timeout={5000}
-            onDismiss={() => setLargePaste(undefined)}
-          >
-            <Button
-              size="compact"
-              onClick={() => {
-                const { id, text } = largePaste;
-                setLargePaste(undefined);
-                if (
-                  input.current?.insertText(
-                    text,
-                    undefined,
-                    undefined,
-                    undefined,
-                    true,
-                    () => setPasteTooLong(true),
-                  )
-                )
-                  attachments.store.remove(id);
-              }}
+        {largePaste &&
+          attachments.items.some((item) => item.id === largePaste.id) && (
+            <ToastNotice
+              key={largePaste.id}
+              title="Pasted as a text file"
+              tone="info"
+              onDismiss={() => setLargePaste(undefined)}
             >
-              Paste inline instead
-            </Button>
-          </ToastNotice>
-        )}
+              <Button
+                size="compact"
+                onClick={() => {
+                  const { id, text } = largePaste;
+                  setLargePaste(undefined);
+                  if (
+                    input.current?.insertText(
+                      text,
+                      undefined,
+                      undefined,
+                      undefined,
+                      true,
+                      () => setPasteTooLong(true),
+                    )
+                  )
+                    attachments.store.remove(id);
+                }}
+              >
+                Paste inline instead
+              </Button>
+            </ToastNotice>
+          )}
         <ComposerContext key={editing.target ? "edit" : "reply"}>
           {editing.target ? (
             <div className={styles.replyContext}>

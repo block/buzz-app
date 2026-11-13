@@ -16652,9 +16652,16 @@ it("shows an annotator's marks in the composer and retires them with the destina
 });
 
 describe("large text paste", () => {
-  const pasteText = (input: HTMLElement, text: string) => {
+  const pasteText = (input: HTMLElement, text: string, plain = false) => {
     act(() => {
       input.focus();
+      if (plain)
+        fireEvent.keyDown(input, {
+          key: "V",
+          code: "KeyV",
+          ctrlKey: true,
+          shiftKey: true,
+        });
       fireEvent.paste(input, {
         clipboardData: {
           items: [],
@@ -16667,18 +16674,56 @@ describe("large text paste", () => {
     within(form).queryAllByText(/^pasted-text-.*\.txt$/);
   const log = Array.from({ length: 300 }, (_, i) => `log line ${i}`).join("\n");
 
-  it("attaches a large paste as a text file and leaves the draft alone", async () => {
+  const notice = () =>
+    screen.queryByRole("dialog", { name: "Pasted as a text file" });
+
+  it("attaches a large paste as a text file that uploads only on Send", async () => {
     const h = await mountUploadComposer();
     pasteText(h.input(), log);
     await waitFor(() => expect(chips(h.form())).toHaveLength(1));
     expect(h.input()).toHaveValue("");
+    expect(h.form()).toHaveTextContent("Uploads when sent");
     expect(
       await screen.findByRole("dialog", { name: "Pasted as a text file" }),
     ).toBeVisible();
+    // Nothing leaves the device until Send.
+    await act(async () => {});
+    expect(h.uploadCalls).toHaveLength(0);
+    fireEvent.click(h.send());
     await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
     const file = h.uploadCalls[0]?.file;
     expect(file?.type).toBe("text/plain");
     expect(await file?.text()).toBe(log);
+    await act(async () =>
+      h.uploadCalls[0]?.result.resolve(uploadDescriptor(file?.name)),
+    );
+    await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+    // The offer leaves with its file, so a late click cannot paste anywhere.
+    await waitFor(() => expect(notice()).toBeNull());
+  });
+
+  it("pastes a plain-text paste inline, however large", async () => {
+    const h = await mountUploadComposer();
+    pasteText(h.input(), log, true);
+    expect(h.input()).toHaveValue(log);
+    expect(chips(h.form())).toHaveLength(0);
+    await act(async () => {});
+    expect(notice()).toBeNull();
+  });
+
+  it("pastes inline without an error when the attachment is refused", async () => {
+    const h = await mountUploadComposer();
+    pickAttachments(
+      h.container,
+      Array.from({ length: 10 }, (_, i) => attachmentFile(`f${i}.txt`)),
+    );
+    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+    pasteText(h.input(), log);
+    expect(h.input()).toHaveValue(log);
+    expect(chips(h.form())).toHaveLength(0);
+    await act(async () => {});
+    expect(screen.queryByText("Could not attach file")).toBeNull();
+    expect(notice()).toBeNull();
   });
 
   it("pastes text at the limit inline", async () => {
@@ -16721,13 +16766,12 @@ describe("large text paste", () => {
     const h = await mountUploadComposer();
     pasteText(h.input(), log);
     await waitFor(() => expect(chips(h.form())).toHaveLength(1));
-    await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
     fireEvent.click(
       await screen.findByRole("button", { name: "Paste inline instead" }),
     );
     expect(h.input()).toHaveValue(log);
     await waitFor(() => expect(chips(h.form())).toHaveLength(0));
-    expect(h.uploadCalls[0]?.signal.aborted).toBe(true);
+    expect(h.uploadCalls).toHaveLength(0);
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: "Pasted as a text file" }),

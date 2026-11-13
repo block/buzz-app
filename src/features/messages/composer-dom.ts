@@ -115,6 +115,9 @@ export type ComposerInputElement = HTMLDivElement & {
     /** Called when the text would make the draft too long. */
     onTooLong?: () => void,
   ): boolean;
+  /** The paste now in progress is a plain-text paste (Mod+Shift+V or the
+   * desktop menu), which inserts the clipboard's text verbatim. */
+  readonly pastingPlain: boolean;
   replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
   /** Replace the typed `@name` with a chip the host is still resolving,
    * followed by the key that ended it (a space by default); the returned id

@@ -1,13 +1,108 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
+import { Context } from "@deepseek-ai/cordis";
+import { SettingsCardsService } from "../../features/settings/service";
 import type { AgentType } from "../../features/agents/service";
 import { ClaudeRuntime } from "./runtime";
-import { apply } from "./index";
+import { apply, inject } from "./index";
 import { ClaudeAuth } from "./auth";
 import { ClaudeSetup } from "./setup";
+import type { ReactElement, FunctionComponent, ComponentProps } from "react";
+import type { SettingsCard } from "../../features/settings/service";
+import type { PageNavigation } from "../../features/navigation/service";
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
+import type { ClaudeConnection } from "./ClaudeSettings";
 
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 afterEach(() => vi.restoreAllMocks());
+
+it.each([true, false])(
+  "contributes auth-owned settings only when supplied (settings=%s)",
+  async (settings) => {
+    if (!settings)
+      vi.spyOn(ClaudeAuth.prototype, "Settings", "get").mockReturnValue(
+        undefined,
+      );
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const root = new Context();
+    root.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    root.provide("agents", {
+      register: vi.fn(),
+      relay: () => undefined,
+    } as never);
+    root.provide("host", { request: vi.fn() } as never);
+    root.provide("agentProtection", { registerModels: vi.fn() } as never);
+    const controller = createNavigationController(createMemoryHistory());
+    const navigation = controller.navigation;
+    root.provide("navigation", navigation);
+    const cards = new SettingsCardsService(root);
+    const scope = root.extend({
+      pluginOwner: { id: "buzz.claude-code", revision: "r1" },
+    });
+    const fiber = scope.plugin({ apply, inject });
+    try {
+      await fiber.await();
+      expect(cards.snapshot()).toMatchObject(
+        settings
+          ? [
+              {
+                key: "buzz.claude-code/credentials",
+                title: "Claude",
+                group: "Plugins",
+              },
+            ]
+          : [],
+      );
+      if (settings) {
+        const parent = {
+          version: 1,
+          kind: "settings",
+          section: "buzz.claude-code/credentials",
+          scope: null,
+        } as const;
+        const Card = cards.snapshot()[0]?.component as FunctionComponent<
+          ComponentProps<SettingsCard["component"]>
+        >;
+        const presentation = () => {
+          const { entry, attempt } = navigation.snapshot();
+          controller.complete(attempt, { status: "opened" });
+          const page = {
+            target: entry.target,
+            signal: attempt.signal,
+          } as PageNavigation;
+          return (
+            Card({ active: () => true, navigation: page }) as ReactElement<{
+              connection: ClaudeConnection;
+            }>
+          ).props.connection;
+        };
+        void navigation.open(parent);
+        presentation().onOpenChange(true);
+        expect(navigation.snapshot().entry.target).toEqual({
+          ...parent,
+          route: { version: 1, params: "connect" },
+        });
+        expect(presentation().open).toBe(true);
+        navigation.back();
+        expect(presentation().open).toBe(false);
+        navigation.forward();
+        expect(presentation().open).toBe(true);
+        presentation().onOpenChange(false);
+        expect(navigation.snapshot().entry.target).toEqual(parent);
+        expect(navigation.snapshot().canGoForward).toBe(false);
+      }
+      await fiber.dispose();
+      expect(cards.snapshot()).toEqual([]);
+    } finally {
+      controller.dispose();
+      await root.fiber.dispose();
+    }
+  },
+);
 
 it("observes saved sessions with the live status of running ones", () => {
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -30,6 +125,7 @@ it("observes saved sessions with the live status of running ones", () => {
   ]);
   let type: AgentType | undefined;
   apply({
+    settingsCards: { register: vi.fn() },
     agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { request: vi.fn() },
@@ -53,6 +149,7 @@ it("shares a Claude agent's model as the claude runtime and imports it back", ()
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   let type: AgentType | undefined;
   apply({
+    settingsCards: { register: vi.fn() },
     agentProtection: { registerModels: vi.fn() },
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { request: vi.fn() },
@@ -83,6 +180,7 @@ it("registers review models from the discovered catalog", async () => {
   ] as never);
   const registerModels = vi.fn();
   apply({
+    settingsCards: { register: vi.fn() },
     agentProtection: { registerModels },
     pluginOwner: { id: "buzz.claude-code", revision: "r1" },
     host: { request: vi.fn() },
@@ -95,47 +193,56 @@ it("registers review models from the discovered catalog", async () => {
   ]);
 });
 
-it("links a failed turn's key to Claude's own Agent setup, quoting only what Claude said", async () => {
-  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-  // The runtime the plugin made, as its sessions list reads it.
-  let runtime: ClaudeRuntime | undefined;
-  vi.spyOn(ClaudeRuntime.prototype, "conversations").mockImplementation(
-    function (this: ClaudeRuntime) {
-      runtime = this;
-      return [];
-    },
-  );
-  vi.spyOn(ClaudeRuntime.prototype, "sessions").mockReturnValue([]);
-  let type: AgentType | undefined;
-  apply({
-    agentProtection: { registerModels: vi.fn() },
-    pluginOwner: { id: "buzz.claude-code", revision: "r1" },
-    host: { request: vi.fn() },
-    agents: {
-      register: (registered: AgentType) => {
-        type = registered;
+it.each([true, false])(
+  "links failed turns to the available auth setup (settings=%s)",
+  async (keySettings) => {
+    if (!keySettings)
+      vi.spyOn(ClaudeAuth.prototype, "Settings", "get").mockReturnValue(
+        undefined,
+      );
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    // The runtime the plugin made, as its sessions list reads it.
+    let runtime: ClaudeRuntime | undefined;
+    vi.spyOn(ClaudeRuntime.prototype, "conversations").mockImplementation(
+      function (this: ClaudeRuntime) {
+        runtime = this;
+        return [];
       },
-      relay: () => undefined,
-    },
-    effect: vi.fn(),
-  } as never);
-  type?.sessions?.list("a".repeat(64));
-  const settings =
-    "buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code";
-  const missing = await new ClaudeAuth(undefined)
-    .authorize(async () => {
-      throw new Error("unreachable");
-    }, true)("claude")
-    .then(
-      () => "",
-      (error: unknown) => String(error),
     );
-  // Buzz refused to start Claude: there are no words of Claude's to quote.
-  expect(runtime?.explain(missing)).toBe(
-    `Claude is missing an API key. Head to [Settings](${settings}) to add one.`,
-  );
-  expect(runtime?.explain("Invalid API key · Fix external API key")).toBe(
-    `Anthropic rejected Claude's API key. It may have been revoked or run out of credit. Head to [Settings](${settings}) to replace it.\n\nClaude said:\n> Invalid API key · Fix external API key`,
-  );
-  expect(runtime?.explain("Error: overloaded")).toBe("Error: overloaded");
-});
+    vi.spyOn(ClaudeRuntime.prototype, "sessions").mockReturnValue([]);
+    let type: AgentType | undefined;
+    apply({
+      settingsCards: { register: vi.fn() },
+      agentProtection: { registerModels: vi.fn() },
+      pluginOwner: { id: "buzz.claude-code", revision: "r1" },
+      host: { request: vi.fn() },
+      agents: {
+        register: (registered: AgentType) => {
+          type = registered;
+        },
+        relay: () => undefined,
+      },
+      effect: vi.fn(),
+    } as never);
+    type?.sessions?.list("a".repeat(64));
+    const settings = keySettings
+      ? "buzz://settings?section=buzz.claude-code%2Fcredentials"
+      : "buzz://settings?section=agents&provider=buzz.claude-code%2Fclaude-code";
+    const missing = await new ClaudeAuth(undefined)
+      .authorize(async () => {
+        throw new Error("unreachable");
+      }, true)("claude")
+      .then(
+        () => "",
+        (error: unknown) => String(error),
+      );
+    // Buzz refused to start Claude: there are no words of Claude's to quote.
+    expect(runtime?.explain(missing)).toBe(
+      `Claude is missing an API key. Head to [Settings](${settings}) to add one.`,
+    );
+    expect(runtime?.explain("Invalid API key · Fix external API key")).toBe(
+      `Anthropic rejected Claude's API key. It may have been revoked or run out of credit. Head to [Settings](${settings}) to replace it.\n\nClaude said:\n> Invalid API key · Fix external API key`,
+    );
+    expect(runtime?.explain("Error: overloaded")).toBe("Error: overloaded");
+  },
+);

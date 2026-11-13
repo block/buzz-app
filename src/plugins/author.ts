@@ -30,6 +30,7 @@ export type {
   Pages,
 } from "../features/pages/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
+export type { SubjectLift } from "../features/messages/subject-lift";
 export type {
   SidebarRow,
   SidebarRowSortMode,
@@ -64,6 +65,10 @@ export type {
   RoutingAgent,
 } from "../features/conversation/agent-routing";
 export type {
+  ConversationWorkspaceProps,
+  PageTabTarget,
+  PageTabOptions,
+  PageTabsProps,
   ComposerObservation,
   CompletionContext,
   CompletionQuery,
@@ -72,6 +77,11 @@ export type {
   CompletionResult,
   ComposerCompletionProps,
   ComposerCompletion,
+  AnnotationObservation,
+  ComposerAnnotation,
+  ComposerAnnotator,
+  ComposerAnnotatorProps,
+  ComposerReplacement,
   ComposerAccessory,
   ComposerAccessoryProps,
   ComposerResource,

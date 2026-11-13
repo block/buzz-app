@@ -106,7 +106,7 @@ it("rejects a pending result if a second router becomes active", async () => {
   const pending = h.router.route(request, new AbortController().signal);
   h.router.register({ id: "two", route: async () => [b] }, h.owner);
   finish([a]);
-  await expect(pending).rejects.toThrow("router changed");
+  await expect(pending).rejects.toThrow("test.router/one, test.router/two");
 });
 
 it("bounds a stalled decision and cancels a send without awaiting the plugin", async () => {
@@ -128,9 +128,16 @@ it("bounds a stalled decision and cancels a send without awaiting the plugin", a
 
 it("refuses ambiguous plugin policies", async () => {
   const h = setup();
-  h.router.register({ id: "one", route: async () => [a] }, h.owner);
-  h.router.register({ id: "two", route: async () => [b] }, h.owner);
+  const run = vi.fn(async () => [a]);
+  const second = h.owner.extend({
+    pluginOwner: { id: "another.router", revision: "one" },
+  });
+  h.router.register({ id: "one", route: run }, h.owner);
+  h.router.register({ id: "two", route: run }, second);
   await expect(
     h.router.route(request, new AbortController().signal),
-  ).rejects.toThrow("More than one");
+  ).rejects.toThrow(
+    "another.router/two, test.router/one. Disable conflicting plugins in Settings → Plugins",
+  );
+  expect(run).not.toHaveBeenCalled();
 });

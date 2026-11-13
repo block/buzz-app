@@ -508,7 +508,7 @@ function CommunitySearch({
             // Retrying removes this focused button; the field owns keyboard
             // navigation, so focus returns there before the retry starts.
             input.current?.focus();
-            services.communities.relay.retry();
+            services.communities.relay.tryAgain();
           }}
         >
           Retry connection

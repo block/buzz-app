@@ -47,7 +47,9 @@ export type ComposerToolProps = Readonly<{
         toggle(recipient: Readonly<{ pubkey: string; name: string }>): void;
       }>
     | undefined;
-  /** False after removal, destination change, read-only state or a rejected edit. */
+  /** Insert text at the caret. Emoji-only text is followed by a space unless a
+   * space or tab already follows, which the caret then moves past. False after
+   * removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.
    * Prose never resolves to identities. Membership is checked by session delivery.
@@ -305,6 +307,47 @@ export type ConversationExtensions = Readonly<{
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
+  annotators?: ContributionReader<ComposerAnnotator>;
+}>;
+
+/** One document revision of the draft an annotator may mark: the projected text
+ * completion providers observe, without the selection. `prose` lists its
+ * ascending, disjoint runs of ordinary prose, outside code, links, chips, line
+ * breaks and raw Markdown syntax. */
+export type AnnotationObservation = Pick<
+  ComposerObservation,
+  "revision" | "text"
+> &
+  Readonly<{ prose: readonly InlineRange[] }>;
+/** Text the person may put in place of an annotation's range. `label` names the
+ * choice when the text alone would not, and is required for an empty `text`. */
+export type ComposerReplacement = Readonly<{ text: string; label?: string }>;
+/** A mark on UTF-16 `[start, end)` of the observed text, which must equal `text`
+ * and lie within one prose run. `label` says what is wrong; `kind` announces a
+ * spelling or grammar error rather than a general one. */
+export type ComposerAnnotation = Readonly<{
+  start: number;
+  end: number;
+  text: string;
+  label: string;
+  kind?: "spelling" | "grammar" | undefined;
+  replacements?: readonly ComposerReplacement[] | undefined;
+}>;
+export type ComposerAnnotatorProps = CompletionContext &
+  Readonly<{
+    observation: AnnotationObservation;
+    /** Shows annotations for this observation, replacing this annotator's
+     * earlier ones. Returns false once the draft has changed or the annotator
+     * retired; cleanup of the returned disposer withdraws them. */
+    publish(annotations: readonly ComposerAnnotation[]): (() => void) | false;
+  }>;
+/** A headless component that marks ranges of the focused composer's prose. The
+ * host draws the marks and replaces text only when the person picks a
+ * replacement; scheduling and the annotations themselves are the plugin's. */
+export type ComposerAnnotator = Readonly<{
+  id: string;
+  title: string;
+  component: ComponentType<ComposerAnnotatorProps>;
 }>;
 
 /** Immutable host-issued evidence, scoped to one live editor observation. */
@@ -422,6 +465,20 @@ export type PageTabTarget = {
   channelId: string;
   threadId?: string;
   messageId?: string;
+};
+/** A page-owned conversation with the host's reader, composer, and side pane. */
+export type ConversationWorkspaceProps = {
+  id: string;
+  session: RelaySession;
+  scope: string;
+  target: PageTabTarget;
+  label: string;
+  /** Content at the start of history. It scrolls with the messages. */
+  intro?: ReactNode;
+  /** Actions in the pane's menu and the main tab's context menu. */
+  actions?: readonly { label: string; run(): void }[];
+  /** Select this panel on entry. Closing it keeps the main conversation. */
+  detail?: { target: string; rootId?: string };
 };
 /** `keep` opens a tab beside the others instead of in place of the last.
  * `markRead: false` keeps a conversation tab from marking what it shows read,

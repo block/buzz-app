@@ -83,8 +83,9 @@ remain distinct. Shared tabs connect related views of one object; route destinat
 retain navigation semantics except for the shell dock described in
 [Chrome route navigation](#chrome-route-navigation). When replacing a focused page heading with shared
 chrome, preserve a meaningful destination focus target, such as a named content
-region. Do not add a duplicate title or discard the focus handoff just because the
-shared heading has no ref or tabIndex prop. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
+region. Do not add a duplicate title or discard the focus handoff: pass `ref` and
+`tabIndex={-1}` to the shared heading to make it a focus landing after an action
+removes the controls it introduces; its recipe draws the keyboard-only ring. [Inbox](../../bundled/inbox/InboxPage.tsx) demonstrates
 body filters and list/detail ownership; [Solo chats](../../bundled/channels/ChannelsPage.tsx)
 demonstrates a working area with a persistent composer. Neither is a blanket visual
 template: check the adoption review before copying their surrounding chrome.

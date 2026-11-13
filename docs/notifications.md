@@ -27,6 +27,15 @@ restoring settings never plays a preview. Silent stops the current preview. The
 Sound switch turns playback off without disabling alerts. Each category also offers
 Silent, which is saved like other sound choices and suppresses that category’s
 audio without changing its desktop alerts. Silent has no audio preview.
+A saved sound name this build does not bundle (chosen on a newer build, for
+example) restores as the default for that category only. Alerts and the other
+choices stay as saved. Restore writes nothing, so a later upgrade finds the name
+unless a notification setting was changed on this build in the meantime: any
+change saves all four categories as currently restored, replacing the name.
+
+Alerts and previews use one-shot Web Audio buffers, not resumable media elements,
+so notification clips do not take over the system’s play/pause controls. Each
+playback closes its audio context on completion, cancellation or failure.
 
 ```ts
 export const inject = ["notifications"];
@@ -76,6 +85,9 @@ checks, not that an OS banner was displayed or read.
   complete snapshot); local-only hosts wait only for local storage. Failed or
   cancelled observation does not release alerts. Visibility is checked after UI
   presentation, without publishing read intent.
+- A fresh live arrival can still alert when a channel read or replay cached the
+  message first. Content caching does not count as live alert delivery; duplicate
+  live copies do not produce additional alerts.
 - Channel Mute/Unmute uses the session's confirmed, encrypted `channel-mutes`
   preference, independently of whether Channels is mounted. Muted channels suppress
   DM and participating-thread alerts; explicit mentions still pass the channel-mute

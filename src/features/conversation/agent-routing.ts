@@ -25,6 +25,15 @@ export type AgentRouter = Readonly<{
 /** Plugin lifetime and result validation for the composer's pre-send gate. */
 export function createAgentRouting(ctx: Context) {
   const entries = createContributions<AgentRouter>(ctx);
+  const conflict = (routers: readonly { key: string }[]) => {
+    const keys = routers
+      .map(({ key }) => key)
+      .sort()
+      .join(", ");
+    return new Error(
+      `More than one agent router is enabled: ${keys}. Disable conflicting plugins in Settings → Plugins so only one router remains, then retry.`,
+    );
+  };
   return {
     register(router: AgentRouter, owner: Context) {
       if (
@@ -38,10 +47,7 @@ export function createAgentRouting(ctx: Context) {
       signal.throwIfAborted();
       const routers = entries.snapshot();
       if (!routers.length || request.candidates.length < 2) return undefined;
-      if (routers.length !== 1)
-        throw new Error(
-          "More than one agent router is enabled. Keep one enabled and retry.",
-        );
+      if (routers.length !== 1) throw conflict(routers);
       const router = routers[0];
       if (!router) return undefined;
       const snapshot = structuredClone(request);
@@ -62,6 +68,7 @@ export function createAgentRouting(ctx: Context) {
       }
       signal.throwIfAborted();
       const current = entries.snapshot();
+      if (current.length > 1) throw conflict(current);
       if (current.length !== 1 || current[0] !== router)
         throw new Error(
           "The agent router changed while deciding. Retry your message.",

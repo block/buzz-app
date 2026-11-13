@@ -421,6 +421,43 @@ it("expands fallback Solo when navigation selects an ordinary chat", async () =>
   }
 });
 
+it.each(["Solo", "All"])(
+  "preserves %s for a source opening and selects Team on its next explicit open",
+  async (filter) => {
+    const f = fixture(true);
+    f.roster((channels) => [
+      ...channels,
+      {
+        id: "source",
+        name: "Source channel",
+        channelType: "stream",
+        cached: true,
+      },
+    ]);
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-channel-id="source"]'),
+      ).not.toBeNull(),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: filter }));
+    const target = conversationTarget(scope, "source");
+    await act(() => f.open(target, { sidebar: "preserve" }));
+    expect(screen.getByRole("tab", { name: filter })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const teamRow = document.querySelector('[data-channel-id="source"]');
+    expect(teamRow).not.toBeNull();
+    expect(teamRow).not.toHaveAttribute("aria-current");
+    await act(() => f.open(target));
+    expect(
+      screen.getByRole("tab", { name: filter === "All" ? "All" : "Team" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(teamRow).toHaveAttribute("aria-current", "page");
+  },
+);
+
 it.each([
   ["New workspace", "New workspace", "Cancel"],
   ["New channel", "Create a channel", "Close channel creation"],
@@ -1067,9 +1104,44 @@ it("moves a refusal's recovery from the sidebar to its one notice", async () => 
   expect(within(sidebar()).queryByText(/sign-in/)).toBeNull();
 });
 
+// NIP-FA: an issuer refusal is not retried automatically, but the user's
+// Try again asks the issuer again rather than repeating it from the cache.
+it("makes Try again a person's retry, which asks the issuer again", async () => {
+  const h = federatedFixture();
+  const f = fixture(
+    true,
+    false,
+    undefined,
+    undefined,
+    0,
+    undefined,
+    undefined,
+    {
+      federatedIdentity: h.service,
+    },
+  );
+  const retry = vi.spyOn(f.relay, "retry");
+  const tryAgain = vi.spyOn(f.relay, "tryAgain");
+  const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
+  f.connection({
+    status: "error",
+    error: "grant-refused",
+    origin: "wss://relay.example",
+  });
+  // So its issuer-refusal advice is that Try again, not a restart.
+  expect(within(sidebar()).getByRole("alert")).toHaveTextContent(
+    "Buzz couldn’t confirm your organization sign-in for this community. Try again. If it keeps happening, contact your administrator.",
+  );
+  await userEvent
+    .setup()
+    .click(within(sidebar()).getByRole("button", { name: "Try again" }));
+  expect(tryAgain).toHaveBeenCalledOnce();
+  expect(retry).not.toHaveBeenCalled();
+});
+
 it("shows Try again beside a settled failure, and Connecting while the connection retries", async () => {
   const f = fixture(true);
-  const retry = vi.spyOn(f.relay, "retry");
+  const retry = vi.spyOn(f.relay, "tryAgain");
   const sidebar = () => screen.getByRole("complementary", { name: "Sidebar" });
   const error = "ReadError: Relay read failed (502)";
   f.connection({ status: "error", error });

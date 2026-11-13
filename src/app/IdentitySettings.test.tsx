@@ -306,6 +306,198 @@ it("only shows renewal and expiry within seven days, with the default caret and 
   );
 });
 
+it("shows a renewal in progress with a Cancel that ends only the browser step", async () => {
+  const h = federatedFixture();
+  h.publish({
+    status: "signed-in",
+    email: "a@example.com",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+  // Like native: a renewal keeps the session signed in until the browser
+  // step ends, and canceling ends it without a new session.
+  let finish: () => void = () => {};
+  vi.mocked(h.service.signIn).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        h.publish({ renewing: true });
+        finish = () => {
+          h.publish({ renewing: false });
+          resolve(h.service.snapshot());
+        };
+      }),
+  );
+  vi.mocked(h.service.cancelSignIn).mockImplementation(async () => finish());
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Renew sign-in" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish in your browser",
+  );
+  expect(screen.queryByRole("button", { name: "Renew sign-in" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
+  expect(
+    await screen.findByRole("button", { name: "Renew sign-in" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Finish in your browser")).toBeNull();
+  expect(screen.getByText("a@example.com")).toBeVisible();
+  expect(h.service.signOut).not.toHaveBeenCalled();
+});
+
+it("keeps keyboard focus on the renewal action as Renew and Cancel swap", async () => {
+  const h = federatedFixture();
+  h.publish({
+    status: "signed-in",
+    email: "a@example.com",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+  let finish: () => void = () => {};
+  vi.mocked(h.service.signIn).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        h.publish({ renewing: true });
+        finish = () => {
+          h.publish({ renewing: false });
+          resolve(h.service.snapshot());
+        };
+      }),
+  );
+  vi.mocked(h.service.cancelSignIn).mockImplementation(async () => finish());
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Renew sign-in" }).focus();
+  await user.keyboard("{Enter}");
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Renew sign-in" })).toHaveFocus(),
+  );
+});
+
+// No click arms these: native ends the renewal on its own.
+it("keeps keyboard focus on the renewal action when native ends a renewal", async () => {
+  const h = federatedFixture();
+  h.publish({
+    status: "signed-in",
+    email: "a@example.com",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    renewing: true,
+  });
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  screen.getByRole("button", { name: "Cancel" }).focus();
+  act(() => h.publish({ renewing: false }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Renew sign-in" })).toHaveFocus(),
+  );
+});
+
+// Native records a renewal only once it starts the browser step: a Cancel
+// before then waits for it, then ends that step.
+it("holds a Cancel chosen before native records the renewal, then ends it", async () => {
+  const h = federatedFixture();
+  h.publish({
+    status: "signed-in",
+    email: "a@example.com",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+  let start: () => void = () => {};
+  let finish: () => void = () => {};
+  vi.mocked(h.service.signIn).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        start = () => h.publish({ renewing: true });
+        finish = () => {
+          h.publish({ renewing: false });
+          resolve(h.service.snapshot());
+        };
+      }),
+  );
+  vi.mocked(h.service.cancelSignIn).mockImplementation(async () => finish());
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Renew sign-in" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(h.service.cancelSignIn).not.toHaveBeenCalled();
+  act(() => start());
+  await waitFor(() => expect(h.service.cancelSignIn).toHaveBeenCalledOnce());
+  expect(
+    await screen.findByRole("button", { name: "Renew sign-in" }),
+  ).toBeVisible();
+  expect(h.service.signOut).not.toHaveBeenCalled();
+});
+
+it("does not take focus back after the person moves away from Cancel", async () => {
+  const h = federatedFixture();
+  h.publish({
+    status: "signed-in",
+    email: "a@example.com",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    renewing: true,
+  });
+  let finish: () => void = () => {};
+  vi.mocked(h.service.cancelSignIn).mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = () => {
+          h.publish({ renewing: false });
+          resolve();
+        };
+      }),
+  );
+  render(
+    <>
+      <IdentitySettings viewer={viewer} federatedIdentity={h.service} />
+      <button type="button">Elsewhere</button>
+    </>,
+    { wrapper: ToastProvider },
+  );
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Cancel" }).focus();
+  await user.keyboard("{Enter}");
+  expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
+  const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+  elsewhere.focus();
+  act(() => finish());
+  expect(
+    await screen.findByRole("button", { name: "Renew sign-in" }),
+  ).toBeVisible();
+  expect(elsewhere).toHaveFocus();
+});
+
+it("shows a renewal that native reports as waiting, after the page reopens", async () => {
+  const h = federatedFixture();
+  // Settings was left mid-renewal: only native knows it still waits.
+  h.publish({
+    status: "signed-in",
+    email: "a@example.com",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    renewing: true,
+  });
+  vi.mocked(h.service.cancelSignIn).mockImplementation(async () => {
+    h.publish({ renewing: false });
+  });
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Finish in your browser",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
+  expect(
+    await screen.findByRole("button", { name: "Renew sign-in" }),
+  ).toBeVisible();
+  expect(screen.getByText("a@example.com")).toBeVisible();
+});
+
 it("signs in to the organization once when signed out", async () => {
   const h = federatedFixture();
   render(
@@ -743,6 +935,48 @@ const memberships = [
   { id: "wss://buzz.homelab.example", name: "homelab" },
 ];
 
+// A listed row has no error popup to take focus: Renew gets it back when a
+// renewal fails on its own.
+it("keeps keyboard focus on a listed server's Renew when its renewal fails", async () => {
+  const { block, root, servers } = twoServers();
+  block.publish({
+    status: "signed-in",
+    email: "will@acme.example",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+  let fail: () => void = () => {};
+  vi.mocked(block.service.signIn).mockImplementation(
+    () =>
+      new Promise((_, reject) => {
+        fail = () => reject(new Error("refused"));
+      }),
+  );
+  const listed = vi.fn(servers);
+  render(
+    <IdentitySettings
+      viewer={viewer}
+      federatedIdentity={root}
+      servers={listed}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await waitFor(() => expect(listed).toHaveBeenCalledOnce());
+  await act(async () => {
+    await listed.mock.results[0]?.value;
+  });
+  const card = screen.getByRole("article", {
+    name: "Acme (acme.builderlab.xyz)",
+  });
+  within(card).getByRole("button", { name: "Renew sign-in" }).focus();
+  await userEvent.keyboard("{Enter}");
+  expect(within(card).getByRole("button", { name: "Cancel" })).toHaveFocus();
+  await act(async () => fail());
+  expect(await within(card).findByRole("alert")).toBeVisible();
+  expect(
+    within(card).getByRole("button", { name: "Renew sign-in" }),
+  ).toHaveFocus();
+});
+
 it("lists each signed-in server and signs out of one without touching the other", async () => {
   const { block, pub, root, servers } = twoServers();
   block.publish({ status: "signed-in", email: "will@acme.example" });
@@ -985,6 +1219,24 @@ it("offers no sign-out retry for a server whose restore failed", async () => {
   expect(screen.queryByText(/Couldn’t sign out/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   expect(pub.service.signOut).not.toHaveBeenCalled();
+  // Only a check of the stored session, which a restore that works answers.
+  const row = screen.getByRole("article", {
+    name: "app.builderlab.xyz",
+  });
+  vi.mocked(pub.service.recheck).mockImplementation(async () =>
+    pub.publish({ status: "signed-in", failure: null }),
+  );
+  await userEvent.click(
+    within(row).getByRole("button", { name: "Check again" }),
+  );
+  expect(pub.service.recheck).toHaveBeenCalledOnce();
+  expect(
+    await within(row).findByRole("button", {
+      name: "Sign out of app.builderlab.xyz",
+    }),
+  ).toBeVisible();
+  expect(pub.service.signIn).not.toHaveBeenCalled();
+  expect(pub.service.signOut).not.toHaveBeenCalled();
 });
 
 it("shows the first server's failed restore as its own recovery text", async () => {
@@ -1005,15 +1257,30 @@ it("shows the first server's failed restore as its own recovery text", async () 
     await listed.mock.results[0]?.value;
   });
   expect(screen.getByRole("alert")).toHaveTextContent(
-    /^Sign-in did not finish\. Try again\.$/,
+    /^Buzz couldn’t check your saved sign-in\. Check your connection, then choose Check again\.$/,
   );
-  // Neither a sign-out retry nor a sign-in while the record is unchecked.
+  // Neither a sign-out retry nor a sign-in while the record is unchecked:
+  // only a check that retries the restore and keeps the record.
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  const card = screen.getByRole("article", {
+    name: "Acme (acme.builderlab.xyz)",
+  });
+  expect(within(card).queryByRole("button", { name: "Sign in" })).toBeNull();
+  vi.mocked(block.service.recheck).mockImplementation(async () =>
+    block.publish({ status: "unavailable", failure: "network-unavailable" }),
+  );
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Check again" }),
+  );
+  expect(block.service.recheck).toHaveBeenCalledOnce();
+  // A check that fails again keeps its recovery text and its button.
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    /^Buzz couldn’t check your saved sign-in\. Check your connection, then choose Check again\.$/,
+  );
   expect(
-    within(
-      screen.getByRole("article", { name: "Acme (acme.builderlab.xyz)" }),
-    ).queryByRole("button", { name: "Sign in" }),
-  ).toBeNull();
+    within(card).getByRole("button", { name: "Check again" }),
+  ).toBeVisible();
+  expect(block.service.signIn).not.toHaveBeenCalled();
   expect(block.service.signOut).not.toHaveBeenCalled();
 });
 

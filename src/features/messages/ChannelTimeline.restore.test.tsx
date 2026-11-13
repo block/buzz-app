@@ -4178,6 +4178,37 @@ it("holds reading on return while the window refreshes, then places the line bef
   }
 });
 
+it("holds reading on return while a reconnect head read is owed, then places the line above what it delivers", async () => {
+  const { h, mounted, read } = await settledReader();
+  try {
+    setDocumentActive(false);
+    // Reconnect queues the head read and marks the rows cached, not refreshing.
+    h.headRead("pending");
+    mounted.rerender(
+      h.tree("c", [read], false, true, true, { freshness: "cached" }),
+    );
+    setDocumentActive(true);
+    await h.dwell();
+    expect(h.catchUp).not.toHaveBeenCalled();
+    expect(h.observe).not.toHaveBeenCalled();
+
+    const arrival = h.row(message(h.peer, "c", "Missed while offline", 11));
+    h.unreadIds.add(arrival.id);
+    h.publish();
+    mounted.rerender(h.tree("c", [read, arrival]));
+    h.headRead("verified");
+    expect(precedes(divider(), screen.getByText("Missed while offline"))).toBe(
+      true,
+    );
+    expect(h.catchUp).not.toHaveBeenCalled();
+    await h.dwell();
+    expect(h.catchUp).toHaveBeenCalled();
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it("counts arrivals after a blur while a focused entry awaits its repair", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const h = boundaryFixture({ reading: true });

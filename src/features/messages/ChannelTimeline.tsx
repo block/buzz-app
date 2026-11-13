@@ -649,8 +649,10 @@ function Timeline({
       return { ready: true };
     // Entry decides first; its own gates hold reading while they must.
     if (boundaryPending || !messageVisit.ready) return { ready: false };
-    // These end on their own; reading resumes once they do.
-    if (window.refreshing || window.loadingOlder) return { ready: false };
+    // These end on their own; reading resumes once they do. A reconnect's
+    // head read is owed without refreshing, and an older page can verify the
+    // window before it lands.
+    if (awaitingHead || window.loadingOlder) return { ready: false };
     // Anything else unproven settles with no line at once, so reading never
     // waits on a retry. A read elsewhere on this device moves the revision; a
     // remote read shows in each row's attention.

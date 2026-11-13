@@ -375,13 +375,20 @@ pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf 
             return executable;
         }
     }
-    #[cfg(windows)]
-    if let Some(Ok(executable)) = git_bash::program(program) {
-        return executable;
-    }
     #[cfg(not(target_os = "macos"))]
     let _ = effective_path;
     PathBuf::from(program)
+}
+
+/// Where a program a plugin declares runs from. On Windows its POSIX programs
+/// run from Git for Windows, and without it fail rather than fall back to
+/// WSL's `bash` or Windows' own `find`.
+pub(crate) fn declared_program(program: &str, effective_path: &OsStr) -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    if let Some(executable) = git_bash::program(program) {
+        return executable;
+    }
+    Ok(resolve_program(program, effective_path))
 }
 
 /// POSIX programs plugins declare, which Windows lacks or names a different
@@ -419,6 +426,10 @@ pub(crate) mod git_bash {
     /// for this user only, else the one whose `git.exe` is on PATH, such as
     /// Portable Git. Read each time, so installing it needs no restart.
     fn install() -> Option<PathBuf> {
+        #[cfg(test)]
+        if tests::GIT_HIDDEN.get() {
+            return None;
+        }
         [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER]
             .into_iter()
             .filter_map(install_path)
@@ -612,6 +623,48 @@ pub(crate) mod git_bash {
             assert_eq!(on_path(&path(&[r"no-bash\cmd", "nowhere"])), None);
         }
 
+        thread_local! {
+            /// Hides Git for Windows from `install` on this test's thread.
+            pub(super) static GIT_HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+
+        async fn uname_through_declared_bash() -> Option<String> {
+            let command = crate::host_command::HostCommand {
+                id: "posix".into(),
+                program: "bash".into(),
+                args: vec!["-c".into(), "uname -o".into()],
+                max_output_bytes: None,
+                max_input_bytes: None,
+                artifact: None,
+            };
+            crate::host_command::run_command(&command, None, std::time::Duration::from_secs(10))
+                .await
+        }
+
+        // A declared `bash` runs Git's, or nothing: never another on PATH or
+        // WSL's from System32.
+        #[tokio::test]
+        async fn declared_bash_runs_from_git_for_windows() {
+            match program("bash") {
+                Some(Ok(_)) => assert_eq!(
+                    uname_through_declared_bash().await.as_deref(),
+                    Some("Msys\n")
+                ),
+                Some(Err(_)) => assert_eq!(uname_through_declared_bash().await, None),
+                None => panic!("bash is not mapped to Git for Windows"),
+            }
+        }
+
+        #[tokio::test(flavor = "current_thread")]
+        async fn declared_bash_without_git_for_windows_does_not_run() {
+            GIT_HIDDEN.set(true);
+            let output = uname_through_declared_bash().await;
+            let found = program("bash");
+            GIT_HIDDEN.set(false);
+            assert!(found.is_some_and(|found| found.is_err()));
+            assert_eq!(output, None);
+        }
+
         #[test]
         fn only_declared_posix_programs_run_from_git() {
             assert!(program("node").is_none());
@@ -663,7 +716,7 @@ async fn run_command(
                 .ok()?
                 .ok()?
         }
-        None => resolve_program(&command.program, &path),
+        None => declared_program(&command.program, &path).ok()?,
     };
     run(
         &program,

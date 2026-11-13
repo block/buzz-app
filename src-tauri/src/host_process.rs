@@ -12,7 +12,7 @@ use claude_hooks::ClaudeHooks;
 use protection::ProcessProtection;
 
 use crate::credential_service::{CredentialService, Issued, ProtectedLaunch};
-use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
+use crate::host_command::{declared_program, effective_path, load_login_shell_path};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::{HostProcess, ProcessArtifact};
 use serde::{Deserialize, Serialize};
@@ -910,12 +910,7 @@ fn program_path(
         return verify_artifact(artifact);
     }
     if !declared.bundled {
-        // Says Git for Windows is missing, rather than starting WSL's bash.
-        #[cfg(windows)]
-        if let Some(program) = crate::host_command::git_bash::program(&declared.program) {
-            return program;
-        }
-        return Ok(resolve_program(&declared.program, path));
+        return declared_program(&declared.program, path);
     }
     let resources = resources().ok_or_else(|| format!("Could not start {}", declared.program))?;
     Ok(resources.join("bin").join(&declared.program))

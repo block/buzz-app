@@ -75,6 +75,9 @@ it("keeps a paused delete's confirmation and offers Retry only after the pause, 
   const retry = screen.getByRole("button", { name: "Retry" });
   expect(retry).toHaveAttribute("aria-disabled", "true");
   expect(retry).toHaveAttribute("data-variant", "destructive");
+  // Base UI schedules the dialog's initial focus on the next real frame, which
+  // fake timers cannot advance; await that frame like the other jsdom tests do.
+  await new Promise((frame) => requestAnimationFrame(frame));
   expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   // Keyboard and screen-reader users can still reach Retry and its state.
   retry.focus();

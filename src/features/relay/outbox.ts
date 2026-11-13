@@ -63,6 +63,10 @@ export interface Outbox {
   /** Capture fresh send intent synchronously; returned work runs once after
    * receipt/verified echo, never history hydration. It cannot affect delivery. */
   observeSend(listener: SendObserver): () => void;
+  /** Each operation of this outbox the relay confirms, by receipt or verified
+   * echo, including one recovered from an earlier session. Both evidences may
+   * report the same operation. It cannot affect delivery. */
+  observeDelivered(listener: (event: RelayEvent) => void): () => void;
   supports(kind: number): boolean;
   ready(): Promise<void>;
   /** Fresh shared-journal ownership without importing another window's operations. */
@@ -251,6 +255,7 @@ export function createOutbox(
   const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
+  const deliveredListeners = new Set<(event: RelayEvent) => void>();
   const deliveryWork = new Map<
     string,
     {
@@ -274,6 +279,13 @@ export function createOutbox(
     const work = deliveryWork.get(event.id)?.work;
     const pending = [...deliveryWork.values()].map((item) => item.event);
     deliveryWork.delete(event.id);
+    for (const listener of deliveredListeners) {
+      try {
+        listener(event);
+      } catch {
+        /* Independent observer. */
+      }
+    }
     for (const run of work ?? []) {
       // Execution/UI observers must never change message delivery evidence.
       try {
@@ -1077,6 +1089,12 @@ export function createOutbox(
         schedule(id, undefined, item.delivery);
       }
     },
+    observeDelivered(listener: (event: RelayEvent) => void) {
+      deliveredListeners.add(listener);
+      return () => {
+        deliveredListeners.delete(listener);
+      };
+    },
     observeDismiss(listener: (item: OutgoingEvent) => void) {
       dismissListeners.add(listener);
       return () => {
@@ -1202,6 +1220,7 @@ export function createOutbox(
       listeners.clear();
       localListeners.clear();
       sendListeners.clear();
+      deliveredListeners.clear();
       dismissListeners.clear();
       deliveryWork.clear();
       void ready

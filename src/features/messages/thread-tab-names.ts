@@ -46,9 +46,10 @@ export function saveThreadTabName(
   });
 }
 
-/** From a session's start, before it sends: a thread deleted here forgets its
- * name once the relay has the deletion, so a refused one keeps it, and a
- * channel deleted or left here forgets all of its names. */
+/** From a session's start, before it sends or recovers its outbox: a thread
+ * deleted here forgets its name once the relay has the deletion, even one
+ * recovered after a restart, so a refused one keeps it. A channel deleted or
+ * left here forgets all of its names. */
 export function retainThreadTabNames(session: RelaySession) {
   if (!session.viewer) return;
   const { scope } = session;
@@ -60,13 +61,11 @@ export function retainThreadTabNames(session: RelaySession) {
       return names.size !== before;
     }),
   );
-  session.outbox?.observeSend((event) => {
+  session.outbox?.observeDelivered((event) => {
     const channelId = event.tags.find(([key]) => key === "h")?.[1];
     if (event.kind !== 5 || !channelId) return;
-    return () => {
-      for (const [key, id] of event.tags)
-        if (key === "e" && id)
-          saveThreadTabName(scope, `${channelId}:${id}`, undefined);
-    };
+    for (const [key, id] of event.tags)
+      if (key === "e" && id)
+        saveThreadTabName(scope, `${channelId}:${id}`, undefined);
   });
 }

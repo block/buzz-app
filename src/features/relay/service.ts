@@ -364,6 +364,8 @@ export function provideRelay(
               transportOrigin(transport),
             ),
           });
+          // Before this session can send or confirm a recovered operation.
+          retainThreadTabNames(successor.session);
           await successor.restore();
           if (
             disposed ||
@@ -380,8 +382,6 @@ export function provideRelay(
             successor.session.channels.ensure(id);
           store.dispose();
           store = successor;
-          // Before anything can send in this session.
-          retainThreadTabNames(store.session);
           if (refused) {
             await refuse(refused);
             return;

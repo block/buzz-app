@@ -1,19 +1,20 @@
 // @vitest-environment jsdom
-import { afterEach, expect, test } from "vitest";
+import { afterEach, assert, expect, test } from "vitest";
+import type { EventTemplate } from "nostr-tools";
+import type { RelayEvent } from "../relay/events";
+import { createOutbox, type OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
+import { flush, keypair, signed } from "../relay/testing";
 import { readView, writeView } from "../../shared/view-state";
 import { retainThreadTabNames } from "./thread-tab-names";
 
 afterEach(() => localStorage.clear());
 
-type Send = (event: {
-  kind: number;
-  tags: string[][];
-}) => (() => void) | undefined;
+type Confirmed = Pick<RelayEvent, "kind" | "tags">;
 /** A fresh session that has opened no tab workspace. */
 function fresh(scope: string, viewer = "viewer") {
   const removals = new Set<(channelId: string) => void>();
-  const sends = new Set<Send>();
+  const confirmations = new Set<(event: Confirmed) => void>();
   const session = {
     scope,
     viewer,
@@ -24,40 +25,40 @@ function fresh(scope: string, viewer = "viewer") {
       },
     },
     outbox: {
-      observeSend(listener: Send) {
-        sends.add(listener);
-        return () => sends.delete(listener);
+      observeDelivered(listener: (event: Confirmed) => void) {
+        confirmations.add(listener);
+        return () => confirmations.delete(listener);
       },
     },
   } as unknown as RelaySession;
-  const send = (kind: number, tags: string[][]) =>
-    [...sends].map((listener) => listener({ kind, tags }));
+  const confirm = (kind: number, tags: string[][]) => {
+    for (const listener of confirmations) listener({ kind, tags });
+  };
   const remove = (channelId: string) => {
     for (const listener of removals) listener(channelId);
   };
-  return { session, send, remove, sends };
+  return { session, confirm, remove, confirmations };
 }
 
-test("a fresh session forgets a deleted thread's name once the relay has it", () => {
+test("a fresh session forgets a deleted thread's name once the relay confirms it", () => {
   const scope = crypto.randomUUID();
-  const names = {
+  // Saved by an earlier launch.
+  writeView(scope, "tab-names", {
     "alpha:r1": "Launch plan",
     "alpha:r2": "Retro",
     "beta:r1": "Elsewhere",
-  };
-  // Saved by an earlier launch.
-  writeView(scope, "tab-names", names);
+  });
   const h = fresh(scope);
   retainThreadTabNames(h.session);
-  const deleted = h.send(5, [
+  h.confirm(9, [
+    ["h", "alpha"],
+    ["e", "r2"],
+  ]);
+  h.confirm(5, [["e", "r2"]]);
+  h.confirm(5, [
     ["h", "alpha"],
     ["e", "r1"],
   ]);
-  expect(h.send(9, [["h", "alpha"]])).toEqual([undefined]);
-  expect(h.send(5, [["e", "r2"]])).toEqual([undefined]);
-  // Pending, or refused and never received: the name stays.
-  expect(readView(scope, "tab-names", {})).toEqual(names);
-  for (const received of deleted) received?.();
   expect(readView(scope, "tab-names", {})).toEqual({
     "alpha:r2": "Retro",
     "beta:r1": "Elsewhere",
@@ -80,5 +81,57 @@ test("a fresh session forgets every name of a channel deleted or left", () => {
 test("a session without a viewer observes nothing", () => {
   const h = fresh("undefined:undefined", "");
   retainThreadTabNames(h.session);
-  expect(h.sends.size).toBe(0);
+  expect(h.confirmations.size).toBe(0);
+});
+
+test("a deletion recovered after a restart forgets its name once confirmed, and only then", async () => {
+  const scope = crypto.randomUUID();
+  const viewer = keypair();
+  writeView(scope, "tab-names", { "alpha:r1": "Launch plan" });
+  let records: readonly OutgoingEvent[] = [];
+  const storage = {
+    load: () => structuredClone(records),
+    save: (next: readonly OutgoingEvent[]) => {
+      records = structuredClone(next);
+    },
+  };
+  const launch = (publish: (event: RelayEvent) => Promise<void>) =>
+    createOutbox(
+      viewer.pubkey,
+      {
+        sign: async (template: EventTemplate) => signed(viewer, template),
+        publish,
+      },
+      storage,
+    );
+  // The deletion is sent, but the app quits before the relay answers.
+  const first = launch(() => new Promise<void>(() => {}));
+  const id = first.outbox.send({
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", "alpha"],
+      ["e", "r1"],
+    ],
+  });
+  await flush();
+  const deletion = records[0]?.signed;
+  assert.exists(deletion);
+  first.dispose();
+  // The next launch restores it without capturing a fresh send.
+  const second = launch(async () => {});
+  retainThreadTabNames({
+    scope,
+    viewer: viewer.pubkey,
+    outbox: second.outbox,
+  } as unknown as RelaySession);
+  await second.outbox.ready();
+  expect(second.outbox.snapshot()).toMatchObject([{ event: { id } }]);
+  expect(readView(scope, "tab-names", {})).toEqual({
+    "alpha:r1": "Launch plan",
+  });
+  second.observe([deletion]);
+  expect(second.outbox.snapshot()).toEqual([]);
+  expect(readView(scope, "tab-names", {})).toEqual({});
+  second.dispose();
 });

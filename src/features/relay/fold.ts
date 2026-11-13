@@ -174,12 +174,28 @@ export function parseAttachments(
   return result;
 }
 
-function parseSummary(
-  event: EventData | undefined,
-): Pick<ChannelMessage, "replyCount" | "agentReplyCount" | "participants"> {
+// Pending agent replies are subtracted only when the relay counts agent
+// replies, so the label does not change when the summary lands.
+function agentReplyCount(
+  summary: ReturnType<typeof parseSummary>,
+  pending: readonly EventData[],
+): number {
+  const counted = summary.agentReplyCount ?? 0;
+  return summary.countsAgents
+    ? counted + pending.filter(agentAudience).length
+    : counted;
+}
+
+function parseSummary(event: EventData | undefined): Pick<
+  ChannelMessage,
+  "replyCount" | "agentReplyCount" | "participants"
+> & {
+  countsAgents: boolean;
+} {
   const empty = {
     replyCount: 0,
     agentReplyCount: 0,
+    countsAgents: false,
     participants: Object.freeze([]),
   };
   if (!event) return empty;
@@ -194,10 +210,10 @@ function parseSummary(
     const replyCount = descendants ?? count(body.reply_count) ?? 0;
     // The agent total counts the whole subtree, so it applies only beside
     // the descendant total, never the direct-reply fallback.
+    const agents = count(body.agent_descendant_count);
+    const countsAgents = descendants !== undefined && agents !== undefined;
     const agentReplyCount =
-      descendants === undefined
-        ? 0
-        : Math.min(count(body.agent_descendant_count) ?? 0, descendants);
+      descendants === undefined ? 0 : Math.min(agents ?? 0, descendants);
     const participants = Array.isArray(body.participants)
       ? body.participants.filter(
           (value): value is string =>
@@ -207,6 +223,7 @@ function parseSummary(
     return {
       replyCount,
       agentReplyCount,
+      countsAgents,
       participants: Object.freeze([...new Set(participants)]),
     };
   } catch {
@@ -432,6 +449,7 @@ export function foldMessages(
     const pending = includeReplies
       ? []
       : (replies.get(event.id)?.filter((reply) => !deleted(reply)) ?? []);
+    const agentReplies = agentReplyCount(summary, pending);
     // The relay lists participants by signer, so a pending reply whose signer
     // it lists but not its author (a relay-signed workflow reply) leads as that
     // signer rather than adding a second identity.
@@ -544,9 +562,7 @@ export function foldMessages(
           deleted,
         ),
         replyCount: summary.replyCount + pending.length,
-        ...(summary.agentReplyCount
-          ? { agentReplyCount: summary.agentReplyCount }
-          : {}),
+        ...(agentReplies ? { agentReplyCount: agentReplies } : {}),
         // Pending repliers lead, returning ones included, so they stay within
         // the visible avatar stack.
         participants: Object.freeze([

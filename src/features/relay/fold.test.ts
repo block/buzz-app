@@ -533,6 +533,42 @@ describe("message fold", () => {
     expect(shareMessageRows(before, fold(1))).toBe(before);
     expect(shareMessageRows(before, fold(2))[0]?.agentReplyCount).toBe(2);
   });
+  it("counts pending agent-audience replies beside a summary that counts agent replies", () => {
+    const root = message(alice, channel, "root", 10);
+    const agentReply = message(bob, channel, "progress", 11, [
+      ["e", root.id, "", "reply"],
+      ["audience", "agents"],
+    ]);
+    const fold = (body: Record<string, unknown>) =>
+      foldMessages(
+        channel,
+        relay.pubkey,
+        [root, agentReply, summary(relay, channel, root.id, body)],
+        { pendingReplies: new Set([agentReply.id]) },
+      ).map((row) => [row.replyCount, row.agentReplyCount]);
+    expect(
+      fold({
+        descendant_count: 2,
+        agent_descendant_count: 1,
+        participants: [],
+      }),
+    ).toEqual([[3, 2]]);
+    expect(
+      fold({
+        descendant_count: 2,
+        agent_descendant_count: 0,
+        participants: [],
+      }),
+    ).toEqual([[3, 1]]);
+    // A relay without the agent count cannot subtract the reply once its
+    // summary lands, so the pending reply is not subtracted either.
+    expect(fold({ descendant_count: 2, participants: [] })).toEqual([
+      [3, undefined],
+    ]);
+    expect(fold({ reply_count: 2, participants: [] })).toEqual([
+      [3, undefined],
+    ]);
+  });
   it("layers pending replies on their root's summary and leads participants with their authors", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>

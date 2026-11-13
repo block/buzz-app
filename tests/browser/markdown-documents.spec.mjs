@@ -377,6 +377,36 @@ test("inline snippets keep rounded ends and tall fenced code wraps with a partia
           expect(layout.cutFraction, label).toBeLessThan(0.8);
           expect(layout.scrolled, label).toBe(true);
           expect(layout.atEnd, label).toBe(true);
+          if (screen === "message") {
+            // Native Tab/scroll behavior differs between engines; assigning
+            // scrollTop alone cannot prove keyboard access to hidden lines.
+            await page
+              .locator('[data-screen="message"] pre')
+              .filter({ hasText: CODE })
+              .getByRole("button", { name: "Copy code block" })
+              .focus();
+            await page.keyboard.press("Tab");
+            await expect(block).toBeFocused();
+            await page.keyboard.press("Home");
+            await expect
+              .poll(() => block.evaluate((code) => code.scrollTop))
+              .toBe(0);
+            await page.keyboard.press("End");
+            await expect
+              .poll(() =>
+                block.evaluate(
+                  (code) =>
+                    code.scrollTop + code.clientHeight === code.scrollHeight,
+                ),
+              )
+              .toBe(true);
+            await page.keyboard.press("Tab");
+            await expect(
+              block
+                .locator("..")
+                .getByRole("button", { name: "Copy code block" }),
+            ).toBeFocused();
+          }
         }
       }
 });

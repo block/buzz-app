@@ -1,5 +1,8 @@
 import { useMemo } from "react";
-import { DOCUMENT_PROFILE } from "../markdown/document-profile";
+import {
+  DOCUMENT_PROFILE,
+  DOCUMENT_RENDER_CELLS,
+} from "../markdown/document-profile";
 import { guardDocument } from "../markdown/guard";
 import {
   MarkdownDocument,
@@ -32,7 +35,10 @@ export function PluginMarkdown({
 }: MarkdownProps & { navigation?: Navigation | undefined }) {
   const plain = useMemo(
     () =>
-      !guardDocument(content, DOCUMENT_PROFILE, { chars: MAX_MARKDOWN_LENGTH }),
+      !guardDocument(content, DOCUMENT_PROFILE, {
+        chars: MAX_MARKDOWN_LENGTH,
+        cells: DOCUMENT_RENDER_CELLS,
+      }),
     [content],
   );
   return plain ? (

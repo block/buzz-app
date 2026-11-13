@@ -5,7 +5,7 @@ export function documentPlugin(ctx) {
   function Reader({ name, session }) {
     ctx.panels.ui.useTabTitle(name);
     const [content, setContent] = React.useState(
-      `## ${name}\n\n**Host Markdown**\n\n![Tracking image](https://tracker.example/p.gif)\n\n[Unsafe](javascript:alert%281%29)\n\n<buzz://channel/alpha>\n\n[the **alpha** room](buzz://channel/alpha)`,
+      `## ${name}\n\n**Host Markdown**\n\n![Tracking image](https://tracker.example/p.gif)\n\n[Unsafe](javascript:alert%281%29)\n\n<buzz://channel/alpha>\n\n[the **alpha** room](buzz://channel/alpha)\n\n\`\`\`ts\n${Array.from({ length: 40 }, (_, line) => `const line${line} = ${line};`).join("\n")}\n\`\`\``,
     );
     const [editing, setEditing] = React.useState(false);
     const [source, setSource] = React.useState(false);

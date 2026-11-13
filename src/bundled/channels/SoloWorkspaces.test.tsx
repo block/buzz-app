@@ -92,6 +92,16 @@ function fixture(projectName = "Work") {
     };
     return saved;
   });
+  const order = vi.fn(async (ids: readonly string[]) => {
+    saved = {
+      ...saved,
+      sections: ids.flatMap((id, order) => {
+        const section = saved.sections.find((section) => section.id === id);
+        return section ? [{ ...section, order }] : [];
+      }),
+    };
+    return saved;
+  });
   const store = () =>
     createSidebarPreferencesStore({
       read: async () => saved,
@@ -99,6 +109,7 @@ function fixture(projectName = "Work") {
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeOrder: order,
       // Groups-only chats have no Messages sort coordinate.
       groupsOnly: true,
     });
@@ -148,10 +159,101 @@ function fixture(projectName = "Work") {
     view,
     write,
     remove,
+    order,
     onNew,
     saved: () => saved,
   };
 }
+
+it("moves workspaces from their menu and restores the saved order", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  try {
+    await store.queries.ensure();
+    await store.queries.createSection({ id: "second", name: "Second" });
+    await store.queries.createSection({ id: "third", name: "Third" });
+    const mounted = render(h.view(store.queries));
+    const move = async (label: string) => {
+      await user.click(
+        screen.getByRole("button", { name: "Actions for Third" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: label, exact: true }),
+      );
+    };
+    await move("Move to top");
+    await waitFor(() =>
+      expect(h.saved().sections.map(({ id }) => id)).toEqual([
+        "third",
+        "work",
+        "second",
+      ]),
+    );
+    await user.click(screen.getByRole("button", { name: "Actions for Third" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up", exact: true }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    await move("Move down");
+    await waitFor(() =>
+      expect(h.saved().sections.map(({ id }) => id)).toEqual([
+        "work",
+        "third",
+        "second",
+      ]),
+    );
+    await move("Move up");
+    await waitFor(() => expect(h.saved().sections[0]?.id).toBe("third"));
+    mounted.unmount();
+    const restored = h.store();
+    try {
+      render(h.view(restored.queries));
+      await screen.findByRole("button", { name: "Actions for Third" });
+      expect(
+        [...document.querySelectorAll(PROJECT_HEADER)].map((node) =>
+          node.getAttribute("data-solo-menu-id"),
+        ),
+      ).toEqual([
+        "project-third",
+        "project-work",
+        "project-second",
+        "project-",
+      ]);
+    } finally {
+      restored.dispose();
+    }
+  } finally {
+    store.dispose();
+  }
+});
+
+it("shows a failed workspace move and retries it", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  try {
+    await store.queries.ensure();
+    await store.queries.createSection({ id: "second", name: "Second" });
+    h.order.mockRejectedValueOnce(new Error("offline"));
+    render(h.view(store.queries));
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Second" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Move to top" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn’t save workspace order. offline",
+    );
+    expect(h.saved().sections[0]?.id).toBe("work");
+    await user.click(screen.getByRole("button", { name: "Retry move" }));
+    await waitFor(() => expect(h.saved().sections[0]?.id).toBe("second"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    store.dispose();
+  }
+});
 
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
   const h = fixture();

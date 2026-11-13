@@ -243,6 +243,11 @@ export function SoloWorkspaces({
     name: string;
   }>();
   const groups = snapshot.data?.sections ?? [];
+  const reorder = (id: string, position: number) => {
+    const order = groups.map((group) => group.id).filter((key) => key !== id);
+    order.splice(position, 0, id);
+    void preferences.reorderSections(id, order).catch(() => {});
+  };
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
@@ -473,6 +478,7 @@ export function SoloWorkspaces({
       chats.some((item) => item.id === move.channelId),
     ) ?? [];
   const entries = visible.map((project) => {
+    const groupIndex = groups.findIndex((group) => group.id === project.id);
     const open =
       !collapsed.includes(project.id) || renamingProject === project.id;
     const changeOpen = (open: boolean) =>
@@ -513,6 +519,26 @@ export function SoloWorkspaces({
         content={
           <>
             {actions}
+            {(
+              [
+                ["Move to top", 0],
+                ["Move up", groupIndex - 1],
+                ["Move down", groupIndex + 1],
+              ] as const
+            ).map(([label, position]) => (
+              <MenuItem
+                key={label}
+                disabled={
+                  !preferences.sectionOrderWritable ||
+                  position < 0 ||
+                  position >= groups.length ||
+                  groups[position]?.id === project.id
+                }
+                onClick={() => reorder(project.id, position)}
+              >
+                {label}
+              </MenuItem>
+            ))}
             <MenuItem onClick={() => setSettingsFor(project)}>
               Workspace settings
             </MenuItem>
@@ -763,6 +789,26 @@ export function SoloWorkspaces({
         <p role="alert" className={styles.listMessage}>
           {readError.message}
         </p>
+      )}
+      {snapshot.orderError && (
+        <div role="alert" className={styles.listMessage}>
+          <p>Couldn’t save workspace order. {snapshot.orderError.error}</p>
+          <Button
+            disabled={!preferences.sectionOrderWritable}
+            onClick={() => {
+              const failed = preferences.snapshot().orderError;
+              if (failed)
+                void preferences
+                  .reorderSections(failed.sectionId, failed.sectionIds)
+                  .catch(() => {});
+            }}
+          >
+            Retry move
+          </Button>
+          <Button onClick={() => preferences.dismissOrderError()}>
+            Dismiss
+          </Button>
+        </div>
       )}
       <ChannelSidebarDnd
         writable={preferences.writable}

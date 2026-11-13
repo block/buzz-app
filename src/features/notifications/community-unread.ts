@@ -16,13 +16,17 @@ export type CommunityUnread = Readonly<{ unread: boolean; attention: number }>;
 
 /** Observes one community session's existing unread evidence, never a new read
  * owner. `publish` gets `undefined` until confirmed mutes are known, so an
- * unknown community never reads as all read. */
+ * unknown community never reads as all read. With `known`, it also gets
+ * `undefined` while the session's unread is stale (its connection dropped,
+ * until the reconnect's read finishes) or no counted channel has observed
+ * evidence; channels without it are left out of the count. */
 export function observeCommunityUnread(
   session: RelaySession,
   viewer: string,
   communityOrigin: string,
   publish: (state: CommunityUnread | undefined) => void,
   gates?: UnreadGates,
+  known = false,
 ) {
   let closed = false;
   const channels = new Map<string, () => void>();
@@ -35,15 +39,22 @@ export function observeCommunityUnread(
     const muted = new Set(preferences.data?.muted ?? []);
     let unread = false;
     let attention = 0;
+    let observed = 0;
     for (const channelId of channels.keys()) {
       if (muted.has(channelId)) continue;
       const snapshot = session.unread.snapshot({ kind: "channel", channelId });
+      if (known) {
+        if (snapshot.freshness === "stale") return publish(undefined);
+        if (snapshot.coverage !== "observed") continue;
+        observed++;
+      }
       // Follow the sidebar rows, which opening a channel quiets.
       const row = snapshot.row ?? snapshot;
       if (snapshot.manual !== "none" || (row.observedCount ?? 0) > 0)
         unread = true;
       attention += row.attentionCount ?? 0;
     }
+    if (known && !observed) return publish(undefined);
     publish({ unread, attention });
   };
   const roster = () => {
@@ -96,7 +107,8 @@ export function observeCommunityUnread(
 
 /** Unread for every joined community, keyed by community id. It opens each
  * one's session in the background and starts its unread repair once, as
- * visiting it would. Communities without a ready session are absent. */
+ * visiting it would. Communities without a ready session, or whose unread is
+ * stale or unobserved, are absent. */
 export function createCommunityUnreads(
   communities: Communities,
   gates?: UnreadGates,
@@ -147,6 +159,7 @@ export function createCommunityUnreads(
         communityDestination(id).url,
         (state) => set(id, state),
         gates,
+        true,
       );
   };
   const drop = (id: string, entry: Entry) => {

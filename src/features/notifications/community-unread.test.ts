@@ -61,6 +61,8 @@ function fakeSession() {
         manual: "none",
         observedCount: 0,
         attentionCount: 0,
+        coverage: "observed",
+        freshness: "observed",
         ...unread.get(channelId),
       }),
       // One listener per channel, as the real capability holds them.
@@ -226,4 +228,44 @@ it("keys every joined community's unread, opening its session and repair once", 
   expect([...unreads.snapshot().keys()]).toEqual([one]);
   expect(first.ensure).toHaveBeenCalledTimes(1);
   expect(second.rows.size).toBe(0);
+});
+
+function observeKnown(fake: ReturnType<typeof fakeSession>) {
+  const publish = vi.fn<(state: CommunityUnread | undefined) => void>();
+  cleanups.push(
+    observeCommunityUnread(fake.session, viewer, one, publish, undefined, true),
+  );
+  return () => publish.mock.lastCall?.[0];
+}
+
+it("hides a known community's badge while its connection is down, and restores it after reconnecting", () => {
+  const fake = fakeSession();
+  const state = observeKnown(fake);
+  fake.join("a", "b");
+  fake.set("a", { observedCount: 1, attentionCount: 1 });
+  expect(state()).toEqual({ unread: true, attention: 1 });
+  // A dropped connection marks the session's unread stale.
+  fake.set("a", { observedCount: 1, attentionCount: 1, freshness: "stale" });
+  expect(state()).toBeUndefined();
+  // The reconnect's read observes it again.
+  fake.set("a", { observedCount: 1, attentionCount: 1 });
+  expect(state()).toEqual({ unread: true, attention: 1 });
+});
+
+it("is unknown when no channel has observed evidence, and counts the ones that do", () => {
+  const fake = fakeSession();
+  const state = observeKnown(fake);
+  const unknown = {
+    coverage: "unknown",
+    observedCount: null,
+    attentionCount: null,
+  } as const;
+  fake.join("a", "b");
+  fake.set("a", unknown);
+  fake.set("b", unknown);
+  expect(state()).toBeUndefined();
+  fake.set("b", { observedCount: 2, attentionCount: 1 });
+  expect(state()).toEqual({ unread: true, attention: 1 });
+  fake.set("b", { observedCount: 0, attentionCount: 0 });
+  expect(state()).toEqual({ unread: false, attention: 0 });
 });

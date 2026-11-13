@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Agent, Agents } from "../../features/agents/service";
 import { settingsTarget } from "../../features/navigation/buzz-links";
 import type { Navigation } from "../../features/navigation/controller";
+import type { SettingsCards } from "../../features/settings/service";
 import { Button } from "../../shared/design-system/ui/Button";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { costText } from "../usage/format";
 import { COST_DAYS, readsUsage, type WeekCost, weekCost } from "./cost";
 
+/** The Usage plugin's settings card, there only while Usage is on. */
+const USAGE = "buzz.usage/usage";
 const BAR = 4;
 const GAP = 2;
 const HEIGHT = 20;
@@ -48,19 +51,26 @@ function Sparkline({ week }: { week: WeekCost }) {
 }
 
 /** The agent's estimated cost over the last week, read when the tab opens: a
- * sparkline, the total and a way to Usage. It says so when the agent's type
- * reports no usage or the agent isn't on this device, and when a read fails,
- * with Retry; it never stands in the way of the tab. */
+ * sparkline, the total and, while the Usage plugin is on, a way to it. The
+ * figures come from the agent type's own read, so they show either way. It
+ * says so when the agent's type reports no usage or the agent isn't on this
+ * device, and when a read fails, with Retry; it never stands in the way of
+ * the tab. */
 export function CostRow({
   agents,
   agent,
   open,
+  settingsCards,
 }: {
   agents: Pick<Agents, "types">;
   agent: Agent;
   open: Navigation["open"];
+  settingsCards: Pick<SettingsCards, "subscribe" | "has">;
 }) {
   const readable = readsUsage(agents, agent);
+  const usagePage = useSyncExternalStore(settingsCards.subscribe, () =>
+    settingsCards.has(USAGE),
+  );
   const [week, setWeek] = useState<WeekCost | "error">();
   const [attempt, setAttempt] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reads again for another agent or a retry.
@@ -116,15 +126,15 @@ export function CostRow({
         <div className="flex flex-wrap items-center justify-end gap-3">
           <Sparkline week={week} />
           <span className="tabular-nums">{costText(week.total)}</span>
-          <Button
-            variant="outline"
-            aria-describedby={label["aria-labelledby"]}
-            onClick={() =>
-              void open(settingsTarget({ section: "buzz.usage/usage" }))
-            }
-          >
-            Open Usage
-          </Button>
+          {usagePage && (
+            <Button
+              variant="outline"
+              aria-describedby={label["aria-labelledby"]}
+              onClick={() => void open(settingsTarget({ section: USAGE }))}
+            >
+              Open Usage
+            </Button>
+          )}
         </div>
       )}
     />

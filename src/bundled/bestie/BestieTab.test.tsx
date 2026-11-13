@@ -46,6 +46,7 @@ const member = (name: string, digit: string): Agent =>
 const ada = member("Ada", "a");
 const bea = member("Bea", "b");
 const navigation = { open: vi.fn(async () => ({ status: "opened" })) } as never;
+const settingsCards = { has: () => true, subscribe: () => () => {} };
 
 /** Agents that save as a synced editor would: the agent's next config.
  * `listed` are the agents it finds, Ada and Bea, both on this device. */
@@ -125,7 +126,7 @@ function community(saved: string | null | undefined, agents = [ada, bea]) {
 it("shows on the saved Bestie only, and moves when Change picks another", async () => {
   const user = userEvent.setup();
   const { relay, mainAgent } = community(ada.pubkey);
-  const tab = bestieTab(relay, host([]).agents, navigation);
+  const tab = bestieTab(relay, host([]).agents, navigation, settingsCards);
   const changed = vi.fn();
   const stop = tab.subscribe?.(changed);
   // Nothing shows before the account's choice is read.
@@ -167,7 +168,7 @@ it("shows the Bestie's cost for the week, without a failed read stopping the tab
     ...host().agents,
     types: () => [{ key: "test/echo", adopt: () => ({}), usage }],
   } as unknown as Parameters<typeof bestieTab>[1];
-  const tab = bestieTab(relay, agents, navigation);
+  const tab = bestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
   const Tab = tab.component;
@@ -201,7 +202,7 @@ it("puts this device back on the account's Bestie when a failed Change is closed
   const user = userEvent.setup();
   const { relay, mainAgent } = community(ada.pubkey);
   mainAgent.write.mockRejectedValueOnce(new Error("offline"));
-  const tab = bestieTab(relay, host([]).agents, navigation);
+  const tab = bestieTab(relay, host([]).agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
   const Tab = tab.component;
@@ -219,7 +220,7 @@ it("keeps the Bestie an agent saved when its tab closes over a failed Change", a
   const user = userEvent.setup();
   const { relay, mainAgent } = community(ada.pubkey);
   mainAgent.write.mockRejectedValueOnce(new Error("offline"));
-  const tab = bestieTab(relay, host([]).agents, navigation);
+  const tab = bestieTab(relay, host([]).agents, navigation, settingsCards);
   const subscribe = tab.subscribe ?? (() => () => {});
   const stop = subscribe(() => {});
   await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
@@ -251,7 +252,7 @@ it("puts this device back when a Change still saving fails after the panel close
         fail = reject;
       }),
   );
-  const tab = bestieTab(relay, host([]).agents, navigation);
+  const tab = bestieTab(relay, host([]).agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
   const Tab = tab.component;
@@ -272,6 +273,7 @@ it("offers a remote agent in Change, and says what it can't do before switching"
     relay,
     host([], [ada, bea, cara]).agents,
     navigation,
+    settingsCards,
   ).component;
   await act(async () => {
     render(<Tab agent={ada} />);
@@ -296,7 +298,12 @@ it("offers a remote agent in Change, and says what it can't do before switching"
 it("says nothing of remote agents when switching to one on this device", async () => {
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
-  const Tab = bestieTab(relay, host([]).agents, navigation).component;
+  const Tab = bestieTab(
+    relay,
+    host([]).agents,
+    navigation,
+    settingsCards,
+  ).component;
   await act(async () => {
     render(<Tab agent={ada} />);
   });
@@ -316,7 +323,7 @@ it("shows a hosted Bestie's switches as unavailable when its provider has no ins
   } as Agent;
   const { relay } = community(ada.pubkey);
   const { agents, save } = host(["block.builderlab/builderlab"], [remote, bea]);
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   await act(async () => {
     render(<Tab agent={remote} />);
   });
@@ -366,7 +373,7 @@ function hostedBestie(text: string) {
 
 it("shows a hosted Bestie's tab, not one on another device's", async () => {
   const { relay } = community(ada.pubkey);
-  const tab = bestieTab(relay, host().agents, navigation);
+  const tab = bestieTab(relay, host().agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
   stop?.();
@@ -378,7 +385,7 @@ it("turns a hosted Bestie's memory on and off through its provider, and never to
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { remote, agents, save, get, set } = hostedBestie("Be brief.");
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   await act(async () => {
     render(<Tab agent={remote} />);
   });
@@ -411,7 +418,7 @@ it("never replaces a hosted Bestie's instructions edited elsewhere since the tab
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { remote, agents, get, set, editElsewhere } = hostedBestie("Be brief.");
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   await act(async () => {
     render(<Tab agent={remote} />);
   });
@@ -441,7 +448,7 @@ it("says why a hosted Bestie's instructions can't be read or saved, and lets eit
   const { relay } = community(ada.pubkey);
   const { remote, agents, get, set } = hostedBestie("Be brief.");
   get.mockRejectedValueOnce(new Error("Builderlab is down."));
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   await act(async () => {
     render(<Tab agent={remote} />);
   });
@@ -467,7 +474,12 @@ it("says why a hosted Bestie's instructions can't be read or saved, and lets eit
 
 it("keeps Change unavailable while there is no other agent to choose", async () => {
   const { relay } = community(ada.pubkey, [ada]);
-  const Tab = bestieTab(relay, host().agents, navigation).component;
+  const Tab = bestieTab(
+    relay,
+    host().agents,
+    navigation,
+    settingsCards,
+  ).component;
   await act(async () => {
     render(<Tab agent={ada} />);
   });
@@ -487,6 +499,7 @@ it("asks before making a remote former Bestie your Bestie again, and Cancel chan
     relay,
     host([], [bea, remote]).agents,
     navigation,
+    settingsCards,
   ).component;
   await act(async () => {
     render(<Tab agent={remote} />);
@@ -517,7 +530,7 @@ it("asks before making a remote former Bestie your Bestie again, and Cancel chan
 
 it("tells the host only when the Bestie or its community changes", async () => {
   const { relay, reconnect } = community(ada.pubkey);
-  const tab = bestieTab(relay, host([]).agents, navigation);
+  const tab = bestieTab(relay, host([]).agents, navigation, settingsCards);
   const changed = vi.fn();
   const stop = tab.subscribe?.(changed);
   await vi.waitFor(() => expect(tab.when?.(ada)).toBe(true));
@@ -536,7 +549,7 @@ it("turns memory on and off as a marked section of the instructions", async () =
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   const base = { instructions: "head-1" };
   const agent = {
     ...ada,
@@ -581,7 +594,7 @@ it("keeps memory on through the owner's edits, and offers Restore for edited mar
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   const base = { instructions: "head-2" };
   const on = withFeature("Be brief.", memory, true);
   const close = "<!-- /buzz:bestie/memory -->";
@@ -627,7 +640,7 @@ it("says why a save failed and lets the switch be tried again", async () => {
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
   save.mockRejectedValueOnce(new Error("Connect to the community to save"));
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   render(<Tab agent={{ ...ada, config: {} } as Agent} />);
   const remembers = screen.getByRole("switch", { name: "Remembers you" });
   await user.click(remembers);
@@ -645,7 +658,7 @@ it("says why a save failed and lets the switch be tried again", async () => {
 it("offers no switch while the agent's instructions can't be read here", () => {
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   render(
     <Tab
       agent={
@@ -669,7 +682,7 @@ it("checks in only while memory is on, hourly and nightly apart, each as an Inte
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   const base = { instructions: "head-1" };
   const remembering = withFeature("Be brief.", memory, true);
   const off = {
@@ -816,7 +829,7 @@ it("says why a check-in couldn't be saved and lets its switch be tried again", a
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   render(<Tab agent={remembering()} />);
   const hourly = screen.getByRole("switch", { name: "Hourly notes" });
   save.mockRejectedValueOnce(new Error("Connect to the community to save"));
@@ -837,7 +850,7 @@ it("offers to remove what is left of a check-in whose Interest or timer is gone"
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   const left = (slug: string, value: object) =>
     ({
       ...remembering(true),
@@ -873,7 +886,7 @@ it("says a check-in paused in Attention is paused, and how to restart it", async
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
-  const Tab = bestieTab(relay, agents, navigation).component;
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
   const paused = {
     ...remembering(true),
     attention: {
@@ -900,7 +913,7 @@ it("says a check-in paused in Attention is paused, and how to restart it", async
 it("shows a Former Bestie tab while a former Bestie has a setting on, with a way back", async () => {
   const user = userEvent.setup();
   const { relay, mainAgent } = community(bea.pubkey);
-  const tab = formerBestieTab(relay, host().agents, navigation);
+  const tab = formerBestieTab(relay, host().agents, navigation, settingsCards);
   const remembering = {
     ...ada,
     config: { instructions: withFeature("Be brief.", memory, true) },
@@ -947,8 +960,8 @@ it("removes the Bestie after asking, and shows the agent as a Former Bestie", as
   const user = userEvent.setup();
   const { relay, mainAgent } = community(ada.pubkey);
   const agents = host().agents;
-  const tab = bestieTab(relay, agents, navigation);
-  const former = formerBestieTab(relay, agents, navigation);
+  const tab = bestieTab(relay, agents, navigation, settingsCards);
+  const former = formerBestieTab(relay, agents, navigation, settingsCards);
   const remembering = {
     ...ada,
     config: { instructions: withFeature("Be brief.", memory, true) },
@@ -999,7 +1012,7 @@ it("shows a hosted former Bestie's Former Bestie tab while its memory is on, rea
   const { remote, agents, get, set, save } = hostedBestie(
     withFeature("Be brief.", memory, true),
   );
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const listener = vi.fn();
   const stop = tab.subscribe?.(listener);
   // Its instructions aren't on this device until its provider is read.
@@ -1053,7 +1066,7 @@ it("keeps a hosted former Bestie's tab when an older background read ends after 
   const user = userEvent.setup();
   const { relay } = community(bea.pubkey);
   const { remote, agents, get } = hostedBestie("Be brief.");
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(bea)).toBe(false));
   // The background read starts while memory is off, and answers late.
@@ -1086,7 +1099,7 @@ it("keeps a hosted former Bestie's tab when an older background read ends after 
 it("keeps a hosted former Bestie's tab while a newer read is under way, whatever an older one answers", async () => {
   const { relay } = community(bea.pubkey);
   const { remote, agents } = hostedBestie("Be brief.");
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(bea)).toBe(false));
   // A failed read shows the tab, which reads again when it opens.
@@ -1112,7 +1125,7 @@ it("keeps a hosted former Bestie's tab while a newer read is under way, whatever
 it("counts an older read's answer once a newer read is abandoned, from the moment it aborts", async () => {
   const { relay } = community(bea.pubkey);
   const { remote, agents } = hostedBestie("Be brief.");
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(bea)).toBe(false));
   const remembering = withFeature("Be brief.", memory, true);
@@ -1143,7 +1156,7 @@ it("shows a hosted former Bestie's tab from a background read that answers after
   const { remote, agents, get } = hostedBestie(
     withFeature("Be brief.", memory, true),
   );
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(bea)).toBe(false));
   let answer = (_text: string) => {};
@@ -1192,7 +1205,7 @@ it("shows a Former Bestie tab for a hosted agent its provider holds no instructi
   let list = listed([OWNER, remote.pubkey]);
   session.channels.list = () => list;
   writeView(SCOPE, "bestie:former", [ada.pubkey]);
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(remote)).toBe(true));
   const Tab = tab.component;
@@ -1215,7 +1228,7 @@ it("keeps a hosted former Bestie's tab after a failed read, until a read shows n
   const user = userEvent.setup();
   const { relay } = community(bea.pubkey);
   const { remote, agents, get } = hostedBestie("Be brief.");
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(bea)).toBe(false));
   get.mockRejectedValueOnce(new Error("Builderlab is down."));
@@ -1239,7 +1252,7 @@ it("keeps a hosted former Bestie's tab when memory saved on but reading it back 
   const user = userEvent.setup();
   const { relay } = community(bea.pubkey);
   const { remote, agents, get, set } = hostedBestie("Be brief.");
-  const tab = formerBestieTab(relay, agents, navigation);
+  const tab = formerBestieTab(relay, agents, navigation, settingsCards);
   const stop = tab.subscribe?.(() => {});
   await vi.waitFor(() => expect(tab.when?.(bea)).toBe(false));
   const Tab = tab.component;
@@ -1267,7 +1280,12 @@ it("keeps a hosted former Bestie's tab when memory saved on but reading it back 
 it("shows no Former Bestie tab while the account's choice is unread or unreadable", async () => {
   const { relay, mainAgent } = community(undefined);
   mainAgent.read.mockRejectedValueOnce(new Error("offline"));
-  const former = formerBestieTab(relay, host().agents, navigation);
+  const former = formerBestieTab(
+    relay,
+    host().agents,
+    navigation,
+    settingsCards,
+  );
   const remembering = {
     ...ada,
     config: { instructions: withFeature("Be brief.", memory, true) },
@@ -1288,7 +1306,12 @@ it("shows a Former Bestie tab on an account that saved none, not on one with no 
     [null, true],
   ] as const) {
     const { relay, mainAgent } = community(record);
-    const former = formerBestieTab(relay, host().agents, navigation);
+    const former = formerBestieTab(
+      relay,
+      host().agents,
+      navigation,
+      settingsCards,
+    );
     const stop = former.subscribe?.(() => {});
     await act(async () => {});
     expect(mainAgent.read).toHaveBeenCalled();
@@ -1304,7 +1327,12 @@ it("offers no Remove without an account to save none to", async () => {
   delete (relay.snapshot() as { session: { mainAgent?: unknown } }).session
     .mainAgent;
   setDefaultAgent(SCOPE, ada.pubkey);
-  const Tab = bestieTab(relay, host().agents, navigation).component;
+  const Tab = bestieTab(
+    relay,
+    host().agents,
+    navigation,
+    settingsCards,
+  ).component;
   await act(async () => {
     render(<Tab agent={ada} />);
   });
@@ -1316,7 +1344,12 @@ it("lets a former Bestie's leftover check-in be turned off", async () => {
   const user = userEvent.setup();
   const { relay } = community(bea.pubkey);
   const { agents, save } = host();
-  const Tab = formerBestieTab(relay, agents, navigation).component;
+  const Tab = formerBestieTab(
+    relay,
+    agents,
+    navigation,
+    settingsCards,
+  ).component;
   const checking = {
     ...ada,
     config: { instructions: withFeature("Be brief.", memory, true) },

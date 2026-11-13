@@ -6,6 +6,7 @@ import type {
   Agents,
 } from "../../features/agents/service";
 import type { Navigation } from "../../features/navigation/controller";
+import type { SettingsCards } from "../../features/settings/service";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -50,12 +51,14 @@ import { inCommunity, savedBestie } from "./saved";
 
 /** The agents a tab saves to, and finds to know which are remote. */
 type TabAgents = FeatureAgents & Pick<Agents, "find">;
+type TabCards = Pick<SettingsCards, "subscribe" | "has">;
 
 /** The Bestie tab, on the agent saved as Bestie in its community. */
 export function bestieTab(
   relay: RelayData,
   agents: TabAgents,
   navigation: Pick<Navigation, "open">,
+  settingsCards: TabCards,
 ): AgentAddedTab {
   const bestie = savedBestie(relay);
   return {
@@ -73,6 +76,7 @@ export function bestieTab(
         agents={agents}
         agent={agent}
         navigation={navigation}
+        settingsCards={settingsCards}
       />
     ),
   };
@@ -86,6 +90,7 @@ export function formerBestieTab(
   relay: RelayData,
   agents: TabAgents,
   navigation: Pick<Navigation, "open">,
+  settingsCards: TabCards,
 ): AgentAddedTab {
   const bestie = savedBestie(relay);
   return {
@@ -122,6 +127,7 @@ export function formerBestieTab(
         agents={agents}
         agent={agent}
         navigation={navigation}
+        settingsCards={settingsCards}
         former
       />
     ),
@@ -189,12 +195,14 @@ function BestieTab({
   agents,
   agent,
   navigation,
+  settingsCards,
   former = false,
 }: {
   relay: RelayData;
   agents: TabAgents;
   agent: Agent;
   navigation: Pick<Navigation, "open">;
+  settingsCards: TabCards;
   former?: boolean;
 }) {
   const { session, scope } = useRelayConnection(relay);
@@ -291,7 +299,12 @@ function BestieTab({
             )}
           />
         )}
-        <CostRow agents={agents} agent={agent} open={navigation.open} />
+        <CostRow
+          agents={agents}
+          agent={agent}
+          open={navigation.open}
+          settingsCards={settingsCards}
+        />
       </SettingsGroup>
       <InlineHeader title="Settings" />
       <SettingsGroup>

@@ -160,6 +160,12 @@ export function installComposerClickFocus() {
     touch = event.pointerType === "touch" || event.pointerType === "pen";
     dismissing = !!document.querySelector(DISMISSIBLE);
   };
+  // A key pressed before the frame (Escape closing what the click opened, say,
+  // while rendering stalls) supersedes the click; its own focus work stands.
+  const key = () => {
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    frame = undefined;
+  };
   const click = (event: MouseEvent) => {
     if (
       touch ||
@@ -201,9 +207,11 @@ export function installComposerClickFocus() {
     });
   };
   window.addEventListener("pointerdown", down, true);
+  window.addEventListener("keydown", key, true);
   window.addEventListener("click", click);
   return () => {
     window.removeEventListener("pointerdown", down, true);
+    window.removeEventListener("keydown", key, true);
     window.removeEventListener("click", click);
     if (frame !== undefined) cancelAnimationFrame(frame);
   };

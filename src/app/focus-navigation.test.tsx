@@ -294,3 +294,22 @@ it("a click that opens a modal leaves focus to the modal", async () => {
   await settle();
   expect(draft).not.toHaveFocus();
 });
+
+it("a key pressed before the click's frame supersedes it", async () => {
+  render(<Shell />);
+  const message = screen.getByText("Main message");
+  const draft = screen.getByRole("textbox", { name: "Main draft" });
+  const press = () => {
+    fireEvent.pointerDown(message, { pointerType: "mouse" });
+    fireEvent.click(message, { detail: 1 });
+  };
+  press();
+  await settle();
+  expect(draft).toHaveFocus();
+  draft.blur();
+  // Rendering stalls past an Escape that closed what the click opened.
+  press();
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  await settle();
+  expect(draft).not.toHaveFocus();
+});

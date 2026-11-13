@@ -32,6 +32,8 @@ export function ChannelHeaderMenu({
   openMenuPanel,
   finishConversion,
   startChat,
+  size = "toolbar",
+  label = "Channel actions",
 }: {
   channel: ChannelSummary | undefined;
   session: RelaySession;
@@ -39,6 +41,8 @@ export function ChannelHeaderMenu({
   trigger: RefObject<HTMLButtonElement | null>;
   openDetails(): void;
   startChat?: ReactNode;
+  size?: "toolbar" | "compact";
+  label?: string;
   finishConversion?: (() => void) | undefined;
   menuPanels?: readonly RegisteredPanel[] | undefined;
   openMenuPanel?: ((panel: RegisteredPanel) => void) | undefined;
@@ -49,26 +53,27 @@ export function ChannelHeaderMenu({
   const menuActions = useChannelMenuActions();
   const readAction = useChannelReadAction();
   const origin = trigger.current;
-  const actions = channel
-    ? menuActions?.(channel, {
-        signal: lifetime,
-        close: (focus) => {
-          finalFocus.current = focus;
-          readAction.reset();
-          setOpen(false);
-        },
-        focus: () => {
-          if (!lifetime?.aborted && origin?.isConnected)
-            origin.focus({ preventScroll: true });
-        },
-        pending: readAction.state?.pending ?? false,
-        runRead: (action) =>
-          readAction.run(action, () => {
+  const actions =
+    open && channel
+      ? menuActions?.(channel, {
+          signal: lifetime,
+          close: (focus) => {
+            finalFocus.current = focus;
             readAction.reset();
             setOpen(false);
-          }),
-      })
-    : undefined;
+          },
+          focus: () => {
+            if (!lifetime?.aborted && origin?.isConnected)
+              origin.focus({ preventScroll: true });
+          },
+          pending: readAction.state?.pending ?? false,
+          runRead: (action) =>
+            readAction.run(action, () => {
+              readAction.reset();
+              setOpen(false);
+            }),
+        })
+      : undefined;
   const popup = (lifecycle: ReactNode) => (
     <MenuPopup
       size="default"
@@ -132,37 +137,36 @@ export function ChannelHeaderMenu({
           <IconButton
             hint="familiar"
             ref={trigger}
-            size="toolbar"
-            aria-label="Channel actions"
-            title="Channel actions"
+            size={size}
+            aria-label={label}
+            title={label}
             data-highlight-expanded="false"
             icon={<DotsThreeIcon size="1rem" aria-hidden="true" />}
           />
         }
       />
-      {channel &&
-      handoff &&
-      (!channel.readOnly || channel.viewerRole === "guest") &&
-      !channel.cached &&
-      !channel.archived ? (
-        <ChannelLifecycleMenu
-          channel={channel}
-          session={session}
-          disabled={!!handoff.lifecycleDialog}
-          separator
-          noun={lifecycleNoun(channel)}
-          choose={(action) =>
-            handoff.openLifecycle(
-              channel,
-              action,
-              trigger.current ?? undefined,
-              lifetime,
-            )
-          }
-          render={popup}
-        />
-      ) : (
-        popup(null)
+      {popup(
+        channel &&
+          handoff &&
+          (!channel.readOnly || channel.viewerRole === "guest") &&
+          !channel.cached &&
+          !channel.archived ? (
+          <ChannelLifecycleMenu
+            channel={channel}
+            session={session}
+            disabled={!!handoff.lifecycleDialog}
+            separator
+            noun={lifecycleNoun(channel)}
+            choose={(action) =>
+              handoff.openLifecycle(
+                channel,
+                action,
+                trigger.current ?? undefined,
+                lifetime,
+              )
+            }
+          />
+        ) : null,
       )}
     </MenuRoot>
   );

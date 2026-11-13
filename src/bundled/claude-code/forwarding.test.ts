@@ -17,9 +17,11 @@ import {
   sessionState,
 } from "./claude-testing";
 import {
+  BYPASSED,
   CHANGED,
   ClaudeForwarding,
   type ForwardNative,
+  type ForwardRetry,
   type Generation,
   HARNESS,
   UNAVAILABLE,
@@ -67,7 +69,10 @@ const OWNER = { id: "buzz.claude-code", revision: "r1" };
 
 /** A route whose revision the test moves, and a native side that records
  * every call and answers `open` from `answers`. */
-function harness(answers: ForwardOpened[] = []) {
+function harness(
+  answers: ForwardOpened[] = [],
+  retry: ForwardRetry = { delays: [] },
+) {
   let route: GatewayRoute = eligible(2);
   const listeners = new Set<() => void>();
   const calls: string[] = [];
@@ -95,24 +100,32 @@ function harness(answers: ForwardOpened[] = []) {
     }),
   };
   const read = vi.fn(() => route);
+  const setRoute = (next: GatewayRoute) => {
+    route = next;
+    for (const listener of [...listeners]) listener();
+  };
   const routes = {
     routeFor: read,
     subscribeRoute: (_key: string, listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    // As the app's routes do: only the current revision's access drops.
+    invalidateRoute: vi.fn((_key: string, revision?: number) => {
+      if (revision === route.revision)
+        setRoute({ ...route, revision: route.revision + 1 } as GatewayRoute);
+    }),
   };
-  const forwarding = new ClaudeForwarding(OWNER, native, routes);
+  const forwarding = new ClaudeForwarding(OWNER, native, routes, retry);
   return {
     forwarding,
     native,
     calls,
     read,
     listeners,
-    setRoute(next: GatewayRoute) {
-      route = next;
-      for (const listener of [...listeners]) listener();
-    },
+    routes,
+    events,
+    setRoute,
   };
 }
 const turn = { binding, context, session: "session-1" };
@@ -289,6 +302,115 @@ describe("ClaudeForwarding.open", () => {
     }
   });
 
+  it("drops the revision's access on a gateway 401 or 403, revoking the generation", async () => {
+    for (const status of [401, 403]) {
+      const h = harness();
+      const generation = await h.forwarding.open(
+        AGENT,
+        eligible(2),
+        turn,
+        signal,
+      );
+      const emit = nth(h.events);
+      emit({ type: "admitted", request: 1, class: "inference" });
+      expect(generation.admitted()).toBe(true);
+      // Others are Claude's to retry, or its own failures.
+      for (const other of [429, 500, 502, 404, null])
+        emit({ type: "finished", request: 1, status: other, aborted: false });
+      expect(h.routes.invalidateRoute).not.toHaveBeenCalled();
+      expect(generation.isRevoked()).toBe(false);
+      emit({ type: "finished", request: 2, status, aborted: false });
+      expect(h.routes.invalidateRoute).toHaveBeenCalledWith(AGENT, 2);
+      expect(generation.isRevoked()).toBe(true);
+      expect(h.calls.at(-1)).toBe("push route-1 3 true");
+    }
+  });
+
+  it("tries an open native can't reach again, at the same revision, until its bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness([], { delays: [10, 20] });
+      vi.mocked(h.native.open).mockRejectedValue(new Error("proxy down"));
+      const result = h.forwarding.open(AGENT, eligible(2), turn, signal);
+      const failed = expect(result).rejects.toThrow(UNAVAILABLE);
+      await vi.advanceTimersByTimeAsync(9);
+      expect(h.native.open).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.native.open).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(20);
+      await failed;
+      expect(h.native.open).toHaveBeenCalledTimes(3);
+      expect(
+        vi
+          .mocked(h.native.open)
+          .mock.calls.map(([, options]) => options.routeRevision),
+      ).toEqual([2, 2, 2]);
+      expect(h.listeners.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens once native can be reached again within the bound", async () => {
+    const h = harness([], { delays: [1, 1] });
+    vi.mocked(h.native.push).mockRejectedValueOnce(new Error("no proxy"));
+    vi.mocked(h.native.open).mockRejectedValueOnce(new Error("no proxy"));
+    const generation = await h.forwarding.open(
+      AGENT,
+      eligible(2),
+      turn,
+      signal,
+    );
+    expect(generation.url).toBe("http://127.0.0.1:9/h1");
+    expect(h.native.push).toHaveBeenCalledTimes(3);
+    expect(h.native.open).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries a refusal, a route change or a stopped turn", async () => {
+    const refused = harness([{ type: "refused", current: 3, admits: true }], {
+      delays: [1, 1],
+    });
+    await expect(
+      refused.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).rejects.toThrow(CHANGED);
+    expect(refused.native.open).toHaveBeenCalledTimes(1);
+
+    const moved = harness([], { delays: [1, 1] });
+    vi.mocked(moved.native.open).mockImplementationOnce(async () => {
+      moved.setRoute(eligible(3));
+      throw new Error("proxy down");
+    });
+    await expect(
+      moved.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).rejects.toThrow(CHANGED);
+    expect(moved.native.open).toHaveBeenCalledTimes(1);
+
+    const stopped = harness([], { delays: [1_000] });
+    const controller = new AbortController();
+    vi.mocked(stopped.native.open).mockImplementationOnce(async () => {
+      queueMicrotask(() => controller.abort(new Error("Stopped")));
+      throw new Error("proxy down");
+    });
+    await expect(
+      stopped.forwarding.open(AGENT, eligible(2), turn, controller.signal),
+    ).rejects.toThrow("Stopped");
+    expect(stopped.native.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an agent's native route key across instances", async () => {
+    const other = "d".repeat(64);
+    const first = harness();
+    await first.forwarding.open(other, eligible(2), turn, signal);
+    const second = harness();
+    // A new instance, as after the plugin is disabled and enabled again.
+    await second.forwarding.open(AGENT, eligible(2), turn, signal);
+    await second.forwarding.open(other, eligible(2), turn, signal);
+    const keyOf = (call: string | undefined) => call?.split(" ")[1];
+    expect(keyOf(second.calls[0])).toBe("route-1");
+    expect(keyOf(second.calls[2])).toBe(keyOf(first.calls[0]));
+    expect(keyOf(first.calls[0])).not.toBe("route-1");
+  });
+
   it("seals once and never after closing; a close native already did resolves", async () => {
     const h = harness();
     const generation = await h.forwarding.open(
@@ -314,6 +436,10 @@ function generation(
   name: string,
   log: string[],
   closed: Promise<void> = Promise.resolve(),
+  {
+    revision = 2,
+    admitted = true,
+  }: { revision?: number; admitted?: boolean } = {},
 ) {
   let closing: Promise<void> | undefined;
   let sealed = false;
@@ -327,6 +453,9 @@ function generation(
   });
   const value: Generation = {
     url: `http://127.0.0.1:9/${name}`,
+    revision,
+    isSealed: () => sealed,
+    admitted: () => admitted,
     revoked: revocation,
     isRevoked: () => revoked,
     seal: () => {
@@ -374,15 +503,19 @@ function pool(
   });
   const log: string[] = [];
   const opened: [string, unknown][] = [];
-  const forward: Forward = async (session, saved) => {
-    opened.push([session, saved]);
-    log.push(`open g${opened.length}`);
-    // As `bindSession` does: a saved binding is kept, else one is minted.
-    return {
-      generation: generation(`g${opened.length}`, log),
-      binding: (saved as GatewayBinding | undefined) ?? binding,
-    };
-  };
+  // Dispatched at revision 2, as each generation opens.
+  const forward: Forward = Object.assign(
+    async (session: string, saved: unknown) => {
+      opened.push([session, saved]);
+      log.push(`open g${opened.length}`);
+      // As `bindSession` does: a saved binding is kept, else one is minted.
+      return {
+        generation: generation(`g${opened.length}`, log),
+        binding: (saved as GatewayBinding | undefined) ?? binding,
+      };
+    },
+    { revision: 2 },
+  );
   const claudes = () => fake.processes.filter(({ id }) => id === "claude");
   return { sessions, all, log, opened, forward, claudes, known: fake.known };
 }
@@ -433,14 +566,54 @@ describe("forwarded turns in a conversation", () => {
     expect(process.killed).toBe(true);
   });
 
-  it("gives a message sent mid-turn its own generation, never the busy process", async () => {
+  it("steers a message sent mid-turn at the same revision into the busy process, on its generation and model", async () => {
     const { sessions, log, opened, forward, claudes } = pool();
-    const first = sessions.deliver("c", "one", 1, { forward });
+    const first = sessions.deliver("c", "one", 1, {
+      forward,
+      pick: { model: "claude-opus-4-6", effort: "high" },
+    });
     await flush();
     const second = sessions.deliver("c", "two", 2, {
       forward,
       steer: "steer: two",
+      pick: { model: "claude-haiku-4-5", effort: "low" },
     });
+    await flush();
+    const process = nth(claudes());
+    expect(process.prompts).toEqual(["one", "steer: two"]);
+    // The running turn's model and effort, and no switch mid-turn.
+    expect(process.models).toEqual(["claude-opus-4-6", "claude-opus-4-6"]);
+    expect(process.efforts).toEqual(["high", "high"]);
+    expect(
+      process.received.filter(
+        (message) =>
+          message.type === "control_request" &&
+          (message.request as { model?: string }).model === "claude-haiku-4-5",
+      ),
+    ).toEqual([]);
+    expect(opened).toHaveLength(1);
+    expect(claudes()).toHaveLength(1);
+    process.finish();
+    expect(await first).toEqual({ ok: true });
+    expect(await second).toEqual({ ok: true });
+    await flush();
+    expect(log).toEqual(["open g1", "seal g1", "close g1", "closed g1"]);
+  });
+
+  it("queues a message whose routing doesn't match the busy forwarded turn", async () => {
+    const { sessions, log, opened, forward, claudes } = pool();
+    const first = sessions.deliver("c", "one", 1, { forward });
+    await flush();
+    // Dispatched at a newer revision than the running generation's.
+    const second = sessions.deliver("c", "two", 2, {
+      forward: Object.assign(
+        (session: string, saved: unknown) => forward(session, saved),
+        { revision: 3 },
+      ),
+      steer: "steer: two",
+    });
+    // And one that falls back, on Claude's own configuration.
+    const third = sessions.deliver("c", "three", 3, { steer: "steer: three" });
     await flush();
     const process = nth(claudes());
     expect(process.prompts).toEqual(["one"]);
@@ -460,6 +633,100 @@ describe("forwarded turns in a conversation", () => {
     expect(settingsOf(next)).toContain("/g2");
     next.finish();
     expect(await second).toEqual({ ok: true });
+    await flush();
+    const last = nth(claudes(), 2);
+    expect(last.prompts).toEqual(["three"]);
+    expect(settingsOf(last)).toBeUndefined();
+    last.finish();
+    expect(await third).toEqual({ ok: true });
+  });
+
+  it("never steers into a sealed or revoked generation", async () => {
+    for (const end of ["seal", "revoke"] as const) {
+      const { sessions, log, forward, claudes } = pool();
+      let made: ReturnType<typeof generation> | undefined;
+      const first = sessions.deliver("c", "one", 1, {
+        forward: Object.assign(
+          async () => {
+            made = generation("g", log);
+            return { generation: made, binding };
+          },
+          { revision: 2 },
+        ),
+      });
+      await flush();
+      if (end === "seal") made?.seal();
+      else made?.revoke();
+      const second = sessions.deliver("c", "two", 2, {
+        forward,
+        steer: "steer: two",
+      });
+      await flush();
+      expect(nth(claudes()).prompts).toEqual(["one"]);
+      nth(claudes()).finish();
+      await first;
+      await flush();
+      nth(claudes(), 1).finish();
+      expect(await second).toEqual({ ok: true });
+      expect(nth(claudes(), 1).prompts).toEqual(["two"]);
+    }
+  });
+
+  it("stops a message queued behind a forwarded turn alone, leaving that turn running", async () => {
+    const { sessions, forward, claudes } = pool();
+    const first = sessions.deliver("c", "one", 1, { forward });
+    await flush();
+    const stop = new AbortController();
+    const second = sessions.deliver("c", "two", 2, {
+      forward: Object.assign(
+        (session: string, saved: unknown) => forward(session, saved),
+        { revision: 3 },
+      ),
+      signal: stop.signal,
+    });
+    await flush();
+    stop.abort();
+    expect(await second).toEqual({ ok: true, undelivered: true });
+    const process = nth(claudes());
+    expect(process.received.filter(isInterrupt)).toEqual([]);
+    expect(process.killed).toBe(false);
+    process.finish();
+    expect(await first).toEqual({ ok: true });
+    expect(claudes()).toHaveLength(1);
+  });
+
+  it("releases the conversation when a forwarded turn's refresh fails", async () => {
+    const { sessions, log, forward, claudes } = pool();
+    const first = sessions.deliver("c", "one", 1, {
+      forward,
+      refresh: async () => {
+        throw new Error("read failed");
+      },
+    });
+    await expect(first).rejects.toThrow("read failed");
+    await flush();
+    // Its process stopped and its generation closed, so the next turn
+    // starts at once, not at the idle timeout.
+    expect(log).toEqual(["open g1", "close g1", "closed g1"]);
+    expect(nth(claudes()).killed).toBe(true);
+    const second = sessions.deliver("c", "two", 2, { forward });
+    await flush();
+    expect(log.at(-1)).toBe("open g2");
+    nth(claudes(), 1).finish();
+    expect(await second).toEqual({ ok: true });
+  });
+
+  it("fails a forwarded turn none of whose requests native admitted", async () => {
+    const { sessions, log, claudes } = pool();
+    const delivered = sessions.deliver("c", "hi", 1, {
+      forward: async () => ({
+        generation: generation("g", log, undefined, { admitted: false }),
+        binding,
+      }),
+    });
+    await flush();
+    nth(claudes()).finish();
+    expect(await delivered).toEqual({ ok: false, error: BYPASSED });
   });
 
   it("keeps the next turn out until the last process has exited and native has closed", async () => {

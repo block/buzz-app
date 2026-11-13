@@ -5,7 +5,8 @@
 // pushing the revision, opening only while it is still the route's, and
 // sealing and closing. A route change pushes the new revision, which revokes
 // the generation natively, and ends its process. Nothing here waits on
-// readiness or re-reads a route to retry: a turn that can't open fails.
+// readiness or re-reads a route to retry; only a native side that can't be
+// reached is tried again, briefly, at the same revision.
 import {
   closeForward,
   openForward,
@@ -26,6 +27,7 @@ import {
 import {
   type EligibleRoute,
   type GatewayRoute,
+  invalidateRoute,
   routeFor,
   subscribeRoute,
 } from "../../features/agents/gateway/route";
@@ -42,7 +44,12 @@ export type ForwardNative = Readonly<{
 export type ForwardRoutes = Readonly<{
   routeFor(key: AgentKey): GatewayRoute;
   subscribeRoute(key: AgentKey, listener: () => void): () => void;
+  /** Drops `revision`'s access, as a gateway 401 or 403 says it ended. */
+  invalidateRoute(key: AgentKey, revision?: number): void;
 }>;
+/** The waits before each further try at an open that couldn't reach native
+ * or its local proxy: bounded, so a turn still fails visibly soon. */
+export type ForwardRetry = Readonly<{ delays: readonly number[] }>;
 
 /** A generation's caller side. `seal` ends admission for good, at the
  * qualifying idle; `close` forgets it once its process has exited, and
@@ -50,6 +57,13 @@ export type ForwardRoutes = Readonly<{
  * idempotent. */
 export type Generation = Readonly<{
   url: string;
+  /** The route revision it was opened at, which a steer must share. */
+  revision: number;
+  /** Sealed: it admits no further model request, so nothing joins it. */
+  isSealed(): boolean;
+  /** Whether native admitted any request on it: one that never did, once
+   * a turn has run, means Claude's requests went somewhere else. */
+  admitted(): boolean;
   seal(): void;
   close(): Promise<void>;
   /** Settles once the route moves on, which revokes the generation
@@ -65,20 +79,25 @@ const NATIVE: ForwardNative = {
   seal: sealForward,
   close: closeForward,
 };
-const ROUTES: ForwardRoutes = { routeFor, subscribeRoute };
+const ROUTES: ForwardRoutes = { routeFor, subscribeRoute, invalidateRoute };
+const RETRY: ForwardRetry = { delays: [250, 1_000, 2_500] };
+/** Native route keys, short and opaque, for the page's life: a key is never
+ * given to another agent, even by a later instance after a re-enable. */
+const KEYS = new Map<AgentKey, string>();
 export const CHANGED =
   "This agent's gateway access changed as the turn started, so it didn't run. Try again.";
 export const UNAVAILABLE =
   "Buzz couldn't start forwarding to the agent gateway on this device, so the turn didn't run.";
 
-export class ClaudeForwarding {
-  /** Native route keys must be short and opaque; agent keys need not be. */
-  private readonly keys = new Map<AgentKey, string>();
+export const BYPASSED =
+  "This turn's model requests didn't go through the agent gateway, so it failed. Claude's own settings may send them elsewhere.";
 
+export class ClaudeForwarding {
   constructor(
     private readonly owner: ForwardOwner,
     private readonly native: ForwardNative = NATIVE,
     private readonly routes: ForwardRoutes = ROUTES,
+    private readonly retry: ForwardRetry = RETRY,
   ) {}
 
   /** The route a session control with no turn of its own (compaction) goes
@@ -97,10 +116,11 @@ export class ClaudeForwarding {
   }
 
   /** Opens the turn's generation for harness session `session` at `route`,
-   * the revision it was dispatched with. A route that moved on, a refusal or
-   * a native side that can't be reached throws, before anything is spawned;
-   * it is never retried. A generation opened after `signal` aborted is
-   * closed. */
+   * the revision it was dispatched with. A route that moved on or a refusal
+   * throws at once, before anything is spawned. A native side that can't be
+   * reached is tried again after each of the retry's delays while the route
+   * and `signal` hold, then throws. A generation opened after `signal`
+   * aborted is closed. */
   async open(
     agent: AgentKey,
     route: EligibleRoute,
@@ -140,38 +160,59 @@ export class ClaudeForwarding {
     const ended = new Promise<void>((resolve) => {
       closed = resolve;
     });
+    let admitted = false;
+    const onEvent = (event: ForwardEvent) => {
+      if (event.type === "closed") closed();
+      if (event.type === "admitted") admitted = true;
+      // The gateway ended this revision's access: the next turn reads the
+      // route again. The turn fails as its process ends on the revocation.
+      if (
+        event.type === "finished" &&
+        (event.status === 401 || event.status === 403)
+      )
+        this.routes.invalidateRoute(agent, route.revision);
+    };
     let opened: ForwardOpened | undefined;
-    try {
-      if (moved()) throw new Error(CHANGED);
-      await this.push(agent, route);
-      signal.throwIfAborted();
-      // Open only at the acknowledged revision.
-      if (!moved())
-        opened = await this.native.open(this.owner, {
-          route: this.key(agent),
-          routeRevision: route.revision,
-          harness: "claude",
-          session: turn.session,
-          inference: inference.value,
-          discovery: discovery.value,
-          onEvent: (event: ForwardEvent) => {
-            if (event.type === "closed") closed();
-          },
-        });
-    } catch (error) {
-      unsubscribe();
-      if (signal.aborted) throw signal.reason;
-      if (error instanceof Error && error.message === CHANGED) throw error;
-      console.warn("Gateway forwarding is unavailable", error);
-      throw new Error(UNAVAILABLE);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        if (moved()) throw new Error(CHANGED);
+        await this.push(agent, route);
+        signal.throwIfAborted();
+        // Open only at the acknowledged revision.
+        if (!moved())
+          opened = await this.native.open(this.owner, {
+            route: this.key(agent),
+            routeRevision: route.revision,
+            harness: "claude",
+            session: turn.session,
+            inference: inference.value,
+            discovery: discovery.value,
+            onEvent,
+          });
+        break;
+      } catch (error) {
+        const changed = error instanceof Error && error.message === CHANGED;
+        const delay = this.retry.delays[attempt];
+        if (!signal.aborted && !changed && delay !== undefined) {
+          console.warn("Gateway forwarding is unavailable; retrying", error);
+          if (await wait(delay, signal)) continue;
+        }
+        unsubscribe();
+        if (signal.aborted) throw signal.reason;
+        if (changed) throw error;
+        console.warn("Gateway forwarding is unavailable", error);
+        throw new Error(UNAVAILABLE);
+      }
     }
     if (opened?.type !== "opened") {
       unsubscribe();
       throw new Error(CHANGED);
     }
     const generation = this.generation(opened, ended, unsubscribe, {
+      revision: route.revision,
       revocation,
       isRevoked: () => revoked,
+      admitted: () => admitted,
     });
     if (signal.aborted || revoked) {
       await generation.close();
@@ -186,14 +227,24 @@ export class ClaudeForwarding {
     ended: Promise<void>,
     unsubscribe: () => void,
     {
+      revision,
       revocation,
       isRevoked,
-    }: Readonly<{ revocation: Promise<void>; isRevoked: () => boolean }>,
+      admitted,
+    }: Readonly<{
+      revision: number;
+      revocation: Promise<void>;
+      isRevoked: () => boolean;
+      admitted: () => boolean;
+    }>,
   ): Generation {
     let sealed = false;
     let closing: Promise<void> | undefined;
     return Object.freeze({
       url,
+      revision,
+      isSealed: () => sealed || closing !== undefined,
+      admitted,
       revoked: revocation,
       isRevoked,
       seal: () => {
@@ -224,11 +275,27 @@ export class ClaudeForwarding {
   }
 
   private key(agent: AgentKey) {
-    let key = this.keys.get(agent);
+    let key = KEYS.get(agent);
     if (!key) {
-      key = `route-${this.keys.size + 1}`;
-      this.keys.set(agent, key);
+      key = `route-${KEYS.size + 1}`;
+      KEYS.set(agent, key);
     }
     return key;
   }
+}
+
+/** Waits `ms`, resolving false at once if `signal` aborts first. */
+function wait(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve(false);
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve(true);
+    }, ms);
+    const abort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }

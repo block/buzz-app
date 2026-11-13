@@ -3009,6 +3009,10 @@ function gateway(
     }),
     open: vi.fn(async (_owner, options) => {
       opens.push(options);
+      // Claude's requests reach the generation.
+      queueMicrotask(() =>
+        options.onEvent({ type: "admitted", request: 1, class: "inference" }),
+      );
       return {
         type: "opened" as const,
         id: opens.length,
@@ -3024,7 +3028,11 @@ function gateway(
   const forwarding = new ClaudeForwarding(
     { id: "buzz.claude-code", revision: "r1" },
     native,
-    { routeFor: () => route, subscribeRoute: () => () => {} },
+    {
+      routeFor: () => route,
+      subscribeRoute: () => () => {},
+      invalidateRoute: () => {},
+    },
   );
   return { forwarding, opens, calls, native };
 }
@@ -3292,6 +3300,101 @@ it("runs a fallen-back turn on Claude's own configuration, opening nothing", asy
   expect(JSON.stringify(args)).not.toContain("127.0.0.1:9");
   f.claudes()[0]?.finish();
   await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+});
+
+/** A thread's root and a reply in it, for a second turn in one conversation. */
+const threadPair = () => {
+  const root = message("2", "@Claude hi", {
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  const reply = message("3", "@Claude also", {
+    tags: [
+      ["h", channel],
+      ["e", root.id, "", "reply"],
+      ["p", self],
+    ],
+  });
+  return { root, reply };
+};
+const fallenBack = {
+  gatewayFallback: { reason: "network", notice: "Ran without the gateway." },
+} as unknown as Partial<Delivery>;
+
+it("runs a forwarded message queued past the handover deadline once the turn ahead ends", async () => {
+  const g = gateway(enabled);
+  const { root, reply } = threadPair();
+  const f = setup([root, reply], { forwarding: g.forwarding, hold: true });
+  // A fallen-back turn runs, so the forwarded one can't join it.
+  await f.deliver({ type: "mention", event: root }, fallenBack);
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+  const handover = new AbortController();
+  await f.deliver(
+    { type: "mention", event: reply },
+    { ...dispatched(), signal: handover.signal },
+  );
+  await flush(10);
+  // The runner's handover deadline passes while it waits.
+  handover.abort(new DOMException("timed out", "TimeoutError"));
+  await flush(10);
+  f.claudes()[0]?.finish();
+  await vi.waitFor(() => expect(g.opens).toHaveLength(1));
+  await vi.waitFor(() => expect(f.claudes()[1]?.prompts).toHaveLength(1));
+  f.claudes()[1]?.finish();
+  const results = await Promise.all(
+    f.workingUntil.mock.calls.map(([done]) => done),
+  );
+  expect(results).toEqual([{ ok: true }, { ok: true }]);
+});
+
+it("stops a queued forwarded message alone, leaving the running turn", async () => {
+  const g = gateway(enabled);
+  const { root, reply } = threadPair();
+  const f = setup([root, reply], { forwarding: g.forwarding, hold: true });
+  await f.deliver({ type: "mention", event: root }, fallenBack);
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+  await f.deliver({ type: "mention", event: reply }, dispatched());
+  await flush(10);
+  const stop = f.interruptible.mock.calls[1]?.[0];
+  if (!stop) throw new Error("no stopper");
+  await stop();
+  await flush(10);
+  const running = f.claudes()[0];
+  expect(
+    running?.received.filter(
+      (item) =>
+        item.type === "control_request" &&
+        (item.request as { subtype?: string }).subtype === "interrupt",
+    ),
+  ).toEqual([]);
+  // The stopped message's wait ended: it is settled, undelivered.
+  await expect(f.workingUntil.mock.calls[1]?.[0]).resolves.toMatchObject({
+    ok: true,
+    undelivered: true,
+  });
+  running?.finish();
+  await flush(10);
+  expect(g.opens).toEqual([]);
+  expect(f.claudes()).toHaveLength(1);
+});
+
+it("steers a forwarded message into the running forwarded turn, on its generation", async () => {
+  const g = gateway(enabled);
+  const { root, reply } = threadPair();
+  const f = setup([root, reply], { forwarding: g.forwarding, hold: true });
+  await f.deliver({ type: "mention", event: root }, dispatched());
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+  await f.deliver({ type: "mention", event: reply }, dispatched());
+  await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(2));
+  expect(g.opens).toHaveLength(1);
+  f.claudes()[0]?.finish();
+  const results = await Promise.all(
+    f.workingUntil.mock.calls.map(([done]) => done),
+  );
+  expect(results).toEqual([{ ok: true }, { ok: true }]);
+  expect(f.claudes()).toHaveLength(1);
 });
 
 it("shows a wake's fallback notice in Activity beside its own prompt only", async () => {

@@ -356,6 +356,25 @@ export class ClaudeProcess {
               LD_LIBRARY_PATH: null,
             }
           : {}),
+        // A forwarded process's endpoint is its generation's alone: what
+        // would pick another provider or endpoint is cleared, as for review.
+        // Settings can still name one; a turn none of whose requests reach
+        // the generation fails.
+        ...(launch.forward
+          ? {
+              ANTHROPIC_BASE_URL: null,
+              CLAUDE_CODE_API_BASE_URL: null,
+              ANTHROPIC_UNIX_SOCKET: null,
+              CLAUDE_CODE_REMOTE_SESSION_ID: null,
+              CLAUDE_CODE_USE_BEDROCK: null,
+              CLAUDE_CODE_USE_VERTEX: null,
+              CLAUDE_CODE_USE_FOUNDRY: null,
+              CLAUDE_CODE_USE_GATEWAY: null,
+              CLAUDE_CODE_USE_MANTLE: null,
+              CLAUDE_CODE_USE_ANTHROPIC_AWS: null,
+              CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD: null,
+            }
+          : {}),
         ...(launch.review
           ? {
               CLAUDE_CONFIG_DIR: launch.review.home,
@@ -559,7 +578,9 @@ export class ClaudeProcess {
   /** Sends one user message. Resolves when it, and anything sent after it, has
    * been answered and the session is idle again. A new turn runs with the
    * picked model and effort, or the session's own without them; a message
-   * folded into a running turn changes only what it asks for. */
+   * folded into a running turn keeps the turn's model and effort, whatever
+   * it asks for, so a turn never switches model (and misses its prompt
+   * cache) partway. */
   send(
     text: string,
     { model, effort, ...activity }: TurnPick & ActivityReceipt = {},
@@ -570,8 +591,8 @@ export class ClaudeProcess {
         error: "Claude is not running",
       });
     // The model first: effort applies to whichever model runs.
-    this.setModel(model !== undefined || !this.busy ? model : this.pickedModel);
-    this.setEffort(effort !== undefined || !this.busy ? effort : this.effort);
+    if (!this.busy) this.setModel(model);
+    if (!this.busy) this.setEffort(effort);
     const uuid = crypto.randomUUID();
     this.receipts.set(uuid, activity);
     this.pending++;

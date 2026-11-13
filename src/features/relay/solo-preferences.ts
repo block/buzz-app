@@ -102,6 +102,24 @@ export function createSoloPreferences(kit: ChannelKit, lifetime: AbortSignal) {
     active: AbortSignal,
   ) {
     admit(value, entry);
+    // Serialized Solo edits still need a later second for replaceable records.
+    // Future-dated heads remain subject to the kit's existing refusal.
+    const delay = entry ? (entry.createdAt + 1) * 1000 - Date.now() : 0;
+    if (delay > 0 && delay <= 1000) {
+      active.throwIfAborted();
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => {
+          clearTimeout(timer);
+          reject(active.reason);
+        };
+        const timer = setTimeout(() => {
+          active.removeEventListener("abort", abort);
+          resolve();
+        }, delay);
+        active.addEventListener("abort", abort, { once: true });
+      });
+    }
+    active.throwIfAborted();
     await kit.save(value, entry?.eventId, false, active);
     active.throwIfAborted();
     const confirmed = soloGroups(kit.snapshot().entries);

@@ -45,12 +45,12 @@ function fixture(lane?: ReturnType<typeof createApiAdmission>) {
     starred: [],
     muted: [],
   };
-  const install = (value: KitValue, deleted = false) => {
+  const install = (value: KitValue, deleted = false, createdAt = time++) => {
     const record: KitRecord = { version: 1, community, deleted, value };
     events.push(
       signed(viewer, {
         kind: 30078,
-        created_at: time++,
+        created_at: createdAt,
         tags: [
           ["d", coordinate(record)],
           ["t", kitTag(record)],
@@ -232,6 +232,142 @@ it("refuses workspace order writes without a fresh catalog and rejects duplicate
     expect(solo.snapshot().data?.sections[0]?.id).toBe("work");
   } finally {
     f.dispose();
+  }
+});
+
+const SAVE_SECOND = 1_900_000_000;
+function fixedClockFixture() {
+  vi.useFakeTimers();
+  const f = fixture();
+  vi.mocked(Date.now).mockRestore();
+  vi.setSystemTime(SAVE_SECOND * 1000 + 250);
+  return f;
+}
+
+it("serializes rapid workspace creation, reorder and filing into distinct protocol seconds", async () => {
+  const f = fixedClockFixture();
+  const solo = f.session.soloPreferences;
+  try {
+    f.install(groups);
+    await solo.ensure();
+    await solo.createSection({ id: "home", name: "Home" });
+    let settled = false;
+    const saving = Promise.all([
+      solo.reorderSections("home", ["home", "work"]),
+      solo.assign(channel, "home"),
+    ]).finally(() => {
+      settled = true;
+    });
+    void saving.catch(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(749);
+    expect(f.publish).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.publish).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(f.publish).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await saving;
+    expect(f.publish.mock.calls.map(([event]) => event.created_at)).toEqual([
+      SAVE_SECOND,
+      SAVE_SECOND + 1,
+      SAVE_SECOND + 2,
+    ]);
+    const saved = JSON.parse(
+      f.publish.mock.calls.at(-1)?.[0].content ?? "null",
+    ).value;
+    expect(saved.groups.map(({ id }: { id: string }) => id)).toEqual([
+      "home",
+      "work",
+    ]);
+    expect(saved.assignments).toEqual({ [other]: "work", [channel]: "home" });
+  } finally {
+    f.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it.each(["clearCache", "dispose"] as const)(
+  "cancels a workspace timestamp wait on %s before publication",
+  async (action) => {
+    const f = fixedClockFixture();
+    const solo = f.session.soloPreferences;
+    try {
+      f.install(groups);
+      await solo.ensure();
+      await solo.createSection({ id: "home", name: "Home" });
+      const saving = solo.reorderSections("home", ["home", "work"]);
+      const cancelled = expect(saving).rejects.toBeDefined();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(solo.snapshot().orderError).toBeUndefined();
+      f[action]();
+      await cancelled;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(f.publish).toHaveBeenCalledTimes(1);
+      expect(f.prepare).toHaveBeenCalledTimes(1);
+    } finally {
+      f.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("retains the kit revision check when another workspace head arrives during the wait", async () => {
+  const f = fixedClockFixture();
+  const solo = f.session.soloPreferences;
+  try {
+    f.install(groups);
+    await solo.ensure();
+    await solo.createSection({ id: "home", name: "Home" });
+    const saving = solo.reorderSections("home", ["home", "work"]);
+    const conflict = expect(saving).rejects.toThrow(
+      "This saved recipe changed",
+    );
+    void conflict.catch(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    f.install(
+      {
+        ...groups,
+        groups: [
+          ...groups.groups,
+          { id: "home", name: "Changed elsewhere", defaultTemplateId: "" },
+        ],
+      },
+      false,
+      SAVE_SECOND + 1,
+    );
+    await vi.advanceTimersByTimeAsync(750);
+    await conflict;
+    expect(f.publish).toHaveBeenCalledTimes(1);
+  } finally {
+    f.dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("leaves future-dated workspace heads subject to the kit timestamp refusal", async () => {
+  const f = fixedClockFixture();
+  try {
+    f.install(
+      {
+        ...groups,
+        groups: [
+          ...groups.groups,
+          { id: "home", name: "Home", defaultTemplateId: "" },
+        ],
+      },
+      false,
+      SAVE_SECOND + 10,
+    );
+    await f.session.soloPreferences.ensure();
+    await expect(
+      f.session.soloPreferences.reorderSections("home", ["home", "work"]),
+    ).rejects.toThrow("Please wait a second");
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+    vi.useRealTimers();
   }
 });
 

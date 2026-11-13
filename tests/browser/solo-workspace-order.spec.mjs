@@ -49,13 +49,10 @@ test("ordinary and composed workspace headers reorder, cancel and restore", asyn
   page,
   app,
 }) => {
-  await page.clock.install();
   const published = async (count) => {
     await expect
       .poll(() => app.report.sidebarPublications?.length ?? 0)
       .toBe(count);
-    // Replaceable preference writes require a later protocol second.
-    await page.clock.runFor(1_100);
   };
   await page.goto(app.origin);
   await newChat(page);

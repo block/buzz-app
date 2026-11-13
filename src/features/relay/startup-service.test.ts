@@ -4,7 +4,7 @@ import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
 import type { ReadTransport } from "./transport";
 import { ReadError } from "./errors";
 import { bounds, keypair, message, metadata, roster, signed } from "./testing";
-import { eventDto } from "./events";
+import { eventDto, type RelayEvent } from "./events";
 import { provideRelay } from "./service";
 
 const storage = vi.hoisted(() => ({ create: vi.fn() }));
@@ -14,6 +14,8 @@ afterEach(async () => {
   for (const ctx of roots.splice(0)) await ctx.fiber.dispose();
   vi.useRealTimers();
 });
+/** A signature no JavaScript check accepts; only a stubbed host admits it. */
+const FORGED = "0".repeat(128);
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -30,6 +32,7 @@ function setup({
   verifyStored,
   relay = keypair(),
   verifiedProfiles,
+  forged = false,
 }: {
   saved?: boolean;
   profiles?: unknown[];
@@ -37,6 +40,8 @@ function setup({
   verifyStored?: ReadTransport["verifyStored"];
   relay?: ReturnType<typeof keypair>;
   verifiedProfiles?: unknown;
+  /** Give the saved history message a signature only a host could accept. */
+  forged?: boolean;
 } = {}) {
   const viewer = keypair();
   const events = [
@@ -57,7 +62,12 @@ function setup({
           savedAt: Date.now(),
           profiles: headProfiles,
           events: [
-            message(viewer, "alpha", "Saved history", 20),
+            forged
+              ? {
+                  ...message(viewer, "alpha", "Saved history", 20),
+                  sig: FORGED,
+                }
+              : message(viewer, "alpha", "Saved history", 20),
             bounds(relay, "alpha", "head", {
               has_more: false,
               next_cursor: null,
@@ -197,6 +207,63 @@ it.each([false, true])(
       snapshot.session.profiles.snapshot().get(embedded.pubkey)?.name,
     ).toBe("History author");
     if (verifyStored) expect(verifyStored).toHaveBeenCalled();
+  },
+);
+it("restores cached discovery, history and head profiles from the host's answer alone", async () => {
+  // Only the host's result can admit these records: JS rejects their signatures.
+  const profile = {
+    ...signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    }),
+    sig: FORGED,
+  };
+  const verifyStored = vi.fn(async (values: readonly unknown[]) =>
+    values.map((value) => structuredClone(value) as RelayEvent),
+  );
+  const { restored } = setup({
+    forged: true,
+    headProfiles: [profile],
+    verifyStored,
+  });
+  const snapshot = await restored();
+  expect(snapshot.session.profiles.snapshot().get(profile.pubkey)?.name).toBe(
+    "Saved member",
+  );
+  for (const kind of [39002, 9, 0])
+    expect(
+      verifyStored.mock.calls.some(([values]) =>
+        values.some((value) => (value as RelayEvent).kind === kind),
+      ),
+    ).toBe(true);
+});
+it.each(["history", "head profiles"])(
+  "drops a cached head whose %s the host rejects",
+  async (stage) => {
+    const profile = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    });
+    const verifyStored = vi.fn(async (values: readonly unknown[]) => {
+      if (values.some((value) => (value as RelayEvent).sig === FORGED))
+        throw new Error("Relay supplied a malformed or invalidly signed event");
+      return values.map((value) => eventDto(JSON.parse(JSON.stringify(value))));
+    });
+    const { data } = setup({
+      forged: stage === "history",
+      headProfiles: [
+        stage === "head profiles" ? { ...profile, sig: FORGED } : profile,
+      ],
+      verifyStored,
+    });
+    await vi.waitFor(() => expect(data.snapshot().cached).toBe(true));
+    data.snapshot().session.channels.ensure("alpha");
+    expect(data.snapshot().session.channels.window("alpha").rows).toEqual([]);
+    expect(
+      data.snapshot().session.profiles.snapshot().get(profile.pubkey),
+    ).toBeUndefined();
   },
 );
 it.each([

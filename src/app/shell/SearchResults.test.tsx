@@ -3947,16 +3947,26 @@ function verifiedAuthorSession({
   namesakeName,
   pageOnly = false,
   namingPolicy = false,
+  profileName = "Robin",
+  verification,
+  searchEmpty = false,
+  extraMembers = 0,
+  earlyHead = false,
 }: {
   namesakeName?: string;
   pageOnly?: boolean;
   namingPolicy?: boolean;
+  profileName?: string;
+  verification?: Promise<void>;
+  searchEmpty?: boolean;
+  extraMembers?: number;
+  earlyHead?: boolean;
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
     person = keypair(),
     namesake = keypair();
-  const raw = profile(person, { name: "Robin" });
+  const raw = profile(person, { name: profileName });
   const head = eventDto(
     signed(relay, {
       kind: 30382,
@@ -3981,6 +3991,7 @@ function verifiedAuthorSession({
     metadata(relay, "crew", "crew"),
     roster(relay, "crew", [
       viewer.pubkey,
+      ...Array.from({ length: extraMembers }, () => keypair().pubkey),
       person.pubkey,
       ...(namesakeName ? [namesake.pubkey] : []),
     ]),
@@ -3988,6 +3999,8 @@ function verifiedAuthorSession({
     head,
   ];
   const reads: Filter[] = [];
+  const verificationReads: Filter[] = [];
+  let deliverHead = () => {};
   const owner = createRelaySession(
     {
       ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
@@ -3997,6 +4010,11 @@ function verifiedAuthorSession({
         searchable: true,
       },
       async query(filters) {
+        const verifying = filters.filter((filter) =>
+          filter.kinds?.includes(30382),
+        );
+        verificationReads.push(...(verifying as Filter[]));
+        if (verifying.length) await verification;
         reads.push(
           ...(filters.filter((filter) =>
             filter.kinds?.includes(9),
@@ -4007,7 +4025,7 @@ function verifiedAuthorSession({
         );
       },
       async searchProfiles() {
-        return [...publicProfiles, head];
+        return searchEmpty ? [] : [...publicProfiles, head];
       },
       subscribe(callbacks) {
         callbacks.state({ status: "connected", routes: [] });
@@ -4016,9 +4034,20 @@ function verifiedAuthorSession({
           retry() {},
           dispose() {},
           syncVerifiedProfiles(_filter, sink) {
-            if (!pageOnly) sink.event(head);
-            sink.eose();
-            return () => {};
+            let active = true;
+            deliverHead = () => {
+              if (active) sink.event(head);
+            };
+            const deliver = () => {
+              if (!active) return;
+              if (!pageOnly && !earlyHead) sink.event(head);
+              sink.eose();
+            };
+            if (verification) void verification.then(deliver, () => {});
+            else deliver();
+            return () => {
+              active = false;
+            };
           },
         };
       },
@@ -4036,8 +4065,220 @@ function verifiedAuthorSession({
         }
       : {},
   );
-  return { owner, person, reads };
+  return {
+    owner,
+    person,
+    reads,
+    verificationReads,
+    deliverHead: () => deliverHead(),
+  };
 }
+
+function authorVerificationGate() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+it.each([
+  { namesake: false, extraMembers: 0, earlyHead: false },
+  { namesake: true, extraMembers: 0, earlyHead: false },
+  { namesake: true, extraMembers: 128, earlyHead: false },
+  { namesake: true, extraMembers: 0, earlyHead: true },
+])(
+  "waits for scoped verification with namesake $namesake, $extraMembers extra members and early head $earlyHead",
+  async ({ namesake, extraMembers, earlyHead }) => {
+    const gate = authorVerificationGate();
+    const { owner, person, reads, verificationReads, deliverHead } =
+      verifiedAuthorSession({
+        ...(namesake ? { namesakeName: "robinz" } : {}),
+        verification: gate.promise,
+        extraMembers,
+        pageOnly: extraMembers > 0,
+        earlyHead,
+      });
+    const change = vi.fn();
+    try {
+      owner.session.channels.ensureList();
+      await waitFor(() =>
+        expect(owner.session.channels.get?.("crew")?.members).toContain(
+          person.pubkey,
+        ),
+      );
+      await act(async () => {
+        await owner.session.profiles.ensure(
+          owner.session.channels.get?.("crew")?.members ?? [],
+        );
+      });
+      if (earlyHead) {
+        await act(async () => deliverHead());
+        expect(owner.session.profiles.verifiedHeld?.(person.pubkey)).toBe(
+          false,
+        );
+        expect(
+          owner.session.profiles.snapshot().get(person.pubkey)?.verified,
+        ).toBeUndefined();
+      }
+      render(
+        <SearchResults
+          session={owner.session}
+          query="from:@robinz deploy"
+          scopedChannelId="crew"
+          onQueryChange={change}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      await waitFor(() => expect(verificationReads.length).toBeGreaterThan(0));
+      expect(reads).toEqual([]);
+      await act(async () => {
+        gate.resolve();
+      });
+      if (namesake) {
+        await waitFor(() =>
+          expect(
+            within(screen.getByRole("group", { name: "People" })).getAllByRole(
+              "option",
+            ),
+          ).toHaveLength(2),
+        );
+        expect(reads).toEqual([]);
+        fireEvent.click(
+          screen.getByRole("option", {
+            name: new RegExp(person.pubkey.slice(0, 12)),
+          }),
+        );
+        expect(change).toHaveBeenCalledWith(`from:${person.pubkey} deploy`);
+      } else {
+        await waitFor(() =>
+          expect(reads).toContainEqual(
+            expect.objectContaining({
+              authors: [person.pubkey],
+              search: "deploy",
+            }),
+          ),
+        );
+      }
+      expect(
+        verificationReads.every((filter) => (filter["#d"]?.length ?? 0) <= 128),
+      ).toBe(true);
+    } finally {
+      gate.resolve();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it.each(["cancel", "fail"])(
+  "does not search an unverified namesake when scoped verification must %s",
+  async (outcome) => {
+    const gate = authorVerificationGate();
+    const { owner, person, reads, verificationReads } = verifiedAuthorSession({
+      namesakeName: "robinz",
+      verification: gate.promise,
+    });
+    const props = {
+      session: owner.session,
+      scopedChannelId: "crew",
+      onQueryChange() {},
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      openConversation() {},
+    };
+    try {
+      owner.session.channels.ensureList();
+      await waitFor(() =>
+        expect(owner.session.channels.get?.("crew")?.members).toContain(
+          person.pubkey,
+        ),
+      );
+      const mounted = render(
+        <SearchResults {...props} query="from:robinz deploy" />,
+      );
+      await waitFor(() => expect(verificationReads.length).toBeGreaterThan(0));
+      expect(reads).toEqual([]);
+      if (outcome === "fail") {
+        await act(async () =>
+          gate.reject(new Error("Verification unavailable")),
+        );
+        await screen.findByRole("button", { name: "Retry messages" });
+        expect(reads).toEqual([]);
+      }
+      // Exact-key selection is independent of a failed or cancelled name lookup.
+      mounted.rerender(
+        <SearchResults {...props} query={`from:${person.pubkey} ship`} />,
+      );
+      await waitFor(() =>
+        expect(reads).toContainEqual(
+          expect.objectContaining({
+            authors: [person.pubkey],
+            search: "ship",
+          }),
+        ),
+      );
+      if (outcome === "cancel") {
+        await act(async () => gate.resolve());
+        await waitFor(() =>
+          expect(
+            owner.session.profiles.snapshot().get(person.pubkey)?.verified
+              ?.username,
+          ).toBe("robinz"),
+        );
+      }
+      expect(reads.every((filter) => filter.search === "ship")).toBe(true);
+    } finally {
+      gate.resolve();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it("offers every scoped alias match when completion is ambiguous", async () => {
+  const { owner, person, reads } = verifiedAuthorSession({
+    profileName: "alice",
+    namesakeName: "alice",
+    namingPolicy: true,
+    searchEmpty: true,
+  });
+  const change = vi.fn();
+  try {
+    render(
+      <SearchResults
+        session={owner.session}
+        query="from:alice deploy"
+        scopedChannelId="crew"
+        onQueryChange={change}
+        input={createRef()}
+        pages={[]}
+        openConversation={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("group", { name: "People" })).getAllByRole(
+          "option",
+        ),
+      ).toHaveLength(2),
+    );
+    expect(reads).toEqual([]);
+    fireEvent.click(
+      screen.getByRole("option", {
+        name: new RegExp(person.pubkey.slice(0, 12)),
+      }),
+    );
+    expect(change).toHaveBeenCalledWith(`from:${person.pubkey} deploy`);
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
 
 it.each(
   [false, true].flatMap((namingPolicy) =>

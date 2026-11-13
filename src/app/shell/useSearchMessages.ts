@@ -1,5 +1,12 @@
 import { workflowOwner } from "../../features/relay/workflow-attribution";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   messageSearchable,
   searchDebounce,
@@ -10,7 +17,10 @@ import type { ReadFilter } from "../../features/relay/events";
 import type { Profile } from "../../features/relay/contracts";
 import { foldProfiles } from "../../features/relay/profiles";
 import { searchedProfiles } from "../../features/relay/profile-search";
-import type { VerifiedProfile } from "../../features/relay/verified-profile";
+import {
+  VERIFIED_PROFILE_BATCH,
+  type VerifiedProfile,
+} from "../../features/relay/verified-profile";
 import { verifiedName } from "../../features/profiles/useVerifiedNames";
 import { normalizeName } from "../../features/search/person-match";
 import {
@@ -148,6 +158,13 @@ export function useSearchMessages(
     [session],
   );
   const parsed = useMemo(() => parseSearchOperators(query), [query]);
+  const verifiedRevision = useSyncExternalStore(
+    session.profiles.subscribe,
+    () =>
+      parsed.from && !isHexPubkey(parsed.from) && !isViewerHandle(parsed.from)
+        ? (session.profiles.verifiedRevision?.() ?? 0)
+        : 0,
+  );
   const syntax = useMemo(() => searchTextSyntax(parsed.text), [parsed.text]);
   // Rerun the search only when the names change, not on every new map.
   const agentKey = JSON.stringify([...agentNames]);
@@ -192,8 +209,24 @@ export function useSearchMessages(
   // Without text the relay reads its ordinary newest-first history.
   const newestFirst = newest || !parsed.text;
   const owner = useMemo(
-    () => ({ session, query, channelId, unresolvedChannel, attempt, newest }),
-    [session, query, channelId, unresolvedChannel, attempt, newest],
+    () => ({
+      session,
+      query,
+      channelId,
+      unresolvedChannel,
+      attempt,
+      newest,
+      verifiedRevision,
+    }),
+    [
+      session,
+      query,
+      channelId,
+      unresolvedChannel,
+      attempt,
+      newest,
+      verifiedRevision,
+    ],
   );
   // The copied result changes synchronously even if React has not committed it yet.
   const copied = useRef<Result | undefined>(undefined);
@@ -247,6 +280,37 @@ export function useSearchMessages(
               await session.profiles.ensure(knownMembers, "foreground");
               controller.signal.throwIfAborted();
             }
+            let remoteNames: ReadonlyMap<string, VerifiedProfile> | undefined;
+            // Kind 0 loads before the shared verified subscription settles.
+            // Check every still-unknown member before treating a public-name
+            // match as unique; another member may own that verified alias.
+            const authority = session.profiles.verifiedAuthority?.();
+            const pending = authority
+              ? knownMembers.filter(
+                  (pubkey) => !session.profiles.verifiedHeld?.(pubkey),
+                )
+              : [];
+            const checkedNames = new Map<string, VerifiedProfile>();
+            for (
+              let start = 0;
+              start < pending.length;
+              start += VERIFIED_PROFILE_BATCH
+            ) {
+              const checked = await session.directMessages.verified(
+                pending.slice(start, start + VERIFIED_PROFILE_BATCH),
+                controller.signal,
+              );
+              controller.signal.throwIfAborted();
+              if (
+                !checked ||
+                checked.authority !== authority ||
+                session.profiles.verifiedAuthority?.() !== authority
+              )
+                throw new Error("Author names changed. Try again.");
+              for (const [pubkey, profile] of checked.profiles)
+                checkedNames.set(pubkey, profile);
+            }
+            if (pending.length) remoteNames = checkedNames;
             // Shared labels can qualify namesakes. Their signed profile names
             // still participate in exact-name ambiguity.
             const originals = foldProfiles(
@@ -257,7 +321,6 @@ export function useSearchMessages(
                 },
               ),
             );
-            let remoteNames: ReadonlyMap<string, VerifiedProfile> | undefined;
             // Exact completion accepts the same profile and verified aliases
             // as the picker, independently of the device's display preference.
             const named = (pubkey: string, profile?: Profile) => {

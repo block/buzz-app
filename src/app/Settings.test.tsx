@@ -951,6 +951,11 @@ export function apply(ctx) {
       recoverSettings: vi.fn(),
       reloadPlugin: vi.fn(),
       readModule: vi.fn(async () => code),
+      readContent: vi.fn(async () => ({
+        readme: null,
+        iconPng: null,
+        iconJpg: null,
+      })),
       imports: {
         folder: vi.fn(),
         files: vi.fn(),

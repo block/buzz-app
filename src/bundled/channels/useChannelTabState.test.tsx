@@ -1226,7 +1226,7 @@ function launch(scope: string, by: "agent" | "page" = "agent") {
       if (by === "agent") tabs.rename("alpha", id.split(":")[2] ?? "", name);
       else page.result.current.renameTab(id, name);
     });
-  return { page, tabs, rename };
+  return { page, tabs, rename, session };
 }
 
 test.each(["agent", "page"] as const)(
@@ -1482,6 +1482,28 @@ test.each(["page", "agent", "others"] as const)(
     ]);
   },
 );
+
+test("closing one workspace's copy keeps a name another workspace shows", () => {
+  const scope = crypto.randomUUID();
+  const first = launch(scope, "page");
+  act(() => first.tabs.open("alpha", "r1"));
+  first.rename("thread:alpha:r1", "Launch plan");
+  // The same thread opened in a page's own workspace takes its name.
+  const inbox = renderHook(() =>
+    useChannelTabState(first.session, undefined, "page:inbox"),
+  );
+  act(() => inbox.result.current.openThreadTab("alpha", "r1", "r1"));
+  expect(inbox.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", name: "Launch plan" },
+  ]);
+  act(() => inbox.result.current.closeTabs(""));
+  expect(readView(scope, "tab-names", {})).toEqual({
+    "alpha:r1": "Launch plan",
+  });
+  // Closing the last copy forgets it.
+  act(() => first.tabs.close("alpha", "r1"));
+  expect(readView(scope, "tab-names", {})).toEqual({});
+});
 
 test("sessions without a viewer keep tab names in memory only", () => {
   const session = tabSession();

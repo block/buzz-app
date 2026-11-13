@@ -280,7 +280,13 @@ const saveThreadTabName = (
   if (existed || name !== undefined)
     writeView(scope, NAMES, Object.fromEntries([...names].slice(-MAX_NAMES)));
 };
-function withSavedNames(scope: string, previous: State, next: State): State {
+function withSavedNames(
+  scope: string,
+  previous: State,
+  next: State,
+  /** The session's other workspaces' tabs, read only when a tab closes. */
+  elsewhere: () => readonly ConversationTab[],
+): State {
   if (next.tabs === previous.tabs) return next;
   let restored = false;
   const tabs = next.tabs.map((tab) => {
@@ -317,17 +323,21 @@ function withSavedNames(scope: string, previous: State, next: State): State {
     return { ...tab, name };
   });
   // A closed tab forgets its name, as does a provisional tab merged into its
-  // root's tab; another tab of the same thread keeps it.
-  const open = new Set(
-    next.tabs.flatMap((tab) => (tab.kind === "thread" ? [nameKey(tab)] : [])),
+  // root's tab; another tab of the same thread, in any workspace, keeps it.
+  const closed = previous.tabs.filter(
+    (tab): tab is ThreadTab =>
+      tab.kind === "thread" && !next.tabs.some((item) => item.id === tab.id),
   );
-  for (const tab of previous.tabs)
-    if (
-      tab.kind === "thread" &&
-      !next.tabs.some((item) => item.id === tab.id) &&
-      !open.has(nameKey(tab))
-    )
-      saveThreadTabName(scope, nameKey(tab), undefined);
+  if (closed.length) {
+    const open = new Set(
+      [...next.tabs, ...elsewhere()].flatMap((tab) =>
+        tab.kind === "thread" ? [nameKey(tab)] : [],
+      ),
+    );
+    for (const tab of closed)
+      if (!open.has(nameKey(tab)))
+        saveThreadTabName(scope, nameKey(tab), undefined);
+  }
   return restored ? { ...next, tabs } : next;
 }
 function createTabStore(scope?: string) {
@@ -399,7 +409,13 @@ function createTabStore(scope?: string) {
       const previous = channels[key] ?? empty;
       const changed = change(previous);
       if (changed === previous) return;
-      const next = scope ? withSavedNames(scope, previous, changed) : changed;
+      const next = scope
+        ? withSavedNames(scope, previous, changed, () =>
+            Object.entries(channels).flatMap(([other, state]) =>
+              other === key ? [] : state.tabs,
+            ),
+          )
+        : changed;
       channels = { ...channels, [key]: next };
       // A stale session may still update its own store, but cannot overwrite
       // the successor's retirement metadata. Records are copy-on-write.

@@ -33,10 +33,15 @@ information document. For example, a production relay currently reports:
 
 NIP-52 is not advertised, and the calendar event kinds (`31922` date-based,
 `31923` time-based) are not among the kinds a session may write. The desktop
-client is already kind-agnostic on the read path:
+client is mostly kind-agnostic on the read path:
 
-- Reads pass any kind through the access model (`src/features/relay/event-access.ts`
-  resolves visibility from channel `h` tags, independent of kind).
+- Event visibility resolves from channel `h` tags on any kind
+  (`src/features/relay/event-access.ts`).
+- Not the whole read path is kind-agnostic, though: in the same file,
+  `home()` returns nothing for kinds outside `channelSourceKind`. NIP-09
+  deletions and reactions that target a `31922`/`31923` event resolve
+  through it, so admitting the kinds in the routing lists (see below) covers
+  those paths too.
 
 The write and routing paths, however, are not kind-agnostic yet:
 
@@ -61,7 +66,8 @@ The initial proposal covers the event kinds only: `31922` (date-based) and
 path later if wanted. Note the NIP's format requirements, since a relay-side
 validation profile needs them: date-based events carry `start`/`end` in ISO
 `YYYY-MM-DD`; time-based events carry `start`/`end` as unix seconds plus the
-required `D` day tag (day-granularity unix days).
+required `D` day tag (day-granularity unix days); multi-day time events
+SHOULD carry several `D` tags, one per day covered.
 
 ## Proposal
 
@@ -70,7 +76,8 @@ required `D` day tag (day-granularity unix days).
 1. Admit `31922` and `31923` under the existing restricted-writes model,
    scoped like other content: require an `h` channel tag (or an explicit
    community scope tag) so community ACLs keep applying, and authorize the
-   author like an ordinary kind-9 post.
+   author like an ordinary kind-9 post. Note `h` guards ACLs/visibility only;
+   it does not protect against replace overwrites (see open questions).
 2. NIP-52 events are addressable: one stored version per (kind, author, `d`),
    with the same dedup/replace semantics the relay already applies to other
    catalogs.
@@ -94,10 +101,15 @@ required `D` day tag (day-granularity unix days).
 ### Open questions
 
 - NIP-52 events are addressable by (kind, author, `d`), and the NIP's `a`
-  coordinate has no channel dimension. For Buzz ACLs we propose requiring an
-  `h` tag in addition to `d` (a Buzz profile of NIP-52), or embedding the
-  channel scope in the `d` value — otherwise one author reusing the same `d`
-  in two channels would silently overwrite across them. Feedback welcome.
+  coordinate has no channel dimension. Requiring an `h` tag in addition to
+  `d` does not prevent cross-channel overwrites: the relay's replace path
+  (`replaceable.rs`) matches on community, kind, pubkey and `d` tag only,
+  so `h` is an ACL/visibility requirement, not part of the replace key.
+  To stop one author reusing the same `d` in two channels from silently
+  overwriting across them, the realistic options are embedding the channel
+  scope in the `d` value, or a relay profile that adds the channel to the
+  replace key — both diverge from NIP-52's `a` coordinates, which
+  third-party clients would follow. Feedback welcome.
 - Retention: addressable events are bounded per (kind, author, `d`), so
   growth comes from the number of distinct `d` values, not history; suggest a
   bounded count of distinct calendar events per channel.
@@ -112,7 +124,7 @@ required `D` day tag (day-granularity unix days).
   its "share" button): works for announcements, but there is no structured
   aggregate, no replace/update semantics, and agents cannot reliably
   distinguish an event from chatter.
-- A Buzz-draft custom kind: avoids the parameterization/ACL question, but
+- A Buzz-draft custom kind: avoids the replace-key/ACL question, but
   reuses nothing from the Nostr ecosystem and blocks third-party clients.
 
 ## References

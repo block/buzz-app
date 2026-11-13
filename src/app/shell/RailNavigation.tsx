@@ -34,6 +34,7 @@ import {
   sidebarSectionTarget,
   isSidebarSectionRoute,
 } from "../../features/channel-navigation/sidebar-section-route";
+import { CountBadge } from "../../shared/design-system/ui/CountBadge";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
@@ -626,10 +627,10 @@ export function RailNavigation({
           includeChannel={(channel) => includeMessagesChannel(channel, counted)}
           renderEntries={(items) =>
             items.length ? (
-              <>
-                {items.length > 99 ? "99+" : items.length}
-                <span className="sr-only"> unread</span>
-              </>
+              <CountBadge
+                count={items.length}
+                label={`${items.length} unread conversation${items.length === 1 ? "" : "s"}`}
+              />
             ) : null
           }
         />

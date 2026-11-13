@@ -36,8 +36,10 @@ export const inject = [
   "panels",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  ctx.agents.registerTab(bestieTab(ctx.relay, ctx.agents));
-  ctx.agents.registerTab(formerBestieTab(ctx.relay, ctx.agents));
+  ctx.agents.registerTab(bestieTab(ctx.relay, ctx.agents, ctx.navigation));
+  ctx.agents.registerTab(
+    formerBestieTab(ctx.relay, ctx.agents, ctx.navigation),
+  );
   // Whoever is Bestie, on any device, only it checks in.
   ctx.effect(() => stopFormerCheckIns(ctx.relay, ctx.agents));
   // A hosted former Bestie's memory is on its provider, read here for its tab.

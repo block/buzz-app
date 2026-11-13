@@ -155,8 +155,8 @@ export function installComposerClickFocus() {
   let frame: number | undefined;
   const down = (event: PointerEvent) => {
     origin = focusedWorkspace();
-    // A tap must not raise an on-screen keyboard.
-    touch = event.pointerType === "touch";
+    // A finger or pen tap must not raise an on-screen keyboard.
+    touch = event.pointerType === "touch" || event.pointerType === "pen";
     dismissing = !!document.querySelector(DISMISSIBLE);
   };
   const click = (event: MouseEvent) => {

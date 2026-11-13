@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { installComposerClickFocus } from "./focus-navigation";
@@ -180,7 +186,7 @@ it("a pane without a message box keeps its focus", async () => {
   expect(screen.getByText("Tool output")).toHaveFocus();
 });
 
-it("keyboard activation and touch taps keep their focus", async () => {
+it("keyboard activation, touch and pen taps keep their focus", async () => {
   const user = userEvent.setup();
   render(<Shell />);
   const react = screen.getByRole("button", { name: "React" });
@@ -194,6 +200,11 @@ it("keyboard activation and touch taps keep their focus", async () => {
     target: message,
     pointerName: "touch",
   } as never);
+  await settle();
+  expect(screen.getByRole("textbox", { name: "Main draft" })).not.toHaveFocus();
+  // user-event has no pen pointer; a pen tap is a pen pointerdown and a click.
+  fireEvent.pointerDown(message, { pointerType: "pen" });
+  fireEvent.click(message, { detail: 1 });
   await settle();
   expect(screen.getByRole("textbox", { name: "Main draft" })).not.toHaveFocus();
 });

@@ -117,7 +117,7 @@ it("keeps every session in the window, however often turns run", async () => {
     expect(storage.get(key)?.length ?? 0).toBeLessThan(200_000);
 });
 
-it("keeps entries with more fields than it reads", async () => {
+it("keeps a saved turn key when another session joins its day", async () => {
   const storage = memory();
   let now = 5 * DAY;
   const key = `${STANDALONE_PREFIX}pi:${AGENT}:5`;
@@ -129,7 +129,7 @@ it("keeps entries with more fields than it reads", async () => {
   now += 1;
   await sessions.add("s2");
   expect(sessions.list()).toEqual([
-    { id: "s1", at: 5 * DAY },
+    { id: "s1", at: 5 * DAY, wake: "timer/daily" },
     { id: "s2", at: now },
   ]);
   expect(JSON.parse(storage.get(key) ?? "").sessions[0]).toEqual([
@@ -219,7 +219,7 @@ it("keeps the key of the turn that started a session, alongside ones without", a
 it("drops a session whose saved turn key is damaged", () => {
   const storage = memory();
   void storage.set(
-    `${STANDALONE_PREFIX}goose:${AGENT}`,
+    `${STANDALONE_PREFIX}goose:${AGENT}:${Math.floor(Date.now() / DAY)}`,
     JSON.stringify({
       version: 1,
       sessions: [

@@ -278,7 +278,7 @@ it("groups cost by the timer or watch that started each session, the rest under 
   const routines = await screen.findByRole("region", { name: "By routine" });
   const rows = within(routines).getAllByRole("listitem");
   expect(rows.map((row) => row.textContent)).toEqual([
-    "timer/daily1 session$3.00",
+    "timer/dailyPixel · 1 session$3.00",
     "Other1 session$1.00",
   ]);
 });

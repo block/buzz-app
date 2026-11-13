@@ -395,11 +395,52 @@ it("groups the period's cost by the timer or watch that started each session, th
     7,
   );
   expect(result.routines).toEqual([
-    { wake: "watch/pulls", cost: { value: 10, partial: false }, sessions: 1 },
-    { wake: "timer/daily", cost: { value: 3, partial: false }, sessions: 2 },
+    {
+      agent: pixel,
+      wake: "watch/pulls",
+      cost: { value: 10, partial: false },
+      sessions: 1,
+    },
+    {
+      agent: pixel,
+      wake: "timer/daily",
+      cost: { value: 3, partial: false },
+      sessions: 2,
+    },
     { cost: { value: 7, partial: false }, sessions: 2 },
   ]);
   expect(result.cost.value).toBe(20);
+});
+
+it("keeps each agent's routines apart when two agents name a timer alike", () => {
+  const pixel = agent("pixel");
+  const relay = agent("relay");
+  const daily = (id: string, usd: number) =>
+    session(id, [seen(today + 9 * HOUR, full(1), "acme-1", usd)], {
+      wake: "timer/daily",
+    });
+  const result = stats(
+    [
+      { agent: pixel, harness: "x/claude", sessions: [daily("a", 3)] },
+      { agent: relay, harness: "x/claude", sessions: [daily("b", 7)] },
+    ],
+    now,
+    7,
+  );
+  expect(result.routines).toEqual([
+    {
+      agent: relay,
+      wake: "timer/daily",
+      cost: { value: 7, partial: false },
+      sessions: 1,
+    },
+    {
+      agent: pixel,
+      wake: "timer/daily",
+      cost: { value: 3, partial: false },
+      sessions: 1,
+    },
+  ]);
 });
 
 it("shows no routines when no session says which timer or watch started it", () => {

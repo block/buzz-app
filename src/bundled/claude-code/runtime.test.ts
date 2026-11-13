@@ -2473,10 +2473,10 @@ it("tells which timer a one-off turn's session was started for, and no other ses
     lastAt: 2,
     observations: [],
   });
-  expect(
+  await expect(
     runtime.withWakes(self, [usage(session), usage("a conversation's")]),
-  ).toEqual([
-    { ...usage(session), wake: "timer/daily" },
+  ).resolves.toEqual([
+    { ...usage(session), wake: "timer/daily", revision: expect.any(String) },
     usage("a conversation's"),
   ]);
 });

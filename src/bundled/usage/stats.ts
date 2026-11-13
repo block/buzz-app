@@ -45,10 +45,12 @@ export type Stats = Readonly<{
     cost: Total;
     sessions: number;
   }>[];
-  /** The period's cost by the timer or watch that started each session,
-   * costliest first, the sessions that none started or whose harness does not
-   * say last, with no `wake`. Empty when no session says. */
+  /** The period's cost by the agent and the timer or watch of its that
+   * started each session, costliest first; the sessions that none started or
+   * whose harness does not say last, with no `agent` or `wake`. Empty when no
+   * session says. */
   routines: readonly Readonly<{
+    agent?: Agent;
     wake?: string;
     cost: Total;
     sessions: number;
@@ -178,10 +180,8 @@ export function stats(
   const prompt = new Sum();
   const agents: Stats["agents"][number][] = [];
   const sessions: Stats["costliest"][number][] = [];
-  const routines = new Map<
-    string | undefined,
-    { cost: Sum; sessions: number }
-  >();
+  // Keyed by agent and wake: each agent names its own timers and watches.
+  const routines = new Map<string, Routine>();
   for (const { agent, harness, sessions: list } of usage) {
     const models = new Map<string, number>();
     const agentCost = new Sum();
@@ -239,13 +239,16 @@ export function stats(
       }
       agentSessions += 1;
       agentCost.include(sessionCost);
-      const routine = routines.get(session.wake) ?? {
+      const { wake } = session;
+      const id = wake === undefined ? "" : JSON.stringify([agent.pubkey, wake]);
+      const routine = routines.get(id) ?? {
+        ...(wake !== undefined && { agent, wake }),
         cost: new Sum(),
         sessions: 0,
       };
       routine.cost.include(sessionCost);
       routine.sessions += 1;
-      routines.set(session.wake, routine);
+      routines.set(id, routine);
       sessions.push({
         agent,
         harness,
@@ -313,18 +316,14 @@ export function stats(
   };
 }
 
+type Routine = { agent?: Agent; wake?: string; cost: Sum; sessions: number };
+
 /** The routines, those a timer or watch started costliest first, then the
  * rest; none when no session says which started it. */
-function routined(
-  routines: ReadonlyMap<string | undefined, { cost: Sum; sessions: number }>,
-): Stats["routines"] {
-  if (![...routines.keys()].some((wake) => wake !== undefined)) return [];
-  return [...routines]
-    .map(([wake, { cost, sessions }]) => ({
-      ...(wake === undefined ? {} : { wake }),
-      cost: cost.total(),
-      sessions,
-    }))
+function routined(routines: ReadonlyMap<string, Routine>): Stats["routines"] {
+  if (![...routines.values()].some(({ wake }) => wake !== undefined)) return [];
+  return [...routines.values()]
+    .map(({ cost, ...routine }) => ({ ...routine, cost: cost.total() }))
     .sort(
       (a, b) =>
         Number(a.wake === undefined) - Number(b.wake === undefined) ||

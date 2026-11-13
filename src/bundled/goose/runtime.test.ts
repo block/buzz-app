@@ -1281,13 +1281,17 @@ describe("GooseRuntime", () => {
       lastAt: 2,
       observations: [],
     });
-    expect(
+    await expect(
       runtime.withWakes(
         self,
         starts.map(({ id }) => usage(id)),
       ),
-    ).toEqual([
-      { ...usage(starts[0]?.id ?? ""), wake: "timer/daily" },
+    ).resolves.toEqual([
+      {
+        ...usage(starts[0]?.id ?? ""),
+        wake: "timer/daily",
+        revision: expect.any(String),
+      },
       usage(starts[1]?.id ?? ""),
     ]);
   });

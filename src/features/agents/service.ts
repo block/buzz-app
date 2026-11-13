@@ -1609,7 +1609,8 @@ export type Agents = {
    * plugins give every turn. Text replaces any the conversation had, and
    * empty text clears them. At most 8 KiB (UTF-8, after trimming). `place`
    * names the conversation as session controls do; a DM, a Solo chat or a
-   * channel-scoped agent has no root, and rejects one. Kept on this device
+   * channel-scoped agent has no root, and rejects one, as a huddle room
+   * rejects any instructions. Kept on this device
    * for now, and dropped when the agent is deleted. Plugins only. */
   setConversationInstructions(
     agent: AgentKey,
@@ -4910,9 +4911,13 @@ export class AgentsService extends Service implements Agents {
   }
   /** Where the owner's local agent keeps a conversation's instructions, as
    * its folder. A root for a conversation its harness runs whole rejects:
-   * no turn would show them. */
+   * no turn would show them. So does a huddle room, whose conversations
+   * harnesses key differently. */
   private async instructionsPlace(key: AgentKey, place: SessionPlace) {
     const found = this.folderPlace(key, place);
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
+      throw new Error("Conversation instructions are unavailable in a huddle");
     if (
       place.root &&
       (found.conversation === place.channelId ||

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   conversationInstructions,
   forgetConversationInstructions,
@@ -73,5 +73,36 @@ describe("conversation instructions", () => {
       "C",
     );
     expect(store.get("unrelated")).toBe("kept");
+  });
+
+  it("read as none when the saved value is unreadable", async () => {
+    const store = memory();
+    const key = `buzz.agents.conversation-instructions.v1:${JSON.stringify(["scope", "agent", "c"])}`;
+    for (const saved of ["{", "{}", JSON.stringify({ plugin: 1, text: "A" })]) {
+      await store.set(key, saved);
+      expect(
+        conversationInstructions(store, "scope", "agent", "c"),
+      ).toBeUndefined();
+    }
+  });
+
+  it("only warn when they cannot be dropped", async () => {
+    const store = memory();
+    await setConversationInstructions(store, "one", "agent", "c", "p", "A");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failing = {
+      ...store,
+      set: async () => {
+        throw new Error("Storage is full");
+      },
+    };
+    await expect(
+      forgetConversationInstructions(failing, "agent"),
+    ).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      "Conversation instructions were not removed",
+      expect.any(Error),
+    );
+    warn.mockRestore();
   });
 });

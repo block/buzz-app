@@ -586,7 +586,8 @@ replaces the old; empty text clears it, and later turns there say no such
 instructions apply now. A turn leaves the section out while the agent is not
 in the channel. Text is at most 8192 UTF-8 bytes after trimming and is sent
 with every turn. `place` names the conversation as session controls do: a
-root for a DM, a Solo chat or a channel-scoped agent rejects. The text is kept
+root for a DM, a Solo chat or a channel-scoped agent rejects, and a huddle
+room rejects any instructions. The text is kept
 on this device for now, survives a restart and is dropped when the agent is
 deleted; another program that does not share this device's agent state does
 not see it. `ctx.agents.conversationInstructions(pubkey, place)` resolves

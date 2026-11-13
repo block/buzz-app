@@ -1943,6 +1943,25 @@ describe("a conversation's instructions", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("are refused in a huddle room", async () => {
+    const f = await ready();
+    const list = f.session.channels.list();
+    vi.spyOn(f.session.channels, "list").mockReturnValue({
+      ...list,
+      channels: list.channels.map((row) =>
+        row.id === channel
+          ? { ...row, description: huddleDescription(crypto.randomUUID()) }
+          : row,
+      ),
+    });
+    for (const place of [thread, { channelId: channel }])
+      await expect(
+        f.plugin.agents.setConversationInstructions(f.agent.key, place, "Do."),
+      ).rejects.toThrow(
+        "Conversation instructions are unavailable in a huddle",
+      );
+  });
+
   it("are left out while the agent is not in the channel", async () => {
     const f = await ready();
     await f.plugin.agents.setConversationInstructions(

@@ -108,6 +108,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
         }
       >
         <NavigationSectionHeading
+          disclosure
           revealActions
           actions={
             <>
@@ -138,6 +139,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
           <div className={styles.heading}>
             <NavigationItem
               label={channel.name}
+              title={channel.name}
               icon={<Icon size={14} />}
               selected={!!props.selected}
               onClick={() => {

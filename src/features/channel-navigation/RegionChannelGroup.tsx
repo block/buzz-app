@@ -95,7 +95,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
       !matchesConversation(navigator.snapshot().entry.target, scope, channel.id)
     )
       return;
-    channelTabs(session).openSettings(channel.id);
+    channelTabs(session).openSettings(channel.id, attempt.id);
   };
   return (
     <div data-solo-channel-group={channel.id}>

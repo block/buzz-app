@@ -83,7 +83,7 @@ type State = {
   paneOpen: boolean;
   thread: { channelId: string; messageId: string } | undefined;
   settings:
-    | { id: string; channelId: string | undefined; focusRequest?: number }
+    | { id: string; channelId: string | undefined; focusRequest?: string }
     | undefined;
   /** A launcher's side panel shows in the pane; the page owns that panel. */
   sidePanel?: boolean;
@@ -486,12 +486,12 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
     list: (channelId: string) =>
       threads(channelId).map(({ tab: _, ...thread }) => thread),
     /** The channel's existing details tab, opened after navigation permits entry. */
-    openSettings(channelId: string) {
+    openSettings(channelId: string, focusRequest: string) {
       store.update(keyOf("messages", channelId), (state) => ({
         ...state,
         settings: {
           ...(state.settings ?? { id: crypto.randomUUID(), channelId }),
-          focusRequest: (state.settings?.focusRequest ?? 0) + 1,
+          focusRequest,
         },
         selected: "settings",
         paneOpen: true,

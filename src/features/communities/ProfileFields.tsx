@@ -1,4 +1,4 @@
-import { useState, type Ref } from "react";
+import { useLayoutEffect, useRef, useState, type Ref } from "react";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { AvatarEditor } from "../profiles/AvatarEditor";
@@ -62,6 +62,18 @@ export function ProfileFields({
   const [repairAbout] = useState(
     () => (profile.about?.length ?? 0) > PROFILE_ABOUT_MAX_LENGTH,
   );
+  const aboutRef = useRef<HTMLTextAreaElement>(null);
+  // The description grows with its content: fixed rows nest a second
+  // scrollport inside the dialog pane, trapping wheel scrolling over the
+  // field and hiding lines past the third while they are edited.
+  useLayoutEffect(() => {
+    void profile.about;
+    const area = aboutRef.current;
+    if (!area) return;
+    area.style.height = "";
+    if (area.scrollHeight > area.clientHeight)
+      area.style.height = `${area.scrollHeight + area.offsetHeight - area.clientHeight}px`;
+  }, [profile.about]);
   return (
     <div className="grid gap-4">
       {showAvatar && (
@@ -119,7 +131,9 @@ export function ProfileFields({
           }
         >
           <Textarea
+            ref={aboutRef}
             rows={3}
+            style={{ resize: "none", overflow: "hidden" }}
             disabled={disabled}
             value={profile.about ?? ""}
             onChange={(event) =>

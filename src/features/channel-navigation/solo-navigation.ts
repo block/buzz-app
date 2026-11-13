@@ -1,14 +1,19 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
-import { readView, viewRevision, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { RelaySession } from "../relay/session";
-import type { JsonValue } from "../navigation/targets";
+import { parseOpenTarget, type JsonValue } from "../navigation/targets";
 import type { PluginManager } from "../../plugins/manager";
 import { relayPartition } from "../relay/partition";
 import { ownSolo, soloLabels } from "../solo/labels";
 import { regionLabels, soloRegionLabel } from "../solo/region-labels";
-import { soloDraftTarget } from "./routes";
+import { soloDraft, soloDraftTarget } from "./routes";
 import { createSoloWorkspaces } from "./solo-workspaces";
 import {
   projectSoloRegions,
@@ -35,9 +40,13 @@ export type SoloNavigationSnapshot = SoloPlacement &
 const readers = new WeakMap<RelaySession, SoloNavigationService>();
 export const soloNavigationFor = (session: RelaySession) =>
   readers.get(session);
-/** A region's New chat draft, one per workspace as for ordinary New chat. */
-export const regionDraftKey = (label: string, workspace?: string) =>
-  `solo:region:${label}${workspace ? `:project:${workspace}` : ""}`;
+/** Region drafts share a workspace slot unless the source supplies a stable key. */
+export const regionDraftKey = (
+  label: string,
+  workspace?: string,
+  key?: string,
+) =>
+  `solo:region:${label}${key ? `:draft:${encodeURIComponent(key)}` : workspace ? `:project:${workspace}` : ""}`;
 /** View state linking a chat to the region draft it was started from. */
 export const regionStartKey = (channelId: string) =>
   `solo-region-start:${channelId}`;
@@ -149,8 +158,6 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   presentation(source: RegisteredSoloSource, binding: SoloRegionBinding) {
     const active = () =>
       sameBinding(this.binding, binding) && this.sources().includes(source);
-    const key = `solo-region-state:${binding.viewer}:${source.key}`;
-    const memoryKey = `${binding.scope}/${key}`;
     return {
       revealRequests: {
         subscribe: (listener: (channelId: string) => void) => {
@@ -172,19 +179,39 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           return stop;
         },
       },
-      state: {
-        get: () => {
-          const saved = viewRevision(binding.scope, key);
-          if (saved === undefined && this.states.has(memoryKey))
+      state: this.regionState(source, binding),
+    };
+  }
+  private regionState(
+    source: RegisteredSoloSource,
+    binding: SoloRegionBinding,
+  ) {
+    binding = Object.freeze({ ...binding });
+    const active = () =>
+      sameBinding(this.binding, binding) && this.sources().includes(source);
+    const key = `solo-region-state:${binding.viewer}:${source.key}`;
+    const memoryKey = `${binding.scope}/${key}`;
+    const current = () => {
+      if (!active()) throw new Error("This Solo region binding has ended");
+    };
+    return {
+      get: () => {
+        current();
+        const saved = viewRevision(binding.scope, key);
+        if (saved === undefined) {
+          if (this.states.has(memoryKey))
             return structuredClone(this.states.get(memoryKey));
-          try {
-            return saved ? (JSON.parse(saved) as JsonValue) : undefined;
-          } catch {
-            return undefined;
-          }
-        },
-        set: (value: JsonValue) => {
-          if (!active()) return false;
+          throw new Error("Solo region storage is unavailable");
+        }
+        try {
+          return saved === null ? undefined : (JSON.parse(saved) as JsonValue);
+        } catch {
+          throw new Error("Solo region state is invalid");
+        }
+      },
+      set: (value: JsonValue) => {
+        if (!active()) return false;
+        try {
           const json = JSON.stringify(value);
           if (
             json === undefined ||
@@ -192,10 +219,39 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           )
             return false;
           const copy = JSON.parse(json) as JsonValue;
-          if (!writeView(binding.scope, key, copy)) return false;
+          const previous = this.states.get(memoryKey);
+          // writeView notifies synchronously; a listener can accept a newer value.
           this.states.set(memoryKey, copy);
+          if (!writeView(binding.scope, key, copy)) {
+            if (previous === undefined) this.states.delete(memoryKey);
+            else this.states.set(memoryKey, previous);
+            return false;
+          }
           return true;
-        },
+        } catch {
+          return false;
+        }
+      },
+      subscribe: (listener: () => void) => {
+        current();
+        const signal = this.runtimes.get(source)?.controller.signal;
+        if (!signal || signal.aborted)
+          throw new Error("This Solo region binding has ended");
+        const stopView = subscribeView(binding.scope, (changedKey) => {
+          if (active() && (changedKey === undefined || changedKey === key)) {
+            try {
+              listener();
+            } catch {
+              /* A source listener cannot reject an accepted storage write. */
+            }
+          }
+        });
+        const stop = () => {
+          stopView();
+          signal.removeEventListener("abort", stop);
+        };
+        signal.addEventListener("abort", stop, { once: true });
+        return stop;
       },
     };
   }
@@ -443,30 +499,56 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         saved.region !== label
       )
         return;
-      return "workspace" in saved && typeof saved.workspace === "string"
-        ? {
-            workspace: saved.workspace,
-            ...("lead" in saved && saved.lead === true
-              ? { lead: true as const }
-              : {}),
-          }
-        : {};
+      const draft =
+        "draft" in saved
+          ? soloDraft({
+              kind: "solo-draft",
+              region: label,
+              draft: saved.draft as JsonValue,
+            })?.draft
+          : { context: { saved: saved as JsonValue } };
+      if ("draft" in saved && !draft)
+        throw new Error("This chat's saved draft context is invalid");
+      return {
+        ...("workspace" in saved && typeof saved.workspace === "string"
+          ? {
+              workspace: saved.workspace,
+            }
+          : {}),
+        ...(draft ? { draft } : {}),
+      };
     };
     this.contributions.register(this.ctx, { ...source, identity });
     return Object.freeze({
       label,
+      draftContext: true,
+      state(binding) {
+        current(binding);
+        const registered = host
+          .sources()
+          .find((entry) => entry.identity === identity);
+        if (!registered) throw new Error("This Solo region binding has ended");
+        return host.regionState(registered, binding);
+      },
       openDraft(binding, input = {}) {
         current(binding);
         const { workspace } = input;
         if (
-          (workspace !== undefined &&
-            (typeof workspace !== "string" ||
-              !workspace ||
-              workspace.length > 256)) ||
-          (input.lead && !workspace)
+          workspace !== undefined &&
+          (typeof workspace !== "string" ||
+            !workspace ||
+            workspace.length > 256)
         )
           throw new Error("Invalid workspace");
-        if (workspace) {
+        // The navigation parser bounds and copies source-owned JSON before retention.
+        const target = parseOpenTarget(
+          soloDraftTarget(binding.scope, {
+            region: label,
+            ...(workspace ? { project: workspace } : {}),
+            ...(input.draft !== undefined ? { draft: input.draft } : {}),
+          }),
+        );
+        if (workspace && !input.draft?.key) {
           // As New chat in a workspace: it starts there, and instructions
           // chosen for another workspace do not carry over.
           const key = regionDraftKey(label, workspace);
@@ -487,13 +569,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
             });
           writeView(binding.scope, `${key}:new-project`, null);
         }
-        void host.ctx.navigation?.open(
-          soloDraftTarget(binding.scope, {
-            region: label,
-            ...(workspace ? { project: workspace } : {}),
-            ...(workspace && input.lead ? { lead: true } : {}),
-          }),
-        );
+        void host.ctx.navigation?.open(target);
       },
       started,
       forget(binding, channelId) {

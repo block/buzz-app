@@ -538,6 +538,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
         .expect("plugin development manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
             .expect("focus manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/changesets/manifest.json"
+        ))
+        .expect("changesets manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -799,7 +803,9 @@ fn sign_release_from_store<K: AsRef<[u8]>>(
         Error::Absent => "Set up your Buzz human identity in the desktop app before signing",
         Error::Denied => "Secure storage access was denied; unlock it and retry signing",
         Error::Busy => "Secure storage is busy; retry signing shortly",
-        Error::Corrupt => "Saved Buzz human identity is malformed; nothing was changed",
+        Error::Corrupt | Error::Ambiguous => {
+            "Saved Buzz human identity is malformed; nothing was changed"
+        }
         _ => "Saved Buzz human identity could not be read from secure storage",
     })?;
     let text = std::str::from_utf8(bytes.as_ref())

@@ -1382,6 +1382,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.mesh-compute"
                 | "buzz.focus"
                 | "buzz.drafts-and-sent"
+                | "buzz.changesets"
                 | "buzz.charts"
         );
         assert_eq!(plugin.enabled, default, "{id}");

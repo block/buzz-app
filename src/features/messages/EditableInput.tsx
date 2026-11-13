@@ -49,13 +49,17 @@ import {
   resourceBlockingMarks,
 } from "./composer-document";
 import { scanMarkdown } from "../relay/message-content";
-import type { ComposerResource } from "../conversation/contracts";
+import type {
+  AnnotationObservation,
+  ComposerResource,
+} from "../conversation/contracts";
 import {
   composerToken,
   composerTokenName,
   composerTokenText,
   type ComposerToken,
 } from "./composer-token";
+import { ComposerSkillChip } from "./ComposerSkillChip";
 import {
   activeBlockFormats,
   apply,
@@ -72,6 +76,16 @@ import {
   composerInlineDelimiters,
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
+import {
+  annotationAt,
+  annotationPlugin,
+  annotationRevision,
+  proseSpans,
+  replaceAnnotation,
+  showAnnotations,
+  shownAnnotations,
+  type AnnotationMark,
+} from "./composer-annotations";
 import {
   buzzCopyDocument,
   externalLinkMarkdown,
@@ -94,6 +108,7 @@ import {
   type ComposerFormatBinding,
   type ComposerLinkEdit,
   type ComposerInputElement,
+  type AnnotationMenuRequest,
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
 import { macWebKit, webKit } from "./mac-webkit";
@@ -395,6 +410,8 @@ export type EditableInputProps = Omit<
   /** Vet a pasted identity link as a notification recipient: the recipient under
    * its current name, or null to keep the display-only chip. */
   acceptRecipient?(pubkey: string): MentionRecipient | null;
+  /** Right-click or Mod+. on a shown annotation. Without it, marks are inert. */
+  onAnnotationMenu?: ((request: AnnotationMenuRequest) => void) | undefined;
 };
 
 /** ProseMirror owns native editing, composition, selection and a single history.
@@ -412,6 +429,7 @@ export function EditableInput({
   onEditLink,
   onPasteTooLong,
   acceptRecipient,
+  onAnnotationMenu,
   ...events
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -429,6 +447,7 @@ export function EditableInput({
     onEditLink,
     onPasteTooLong,
     acceptRecipient,
+    onAnnotationMenu,
     disabled,
     placeholder,
     autocorrect,
@@ -442,6 +461,7 @@ export function EditableInput({
     onEditLink,
     onPasteTooLong,
     acceptRecipient,
+    onAnnotationMenu,
     disabled,
     placeholder,
     autocorrect,
@@ -475,6 +495,8 @@ export function EditableInput({
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
   const emitted = useRef(draft);
+  /** Opens the actions for the annotation at a document position, if any. */
+  const openAnnotation = useRef<(position: number) => boolean>(undefined);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
     /** Applies the settles held through the composition that has just ended. */
@@ -609,13 +631,27 @@ export function EditableInput({
         const tr = state.tr;
         // Only adopt newly recognized tokens. Never rebuild editable text from
         // Markdown here: that would discard stored marks/whitespace on each key.
+        // A restored presentation token takes its renderer's editing mode.
         for (const item of [...decorations].reverse()) {
-          if (
-            next.tokens.some(
-              (token) => token.start === item.start && token.end === item.end,
+          const existing = next.tokens.find(
+            (token) => token.start === item.start && token.end === item.end,
+          );
+          if (existing) {
+            const { attrs } = existing.node;
+            if (
+              attrs.editAsText !== !!item.editAsText &&
+              !attrs.recipient &&
+              !attrs.resource &&
+              !attrs.semantic &&
+              !attrs.pending
             )
-          )
+              tr.setNodeAttribute(
+                existing.from,
+                "editAsText",
+                !!item.editAsText,
+              );
             continue;
+          }
           const from = next.position(item.start),
             to = next.position(item.end, -1);
           if (next.source(from) !== item.start || next.source(to) !== item.end)
@@ -713,8 +749,13 @@ export function EditableInput({
         },
       },
     });
+    let observed: { doc: EditorNode; value: AnnotationObservation } | undefined;
+    const annotations = annotationPlugin(
+      styles.annotation ?? "",
+      () => composing.current || !!editor?.composing,
+    );
     const state = (doc = initial) =>
-      EditorState.create({ doc, plugins: [history(), normalize] });
+      EditorState.create({ doc, plugins: [history(), normalize, annotations] });
     const setRange = (start: number, end: number, direction?: string) => {
       openTokens(start, end);
       const source = projection();
@@ -1892,6 +1933,10 @@ export function EditableInput({
             return {
               dom,
               ignoreMutation: () => true,
+              // A chip's own control keeps its pointer and keys.
+              stopEvent: (event) =>
+                event.target instanceof Element &&
+                !!event.target.closest("button"),
               destroy() {
                 hosts.current.delete(dom);
                 tokenViews();
@@ -2468,7 +2513,118 @@ export function EditableInput({
         configurable: true,
         value: (next: MentionDraft) => api.current?.sync(next, true),
       },
+      shownAnnotations: {
+        configurable: true,
+        get: () => shownAnnotations(editor.state),
+      },
+      annotationObservation: {
+        configurable: true,
+        value: () => {
+          if (
+            view.current !== editor ||
+            !editable() ||
+            composing.current ||
+            editor.composing ||
+            !editor.hasFocus()
+          )
+            return null;
+          // One object per document, so a publication for it stays current.
+          const doc = editor.state.doc;
+          if (observed?.doc !== doc)
+            observed = {
+              doc,
+              value: Object.freeze({
+                revision: annotationRevision(doc),
+                text: projection().draft.text,
+                prose: Object.freeze(proseSpans(doc)),
+              }),
+            };
+          return observed.value;
+        },
+      },
+      showAnnotations: {
+        configurable: true,
+        value: (revision: number, marks: readonly AnnotationMark[]) => {
+          // Owners may clear their marks after the editor has unmounted.
+          if (view.current !== editor) return !marks.length;
+          if (
+            marks.length &&
+            (!editable() || composing.current || editor.composing)
+          )
+            return false;
+          const tr = showAnnotations(editor.state, revision, marks);
+          if (tr) editor.dispatch(tr);
+          return !!tr || !marks.length;
+        },
+      },
+      replaceAnnotation: {
+        configurable: true,
+        value: (
+          revision: number,
+          target: { start: number; end: number; text: string },
+          replacement: string,
+        ) => {
+          if (
+            view.current !== editor ||
+            !editable() ||
+            composing.current ||
+            editor.composing
+          )
+            return false;
+          const tr = replaceAnnotation(
+            editor.state,
+            revision,
+            target,
+            replacement,
+          );
+          if (!tr) return false;
+          const before = editor.state;
+          editor.dispatch(tr.scrollIntoView());
+          if (editor.state === before) return false;
+          // Typing after the replacement starts its own undo step.
+          separateHistory = true;
+          editor.focus();
+          return true;
+        },
+      },
     });
+    openAnnotation.current = (position: number) => {
+      const mark = annotationAt(editor.state, position);
+      const open = current.current.onAnnotationMenu;
+      if (
+        !mark ||
+        !open ||
+        !editable() ||
+        composing.current ||
+        editor.composing
+      )
+        return false;
+      const source = projectComposerDocument(editor.state.doc);
+      const from = source.position(mark.start),
+        to = source.position(mark.end, -1);
+      open({
+        revision: annotationRevision(editor.state.doc),
+        mark,
+        anchor: {
+          getBoundingClientRect() {
+            try {
+              const start = editor.coordsAtPos(from, 1),
+                end = editor.coordsAtPos(to, -1);
+              const left = Math.min(start.left, end.left);
+              return new DOMRect(
+                left,
+                start.top,
+                Math.max(start.right, end.right) - left,
+                Math.max(start.bottom, end.bottom) - start.top,
+              );
+            } catch {
+              return editor.dom.getBoundingClientRect();
+            }
+          },
+        },
+      });
+      return true;
+    };
     api.current = {
       settleHeld() {
         // ProseMirror skips its own compositionend handler while the view is
@@ -2514,6 +2670,7 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      openAnnotation.current = undefined;
       for (const held of heldSettles.current.splice(0)) held.resolve(false);
       editor.destroy();
     };
@@ -2561,6 +2718,21 @@ export function EditableInput({
     const editor = view.current;
     if (editor?.hasFocus()) editor.dispatch(editor.state.tr.scrollIntoView());
   });
+  // Closing a chip's details returns the caret to right after the chip.
+  const caretAfter = (position: () => number | undefined) => {
+    const editor = view.current;
+    const pos = position();
+    const node = pos === undefined ? null : editor?.state.doc.nodeAt(pos);
+    if (!editor?.editable || pos === undefined || node?.type.name !== "token")
+      return false;
+    editor.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, pos + node.nodeSize),
+      ),
+    );
+    editor.focus();
+    return true;
+  };
   return (
     <>
       {/* biome-ignore lint/a11y/useSemanticElements: ProseMirror owns this native editing surface. */}
@@ -2607,6 +2779,19 @@ export function EditableInput({
           )
             return;
           events.onKeyDown?.(event as KeyboardEvent<ComposerInputElement>);
+          const apple = isApplePlatform(navigator.platform);
+          if (
+            !event.defaultPrevented &&
+            event.key === "." &&
+            (apple
+              ? event.metaKey && !event.ctrlKey
+              : event.ctrlKey && !event.metaKey) &&
+            !event.altKey &&
+            !event.shiftKey &&
+            view.current &&
+            openAnnotation.current?.(view.current.state.selection.head)
+          )
+            event.preventDefault();
           if (!event.defaultPrevented && event.key === "Enter") {
             event.preventDefault();
             ref.current?.insertLineBreak();
@@ -2618,6 +2803,21 @@ export function EditableInput({
             crossTokenLine(view.current, hosts.current, event.key, event)
           )
             event.preventDefault();
+        }}
+        onContextMenu={(event) => {
+          const editor = view.current;
+          const target =
+            event.target instanceof Element
+              ? event.target.closest("[data-annotation]")
+              : null;
+          if (
+            editor &&
+            target &&
+            editor.dom.contains(target) &&
+            openAnnotation.current?.(editor.posAtDOM(target, 0))
+          )
+            event.preventDefault();
+          events.onContextMenu?.(event as never);
         }}
         onCompositionStart={(event) => {
           composing.current = true;
@@ -2644,7 +2844,12 @@ export function EditableInput({
         );
         return createPortal(
           // Host-owned artwork: restore never depends on the providing plugin.
-          host.semantic ? (
+          host.semantic?.kind === "skill" ? (
+            <ComposerSkillChip
+              token={host.semantic}
+              returnCaret={() => caretAfter(host.position)}
+            />
+          ) : host.semantic ? (
             <span
               data-buzz-ui=""
               className="inline-chip"

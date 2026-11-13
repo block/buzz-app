@@ -5,6 +5,7 @@ import { repositoriesContext } from "../../features/communities/repositories";
 // this computer. Each conversation the agent is in is one continuing session;
 // Claude answers with the in-process Buzz tools.
 import { isTauri } from "@tauri-apps/api/core";
+import { type ComponentType, createElement } from "react";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import { withProviderWords } from "../../features/agents/failure-words";
@@ -22,7 +23,13 @@ export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
 const UPDATE_MS = 6 * 60 * 60_000;
 
-export const inject = ["agents", "host", "agentProtection", "navigation"];
+export const inject = [
+  "agents",
+  "host",
+  "agentProtection",
+  "navigation",
+  "settingsCards",
+];
 export const apply: PluginModule["apply"] = (ctx) => {
   // Only the desktop app can start `claude`, and setup and file uploads run
   // `bash` and `base64`, which stock Windows lacks; no unusable type elsewhere.
@@ -32,6 +39,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const spawn = host.spawn && withScript(host.spawn.bind(host));
   const readFile = host.readFile?.bind(host);
   const setup = new ClaudeSetup(spawn, (input) => host.request(input));
+  // Older replacement auth implementations need not provide key management.
+  const { Settings } = setup.auth as {
+    Settings?: ComponentType<{ setup: ClaudeSetup; active(): boolean }>;
+  };
+  if (Settings)
+    ctx.settingsCards.register({
+      id: "credentials",
+      title: "Claude",
+      icon: ClaudeLogoIcon,
+      group: "Plugins",
+      component: ({ active }) => createElement(Settings, { setup, active }),
+    });
   ctx.agentProtection.registerModels({
     label: "Claude",
     models: async () =>
@@ -44,7 +63,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const providerDefaults = new ClaudeDefaults(agents.storage);
   // No turn starts without credentials.
   const runtime = new ClaudeRuntime(
-    spawn ? { spawn: setup.auth.authorize(spawn, true) } : {},
+    {
+      ...(spawn ? { spawn: setup.auth.authorize(spawn, true) } : {}),
+      ...(host.resolveDirectory
+        ? { resolveDirectory: host.resolveDirectory.bind(host) }
+        : {}),
+    },
     (key) => ownerReads(agents.relay(key), pubkeyOf(key)),
     (key, signal) => agents.core(key, signal),
     agents.storage,
@@ -107,20 +131,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
     });
   }
 
+  const destination = Settings
+    ? { section: `${ctx.pluginOwner?.id ?? "buzz.claude-code"}/credentials` }
+    : { section: "agents", provider: typeKey };
+  const settingsLink = `buzz://settings?${new URLSearchParams(destination)}`;
   const openSetup = () =>
-    void ctx.navigation.open({
-      version: 1,
-      kind: "settings",
-      section: "agents",
-      provider: typeKey,
-    });
+    void ctx.navigation.open({ version: 1, kind: "settings", ...destination });
   // Failed turns' reports link to the same place, then quote Claude. Buzz's
   // own refusal to start Claude isn't Claude's words, and the link says it.
   runtime.explain = (error) => {
-    const explained = setup.auth.explainTurn(
-      error,
-      `buzz://settings?section=agents&provider=${encodeURIComponent(typeKey)}`,
-    );
+    const explained = setup.auth.explainTurn(error, settingsLink);
     return explained === error || refusedByBuzz(error)
       ? explained
       : withProviderWords(explained, "Claude", error);
@@ -144,6 +164,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   agents.register<Config>({
     id: TYPE_ID,
     execution: true,
+    conversationFolders: true,
     hooks: { events: CLAUDE_HOOK_EVENTS },
     retire: (pubkey) => runtime.retire(pubkey),
     protection: true,
@@ -198,14 +219,22 @@ export const apply: PluginModule["apply"] = (ctx) => {
         usage: async (agent, { since, signal }) => {
           if (await agents.inspectExecution(agent.key))
             throw new Error("Usage is unavailable for remote Claude agents.");
-          return readUsage(
-            { spawn, readFile },
-            config(agent.config).workspace,
-            agent.key,
-            runtime.conversations(agent.key).map((saved) => saved.sessionId),
-            since,
-            signal,
+          // Its workspace's sessions, and those of each conversation folder.
+          const found = await Promise.all(
+            runtime
+              .sessionPlaces(agent.key, config(agent.config).workspace)
+              .map(({ place, saved }) =>
+                readUsage(
+                  { spawn, readFile },
+                  place,
+                  agent.key,
+                  saved,
+                  since,
+                  signal,
+                ),
+              ),
           );
+          return found.flat().sort((a, b) => b.lastAt - a.lastAt);
         },
       }),
     provider: {

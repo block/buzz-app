@@ -310,7 +310,8 @@ async function fixture({
       relayListeners.add(listener);
       return () => relayListeners.delete(listener);
     },
-    retry: retryConnection,
+    retry() {},
+    tryAgain: retryConnection,
     disconnect() {},
     async clearCache() {},
   };

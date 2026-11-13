@@ -1,4 +1,10 @@
 import { followUpQueue } from "../messages/follow-up-queue";
+import {
+  createSessionAdmissions,
+  type AgentSessionRouter,
+  type AgentSessionAssociation,
+  type AgentSessionSource,
+} from "./session-admission";
 import type {} from "../navigation/service";
 import {
   createAgentExecutions,
@@ -71,6 +77,17 @@ import {
   type AgentHookDispatchOptions,
 } from "./hooks";
 import { ownerReads } from "./reads";
+import { createToolOperation, type AgentToolProvider } from "./tool-operation";
+import {
+  assignConversationFolder as assignFolder,
+  conversationFolder as storedFolder,
+  conversationKey,
+} from "./conversation-folders";
+import {
+  conversationInstructions as storedInstructions,
+  forgetConversationInstructions,
+  setConversationInstructions as storeInstructions,
+} from "./conversation-instructions";
 // Agents: agents that are plugins from the start. A plugin registers an agent
 // type (its summary line, peek view, settings tabs and `run`); each agent made
 // from it has its own native-held key, an `agent-attention/v1` configuration the
@@ -108,7 +125,10 @@ import {
   type AgentRecordBody,
   removeAgentFromChannels,
   removeRelayAgent,
+  archiveAgent,
+  type OwnerConsent,
 } from "./relay-removal";
+import { UnattestedProfile } from "../relay/identity-archives";
 import { communityDestination, relayOrigin } from "../communities/destination";
 import type { Communities } from "../communities/service";
 import {
@@ -183,6 +203,7 @@ import {
   type Team,
   type Unfinished,
 } from "./store";
+import { isHuddleRoom } from "../huddle/lifecycle";
 import { soloChat } from "./solo-chat";
 import {
   readCheckpoints,
@@ -378,6 +399,25 @@ export type AgentAddedTab = Readonly<{
   subscribe?: (listener: () => void) => () => void;
 }>;
 export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
+/** Standing instructions a plugin gives every turn of every agent this copy
+ * of the app runs, or of those `when` accepts, while the plugin is on. */
+export type AgentInstructions = Readonly<{
+  id: string;
+  /** Sent with every turn, so keep it short: at most 4 KB (UTF-8). */
+  text: string;
+  /** Whether the agent's turns get them; absent, every agent's do. Asked as
+   * each turn's prompt is built. A `when` that throws leaves out only these. */
+  when?: (agent: Agent) => boolean;
+}>;
+/** Most UTF-8 bytes one `AgentInstructions` text may have, after trimming.
+ * It goes with every turn, so this matches a watch classifier's true/false
+ * text, not the once-a-session blocks such as agent instructions. */
+const INSTRUCTIONS_TEXT_LIMIT = 4 * 1024;
+/** Most UTF-8 bytes one conversation's instructions may have, after
+ * trimming: room for a role's text, still small enough to send each turn. */
+const CONVERSATION_INSTRUCTIONS_LIMIT = 8 * 1024;
+/** Instructions for one turn, with the plugin that gave them. */
+export type TurnInstructions = Readonly<{ plugin: string; text: string }>;
 /** One of an agent's conversation sessions on this device. Without `root` it
  * is the channel's one session: a channel-scoped agent's, a DM's or a Solo
  * chat's; with it, the thread's. `at` is when it last took in a message
@@ -445,10 +485,13 @@ export type SessionUsage = Readonly<{
   observations: readonly UsageObservation[];
 }>;
 /** A conversation to wake an agent in, and what to tell it there. `root` is
- * the thread's root event id; leave it out for a Solo chat. */
+ * the thread's root event id; leave it out for a Solo chat. `topLevel` wakes
+ * it at the top level of a channel that is not a Solo chat, as a watch on the
+ * whole channel does; without it, such a wake has no conversation. */
 export type AgentWake = Readonly<{
   channel: string;
   root?: string;
+  topLevel?: true;
   text: string;
 }>;
 /** The conversation a self-handoff came from: no channel for a watch's or
@@ -564,6 +607,15 @@ export type AgentHandle = Readonly<{
   /** Takes notes for this conversation, oldest first. A thread session passes
    * its root; a channel session omits it and takes all notes in the channel. */
   notes?(channelId: string, root?: string): readonly string[];
+  /** The instructions plugins give the agent's turns now, in a stable order. */
+  instructions?(): readonly TurnInstructions[];
+  /** The instructions a plugin gave the agent's turns in one conversation,
+   * keyed as its session is: a thread session passes its root, a channel
+   * session omits it. Empty text means they were cleared. */
+  conversationInstructions?(
+    channelId: string,
+    root?: string,
+  ): TurnInstructions | undefined;
   /** Puts back notes taken for a turn that never began, ahead of any left
    * since, targeting the same conversation that took them. */
   restoreNotes?(
@@ -694,6 +746,18 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
 export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
 export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
+  session?: AgentSessionAssociation;
+  sessionContext?: string;
+  /** The native adapter calls this after authority and conversation checks. */
+  prepareSession?(
+    placement: Readonly<{
+      source: AgentSessionSource;
+      conversation: AgentSessionSource;
+    }>,
+    deferred?: boolean,
+  ): Promise<
+    Readonly<{ session: AgentSessionAssociation; context?: string }> | undefined
+  >;
   /** The live route's channel; absent when the wire scope was ambiguous. */
   channelId?: string;
   agent: AgentHandle;
@@ -726,7 +790,7 @@ export type Delivery<Config = unknown> = Readonly<{
   /** The plugin declined this request; no work or successful outcome is implied. */
   ignored?(): void;
   /** The harness acknowledged this exact request. Not proof of model consumption. */
-  acknowledged?(): void;
+  acknowledged?(input?: Readonly<{ steering?: true }>): void;
   /** A newer acknowledged request owns this turn's activity; hide this message's
    * bubble without claiming success or changing the execution outcome. */
   superseded?(): void;
@@ -752,7 +816,10 @@ export type Effort = Readonly<{ id: string; label: string }>;
 export type SessionAction = "compact" | "new";
 /** Immediate controls for an existing conversation; separate from run picks. */
 export type SessionControlAction = SessionAction | "interrupt";
-export type SessionPlace = Readonly<{ channelId: string; root?: string }>;
+export type SessionPlace = Readonly<{
+  channelId: string;
+  root?: string;
+}>;
 export type SessionState = "idle" | "active" | "compacting" | "unavailable";
 export type AgentMigrationSetting = Readonly<{
   id: string;
@@ -840,6 +907,8 @@ export type AgentVoiceConnection = Readonly<{
 }>;
 
 export type AgentType<Config = unknown> = {
+  /** Carries Delivery.session into tool context and sessionContext into the prompt. */
+  sessionAdmission?: true;
   /** Huddles supplies a running agent owned by the current viewer.
    * Full-duplex voice on the existing room conversation; abort closes the pipe. */
   voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
@@ -950,6 +1019,7 @@ export type AgentType<Config = unknown> = {
       agent: Agent<Config>,
       place: SessionPlace,
       action: SessionControlAction,
+      reset?: (change: () => Promise<void>) => Promise<void>,
     ): Promise<void>;
     subscribe(listener: () => void): () => void;
   };
@@ -975,6 +1045,11 @@ export type AgentType<Config = unknown> = {
   protection?: true;
   /** Uses the agent's saved execution target for native process and file I/O. */
   execution?: true;
+  /** Starts a conversation that `Agents.assignConversationFolder` gave a
+   * folder in that folder, and refuses its turns while the folder is
+   * missing. `sessions` lists each conversation that has a session, which
+   * then gets no folder. Without it, its agents' conversations get none. */
+  conversationFolders?: true;
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;
   /** Fully retires native sessions for this membership key before policy changes. */
@@ -1286,6 +1361,7 @@ export type NewAgent = Readonly<{
   config?: unknown;
 }>;
 export type Agents = {
+  registerSessionRouter(router: AgentSessionRouter): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
   bindExecution(
@@ -1344,8 +1420,14 @@ export type Agents = {
    * the tools there are when it starts, and one that cannot take a changed
    * list is replaced when it is next used. */
   addTool(tool: AddedTool): void;
+  /** A provider keeps the resolver and shares only its operation descriptor. */
+  createToolOperation(id: string): AgentToolProvider;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Adds standing instructions to every turn of the agents this copy of the
+   * app runs, or of those `when` accepts, while the plugin is on. Each turn
+   * shows them in a `<plugin-instructions>` section that names the plugin. */
+  addInstructions(instructions: AgentInstructions): void;
   /** The Buzz side of a turn for an agent type a plugin brings: where a
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
@@ -1506,6 +1588,44 @@ export type Agents = {
     place: SessionPlace,
     action: SessionControlAction,
   ): Promise<void>;
+  /** Gives one conversation of the owner's local agent its own working
+   * folder, before its first turn: its session starts there, with that
+   * folder's repository configuration, and the agent's workspace stays
+   * reachable. `place` names the conversation as session controls do; a DM
+   * or Solo chat has no root, and rejects one, as a huddle room rejects any
+   * folder. `path` is absolute or `~/…` and must be an
+   * existing directory. Resolves with the folder, without symbolic links.
+   * Kept on this device only, and set once: the same folder again resolves,
+   * another rejects, as does a conversation that already has a session.
+   * Requires `host.files`. Rejects for a harness without conversation
+   * folders, or an agent on an execution target. A folder that
+   * is later removed makes the conversation's next turn fail, naming it. */
+  assignConversationFolder(
+    agent: AgentKey,
+    place: SessionPlace,
+    path: string,
+  ): Promise<string>;
+  /** The folder `assignConversationFolder` gave the conversation, if any. */
+  conversationFolder(agent: AgentKey, place: SessionPlace): string | undefined;
+  /** Gives the owner's local agent standing instructions in one
+   * conversation: each of its turns there shows them, after the instructions
+   * plugins give every turn. Text replaces any the conversation had, and
+   * empty text clears them. At most 8 KiB (UTF-8, after trimming). `place`
+   * names the conversation as session controls do; a DM, a Solo chat or a
+   * channel-scoped agent has no root, and rejects one, as a huddle room
+   * rejects any instructions. Kept on this device for now, also when the
+   * agent leaves the community, and dropped when it is deleted. Plugins
+   * only. */
+  setConversationInstructions(
+    agent: AgentKey,
+    place: SessionPlace,
+    text: string,
+  ): Promise<void>;
+  /** The text `setConversationInstructions` gave the conversation, if any. */
+  conversationInstructions(
+    agent: AgentKey,
+    place: SessionPlace,
+  ): Promise<string | undefined>;
   /** Has a hosted agent's provider stop its turn in one conversation. False
    * when nothing there was running. */
   interrupt(
@@ -1838,6 +1958,10 @@ const wssOf = (origin: string) =>
   relayOrigin(origin).replace(/^https:/, "wss:");
 
 export class AgentsService extends Service implements Agents {
+  private readonly sessionAdmissions;
+  registerSessionRouter(router: AgentSessionRouter) {
+    this.sessionAdmissions.register(this.ctx, router);
+  }
   private readonly executions;
   private async checkExecution(key: AgentKey, type: string) {
     if (!(await this.executions.inspect(key))) return;
@@ -1929,6 +2053,8 @@ export class AgentsService extends Service implements Agents {
   private readonly tabContributions;
   private readonly attentionControls;
   private readonly addedTools;
+  private readonly operationNames = new Set<string>();
+  private readonly addedInstructions;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
   private readonly attentionSources;
@@ -2058,12 +2184,17 @@ export class AgentsService extends Service implements Agents {
     private readonly deviceSettings?: DeviceSettings,
   ) {
     super(ctx, "agents");
+    this.sessionAdmissions = createSessionAdmissions(
+      ctx,
+      executionStorage(storage),
+    );
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
     this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
+    this.addedInstructions = createContributions<AgentInstructions>(ctx);
     this.attentionSources = createContributions<AttentionProducer>(ctx);
     // Each changes the copy at once and logs a failed save itself.
     void migrateAgentStorage(storage);
@@ -2149,6 +2280,26 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      prepareSession: async (agent, type, trigger, placement, signal) => {
+        if (
+          !type.sessionAdmission ||
+          (trigger.type !== "mention" &&
+            trigger.type !== "plugin" &&
+            trigger.type !== "attention")
+        )
+          return;
+        return this.sessionAdmissions.prepare({
+          agent: agent.key,
+          owner: agent.owner,
+          harness: agent.type,
+          ...placement,
+          invocationId:
+            trigger.type === "mention" ? trigger.event.id : trigger.id,
+          ...(trigger.type === "mention" ? { event: trigger.event } : {}),
+          resumed: trigger.type === "mention" && !!trigger.resumed,
+          signal,
+        });
+      },
       // Only the copy that runs an agent keeps its watched channels live.
       ownershipChanged: () => {
         this.attend(this.state.running);
@@ -2463,6 +2614,9 @@ export class AgentsService extends Service implements Agents {
         }),
       handoff: (agent, { from, ...wake }) =>
         this.wakeIn(agent.key, wake, { from }),
+      instructions: (agent) => this.turnInstructions(agent),
+      conversationInstructions: (agent, channelId, root) =>
+        this.turnConversationInstructions(agent, channelId, root),
       templates: (agent) => {
         // The agents Agents shows for this community, as the create dialog
         // offers a template's.
@@ -2884,6 +3038,106 @@ export class AgentsService extends Service implements Agents {
       return () => this.toolNames.delete(tool.name);
     });
   }
+  createToolOperation(id: string): AgentToolProvider {
+    const ctx = this.ctx;
+    const owner = ctx.pluginOwner;
+    if (!owner || !/^[a-z][a-z0-9_-]{0,63}$/.test(id))
+      throw new Error("An installed plugin must name its agent operation");
+    const name = `${owner.id}/${id}`;
+    if (this.operationNames.has(name))
+      throw new Error(`Agent operation already registered: ${name}`);
+    let active = false;
+    ctx.effect(() => {
+      this.operationNames.add(name);
+      active = true;
+      return () => {
+        active = false;
+        this.operationNames.delete(name);
+      };
+    });
+    return createToolOperation(name, (client, context, tool) => {
+      const agent = this.ready(client.key);
+      const binding = agent && this.bindingOf(agent);
+      if (!agent || !binding)
+        throw new Error("The agent operation needs a live community");
+      const epoch = binding.connection.epoch;
+      const viewer = { ...agent, pubkey: binding.viewer };
+      let invalid = false;
+      const check = () => {
+        if (
+          invalid ||
+          !active ||
+          !ctx.pluginStatus.isActive(owner.id, owner.revision) ||
+          !this.addedTools
+            .snapshot()
+            .includes(tool as Contribution<AddedTool & { id: string }>) ||
+          binding.controller.signal.aborted ||
+          this.bindingOf(agent) !== binding ||
+          binding.connection.epoch !== epoch ||
+          binding.connection.since === undefined ||
+          this.communities.snapshot().viewer !== binding.viewer ||
+          this.ready(client.key)?.pubkey !== agent.pubkey ||
+          client.pubkey !== agent.pubkey ||
+          client.owner !== binding.viewer ||
+          !context.channel ||
+          this.reads(agent, { tags: [["h", context.channel]] }) !== true ||
+          this.reads(viewer, { tags: [["h", context.channel]] }) !== true
+        )
+          throw new Error("The agent operation binding is no longer active");
+      };
+      check();
+      const release = binding.session.channels.subscribeList(() => {
+        try {
+          check();
+        } catch {
+          invalid = true;
+        }
+      });
+      return {
+        viewer: binding.viewer,
+        community: binding.origin,
+        check,
+        release,
+      };
+    });
+  }
+  addInstructions(instructions: AgentInstructions) {
+    // What is checked is what is kept, whatever the object does later.
+    const { id, text, when } = instructions;
+    if (
+      !/^[a-z0-9][a-z0-9._-]*$/.test(id ?? "") ||
+      typeof text !== "string" ||
+      !text.trim() ||
+      (when !== undefined && typeof when !== "function")
+    )
+      throw new Error("Agent instructions need an id and text");
+    if (new TextEncoder().encode(text.trim()).length > INSTRUCTIONS_TEXT_LIMIT)
+      throw new Error(
+        `Agent instructions are over ${INSTRUCTIONS_TEXT_LIMIT} bytes`,
+      );
+    this.addedInstructions.register(
+      this.ctx,
+      when ? { id, text, when } : { id, text },
+    );
+  }
+  /** The instructions active plugins give this agent's turns now, ordered by
+   * plugin and id so the order plugins start in does not change a prompt. */
+  private turnInstructions(agent: Agent): readonly TurnInstructions[] {
+    const current = this.agent(agent.key) ?? agent;
+    return this.addedInstructions
+      .snapshot()
+      .filter((entry) => {
+        try {
+          // Only true admits them: an async `when` gives a Promise.
+          return !entry.when || entry.when(current) === true;
+        } catch (error) {
+          console.warn("Agent instructions failed to match", entry.key, error);
+          return false;
+        }
+      })
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map((entry) => ({ plugin: entry.pluginId, text: entry.text }));
+  }
   addAttentionSource(source: import("./attention-sources").AttentionSource) {
     const plugin = this.ctx.pluginOwner?.id;
     if (
@@ -3211,7 +3465,7 @@ export class AgentsService extends Service implements Agents {
   }
   private wakeIn(
     key: AgentKey,
-    { channel, root, text }: AgentWake,
+    { channel, root, topLevel, text }: AgentWake,
     source: Readonly<{ plugin: string } | { from: HandoffSource }>,
   ) {
     if (!channel || !text.trim())
@@ -3220,11 +3474,14 @@ export class AgentsService extends Service implements Agents {
     // them answering at the wake's own id.
     if (root !== undefined && !/^[0-9a-f]{64}$/i.test(root))
       throw new Error("A wake's root must be the thread's 64-hex event id");
+    if (topLevel !== undefined && (topLevel !== true || root !== undefined))
+      throw new Error("A wake is in a thread or at the top level, not both");
     this.runners.wakeIn(key, {
       type: "plugin",
       ...source,
       channel,
       ...(root ? { root: root.toLowerCase() } : {}),
+      ...(topLevel ? { topLevel } : {}),
       text,
       id: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
       at: Date.now(),
@@ -3499,12 +3756,14 @@ export class AgentsService extends Service implements Agents {
       agents: Object.freeze(
         identities
           .filter((identity) => !identity.deleted)
-          .map(({ key, pubkey, name, relay, owner, picture }) =>
+          .map(({ key, pubkey, name, relay, owner, picture, type, deleting }) =>
             Object.freeze({
               pubkey,
               name,
               relayUrl: relay,
               owner,
+              type,
+              ...(deleting ? { deleting: true as const } : {}),
               ...(remote.has(key) ? { execution: "remote" as const } : {}),
               ...(picture ? { picture } : {}),
             }),
@@ -4496,6 +4755,21 @@ export class AgentsService extends Service implements Agents {
       prior: this.rowOf(origin, pubkey)?.prior,
     });
   }
+  private sessionPlace(
+    agent: Agent,
+    type: RegisteredAgentType,
+    source: SessionPlace,
+  ): SessionPlace {
+    const summary = this.channelOf(agent, { tags: [["h", source.channelId]] });
+    const whole =
+      summary?.channelType === "solo" ||
+      summary?.channelType === "dm" ||
+      type.sessionControls?.scope(agent) === "channel";
+    return {
+      channelId: source.channelId,
+      ...(!whole && source.root ? { root: source.root } : {}),
+    };
+  }
   sessionState(key: AgentKey, place: SessionPlace): SessionState {
     const agent = this.agent(key);
     const type = agent && this.types().find((kind) => kind.key === agent.type);
@@ -4506,7 +4780,12 @@ export class AgentsService extends Service implements Agents {
       this.runners.transitioning(key)
     )
       return "unavailable";
-    return type?.sessionControls?.state(agent, place) ?? "unavailable";
+    return (
+      type?.sessionControls?.state(
+        agent,
+        this.sessionPlace(agent, type, place),
+      ) ?? "unavailable"
+    );
   }
   async session(
     key: AgentKey,
@@ -4529,8 +4808,185 @@ export class AgentsService extends Service implements Agents {
       const current = shown();
       if (current?.type !== agent.type || !this.types().includes(type))
         throw new Error("The agent's harness changed. Try again.");
-      await type.sessionControls?.run(current, place, action);
+      const actual = this.sessionPlace(current, type, place);
+      await type.sessionControls?.run(
+        current,
+        actual,
+        action,
+        type.sessionAdmission
+          ? (change) =>
+              this.sessionAdmissions.reset(key, current.type, actual, change)
+          : undefined,
+      );
     });
+  }
+
+  async assignConversationFolder(
+    key: AgentKey,
+    place: SessionPlace,
+    path: string,
+  ) {
+    const host = this.ctx.host;
+    if (!this.ctx.pluginOwner || !host?.resolveDirectory)
+      throw new Error("Only a desktop plugin assigns a conversation folder");
+    const { scope, agent, conversation } = this.folderPlace(key, place);
+    const type = this.types().find((kind) => kind.key === agent.type);
+    if (!type?.conversationFolders)
+      throw new Error(
+        `${type?.title ?? "This"} agents do not support conversation folders`,
+      );
+    if (await this.executions.inspect(key))
+      throw new Error(
+        "Conversation folders are unavailable for agents on an execution target",
+      );
+    // Harnesses run a DM or Solo chat as one conversation, so a root would
+    // name a conversation that never runs. They key a huddle room's
+    // conversations differently, so none gets a folder.
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    const channel = await reads?.channel(place.channelId);
+    if (isHuddleRoom(channel?.about))
+      throw new Error("Conversation folders are unavailable in a huddle");
+    if (await this.rootInWhole(key, agent.owner, place))
+      throw new Error(
+        "A DM or Solo chat is one conversation: give its folder without a root",
+      );
+    // With the calling plugin's own file access, which the host checks.
+    const folder = await host.resolveDirectory(path, { create: false });
+    // Its session's history stays where it began, so a folder given later
+    // would start it over.
+    if (
+      !storedFolder(this.storage, scope, key, conversation) &&
+      type.sessions
+        ?.list(key)
+        .some(
+          (session) =>
+            conversationKey(session.channelId, session.root) === conversation,
+        )
+    )
+      throw new Error(
+        "This conversation already started in the agent's workspace",
+      );
+    return assignFolder(this.storage, scope, key, conversation, folder);
+  }
+  conversationFolder(key: AgentKey, place: SessionPlace) {
+    try {
+      const { scope, conversation } = this.folderPlace(key, place);
+      return storedFolder(this.storage, scope, key, conversation);
+    } catch {
+      return undefined;
+    }
+  }
+  async setConversationInstructions(
+    key: AgentKey,
+    place: SessionPlace,
+    text: string,
+  ) {
+    const plugin = this.ctx.pluginOwner?.id;
+    if (!plugin)
+      throw new Error("Only a plugin sets conversation instructions");
+    if (typeof text !== "string")
+      throw new Error("Conversation instructions need text");
+    const trimmed = text.trim();
+    if (
+      new TextEncoder().encode(trimmed).length > CONVERSATION_INSTRUCTIONS_LIMIT
+    )
+      throw new Error(
+        `Conversation instructions are over ${CONVERSATION_INSTRUCTIONS_LIMIT} bytes`,
+      );
+    const { scope, conversation } = await this.instructionsPlace(key, place);
+    await storeInstructions(
+      this.storage,
+      scope,
+      key,
+      conversation,
+      plugin,
+      trimmed,
+    );
+  }
+  async conversationInstructions(key: AgentKey, place: SessionPlace) {
+    try {
+      const { scope, conversation } = await this.instructionsPlace(key, place);
+      return (
+        storedInstructions(this.storage, scope, key, conversation)?.text ||
+        undefined
+      );
+    } catch {
+      return undefined;
+    }
+  }
+  /** Where the owner's local agent keeps a conversation's instructions, as
+   * its folder. A root for a conversation its harness runs whole rejects:
+   * no turn would show them. So does a huddle room, whose conversations
+   * harnesses key differently. */
+  private async instructionsPlace(key: AgentKey, place: SessionPlace) {
+    const found = this.folderPlace(key, place);
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    if (isHuddleRoom((await reads?.channel(place.channelId))?.about))
+      throw new Error("Conversation instructions are unavailable in a huddle");
+    if (
+      place.root &&
+      (found.conversation === place.channelId ||
+        (await this.rootInWhole(key, found.agent.owner, place)))
+    )
+      throw new Error(
+        "This agent runs the channel as one conversation: give its instructions without a root",
+      );
+    return found;
+  }
+  /** The instructions a plugin gave the agent in the conversation its
+   * harness keys as `channelId` and `root`. One removed from that channel
+   * keeps none there: its turns say any it was shown no longer apply. */
+  private turnConversationInstructions(
+    agent: Agent,
+    channelId: string,
+    root?: string,
+  ) {
+    const scope = ownerReads(this.relay(agent.key), pubkeyOf(agent.key))?.scope;
+    const saved =
+      scope &&
+      storedInstructions(
+        this.storage,
+        scope,
+        agent.key,
+        conversationKey(channelId, root),
+      );
+    if (!saved) return undefined;
+    return this.member(agent, { tags: [["h", channelId]] }) === false
+      ? { ...saved, text: "" }
+      : saved;
+  }
+  /** Whether `place` has a root in a DM or Solo chat. Harnesses run each as
+   * one conversation, so the root would name one that never runs. */
+  private async rootInWhole(key: AgentKey, owner: string, place: SessionPlace) {
+    if (!place.root) return false;
+    const reads = ownerReads(this.relay(key), pubkeyOf(key));
+    return !!(
+      (await reads?.channel(place.channelId))?.dm ||
+      (await reads?.soloChat(
+        owner,
+        place.channelId,
+        new AbortController().signal,
+      ))
+    );
+  }
+  /** Where the owner's local agent keeps a conversation's folder: keyed as
+   * its harness keys the conversation's session. */
+  private folderPlace(key: AgentKey, place: SessionPlace) {
+    const agent = this.agent(key);
+    const type = agent && this.types().find((kind) => kind.key === agent.type);
+    if (!agent || !this.liveMember(key) || type?.remote)
+      throw new Error("No such local agent on this device");
+    const scope = ownerReads(this.relay(key), pubkeyOf(key))?.scope;
+    if (!scope) throw new Error("The agent's community is not connected");
+    const channel = type?.sessionControls?.scope(agent) === "channel";
+    return {
+      scope,
+      agent,
+      conversation: conversationKey(
+        place.channelId,
+        channel ? undefined : place.root,
+      ),
+    };
   }
 
   /** Whether the owner can stop a hosted agent's turn: its provider can. A
@@ -4935,7 +5391,19 @@ export class AgentsService extends Service implements Agents {
           binding.controller.signal,
           AbortSignal.timeout(CLEANUP_TIMEOUT_MS),
         ]);
-        await leaveCommunity(binding.session, pubkey, signal);
+        // Only an owner proves ownership with a proof issued now; its key,
+        // still here, force-republishes its own profile naming that owner.
+        await leaveCommunity(
+          binding.session,
+          pubkey,
+          signal,
+          member.owner === binding.viewer
+            ? {
+                issue: this.authorize,
+                attest: () => native.publishProfile(member, true),
+              }
+            : undefined,
+        );
         await unshare(binding.session, binding.viewer, pubkey, signal);
         await deleteAgentRecord(
           binding.session,
@@ -4962,6 +5430,9 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(member.key, false);
       this.unlist(binding.origin, pubkey);
       await native.forget(member);
+      // Left, its conversations stay here, and so do their instructions.
+      if (deleting)
+        await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
@@ -4990,11 +5461,16 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(key, false);
       this.unlist(originOf(member.relay) ?? "", member.pubkey);
       await native.forget(member);
+      await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }
     await this.refresh();
     if (!this.liveRows(member.pubkey).length) forgetDefaultAgent(member.pubkey);
+    // So the community's agent choices no longer offer it.
+    await this.bindingOf(member)?.session.agentChoices.refresh(true, {
+      fresh: true,
+    });
   }
 
   joinable() {
@@ -5151,11 +5627,43 @@ export class AgentsService extends Service implements Agents {
     return this.exclusive(pubkey, async () => {
       const { agent, remote, origin, binding } = this.hosted(pubkey, true);
       const { signal } = binding.controller;
-      await remote.remove({ pubkey, community: agent.relay, signal });
+      // Only an owner proves ownership with a proof issued now. Its key is
+      // its provider's, so a profile that lacks one can't be republished.
+      const owner: OwnerConsent | undefined =
+        agent.owner === binding.viewer ? { issue: this.authorize } : undefined;
+      // Archived before its provider removes it, which can't be undone, so
+      // nothing offers it once it is gone. A retry finds it archived.
+      let archive: "archived" | "skipped";
+      try {
+        archive = await archiveAgent(binding.session, pubkey, signal, owner);
+      } catch (error) {
+        console.warn(`Agent ${agent.name} was not archived`, error);
+        throw new Error(
+          error instanceof UnattestedProfile
+            ? `${agent.name} wasn't deleted: this community archives it only when its profile names you as its owner, and only its provider can publish that profile.`
+            : `${agent.name} wasn't deleted: Buzz couldn't archive it in this community. Delete it again.`,
+        );
+      }
+      try {
+        await remote.remove({ pubkey, community: agent.relay, signal });
+      } catch (error) {
+        console.warn(`Agent ${agent.name} was not removed`, error);
+        throw new Error(
+          archive === "archived"
+            ? `${agent.name} is archived and hidden, but its provider couldn't remove it, so it may still be running. Delete it again.`
+            : `${agent.name} wasn't deleted: its provider couldn't remove it, so it may still be running. This community advertises no archive authority, so it wasn't archived. Delete it again.`,
+        );
+      }
       // Before its record goes, so a failure leaves it listed to Delete again.
       await unshare(binding.session, binding.viewer, pubkey, signal);
       // An unfinished one may have published its profile before setup failed.
-      await removeRelayAgent(binding.session, binding.viewer, pubkey, signal);
+      await removeRelayAgent(
+        binding.session,
+        binding.viewer,
+        pubkey,
+        signal,
+        owner,
+      );
       this.unlist(origin, pubkey);
       await this.writeUnfinished(
         this.unfinished.filter((setup) => setup.pubkey !== pubkey),
@@ -5648,7 +6156,9 @@ export class AgentsService extends Service implements Agents {
 
   /** Reads the viewer's agent records in the community, then lists each of
    * its agents here that they lack. A sync asks again until one succeeds.
-   * Without the desktop app there are no agents to show. */
+   * Without the desktop app there are no agents to show. Agents shows its
+   * hosted agents from these records alone, so the read uses foreground
+   * capacity: a slow background read must not run out its deadline. */
   private async readListings(origin: string, binding: Binding) {
     if (!this.native || this.reading.get(origin) === binding) return;
     this.reading.set(origin, binding);
@@ -5656,7 +6166,7 @@ export class AgentsService extends Service implements Agents {
     try {
       const events = await session.read(
         [{ kinds: [30177], authors: [viewer], limit: 500 }],
-        { signal: controller.signal, priority: "background", fresh: true },
+        { signal: controller.signal, priority: "foreground", fresh: true },
       );
       if (this.bound.get(origin)?.binding !== binding) return;
       const edits = this.edits.get(origin);
@@ -6472,7 +6982,10 @@ export class AgentsService extends Service implements Agents {
       );
       this.unlist(originOf(relay) ?? "", pubkey);
       await this.native?.forget(member);
+      await forgetConversationInstructions(this.storage, member.key);
       await this.refresh();
+      // So the community's agent choices no longer offer it.
+      await binding.session.agentChoices.refresh(true, { fresh: true });
     } catch (error) {
       if (!fence.aborted) console.warn("Deleted agent cleanup stopped", error);
     }
@@ -6995,21 +7508,10 @@ async function leaveCommunity(
   session: RelaySession,
   pubkey: string,
   signal: AbortSignal,
+  owner?: OwnerConsent,
 ) {
   await removeAgentFromChannels(session, pubkey, signal);
-  const { archives } = session;
-  if (!archives.writable) return;
-  // The archive cache is not live; this needs a read started now.
-  await archives.ensure();
-  await archives.refresh();
-  signal.throwIfAborted();
-  const state = archives.state(pubkey);
-  // An unfinished read says nothing, least of all "not archived".
-  if (state === "unknown") throw new Error("Archive state is unknown");
-  // Without an owner-attested profile the agent is not in the directory, so
-  // there is nothing to hide (and no consent path to archive it with).
-  if (state === "not-archived" && (await archives.consent(pubkey, signal)))
-    await archives.request("archive", pubkey, signal);
+  await archiveAgent(session, pubkey, signal, owner);
 }
 /** After a finished Delete, rereads the shared agent choices, superseding any
  * read begun before it, so their inventory no longer offers it; then forgets

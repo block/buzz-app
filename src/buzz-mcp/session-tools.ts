@@ -9,11 +9,21 @@ import {
   ATTENTION_REVIEW,
 } from "../features/agent-harness/attention-prompt";
 import {
+  ownerInstructions,
+  pluginInstructions,
+} from "../features/agent-harness/plugin-instructions";
+import type { AgentHandle } from "../features/agents/service";
+import {
   ATTENTION_TOOLS,
   callAttentionTool,
   isAttentionTool,
 } from "./attention";
 import type { BuzzClient, Context } from "./client";
+import {
+  callToolOperation,
+  type AgentToolOperation,
+  type AgentToolProof,
+} from "../features/agents/tool-operation";
 import { callPluginTool, isPluginTool, PLUGIN_TOOLS } from "./plugins";
 import { callSettingsTool, isSettingsTool, SETTINGS_TOOLS } from "./settings";
 import {
@@ -36,12 +46,15 @@ export type AddedTool = Readonly<{
   name: string;
   description: string;
   inputSchema: Readonly<Record<string, unknown>>;
+  /** A provider operation checked with these exact tool arguments. */
+  operation?: AgentToolOperation;
   /** Runs as the agent in `context`. Use `client.signal` to cancel waits and
    * check it before external writes. A throw is a tool error for the agent. */
   call(
     client: BuzzClient,
     context: Context,
     args: Record<string, unknown>,
+    proof?: AgentToolProof,
   ): Promise<Reply>;
 }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
@@ -119,14 +132,32 @@ export function addedKey(added: readonly AddedTool[]) {
   return (hash >>> 0).toString(36);
 }
 
-/** Text for the end of a turn's prompt, as the agent's attention is now.
- * An agent with no Interests has nothing to review, so it need not load the
- * attention tools to find that out. */
-export function turnNote(client?: Pick<BuzzClient, "attention">) {
+/** Text for the end of a turn's prompt: the instructions plugins give the
+ * agent now, then those for its conversation, which a harness names as it
+ * names its notes', then its attention as it is now. An agent with no
+ * Interests has nothing to review, so it need not load the attention tools to
+ * find that out. */
+export function turnNote(
+  client?: Pick<BuzzClient, "attention"> &
+    Pick<AgentHandle, "instructions" | "conversationInstructions">,
+  channelId?: string,
+  root?: string,
+) {
   const attention = client?.attention;
-  if (!attention) return undefined;
-  if (!attention.enabled()) return ATTENTION_OFF;
-  return attention.interests().length ? ATTENTION_REVIEW : ATTENTION_NONE;
+  const review = !attention
+    ? undefined
+    : !attention.enabled()
+      ? ATTENTION_OFF
+      : attention.interests().length
+        ? ATTENTION_REVIEW
+        : ATTENTION_NONE;
+  const notes = [
+    pluginInstructions(client?.instructions?.()),
+    channelId &&
+      ownerInstructions(client?.conversationInstructions?.(channelId, root)),
+    review,
+  ].filter(Boolean);
+  return notes.length ? notes.join("\n\n") : undefined;
 }
 
 /** Answers one tool call. Throws when the tool cannot run now; the message
@@ -140,6 +171,17 @@ export async function callSessionTool(
   added: readonly AddedTool[] = [],
 ): Promise<Reply> {
   if (!client) throw new Error("Buzz is not ready yet. Try again.");
+  const operation = added.find((tool) => tool.name === name && tool.operation);
+  if (operation) {
+    const session = JSON.stringify(context);
+    try {
+      const reply = await callToolOperation(client, context, args, operation);
+      await client.protect?.({ kind: "tool-result", session, content: reply });
+      return reply;
+    } catch (error) {
+      return checkedToolError(client, session, error);
+    }
+  }
   // Hold the reviewed destination and arguments while the checker waits.
   if (client.protect) {
     context = structuredClone(context);

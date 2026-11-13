@@ -242,6 +242,20 @@ edit/reaction removes that overlay. Unknown or denied auxiliary targets remain
 invisible; active thread target evidence survives shared-cache eviction but still
 passes the existing recursive access check.
 
+Closing a ready ordinary view of a root keeps the rows it showed (root, confirmed
+replies, direction and load-more state) in a memory-only resume (32 threads / 8 MiB,
+least recently used first); closing it during a read, or after it selected an exact
+target, leaves an earlier resume in place. The next ordinary view of that root
+starts `ready` showing those rows, after the existing access check, so the panel
+positions it without the loader. Resumed rows are display only and never evidence:
+the closed view missed the stream, and the relay omits deleted rows with their
+deletions. A resumed row never shows over that row's own evidence or any retained
+deletion of it. A view opened from a resume with no retained root skips the
+session's replay of retained events, which a first open without the root ignores. The view's first refresh runs in the background with the same reads as a
+first open, then replaces them; if it fails they are dropped. Exact views neither
+use nor replace a resume. Any access change, cache clear or session disposal drops
+every resume.
+
 Threads share the 64 owned-handle ceiling. Each retains at most 2,000 events / 4 MiB;
 overflow clears display evidence and exposes an explicit recoverable limit rather
 than silently evicting a tombstone. Cache clear, access loss and session disposal
@@ -697,13 +711,28 @@ disconnect. Window focus does not read the roster. Decryption, uploads and serve
 
 The same rule covers the other reads a global route replays. After a continuous
 profiles replay, statuses and the emoji catalog are not read again; after a
-continuous membership replay, the read-state markers and the reminders list are
-not read again. Each owner returns to the state the drop interrupted once the
-replay is in, and reads again when that state was incomplete, failed, or still
-loading. A cut replay or no cursor keeps the earlier reads, even after an earlier
-report on the same connection; a route that fails before it establishes, or a
-host that reports no route, keeps them once per connection. The unread repair
-still runs on each connection.
+continuous membership replay, the read-state markers, reminders list and saved
+sidebar preferences are not read again unless reconciliation is still owed.
+Each owner returns to the state the drop interrupted once the replay is in, and
+reads again when that state was incomplete, failed, or still loading. A cut
+replay or no cursor keeps the earlier reads, even after an earlier report on the
+same connection; a route that fails before it establishes, or a host that reports
+no route, keeps them once per connection. The unread repair still runs on each
+connection.
+
+Saved sidebar preferences use no idle polling. A newer own sidebar event,
+including a local-write echo, requests one strong, fresh five-filter latest-head
+batch (limit 1 per coordinate). Same-turn hints coalesce; a newer hint or an
+overlapping local write can require a trailing batch. Duplicate or superseded
+hints request none. A non-continuous membership establishment requests one batch,
+including the first connection without a cursor: cold start typically reads
+twice (initial load plus repair), with another batch possible if replay overlaps
+a read. Continuous reconnect adds none when reconciliation is complete. Each
+published local preference write can therefore add one echo batch; unchanged
+writes that do not publish add none. Transient read failures use the existing
+session recovery backoff (1 second through a 30-second cap); other failures wait
+for Retry, a newer hint or reconnect. All reads use the existing host decoder;
+live payloads are invalidation hints, not preference authority.
 
 `session.messages.send(channelId, text)`, `.reply(channelId, resolvedRootId, text)`,
 `.edit(messageId, text)` and `.retry(id)`

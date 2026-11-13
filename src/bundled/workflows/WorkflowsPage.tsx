@@ -56,7 +56,7 @@ export function WorkflowsPage({ relay }: { relay: RelayData }) {
         {connection.status === "error" && (
           <>
             <p role="alert">{connection.error}</p>
-            <Button onClick={() => relay.retry()}>Retry connection</Button>
+            <Button onClick={() => relay.tryAgain()}>Retry connection</Button>
           </>
         )}
       </div>
@@ -359,6 +359,8 @@ export function WorkflowCommunity({
           scope={
             <WorkflowChannelPicker
               channels={creatable}
+              profiles={session.profiles}
+              names={session.names}
               onSelect={(id) => {
                 setCreateOpen(false);
                 openChannel(id, "new");

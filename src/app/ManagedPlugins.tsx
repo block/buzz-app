@@ -5,6 +5,7 @@ import { InlineHeader } from "../shared/design-system/ui/Header";
 import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Switch } from "../shared/design-system/ui/Switch";
+import { gitScope } from "../plugins/git-scope";
 import type { PluginManager } from "../plugins/manager";
 import type {
   Catalog,
@@ -280,10 +281,12 @@ export function ManagedPluginReview({
   authorizeGit,
   holdReview,
   requestedBy,
+  refusal,
   recheck,
   confirm,
   returnFocus,
   onInstalled,
+  onOpen,
   onClose,
 }: {
   plugins: PluginManager;
@@ -296,12 +299,17 @@ export function ManagedPluginReview({
   holdReview?: (() => () => void) | undefined;
   /** An agent's request, reviewed in place of a recommendation. */
   requestedBy?: Readonly<{ name: string; reason: string }> | undefined;
+  /** Refuses the install as the review opens, before downloading anything. */
+  refusal?: string | undefined;
   /** Run as the owner confirms; a returned reason refuses the install. */
   recheck?: (() => string | undefined) | undefined;
   /** Marks the install as confirmed until the returned function runs. */
   confirm?: (() => () => void) | undefined;
   returnFocus: () => HTMLElement | null;
-  onInstalled?: () => void;
+  /** Reports whether the install added the plugin or replaced one present as it started. */
+  onInstalled?: (outcome: "installed" | "updated") => void;
+  /** Shows the installed plugin a refusal names. */
+  onOpen?: (() => void) | undefined;
   onClose: () => void;
 }) {
   const cancel = useRef<HTMLButtonElement>(null);
@@ -311,6 +319,9 @@ export function ManagedPluginReview({
   const [attempt, setAttempt] = useState(0);
   const [review, setReview] = useState<Review>({ status: "loading" });
   const [installing, setInstalling] = useState(false);
+  // Open plugin shows the named plugin at once and lets this dialog finish
+  // closing before it unmounts, so focus returns to the details it opened.
+  const [opened, setOpened] = useState(false);
   const [enable, setEnable] = useState(true);
   // Installing refreshes the catalog before enabling; the dialog keeps what it started with.
   const [frozen, setFrozen] = useState<PluginInfo | null>();
@@ -358,7 +369,7 @@ export function ManagedPluginReview({
           signed?.repository ?? wanted.repository,
           wanted.reference,
           signed?.token,
-          wanted.commit,
+          ...gitScope(wanted.commit, wanted.path),
         );
         if (!preview) throw new Error("No plugin source found.");
         if (!current.active) {
@@ -403,7 +414,7 @@ export function ManagedPluginReview({
     },
   );
   const close = useEffectEvent(() => onClose());
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a retry is a new attempt, and a changed recommendation is a new entry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a retry is a new attempt, a changed recommendation is a new entry, and a refused one downloads nothing.
   useEffect(() => {
     if (working.current) return;
     const wanted = latest.current.entry;
@@ -411,6 +422,7 @@ export function ManagedPluginReview({
       close();
       return;
     }
+    if (refusal) return;
     const current = { active: true };
     setReview({ status: "loading" });
     // Deferred so Strict Mode's retired mount never acquires the import slot.
@@ -422,7 +434,7 @@ export function ManagedPluginReview({
       if (token.current && !working.current) discard(token.current);
       if (!working.current) token.current = "";
     };
-  }, [attempt, key]);
+  }, [attempt, key, refusal]);
 
   const ready = review.status === "ready" && review.key === key;
   const candidate = ready
@@ -478,7 +490,7 @@ export function ManagedPluginReview({
       await imports?.discard(value).catch(() => {});
       if (!alreadyInstalled && enable)
         await plugins.change("enable", wanted.id);
-      onInstalled?.();
+      onInstalled?.(alreadyInstalled ? "updated" : "installed");
       onClose();
     } finally {
       unconfirm?.();
@@ -489,6 +501,42 @@ export function ManagedPluginReview({
 
   const busy = installing || managing || !ready;
   const name = candidate?.manifest.name ?? entry?.id ?? "plugin";
+  if ((refusal || opened) && !installing)
+    return (
+      <Dialog
+        open={!opened}
+        onOpenChange={(next) => {
+          if (!next) onClose();
+        }}
+        onOpenChangeComplete={(open) => {
+          if (!open && opened) onClose();
+        }}
+        initialFocus={cancel}
+        title="Already installed"
+        description={refusal}
+        size="compact"
+        dismissOnOutsideClick
+        finalFocus={returnFocus}
+        actions={
+          <>
+            <Button ref={cancel} onClick={onClose}>
+              Close
+            </Button>
+            {onOpen && (
+              <Button
+                variant="prominent"
+                onClick={() => {
+                  setOpened(true);
+                  onOpen();
+                }}
+              >
+                Open plugin
+              </Button>
+            )}
+          </>
+        }
+      />
+    );
   return (
     <Dialog
       open
@@ -575,6 +623,15 @@ export function ManagedPluginReview({
               {requestedBy.reason}
             </p>
           )}
+          {"url" in entry &&
+            existing?.source === "external" &&
+            existing.updateSource &&
+            "repository" in existing.updateSource && (
+              <p className="mb-4 mt-0 break-words">
+                This update switches this plugin from Git to a packaged
+                download. The URL below replaces its saved Git source.
+              </p>
+            )}
           <code className={`${importStyles.sourcePath} break-all`}>
             {location(entry)}
           </code>
@@ -625,6 +682,7 @@ export function UrlPluginInstallReview({
   holdReview,
   request,
   returnFocus,
+  onOpenInstalled,
   onClose,
 }: {
   plugins: PluginManager;
@@ -644,15 +702,12 @@ export function UrlPluginInstallReview({
       }>
     | undefined;
   returnFocus: () => HTMLElement | null;
+  /** Shows the installed plugin when a different source already holds it. */
+  onOpenInstalled?: ((id: string) => void) | undefined;
   onClose?: (() => void) | undefined;
 }) {
   const [claimed, setClaimed] = useState(!request);
   const [closed, setClosed] = useState(false);
-  const latest = useRef(catalog);
-  latest.current = catalog;
-  const [updating] = useState(() =>
-    catalog.plugins.some((plugin) => plugin.manifest.id === source.id),
-  );
   const mounted = useRef(false);
   const claimOnce = useEffectEvent(() => {
     if (request && !claimed && request.claim(request.id)) setClaimed(true);
@@ -669,40 +724,42 @@ export function UrlPluginInstallReview({
     };
   }, []);
   if (!claimed || closed || !plugins.imports) return null;
+  const current = catalog.plugins.find(
+    (plugin) => plugin.manifest.id === source.id,
+  );
+  const saved = current?.updateSource;
+  const conflict =
+    current?.source !== "external" ||
+    (saved && ("url" in saved || "repository" in saved))
+      ? undefined
+      : `${current.manifest.name} is already installed from ${
+          saved ? saved.root : "an unknown source"
+        }; remove it first to install it from ${source.url}.`;
+  const close = () => {
+    setClosed(true);
+    if (request) request.end(request.id);
+    onClose?.();
+  };
   return (
     <ManagedPluginReview
       plugins={plugins}
       catalog={catalog}
       busy={busy}
       source={requester}
-      entry={{ ...source, state: updating ? "outdated" : "missing" }}
+      entry={{ ...source, state: current ? "outdated" : "missing" }}
       holdReview={holdReview}
       requestedBy={{ name: requester, reason: "" }}
-      recheck={() => {
-        const current = latest.current.plugins.find(
-          (plugin) => plugin.manifest.id === source.id,
-        );
-        const saved = current?.updateSource;
-        if (current?.source !== "external" || (saved && "url" in saved))
-          return undefined;
-        return `${current.manifest.name} is already installed from ${
-          saved && "repository" in saved
-            ? saved.repository
-            : saved
-              ? saved.root
-              : "an unknown source"
-        }; remove it first to install it from ${source.url}.`;
-      }}
+      // A link's refusal stands alone; a plugin's request says who asked.
+      refusal={
+        conflict && request
+          ? `Requested by ${requester}. ${conflict}`
+          : conflict
+      }
       confirm={request && (() => request.confirm(request.id))}
       returnFocus={returnFocus}
-      onInstalled={() =>
-        request?.settle(request.id, updating ? "updated" : "installed")
-      }
-      onClose={() => {
-        setClosed(true);
-        if (request) request.end(request.id);
-        onClose?.();
-      }}
+      onInstalled={(outcome) => request?.settle(request.id, outcome)}
+      onOpen={onOpenInstalled && (() => onOpenInstalled(source.id))}
+      onClose={close}
     />
   );
 }

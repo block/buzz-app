@@ -44,9 +44,43 @@ it("rejects foreign route kinds and draft payloads", () => {
     { kind: "solo-draft", agent: "not-a-key" },
     { kind: "solo-draft", text: "private draft" },
     { kind: "solo-draft", linked: "invalid" },
+    { kind: "solo-draft", draft: { context: null } },
+    { kind: "solo-draft", region: "buzz.region:example:tasks", draft: {} },
+    {
+      kind: "solo-draft",
+      region: "buzz.region:example:tasks",
+      draft: { key: "", context: null },
+    },
+    {
+      kind: "solo-draft",
+      region: "buzz.region:example:tasks",
+      draft: { key: "bad/key", context: null },
+    },
+    {
+      kind: "solo-draft",
+      region: "buzz.region:example:tasks",
+      draft: { context: null, extra: true },
+    },
   ]) {
     expect(isChannelRoute(params)).toBe(false);
     expect(soloDraft(params)).toBeUndefined();
+  }
+});
+
+it("retains opaque region context in a saved destination with or without a separate draft key", () => {
+  for (const draft of [
+    { context: null },
+    { key: "item:42", context: { item: 42, flags: [true, "example"] } },
+  ]) {
+    const target = soloDraftTarget(partition, {
+      region: "buzz.region:example:tasks",
+      draft,
+    });
+    const saved = JSON.parse(JSON.stringify(target));
+    expect(soloDraft(saved.route.params)).toEqual({
+      region: "buzz.region:example:tasks",
+      draft,
+    });
   }
 });
 
@@ -62,6 +96,7 @@ it("keeps a region draft's label and refuses a malformed or linked one", () => {
   expect(soloDraft({ kind: "solo-draft", region, project: "p" })).toEqual({
     region,
     project: "p",
+    draft: { context: { saved: { kind: "solo-draft", region, project: "p" } } },
   });
   for (const params of [
     { kind: "solo-draft", region: "buzz.solo" },
@@ -75,15 +110,22 @@ it("keeps a region draft's label and refuses a malformed or linked one", () => {
   ])
     expect(soloDraft(params)).toBeUndefined();
 });
-it("keeps a region lead draft only with its region and workspace", () => {
+it("retains prior region source fields as opaque unkeyed context", () => {
   const region = "buzz.region:example:tasks";
+  const saved = { kind: "solo-draft", region, project: "p", mode: "example" };
+  expect(soloDraft(saved)).toEqual({
+    region,
+    project: "p",
+    draft: { context: { saved } },
+  });
+  expect(soloDraft({ ...saved, draft: { context: null } })).toEqual({
+    region,
+    project: "p",
+    draft: { context: null },
+  });
+  for (const draft of [null, {}, { key: "", context: null }])
+    expect(soloDraft({ ...saved, draft })).toBeUndefined();
   expect(
-    soloDraft({ kind: "solo-draft", region, project: "p", lead: true }),
-  ).toEqual({ region, project: "p", lead: true });
-  for (const params of [
-    { kind: "solo-draft", region, lead: true },
-    { kind: "solo-draft", project: "p", lead: true },
-    { kind: "solo-draft", region, project: "p", lead: false },
-  ])
-    expect(soloDraft(params)).toBeUndefined();
+    soloDraft({ kind: "solo-draft", project: "p", mode: "example" }),
+  ).toBeUndefined();
 });

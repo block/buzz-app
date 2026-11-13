@@ -121,9 +121,19 @@ const empty: State = {
   thread: undefined,
   settings: undefined,
 };
+/** Specialized readers opt into native profile history without changing catch-all panels. */
+export const profileContentPanel = (entry: PanelOpening) =>
+  entry.panel.key === "buzz.profiles/profile" ||
+  ((
+    entry.panel.component as typeof entry.panel.component & {
+      profileHistory?: boolean;
+    }
+  )?.profileHistory === true &&
+    !!(profilePanelKey(entry.target) ?? profileActivityViewKey(entry.target)));
+
 /** A version inspector changes the address within one profile, not its tab. */
 export const panelContentTarget = (entry: PanelOpening) =>
-  entry.panel.key === "buzz.profiles/profile" &&
+  profileContentPanel(entry) &&
   profileHistoryActive(entry.target) &&
   profilePanelKey(entry.target)
     ? (entry.target.split("#")[0] as string)
@@ -177,6 +187,7 @@ function withThread(
   intent: ThreadIntent | undefined,
   pane: TabPane,
   attention = false,
+  relocate = false,
 ): State {
   const existing = threadTab(state.tabs, channelId, rootId);
   const baseId = `thread:${channelId}:${rootId}`;
@@ -211,8 +222,8 @@ function withThread(
       intent === "reveal"
         ? (prior?.revealRequest ?? 0) + 1
         : prior?.revealRequest,
-    // An already-open thread stays wherever it was placed.
-    pane: prior ? tabPane(prior) : pane,
+    // Detail visits need the source thread in the other pane.
+    pane: prior && !relocate ? tabPane(prior) : pane,
     rootId: prior?.rootId,
     name: prior?.name,
   };
@@ -610,6 +621,8 @@ export function useChannelTabState(
             thread.rootId,
             "select",
             thread.pane ?? threadPlacementPreference(),
+            false,
+            !!detail && thread.pane === "main",
           );
         const saved = visits?.[visit];
         return saved

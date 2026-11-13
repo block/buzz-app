@@ -4,6 +4,7 @@ import type { ReadFilter } from "../../features/relay/events";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { termMatches } from "../../features/search/snippet";
 import { avatarMedia } from "../../shared/avatar-source";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import type { SearchDestination, SearchTone } from "./SearchChoices";
 import { SEARCH_KINDS, searchText } from "./useSearchMessages";
@@ -166,12 +167,7 @@ function useLines(session: RelaySession, target: PeekTarget | undefined) {
 }
 
 const when = (createdAt: number) =>
-  new Date(createdAt * 1000).toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  formatItemTimestamp(createdAt, { withTime: true });
 
 /** A short look at the highlighted row: enough to tell it is the right one
  * without opening it. */
@@ -250,6 +246,14 @@ export function SearchPreview({
           </div>
         </div>
       </div>
+      {!target && row.action && (
+        <p className="search-peek-start m-0 text-body-sm text-subtle">
+          <span aria-hidden="true">
+            <kbd>↵</kbd>
+          </span>{" "}
+          {row.action}
+        </p>
+      )}
       {target?.kind === "channel" && target.about && (
         <p className="search-peek-about text-body-sm">{target.about}</p>
       )}

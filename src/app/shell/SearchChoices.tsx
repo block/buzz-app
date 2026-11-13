@@ -54,6 +54,9 @@ export type SearchDestination = {
   peek?: PeekTarget | undefined;
   /** The row's own kind, where its group mixes kinds. */
   kind?: SearchTone | undefined;
+  /** What choosing the row does, said in a preview that has nothing else to
+   * show, e.g. "Open Activity". */
+  action?: string | undefined;
   run: () => void;
 };
 
@@ -102,7 +105,7 @@ export type SearchTone =
  * group, and Tab shows one group whole. */
 export type SearchPeek = {
   ranked: boolean;
-  /** `tone` is the hue of the group the row is in. */
+  /** `tone` is the row's own hue, else that of the group it is in. */
   preview: (
     row: SearchDestination | undefined,
     tone: SearchTone | undefined,
@@ -1070,9 +1073,10 @@ export function SearchChoices({
                 return peek.preview(
                   row,
                   row &&
-                    merged.find((group) =>
-                      group.destinations.some(({ key }) => key === row.key),
-                    )?.tone,
+                    (row.kind ??
+                      merged.find((group) =>
+                        group.destinations.some(({ key }) => key === row.key),
+                      )?.tone),
                 );
               })()}
             </div>

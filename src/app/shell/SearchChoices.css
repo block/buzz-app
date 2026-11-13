@@ -169,7 +169,8 @@
     background: linear-gradient(to bottom, var(--surface-panel), transparent);
     pointer-events: none;
   }
-  .search-palette[data-search-footer] .search-palette-height::before {
+  .search-palette:is([data-search-footer], [data-search-peek])
+    .search-palette-height::before {
     content: "";
     position: absolute;
     inset: auto 0 0;
@@ -287,6 +288,29 @@
   .search-peek-tile[data-size="large"] {
     width: 2.5rem;
     height: 2.5rem;
+  }
+  /* Rows with their own controls draw their icon in the preference row's
+     slot; it takes the same tile, so the icon column reads as one set. */
+  .search-palette[data-search-peek]
+    .search-palette-group[data-tone]
+    .buzz-preference-row-icon {
+    justify-content: center;
+    border-radius: 30%;
+    background: var(--peek-fill);
+    color: var(--peek-ink);
+  }
+  .search-palette[data-search-peek]
+    .search-palette-group[data-tone]
+    .buzz-preference-row-icon
+    > svg {
+    width: 0.9375rem;
+    height: 0.9375rem;
+  }
+  .search-palette[data-search-peek]
+    .search-palette-group[data-tone]
+    .buzz-preference-row[data-disabled]
+    .buzz-preference-row-icon {
+    color: var(--text-unavailable);
   }
   .search-palette[data-search-peek]
     :is(

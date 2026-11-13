@@ -58,6 +58,7 @@ import {
 } from "../../features/search/recent-searches";
 import { useMessageRerank } from "./message-rerank";
 import { SearchPreview } from "./SearchPreview";
+import { formatItemTimestamp } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Calendar } from "../../shared/design-system/ui/Calendar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -1555,7 +1556,7 @@ export function SearchResults({
         authorId: message.workflowOwnerId ?? message.authorId,
         text: message.text || message.preview,
       },
-      detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+      detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${formatItemTimestamp(message.createdAt)}`,
       detailIcon: channel && channelIcon(channel),
       detailIconLabel: channel && channelIconLabel(channel),
       icon: ChatCircleIcon,
@@ -1647,7 +1648,7 @@ export function SearchResults({
         [
           ["from:", "person", "person"],
           ["in:", "channel", "channel"],
-          ["during:", "date", "plugin"],
+          ["during:", "date", "page"],
           ["ask:", askAgent?.name ?? "agent", "agent"],
         ] as const
       ).map(([operator, what, tone]) => (
@@ -1771,7 +1772,11 @@ export function SearchResults({
       // PageSearch already ranked these by text and underlined them; here
       // usage and earlier choices adjust the order.
       destinations: byMatch(pages, (page) => rankOf(page.label, page.key)).map(
-        (page) => ({ ...page, run: choose(page.key, page.run) }),
+        (page) => ({
+          ...page,
+          action: `Open ${page.label}`,
+          run: choose(page.key, page.run),
+        }),
       ),
       best: Math.min(...pages.map((page) => rankOf(page.label, page.key))),
     },
@@ -1954,6 +1959,7 @@ export function SearchResults({
                     ? [
                         {
                           label: "This conversation",
+                          tone: "page" as const,
                           destinations: scopeAction,
                         },
                       ]
@@ -2011,6 +2017,7 @@ export function SearchResults({
                               label: text,
                               icon: ClockIcon,
                               kind: "page",
+                              action: "Search again",
                               run: () => onQueryChange(text),
                             }),
                           ),
@@ -2026,6 +2033,7 @@ export function SearchResults({
                     ? [
                         {
                           label: "This conversation",
+                          tone: "page" as const,
                           destinations: scopeAction,
                         },
                       ]

@@ -1866,8 +1866,8 @@ async function unreadToggle() {
 it.each([
   [{ activity: "all", attention: "unread" }, "All", "true"],
   [{ activity: "threads" }, "Threads", "false"],
-  [{ activity: "mentions" }, "Direct", "false"],
-  [{ activity: "dms" }, "Direct", "false"],
+  [{ activity: "mentions" }, "Mentions", "false"],
+  [{ activity: "dms" }, "DMs", "false"],
 ] as const)(
   "a shortcut open with %j applies and saves its filters, leaving the others",
   async (params, label, unread) => {
@@ -1908,9 +1908,9 @@ it("re-applies a repeated shortcut open after the filters were changed by hand",
   const h = fixture({ withDm: true });
   const view = render(viewAt(h, visit({ activity: "threads" })));
   await waitFor(() => expect(activityType()).toBe("Threads"));
-  await chooseFilter("Direct");
+  await chooseFilter("DMs");
   await chooseFilter("Unread only", "Attention");
-  expect(activityType()).toBe("Direct");
+  expect(activityType()).toBe("DMs");
   // A rerender of the same presentation is not a new visit.
   const same = visit({ activity: "threads" });
   view.rerender(viewAt(h, same));
@@ -1928,13 +1928,13 @@ it("Back/Forward to a shortcut visit keeps the filters chosen since", async () =
   const h = fixture({ withDm: true });
   const view = render(viewAt(h, visit({ activity: "threads" })));
   await waitFor(() => expect(activityType()).toBe("Threads"));
-  await chooseFilter("Direct");
+  await chooseFilter("DMs");
   // Traversal presents the visit as a new object carrying the same address.
   view.rerender(
     viewAt(h, { ...visit({ activity: "threads" }), traversal: true }),
   );
-  expect(activityType()).toBe("Direct");
-  expect(savedFilters(h)).toMatchObject({ activity: "direct" });
+  expect(activityType()).toBe("DMs");
+  expect(savedFilters(h)).toMatchObject({ activity: "dms" });
 });
 
 it("a route open applies its sender, keeping the other saved filters", async () => {
@@ -2006,7 +2006,7 @@ it("a plain open leaves saved filters alone", async () => {
   view.rerender(viewAt(h, visit()));
   expect(savedFilters(h)).toEqual(saved);
   expect(fromTrigger()).toHaveAccessibleName("From people");
-  expect(activityType()).toBe("Direct");
+  expect(activityType()).toBe("Mentions");
 });
 
 async function chooseFilter(label: string, control = "Activity views") {
@@ -3271,7 +3271,8 @@ it("combines the existing filter choices without placeholder actions", async () 
   expect(tabs("Activity views")).toEqual([
     "All",
     "Threads",
-    "Direct",
+    "DMs",
+    "Mentions",
     "Reactions",
   ]);
   expect(activityType()).toBe("All");

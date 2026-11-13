@@ -12,6 +12,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   BellIcon,
+  AtIcon,
   MessageReplyIcon,
   SmileyIcon,
   Filter2Icon,
@@ -33,13 +34,15 @@ export type SenderFilter = "everyone" | "humans" | "agents";
 export const activityViews = [
   { value: "all", label: "All", icon: <BellIcon size={20} /> },
   { value: "threads", label: "Threads", icon: <MessageReplyIcon size={20} /> },
-  { value: "direct", label: "Direct", icon: <UsersIcon size={20} /> },
+  { value: "dms", label: "DMs", icon: <UsersIcon size={20} /> },
+  { value: "mentions", label: "Mentions", icon: <AtIcon size={20} /> },
   { value: "reactions", label: "Reactions", icon: <SmileyIcon size={20} /> },
 ] as const;
 /** Saved filters and old links may name a view that is no longer offered. */
 export const offeredActivity = (view: ActivityFilter): ActivityFilter =>
-  view === "mentions" || view === "dms"
-    ? "direct"
+  // Direct was DMs and mentions together.
+  view === "direct"
+    ? "dms"
     : view === "channels" || view === "working" || view === "waiting"
       ? "all"
       : view;

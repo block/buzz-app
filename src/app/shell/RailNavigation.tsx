@@ -39,6 +39,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   ArrowRightIcon,
+  AtIcon,
   ChatCircleIcon,
   HashIcon,
   MessageReplyIcon,
@@ -646,7 +647,8 @@ export function RailNavigation({
         label: "Threads",
         icon: <MessageReplyIcon size={18} />,
       },
-      { filter: "direct", label: "DMs", icon: <UsersIcon size={18} /> },
+      { filter: "dms", label: "DMs", icon: <UsersIcon size={18} /> },
+      { filter: "mentions", label: "Mentions", icon: <AtIcon size={18} /> },
       { filter: "channels", label: "Channels", icon: <HashIcon size={18} /> },
     ];
     const teamOpen = routedSection(navigation.entry.target) === "messages";

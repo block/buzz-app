@@ -15,7 +15,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-test("moved exact destinations retain distinct targets and follow Direct and live unread filters", async () => {
+test("moved exact destinations retain distinct targets and follow Mentions and live unread filters", async () => {
   const base = createRelaySession(null).session;
   const scope = {
     viewer: "c".repeat(64),
@@ -159,7 +159,7 @@ test("moved exact destinations retain distinct targets and follow Direct and liv
   );
   expect(screen.queryByRole("button", { name: "Thread 2" })).toBeNull();
   expect(screen.getByRole("button", { name: "Thread 1" })).toBeVisible();
-  await user.click(screen.getByRole("tab", { name: "Direct" }));
+  await user.click(screen.getByRole("tab", { name: "Mentions" }));
   expect(screen.getByRole("button", { name: "Mention" })).toBeVisible();
   act(() => {
     const key = "d".repeat(64);

@@ -40,11 +40,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
   open("open-threads", "Open threads in Activity", "t", 30, {
     activity: "threads",
   });
-  // Direct lists mentions and DMs together, so both chords open it.
   open("open-mentions", "Open mentions in Activity", "m", 40, {
-    activity: "direct",
+    activity: "mentions",
   });
-  open("open-dms", "Open DMs in Activity", "k", 50, { activity: "direct" });
+  open("open-dms", "Open DMs in Activity", "k", 50, { activity: "dms" });
   const Sheet = (
     props: PageTabsProps & {
       navigation?:

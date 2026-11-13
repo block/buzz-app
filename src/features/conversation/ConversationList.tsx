@@ -39,6 +39,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { ConversationRow } from "../../features/messages/ConversationRow";
 import {
+  AtIcon,
   Filter2Icon,
   HashIcon,
   LockIcon,
@@ -85,7 +86,8 @@ export type ActivityView = {
   filter:
     | "all"
     | "threads"
-    | "direct"
+    | "dms"
+    | "mentions"
     | "channels"
     | "working"
     | "waiting"
@@ -107,9 +109,15 @@ export const conversationViews = [
     icon: <MessageReplyIcon size={20} aria-hidden="true" />,
   },
   {
-    value: "direct",
-    label: "Direct",
+    value: "dms",
+    label: "DMs",
     icon: <UsersIcon size={20} aria-hidden="true" />,
+  },
+
+  {
+    value: "mentions",
+    label: "Mentions",
+    icon: <AtIcon size={20} aria-hidden="true" />,
   },
   {
     value: "channels",
@@ -135,14 +143,19 @@ export const conversationViews = [
 /** Working and Waiting describe agents' chats, so only Solo offers them. */
 const agentView = (filter: View["filter"]) =>
   filter === "working" || filter === "waiting";
+/** DMs, Mentions and Channels describe Team's conversations; Solo has none. */
+const teamView = (filter: View["filter"]) =>
+  filter === "dms" || filter === "mentions" || filter === "channels";
 const viewsFor = (agentViews: boolean) =>
-  // Solo lists no channels.
-  agentViews
-    ? conversationViews.filter((item) => item.value !== "channels")
-    : conversationViews.filter((item) => !agentView(item.value));
+  conversationViews.filter(
+    (item) => !(agentViews ? teamView : agentView)(item.value),
+  );
 /** The view a list without the agent views shows for a saved one. */
 export const withoutAgentViews = (view: ActivityView): ActivityView =>
   agentView(view.filter) ? { ...view, filter: "all" } : view;
+/** The view Solo's list shows for a saved one. */
+export const withoutTeamViews = (view: ActivityView): ActivityView =>
+  teamView(view.filter) ? { ...view, filter: "all" } : view;
 const viewKey = "activity-sidebar:view:v5";
 
 function readSavedView(scope: string): View {
@@ -151,13 +164,17 @@ function readSavedView(scope: string): View {
     ...(saved?.sort === "alpha" && { sort: "alpha" as const }),
     filter:
       saved?.filter === "threads" ||
-      saved?.filter === "direct" ||
+      saved?.filter === "dms" ||
+      saved?.filter === "mentions" ||
       saved?.filter === "channels" ||
       saved?.filter === "working" ||
       saved?.filter === "waiting" ||
       saved?.filter === "reactions"
         ? saved.filter
-        : "all",
+        : // Direct was DMs and mentions together.
+          (saved?.filter as string | undefined) === "direct"
+          ? "dms"
+          : "all",
     unread: saved?.unread === true,
   };
 }
@@ -213,8 +230,10 @@ export function activityViewFor(
   if (
     !kind ||
     view.filter === "all" ||
-    (view.filter === "direct" && kind !== "team") ||
-    ((view.filter === "threads" || view.filter === "channels") &&
+    (view.filter === "dms" && kind === "dm") ||
+    ((view.filter === "threads" ||
+      view.filter === "mentions" ||
+      view.filter === "channels") &&
       kind === "team") ||
     ((view.filter === "working" || view.filter === "waiting") &&
       kind === "solo")
@@ -563,20 +582,21 @@ export function ConversationList({
   const filter = view.filter;
   const reacted = filter === "reactions";
   const flat = filter === "threads" || reacted;
-  const direct = filter === "direct";
+  const mentions = filter === "mentions";
   const working = useWorkingChannels(session);
   const agentView = filter === "working" || filter === "waiting";
-  const scoped = flat
-    ? []
-    : list.channels.filter(
-        (channel) =>
-          listed(channel) &&
-          (!includeChannel || includeChannel(channel)) &&
-          kindOf(channel) !== undefined &&
-          (!direct || kindOf(channel) !== "team") &&
-          (filter !== "channels" || kindOf(channel) === "team") &&
-          (!agentView || channel.channelType === "solo"),
-      );
+  const scoped =
+    flat || mentions
+      ? []
+      : list.channels.filter(
+          (channel) =>
+            listed(channel) &&
+            (!includeChannel || includeChannel(channel)) &&
+            kindOf(channel) !== undefined &&
+            (filter !== "dms" || kindOf(channel) === "dm") &&
+            (filter !== "channels" || kindOf(channel) === "team") &&
+            (!agentView || channel.channelType === "solo"),
+        );
   const { latest: fetched, observe: previewRef } = useVisibleChannelPreviews(
     session,
     !flat && (filter === "waiting" || includeAuthor)
@@ -687,7 +707,7 @@ export function ConversationList({
       ? []
       : flat
         ? threadEvents(inbox.items, teamIds, session)
-        : direct
+        : mentions
           ? mentionEvents(inbox.items, teamIds)
           : []
   )
@@ -704,7 +724,7 @@ export function ConversationList({
           channelsById.get(b.channelId)?.name ?? "",
         ) || a.preview.localeCompare(b.preview),
     );
-  // Direct interleaves chats, DMs and mentions; All lists conversations.
+  // Mentions lists messages; All, DMs and Channels list conversations.
   const eventsByKey = new Map(shownEvents.map((event) => [event.key, event]));
   const entries = flat
     ? []
@@ -925,13 +945,15 @@ export function ConversationList({
           <p className={`text-body-sm text-subtle ${styles.empty}`}>
             {filter === "threads"
               ? "No thread activity yet."
-              : filter === "direct"
-                ? "No chats, DMs or mentions yet."
-                : filter === "working"
-                  ? "No agent is working right now."
-                  : filter === "waiting"
-                    ? "Nothing is waiting on you."
-                    : "Nothing here yet."}
+              : filter === "dms"
+                ? "No DMs yet."
+                : filter === "mentions"
+                  ? "No mentions yet."
+                  : filter === "working"
+                    ? "No agent is working right now."
+                    : filter === "waiting"
+                      ? "Nothing is waiting on you."
+                      : "Nothing here yet."}
           </p>
         )}
     </div>

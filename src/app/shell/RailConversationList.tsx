@@ -11,6 +11,7 @@ import {
   includeMessagesChannel,
   useActivityView,
   withoutAgentViews,
+  withoutTeamViews,
   type ActivityView,
   type ConversationListEntry,
 } from "../../features/conversation/ConversationList";
@@ -47,7 +48,7 @@ export function RailConversationList({
       : `${scope.communityOrigin}:${scope.viewer}:rail-page:${section}`,
   );
   const agentViews = section === "solo";
-  const view = agentViews ? saved : withoutAgentViews(saved);
+  const view = agentViews ? withoutTeamViews(saved) : withoutAgentViews(saved);
   // Whole conversations use the shared feed. Exact message/thread destinations
   // remain individual entries, preserving their original opening targets.
   const conversations = new Map<string, RailEntry>();
@@ -88,7 +89,7 @@ export function RailConversationList({
   const extras = others.filter(
     (entry) =>
       view.filter === "all" ||
-      ((view.filter === "threads" || view.filter === "direct") &&
+      ((view.filter === "threads" || view.filter === "mentions") &&
         entry.target.kind === "conversation" &&
         (view.filter === "threads"
           ? !!entry.target.threadRootId

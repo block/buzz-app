@@ -480,15 +480,15 @@ and are asked to sign in again in Buzz.
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
 - **Activity** is the default landing view. With no conversation selected, the detail pane shows “No conversation selected”; use **+** to start a new message. The visible filter strip below its title selects All, Threads,
-  Direct or Reactions, the same views as Team. The sidebar’s **Agents** card shows up to four of your
+  DMs, Mentions or Reactions, the same views as Team. The sidebar’s **Agents** card shows up to four of your
   non-archived agents that are eligible to message in the current community,
   ranked by your usage; older library entries alone do not qualify. Like Pins,
   it displays an avatar grid. Agents remain here when pinned or placed in another
   sidebar section. Hover or focus an avatar for its name; click to open
   its DM. Bundled agent artwork animates here, with still images for reduced motion
   or unavailable playback.
-  Direct uses the same conversation
-  view as Team; the filter icon before All chooses whose activity to show and whether
+  DMs and Mentions use the same conversation
+  views as Team; the filter icon before All chooses whose activity to show and whether
   to show unread only. Team, Activity, and Solo keep the list on the left and the
   selected conversation on the right. Click a sidebar card’s title or **Open [section name]**
   to open its full list. **Agents** is a single row in Plugins that opens the agent directory. Drag the outer sidebar’s right edge to resize it;
@@ -535,7 +535,7 @@ and are asked to sign in again in Buzz.
   opens the resulting conversation beside the list.
   Activity (the bell in the app rail) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All; their nested
-  threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Direct, Reactions) narrow it by
+  threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, DMs, Mentions, Reactions) narrow it by
   kind, and **From** by sender (Anyone, People or Agents). Turn on **Unread** to see only what you haven't read:
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
@@ -873,8 +873,9 @@ and are asked to sign in again in Buzz.
   Reopen Buzz from the Dock. ⌘⇧W clears the current channel's tabs without
   closing the window. These tab shortcuts do nothing while a modal is open.
 - **Conversation list filters**: All combines chats, DMs and channels by recent
-  activity. Threads shows channel threads; Direct combines chats, DMs and mentions.
-  In Team, Channels shows channels only.
+  activity. Threads shows channel threads.
+  In Team, DMs shows direct messages, Mentions shows messages that mention you,
+  and Channels shows channels only; Solo offers none of the three.
   A channel's row shows the avatar of whoever posted there last.
   Reactions lists reactions to your messages. The Solo list adds two views:
   Working shows Solo chats with an active agent; Waiting shows Solo chats where
@@ -899,13 +900,12 @@ and are asked to sign in again in Buzz.
   Each object card shows up to four rows, then **→ Open [section name]**;
   **Open [section name]** opens a dedicated list in the main content area without expanding
   the card. Back and Forward return between the list and its items. Pins remains uncapped. The Team card lists
-  **Activity**, **Threads**, **DMs**, and **Channels**. Activity opens the Activity
-  page; the other three open the Team list on that view. Each row shows how many
+  **Activity**, **Threads**, **DMs**, **Mentions**, and **Channels**. Activity opens the
+  Activity page; the others open the Team list on that view. Each row shows how many
   of its conversations are unread, and no number when all are read. The view
   you choose is saved locally for this account and community. Bestie conversations
   follow normal ordering; the Bestie plugin also appears under Plugins.
-  **All** keeps Solo chats in the Solo collection; the Direct view can
-  include them.
+  Team's views keep Solo chats in the Solo collection.
   Expanded Team and Solo lists show one-line message previews and the same
   filter and sort controls; their selection is saved for each list.
   **Open [section name]** opens the full,
@@ -1013,7 +1013,7 @@ and are asked to sign in again in Buzz.
   grabbers brighten only when the pointer is close and appear immediately under it.
   Hovering elsewhere on the card keeps them hidden. Keyboard focus reveals controls
   immediately, and touch devices show them without waiting.
-- **Team card**: Activity, Threads, DMs, and Channels each show an unread count.
+- **Team card**: Activity, Threads, DMs, Mentions, and Channels each show an unread count.
   Drafts & sent and anything you move into Team appear below them. The **Team**
   heading opens the full conversation list.
   People and one-to-one DM avatars in sidebar cards show online, away, or offline

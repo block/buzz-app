@@ -16,7 +16,7 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
   await page.goto(app.origin);
   const rail = page.getByRole("navigation", { name: "Apps", exact: true });
   const card = rail.locator('[data-rail-section="messages"]');
-  for (const name of ["Activity", "Threads", "DMs", "Channels"])
+  for (const name of ["Activity", "Threads", "DMs", "Mentions", "Channels"])
     await expect(
       card.getByRole("button", { name: new RegExp(`^${name}`) }),
     ).toBeVisible();
@@ -37,7 +37,7 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
     "true",
   );
 
-  await card.locator('[data-rail-team-view="direct"]').click();
+  await card.locator('[data-rail-team-view="dms"]').click();
   await expect(alpha).toHaveCount(0);
   await channels.click();
   await expect(alpha).toBeVisible();

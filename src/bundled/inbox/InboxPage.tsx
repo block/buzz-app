@@ -338,7 +338,10 @@ const InboxList = memo(function InboxList({
   const activity = offeredActivity(filters.activity);
   const unreadOnly = filters.attention === "unread";
   const conversationView =
-    activity === "direct" || activity === "working" || activity === "waiting"
+    activity === "dms" ||
+    activity === "mentions" ||
+    activity === "working" ||
+    activity === "waiting"
       ? activity
       : undefined;
   // Each list returns to the session's last offset once its rows show,

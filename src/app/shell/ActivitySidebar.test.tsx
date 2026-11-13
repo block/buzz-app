@@ -26,7 +26,10 @@ import {
 } from "../../features/conversation/ConversationList";
 
 const previewOwners: (() => void)[] = [];
+/** Solo offers Working and Waiting; Team offers DMs, Mentions and Channels. */
+let soloViews = false;
 afterEach(() => {
+  soloViews = false;
   cleanup();
   for (const stop of previewOwners.splice(0)) stop();
   vi.unstubAllGlobals();
@@ -218,7 +221,11 @@ function setup(
     });
     return (
       <>
-        <ActivityFilters view={view} onChange={setView} agentViews />
+        <ActivityFilters
+          view={view}
+          onChange={setView}
+          agentViews={soloViews}
+        />
         <ActivitySidebar
           session={session}
           navigator={navigator}
@@ -376,9 +383,9 @@ const mentionItem = () => {
   return { ...mention, mention } as InboxItem;
 };
 
-test("Team's Direct view lists mentions and opens them in their thread", async () => {
+test("Team's Mentions view lists mentions and opens them in their thread", async () => {
   const { open } = setup([mentionItem()]);
-  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Mentions" }));
   await userEvent.click(screen.getByText("hey @you"));
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -430,17 +437,18 @@ test("an unread row's checkmark marks its channel read without opening it", asyn
   ).not.toBeInTheDocument();
 });
 
-test("Direct interleaves chats, DMs and mentions of you, newest first", async () => {
+test("DMs and Mentions each list only their own rows", async () => {
   setup([mentionItem()]);
-  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
-  const items = within(screen.getByRole("list", { name: "Conversations" }))
-    .getAllByRole("listitem")
-    .map((li) => li.getAttribute("data-activity-row") ?? li.textContent);
-  // Mention (500), DM (450), chat (300); channels stay out.
-  expect(items).toHaveLength(3);
-  expect(items[0]).toContain("hey @you");
-  expect(items[1]).toBe("dm");
-  expect(items[2]).toBe("solo");
+  const items = () =>
+    within(screen.getByRole("list", { name: "Conversations" }))
+      .getAllByRole("listitem")
+      .map((li) => li.getAttribute("data-activity-row") ?? li.textContent);
+  // Chats, channels and mentions stay out of DMs.
+  await userEvent.click(screen.getByRole("tab", { name: "DMs" }));
+  expect(items()).toEqual(["dm"]);
+  await userEvent.click(screen.getByRole("tab", { name: "Mentions" }));
+  expect(items()).toHaveLength(1);
+  expect(items()[0]).toContain("hey @you");
 });
 
 test.each([
@@ -455,6 +463,7 @@ test.each([
 ])(
   "Working and Waiting preserve whose move it is: $authorId / $workingIn",
   async ({ workingIn, authorId, workingRows, waitingRows }) => {
+    soloViews = true;
     setup(
       [],
       { solo: { createdAt: 300, content: "on it", authorId } },
@@ -497,7 +506,7 @@ const faceOf = (id: string) =>
 
 test("a DM row is titled with its people, not DM", async () => {
   setup();
-  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
+  await userEvent.click(screen.getByRole("tab", { name: "DMs" }));
   const row = document.querySelector('[data-activity-row="dm"]');
   expect(row).toHaveTextContent("Alice");
   expect(row).not.toHaveTextContent(/^DM/);
@@ -531,7 +540,7 @@ test("a group DM shows at most three other participants", async () => {
     [],
     [viewer, alice, bob, root, reply],
   );
-  await userEvent.click(screen.getByRole("tab", { name: "Direct" }));
+  await userEvent.click(screen.getByRole("tab", { name: "DMs" }));
   const row = document.querySelector<HTMLElement>('[data-activity-row="dm"]');
   if (!row) throw new Error("Conversation row missing");
   expect(row.querySelectorAll("[data-avatar-fallback]")).toHaveLength(3);

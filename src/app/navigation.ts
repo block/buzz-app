@@ -8,7 +8,11 @@ import {
 } from "react";
 import type { AppServices } from "./services";
 import { communityDestination } from "../features/communities/destination";
-import { targetKey, type OpenTarget } from "../features/navigation/targets";
+import {
+  targetKey,
+  type NavigationScope,
+  type OpenTarget,
+} from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
 import type {
   OpenAttempt,
@@ -422,7 +426,9 @@ export function useAppNavigation(
     }
   }, [navigation, state, failure, offline, relay.status]);
   // The last visit opened inside each dock app, for the dock to return to.
-  const dockVisits = useRef(new Map<string, OpenTarget>());
+  const dockVisits = useRef(
+    new Map<string, { id: string; target: OpenTarget }>(),
+  );
   const dockPages = useRef(pages);
   dockPages.current = pages;
   useEffect(() => {
@@ -430,11 +436,27 @@ export function useAppNavigation(
       const { status, entry } = navigation.snapshot();
       if (status !== "opened") return;
       const owner = dockOwner(dockPages.current, entry.target);
-      if (owner) dockVisits.current.set(owner, entry.target);
+      if (!owner) return;
+      // A page opened with no scope (an Activity shortcut, say) opened in the
+      // account and community selected when it opened, not on a later update.
+      const known = dockVisits.current.get(owner);
+      const target =
+        entry.target.kind === "page" && entry.target.scope === undefined
+          ? {
+              ...entry.target,
+              scope:
+                known?.id === entry.id &&
+                known.target.kind === "page" &&
+                known.target.scope !== undefined
+                  ? known.target.scope
+                  : dockScope(services),
+            }
+          : entry.target;
+      dockVisits.current.set(owner, { id: entry.id, target });
     };
     remember();
     return navigation.subscribe(remember);
-  }, [navigation]);
+  }, [navigation, services]);
   const select = (
     key: string,
     options?: Pick<NavigationOpenOptions, "focus"> & {
@@ -444,14 +466,7 @@ export function useAppNavigation(
       resume?: boolean;
     },
   ) => {
-    const selectedClient = services.communities.snapshot();
-    const scope =
-      selectedClient.viewer && selectedClient.selected
-        ? {
-            viewer: selectedClient.viewer,
-            communityOrigin: communityDestination(selectedClient.selected).url,
-          }
-        : null;
+    const scope = dockScope(services);
     let destination: OpenTarget;
     if (key === "settings")
       destination = {
@@ -463,8 +478,14 @@ export function useAppNavigation(
     else {
       const selected = pages.find((page) => page.key === key);
       if (!selected) return;
-      destination = (options?.resume &&
-        dockReturn(pages, key, dockVisits.current.get(key), scope)) || {
+      const last = options?.resume ? dockVisits.current.get(key) : undefined;
+      destination = (last &&
+        dockReturn(
+          pages,
+          key,
+          services.navigationHost.visitPlace(last.id) ?? last.target,
+          scope,
+        )) || {
         version: 1,
         kind: "page",
         pluginId: selected.pluginId,
@@ -656,4 +677,12 @@ function legacyPageTarget(
       ...scope,
     };
   }
+}
+
+/** The account and community a dock visit belongs to: those selected now. */
+function dockScope(services: AppServices): NavigationScope | null {
+  const { viewer, selected } = services.communities.snapshot();
+  return viewer && selected
+    ? { viewer, communityOrigin: communityDestination(selected).url }
+    : null;
 }

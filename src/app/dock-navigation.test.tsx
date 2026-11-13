@@ -12,6 +12,7 @@ import type { OpenTarget } from "../features/navigation/targets";
 import { matchesEvent } from "../features/relay/projection";
 import { bounds, message, metadata, roster } from "../features/relay/testing";
 import type { ReadFilter } from "../features/relay/events";
+import { inboxTarget } from "../bundled/inbox/route";
 
 vi.mock("../bundled", async () => ({
   bundledPlugins: [
@@ -185,6 +186,38 @@ it("returns to Activity when the dock switches back to Messages", async () => {
       pluginId: "buzz.bestie",
     }),
   );
+});
+
+// Activity's shortcuts and its preview footer open it with no scope; the
+// dock returns there in the community it opened in.
+it.each([
+  [
+    "its unread shortcut",
+    () => userEvent.keyboard("{Control>}{Shift>}a{/Shift}{/Control}"),
+    { route: { version: 1, params: { activity: "all", attention: "unread" } } },
+  ],
+  [
+    "the preview footer's open",
+    () =>
+      act(() => {
+        void current().navigation.open(inboxTarget);
+      }),
+    {},
+  ],
+])("returns to Activity opened by %s", async (_, enter, extra) => {
+  const app = dockFixture();
+  await waitFor(() => expect(app.navigation.snapshot().status).toBe("opened"));
+  await enter();
+  await waitFor(() =>
+    expect(app.navigation.snapshot()).toMatchObject({
+      status: "opened",
+      entry: { target: { pluginId: "buzz.inbox", ...extra } },
+    }),
+  );
+  expect(app.navigation.snapshot().entry.target).not.toHaveProperty("scope");
+  await bestie();
+  await userEvent.click(messagesTab());
+  await opened(app, { ...activity, ...extra });
 });
 
 it("returns to the channel and its thread, without the one-time parts", async () => {

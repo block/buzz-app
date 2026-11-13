@@ -27,6 +27,28 @@ test.use({
   historyCounts: { alpha: 20, beta: 20 },
 });
 
+/** Switches the dock to Workflows and back to Messages, each visit opened. */
+async function dockRoundTrip(page) {
+  const dock = page.getByRole("navigation", { name: "Apps dock" });
+  const settled = (pluginId) =>
+    expect
+      .poll(() =>
+        page.evaluate(() => {
+          const { status, entry } = window.fixtureNavigation.snapshot();
+          return status === "opened" && entry.target.pluginId;
+        }),
+      )
+      .toBe(pluginId);
+  await dock.getByRole("tab", { name: "Workflows", exact: true }).click();
+  await settled("buzz.workflows");
+  await dock.getByRole("tab", { name: "Messages", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+}
+const visitTarget = (page) =>
+  page.evaluate(() => window.fixtureNavigation.snapshot().entry.target);
+
 test("Back restores each thread visit before the previous channel", async ({
   page,
   app,
@@ -900,7 +922,14 @@ test("header openings keep focus while a main-pane thread is retained", async ({
   });
   const projects = topbar.getByRole("tab", { name: "Workflows", exact: true });
   const inbox = activityRow(page);
-  for (const leave of [inbox, projects]) {
+  const alpha = main.getByRole("tab", { name: "Alpha", exact: true });
+  const thread = main.locator('[role="tab"][data-tab-value^="thread:"]');
+  // Reselecting Messages from Activity, which Messages owns, opens its
+  // channels; switching back from another app returns to the retained thread.
+  for (const [leave, selected, unselected] of [
+    [inbox, alpha, thread],
+    [projects, thread, alpha],
+  ]) {
     await page
       .locator(`[data-channel-timeline="alpha"] [data-message-id="${root.id}"]`)
       .getByRole("button", { name: /^View thread:/ })
@@ -911,9 +940,8 @@ test("header openings keep focus while a main-pane thread is retained", async ({
     await leave.click();
     await messages.focus();
     await messages.press("Enter");
-    await expect(
-      main.getByRole("tab", { name: "Alpha", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
+    await expect(selected).toHaveAttribute("aria-selected", "true");
+    await expect(unselected).toHaveAttribute("aria-selected", "false");
     await messages.evaluate(
       () => new Promise((resolve) => requestAnimationFrame(resolve)),
     );
@@ -974,8 +1002,79 @@ test("a wrong link hint preserves both open thread editors and selects the verif
   ).toHaveCount(1);
   expect(await originalEditor.evaluate((el) => el.isConnected)).toBe(true);
   expect(await destinationEditor.evaluate((el) => el.isConnected)).toBe(true);
+  // The dock returns to the thread the reader verified, never the hint's.
+  await dockRoundTrip(page);
+  expect(await visitTarget(page)).toMatchObject({
+    kind: "conversation",
+    channelId: "alpha",
+    messageId: roots[0].id,
+    threadRootId: roots[0].id,
+  });
+  await expect(
+    main.getByRole("tab", { name: "Alpha", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    main.locator('[role="tab"][data-tab-value^="thread:"]'),
+  ).toHaveAttribute("aria-selected", "false");
+  await expect(reply(side)).toHaveText("Destination draft");
   await main.locator('[role="tab"][data-tab-value^="thread:"]').click();
   await expect(reply(main)).toHaveText("Keep original draft");
+});
+
+// A reply link with no thread hint names only the message; its reader finds
+// the thread, and the dock returns there rather than to the channel.
+test("the dock returns to the thread a hintless reply link opened in the main pane", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-thread-placement.v1", "main"),
+  );
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const linkedReply = app.append(
+    "primary",
+    "alpha",
+    "Linked reply",
+    false,
+    false,
+    root.id,
+  );
+  const opener = app.append(
+    "primary",
+    "alpha",
+    `See <buzz://message?channel=alpha&id=${linkedReply.id}>`,
+    false,
+  );
+  await open(page, app);
+  const main = page.locator("[data-main-workspace]");
+  const thread = main.locator('[role="tab"][data-tab-value^="thread:"]');
+  await page
+    .locator(`[data-channel-timeline="alpha"] [data-message-id="${opener.id}"]`)
+    .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true })
+    .click();
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await expect(
+    main.locator(`[data-message-id="${linkedReply.id}"]`),
+  ).toBeVisible();
+  // The tab takes its root's text once the reader verifies the thread.
+  await expect(thread).toContainText("Thread root 0");
+  await dockRoundTrip(page);
+  expect(await visitTarget(page)).toMatchObject({
+    kind: "conversation",
+    channelId: "alpha",
+    messageId: root.id,
+    threadRootId: root.id,
+  });
+  await expect(thread).toHaveCount(1);
+  await expect(thread).toHaveAttribute("aria-selected", "true");
+  await expect(
+    main.getByRole("tab", { name: "Alpha", exact: true }),
+  ).toHaveAttribute("aria-selected", "false");
+  await expect(
+    main.locator(`[data-message-id="${linkedReply.id}"]`),
+  ).toBeVisible();
 });
 
 test.describe(() => {

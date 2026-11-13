@@ -43,8 +43,12 @@ it("files Activity and conversations under Messages", () => {
   ).toBeUndefined();
 });
 
-it("reopens a thread at its root, dropping the message, Members and Forward", () => {
-  expect(dockReturn(pages, "buzz.channels/channels", thread, scope)).toEqual({
+it("reopens a verified thread at its root, dropping Members and Forward", () => {
+  const verified: OpenTarget = {
+    ...thread,
+    messageId: "c".repeat(64),
+  };
+  expect(dockReturn(pages, "buzz.channels/channels", verified, scope)).toEqual({
     version: 1,
     kind: "conversation",
     scope,
@@ -52,6 +56,24 @@ it("reopens a thread at its root, dropping the message, Members and Forward", ()
     messageId: "c".repeat(64),
     threadRootId: "c".repeat(64),
   });
+});
+
+it("never trusts a link's thread hint: an unverified thread reopens its channel", () => {
+  const channel = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+  };
+  // A reply whose hinted root its reader never confirmed.
+  expect(dockReturn(pages, "buzz.channels/channels", thread, scope)).toEqual(
+    channel,
+  );
+  // A reply link with no hint.
+  const { threadRootId: _root, ...reply } = thread;
+  expect(dockReturn(pages, "buzz.channels/channels", reply, scope)).toEqual(
+    channel,
+  );
 });
 
 it("reopens a channel without the message it revealed", () => {

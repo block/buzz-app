@@ -2158,11 +2158,12 @@ export function SearchResults({
           hints,
           busy: !!query.trim() && (messagesPending || directoryPending),
           onFreeze: () => setFrozenFor(query),
-          preview: (row, tone) => (
+          preview: (row, tone, follow) => (
             <SearchPreview
               session={session}
               row={row}
               tone={tone}
+              follow={follow}
               terms={terms}
               nameOf={nameOf}
               whereOf={whereOf}

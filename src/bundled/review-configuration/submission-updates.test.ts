@@ -233,7 +233,7 @@ it("identifies only changed lanes using the previously displayed request and rep
   expect(f.store.unreadLane(changed, 0)).toBe(true);
   expect(f.store.unreadLane(changed, 1)).toBe(false);
   f.store.markSeen(changed);
-  const reminder = {
+  const reminder: SavedSubmission = {
     ...changed,
     value: {
       ...changed.value,

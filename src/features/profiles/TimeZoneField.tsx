@@ -39,21 +39,25 @@ function matches(zone: string, query: string) {
 }
 
 /** Chooses the profile's shared `tz`, written exactly as picked. Undefined
- * means none is shared; the picker then offers this device's zone. */
+ * means none is shared; the picker then offers `fallback`, else this device's
+ * zone. */
 export function TimeZoneField({
   value,
+  fallback,
   onChange,
   byDefault = false,
   disabled = false,
 }: {
   value: string | undefined;
+  /** The zone rechecking offers, such as the saved one. */
+  fallback?: string | undefined;
   onChange(value: string | undefined): void;
   /** The profile has no `tz` yet; `value` will be shared from this device. */
   byDefault?: boolean;
   disabled?: boolean;
 }) {
   const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const shown = value ?? device;
+  const shown = value ?? fallback ?? device;
   const zones = useMemo(
     () => [
       ...new Set([
@@ -77,7 +81,8 @@ export function TimeZoneField({
       />
       {byDefault && value !== undefined && (
         <p className="text-caption text-secondary">
-          This device’s time zone will be shared.
+          This device’s time zone is shared by default. Uncheck and save to stop
+          sharing it.
         </p>
       )}
       <Combobox.Root

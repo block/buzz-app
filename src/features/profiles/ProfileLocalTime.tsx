@@ -23,10 +23,21 @@ export function ProfileLocalTime({
     const tick = () => {
       const current = new Date();
       setNow(current);
-      timer = setTimeout(tick, 60_000 - (current.getTime() % 60_000) || 60_000);
+      clearTimeout(timer);
+      timer = setTimeout(tick, 60_000 - (current.getTime() % 60_000));
+    };
+    // A timer can fire late after the machine sleeps; catch up on return.
+    const visible = () => {
+      if (document.visibilityState === "visible") tick();
     };
     tick();
-    return () => clearTimeout(timer);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", visible);
+    };
   }, [zone]);
   const label = localTimeLabel(
     zone,

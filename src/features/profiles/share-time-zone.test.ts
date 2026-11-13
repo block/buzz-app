@@ -271,3 +271,39 @@ it("adds the device zone to a first or untouched profile but keeps an opt-out", 
     name: "Mic",
   });
 });
+
+it("remembers on this device that a community was settled, across launches", async () => {
+  const stored = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+    removeItem: (key: string) => stored.delete(key),
+  });
+  try {
+    // An opted-out profile settles the community on this device.
+    const first = share(
+      Promise.resolve([profile(viewer, { name: "Mic", tz: "" })]),
+    );
+    expect(await first.shared).toBe(false);
+    // Next launch: another app has rewritten the profile without `tz`.
+    vi.resetModules();
+    const next = await import("./share-time-zone");
+    const publish = vi.fn(async () => {});
+    const events = [profile(viewer, { name: "Mic" })];
+    expect(
+      await next.shareDeviceTimeZone({
+        community,
+        viewer: viewer.pubkey,
+        communities: {} as Communities,
+        read: Promise.resolve(events),
+        inspect: async () => profileFromEvent(events[0]),
+        publish,
+        zone,
+      }),
+    ).toBe(false);
+    expect(publish).not.toHaveBeenCalled();
+  } finally {
+    resetSharedTimeZones();
+    vi.unstubAllGlobals();
+  }
+});

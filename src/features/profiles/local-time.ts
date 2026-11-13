@@ -18,8 +18,9 @@ export function profileTimeZone(value: unknown): string | undefined {
   return zone;
 }
 
-/** Minutes the zone is ahead of UTC at `at`, including daylight saving. */
-function utcOffset(timeZone: string, at: Date): number {
+/** Minutes the zone is ahead of UTC at `at`, including daylight saving;
+ * undefined when the engine's offset name is not recognized. */
+function utcOffset(timeZone: string, at: Date): number | undefined {
   const name = new Intl.DateTimeFormat("en-US", {
     timeZone,
     timeZoneName: "longOffset",
@@ -27,7 +28,7 @@ function utcOffset(timeZone: string, at: Date): number {
     .formatToParts(at)
     .find((part) => part.type === "timeZoneName")?.value;
   const match = /^GMT(?:([+-])(\d{2}):(\d{2}))?$/.exec(name ?? "");
-  if (!match) return 0;
+  if (!match) return;
   const minutes = Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
   return match[1] === "-" ? -minutes : minutes;
 }
@@ -81,7 +82,12 @@ export function localTimeLabel(
           ? // English, like "tomorrow" and the rest of the label.
             ` ${new Intl.DateTimeFormat("en-US", { timeZone: zone, weekday: "long" }).format(now)}`
           : "";
-  const difference = utcOffset(zone, now) - utcOffset(viewer, now);
+  const zoneOffset = utcOffset(zone, now);
+  const viewerOffset = utcOffset(viewer, now);
+  const difference =
+    zoneOffset === undefined || viewerOffset === undefined
+      ? 0
+      : zoneOffset - viewerOffset;
   if (!difference || options.difference === false)
     return `${time}${day} local time`;
   const hours = Math.floor(Math.abs(difference) / 60);

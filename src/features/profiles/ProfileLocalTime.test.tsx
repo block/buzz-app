@@ -49,3 +49,17 @@ it("adds the difference and the zone on its own line unless details are off", ()
   expect(screen.getByText(/local time/).textContent).toMatch(/local time$/);
   view.unmount();
 });
+
+it("catches up when the window returns after sleep", () => {
+  vi.useFakeTimers({ now: new Date("2026-01-15T15:41:30Z") });
+  render(<ProfileLocalTime timeZone="UTC" className="local-time" />);
+  const time = () => screen.getByText(/local time/).textContent;
+  expect(time()).toMatch(/3:41|15:41/);
+  // Asleep: the clock moves on without the timer firing.
+  vi.setSystemTime(new Date("2026-01-15T18:05:10Z"));
+  act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  expect(time()).toMatch(/6:05|18:05/);
+  expect(vi.getTimerCount()).toBe(1);
+});

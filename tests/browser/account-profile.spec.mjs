@@ -151,9 +151,9 @@ test("account menu choices remain reachable across themes, widths and enlarged t
   ).toBeVisible();
 });
 
-// Sharing by default crosses the profile button's fresh read, the strong read
-// before publishing and the host's merging profile writer; unit tests stub
-// each of those boundaries.
+// Sharing by default crosses the profile button's fresh read and the strong
+// read before publishing, then the fixture's merging profile writer (not the
+// browser host's); unit tests stub each read.
 test.describe("local time shared by default", () => {
   test.use({ profileTimeZone: null, timezoneId: "Europe/Paris" });
 

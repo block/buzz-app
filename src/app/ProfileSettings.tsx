@@ -264,8 +264,8 @@ export function ProfileSettings({
       : undefined;
   const tz = tzDraft === undefined ? persistedTz : (tzDraft ?? undefined);
   const tzChanged = tzDraft !== undefined && tz !== persistedTz;
-  const hasChanges =
-    (draft !== null && !profilesEqual(edited, persisted)) || tzChanged;
+  const profileEdited = draft !== null && !profilesEqual(edited, persisted);
+  const hasChanges = profileEdited || tzChanged;
   // A dispatched save continues after Settings closes, so it is not
   // discardable. Before then (the fresh read), closing would drop the edit.
   const discardable = hasChanges && !dispatched;
@@ -379,7 +379,7 @@ export function ProfileSettings({
                       (community && (!loaded || loadStatus !== "ready"))
                     )
                       return;
-                    const next = {
+                    let next = {
                       ...profile,
                       name: profile.name.trim(),
                       about: profile.about?.trim() ?? "",
@@ -408,6 +408,18 @@ export function ProfileSettings({
                           // Preserve fields outside this editor even if another client edited them.
                           const latest = await inspect(community.id);
                           if (!mounted.current) return;
+                          // A save about `tz` alone keeps fields another
+                          // client changed since Settings opened.
+                          if (
+                            !profileEdited &&
+                            latest.exists &&
+                            latest.profile.name.trim()
+                          )
+                            next = {
+                              ...latest.profile,
+                              name: latest.profile.name.trim(),
+                              about: latest.profile.about?.trim() ?? "",
+                            };
                           setDispatched(true);
                           await communityApi.publishProfile(
                             community.id,
@@ -475,6 +487,7 @@ export function ProfileSettings({
                   {community && (
                     <TimeZoneField
                       value={tz}
+                      fallback={persistedTz}
                       byDefault={tzByDefault && !tzChanged}
                       disabled={saving || !previewReady}
                       onChange={(next) => {

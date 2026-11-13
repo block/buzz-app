@@ -20,8 +20,26 @@ export function withDeviceTimeZone(
   return zone && !("tz" in existing) ? { ...existing, tz: zone } : existing;
 }
 
-// Community and viewer pairs already settled this launch.
-const settled = new Set<string>();
+// Community and viewer pairs already settled. A pair whose profile was read
+// is remembered on this device, so sharing by default happens at most once per
+// device: a later missing `tz` (another app rewrote the profile) stays alone.
+const storageKey = "buzz-shared-time-zones.v1";
+let settled: Set<string> | undefined;
+function settledPairs() {
+  if (settled) return settled;
+  settled = new Set();
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
+    if (Array.isArray(saved))
+      for (const key of saved) if (typeof key === "string") settled.add(key);
+  } catch {}
+  return settled;
+}
+function storeSettled() {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify([...settledPairs()]));
+  } catch {}
+}
 // The share in flight per pair; a replacement waits for it before checking.
 const running = new Map<string, Promise<boolean>>();
 
@@ -99,7 +117,8 @@ async function attemptShare({
   zone: string | undefined;
 }): Promise<boolean> {
   const key = `${community}\n${viewer}`;
-  if (settled.has(key)) return false;
+  const pairs = settledPairs();
+  if (pairs.has(key)) return false;
   const saves = profileSaveGeneration(communities);
   let events: readonly EventData[];
   try {
@@ -107,13 +126,14 @@ async function attemptShare({
   } catch {
     return false;
   }
-  if (signal?.aborted || settled.has(key)) return false;
-  settled.add(key);
+  if (signal?.aborted || pairs.has(key)) return false;
+  pairs.add(key);
   let latest: EventData | undefined;
   for (const event of events)
     if (event.kind === 0 && event.pubkey === viewer)
       latest = newer(latest, event);
   if (!latest || !zone) return false;
+  storeSettled();
   try {
     if (!shareable(profileFromEvent(latest))) return false;
   } catch {
@@ -123,11 +143,13 @@ async function attemptShare({
   try {
     current = await inspect();
   } catch {
-    settled.delete(key);
+    pairs.delete(key);
+    storeSettled();
     return false;
   }
   if (signal?.aborted) {
-    settled.delete(key);
+    pairs.delete(key);
+    storeSettled();
     return false;
   }
   if (!shareable(current) || profileSavedSince(communities, saves))
@@ -145,8 +167,11 @@ async function attemptShare({
   }
 }
 
-/** Test seam: forget which communities were settled this launch. */
+/** Test seam: forget which communities were settled. */
 export function resetSharedTimeZones() {
-  settled.clear();
+  settled = undefined;
+  try {
+    localStorage.removeItem(storageKey);
+  } catch {}
   running.clear();
 }

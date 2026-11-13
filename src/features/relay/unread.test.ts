@@ -6084,6 +6084,44 @@ it("catch-up reads a viewed mention but replaces only ordinary message marks", a
   expect(h.journal()?.state.frontiers).toEqual({ room: 30 });
 });
 
+it("catch-up does not read a mention arriving while its activity save is pending", async () => {
+  const h = setup();
+  h.grant("room");
+  const retained = message(h.alice, "room", "retained mention", 11, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const bottom = message(h.alice, "room", "bottom", 13);
+  h.emit([retained, bottom]);
+  await h.session.unread.ensure();
+  const lease = h.session.unread.reading("room");
+  const held = h.holdSaveStarted();
+  const pending = lease.catchUp(bottom.id);
+  try {
+    await held.started;
+    // Older timestamps can arrive after the dwell has already been earned.
+    const later = message(h.alice, "room", "late mention", 12, [
+      ["p", h.viewer.pubkey],
+    ]);
+    h.emit([later]);
+    expect(h.session.unread.attention("room", later.id).unread).toBe(true);
+    held.release();
+    await pending;
+    expect(h.session.unread.attention("room", retained.id).unread).toBe(false);
+    expect(h.session.unread.attention("room", later.id).unread).toBe(true);
+    expect(h.journal()?.state.frontiers).not.toHaveProperty(`msg:${later.id}`);
+    // A subsequent dwell may acknowledge the now-retained mention.
+    await lease.catchUp(bottom.id);
+    expect(h.session.unread.attention("room", later.id).unread).toBe(false);
+  } finally {
+    held.release();
+    try {
+      await pending;
+    } finally {
+      lease.dispose();
+    }
+  }
+});
+
 it("catch-up leaves a mention marked unread unread", async () => {
   const h = setup();
   h.grant("room");

@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23e5f6d8be 100644
+index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..9f834e5232deced0d284b1f966233d17cc8184ad 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -499,7 +499,7 @@ function getDefaultSwipeDirections(position) {
@@ -11,7 +11,27 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
      const [swipeDirection, setSwipeDirection] = React__default.default.useState(null);
      const [swipeOutDirection, setSwipeOutDirection] = React__default.default.useState(null);
      const [mounted, setMounted] = React__default.default.useState(false);
-@@ -540,6 +540,8 @@ const Toast = (props)=>{
+@@ -512,6 +512,19 @@ const Toast = (props)=>{
+     const remainingTime = React__default.default.useRef(toast.duration || durationFromToaster || TOAST_LIFETIME);
+     const dragStartTime = React__default.default.useRef(null);
+     const toastRef = React__default.default.useRef(null);
++    const [inert, setInert] = React__default.default.useState(false);
++    React__default.default.useLayoutEffect(()=>{
++        const node = toastRef.current;
++        if (!node) return;
++        // Hidden modal background time must not consume finite feedback.
++        const update = ()=>setInert(Boolean(node.closest('[inert]')));
++        const observer = new MutationObserver(update);
++        for(let ancestor = node; ancestor; ancestor = ancestor.parentElement){
++            observer.observe(ancestor, { attributes: true, attributeFilter: ['inert'] });
++        }
++        update();
++        return ()=>observer.disconnect();
++    }, []);
+     const isFront = index === 0;
+     const isVisible = index + 1 <= visibleToasts;
+     const toastType = toast.type;
+@@ -540,6 +553,8 @@ const Toast = (props)=>{
      const offset = React__default.default.useRef(0);
      const lastCloseTimerStartTimeRef = React__default.default.useRef(0);
      const pointerStartRef = React__default.default.useRef(null);
@@ -20,7 +40,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
      const [y, x] = position.split('-');
      const toastsHeightBefore = React__default.default.useMemo(()=>{
          return heights.reduce((prev, curr, reducerIndex)=>{
-@@ -638,7 +640,9 @@ const Toast = (props)=>{
+@@ -638,7 +653,9 @@ const Toast = (props)=>{
          setRemoved(true);
          setOffsetBeforeRemove(offset.current);
          setHeights((h)=>h.filter((height)=>height.toastId !== toast.id));
@@ -31,12 +51,12 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
              removeToast(toast);
          }, TIME_BEFORE_UNMOUNT);
      }, [
-@@ -671,15 +675,14 @@ const Toast = (props)=>{
+@@ -671,15 +688,15 @@ const Toast = (props)=>{
                  deleteToast();
              }, remainingTime.current);
          };
 -        if (expanded || interacting || isDocumentHidden) {
-+        if (paused || isDocumentHidden) {
++        if (paused || inert || isDocumentHidden) {
              pauseTimer();
          } else {
              startTimer();
@@ -46,10 +66,11 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
 -        expanded,
 -        interacting,
 +        paused,
++        inert,
          toast,
          toastType,
          isDocumentHidden,
-@@ -748,6 +751,22 @@ const Toast = (props)=>{
+@@ -748,6 +765,22 @@ const Toast = (props)=>{
              setSwipeDirection(null);
              pointerStartRef.current = null;
          },
@@ -72,7 +93,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
          onPointerDown: (event)=>{
              if (event.button === 2) return; // Return early on right click
              if (disabled || !dismissible) return;
-@@ -1009,6 +1028,8 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1009,6 +1042,8 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
      const [heights, setHeights] = React__default.default.useState([]);
      const [expanded, setExpanded] = React__default.default.useState(false);
      const [interacting, setInteracting] = React__default.default.useState(false);
@@ -81,7 +102,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
      const [actualTheme, setActualTheme] = React__default.default.useState(theme !== 'system' ? theme : typeof window !== 'undefined' ? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' : 'light');
      const listRef = React__default.default.useRef(null);
      const hotkeyLabel = hotkey.join('+').replace(/Key/g, '').replace(/Digit/g, '');
-@@ -1104,12 +1125,13 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1104,12 +1139,13 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
          theme
      ]);
      React__default.default.useEffect(()=>{
@@ -100,7 +121,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
      ]);
      React__default.default.useEffect(()=>{
          const handleKeyDown = (event)=>{
-@@ -1133,9 +1155,10 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1133,9 +1169,10 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
          if (listRef.current) {
              return ()=>{
                  if (lastFocusedElementRef.current) {
@@ -114,7 +135,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
                      lastFocusedElementRef.current = null;
                      isFocusWithinRef.current = false;
                  }
-@@ -1176,17 +1199,19 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1176,17 +1213,19 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
                  ...assignOffset(offset, mobileOffset)
              },
              onBlur: (event)=>{
@@ -139,7 +160,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
                  const isNotDismissible = event.target instanceof HTMLElement && event.target.dataset.dismissible === 'false';
                  if (isNotDismissible) return;
                  if (!isFocusWithinRef.current) {
-@@ -1194,9 +1219,10 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1194,9 +1233,10 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
                      lastFocusedElementRef.current = event.relatedTarget;
                  }
              },
@@ -152,7 +173,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
                  // Avoid setting expanded to false when interacting with a toast, e.g. swiping
                  if (!interacting) {
                      setExpanded(false);
-@@ -1208,7 +1234,8 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1208,7 +1248,8 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
                  if (isNotDismissible) return;
                  setInteracting(true);
              },
@@ -162,7 +183,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
          }, filteredToasts.filter((toast)=>!toast.position && index === 0 || toast.position === position).map((toast, index)=>{
              var _toastOptions_duration, _toastOptions_closeButton;
              return /*#__PURE__*/ React__default.default.createElement(Toast, {
-@@ -1223,7 +1250,7 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
+@@ -1223,7 +1264,7 @@ const Toaster = /*#__PURE__*/ React__default.default.forwardRef(function Toaster
                  invert: invert,
                  visibleToasts: visibleToasts,
                  closeButton: (_toastOptions_closeButton = toastOptions == null ? void 0 : toastOptions.closeButton) != null ? _toastOptions_closeButton : closeButton,
@@ -172,7 +193,7 @@ index 394dbc2272f43b84642b0f9d5cc7eb1eacb0ffb3..1e1ecb9f67b51a9929e1a9cd866eaa23
                  style: toastOptions == null ? void 0 : toastOptions.style,
                  unstyled: toastOptions == null ? void 0 : toastOptions.unstyled,
 diff --git a/dist/index.mjs b/dist/index.mjs
-index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe3002d550d5 100644
+index c124f821a68f7070647a5a04441d0caa53689662..bc87b3c16d4faa849b317ff395ba24328b1dd27d 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -492,7 +492,7 @@ function getDefaultSwipeDirections(position) {
@@ -184,7 +205,27 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
      const [swipeDirection, setSwipeDirection] = React.useState(null);
      const [swipeOutDirection, setSwipeOutDirection] = React.useState(null);
      const [mounted, setMounted] = React.useState(false);
-@@ -533,6 +533,8 @@ const Toast = (props)=>{
+@@ -505,6 +505,19 @@ const Toast = (props)=>{
+     const remainingTime = React.useRef(toast.duration || durationFromToaster || TOAST_LIFETIME);
+     const dragStartTime = React.useRef(null);
+     const toastRef = React.useRef(null);
++    const [inert, setInert] = React.useState(false);
++    React.useLayoutEffect(()=>{
++        const node = toastRef.current;
++        if (!node) return;
++        // Hidden modal background time must not consume finite feedback.
++        const update = ()=>setInert(Boolean(node.closest('[inert]')));
++        const observer = new MutationObserver(update);
++        for(let ancestor = node; ancestor; ancestor = ancestor.parentElement){
++            observer.observe(ancestor, { attributes: true, attributeFilter: ['inert'] });
++        }
++        update();
++        return ()=>observer.disconnect();
++    }, []);
+     const isFront = index === 0;
+     const isVisible = index + 1 <= visibleToasts;
+     const toastType = toast.type;
+@@ -533,6 +546,8 @@ const Toast = (props)=>{
      const offset = React.useRef(0);
      const lastCloseTimerStartTimeRef = React.useRef(0);
      const pointerStartRef = React.useRef(null);
@@ -193,7 +234,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
      const [y, x] = position.split('-');
      const toastsHeightBefore = React.useMemo(()=>{
          return heights.reduce((prev, curr, reducerIndex)=>{
-@@ -631,7 +633,9 @@ const Toast = (props)=>{
+@@ -631,7 +646,9 @@ const Toast = (props)=>{
          setRemoved(true);
          setOffsetBeforeRemove(offset.current);
          setHeights((h)=>h.filter((height)=>height.toastId !== toast.id));
@@ -204,12 +245,12 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
              removeToast(toast);
          }, TIME_BEFORE_UNMOUNT);
      }, [
-@@ -664,15 +668,14 @@ const Toast = (props)=>{
+@@ -664,15 +681,15 @@ const Toast = (props)=>{
                  deleteToast();
              }, remainingTime.current);
          };
 -        if (expanded || interacting || isDocumentHidden) {
-+        if (paused || isDocumentHidden) {
++        if (paused || inert || isDocumentHidden) {
              pauseTimer();
          } else {
              startTimer();
@@ -219,10 +260,11 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
 -        expanded,
 -        interacting,
 +        paused,
++        inert,
          toast,
          toastType,
          isDocumentHidden,
-@@ -741,6 +744,22 @@ const Toast = (props)=>{
+@@ -741,6 +758,22 @@ const Toast = (props)=>{
              setSwipeDirection(null);
              pointerStartRef.current = null;
          },
@@ -245,7 +287,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
          onPointerDown: (event)=>{
              if (event.button === 2) return; // Return early on right click
              if (disabled || !dismissible) return;
-@@ -1002,6 +1021,8 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1002,6 +1035,8 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
      const [heights, setHeights] = React.useState([]);
      const [expanded, setExpanded] = React.useState(false);
      const [interacting, setInteracting] = React.useState(false);
@@ -254,7 +296,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
      const [actualTheme, setActualTheme] = React.useState(theme !== 'system' ? theme : typeof window !== 'undefined' ? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' : 'light');
      const listRef = React.useRef(null);
      const hotkeyLabel = hotkey.join('+').replace(/Key/g, '').replace(/Digit/g, '');
-@@ -1097,12 +1118,13 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1097,12 +1132,13 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
          theme
      ]);
      React.useEffect(()=>{
@@ -273,7 +315,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
      ]);
      React.useEffect(()=>{
          const handleKeyDown = (event)=>{
-@@ -1126,9 +1148,10 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1126,9 +1162,10 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
          if (listRef.current) {
              return ()=>{
                  if (lastFocusedElementRef.current) {
@@ -287,7 +329,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
                      lastFocusedElementRef.current = null;
                      isFocusWithinRef.current = false;
                  }
-@@ -1169,17 +1192,19 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1169,17 +1206,19 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
                  ...assignOffset(offset, mobileOffset)
              },
              onBlur: (event)=>{
@@ -312,7 +354,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
                  const isNotDismissible = event.target instanceof HTMLElement && event.target.dataset.dismissible === 'false';
                  if (isNotDismissible) return;
                  if (!isFocusWithinRef.current) {
-@@ -1187,9 +1212,10 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1187,9 +1226,10 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
                      lastFocusedElementRef.current = event.relatedTarget;
                  }
              },
@@ -325,7 +367,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
                  // Avoid setting expanded to false when interacting with a toast, e.g. swiping
                  if (!interacting) {
                      setExpanded(false);
-@@ -1201,7 +1227,8 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1201,7 +1241,8 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
                  if (isNotDismissible) return;
                  setInteracting(true);
              },
@@ -335,7 +377,7 @@ index c124f821a68f7070647a5a04441d0caa53689662..48fd47e34323712cb9253721645bfe30
          }, filteredToasts.filter((toast)=>!toast.position && index === 0 || toast.position === position).map((toast, index)=>{
              var _toastOptions_duration, _toastOptions_closeButton;
              return /*#__PURE__*/ React.createElement(Toast, {
-@@ -1216,7 +1243,7 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
+@@ -1216,7 +1257,7 @@ const Toaster = /*#__PURE__*/ React.forwardRef(function Toaster(props, ref) {
                  invert: invert,
                  visibleToasts: visibleToasts,
                  closeButton: (_toastOptions_closeButton = toastOptions == null ? void 0 : toastOptions.closeButton) != null ? _toastOptions_closeButton : closeButton,

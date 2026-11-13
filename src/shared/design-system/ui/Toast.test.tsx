@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
+import { toast } from "sonner";
 import {
   act,
   cleanup,
@@ -8,6 +9,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -400,3 +402,189 @@ it("cancels a dismissed toast's pending removal when its host unmounts", async (
   view.unmount();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("lets completed actions outlive a row but suppresses feedback after their host closes", async () => {
+  let notify!: ReturnType<typeof useToastNotification>;
+  function Action() {
+    notify = useToastNotification();
+    return null;
+  }
+  const custom = vi.spyOn(toast, "custom");
+  const view = render(
+    <StrictMode>
+      <ToastProvider>
+        <Action />
+      </ToastProvider>
+    </StrictMode>,
+  );
+  view.rerender(
+    <StrictMode>
+      <ToastProvider>{null}</ToastProvider>
+    </StrictMode>,
+  );
+  act(() => {
+    notify("Row removed", "success");
+  });
+  expect(
+    await screen.findByRole("dialog", { name: "Row removed" }),
+  ).toBeVisible();
+  view.unmount();
+  custom.mockClear();
+  act(() => {
+    notify("Late clipboard failure", "error");
+  });
+  expect(custom).not.toHaveBeenCalled();
+});
+
+it("keeps effect-driven feedback through StrictMode host replay", async () => {
+  vi.useFakeTimers();
+  let mounts = 0;
+  function Action() {
+    const notify = useToastNotification();
+    useEffect(() => {
+      notify(
+        ++mounts === 1 ? "Initial feedback" : "Replay feedback",
+        "success",
+      );
+    }, [notify]);
+    return null;
+  }
+  render(
+    <StrictMode>
+      <ToastProvider>
+        <Action />
+      </ToastProvider>
+    </StrictMode>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(300));
+  expect(screen.getByRole("dialog", { name: "Replay feedback" })).toBeVisible();
+});
+
+it.each(["success", "error"] as const)(
+  "routes late %s feedback to the nearest mounted enclosing host",
+  async (tone) => {
+    let notify!: ReturnType<typeof useToastNotification>;
+    function Action() {
+      notify = useToastNotification();
+      return null;
+    }
+    const outer = document.createElement("div");
+    const inner = document.createElement("div");
+    document.body.append(outer, inner);
+    const view = render(
+      <StrictMode>
+        <ToastProvider portalContainer={outer}>
+          <ToastProvider portalContainer={inner}>
+            <Action />
+          </ToastProvider>
+        </ToastProvider>
+      </StrictMode>,
+    );
+    try {
+      act(() => {
+        notify("Viewer feedback", tone);
+      });
+      expect(inner).toContainElement(
+        await screen.findByRole("dialog", { name: "Viewer feedback" }),
+      );
+      view.rerender(
+        <StrictMode>
+          <ToastProvider portalContainer={outer}>{null}</ToastProvider>
+        </StrictMode>,
+      );
+      act(() => {
+        notify("Completed after close", tone);
+      });
+      const feedback = await screen.findByRole("dialog", {
+        name: "Completed after close",
+      });
+      expect(outer).toContainElement(feedback);
+      expect(inner).toBeEmptyDOMElement();
+      expect(
+        screen.queryByRole("dialog", { name: "Viewer feedback" }),
+      ).toBeNull();
+      fireEvent.click(
+        within(feedback).getByRole("button", { name: "Dismiss notification" }),
+      );
+      await waitFor(() => expect(feedback).not.toBeInTheDocument());
+      view.unmount();
+      const custom = vi.spyOn(toast, "custom");
+      act(() => {
+        notify("All hosts closed", tone);
+      });
+      expect(custom).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      outer.remove();
+      inner.remove();
+    }
+  },
+);
+
+it.each(["before hiding", "while hidden"])(
+  "preserves the remaining lifetime of late feedback arriving %s",
+  async (arrival) => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    let notify!: ReturnType<typeof useToastNotification>;
+    function Action() {
+      notify = useToastNotification();
+      return null;
+    }
+    const ancestor = document.createElement("div");
+    const portal = document.createElement("div");
+    ancestor.append(portal);
+    document.body.append(ancestor);
+    const view = render(
+      <StrictMode>
+        <ToastProvider portalContainer={portal}>
+          <ToastProvider>
+            <Action />
+          </ToastProvider>
+        </ToastProvider>
+      </StrictMode>,
+    );
+    try {
+      view.rerender(
+        <StrictMode>
+          <ToastProvider portalContainer={portal}>{null}</ToastProvider>
+        </StrictMode>,
+      );
+      const publish = async () => {
+        act(() => {
+          notify("Stop failed after closing", "error");
+        });
+        await act(() => vi.advanceTimersByTimeAsync(0));
+      };
+      if (arrival === "before hiding") {
+        await publish();
+        await act(() => vi.advanceTimersByTimeAsync(1000));
+      }
+      await act(async () => {
+        ancestor.setAttribute("inert", "");
+      });
+      if (arrival === "while hidden") await publish();
+      await act(() => vi.advanceTimersByTimeAsync(10000));
+      expect(portal).toContainElement(
+        screen.getByText("Stop failed after closing"),
+      );
+      await act(async () => {
+        ancestor.removeAttribute("inert");
+      });
+      const remaining = arrival === "before hiding" ? 3000 : 4000;
+      await act(() => vi.advanceTimersByTimeAsync(remaining - 1));
+      const item = screen
+        .getByText("Stop failed after closing")
+        .closest("[data-sonner-toast]");
+      expect(item).toHaveAttribute("data-removed", "false");
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(item).toHaveAttribute("data-removed", "true");
+      view.unmount();
+      await act(() => vi.advanceTimersByTimeAsync(300));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      view.unmount();
+      ancestor.remove();
+    }
+  },
+);

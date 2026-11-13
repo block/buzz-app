@@ -94,6 +94,11 @@
 }
 
 @layer base {
+  /* Modal and launch boundaries disable this host; its notices must not paint
+     above those surfaces while their controls are unreachable. */
+  #buzz-toast-root[inert] {
+    display: none;
+  }
   :root {
     font-family: var(--font-legacy-sans);
     color: var(--text);

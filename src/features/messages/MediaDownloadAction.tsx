@@ -1,4 +1,13 @@
-import { useEffect, useEffectEvent, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -10,6 +19,7 @@ import {
 } from "../../shared/design-system/icons";
 import { useNativeDownload } from "./use-native-download";
 import { isNativeMediaSource } from "./attachment-source";
+import styles from "./Messages.module.css";
 
 const FAILURE_DURATION = 6000;
 const SAVED = "Saved to Downloads";
@@ -123,21 +133,39 @@ function NativeMediaDownload({
   );
 }
 
-/** Results of the native media menu's Download, which has no control to show them. */
-export function MediaMenuDownloadNotice() {
+type DownloadResult = (name: string | null) => void;
+const MediaMenuDownloadContext = createContext<
+  ((show: DownloadResult) => () => void) | undefined
+>(undefined);
+
+/** One native listener routes feedback into the current viewer, or the host toast. */
+export function MediaMenuDownloadProvider({
+  children,
+}: {
+  children?: ReactNode;
+}) {
+  const viewers = useRef(new Set<DownloadResult>());
+  const register = useCallback((show: DownloadResult) => {
+    viewers.current.add(show);
+    return () => {
+      viewers.current.delete(show);
+    };
+  }, []);
   const notify = useToastNotification();
   // The host sends the saved file's name, or null if the download failed.
   const show = useEffectEvent((name: string | null) => {
-    if (name === null) notify(FAILED, "error");
+    const viewer = [...viewers.current].at(-1);
+    if (viewer) viewer(name);
+    else if (name === null) notify(FAILED, "error");
     else notify(SAVED, "success");
   });
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
     let unlisten = () => {};
-    listen<string | null>("media-menu-download", ({ payload }) =>
-      show(payload),
-    ).then(
+    listen<string | null>("media-menu-download", ({ payload }) => {
+      if (active) show(payload);
+    }).then(
       (stop) => {
         if (active) unlisten = stop;
         else stop();
@@ -149,5 +177,37 @@ export function MediaMenuDownloadNotice() {
       unlisten();
     };
   }, []);
-  return null;
+  return (
+    <MediaMenuDownloadContext value={register}>
+      {children}
+    </MediaMenuDownloadContext>
+  );
+}
+
+/** Viewer-owned status stays inside modal isolation; no background controls move. */
+export function MediaMenuDownloadStatus() {
+  const register = useContext(MediaMenuDownloadContext);
+  const [result, setResult] = useState<{ failed: boolean }>();
+  useEffect(
+    () => register?.((name) => setResult({ failed: name === null })),
+    [register],
+  );
+  useEffect(() => {
+    if (!result) return;
+    const timer = setTimeout(
+      () => setResult(undefined),
+      result.failed ? FAILURE_DURATION : 4000,
+    );
+    return () => clearTimeout(timer);
+  }, [result]);
+  return (
+    <div className={result ? styles.mediaMenuDownloadStatus : "sr-only"}>
+      <span role="status" aria-label="Download status">
+        {result && !result.failed ? SAVED : ""}
+      </span>
+      <span role="alert" aria-label="Download error">
+        {result?.failed ? FAILED : ""}
+      </span>
+    </div>
+  );
 }

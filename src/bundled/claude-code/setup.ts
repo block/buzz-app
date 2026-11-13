@@ -11,6 +11,7 @@ import type {
 } from "../../features/host/service";
 import { ClaudeProcess, ENV, type ClaudeModel, type Spawn } from "./claude";
 import script from "./claude.sh?raw";
+import type { Inherited } from "./forwarding";
 import {
   PROTECTED_CLAUDE_ROOT,
   PROTECTED_CLAUDE_VERSION,
@@ -48,6 +49,7 @@ const STEPS: Readonly<Record<string, string>> = {
   review: "review",
   "review-token": "review-token",
   managed: "managed",
+  "no-proxy": "no-proxy",
 };
 /** Starts `claude` and its other steps as steps of `claude.sh`, which the
  * manifest grants as `bash -c`; other processes start as declared. */
@@ -173,14 +175,31 @@ export async function readManaged(spawn: Spawn, folder: string) {
     throw new Error(
       stderr.trim() || "Claude's managed settings are unreadable",
     );
-  const decoder = new TextDecoder();
-  return stdout
-    .split("\n")
-    .filter(Boolean)
-    .map((line) =>
-      decoder.decode(Uint8Array.from(atob(line), (char) => char.charCodeAt(0))),
-    );
+  return stdout.split("\n").filter(Boolean).map(decode);
 }
+
+/** NO_PROXY and no_proxy as Claude's processes inherit them from the app,
+ * empty where unset, and whether they inherit a proxy. */
+export async function readNoProxy(spawn: Spawn): Promise<Inherited> {
+  const { code, stdout, stderr } = await collect(spawn, "no-proxy", []);
+  const [upper, lower, proxy] = stdout.split("\n");
+  if (
+    code !== 0 ||
+    upper === undefined ||
+    lower === undefined ||
+    (proxy !== "proxied" && proxy !== "direct")
+  )
+    throw new Error(stderr.trim() || "The proxy exceptions are unreadable");
+  return {
+    lists: [decode(upper), decode(lower)],
+    proxied: proxy === "proxied",
+  };
+}
+
+const decode = (line: string) =>
+  new TextDecoder().decode(
+    Uint8Array.from(atob(line), (char) => char.charCodeAt(0)),
+  );
 
 export async function checkClaude(spawn: Spawn): Promise<ClaudeStatus> {
   let version: string;

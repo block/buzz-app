@@ -65,6 +65,10 @@ export type Generation = Readonly<{
   /** Whether native admitted any request on it: one that never did, once
    * a turn has run, means Claude's requests went somewhere else. */
   admitted(): boolean;
+  /** Its process's NO_PROXY and no_proxy: the inherited ones with the
+   * generation's loopback address added, so a proxy never gets its
+   * requests. */
+  noProxy: string;
   seal(): void;
   close(): Promise<void>;
   /** Settles once the route moves on, which revokes the generation
@@ -96,13 +100,34 @@ export const UNAVAILABLE =
 const UNREACHABLE = "Could not start forwarding";
 export const MANAGED_UNREADABLE =
   "Buzz couldn't read Claude's managed settings to check where they send this agent's requests, so the turn didn't run.";
+export const NO_PROXY_UNREADABLE =
+  "Buzz couldn't read this device's proxy exceptions to keep this agent's requests off a proxy, so the turn didn't run.";
 export const managedRefusal = (name: string) =>
   `Claude's managed settings set ${name}, which would send this agent's requests around the agent gateway, so the turn didn't run.`;
 
+/** Where every generation is, which a proxy must never be sent. */
+const LOOPBACK = ["127.0.0.1", "localhost"];
+const NO_PROXY = ["NO_PROXY", "no_proxy"] as const;
+const PROXIES = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"];
+/** What a no-proxy list names that reaches every generation; anything else,
+ * a port or another range included, may not. */
+const BYPASSES = new Set(["*", "127.0.0.1", "127.0.0.1/32", "127.0.0.0/8"]);
+const hosts = (list: string) => list.split(/[\s,]+/).filter(Boolean);
+/** `lists`' hosts once each, with loopback added: what a forwarded process
+ * reaches without a proxy, set as both of its names. */
+export const noProxy = (lists: readonly string[]) =>
+  [...new Set([...lists.flatMap(hosts), ...LOOPBACK])].join(",");
+
 /** The provider or endpoint `files`, managed settings in merge order, set in
- * their `env`, which outranks Buzz's flag settings; undefined when none. A
- * file that isn't a settings object is skipped, as Claude skips it. */
-export function managedRouting(files: readonly string[]): string | undefined {
+ * their `env`, which outranks Buzz's flag settings and process env; or,
+ * where a proxy applies (`proxied`, the app's environment has one, or they
+ * set one), a no-proxy list they set that may not reach the generation.
+ * Undefined when none. A file that isn't a settings object is skipped, as
+ * Claude skips it. */
+export function managedRouting(
+  files: readonly string[],
+  proxied: boolean,
+): string | undefined {
   const env: Record<string, unknown> = {};
   for (const file of files) {
     let settings: unknown;
@@ -115,15 +140,30 @@ export function managedRouting(files: readonly string[]): string | undefined {
     if (own && typeof own === "object") Object.assign(env, own);
   }
   const text = (name: string) => String(env[name] ?? "").trim();
-  return (
+  const routed =
     PROVIDERS.find((name) =>
       ["1", "true", "yes", "on"].includes(text(name).toLowerCase()),
-    ) ?? ENDPOINTS.find((name) => text(name) !== "")
+    ) ?? ENDPOINTS.find((name) => text(name) !== "");
+  if (routed || !(proxied || PROXIES.some((name) => text(name) !== "")))
+    return routed;
+  return NO_PROXY.find(
+    (name) =>
+      name in env && !hosts(text(name)).some((host) => BYPASSES.has(host)),
   );
 }
 
+/** NO_PROXY and no_proxy as Claude's processes inherit them, and whether
+ * they inherit a proxy, whose value (it may hold a password) is never read. */
+export type Inherited = Readonly<{
+  lists: readonly string[];
+  proxied: boolean;
+}>;
+
 export const BYPASSED =
   "This turn's model requests didn't go through the agent gateway, so it failed. Claude's own settings may send them elsewhere.";
+/** Before Claude's own error, for a forwarded turn that failed with no model
+ * request admitted: not necessarily a routing failure. */
+export const UNREACHED = "No model request reached the agent gateway.";
 
 export class ClaudeForwarding {
   constructor(
@@ -131,6 +171,10 @@ export class ClaudeForwarding {
     /** The managed settings files Claude reads, in merge order: required,
      * so nothing opens without checking them. */
     private readonly managed: () => Promise<readonly string[]>,
+    /** NO_PROXY and no_proxy as Claude's processes inherit them, and
+     * whether a proxy does: required, so no forwarded process drops the
+     * person's own. */
+    private readonly inherited: () => Promise<Inherited>,
     private readonly native: ForwardNative = NATIVE,
     private readonly routes: ForwardRoutes = ROUTES,
     private readonly retry: ForwardRetry = RETRY,
@@ -184,7 +228,14 @@ export class ClaudeForwarding {
       console.warn("Claude's managed settings are unreadable", error);
       throw new Error(MANAGED_UNREADABLE);
     }
-    const set = managedRouting(files);
+    let inherited: Inherited;
+    try {
+      inherited = await this.inherited();
+    } catch (error) {
+      console.warn("The proxy exceptions are unreadable", error);
+      throw new Error(NO_PROXY_UNREADABLE);
+    }
+    const set = managedRouting(files, inherited.proxied);
     if (set) throw new Error(managedRefusal(set));
     signal.throwIfAborted();
     // Watched from before the push: a change during it, the open or the
@@ -265,6 +316,7 @@ export class ClaudeForwarding {
       revocation,
       isRevoked: () => revoked,
       admitted: () => admitted,
+      noProxy: noProxy(inherited.lists),
     });
     if (signal.aborted || revoked) {
       await generation.close();
@@ -283,11 +335,13 @@ export class ClaudeForwarding {
       revocation,
       isRevoked,
       admitted,
+      noProxy,
     }: Readonly<{
       revision: number;
       revocation: Promise<void>;
       isRevoked: () => boolean;
       admitted: () => boolean;
+      noProxy: string;
     }>,
   ): Generation {
     let sealed = false;
@@ -297,6 +351,7 @@ export class ClaudeForwarding {
       revision,
       isSealed: () => sealed || closing !== undefined,
       admitted,
+      noProxy,
       revoked: revocation,
       isRevoked,
       seal: () => {

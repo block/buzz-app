@@ -10,6 +10,8 @@
 #   review                           prints their folder, then that sign-in
 #   managed FOLDER                   prints each managed settings file
 #                                    Claude reads there, base64, one per line
+#   no-proxy                         prints NO_PROXY and no_proxy, base64,
+#                                    one per line, then whether a proxy is set
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
@@ -181,6 +183,20 @@ managed)
     printf '%s\n' "$encoded" | tr -d '\n'
     echo
   done
+  ;;
+no-proxy)
+  # The hosts Claude's processes, which inherit this environment, reach
+  # without a proxy: NO_PROXY, then no_proxy, base64, one per line; then
+  # whether they have a proxy, never its value, which may hold a password.
+  for value in "${NO_PROXY-}" "${no_proxy-}"; do
+    printf '%s' "$value" | base64 | tr -d '\n'
+    echo
+  done
+  if [ -n "${HTTPS_PROXY-}${https_proxy-}${HTTP_PROXY-}${http_proxy-}" ]; then
+    echo proxied
+  else
+    echo direct
+  fi
   ;;
 *)
   echo "Unknown command: $command" >&2

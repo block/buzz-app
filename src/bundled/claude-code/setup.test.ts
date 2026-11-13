@@ -14,6 +14,7 @@ import {
   MIN_VERSION,
   managedFolder,
   readManaged,
+  readNoProxy,
   withScript,
 } from "./setup";
 
@@ -1054,4 +1055,36 @@ it("reads managed settings files from claude.sh, and fails when it can't", async
   ).rejects.toThrow("Permission denied");
   expect(managedFolder(true)).toBe("/Library/Application Support/ClaudeCode");
   expect(managedFolder(false)).toBe("/etc/claude-code");
+});
+
+it("reads the inherited no-proxy lists from claude.sh, and fails when it can't", async () => {
+  const answering =
+    (code: number, stdout: string, stderr = ""): Spawn =>
+    async (id, options) => {
+      expect([id, options?.args]).toEqual(["no-proxy", []]);
+      queueMicrotask(() => {
+        options?.onStdout?.(stdout);
+        if (stderr) options?.onStderr?.(stderr);
+      });
+      return {
+        write: async () => undefined,
+        end: async () => undefined,
+        kill: async () => undefined,
+        exited: new Promise((resolve) => setTimeout(() => resolve(code))),
+      };
+    };
+  await expect(
+    readNoProxy(answering(0, `${btoa("corp.example")}\n\nproxied\n`)),
+  ).resolves.toEqual({ lists: ["corp.example", ""], proxied: true });
+  await expect(readNoProxy(answering(0, "\n\ndirect\n"))).resolves.toEqual({
+    lists: ["", ""],
+    proxied: false,
+  });
+  // Cut short, it can't say whether a proxy applies.
+  await expect(readNoProxy(answering(0, "\n\n"))).rejects.toThrow(
+    "The proxy exceptions are unreadable",
+  );
+  await expect(
+    readNoProxy(answering(1, "", "Permission denied\n")),
+  ).rejects.toThrow("Permission denied");
 });

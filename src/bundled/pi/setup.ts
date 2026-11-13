@@ -14,8 +14,6 @@ export type Provider = Readonly<{
   signsIn: boolean;
   /** Where Pi finds its credentials, when it has them. */
   configured?: string;
-  /** Why the agent can't use it, as in gateway mode. */
-  unavailable?: string;
 }>;
 
 export type Providers = Readonly<{
@@ -28,9 +26,6 @@ export type Providers = Readonly<{
 export type PiModel = ModelChoice & Readonly<{ thinking: readonly string[] }>;
 
 export type Tested = Readonly<{ ok: boolean; message: string }>;
-
-/** The model gateway's provider, as host.mjs's `GATEWAY` names it. */
-export const GATEWAY_PROVIDER = "buzz-gateway";
 
 /** Pi's own thinking level when its settings name none. */
 export const DEFAULT_THINKING = "medium";
@@ -57,9 +52,9 @@ export class PiSetup {
   constructor(private readonly pi: Pick<Pi, "request">) {}
 
   /** Pi's providers and settings as they are now, which the `pi` command
-   * changes; for an agent open in gateway mode, as it may use them. */
-  providers(agent?: string): Promise<Providers> {
-    return this.pi.request<Providers>("providers", agent ? { agent } : {});
+   * changes. */
+  providers(): Promise<Providers> {
+    return this.pi.request<Providers>("providers");
   }
 
   /** What Pi's settings pick now, which the `pi` command changes. */
@@ -67,25 +62,13 @@ export class PiSetup {
     return this.pi.request<Providers["defaults"]>("defaults");
   }
 
-  /** A provider's models, from Pi's catalog; for an agent open in gateway
-   * mode, from its gateway, read again each time. */
-  models(id: string, agent?: string): Promise<readonly PiModel[]> {
-    if (agent) return this.list(id, agent);
+  /** A provider's models, from Pi's catalog. */
+  models(id: string): Promise<readonly PiModel[]> {
     const listed = this.listed.get(id);
     if (listed) return listed;
-    const listing = this.list(id);
-    this.listed.set(id, listing);
-    listing.catch(() => {
-      if (this.listed.get(id) === listing) this.listed.delete(id);
-    });
-    return listing;
-  }
-
-  private list(id: string, agent?: string): Promise<readonly PiModel[]> {
-    return this.pi
+    const listing = this.pi
       .request<{ id: string; name: string; thinking: string[] }[]>("models", {
         provider: id,
-        ...(agent ? { agent } : {}),
       })
       .then((models) =>
         models.map((model) => ({
@@ -94,6 +77,11 @@ export class PiSetup {
           thinking: model.thinking,
         })),
       );
+    this.listed.set(id, listing);
+    listing.catch(() => {
+      if (this.listed.get(id) === listing) this.listed.delete(id);
+    });
+    return listing;
   }
 
   /** Saves a provider's API key with Pi's own login. */
@@ -101,13 +89,9 @@ export class PiSetup {
     await this.pi.request("login", { provider: id, key });
   }
 
-  /** Asks the model for one short reply, without tools. `admit` runs just
-   * before it is sent, as `Pi.request`'s does. */
-  test(
-    choice: Readonly<{ provider: string; model: string }>,
-    admit?: () => void,
-  ): Promise<Tested> {
-    return this.pi.request<Tested>("test", choice, admit);
+  /** Asks the model for one short reply, without tools. */
+  test(choice: Readonly<{ provider: string; model: string }>): Promise<Tested> {
+    return this.pi.request<Tested>("test", choice);
   }
   async review(
     choice: { provider?: string; id: string },

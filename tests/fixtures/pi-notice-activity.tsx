@@ -18,9 +18,9 @@ const NOTICE = fallbackNotice({
   reason: "gateway_error",
   message: "",
 });
-// As host.mjs fails a saved gateway-only model on a turn sent without it.
-const GATEWAY_ONLY =
-  "This agent's model is available only through the model gateway, which this turn ran without. Choose another model in its Identity tab, or try again later.";
+// As host.mjs fails a turn with no model, before Pi has its prompt.
+const NO_MODEL =
+  "This agent has no model. Choose a provider and model in its Identity tab.";
 const T = 1793910000000;
 const wake = (id: number, text: string, notice?: string): PiEntry => ({
   id,
@@ -104,7 +104,7 @@ const SCENARIOS: Record<"done" | "stopped" | "error" | "overlap", Scenario> = {
         id: 3,
         kind: "buzz.notice",
         notice: NOTICE,
-        error: GATEWAY_ONLY,
+        error: NO_MODEL,
         at: T + 3000,
       },
       {

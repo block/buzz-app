@@ -3,6 +3,7 @@
 // go both ways: the plugin asks the host to run turns, and the host asks the
 // plugin to run the Buzz tools, so the process holds no Buzz key.
 import type { AgentProtection } from "../../features/agent-protection/service";
+import type { GatewayProfile } from "../../features/agents/gateway/contract";
 import { protectionEnvironment } from "../../features/agent-protection/native-bridge";
 import type { Context } from "../../buzz-mcp/client";
 import type {
@@ -67,6 +68,10 @@ export type PiGatewayAnswer =
       persist?: boolean;
       /** The eligibility revision an admission holds at. */
       revision?: number;
+      /** Where an admitted request goes: the gateway's root for Pi, ahead
+       * of each protocol's path, and the build's header profile. */
+      root?: string;
+      profile?: GatewayProfile;
       /** Whether a refusal dropped the route's current access. */
       applied?: boolean;
     }
@@ -152,14 +157,8 @@ export class Pi {
     private readonly protectedLaunch?: ProtectedLaunch,
   ) {}
 
-  /** Asks the host, starting it first if it is not running. `admit`, when
-   * given, runs once the host is ready, just before the request is sent:
-   * throwing there sends nothing. */
-  async request<T>(
-    method: string,
-    params: object = {},
-    admit?: () => void,
-  ): Promise<T> {
+  /** Asks the host, starting it first if it is not running. */
+  async request<T>(method: string, params: object = {}): Promise<T> {
     if (this.stopped) throw new Error("Pi has stopped");
     const agent = (params as { agent?: string }).agent;
     if (agent && this.protection) {
@@ -182,9 +181,9 @@ export class Pi {
       })();
       this.hosts.set(agent, next);
       const child = (await next).pi;
-      if (child) return child.request<T>(method, params, admit);
+      if (child) return child.request<T>(method, params);
     }
-    return this.rawRequest<T>(method, params, admit);
+    return this.rawRequest<T>(method, params);
   }
   /** Ends the old worker without resolving a possibly newer policy first. */
   async retire(agent: string) {
@@ -198,14 +197,9 @@ export class Pi {
     this.hosts.set(agent, retired);
     await retired;
   }
-  private async rawRequest<T>(
-    method: string,
-    params: object = {},
-    admit?: () => void,
-  ): Promise<T> {
+  private async rawRequest<T>(method: string, params: object = {}): Promise<T> {
     const connection = await this.connect();
     if (connection.gone) throw connection.gone;
-    admit?.();
     const id = ++this.requests;
     const answer = new Promise<unknown>((resolve, reject) =>
       connection.calls.set(id, { resolve, reject }),

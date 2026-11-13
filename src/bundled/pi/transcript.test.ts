@@ -312,6 +312,43 @@ it("reads pages, newest first, until one turn more than it shows", async () => {
   });
 });
 
+it("counts a noted turn that failed before Pi had its prompt as a turn when it reads pages", async () => {
+  // Only such turns, a page of three entries at a time.
+  const entries: PiEntry[] = Array.from(
+    { length: TURN_LIMIT + 5 },
+    (_, index) => ({
+      id: index,
+      kind: "buzz.notice",
+      notice: "Ran without the agent gateway.",
+      error: `failure ${index}`,
+      at: index,
+    }),
+  ).reverse();
+  const request = vi.fn(
+    async (_method: string, params: Record<string, unknown>) => {
+      const from = Number(params.cursor ?? 0);
+      return {
+        entries: entries.slice(from, from + 3),
+        ...(from + 3 < entries.length ? { next: String(from + 3) } : {}),
+      };
+    },
+  );
+  const read = await readTranscript(
+    { request } as never,
+    "agent",
+    PLACE,
+    false,
+    new AbortController().signal,
+  );
+  expect(read.more).toBe(true);
+  expect(read.turns).toHaveLength(TURN_LIMIT);
+  expect(read.turns.at(-1)).toMatchObject({
+    error: `failure ${TURN_LIMIT + 4}`,
+  });
+  // 51 turns, newest first, are the first 51 entries: 17 pages, not all 19.
+  expect(request).toHaveBeenCalledTimes(17);
+});
+
 it("names each session by the reset that began it, however old", async () => {
   // The window starts after older resets; one more is inside it.
   const entries = [

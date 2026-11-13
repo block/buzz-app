@@ -110,8 +110,13 @@ function prompt(
     steer: !!steer,
   };
 }
-/** Whether an entry is a prompt that opens a turn, not a steer into one. */
+/** The entry host.mjs writes for a noted turn that failed before Pi had
+ * its prompt. */
+const NOTICE = "buzz.notice";
+/** Whether an entry opens a turn: a prompt, not a steer into one, or a
+ * noted turn that failed before Pi had its prompt. */
 const opens = ({ id, kind, model }: PiEntry) => {
+  if (kind === NOTICE) return true;
   if (kind !== "pi.user") return false;
   const item = prompt(String(id), 0, text(model?.[0]?.content));
   return !(item.type === "prompt" && item.steer);
@@ -169,7 +174,7 @@ export function piTurns(
   for (const entry of entries) {
     // A noted turn that failed before Pi had its prompt: its own turn, with
     // the notice beside that failure.
-    if (entry.kind === "buzz.notice") {
+    if (entry.kind === NOTICE) {
       const at = entry.at ?? last;
       const failed = make(`${entry.id}`, at, false);
       failed.endedAt = at;

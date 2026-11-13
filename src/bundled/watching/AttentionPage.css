@@ -154,9 +154,6 @@
   margin: 0;
 }
 @container (max-width: 28rem) {
-  .attention-reference-label {
-    max-inline-size: 4rem;
-  }
   .attention-table-row {
     column-gap: var(--space-2);
   }

@@ -1058,8 +1058,16 @@ test("the dock returns to the thread a hintless reply link opened in the main pa
   await expect(
     main.locator(`[data-message-id="${linkedReply.id}"]`),
   ).toBeVisible();
-  // The tab takes its root's text once the reader verifies the thread.
-  await expect(thread).toContainText("Thread root 0");
+  // The reader shows the root it verified, then reports it after that render.
+  await expect(
+    main.locator(`[data-thread-rows] [data-message-id="${root.id}"]`),
+  ).toBeAttached();
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => setTimeout(resolve)),
+      ),
+  );
   await dockRoundTrip(page);
   expect(await visitTarget(page)).toMatchObject({
     kind: "conversation",

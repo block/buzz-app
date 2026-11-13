@@ -450,36 +450,47 @@ it.each([
   });
 });
 
-it("shows explicitly disabled region chats in ordinary Solo and reclaims them when re-enabled", async () => {
-  const h = fixture();
-  await h.register();
-  const active = {
-    example: { revision: "one", status: "active" as const, error: null },
-  };
-  const before = h.session.channels
-    .list()
-    .channels.find((channel) => channel.id === "owned");
-  expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
-
-  h.plugins(pluginConfiguration(false), active);
-  const disabled = h.service.snapshot();
-  expect([...disabled.excluded]).toEqual([]);
-  expect([...disabled.managed]).toEqual(["owned", "shared"]);
-  expect(prepareSoloMove(h.session, "owned")).toBe(
-    "This chat is managed by Work.",
-  );
-  expect(prepareSoloMove(h.session, "chat")).toBeUndefined();
-  expect(
-    h.session.channels
+it.each([false, true])(
+  "shows disabled region chats in ordinary Solo and reclaims them when re-enabled (hidden: %s)",
+  async (hidden) => {
+    const h = fixture();
+    const source = await h.register();
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 2,
+      hidden,
+    });
+    const active = {
+      example: { revision: "one", status: "active" as const, error: null },
+    };
+    const before = h.session.channels
       .list()
-      .channels.find((channel) => channel.id === "owned"),
-  ).toEqual(before);
+      .channels.find((channel) => channel.id === "owned");
+    expect([...h.service.snapshot().excluded]).toEqual(["owned", "shared"]);
 
-  h.plugins(pluginConfiguration(true), active);
-  const enabled = h.service.snapshot();
-  expect([...enabled.excluded]).toEqual(["owned", "shared"]);
-  expect([...enabled.managed]).toEqual(["owned", "shared"]);
-});
+    h.plugins(pluginConfiguration(false), active);
+    const disabled = h.service.snapshot();
+    expect(disabled.regions[0]?.hidden).toBeUndefined();
+    expect([...disabled.excluded]).toEqual([]);
+    expect([...disabled.managed]).toEqual(["owned", "shared"]);
+    expect(prepareSoloMove(h.session, "owned")).toBe(
+      "This chat is managed by Work.",
+    );
+    expect(prepareSoloMove(h.session, "chat")).toBeUndefined();
+    expect(
+      h.session.channels
+        .list()
+        .channels.find((channel) => channel.id === "owned"),
+    ).toEqual(before);
+
+    h.plugins(pluginConfiguration(true), active);
+    const enabled = h.service.snapshot();
+    expect(enabled.regions[0]?.hidden).toBe(hidden || undefined);
+    expect([...enabled.excluded]).toEqual(["owned", "shared"]);
+    expect([...enabled.managed]).toEqual(["owned", "shared"]);
+  },
+);
 
 it("matches disabled plugins by exact id without misclassifying an uninstalled plugin", () => {
   const h = fixture();

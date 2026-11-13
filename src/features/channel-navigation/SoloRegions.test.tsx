@@ -1310,13 +1310,24 @@ it("keeps recovery chats reachable while distinguishing installed, unknown and n
   expect(screen.queryByText(/buzz\.region:/)).not.toBeInTheDocument();
 });
 
-it.each([false, true])(
-  "shows explicitly disabled region chats once in the ordinary Solo inventory (composing source: %s)",
-  async (composing) => {
+it.each([
+  { composing: false, hidden: false },
+  { composing: true, hidden: false },
+  { composing: false, hidden: true },
+  { composing: true, hidden: true },
+])(
+  "shows explicitly disabled region chats once in ordinary Solo (composing: $composing, hidden: $hidden)",
+  async ({ composing, hidden }) => {
     const h = fixture();
-    await h.register({
+    const source = await h.register({
       composeWorkspaces: true,
       workspace: () => ({ id: "personal", file: async () => {} }),
+    });
+    source.update({
+      status: "ready",
+      binding: source.binding(),
+      revision: 2,
+      hidden,
     });
     if (composing)
       await h.register(

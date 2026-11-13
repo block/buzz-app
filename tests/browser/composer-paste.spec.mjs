@@ -313,6 +313,62 @@ test("external linked text stays linked in the composer and sent message", async
   );
 });
 
+// Browser integration: WebKit offers the picture office apps copy beside
+// text as an image file. The form's attachment capture and the editor must
+// both read it as the text's rendering on the prose, raw and code paths.
+// Keeping it when no plain text could replace it, and other file pastes, are
+// covered in composer-clipboard.test.ts and composer-attachments.spec.mjs.
+test("copied office text pastes as text, not its picture", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const attachments = page.getByRole("region", {
+    name: "Attachments",
+    exact: true,
+  });
+  const cells = "Q3\t12\nQ4\t15";
+  const paste = (raw = false) =>
+    input.evaluate(
+      (element, { cells, raw }) => {
+        if (raw) element.dispatchEvent(new Event("buzz:paste-plain"));
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", cells);
+        clipboardData.setData(
+          "text/html",
+          "<table><tr><td>Q3</td><td>12</td></tr><tr><td>Q4</td><td>15</td></tr></table>",
+        );
+        clipboardData.items.add(
+          new File(["png"], "image.png", { type: "image/png" }),
+        );
+        element.dispatchEvent(
+          new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+      },
+      { cells, raw },
+    );
+  await input.click();
+  await paste();
+  await expect(input).toHaveJSProperty("value", cells);
+  await input.fill("");
+  await paste(true);
+  await expect(input).toHaveJSProperty("value", cells);
+  await input.fill("");
+  await input.pressSequentially("```");
+  await expect(input.locator("pre code")).toHaveCount(1);
+  await paste();
+  await expect(input.locator("pre code")).toHaveText(cells);
+  await expect(attachments).toHaveCount(0);
+});
+
 // Browser integration: a native paste event over a selection reaches
 // the editor's link path, renders the anchor and publishes the linked label.
 test("pasting a URL over selected text links it in the composer and sent message", async ({

@@ -7,7 +7,12 @@ import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import { keypair, signed } from "../../features/relay/testing";
-import { ReviewConfigurationCommunity } from "./ReviewConfigurationPage";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { RelayData } from "../../features/relay/service";
+import {
+  ReviewConfigurationPage,
+  ReviewConfigurationCommunity,
+} from "./ReviewConfigurationPage";
 
 afterEach(() => {
   cleanup();
@@ -766,4 +771,42 @@ it("starts approval unchecked and persists an explicit opt-in", async () => {
   await screen.findByText("Saved example-org/project.");
   const saved = JSON.parse(test.publish.mock.calls[0]?.[0].content ?? "{}");
   expect(saved.lanes[0].autoApprove).toBe(true);
+});
+
+it("keeps the addressed detail during a transient navigation handoff, then returns to the list", async () => {
+  const test = fixture();
+  const snapshot = {
+    status: "ready",
+    scope: test.session.scope,
+    generation: 1,
+    session: test.session,
+  };
+  const relay = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const target = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.review-configuration",
+    pageId: "all",
+    route: { version: 1, params: { channel, submission: "submission" } },
+  } as const;
+  const detail = { target } as unknown as PageNavigation;
+  const content = (navigation?: PageNavigation) => (
+    <ReviewConfigurationPage relay={relay} page="all" navigation={navigation} />
+  );
+  const view = render(content(detail));
+  await screen.findByRole("button", { name: "Back to Pull requests" });
+  view.rerender(content());
+  expect(
+    screen.getByRole("button", { name: "Back to Pull requests" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("Submitted pull requests")).toBeNull();
+  view.rerender(
+    content({
+      target: { ...target, route: undefined },
+    } as unknown as PageNavigation),
+  );
+  expect(screen.getByText("Submitted pull requests")).toBeTruthy();
 });

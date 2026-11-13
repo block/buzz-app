@@ -1,3 +1,4 @@
+import { submissionRoute } from "./submission-route";
 import { useReviewChannel } from "./submission-updates";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { createAdmissionReader, type ReadAdmission } from "./admission";
@@ -13,7 +14,13 @@ const publicPullReader = createPullReader();
 const publicStatusReader = createPullStatusReader();
 const publicAdmissionReader = createAdmissionReader();
 import { LaneRules, ruleDescription } from "./LaneRules";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { PageNavigation } from "../../features/navigation/service";
 import { messageRoute, ReviewMessageDialog } from "./ReviewMessageDialog";
@@ -112,9 +119,34 @@ export function ReviewConfigurationPage({
 }) {
   const connection = useRelayConnection(relay);
   const messageTrigger = useRef<HTMLElement | null>(null);
-  const target = navigation?.target;
+  // The host briefly withdraws the presentation while resolving a new visit.
+  // Retain only its address in the same scope so the underlying detail does not
+  // flash the list, acknowledge unrelated updates, or discard the popup trigger.
+  const presented = useRef<{
+    scope: string | undefined;
+    page: ReviewPage;
+    target: PageNavigation["target"];
+  }>(undefined);
+  useLayoutEffect(() => {
+    if (navigation)
+      presented.current = {
+        scope: connection.scope,
+        page,
+        target: navigation.target,
+      };
+  }, [navigation, connection.scope, page]);
+  const target =
+    navigation?.target ??
+    (presented.current?.scope === connection.scope &&
+    presented.current?.page === page
+      ? presented.current.target
+      : undefined);
   const preview =
     target?.kind === "page" ? messageRoute(target.route?.params) : undefined;
+  const detail =
+    page === "all" && target?.kind === "page"
+      ? submissionRoute(target.route?.params)
+      : undefined;
   const scope = splitPartition(connection.scope ?? "");
   const base = {
     version: 1 as const,
@@ -124,29 +156,55 @@ export function ReviewConfigurationPage({
     ...(scope ? { scope } : {}),
   };
   const closeMessage = () =>
-    navigator?.dismiss((visit) => {
-      if (
-        visit.kind !== "page" ||
-        visit.pluginId !== base.pluginId ||
-        visit.pageId !== page ||
-        visit.scope?.viewer !== scope?.viewer ||
-        visit.scope?.communityOrigin !== scope?.communityOrigin
-      )
-        return false;
-      const route = messageRoute(visit.route?.params);
-      return (
-        !!route &&
-        route.channel === preview?.channel &&
-        route.message === preview?.message
-      );
-    }, base);
+    navigator?.dismiss(
+      (visit) => {
+        if (
+          visit.kind !== "page" ||
+          visit.pluginId !== base.pluginId ||
+          visit.pageId !== page ||
+          visit.scope?.viewer !== scope?.viewer ||
+          visit.scope?.communityOrigin !== scope?.communityOrigin
+        )
+          return false;
+        const route = messageRoute(visit.route?.params);
+        return (
+          !!route &&
+          route.channel === preview?.channel &&
+          route.message === preview?.message
+        );
+      },
+      detail ? { ...base, route: { version: 1, params: detail } } : base,
+    );
   if (connection.status === "ready")
     return (
       <>
         <ReviewConfigurationCommunity
           key={`${connection.scope}:${connection.generation}`}
           session={connection.session}
-          messageChannel={preview?.channel}
+          messageChannel={detail?.channel ?? preview?.channel}
+          submission={detail?.submission}
+          onOpenSubmission={
+            navigator
+              ? async (channel, submission) => {
+                  const result = await navigator.open(
+                    {
+                      ...base,
+                      ...(submission
+                        ? {
+                            route: {
+                              version: 1,
+                              params: { channel, submission },
+                            },
+                          }
+                        : {}),
+                    },
+                    { focus: "preserve" },
+                  );
+                  if (result.status === "failed")
+                    throw new Error("Could not open the pull request.");
+                }
+              : undefined
+          }
           onOpenMessage={
             navigator
               ? async (channel, message, trigger) => {
@@ -154,7 +212,10 @@ export function ReviewConfigurationPage({
                   const result = await navigator.open(
                     {
                       ...base,
-                      route: { version: 1, params: { channel, message } },
+                      route: {
+                        version: 1,
+                        params: { ...detail, channel, message },
+                      },
                     },
                     { focus: "preserve" },
                   );
@@ -235,6 +296,8 @@ export function ReviewConfigurationPage({
 export function ReviewConfigurationCommunity({
   session,
   messageChannel,
+  submission,
+  onOpenSubmission,
   onOpenMessage,
   onOpenThread,
   onNavigate,
@@ -246,6 +309,10 @@ export function ReviewConfigurationCommunity({
 }: {
   session: RelaySession;
   messageChannel?: string | undefined;
+  submission?: string | undefined;
+  onOpenSubmission?:
+    | ((channel: string, submission?: string) => Promise<void>)
+    | undefined;
   onOpenMessage?:
     | ((channel: string, id: string, trigger: HTMLElement) => Promise<void>)
     | undefined;
@@ -258,7 +325,8 @@ export function ReviewConfigurationCommunity({
   onOpenThread?: ((channel: string, id: string) => Promise<void>) | undefined;
 }) {
   const list = useChannelList(session.channels);
-  const [channel, setChannel] = useReviewChannel(session.scope);
+  const [savedChannel, setChannel] = useReviewChannel(session.scope);
+  const channel = messageChannel ?? savedChannel;
   useEffect(() => {
     if (messageChannel) setChannel(messageChannel);
   }, [messageChannel, setChannel]);
@@ -284,12 +352,18 @@ export function ReviewConfigurationCommunity({
       (item.channelType === "stream" || item.channelType === "forum"),
   );
   useEffect(() => {
-    if (list.status !== "ready" || list.coverage === "partial" || editing)
+    if (
+      messageChannel ||
+      list.status !== "ready" ||
+      list.coverage === "partial" ||
+      editing
+    )
       return;
     if (list.channels.some((item) => item.metadataPending)) return;
     if (channel && channels.some((item) => item.id === channel)) return;
     setChannel(channels.length === 1 ? (channels[0]?.id ?? "") : "");
   }, [
+    messageChannel,
     list.status,
     list.coverage,
     list.channels,
@@ -349,10 +423,19 @@ export function ReviewConfigurationCommunity({
       {page !== "configuration" && (
         <div className="review-config-actions">
           <Button
-            disabled={editing || !onNavigate}
-            onClick={() => void navigate("configuration")}
+            disabled={editing || !(submission ? onOpenSubmission : onNavigate)}
+            onClick={() => {
+              if (submission)
+                void onOpenSubmission?.(channel).catch((reason) =>
+                  setNavigationError(String(reason)),
+                );
+              else void navigate("configuration");
+            }}
           >
-            <ArrowLeftIcon /> Back to Review Configuration
+            <ArrowLeftIcon />{" "}
+            {submission
+              ? "Back to Pull requests"
+              : "Back to Review Configuration"}
           </Button>
           {page === "all" && (
             <Button
@@ -366,12 +449,20 @@ export function ReviewConfigurationCommunity({
         </div>
       )}
       {navigationError && <p role="alert">{navigationError}</p>}
-      {(page !== "configuration" || !channel) && channelSelector}
+      {!submission && (page !== "configuration" || !channel) && channelSelector}
+      {submission && !readable && (
+        <p role="status">
+          Pull request details are unavailable until access to the review
+          channel is confirmed.
+        </p>
+      )}
       {channel &&
         (page !== "configuration" ? (
           <ReviewSubmissions
             key={`${channel}:${page}`}
             mode={page}
+            submission={submission}
+            onOpenSubmission={onOpenSubmission}
             readable={readable}
             session={session}
             channel={channel}

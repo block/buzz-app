@@ -149,6 +149,18 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(allPrs.title, "Pull requests");
     assert.equal(allPrs.primary, true);
     assert.equal(allPrs.placement, "dock");
+    const detail = { channel: "reviews", submission: "submission" };
+    assert.equal(allPrs.route.validate(detail), true);
+    assert.equal(
+      allPrs.route.validate({ ...detail, message: "a".repeat(64) }),
+      true,
+    );
+    assert.equal(
+      allPrs.route.validate({ ...detail, submission: "../invalid" }),
+      false,
+    );
+    assert.equal(submitPr.route.validate(detail), false);
+    assert.equal(reviewConfiguration.route.validate(detail), false);
     await services.plugins.change("disable", "buzz.review-configuration");
     assert.equal(
       services.pages

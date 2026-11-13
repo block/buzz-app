@@ -171,3 +171,17 @@
   text-decoration: underline;
   text-underline-offset: var(--space-1);
 }
+
+.review-config-compact-table th,
+.review-config-compact-table td {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.review-config-compact-table tbody tr {
+  cursor: pointer;
+}
+.review-config-summary {
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

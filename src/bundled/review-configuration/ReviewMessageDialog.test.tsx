@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { ThreadSnapshot } from "../../features/relay/threads";
+import { submissionRoute } from "./submission-route";
 import { messageRoute, ReviewMessageDialog } from "./ReviewMessageDialog";
 
 afterEach(cleanup);
@@ -83,4 +84,24 @@ it("loads the exact message, shows the whole body, and releases the read on clos
   expect(screen.getByRole("alert").textContent).toContain("unavailable");
   view.unmount();
   expect(dispose).toHaveBeenCalledTimes(1);
+});
+
+it("restores only bounded submission identity from a detail address", () => {
+  expect(
+    submissionRoute({
+      channel: "channel",
+      submission: "submission",
+      content: "ignored",
+      message: "a".repeat(64),
+    }),
+  ).toEqual({ channel: "channel", submission: "submission" });
+  for (const value of [
+    null,
+    [],
+    "text",
+    { channel: "", submission: "id" },
+    { channel: "channel", submission: "../other" },
+    { channel: "channel", submission: "a".repeat(129) },
+  ])
+    expect(submissionRoute(value)).toBeUndefined();
 });

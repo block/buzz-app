@@ -90,6 +90,7 @@ function fixture(
   viewer = record.value.submitter,
   readStatus: ReadPullStatus = vi.fn(async () => "Open" as const),
   readable = true,
+  initialSelection: string | null = record.artifactId,
 ) {
   const agents = [{ pubkey: "a".repeat(64), name: "UI Reviewer" }];
   const choices = {
@@ -143,6 +144,12 @@ function fixture(
   const onOpenThread = vi.fn(async () => {});
   const onOpenMessage = vi.fn(async () => {});
   const editing = vi.fn();
+  let selection = initialSelection;
+  let ready = readable;
+  const onOpenSubmission = vi.fn(async (_channel: string, id?: string) => {
+    selection = id ?? null;
+    view.rerender(content(ready));
+  });
   const content = (ready: boolean) => (
     <>
       <UpdateCount session={session} enabled={ready && mode === "all"} />
@@ -150,6 +157,8 @@ function fixture(
         readable={ready}
         session={session}
         mode={mode}
+        submission={mode === "all" ? (selection ?? undefined) : undefined}
+        onOpenSubmission={onOpenSubmission}
         channel="channel"
         writable
         onEditingChange={editing}
@@ -164,7 +173,15 @@ function fixture(
   const view = render(content(readable));
   return {
     ...view,
-    setReadable: (ready: boolean) => view.rerender(content(ready)),
+    setReadable: (value: boolean) => {
+      ready = value;
+      view.rerender(content(ready));
+    },
+    select: (id: string | null) => {
+      selection = id;
+      view.rerender(content(ready));
+    },
+    onOpenSubmission,
     emit: (events: Parameters<LiveListener>[0]["events"]) =>
       act(() => {
         for (const listener of listeners) listener({ events });
@@ -882,7 +899,10 @@ it("clears the shared badge on opening and keeps lane highlights until the next 
     }) as import("../../features/relay/events").RelayEvent;
   const first = applyReviewReports(base, "channel", [report(0, 200)]);
   vi.mocked(loadSubmissions).mockResolvedValue({ rows: [first], warning: "" });
-  const view = fixture("all");
+  const view = fixture("all", undefined, undefined, true, null);
+  await view.user.click(
+    await screen.findByRole("button", { name: "example-org/project#42" }),
+  );
   const ui = (await screen.findByText("UI", { exact: true })).closest("tr");
   const backend = screen.getByText("Backend", { exact: true }).closest("tr");
   if (!ui || !backend) throw new Error("Missing lane rows");
@@ -910,4 +930,114 @@ it("clears the shared badge on opening and keeps lane highlights until the next 
   await screen.findByText("Backend", { exact: true });
   expect(screen.queryByText("Updated")).toBeNull();
   expect(screen.getByTestId("unseen-updates").textContent).toBe("0");
+});
+
+it("shows one compact row per PR and opens only that PR's lane details", async () => {
+  const second: SavedSubmission = {
+    ...record,
+    artifactId: "second",
+    revision: "f".repeat(64),
+    value: { ...record.value, pr: 43 },
+  };
+  vi.mocked(loadSubmissions).mockResolvedValue({
+    rows: [record, second],
+    warning: "",
+  });
+  const test = fixture("all", undefined, undefined, true, null);
+  const first = await screen.findByRole("button", {
+    name: "example-org/project#42",
+  });
+  const table = screen.getByRole("table");
+  expect(within(table).getAllByRole("row")).toHaveLength(3);
+  expect(within(table).getAllByText("1 needs review")).toHaveLength(2);
+  expect(
+    within(table).queryByRole("columnheader", { name: "Lane threads" }),
+  ).toBeNull();
+  expect(test.session.thread).not.toHaveBeenCalled();
+  first.focus();
+  await test.user.keyboard("{Enter}");
+  expect(test.onOpenSubmission).toHaveBeenCalledWith(
+    "channel",
+    record.artifactId,
+  );
+  expect(
+    await screen.findByRole("button", { name: "Open UI thread" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("example-org/project#43")).toBeNull();
+  expect(test.session.thread).toHaveBeenCalledTimes(1);
+  test.select(null);
+  const restored = screen.getByRole("button", {
+    name: "example-org/project#42",
+  });
+  expect(document.activeElement).toBe(restored);
+  const row = screen
+    .getByRole("button", { name: "example-org/project#43" })
+    .closest("tr");
+  if (!row) throw new Error("Missing second row");
+  await test.user.click(within(row).getByText("1 needs review"));
+  expect(test.onOpenSubmission).toHaveBeenLastCalledWith("channel", "second");
+  expect(
+    screen.getByRole("rowgroup", { name: "example-org/project#43" }),
+  ).toBeTruthy();
+});
+
+it("shows recovery for a missing detail without opening unrelated lane threads", async () => {
+  vi.mocked(loadSubmissions).mockResolvedValue({ rows: [record], warning: "" });
+  const test = fixture("all", undefined, undefined, true, "missing");
+  expect(
+    (await screen.findByText(/This submission is unavailable/)).textContent,
+  ).toContain("Reload");
+  expect(test.session.thread).not.toHaveBeenCalled();
+  expect(screen.queryByRole("table")).toBeNull();
+  test.select(null);
+  expect(
+    await screen.findByRole("button", { name: "example-org/project#42" }),
+  ).toBeTruthy();
+});
+
+it("keeps updates to other PRs unread while inspecting one detail", async () => {
+  const request = "11111111-1111-4111-8111-111111111111";
+  const second: SavedSubmission = {
+    ...record,
+    artifactId: "second",
+    revision: "f".repeat(64),
+    value: {
+      ...record.value,
+      pr: 43,
+      threads: [{ id: "e".repeat(64), request, delivered: true }],
+    },
+  };
+  vi.mocked(loadSubmissions).mockResolvedValue({
+    rows: [record, second],
+    warning: "",
+  });
+  const test = fixture("all");
+  await screen.findByRole("button", { name: "Open UI thread" });
+  test.emit([
+    {
+      id: "1".repeat(64),
+      kind: 9,
+      created_at: 200,
+      pubkey: "a".repeat(64),
+      content: "Reviewing",
+      tags: [
+        ["h", "channel"],
+        ["t", "buzz.review.status"],
+        ["r", request],
+        ["review", "second", "0"],
+        ["e", "e".repeat(64), "", "reply"],
+        ["status", "reviewing"],
+        ["review-sequence", "1"],
+      ],
+    } as import("../../features/relay/events").RelayEvent,
+  ]);
+  expect(screen.getByTestId("unseen-updates").textContent).toBe("1");
+  expect(screen.queryByText("Updated")).toBeNull();
+  test.select(null);
+  expect(screen.getByTestId("unseen-updates").textContent).toBe("0");
+  const row = screen
+    .getByRole("button", { name: "example-org/project#43" })
+    .closest("tr");
+  if (!row) throw new Error("Missing updated PR");
+  expect(within(row).getByText("Updated")).toBeTruthy();
 });

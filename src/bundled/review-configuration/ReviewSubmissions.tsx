@@ -1,3 +1,4 @@
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { useSubmissionUpdates } from "./submission-updates";
 import { ReviewStatusLabel, ReviewDate } from "./ReviewStatusLabel";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -9,7 +10,13 @@ import {
   overallReviewStatus,
   reviewLabels,
 } from "../../features/agents/pr-review";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
@@ -55,6 +62,8 @@ function TriageError({ scope, artifact }: { scope: string; artifact: string }) {
 export function ReviewSubmissions({
   session,
   mode = "submit",
+  submission,
+  onOpenSubmission,
   channel,
   writable,
   readable = true,
@@ -68,6 +77,10 @@ export function ReviewSubmissions({
 }: {
   session: RelaySession;
   mode?: "submit" | "all";
+  submission?: string | undefined;
+  onOpenSubmission?:
+    | ((channel: string, submission?: string) => Promise<void>)
+    | undefined;
   channel: string;
   writable: boolean;
   readable?: boolean;
@@ -110,8 +123,11 @@ export function ReviewSubmissions({
       return;
     }
     if (listLoading || listError) return;
-    const updated = rows.filter(store.unread);
-    const lanes = rows.flatMap((row) =>
+    const displayed = submission
+      ? rows.filter((row) => row.artifactId === submission)
+      : rows;
+    const updated = displayed.filter(store.unread);
+    const lanes = displayed.flatMap((row) =>
       (["triage", ...row.value.threads.map((_, index) => index)] as const)
         .filter((index) => store.unreadLane(row, index))
         .map((index) => `${row.artifactId}:${index}`),
@@ -128,14 +144,49 @@ export function ReviewSubmissions({
         ...lanes,
       ]),
     }));
-    store.markSeen(rows);
-  }, [store, rows, listLoading, listError, readable, mode]);
+    store.markSeen(displayed);
+  }, [store, rows, listLoading, listError, readable, mode, submission]);
   const setRows = store.setRows;
   const [statuses, setStatuses] = useState<
     Record<string, { value: PullStatus | "Unavailable"; error?: string }>
   >({});
   const input = useRef<HTMLInputElement>(null);
   const listHeading = useRef<HTMLDivElement>(null);
+  const previousSubmission = useRef(submission);
+  const listScroll = useRef({ top: 0, left: 0 });
+  useEffect(() => {
+    const scroll = listHeading.current?.closest<HTMLElement>(
+      ".review-config-scroll",
+    );
+    if (!scroll || submission) return;
+    const remember = () => {
+      listScroll.current.top = scroll.scrollTop;
+    };
+    scroll.addEventListener("scroll", remember);
+    return () => scroll.removeEventListener("scroll", remember);
+  }, [submission]);
+  useLayoutEffect(() => {
+    if (previousSubmission.current === submission) return;
+    const previous = previousSubmission.current;
+    previousSubmission.current = submission;
+    const heading = listHeading.current;
+    const scroll = heading?.closest<HTMLElement>(".review-config-scroll");
+    if (submission) heading?.focus({ preventScroll: true });
+    else if (previous) {
+      const button = Array.from(
+        heading?.parentElement?.querySelectorAll<HTMLElement>(
+          "[data-submission]",
+        ) ?? [],
+      ).find((item) => item.dataset.submission === previous);
+      (button ?? heading)?.focus({ preventScroll: true });
+    }
+    if (scroll) scroll.scrollTop = submission ? 0 : listScroll.current.top;
+    const tableScroll = heading?.parentElement?.querySelector<HTMLElement>(
+      ".review-config-table-scroll",
+    );
+    if (tableScroll)
+      tableScroll.scrollLeft = submission ? 0 : listScroll.current.left;
+  }, [submission]);
   const deleteTrigger = useRef<HTMLButtonElement | null>(null);
   const [removing, setRemoving] = useState<SavedSubmission>();
   const [reminding, setReminding] = useState<{
@@ -174,10 +225,11 @@ export function ReviewSubmissions({
         setReminderMessage(current.value.reminderMessage ?? "");
     }
   }, [rows, reminding, busy, listLoading]);
+  const selected = rows.find((row) => row.artifactId === submission);
   const resultId = result?.artifactId;
   const rootsKey = [
     ...new Set(
-      (mode === "all" ? rows : result ? [result] : [])
+      (mode === "all" ? (selected ? [selected] : []) : result ? [result] : [])
         .flatMap((row) => [
           row.value.triage?.thread.id,
           ...row.value.threads.map((thread) => thread.id),
@@ -482,6 +534,119 @@ export function ReviewSubmissions({
     );
   }
 
+  function reviewStates(row: SavedSubmission) {
+    return row.value.threads.flatMap((_thread, index) =>
+      submissionLane(row.value, index)
+        ? [row.reviewStates?.[index] ?? "need_review"]
+        : [],
+    );
+  }
+  function reviewStatus(row: SavedSubmission) {
+    return row.value.triage?.state === "pending"
+      ? "Awaiting triage"
+      : row.value.triage?.state === "rejected"
+        ? "Rejected"
+        : reviewLabels[overallReviewStatus(reviewStates(row))];
+  }
+  function summary(row: SavedSubmission) {
+    if (row.value.triage?.state === "pending")
+      return "Waiting for admission triage";
+    if (row.value.triage?.state === "rejected") return row.value.triage.message;
+    const counts = new Map<string, number>();
+    for (const state of reviewStates(row)) {
+      const label = reviewLabels[state];
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return (
+      [...counts]
+        .map(([label, count]) => `${count} ${label.toLowerCase()}`)
+        .join(" · ") || "No review lanes assigned"
+    );
+  }
+  async function openSubmission(row: SavedSubmission) {
+    try {
+      await onOpenSubmission?.(channel, row.artifactId);
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not open the pull request.",
+      );
+    }
+  }
+  function compactTable() {
+    return (
+      <section
+        className="review-config-table-scroll"
+        aria-label="Pull requests list"
+        onScroll={(event) => {
+          listScroll.current.left = event.currentTarget.scrollLeft;
+        }}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The table scrollport supports keyboard horizontal scrolling.
+        tabIndex={0}
+      >
+        <table className="review-config-table review-config-compact-table text-body-sm">
+          <thead>
+            <tr>
+              <th scope="col">Pull request</th>
+              <th scope="col">GitHub status</th>
+              <th scope="col">Review status</th>
+              <th scope="col">Summary</th>
+              <th scope="col">Updates</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const name = `${row.value.config.repository}#${row.value.pr}`;
+              return (
+                <tr
+                  key={row.artifactId}
+                  onClick={(event) => {
+                    if (
+                      !(event.target instanceof Element) ||
+                      event.target.closest("button,a")
+                    )
+                      return;
+                    if (!busy && onOpenSubmission) void openSubmission(row);
+                  }}
+                >
+                  <th scope="row">
+                    <NavigationItem
+                      variant="text"
+                      label={name}
+                      data-submission={row.artifactId}
+                      disabled={busy || !onOpenSubmission}
+                      onClick={() => void openSubmission(row)}
+                    />
+                  </th>
+                  <td title={statuses[row.revision]?.error}>
+                    {statuses[row.revision]?.value ?? "Loading…"}
+                  </td>
+                  <td>
+                    <ReviewStatusLabel label={reviewStatus(row)} />
+                  </td>
+                  <td className="review-config-summary" title={summary(row)}>
+                    {summary(row)}
+                  </td>
+                  <td>
+                    {visit.store === store && visit.rows.has(row.artifactId) ? (
+                      <strong className="review-config-update text-caption text-accent">
+                        <BellIcon size={14} aria-hidden="true" />
+                        Updated
+                      </strong>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
+    );
+  }
+
   function table(records: SavedSubmission[], deletable: boolean) {
     return (
       <section
@@ -546,20 +711,7 @@ export function ReviewSubmissions({
                 };
               }),
             ];
-            const overall =
-              triage?.state === "pending"
-                ? "Awaiting triage"
-                : triage?.state === "rejected"
-                  ? "Rejected"
-                  : reviewLabels[
-                      overallReviewStatus(
-                        row.value.threads.flatMap((_thread, index) =>
-                          submissionLane(row.value, index)
-                            ? [row.reviewStates?.[index] ?? "need_review"]
-                            : [],
-                        ),
-                      )
-                    ];
+            const overall = reviewStatus(row);
             return (
               <tbody key={row.artifactId} aria-label={name}>
                 {lanes.map((lane, index) => {
@@ -919,7 +1071,13 @@ export function ReviewSubmissions({
         <section className="review-config-form" aria-label="All PRs">
           <div ref={listHeading} tabIndex={-1}>
             <InlineHeader
-              title="Submitted pull requests"
+              title={
+                submission
+                  ? selected
+                    ? `${selected.value.config.repository}#${selected.value.pr}`
+                    : "Pull request details"
+                  : "Submitted pull requests"
+              }
               actions={
                 <Button
                   disabled={busy || listLoading || !!removing}
@@ -939,14 +1097,26 @@ export function ReviewSubmissions({
             label="Loading submissions…"
             statusVisibility="screen-reader"
           >
-            {!listLoading && !listError && !rows.length && (
+            {!submission && !listLoading && !listError && !rows.length && (
               <p>
                 {warning
                   ? "No readable submissions in this result."
                   : "No submissions in the list. Use Submit PR to start a review."}
               </p>
             )}
-            {rows.length > 0 && table(rows, true)}
+            {readable &&
+              (submission
+                ? selected
+                  ? table([selected], true)
+                  : !listLoading &&
+                    !listError && (
+                      <p role="status">
+                        This submission is unavailable in the current list. It
+                        may have been deleted, or the list may be incomplete.
+                        Return to Pull requests or Reload to try again.
+                      </p>
+                    )
+                : rows.length > 0 && compactTable())}
           </LoadingRegion>
           {listError && (
             <p role="alert">{listError} Use Reload to try again.</p>

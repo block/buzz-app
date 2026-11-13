@@ -1,4 +1,5 @@
 import { ReviewUpdatesBadge } from "./ReviewUpdatesBadge";
+import { submissionRoute } from "./submission-route";
 import { messageRoute } from "./ReviewMessageDialog";
 import { createAdmissionReader } from "./admission";
 import { watchTriage } from "./triage-coordinator";
@@ -57,7 +58,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : {}),
       primary: page !== "submit",
       placement: page === "submit" ? "sidebar" : "dock",
-      route: { version: 1, validate: (params) => !!messageRoute(params) },
+      route: {
+        version: 1,
+        validate: (params) =>
+          !!messageRoute(params) ||
+          (page === "all" && !!submissionRoute(params)),
+      },
       component: ({ navigation }) => (
         <ReviewConfigurationPage
           page={page}

@@ -248,6 +248,9 @@ it("has Nightly review silent, strict about promotion and bounded in what it cha
   expect(steps).toContain("at most 4 KB");
   expect(steps).toContain("MOVED TO [[slug]]");
   expect(steps).toContain('Append a "Dream" section');
+  // A night with no new note still retires stale hypotheses.
+  expect(steps).toContain("Stop and write nothing only if there is no note");
+  expect(steps).toContain("step 3 still marks and retires stale hypotheses");
 });
 
 it("takes the old hourly check-in's section away, as it was saved", () => {

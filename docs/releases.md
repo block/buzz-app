@@ -51,9 +51,9 @@ Publication waits for every platform job, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and
 automatic feed promotion; it does not publish a partial release. Downloads are
 checked against each job's checksums before assembly. If a job fails, use
-**Re-run all jobs**. A run that failed before publishing created no tag, so the
-re-run gets the same version; publication still rejects artifacts built as any
-other version. Windows/Linux previews are not
+**Re-run all jobs**. The re-run works out the number again from the tags that
+exist at that moment, so it gets the same version only if no other preview has
+published since; publication still rejects artifacts built as any other version. Windows/Linux previews are not
 Authenticode-signed Windows releases or evidence of completed desktop acceptance.
 
 Previews build from three triggers:
@@ -75,15 +75,19 @@ then `-preview.<N>`. `N` is one above the highest existing
 counts published previews of that base and starts over with each new base.
 After `v1.0.1`, previews are `1.0.2-preview.1`, `.2`, `.3`…; after `v1.1.0`,
 `1.1.1-preview.1`, and so on. A daily run, the run after a stable release and
-a manual run each take the next number; failed runs take none.
+a manual run each take the next number. A run takes its number once its tag
+exists, even if promotion or cleanup fails afterward; a run that fails before
+publishing creates no tag and takes none.
 `tauri.conf.json`'s version is not used, and beta and preview tags never count.
 A run whose commit has no stable tag in its history fails. By SemVer
 precedence a preview sorts above the stable release it follows and below the
 next one (`1.1.0-preview.9` < `1.1.0` < `1.1.1-preview.1`), and `N` orders
 previews of the same base. Runs share one concurrency group, so two previews
 never compute the same number; candidate runs compute one but never publish.
-Cleanup always keeps the newest previews, so the highest `N` is never deleted
-and never reused. Older `-preview.<run>.<attempt>` previews are left as they are.
+Cleanup keeps the newest 10 previews overall, so the current base's highest `N`
+is never deleted. It can delete every tag of an older base, though; a full
+re-run of an old run from that base may then reuse one of its numbers, and the
+feed refuses to promote it. Older `-preview.<run>.<attempt>` previews are left as they are.
 
 The macOS builds run on Apple Silicon `macos-latest` with the repository's
 pinned toolchain; the Intel build cross-compiles `x86_64-apple-darwin` after

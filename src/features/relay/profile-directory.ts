@@ -5,10 +5,11 @@ import {
   verifiedLabel,
   type NamePreference,
 } from "../profiles/name-preference";
-import type {
-  VerifiedProfileAuthority,
-  VerifiedProfileFilter,
-  VerifiedProfileSink,
+import {
+  verifiedProfileSubject,
+  type VerifiedProfileAuthority,
+  type VerifiedProfileFilter,
+  type VerifiedProfileSink,
 } from "./verified-profile";
 import { retryRead } from "./read-retry";
 import { attestedOwner } from "../agents/owner-attestation";
@@ -58,7 +59,7 @@ export interface ProfileQueries {
   /** The community's current verified-profile authority, or undefined while
    * it advertises none. Subscribers are notified when it changes. */
   verifiedAuthority?(): VerifiedProfileAuthority | undefined;
-  /** Whether the shared verified directory holds a head for `pubkey`. Its
+  /** Whether the published shared snapshot holds a head for `pubkey`. Its
    * profile's `verified`, present or not, then outranks a search's answer:
    * a newer inactive or malformed head revokes an older name. */
   verifiedHeld?(pubkey: string): boolean;
@@ -139,6 +140,7 @@ export function createProfileDirectory(
   }
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
+  let publishedVerifiedHeads: ReadonlySet<string> = new Set();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
   let unnamed: ReadonlySet<string> = new Set();
   // Absences this connection has read. Background enrichment does not
@@ -236,6 +238,16 @@ export function createProfileDirectory(
    * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
     folded = false;
+    const authority = verified?.authority();
+    const held = new Set(
+      (verified?.heads(limit) ?? []).flatMap((event) => {
+        const subject = authority && verifiedProfileSubject(event, authority);
+        return subject ? [subject] : [];
+      }),
+    );
+    const headsChanged =
+      held.size !== publishedVerifiedHeads.size ||
+      [...held].some((pubkey) => !publishedVerifiedHeads.has(pubkey));
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);
@@ -322,10 +334,12 @@ export function createProfileDirectory(
         unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
     } else if (
       !headChanged &&
+      !headsChanged &&
       publishedAuthority === verified?.authority() &&
       publishedRevision === verifiedRevision
     )
       return;
+    publishedVerifiedHeads = held;
     publishedAuthority = verified?.authority();
     publishedRevision = verifiedRevision;
     for (const listener of listeners) notify(listener);
@@ -548,7 +562,8 @@ export function createProfileDirectory(
     limit: () => limit,
     evictions: () => events.evictions + cancelled,
     verifiedAuthority: () => verified?.authority(),
-    verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
+    // Held evidence and its projection become visible in the same publication.
+    verifiedHeld: (pubkey: string) => publishedVerifiedHeads.has(pubkey),
     verifiedRevision: () => verifiedRevision,
     verifiedSince: (pubkey: string, revision: number) =>
       (acceptedAt.get(pubkey) ?? (revision < forgottenAt ? Infinity : 0)) >

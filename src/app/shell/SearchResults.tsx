@@ -32,6 +32,7 @@ import {
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { searchedProfiles } from "../../features/relay/profile-search";
+import { foldProfiles } from "../../features/relay/profiles";
 import {
   ArrowsDownUpIcon,
   CalendarIcon,
@@ -758,8 +759,15 @@ export function SearchResults({
   );
   // Match both verified names regardless of the display preference, retaining
   // the profile and selectable-agent aliases the picker already accepted.
+  const originalAuthors = foldProfiles(
+    [...candidates.keys()].flatMap((pubkey) => {
+      const event = session.profiles.event?.(pubkey);
+      return event ? [event] : [];
+    }),
+  );
   const rankedAuthors = namedAuthors.map((profile) => {
     const { pubkey } = profile;
+    const original = originalAuthors.get(pubkey);
     const found = authorNames(pubkey);
     const verified =
       profiles.get(pubkey)?.verified ?? authorVerified.get(pubkey);
@@ -774,6 +782,8 @@ export function SearchResults({
         profile.username,
         profile.fullName,
         ...(profile.profileNames ?? []),
+        original?.name,
+        original?.username,
         selectableAgents.get(pubkey)?.name,
       ].map((alias) =>
         alias === undefined

@@ -634,6 +634,132 @@ describe("device-local startup", () => {
     expect((await storage.readStartup?.())?.discovery?.savedAt).toBe(savedAt);
   });
 
+  /** A live session whose discovery disables verified names on reconnect. */
+  function verifiedSession(storage: HeadPersistence) {
+    let live: import("./live").LiveCallbacks | undefined;
+    let sink: VerifiedProfileSink | undefined;
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: async () => [],
+        media: () => undefined,
+        verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+        readVerifiedProfileAuthority: async () => null,
+        subscribe(callbacks) {
+          live = callbacks;
+          return {
+            update() {},
+            retry() {},
+            dispose() {},
+            syncVerifiedProfiles(_filter, next) {
+              sink = next;
+              return () => {};
+            },
+          };
+        },
+      },
+      { persistence: storage, prepared: true },
+    );
+    owners.push(owner);
+    return {
+      owner,
+      live: () => live,
+      sink: () => sink,
+      mirrored: async () =>
+        (((await storage.readProfiles?.()) ?? []) as RelayEvent[]).map(
+          (event) => event.id,
+        ),
+    };
+  }
+  function verifiedHead(subject: string, name: string, at: number) {
+    return eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: at,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", "true"],
+          ["display_name", name],
+          ["username", "alice"],
+          ["issuer_label", "Example"],
+          ["verified_at", String(at)],
+        ],
+      }),
+    );
+  }
+
+  it("keeps a removal a sync answered over a late mirror read after a disconnect", async () => {
+    const storage = disk();
+    const alice = keypair();
+    await storage.writeProfiles?.([verifiedHead(alice.pubkey, "Alice", 1)]);
+    const read = deferred<void>();
+    const reading = storage.readProfiles;
+    vi.mocked(storage.readProfiles)?.mockImplementationOnce(async () => {
+      await read.promise;
+      return (await reading?.()) ?? [];
+    });
+    const h = verifiedSession(storage);
+    const { profiles } = h.owner.session;
+    h.live()?.state({ status: "connected", routes: [] });
+    const restored = h.owner.restore();
+    void profiles.ensure([alice.pubkey]).catch(() => {});
+    await vi.waitFor(() => expect(h.sink()).toBeDefined());
+    h.sink()?.eose(); // The relay no longer holds Alice's head.
+    h.live()?.state({ status: "connecting", routes: [] });
+    vi.mocked(storage.writeProfiles)?.mockClear();
+    read.resolve();
+    await restored;
+    await vi.waitFor(() => expect(storage.writeProfiles).toHaveBeenCalled());
+    expect(profiles.snapshot().get(alice.pubkey)?.name).toBeUndefined();
+    expect(await h.mirrored()).toEqual([]);
+  });
+
+  it("records a disable when the mirror could not be read", async () => {
+    const storage = disk();
+    await storage.writeStartup?.({
+      verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+    });
+    vi.mocked(storage.readProfiles)?.mockRejectedValueOnce(new Error("busy"));
+    const h = verifiedSession(storage);
+    h.live()?.state({ status: "connected", routes: [] });
+    await h.owner.restore();
+    h.live()?.state({ status: "connecting", routes: [] });
+    h.live()?.state({ status: "connected", routes: [] });
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+  });
+
+  it("saves a rename that a disable follows before the mirror is written", async () => {
+    const storage = disk();
+    const alice = keypair();
+    const renamed = verifiedHead(alice.pubkey, "Alice Renamed", 2);
+    await storage.writeProfiles?.([verifiedHead(alice.pubkey, "Alice", 1)]);
+    const h = verifiedSession(storage);
+    const { profiles } = h.owner.session;
+    h.live()?.state({ status: "connected", routes: [] });
+    await h.owner.restore();
+    await vi.waitFor(() => expect(h.sink()).toBeDefined());
+    h.sink()?.event(renamed);
+    h.sink()?.eose();
+    h.live()?.state({ status: "connecting", routes: [] });
+    h.live()?.state({ status: "connected", routes: [] });
+    await vi.waitFor(() =>
+      expect(profiles.verifiedAuthority?.()).toBeUndefined(),
+    );
+    await vi.waitFor(
+      async () =>
+        expect((await storage.readStartup?.())?.verifiedProfiles).toBeNull(),
+      { timeout: 3000 },
+    );
+    expect(await h.mirrored()).toEqual([renamed.id]);
+  });
+
   it("publishes a mirror of verified names alone before restore returns", async () => {
     const storage = disk();
     const alice = keypair();

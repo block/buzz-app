@@ -1346,6 +1346,24 @@ it("restores saved heads as cached until a sync answers, never over a sync's ans
   }
 });
 
+it("keeps a sync's removal over a restored head after a disconnect", async () => {
+  const h = harness();
+  try {
+    h.directory.ensure([alice.pubkey]);
+    await Promise.resolve();
+    const sink = h.subscriptions[0]?.sink;
+    assert(sink);
+    sink.eose(); // The relay no longer holds Alice's head.
+    h.directory.connected(false);
+    // The disk copy is read after the disconnect cleared checked status.
+    h.directory.restore([projection(10)]);
+    expect(h.directory.snapshot().size).toBe(0);
+    expect(h.directory.heads(10)).toEqual([]);
+  } finally {
+    h.directory.dispose();
+  }
+});
+
 it("restores nothing while discovery has no authority", async () => {
   const subscribe = vi.fn(() => () => {});
   const changed = vi.fn();

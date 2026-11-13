@@ -1422,7 +1422,8 @@ export function createChannelStore(
   function saveProfiles() {
     clearTimeout(profileSave);
     profileSave = undefined;
-    if (!persistence?.writeProfiles || !profilesRestored || disposed) return;
+    if (!persistence || disposed) return;
+    // Saved even when the mirror could not be read, so a disable still lands.
     const authority = directory.queries.verifiedAuthority?.();
     const observed = JSON.stringify(authority ?? null);
     if (observed !== savedAuthority && persistence.writeStartup) {
@@ -1433,7 +1434,19 @@ export function createChannelStore(
           savedAuthority = undefined;
         });
     }
-    if (authority) savedVerified = directory.verifiedHeads(PROFILE_CACHE_BASE);
+    if (!persistence.writeProfiles || !profilesRestored) return;
+    const held = directory.verifiedHeads(PROFILE_CACHE_BASE);
+    if (authority) savedVerified = held;
+    else if (held.length) {
+      // Heads kept after a disable are newer than the saved copy of theirs.
+      const address = (event: RelayEvent) =>
+        `${event.pubkey}:${event.tags.find(([name]) => name === "d")?.[1]}`;
+      const kept = new Set(held.map(address));
+      savedVerified = [
+        ...savedVerified.filter((event) => !kept.has(address(event))),
+        ...held,
+      ].slice(-PROFILE_CACHE_BASE);
+    }
     const events = [...directory.recent(PROFILE_CACHE_BASE), ...savedVerified];
     // Sorted, so reads that only reorder the LRU never rewrite the mirror.
     const signature = events

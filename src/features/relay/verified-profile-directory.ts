@@ -28,6 +28,9 @@ export function createVerifiedProfileDirectory(
   // Least recently ensured first.
   const wanted = new Set<string>();
   const checked = new Set<string>();
+  // Subjects a sync answered under this authority. Unlike checked status, a
+  // disconnect keeps them: a restored disk head never overrides an answer.
+  const answered = new Set<string>();
   // Subjects whose head changed since the owner last took them.
   const accepted = new Set<string>();
   type Batch = {
@@ -84,6 +87,7 @@ export function createVerifiedProfileDirectory(
         if (authority?.pubkey !== next.pubkey) {
           stopBatches();
           heads.clear();
+          answered.clear();
         }
         // An equal refresh keeps the current object, so unchanged heads keep
         // their projections. Re-enabling starts a new one: whatever was checked
@@ -199,6 +203,7 @@ export function createVerifiedProfileDirectory(
               for (const subject of seen) {
                 if (!wanted.has(subject) || checked.has(subject)) continue;
                 checked.add(subject);
+                answered.add(subject);
                 dirty = true;
               }
               if (dirty) changed();
@@ -209,8 +214,10 @@ export function createVerifiedProfileDirectory(
             const complete = count < chunk.length || seen.size === chunk.length;
             for (const subject of chunk) {
               const had = checked.has(subject);
-              if (wanted.has(subject) && (seen.has(subject) || complete))
+              if (wanted.has(subject) && (seen.has(subject) || complete)) {
                 checked.add(subject);
+                answered.add(subject);
+              }
               // An incomplete replacement cannot confirm inherited status.
               else checked.delete(subject);
               if (had !== checked.has(subject)) dirty = true;
@@ -311,6 +318,7 @@ export function createVerifiedProfileDirectory(
       wanted.delete(subject);
       heads.delete(subject);
       checked.delete(subject);
+      answered.delete(subject);
     }
     evicted = true;
     // A later ensure must issue a fresh REQ; the old one is past EOSE.
@@ -362,13 +370,14 @@ export function createVerifiedProfileDirectory(
         .slice(-count),
     /** Heads an earlier session saved, shown as cached until a sync answers.
      * Restored subjects are the least recently ensured. A subject a sync has
-     * already answered keeps that answer, so a removed head cannot return. */
+     * already answered keeps that answer, even after a disconnect, so a
+     * removed head cannot return. */
     restore(events: readonly RelayEvent[]) {
       const current = authority;
       if (closed || !enabled || !current) return;
       const restored = events.flatMap((event) => {
         const subject = verifiedProfileSubject(event, current);
-        return subject && !checked.has(subject) ? [{ subject, event }] : [];
+        return subject && !answered.has(subject) ? [{ subject, event }] : [];
       });
       if (!restored.length) return;
       const ensured = [...wanted];
@@ -432,6 +441,7 @@ export function createVerifiedProfileDirectory(
       refreshTimer = undefined;
       wanted.clear();
       heads.clear();
+      answered.clear();
       changed();
     },
     dispose() {

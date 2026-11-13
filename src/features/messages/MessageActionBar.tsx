@@ -214,6 +214,11 @@ function MessageActionBarControls({
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();
   const busy = useRef(false);
   const afterClose = useRef<(() => void) | undefined>(undefined);
+  // A list's removed row also drops the item it queued for after close.
+  const removed = !!host && !messageId;
+  useLayoutEffect(() => {
+    if (removed) afterClose.current = undefined;
+  }, [removed]);
   const live = useRef(true);
   useLayoutEffect(() => {
     live.current = true;

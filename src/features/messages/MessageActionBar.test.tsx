@@ -860,6 +860,42 @@ it("opens a list's menu with the actions of the row under the press", async () =
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 });
 
+it("drops a row's queued Forward when the row goes before its list's menu closes", async () => {
+  const forward = vi.fn();
+  function List({ rows }: { rows: string[] }) {
+    return (
+      <MessageContextMenus>
+        <div>
+          {rows.map((id) => (
+            <MessageActionBar
+              key={id}
+              withToolbar
+              messageId={id}
+              link={`buzz://${id}`}
+              copyText={() => id}
+              onForward={forward}
+            >
+              <div data-message-id={id}>
+                <p>{`Text ${id}`}</p>
+              </div>
+            </MessageActionBar>
+          ))}
+        </div>
+      </MessageContextMenus>
+    );
+  }
+  const view = render(<List rows={["a"]} />);
+  fireEvent.contextMenu(screen.getByText("Text a"), { button: 2 });
+  const item = await screen.findByRole("menuitem", { name: "Forward message" });
+  act(() => {
+    fireEvent.click(item);
+    view.rerender(<List rows={[]} />);
+  });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(forward).not.toHaveBeenCalled();
+});
+
 it("opens a list's menu from the keyboard and keeps its focus in the list", async () => {
   const focused = vi.fn();
   render(

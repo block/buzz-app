@@ -2749,7 +2749,9 @@ describe("Recommended", () => {
     expect(screen.queryByText("Model B · Medium")).not.toBeInTheDocument();
     await user.click(aiSettings);
     expect(await screen.findByText("Model B · Medium")).toBeInTheDocument();
-    expect(aiSettings).toHaveAccessibleDescription("Currently set to Model B");
+    expect(aiSettings).toHaveAccessibleDescription(
+      "Set to Model B (recommended)",
+    );
     // The model rows wait for Manual.
     const thinking = () => screen.getByRole("combobox", { name: "Thinking" });
     expect(

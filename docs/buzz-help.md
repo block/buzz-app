@@ -1095,7 +1095,7 @@ available rather than silently discarding it.
   The agent keeps its harness afterwards. If no recommended model is offered
   when the agent runs, it uses the harness's default. If nothing recommended is
   set up on this computer, a row asks you to set up Goose, Codex or Claude first, with a
-  **Set up** button, and Create waits. **Custom** opens
+  **Set up** button, and Create waits in Automatic. You can still choose Custom and a hosted harness. **Custom** opens
   Harness, Model and Thinking in place, starting from what Automatic picked. An
   agent's **Identity** tab shows the same **AI setup** row; changing the
   model, provider or thinking level there turns Automatic off. Automatic is

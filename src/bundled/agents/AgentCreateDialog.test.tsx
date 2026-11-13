@@ -1881,7 +1881,7 @@ describe("Recommended setup", () => {
     ).not.toBeInTheDocument();
     await inspectModel(user, dialog, "Model A · High");
     expect(aiSettings(dialog)).toHaveAccessibleDescription(
-      "Currently set to Model A",
+      "Set to Model A (recommended)",
     );
     // Recommended owns the harness and model; their rows wait for Custom.
     expect(
@@ -2028,23 +2028,40 @@ describe("Recommended setup", () => {
   it("asks for one thing to set up first when nothing recommended is set up", async () => {
     codexReady = false;
     const unready = harness("goose", "Goose", () => false);
-    const { agents, dialog, user } = setup([echo, unready, codex]);
+    const { agents, dialog, user } = setup([echo, unready, codex, hosted()]);
     expect(
       await within(dialog).findByText("One thing to set up first"),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Buzz needs Goose, Codex or Claude on this computer to run agents.",
+        "Set up a local harness for Automatic, or choose Custom to select another harness.",
       ),
     ).toBeInTheDocument();
     expect(unready.recommends).toHaveBeenCalled();
-    expect(aiSettings(dialog)).toBeDisabled();
+    expect(aiSettings(dialog)).toBeEnabled();
     await user.type(within(dialog).getByLabelText("Name"), "Agent A");
     // No harness can run a Recommended agent here, so there is none to create;
     // the button stays focusable so its reason can be read.
     expect(createButton()).toHaveAttribute("aria-disabled", "true");
     await user.click(createButton());
     expect(agents.create).not.toHaveBeenCalled();
+    await chooseCustom(user, dialog);
+    expect(
+      within(dialog).queryByText("One thing to set up first"),
+    ).not.toBeInTheDocument();
+    await pickOption(user, harnessSelect(dialog), /^Hosted A/);
+    expect(within(dialog).getByText("Hosted rows")).toBeInTheDocument();
+    await user.click(createButton());
+    await user.click(
+      within(
+        screen.getByRole("dialog", { name: "Meet your remote agent" }),
+      ).getByRole("button", { name: "Let’s go" }),
+    );
+    await waitFor(() => expect(agents.create).toHaveBeenCalled());
+    expect(agents.create.mock.calls[0]?.[0]).toMatchObject({
+      type: "test/hosted",
+      name: "Agent A",
+    });
   });
 
   it("offers a hosted type only under Custom's Harness, with its own controls as on main", async () => {

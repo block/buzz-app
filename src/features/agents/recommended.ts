@@ -70,7 +70,10 @@ const filled = (value: unknown): value is string =>
 
 /** Parse a recommendation object or a legacy candidates array. An empty value
  * recommends nothing. Errors name the field at fault without echoing values. */
-export function parseRecommended(value: string): RecommendedSetup {
+export function parseRecommended(
+  value: string,
+  allowEmpty = false,
+): RecommendedSetup {
   if (!value.trim()) return Object.freeze({ candidates: Object.freeze([]) });
   const invalid = (problem: string) =>
     new Error(`BUZZ_RECOMMENDED_AGENT${problem}`);
@@ -102,7 +105,7 @@ export function parseRecommended(value: string): RecommendedSetup {
     list = candidates;
     prefix = ".candidates";
   }
-  if (!Array.isArray(list) || !list.length)
+  if (!Array.isArray(list) || (!list.length && !allowEmpty))
     throw invalid(
       `${prefix} must be a ${prefix ? "nonempty candidates array" : "JSON array or an object with a nonempty candidates array"}.`,
     );
@@ -154,12 +157,19 @@ let runtimeRecommendation: RecommendedSetup | undefined;
  * as a source read at start-up may; `undefined` goes back to the build's.
  * Runtime input is validated; invalid input keeps the last good setup.
  * Set before agents run: previously resolved picks are not rechecked. */
-export function setRuntimeRecommendation(setup: RecommendedSetup | undefined): boolean {
-  if (setup === undefined) { runtimeRecommendation = undefined; return true; }
-  try {
-    runtimeRecommendation = parseRecommended(JSON.stringify(setup));
+export function setRuntimeRecommendation(
+  setup: RecommendedSetup | undefined,
+): boolean {
+  if (setup === undefined) {
+    runtimeRecommendation = undefined;
     return true;
-  } catch { return false; }
+  }
+  try {
+    runtimeRecommendation = parseRecommended(JSON.stringify(setup), true);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The current recommendation and attribution, supplied by runtime or build. */

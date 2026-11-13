@@ -191,7 +191,8 @@ export function AgentCreateDialog({
   const recommendation = useRecommendedPick(types, recommendable);
   const { pick } = recommendation.status === "found" ? recommendation : {};
   // No local harness can run an Automatic agent here: one thing to set up.
-  const nothingSetUp = recommendable && recommendation.status === "none";
+  const nothingSetUp =
+    automatic && recommendable && recommendation.status === "none";
   const preview = migration(type);
   const [dirty, setDirty] = useState(Boolean(update));
   const [pending, setPending] = useState(false);
@@ -571,7 +572,7 @@ export function AgentCreateDialog({
                   automatic={automatic}
                   harnessIcon={automatic ? pick?.type.icon : type?.icon}
                   modelName={pick?.candidate.label}
-                  disabled={pending || nothingSetUp}
+                  disabled={pending}
                   onChange={chooseAutomatic}
                   summary={
                     recommendation.status === "checking" ? (
@@ -595,7 +596,7 @@ export function AgentCreateDialog({
                   <PreferenceRow
                     icon={<PlugIcon size={20} aria-hidden="true" />}
                     title="One thing to set up first"
-                    subtitle="Buzz needs Goose, Codex or Claude on this computer to run agents."
+                    subtitle="Set up a local harness for Automatic, or choose Custom to select another harness."
                     trailing={
                       openSettings && (
                         <Button

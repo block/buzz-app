@@ -1855,7 +1855,7 @@ describe("Recommended", () => {
     );
     await waitFor(() => expect(aiSettings()).toHaveFocus());
     expect(aiSettings()).toHaveAccessibleDescription(
-      "Currently set to Model B",
+      "Set to Model B (recommended)",
     );
     // Recommended owns the provider, model and thinking level; their rows
     // wait for Manual.

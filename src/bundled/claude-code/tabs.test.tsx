@@ -3054,7 +3054,9 @@ it("follows the recommended setup in Settings until a manual choice", async () =
     const user = userEvent.setup();
     await user.click(aiSettings);
     expect(await screen.findByText("Model S · High")).toBeInTheDocument();
-    expect(aiSettings).toHaveAccessibleDescription("Currently set to Model S");
+    expect(aiSettings).toHaveAccessibleDescription(
+      "Set to Model S (recommended)",
+    );
     await user.keyboard("{Escape}");
     // The model rows wait for Manual.
     const thinking = () => screen.getByRole("combobox", { name: "Thinking" });

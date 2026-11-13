@@ -708,6 +708,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          communityUnreads={services.communityUnreads}
           federatedIdentity={services.federatedIdentity}
           invite={invite?.viewer === client.viewer ? invite : undefined}
           onInviteClose={services.invites.clear}

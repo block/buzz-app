@@ -509,6 +509,13 @@ export function createCommunities(
         ? acquire(id)
         : undefined;
     },
+    /** A joined community's session if one is already open; never connects. */
+    retained(id: string): RelayData | undefined {
+      id = communityDestination(id).id;
+      return state.memberships.some((m) => m.id === id)
+        ? sessions.get(id)
+        : undefined;
+    },
     saveProfile(profile: PersonalProfile) {
       update({ profile });
     },

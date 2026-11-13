@@ -1419,3 +1419,50 @@ it("shares discovered community artwork with an already-open Settings address wi
     await root.fiber.dispose();
   }
 });
+
+it("badges other communities' unread on their rows and the closed switcher", () => {
+  const h = harness();
+  const listeners = new Set<() => void>();
+  let states = new Map([
+    [primary, { unread: true, attention: 4 }],
+    [secondary, { unread: true, attention: 0 }],
+  ]);
+  const unreads = {
+    snapshot: () => states,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  const change = (next: typeof states) =>
+    act(() => {
+      states = next;
+      for (const listener of listeners) listener();
+    });
+  render(<CommunityPicker communities={h.communities} unreads={unreads} />);
+  const row = (name: string) => {
+    openSwitcher();
+    return screen.getByRole("button", {
+      name: new RegExp(`^Switch to ${name}`),
+    });
+  };
+  // The selected community is never badged; the other shows a dot.
+  expect(row("Primary")).toHaveAccessibleName("Switch to Primary");
+  expect(row("Secondary")).toHaveAccessibleName("Switch to Secondary, unread");
+  expect(switcher()).toHaveAccessibleName(
+    "Community switcher: Primary, unread in other communities",
+  );
+  change(new Map([[secondary, { unread: true, attention: 3 }]]));
+  expect(row("Secondary")).toHaveAccessibleName(
+    "Switch to Secondary, 3 items need you",
+  );
+  expect(within(row("Secondary")).getByText("3")).toBeInTheDocument();
+  // Read, or not yet known: no badge and no false all-read.
+  change(new Map([[secondary, { unread: false, attention: 0 }]]));
+  expect(row("Secondary")).toHaveAccessibleName("Switch to Secondary");
+  expect(switcher()).toHaveAccessibleName("Community switcher: Primary");
+  change(new Map());
+  expect(row("Secondary")).toHaveAccessibleName("Switch to Secondary");
+});

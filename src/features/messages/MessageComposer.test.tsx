@@ -8051,6 +8051,24 @@ it.each([
   },
 );
 
+it("keeps the caret after a typed colon whose conversion exceeds the limit", async () => {
+  const h = mountEmojiTypeahead();
+  // The flag is two units longer than its shortcode: the colon fits, the
+  // conversion does not.
+  const typed = `${"x".repeat(15999 - 14)} :flag-wales `;
+  h.fill(typed);
+  const caret = typed.length - 1;
+  act(() => h.input().setSelectionRange(caret, caret));
+  fireEvent(document, new Event("selectionchange"));
+  await screen.findByRole("option", { name: ":flag-wales:" });
+  expect(colon(h.input())).toBe(false);
+  expect(h.input()).toHaveValue(`${typed.slice(0, caret)}: `);
+  expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([
+    caret + 1,
+    caret + 1,
+  ]);
+});
+
 it("undoes an emoji completed before an existing space in one step", async () => {
   const h = mountEmojiTypeahead();
   h.fill("a :-1 b");

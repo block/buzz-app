@@ -1791,10 +1791,11 @@ function Composer({
     if (!insert(separated ? text : `${text} `, undefined, range, terminator))
       return false;
     const field = input.current;
-    if (separated && field) {
-      const caret = field.selectionEnd + 1;
-      field.setSelectionRange(caret, caret);
-    }
+    const end = field?.selectionEnd ?? 0;
+    // A typed colon can land without conversion at the length limit; the
+    // caret then stays after the literal colon.
+    if (separated && field?.value.slice(end - text.length, end) === text)
+      field.setSelectionRange(end + 1, end + 1);
     return true;
   }
   function insertToolText(text: string) {

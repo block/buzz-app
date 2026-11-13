@@ -539,6 +539,7 @@ impl FederatedIdentity {
         state.snapshot.revision = session.record.revision.clone();
         state.snapshot.email = session.record.email.clone();
         state.snapshot.failure = None;
+        state.snapshot.clock_offset = None;
         state.snapshot.expires_at = Some(session.record.expires_at.clone());
         state.snapshot.expiring = false;
         state.snapshot.cleanup = false;
@@ -657,6 +658,7 @@ impl FederatedIdentity {
         }
         state.snapshot.status = status;
         state.snapshot.failure = failure;
+        state.snapshot.clock_offset = None;
         state.snapshot.cleanup = false;
         self.publish(&state);
     }
@@ -668,6 +670,7 @@ impl FederatedIdentity {
         }
         state.snapshot.status = Status::Unavailable;
         state.snapshot.failure = Some(failure);
+        state.snapshot.clock_offset = None;
         state.snapshot.cleanup = true;
         self.publish(&state);
     }
@@ -691,6 +694,7 @@ impl FederatedIdentity {
         state.snapshot.status = status;
         state.snapshot.email = None;
         state.snapshot.failure = failure;
+        state.snapshot.clock_offset = None;
         state.snapshot.expires_at = None;
         state.snapshot.expiring = false;
         state.snapshot.cleanup = false;

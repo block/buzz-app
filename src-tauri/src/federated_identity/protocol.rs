@@ -100,21 +100,29 @@ async fn body(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>, Fai
 pub(crate) async fn json<T: DeserializeOwned>(
     request: impl Fn() -> RequestBuilder,
 ) -> Result<T, Failure> {
-    json_with(|| std::future::ready(Ok(request()))).await
+    Ok(json_with(|| std::future::ready(Ok(request()))).await?.0)
 }
 
 /// `json`, building every transmitted attempt anew: a request carrying a
 /// single-use proof signs a fresh one per attempt, so a retry is never
-/// refused as a replay of the attempt before it.
-pub(crate) async fn json_with<T: DeserializeOwned, F>(request: impl Fn() -> F) -> Result<T, Failure>
+/// refused as a replay of the attempt before it. Also answers when the
+/// attempt whose response came back started, sampled before it was built,
+/// so a token's lifetime is counted from that attempt and not from an
+/// earlier one that failed (the shared client lifetime rule).
+pub(crate) async fn json_with<T: DeserializeOwned, F>(
+    request: impl Fn() -> F,
+) -> Result<(T, tokio::time::Instant), Failure>
 where
     F: std::future::Future<Output = Result<RequestBuilder, Failure>>,
 {
     // One total deadline includes bounded retry and Retry-After. Refusals and
     // invalid success bodies do not retry; no browser is launched here.
-    let terminal_headers = std::sync::atomic::AtomicBool::new(false);
+    // Set when a refusal's headers arrive, with their clock offset, so a
+    // body that then outlasts the deadline still reports both.
+    let terminal_headers = std::sync::Mutex::new(None::<Option<i64>>);
     tokio::time::timeout(DEADLINE, async {
         for attempt in 0..3u64 {
+            let started = tokio::time::Instant::now();
             let response = request().await?.send().await;
             let retry = match response {
                 Err(_) => Some(None),
@@ -135,8 +143,10 @@ where
                                 )
                             })
                             .flatten();
-                        terminal_headers
-                            .store(!status.is_success(), std::sync::atomic::Ordering::Relaxed);
+                        *terminal_headers
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            (!status.is_success()).then_some(clock_offset);
                         #[cfg(test)]
                         let _ = HEADERS_RECEIVED.try_with(|received| received.notify_one());
                         let bytes = match body(response).await {
@@ -162,6 +172,7 @@ where
                         };
                         if status.is_success() {
                             return serde_json::from_slice(&bytes)
+                                .map(|value| (value, started))
                                 .map_err(|_| "invalid-response".into());
                         }
                         let value: serde_json::Value =
@@ -206,13 +217,16 @@ where
     })
     .await
     .map_err(|_| {
-        Failure::from(
-            if terminal_headers.load(std::sync::atomic::Ordering::Relaxed) {
-                "adapter-refused"
-            } else {
-                "network-timeout"
+        match *terminal_headers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            Some(clock_offset) => Failure {
+                clock_offset,
+                .."adapter-refused".into()
             },
-        )
+            None => "network-timeout".into(),
+        }
     })?
 }
 

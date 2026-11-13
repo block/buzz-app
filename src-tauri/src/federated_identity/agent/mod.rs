@@ -898,17 +898,16 @@ impl AgentTokens {
             expires_at: u64,
         }
         let client = protocol::client()?;
-        let request_start = tokio::time::Instant::now();
-        let issued: Issued = protocol::json(|| {
+        let (issued, request_start): (Issued, _) = protocol::json_with(|| {
             let request = client
                 .post(endpoint.clone())
                 .bearer_auth(&grant.token)
                 .header("Content-Type", "application/json")
                 .body(body.clone());
-            match proof() {
+            std::future::ready(Ok(match proof() {
                 Ok(proof) => request.header("Nostr-Authorization", proof),
                 Err(_) => request,
-            }
+            }))
         })
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
@@ -1215,6 +1214,8 @@ fn nostr(event: serde_json::Value) -> Result<String, String> {
 }
 
 /// Local misuse checks on an agent assertion; the relay verifies its signature.
+/// A future `iat` past `CLOCK_SKEW_SECS` is `invalid-assertion` here on
+/// purpose: `clock-skew` is only the human sign-in's diagnosis.
 fn validate(
     token: &str,
     agent: &AppAgent,

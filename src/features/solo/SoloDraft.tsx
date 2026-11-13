@@ -919,8 +919,8 @@ export function SoloDraft({
             // workspace deleted since.
             const project = settingsProject ?? "";
             const projectKey = `${draftKey}:new-project`;
-            const moved =
-              readView<unknown>(scope, projectKey, projectId ?? "") !== project;
+            const saved = readView<unknown>(scope, projectKey, null);
+            const moved = (saved ?? projectId ?? "") !== project;
             // A lifetime changed here, or chosen before, stays chosen; an
             // unchanged one keeps following the default.
             const chosen =
@@ -933,10 +933,17 @@ export function SoloDraft({
               ...(chosen ? { lifetimeChosen: true as const } : {}),
               name: name ?? "",
             };
-            if (
-              !writeView(scope, `${draftKey}:settings`, next) ||
-              (moved && !writeView(scope, projectKey, project))
-            )
+            // The pick and the settings are two writes, and either can fail.
+            // The pick goes first: these settings are never saved beside
+            // another workspace. If they then can't be saved, the pick found
+            // here goes back beside the settings saved for it, which were
+            // not touched.
+            let stored = !moved || writeView(scope, projectKey, project);
+            if (stored && !writeView(scope, `${draftKey}:settings`, next)) {
+              stored = false;
+              if (moved) writeView(scope, projectKey, saved);
+            }
+            if (!stored)
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",
               );

@@ -492,9 +492,10 @@ function refusedStart(test: ReturnType<typeof setup>) {
 function failingViewWrites(
   keys: readonly string[],
   fails: (value: string) => boolean = () => true,
+  scope = "test",
 ) {
   const names = new Set(
-    keys.map((key) => `buzz-view.v1:${JSON.stringify(["test", key])}`),
+    keys.map((key) => `buzz-view.v1:${JSON.stringify([scope, key])}`),
   );
   const setItem = Storage.prototype.setItem;
   return vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
@@ -1894,8 +1895,14 @@ it("a workspace another window picks under open Chat settings is dropped on clos
 });
 
 /** Chat settings open on `opened` with typed instructions, then another
- * window picks Other, which still exists, from its workspace control. */
-async function pickedElsewhere(scope: string, opened: "work" | "") {
+ * window picks Other, which still exists, from its workspace control. It can
+ * instead pick `pick` and leave `settings`, as its own Chat settings save. */
+async function pickedElsewhere(
+  scope: string,
+  opened: "work" | "",
+  pick: "other" | "" = "other",
+  settings: { name: string; canvas?: string } = { name: "" },
+) {
   const f = await projectSetup();
   const user = userEvent.setup();
   const started = vi.fn();
@@ -1912,12 +1919,12 @@ async function pickedElsewhere(scope: string, opened: "work" | "") {
   await user.type(instructions, "My own notes");
   // A pick from the workspace control also clears the draft's canvas.
   act(() => {
-    otherWindowWrites(scope, "solo:new-project", "other");
-    otherWindowWrites(scope, "solo:settings", { name: "" });
+    otherWindowWrites(scope, "solo:new-project", pick);
+    otherWindowWrites(scope, "solo:settings", settings);
   });
   // Other's defaults load for the start, as they would in the real window.
   await act(async () => {});
-  expect(readView(scope, "solo:new-project", null)).toBe("other");
+  expect(readView(scope, "solo:new-project", null)).toBe(pick);
   const send = async () => {
     await user.type(screen.getByRole("textbox"), "Plan the week");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -1981,6 +1988,77 @@ it("Cancelling Chat settings keeps the workspace another window picked, and its 
     undefined,
   );
 });
+
+/** Save while storage refuses `key`, as when it is full. The dialog says so
+ * and keeps what was typed; storage then works again. */
+async function refusedSave(
+  scope: string,
+  user: ReturnType<typeof userEvent.setup>,
+  key: string,
+) {
+  const writes = failingViewWrites([key], undefined, scope);
+  try {
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Settings couldn’t be saved on this device. Try again.",
+    );
+  } finally {
+    writes.mockRestore();
+  }
+  expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
+    "My own notes",
+  );
+}
+
+// Save writes the workspace, then the settings: each is refused in turn.
+const saveWrites = ["solo:new-project", "solo:settings"];
+
+it.each(saveWrites)(
+  "a Chat settings Save that can't write %s leaves another window's No workspace as it was; saving again puts both back",
+  async (key) => {
+    const scope = `refused-save-over-none:${key}`;
+    const { user } = await pickedElsewhere(scope, "work", "");
+    await refusedSave(scope, user, key);
+    // Neither the opening workspace nor its edited instructions stayed.
+    expect(readView(scope, "solo:new-project", null)).toBe("");
+    expect(readView(scope, "solo:settings", null)).toEqual({ name: "" });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(readView(scope, "solo:new-project", null)).toBe("work");
+    expect(readView(scope, "solo:settings", null)).toMatchObject({
+      canvas: "My own notes",
+    });
+  },
+);
+
+it.each(saveWrites)(
+  "a Chat settings Save that can't write %s leaves another window's workspace with the instructions saved for it; Cancel then Send uses both",
+  async (key) => {
+    const scope = `refused-save-over-other:${key}`;
+    const theirs = { name: "", canvas: "Their notes" };
+    const { f, user, send } = await pickedElsewhere(
+      scope,
+      "work",
+      "other",
+      theirs,
+    );
+    await refusedSave(scope, user, key);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Workspace: Other" }),
+    ).toBeVisible();
+    expect(readView(scope, "solo:new-project", null)).toBe("other");
+    expect(readView(scope, "solo:settings", null)).toEqual(theirs);
+    await send();
+    expect(f.assign.mock.calls).toEqual([[expect.any(String), "other"]]);
+    expect(f.saveCanvas).toHaveBeenCalledWith(
+      expect.any(String),
+      "Their notes",
+      undefined,
+    );
+  },
+);
 
 it("another window's saved instructions leave open Chat settings alone; its own Save wins", async () => {
   const f = await projectSetup();

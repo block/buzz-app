@@ -33,7 +33,7 @@ export const SESSION_LIMIT = 32;
 /** Sessions on the browser development broker. Each holds a live stream on
  * one same-origin HTTP/1.1 connection, and browsers open about six per
  * origin, so the rest stay free for ordinary requests. */
-export const BROKER_SESSION_LIMIT = 2;
+export const BROKER_SESSION_LIMIT = 3;
 export type PersonalProfile = { name: string; picture: string; about?: string };
 export type Membership = {
   id: string;
@@ -195,16 +195,18 @@ export function createCommunities(
       closed.delete(id);
     }
     if (!session) {
-      if (badge && (closed.has(id) || sessions.size >= sessionLimit))
+      // A badge leaves the last slot free, so work it is never closed for
+      // does not wait on a socket another session is still releasing.
+      if (badge && (closed.has(id) || sessions.size >= sessionLimit - 1))
         return undefined;
       let room: Promise<unknown> = Promise.resolve();
       const oldest = [...badgeOnly][0];
-      if (sessions.size >= sessionLimit && oldest) {
+      const evicted = sessions.size >= sessionLimit && oldest;
+      if (evicted) {
         badgeOnly.delete(oldest);
         closed.add(oldest);
         // Close before connecting so the native socket is free first.
         room = dispose(oldest);
-        for (const fn of listeners) fn();
       }
       if (badge) badgeOnly.add(id);
       const scope = newScope();
@@ -224,6 +226,8 @@ export function createCommunities(
       session.subscribe(() => {
         if (state.selected === id) emitRelay();
       });
+      // Only once the slot is held: listeners open sessions themselves.
+      if (evicted) for (const fn of listeners) fn();
     }
     return session;
   };

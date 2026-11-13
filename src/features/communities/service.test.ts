@@ -159,10 +159,12 @@ it("opens a joined community without selecting it, and never one that is not joi
     "/api/relay/primary/session",
   ]);
 });
-it("closes the oldest badge-only session, never selected or agent work, when the native socket limit is full", async () => {
+/** A native client over a modeled host registry: one socket per connected
+ * transport until its scope aborts it, refused past `SESSION_LIMIT`. */
+async function nativeAtLimit() {
   const nativeViewer = "c".repeat(64);
   const ids = Array.from(
-    { length: SESSION_LIMIT + 1 },
+    { length: SESSION_LIMIT + 2 },
     (_, i) => `https://c${i}.example.test`,
   );
   const saved = {
@@ -175,8 +177,6 @@ it("closes the oldest badge-only session, never selected or agent work, when the
       key === `buzz-client.v1:${nativeViewer}` ? JSON.stringify(saved) : null,
     setItem: vi.fn(),
   });
-  // The host's registry: a socket per transport until its scope aborts it,
-  // refused past the limit.
   const held = new Set<string>();
   const refused: string[] = [];
   const connect = vi.fn(
@@ -209,37 +209,79 @@ it("closes the oldest badge-only session, never selected or agent work, when the
     connect,
   );
   await flush();
-  // Startup badges, then visits and an agent's community fill every socket.
-  const badges = ids.slice(1, 9).map((id) => client.open(id, true));
-  for (const id of ids.slice(9, SESSION_LIMIT - 1)) client.select(id);
-  const agent = client.open(ids[SESSION_LIMIT - 1] as string);
-  client.select(ids[0] as string);
+  const id = (index: number) => ids[index] as string;
+  // Startup badges on c1–c8; visits fill all but the reserved last socket.
+  const badges = ids.slice(1, 9).map((each) => client.open(each, true));
+  for (const each of ids.slice(9, SESSION_LIMIT - 1)) client.select(each);
+  client.select(id(0));
   await flush();
   expect(badges.every(Boolean)).toBe(true);
+  expect(held.size).toBe(SESSION_LIMIT - 1);
+  return { client, id, held, refused, connect, badges };
+}
+it("a badge never takes the last native socket, which other work still gets", async () => {
+  const { client, id, held, refused } = await nativeAtLimit();
+  expect(client.open(id(SESSION_LIMIT - 1), true)).toBeUndefined();
+  client.select(id(SESSION_LIMIT - 1));
+  await flush();
+  expect(refused).toEqual([]);
   expect(held.size).toBe(SESSION_LIMIT);
-  // A badge never takes the last socket from other work.
-  const last = ids[SESSION_LIMIT] as string;
-  expect(client.open(last, true)).toBeUndefined();
-
+  expect(held.has(id(1))).toBe(true);
+});
+it("closes the oldest badge-only session, never selected or agent work, when the native socket limit is full", async () => {
+  const { client, id, held, refused, badges } = await nativeAtLimit();
+  const agent = client.open(id(SESSION_LIMIT - 1));
+  await flush();
+  expect(held.size).toBe(SESSION_LIMIT);
+  const last = id(SESSION_LIMIT);
   client.select(last);
   await flush();
   await flush();
   expect(refused).toEqual([]);
   expect(held.has(last)).toBe(true);
   // Only the oldest badge-only session gave up its socket, and stays closed.
-  expect(held.has(ids[1] as string)).toBe(false);
-  expect(client.open(ids[1] as string, true)).toBeUndefined();
-  for (const [index, id] of ids.slice(2, 9).entries())
-    expect(client.open(id, true)).toBe(badges[index + 1]);
-  expect(client.open(ids[SESSION_LIMIT - 1] as string)).toBe(agent);
-  expect(held.has(ids[0] as string)).toBe(true);
+  expect(held.has(id(1))).toBe(false);
+  expect(client.open(id(1), true)).toBeUndefined();
+  for (const [index, each] of [2, 3, 4, 5, 6, 7, 8].entries())
+    expect(client.open(id(each), true)).toBe(badges[index + 1]);
+  expect(client.open(id(SESSION_LIMIT - 1))).toBe(agent);
+  expect(held.has(id(0))).toBe(true);
   // Selecting the closed community connects it again, closing the next oldest.
-  client.select(ids[1] as string);
+  client.select(id(1));
   await flush();
   await flush();
   expect(refused).toEqual([]);
-  expect(held.has(ids[1] as string)).toBe(true);
-  expect(held.has(ids[2] as string)).toBe(false);
+  expect(held.has(id(1))).toBe(true);
+  expect(held.has(id(2))).toBe(false);
+});
+it("a listener reopening a badge on the eviction notice cannot take the freed socket", async () => {
+  const { client, id, refused } = await nativeAtLimit();
+  client.open(id(SESSION_LIMIT - 1));
+  await flush();
+  // The unread projection reopens every eligible badge whenever notified.
+  const reopened: unknown[] = [];
+  client.subscribe(() =>
+    reopened.push(client.open(id(SESSION_LIMIT + 1), true)),
+  );
+  client.select(id(SESSION_LIMIT));
+  await flush();
+  await flush();
+  expect(reopened[0]).toBeUndefined();
+  expect(refused).toEqual([]);
+});
+it("an agent reopening its community on the eviction notice reuses the stored session", async () => {
+  const { client, id, refused, connect } = await nativeAtLimit();
+  client.open(id(SESSION_LIMIT - 1));
+  await flush();
+  const agent = id(SESSION_LIMIT);
+  const inner: unknown[] = [];
+  client.subscribe(() => inner.push(client.open(agent)));
+  const outer = client.open(agent);
+  await flush();
+  await flush();
+  expect(inner[0]).toBe(outer);
+  expect(connect.mock.calls.filter(([each]) => each === agent)).toHaveLength(1);
+  expect(refused).toEqual([]);
 });
 it("keeps badge-only sessions within the broker's session limit", async () => {
   const ids = Array.from(
@@ -253,11 +295,12 @@ it("keeps badge-only sessions within the broker's session limit", async () => {
   });
   await flush();
   await flush();
+  // The selected community and one kept free leave room for one badge.
   const badges = ids.slice(1).map((id) => client.open(id, true));
-  expect(badges.filter(Boolean)).toHaveLength(BROKER_SESSION_LIMIT - 1);
-  // Selecting a community past the limit replaces the badge-only session.
-  const last = ids.at(-1) as string;
-  client.select(last);
+  expect(badges.filter(Boolean)).toHaveLength(BROKER_SESSION_LIMIT - 2);
+  client.select(ids[2] as string);
+  // Past the limit, a selection replaces the badge-only session.
+  client.select(ids[3] as string);
   await flush();
   await flush();
   expect(client.relay.snapshot().status).toBe("ready");

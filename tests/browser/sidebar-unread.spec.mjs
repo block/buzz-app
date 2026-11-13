@@ -124,9 +124,15 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
 }) => {
   await holdReadingFocus(page);
   // The held unread read must outlive the app's 10s read deadline on slow
-  // runners; the test releases it explicitly, so app timeouts are not under test.
+  // runners. Only 10s deadlines started while it is held are suspended; the
+  // test releases it explicitly, so that deadline is not under test.
   await page.addInitScript(() => {
-    AbortSignal.timeout = () => new AbortController().signal;
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    window.__holdReadDeadline = true;
+    AbortSignal.timeout = (ms) =>
+      window.__holdReadDeadline && ms === 10_000
+        ? new AbortController().signal
+        : timeout(ms);
   });
   const alphaHeads = () =>
     app.report.queries.filter(
@@ -168,6 +174,9 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     await opening;
     await expect(row(page, "dm-090")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__holdReadDeadline = false;
+    });
     app.relay.releaseUnread();
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);

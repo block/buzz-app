@@ -1059,11 +1059,12 @@ available rather than silently discarding it.
   there, once for every local Claude agent. With the Claude plugin enabled,
   **Settings → Claude → Set** opens **Connect Claude** to add a key. Back hides
   setup and Forward restores its draft while the Claude page remains open.
-  Closing
-  the dialog discards its draft; saving returns to the masked, read-only saved
-  key. The field opens its **Replace / Remove** menu when focused or clicked;
-  the chevron also opens it. **Replace** opens a blank, masked field with small
-  **Cancel / Save** buttons inside it. When adding or replacing a key, **Save**
+  The input keeps focus but is read-only while secure storage is checked. If the
+  check fails, the dialog keeps its draft and offers **Retry**; saving waits for
+  a successful check. Closing the dialog discards its draft; saving returns to
+  the masked, read-only saved key. The field opens its **Replace / Remove** menu
+  when focused or clicked; the chevron also opens it. **Replace** opens a blank,
+  masked field with small **Cancel / Save** buttons inside it. When adding or replacing a key, **Save**
   stays visible inside the field and is disabled until you enter a key.
   **Save** stores a non-empty replacement
   and returns to the masked view; **Cancel** discards the draft. Settings cannot

@@ -236,6 +236,7 @@ const message = (error: unknown) =>
 export function SignIn({
   setup,
   disabled = false,
+  readOnly = false,
   variant = "full",
   onSaved,
   active,
@@ -244,6 +245,7 @@ export function SignIn({
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
+  readOnly?: boolean;
   variant?: "full" | "compact" | "dialog";
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
@@ -260,6 +262,7 @@ export function SignIn({
       <KeyForm
         setup={setup}
         disabled={disabled}
+        readOnly={readOnly}
         onSaved={onSaved}
         active={active}
         onSavingChange={onSavingChange}
@@ -320,6 +323,7 @@ export function Missing({
 function KeyForm({
   setup,
   disabled = false,
+  readOnly = false,
   replace = false,
   onSaved,
   active = () => true,
@@ -328,6 +332,7 @@ function KeyForm({
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
+  readOnly?: boolean;
   replace?: boolean;
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
@@ -372,6 +377,7 @@ function KeyForm({
       onValueChange={setKey}
       onSave={() => void save()}
       disabled={disabled}
+      readOnly={readOnly}
       saving={!!saving}
       variant={replace ? "subtle" : "prominent"}
       feedback={

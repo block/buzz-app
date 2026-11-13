@@ -277,29 +277,58 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
 });
 
 it.each(["saved elsewhere", "read failure"] as const)(
-  "retires restored setup after %s",
+  "rechecks restored setup after %s",
   async (outcome) => {
     native.saved = false;
+    const user = userEvent.setup();
     const { setup, present, onOpenChange } = fixture();
-    await connectKey();
+    await user.type(await connectKey(user), "sk-ant-draft");
     act(() => present(false));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     const read = vi.spyOn(setup.auth, "check");
-    if (outcome === "saved elsewhere") native.saved = true;
-    else read.mockRejectedValueOnce("Secure storage is unavailable");
-
-    act(() => present(true));
-    await waitFor(() => {
-      expect(onOpenChange).toHaveBeenCalledWith(false);
-      expect(screen.queryByRole("dialog")).toBeNull();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
     });
+    native.saved = outcome === "saved elsewhere";
+    native.invoke.mockImplementationOnce(async () => {
+      await pending;
+      if (outcome === "read failure") throw "Secure storage is unavailable";
+      return native.saved;
+    });
+    try {
+      act(() => present(true));
+      const input = within(screen.getByRole("dialog")).getByLabelText(
+        "Anthropic API key",
+      );
+      await waitFor(() => expect(input).toHaveFocus());
+      expect(input).toHaveAttribute("readonly");
+      await user.type(input, "ignored");
+      expect(input).toHaveValue("sk-ant-draft");
+    } finally {
+      await act(async () => release());
+    }
     expect(read).toHaveBeenCalledOnce();
-    if (outcome === "saved elsewhere") await savedKey();
-    else {
-      expect(screen.getByRole("alert")).toHaveTextContent(
+    if (outcome === "saved elsewhere") {
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await savedKey();
+    } else {
+      const dialog = screen.getByRole("dialog", { name: "Connect Claude" });
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
         "Secure storage is unavailable",
       );
-      expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+      const input = within(dialog).getByLabelText("Anthropic API key");
+      expect(input).toHaveValue("sk-ant-draft");
+      expect(
+        within(dialog).getByRole("button", { name: "Save" }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(input).not.toHaveAttribute("readonly"));
+      expect(input).toHaveFocus();
+      await user.type(input, "-recovered");
+      expect(input).toHaveValue("sk-ant-draft-recovered");
+      expect(onOpenChange).not.toHaveBeenCalled();
     }
   },
 );

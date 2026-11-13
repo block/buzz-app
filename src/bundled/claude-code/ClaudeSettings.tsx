@@ -84,9 +84,8 @@ export function ClaudeSettings({
     if (connection?.open) void check();
   }, [connection?.open, check]);
   useEffect(() => {
-    if (connectionOpen && (configured === true || readError))
-      changeConnection(false);
-  }, [connectionOpen, configured, readError, changeConnection]);
+    if (connectionOpen && configured === true) changeConnection(false);
+  }, [connectionOpen, configured, changeConnection]);
 
   const clear = async () => {
     if (!active() || saving || clearing) return;
@@ -105,6 +104,24 @@ export function ClaudeSettings({
     }
   };
   const disabled = checking || saving || clearing || !!readError || !active();
+  const feedback = readError ? (
+    <div className="flex flex-wrap items-center gap-3">
+      <p role="alert" className="buzz-field-error m-0">
+        {readError}
+      </p>
+      <Button
+        onClick={() => {
+          void check();
+          if (connectionOpen)
+            connectForm.current
+              ?.querySelector<HTMLInputElement>("input")
+              ?.focus();
+        }}
+      >
+        Retry
+      </Button>
+    </div>
+  ) : undefined;
   return (
     <section
       ref={section}
@@ -126,14 +143,7 @@ export function ClaudeSettings({
           label="Checking for a saved key…"
           statusVisibility="screen-reader"
           feedback={
-            readError ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <p role="alert" className="buzz-field-error m-0">
-                  {readError}
-                </p>
-                <Button onClick={() => void check()}>Retry</Button>
-              </div>
-            ) : undefined
+            connectionOpen && configured === false ? undefined : feedback
           }
         >
           {configured === true ? (
@@ -188,6 +198,7 @@ export function ClaudeSettings({
           variant="dialog"
           setup={setup}
           disabled={disabled}
+          readOnly={checking || !!readError}
           active={active}
           onSavingChange={setSaving}
           onSaved={() => changeConnection(false)}
@@ -227,7 +238,14 @@ export function ClaudeSettings({
                 actionsButton.current ?? setButton.current ?? section.current
               }
             >
-              <div ref={connectForm}>{form}</div>
+              <LoadingRegion
+                pending={checking}
+                label="Checking for a saved key…"
+                statusVisibility="screen-reader"
+                feedback={feedback}
+              >
+                <div ref={connectForm}>{form}</div>
+              </LoadingRegion>
             </Dialog>
           )}
         />

@@ -328,24 +328,26 @@ impl Pairings {
             .find(|record| record.digest == key)
             .ok_or_else(Failure::revoked)?;
         let now = unix_now()?;
-        let acts = match &human {
-            Human::Pending(message) => return Err(Failure::new("unavailable", message)),
-            Human::Absent => false,
-            // Signed out with no sign-out recorded: the sign-in lapsed, as
-            // when it expired and Buzz restarted. A sign-out or a change of
-            // account revokes every pairing on its own, so this one waits.
-            Human::Ready(approver)
-                if record.approved_by.fi_account.is_some()
-                    && Approver {
-                        fi_account: None,
-                        ..record.approved_by.clone()
-                    } == *approver =>
-            {
-                return Err(Failure::new("unavailable", SIGN_IN_AGAIN));
-            }
-            Human::Ready(approver) => *approver == record.approved_by,
-        };
-        if !acts || now.saturating_sub(record.last_used) > DISUSE {
+        // Expiry comes first, so a lapsed sign-in never waits on a dead pairing.
+        let acts = now.saturating_sub(record.last_used) <= DISUSE
+            && match &human {
+                Human::Pending(message) => return Err(Failure::new("unavailable", message)),
+                Human::Absent => false,
+                // Signed out with no sign-out recorded: the sign-in lapsed, as
+                // when it expired and Buzz restarted. A sign-out or a change of
+                // account revokes every pairing on its own, so this one waits.
+                Human::Ready(approver)
+                    if record.approved_by.fi_account.is_some()
+                        && Approver {
+                            fi_account: None,
+                            ..record.approved_by.clone()
+                        } == *approver =>
+                {
+                    return Err(Failure::new("unavailable", SIGN_IN_AGAIN));
+                }
+                Human::Ready(approver) => *approver == record.approved_by,
+            };
+        if !acts {
             self.mutate(|records| {
                 records.retain(|r| r.id != record.id);
                 Some(())

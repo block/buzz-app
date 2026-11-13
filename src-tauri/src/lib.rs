@@ -1033,17 +1033,19 @@ pub fn run() {
                 }
             }
             #[cfg(unix)]
-            if cli_link::owns(
-                cli_link::development(tauri::is_dev()),
-                &app.config().identifier,
-                std::env::var_os("APPIMAGE").is_some(),
-            ) {
-                let cli = app
-                    .path()
+            if let (Some(home), Ok(cli)) = (
+                dirs::home_dir(),
+                app.path()
                     .resource_dir()
                     .map_err(std::io::Error::other)
-                    .and_then(|resources| resources.join("bin/buzz").canonicalize());
-                if let (Some(home), Ok(cli)) = (dirs::home_dir(), cli) {
+                    .and_then(|resources| resources.join("bin/buzz").canonicalize()),
+            ) {
+                if cli_link::owns(
+                    cli_link::development(tauri::is_dev()),
+                    &app.config().identifier,
+                    std::env::var_os("APPIMAGE").is_some(),
+                    &cli,
+                ) {
                     if let Err(error) = cli_link::ensure(&home.join(".local/bin"), &cli) {
                         eprintln!("Could not link the buzz command: {error}");
                     }

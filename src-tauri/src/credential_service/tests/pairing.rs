@@ -315,6 +315,39 @@ async fn a_pairing_survives_a_lapsed_sign_in_and_a_restart() {
     assert_eq!(reply.1["result"], human_pubkey().await);
 }
 
+/// Past its disuse period, a lapsed sign-in revokes it rather than asking
+/// for a sign-in that would only find it expired.
+#[tokio::test]
+async fn a_lapsed_sign_in_revokes_a_pairing_past_its_disuse_period() {
+    let mut fixture = fixture();
+    let session = testing::restoring();
+    session.finish_restore_as_for_test("ada@example.com");
+    fixture.service = service_over(
+        &fixture.host,
+        &session,
+        &fixture.keychain,
+        &fixture.notices,
+        IdentityHost::fixture(),
+    );
+    let token = paired(&fixture).await;
+    let mut saved: Vec<Value> =
+        serde_json::from_slice(fixture.keychain.value.lock().unwrap().as_ref().unwrap()).unwrap();
+    saved[0]["last_used"] = json!(now() - super::super::pairing::DISUSE - 1);
+    *fixture.keychain.value.lock().unwrap() = Some(serde_json::to_vec(&saved).unwrap());
+    let session = testing::restoring();
+    session.finish_restore_signed_out_for_test();
+    fixture.service = service_over(
+        &fixture.host,
+        &session,
+        &fixture.keychain,
+        &fixture.notices,
+        IdentityHost::fixture(),
+    );
+    let reply = ask(&fixture, &token, "describe", &[]).await;
+    assert_eq!(error(&reply), (StatusCode::UNAUTHORIZED, "revoked"));
+    assert!(fixture.keychain.value.lock().unwrap().is_none());
+}
+
 #[tokio::test]
 async fn a_pairing_under_another_human_is_revoked_and_deleted() {
     let mut fixture = fixture();

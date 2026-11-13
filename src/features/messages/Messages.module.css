@@ -20,14 +20,14 @@
   background: transparent;
 }
 .feed {
-  --message-hover-inset: var(--space-panel-inset);
+  --message-hover-inset: var(--space-6);
   --timeline-measure: var(--size-conversation-measure);
 
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-anchor: none;
-  padding: 0 var(--space-panel-inset);
+  padding: 0 var(--space-6);
   /* Keep fractional last rows reachable despite integer scroll extents. */
   --history-bottom-inset: var(--space-half);
   padding-bottom: var(--history-bottom-inset);
@@ -43,13 +43,6 @@
      ::-webkit-scrollbar, which is why .feed carries no such rules. */
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-}
-/* Narrow conversations keep the shared compact inset beside the app dock. */
-@container messages (max-width: 30rem) {
-  .feed {
-    --message-hover-inset: var(--space-4);
-    padding-inline: var(--space-4);
-  }
 }
 
 .threadHistory::-webkit-scrollbar {
@@ -996,14 +989,14 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 }
 
 .threadHistory {
-  --message-hover-inset: var(--space-4);
+  --message-hover-inset: var(--space-6);
   --timeline-measure: var(--size-conversation-measure);
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  /* Narrower than the channel feed's panel inset; aligns with the composer. */
-  padding: 0 var(--space-4);
+  /* Match the main timeline gutter in split threads. */
+  padding: 0 var(--space-6);
   /* The original starts space-4 below the header, less its .message padding. */
   padding-top: calc(var(--space-4) - var(--space-3) - var(--space-half));
   /* The end spacer below replaces bottom padding, so the jump button's sticky
@@ -1017,11 +1010,19 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
+/* Each message row measures its own available width in main and split views.
+   Keep the sender gutter, but reclaim the opposite avatar reservation when
+   the reading area is narrow. */
+@container message-row (max-width: 50rem) {
+  .message:has(> .messageGutter) > .messageBody {
+    max-width: 100%;
+  }
+}
 /* Compact gives conversations the window's full width, as list layouts do. */
 :where(html[data-message-density="compact"]) :is(.feed, .threadHistory) {
   --timeline-measure: 100%;
-  --message-hover-start-inset: var(--space-3);
-  padding-inline-start: var(--space-3);
+  --message-hover-start-inset: var(--space-6);
+  padding-inline-start: var(--space-6);
 }
 :where(html[data-message-density="compact"]) .composer {
   max-width: none;

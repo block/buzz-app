@@ -581,80 +581,122 @@ test("thread actions and growing reactions paint beyond the scroller without mov
 });
 
 // Browser-only: the sticky thread header, native top-layer toolbar and emoji
-// picker share viewport geometry that a DOM test cannot exercise. Before this
-// regression, the first thread message hid its actions above that header.
-test("thread-root actions nest from the message top edge", async ({
-  page,
-  app,
-}) => {
-  const root = app.histories
-    .get("primary/alpha")
-    .find((event) => event.content === "Thread root 0");
-  app.append(
-    "primary",
-    "alpha",
-    `First visible reply\n\n${"More reply content.\n\n".repeat(30)}`,
-    false,
-    false,
-    root.id,
-  );
-  await open(page, app);
-  await page
-    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
-    .click();
-  const panel = page.getByRole("complementary", {
-    name: "Thread",
-    exact: true,
-  });
-  const scroller = panel.getByRole("region", { name: "Thread messages" });
-  const row = panel.locator(`[data-message-id="${root.id}"]`);
-  const actions = actionsFor(row);
-  await expect(row).toBeVisible();
-  await settle(page, scroller);
-  await hoverMessage(row);
-  await shown(actions);
-  await expect
-    .poll(() =>
+// picker share viewport geometry that a DOM test cannot exercise. The original
+// leaves room for its actions above it, so they cover neither its name nor its
+// text; they nest inside it only once that placement would slip under the header.
+for (const density of ["default", "compact"])
+  test(`thread-root actions sit above the original and nest once scrolled (${density})`, async ({
+    page,
+    app,
+  }) => {
+    if (density === "compact")
+      await page.addInitScript(() =>
+        localStorage.setItem("buzz-message-density.v1", "compact"),
+      );
+    // A peer's wrapping original fills the width the bar floats over.
+    const root = app.append(
+      "primary",
+      "alpha",
+      "Wrapping original ".repeat(40),
+      false,
+      false,
+    );
+    app.append(
+      "primary",
+      "alpha",
+      `First visible reply\n\n${"More reply content.\n\n".repeat(30)}`,
+      false,
+      false,
+      root.id,
+    );
+    await open(page, app);
+    const original = page.locator(
+      `[data-channel-timeline] [data-message-id="${root.id}"]`,
+    );
+    await hoverMessage(original);
+    await original.getByRole("button", { name: "Reply", exact: true }).click();
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const scroller = panel.getByRole("region", { name: "Thread messages" });
+    const row = panel.locator(`[data-message-id="${root.id}"]`);
+    const actions = actionsFor(row);
+    await expect(row).toBeVisible();
+    await settle(page, scroller);
+    const placement = () =>
       actions.evaluate((bar) => {
         const row = bar.closest("[data-layout]");
         const toolbar = bar.getBoundingClientRect();
         const viewport = bar
           .closest("[data-message-scroller]")
           .getBoundingClientRect();
+        const covers = (element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            toolbar.bottom > rect.top + 1 &&
+            toolbar.top < rect.bottom - 1 &&
+            toolbar.right > rect.left + 1 &&
+            toolbar.left < rect.right - 1
+          );
+        };
+        const top = Math.max(row.getBoundingClientRect().top, viewport.top);
         return {
-          nested:
-            Math.abs(toolbar.top - row.getBoundingClientRect().top - 8) < 1,
+          clear: ![
+            row.querySelector("[data-message-author]"),
+            row.querySelector("[data-message-action-anchor] p"),
+          ].some(covers),
+          nested: Math.abs(toolbar.top - top - 8) < 1,
           visible:
             toolbar.top >= viewport.top && toolbar.bottom <= viewport.bottom,
         };
-      }),
-    )
-    .toEqual({ nested: true, visible: true });
-  await actions.getByRole("button", { name: "Add reaction" }).click();
-  await expect(page.locator("em-emoji-picker")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await actions.getByRole("button").first().focus();
-  await page.mouse.move(0, 0);
-  await row.evaluate((node) => {
-    const scroller = node.closest("[data-message-scroller]");
-    scroller.scrollTop +=
-      node.getBoundingClientRect().bottom -
-      scroller.getBoundingClientRect().top +
-      8;
+      });
+    // At rest the bar has headroom: it covers neither the name nor the text.
+    await hoverMessage(row);
+    await shown(actions);
+    await animationsSettled(actions);
+    await expect
+      .poll(placement)
+      .toEqual({ clear: true, nested: false, visible: true });
+    await page.mouse.move(0, 0);
+    await hidden(actions);
+    // Scrolled under the header, the bar nests inside the original.
+    await row.evaluate((node) => {
+      node.closest("[data-message-scroller]").scrollTop += 24;
+    });
+    await settle(page, scroller);
+    await hoverMessage(row);
+    await shown(actions);
+    await animationsSettled(actions);
+    await expect
+      .poll(() =>
+        placement().then(({ nested, visible }) => ({ nested, visible })),
+      )
+      .toEqual({ nested: true, visible: true });
+    await actions.getByRole("button", { name: "Add reaction" }).click();
+    await expect(page.locator("em-emoji-picker")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await actions.getByRole("button").first().focus();
+    await page.mouse.move(0, 0);
+    await row.evaluate((node) => {
+      const scroller = node.closest("[data-message-scroller]");
+      scroller.scrollTop +=
+        node.getBoundingClientRect().bottom -
+        scroller.getBoundingClientRect().top +
+        8;
+    });
+    await settle(page, scroller);
+    await expect
+      .poll(() =>
+        row.evaluate(
+          (node) =>
+            node.getBoundingClientRect().bottom <=
+            node.closest("[data-message-scroller]").getBoundingClientRect().top,
+        ),
+      )
+      .toBe(true);
+    await hidden(actions);
   });
-  await settle(page, scroller);
-  await expect
-    .poll(() =>
-      row.evaluate(
-        (node) =>
-          node.getBoundingClientRect().bottom <=
-          node.closest("[data-message-scroller]").getBoundingClientRect().top,
-      ),
-    )
-    .toBe(true);
-  await hidden(actions);
-});
 
 test("compact timeline actions slide under the top edge, track scrolling and preserve keyboard order", async ({
   page,

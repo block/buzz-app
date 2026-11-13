@@ -453,12 +453,11 @@ export function useFloatingActionBar(
         ? rowBounds.top + overlap
         : whole.top + aboveOverlap;
       const abovePaintedTop = aboveTop - height;
-      // Only the thread root nests below its sticky header. Timeline and reply
+      // The thread history leaves headroom above the root, so its bar sits above
+      // the message like any other. Only once that placement would clip under
+      // the pane header does the root's bar nest inside it. Timeline and reply
       // toolbars retain their above-message placement and clipping.
-      const nested =
-        threadRoot &&
-        !!viewport &&
-        abovePaintedTop < viewport.top + height + overlap;
+      const nested = threadRoot && !!viewport && abovePaintedTop < viewport.top;
       const paintedTop = nested
         ? Math.max(rowBounds.top + overlap, viewport.top + overlap)
         : abovePaintedTop;

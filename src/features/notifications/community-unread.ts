@@ -110,10 +110,16 @@ export function observeCommunityUnread(
   };
 }
 
-/** Unread for every joined community, keyed by community id. It opens each
- * one's session in the background and starts its unread repair once, as
- * visiting it would. Communities without a ready session, or whose unread is
- * stale or unobserved, are absent. */
+/** Background sessions opened for unread. The native host refuses a 17th
+ * relay socket (`socket.rs`), and each session holds one; the remainder keeps
+ * room for the selected community, agents' communities and visits. */
+export const BACKGROUND_UNREAD_LIMIT = 8;
+
+/** Unread for joined communities, keyed by community id. It opens the first
+ * `BACKGROUND_UNREAD_LIMIT` in the background, plus every community selected
+ * this launch, and starts each one's unread repair once, as visiting it would.
+ * Communities without a ready session, or whose unread is stale or
+ * unobserved, are absent. */
 export function createCommunityUnreads(
   communities: Communities,
   gates?: UnreadGates,
@@ -125,6 +131,8 @@ export function createCommunityUnreads(
     stop?: (() => void) | undefined;
   };
   const entries = new Map<string, Entry>();
+  // Selected communities are retained already; observing them costs no socket.
+  const visited = new Set<string>();
   const listeners = new Set<() => void>();
   let states: ReadonlyMap<string, CommunityUnread> = new Map();
   let closed = false;
@@ -175,8 +183,14 @@ export function createCommunityUnreads(
   };
   const update = () => {
     if (closed) return;
-    const { viewer, memberships } = communities.snapshot();
-    const joined = new Set(viewer ? memberships.map((m) => m.id) : []);
+    const { viewer, memberships, selected } = communities.snapshot();
+    if (selected) visited.add(selected);
+    const ids = viewer ? memberships.map((m) => m.id) : [];
+    const joined = new Set(
+      ids.filter(
+        (id, index) => index < BACKGROUND_UNREAD_LIMIT || visited.has(id),
+      ),
+    );
     for (const [id, entry] of entries)
       if (!joined.has(id) || communities.open(id) !== entry.relay)
         drop(id, entry);

@@ -186,14 +186,16 @@ export function policyRelay({
     emptyRoster() {
       emptyRoster = true;
     },
+    // Quotas refuse primary's next matching read: every joined community
+    // reads its own roster and heads at startup.
     quotaNextRoster(seconds = 1) {
-      quotas.set("roster", seconds);
+      quotas.set("primary/roster", seconds);
     },
     quotaNextHead(channel, seconds = 1) {
-      quotas.set(channel, seconds);
+      quotas.set(`primary/${channel}`, seconds);
     },
     quotaNextOlder(channel, seconds = 1) {
-      quotas.set(`older:${channel}`, seconds);
+      quotas.set(`primary/older:${channel}`, seconds);
     },
     /** With `only`, just the signed requests to those paths. */
     refuseSigned(status, body, only) {
@@ -502,7 +504,7 @@ export function policyRelay({
         const channel = filter["#h"]?.[0];
         // Head catch-up is an exact top-level channel window, not a batched
         // sidebar preview that happens to contain that channel.
-        const quota = filter.kinds?.includes(39002)
+        const scope = filter.kinds?.includes(39002)
           ? "roster"
           : filter.kinds?.includes(9)
             ? filter.until === undefined
@@ -511,6 +513,7 @@ export function policyRelay({
                 : undefined
               : `older:${channel}`
             : undefined;
+        const quota = scope && `${community}/${scope}`;
         if (quotas.has(quota)) {
           const seconds = quotas.get(quota);
           quotas.delete(quota);

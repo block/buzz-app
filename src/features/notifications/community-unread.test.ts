@@ -4,6 +4,7 @@ import type { RelayData } from "../relay/service";
 import type { RelaySession } from "../relay/session";
 import type { UnreadSnapshot } from "../relay/unread";
 import {
+  BACKGROUND_UNREAD_LIMIT,
   createCommunityUnreads,
   observeCommunityUnread,
   type CommunityUnread,
@@ -313,4 +314,38 @@ it("stops listening to the live connection when disposed", () => {
   expect(fake.live.size).toBe(1);
   stop();
   expect(fake.live.size).toBe(0);
+});
+
+it("opens at most the background limit, plus communities selected this launch", () => {
+  const ids = Array.from(
+    { length: BACKGROUND_UNREAD_LIMIT + 3 },
+    (_, index) => `https://c${index}.example`,
+  );
+  const client = signal();
+  let snapshot = {
+    viewer,
+    selected: ids[0] as string,
+    memberships: ids.map((id) => ({ id })),
+  };
+  const opened = vi.fn((_id: string) => undefined);
+  const communities = {
+    snapshot: () => snapshot,
+    subscribe: client.subscribe,
+    open: opened,
+    relay: { subscribe: () => () => {} },
+  } as unknown as Communities;
+  const unreads = createCommunityUnreads(communities);
+  cleanups.push(unreads.dispose);
+  const asked = () => new Set(opened.mock.calls.map(([id]) => id));
+  expect(asked()).toEqual(new Set(ids.slice(0, BACKGROUND_UNREAD_LIMIT)));
+  // Selecting one past the limit keeps observing it after it is left.
+  const late = ids.at(-1) as string;
+  snapshot = { ...snapshot, selected: late };
+  client.emit();
+  snapshot = { ...snapshot, selected: ids[0] as string };
+  opened.mockClear();
+  client.emit();
+  expect(asked()).toEqual(
+    new Set([...ids.slice(0, BACKGROUND_UNREAD_LIMIT), late]),
+  );
 });

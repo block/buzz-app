@@ -396,13 +396,8 @@
 .pullState[data-pr-state="completed"] {
   color: var(--message-icon-categorical-purple, var(--icon-categorical-purple));
 }
-/* An open pull request's approval mark, smaller than its state icon and
-   pulled in to it, so the two read as one. */
-.pullState .pullApproved {
-  width: 0.75em;
-  height: 0.75em;
-  margin-left: calc(-1 * var(--space-half));
-  vertical-align: 0;
+/* An open pull request's approval stamp, beside its state icon. */
+.pullApproved {
   color: var(--message-icon-success, var(--icon-success));
 }
 .soloLink {

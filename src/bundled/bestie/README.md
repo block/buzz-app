@@ -88,8 +88,9 @@ marked `<!-- buzz:bestie/memory v2 -->` … `<!-- /buzz:bestie/memory -->`, and
 turning it off removes that section. The section is the memory map and its
 rules, which every turn needs: each slug with its size and who writes it
 (`core`, `mem/user`, `mem/memory`, `mem/entities/<type>/<id>` cards,
-`mem/hypotheses`, `mem/notes/YYYY-MM-DD`, `mem/heartbeat`), add-then-organize,
-what is a fact and what a guess, and checking a fact against its source before
+`mem/hypotheses`, `mem/notes/YYYY-MM-DD`, `mem/heartbeat`), add-then-organize
+(each card write is linked from that day's note, which is how Nightly review
+finds it), what is a fact and what a guess, and checking a fact against its source before
 relying on it. Sizes are asked for in the text; nothing enforces them yet. An
 agent that already has the v1 section keeps it until Remembers you is turned
 off and on again. The switch is on while the section is

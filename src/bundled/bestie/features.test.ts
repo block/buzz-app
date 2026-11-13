@@ -251,6 +251,16 @@ it("has Nightly review silent, strict about promotion and bounded in what it cha
   // A night with no new note still retires stale hypotheses.
   expect(steps).toContain("Stop and write nothing only if there is no note");
   expect(steps).toContain("step 3 still marks and retires stale hypotheses");
+  // The cards it reads, and whether it stops, both come from the notes, so
+  // every card write links its card from a note: in chat and in Hourly notes.
+  const link = "[[mem/entities/<type>/<id>]]";
+  expect(steps).toContain(`each card those notes link as ${link}`);
+  expect(memory.text).toContain(
+    `Each time you write to a card, also append a line to mem/notes/<today> with the source event id that links the card as ${link}`,
+  );
+  expect(notes.timer?.interest).toContain(
+    `link the card from the note line as ${link}`,
+  );
 });
 
 it("takes the old hourly check-in's section away, as it was saved", () => {

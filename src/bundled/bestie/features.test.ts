@@ -248,6 +248,18 @@ it("has Nightly review silent, strict about promotion and bounded in what it cha
   expect(steps).toContain("at most 4 KB");
   expect(steps).toContain("MOVED TO [[slug]]");
   expect(steps).toContain('Append a "Dream" section');
+  // A reflection has explicit ends, and the stop check leaves out only what
+  // lies between them: a note holding only a reflection is no work, and a
+  // card link appended after its end line is.
+  const start = '"<!-- dream:start -->"';
+  const end = '"<!-- dream:end -->"';
+  expect(steps).toContain(
+    `Start it with a line ${start} and end it with a line ${end}, so later lines are not part of it.`,
+  );
+  expect(steps).toContain(
+    `no note line dated on or after last_dream outside a reflection (from a ${start} line to the next ${end} line; anything after that end line is new)`,
+  );
+  expect(steps).not.toContain('outside a "Dream" section');
   // A night with no new note still retires stale hypotheses.
   expect(steps).toContain("Stop and write nothing only if there is no note");
   // Lines are dated by day, so a line from later on last_dream's day counts.

@@ -3524,7 +3524,9 @@ test("product feedback signs and publishes only private bounded text/category", 
   const h = await harness(success);
   try {
     await h.start();
-    expect((await (await h.get("session")).json()).writeKinds).toContain(42000);
+    expect((await (await h.get("session")).json()).writeKinds).toEqual(
+      expect.arrayContaining([42000, 42001]),
+    );
     const template = {
       ...h.event,
       kind: 42000,

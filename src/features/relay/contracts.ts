@@ -67,6 +67,12 @@ export type ChannelSummary = Readonly<{
   /** Members the signed roster marks as owners. Offers lifecycle actions;
    * the relay authorizes each command. */
   owners?: readonly string[];
+  /** Members the signed roster marks as channel leads. */
+  admins?: readonly string[];
+  /** Channel GOAL carried by the current relay-signed metadata head. */
+  goal?: string;
+  /** Metadata event id that versions `goal`. */
+  goalVersion?: string;
   /** Relay-published NIP-CL labels. Any channel admin can set them: grouping, never trust. */
   labels?: readonly string[];
   /** Relay-written creator (NIP-CL `P`): the kind:9007 signer. Ownership can move later. */
@@ -183,6 +189,12 @@ export type ChannelMessage = Readonly<{
   threadRootId?: string | undefined;
   /** Immediate signed reply target; separate from the canonical thread root. */
   replyParentId?: string | undefined;
+  /** Channel GOAL and decision snapshotted by this thread root. */
+  threadGoal?: Readonly<{
+    goal: string;
+    version: string;
+    decision: string;
+  }>;
   /** Exact signed media target for a timecoded reply. */
   mediaTargetUrl?: string | undefined;
   sentFromThread?:

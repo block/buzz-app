@@ -20,7 +20,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=15).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -31,6 +31,12 @@ fn details(event: &EventTemplate) -> bool {
         return false;
     };
     let mut index = 3;
+    if let Some(goal) = tag(event, index, "goal") {
+        if goal.chars().count() > 2000 {
+            return false;
+        }
+        index += 1;
+    }
     if let Some(visibility) = tag(event, index, "visibility") {
         if !matches!(visibility, "private" | "open") {
             return false;
@@ -616,6 +622,22 @@ mod boundary_tests {
                 assert!(validate("channel-details", &altered, altered["pubkey"].as_str()).is_err());
             }
         }
+    }
+
+    #[test]
+    fn details_admit_a_bounded_goal_before_other_optional_fields() {
+        let event = details_event(vec![
+            vec!["goal".into(), "Ship V1".into()],
+            vec!["visibility".into(), "private".into()],
+        ]);
+        assert!(valid("channel-details", &event));
+        let oversized = details_event(vec![vec!["goal".into(), "x".repeat(2001)]]);
+        assert!(!valid("channel-details", &oversized));
+        let out_of_order = details_event(vec![
+            vec!["visibility".into(), "private".into()],
+            vec!["goal".into(), "Ship V1".into()],
+        ]);
+        assert!(!valid("channel-details", &out_of_order));
     }
 
     #[test]

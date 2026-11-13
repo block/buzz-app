@@ -180,12 +180,17 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "send",
-    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
+    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread. Starting a thread in a channel with a GOAL requires decision.",
     {
       text: str,
       path: str,
       channel: str,
       reply: str,
+      decision: {
+        ...str,
+        description:
+          "Decision this new thread changes; required when the destination channel has a GOAL.",
+      },
       files: strs,
       mentions: strs,
       audience,
@@ -620,7 +625,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     const audienceTags = [...audienceOf(args), ...requestOf(args)];
     const thread = reply ? await tools.threadTags(reply) : [];
-    return post(tools, channel, args, thread, audienceTags);
+    const goalTags = thread.length
+      ? []
+      : await tools.threadGoalTags(channel, args);
+    return post(tools, channel, args, thread, [...audienceTags, ...goalTags]);
   },
 
   async reply_in_subthread(tools, args) {
@@ -1734,6 +1742,31 @@ class Tools {
       { kinds: [39000], "#d": [channel], limit: 1 },
     ]);
     return metadata;
+  }
+
+  async threadGoalTags(channel: string, args: Args) {
+    const metadata = await this.metadata(channel);
+    if (!metadata || soloChannelMetadata(metadata as RelayEvent)) return [];
+    const kinds = metadata.tags
+      .filter(([name]) => name === "t")
+      .map(([, value]) => value);
+    if (kinds.some((kind) => kind === "dm" || kind === "system")) return [];
+    const goals = metadata.tags.filter(([name]) => name === "goal");
+    const goal =
+      goals.length === 1 && goals[0]?.length === 2 ? goals[0][1] : undefined;
+    if (!goal || [...goal].length > 2000) return [];
+    const decision = text(args.decision)?.trim();
+    if (!decision)
+      throw new Error(
+        "decision is required when starting a thread in a channel with a GOAL.",
+      );
+    if ([...decision].length > 1000)
+      throw new Error("decision must be at most 1,000 characters.");
+    return [
+      ["buzz:goal", goal],
+      ["buzz:goal-version", metadata.id],
+      ["buzz:decision", decision],
+    ];
   }
 
   async details(channel: string) {

@@ -211,6 +211,7 @@ async function remoteFixture() {
   } as Agent;
   const handle = {
     ...agent,
+    query: vi.fn(async () => []),
     publish: vi.fn(async () => ({})),
   } as unknown as AgentHandle;
   const reads = {

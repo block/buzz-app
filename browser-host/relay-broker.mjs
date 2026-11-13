@@ -1672,6 +1672,7 @@ export function relayBrokerPlugin({
                 9,
                 40003,
                 42000,
+                42001,
                 9000,
                 9001,
                 30078,

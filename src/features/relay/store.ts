@@ -475,6 +475,9 @@ export function createChannelStore(
         old.pending === channel.pending &&
         sameKeys(old.members, channel.members) &&
         sameKeys(old.owners, channel.owners) &&
+        sameKeys(old.admins, channel.admins) &&
+        old.goal === channel.goal &&
+        old.goalVersion === channel.goalVersion &&
         sameKeys(old.participants, channel.participants)
         ? old
         : Object.freeze({

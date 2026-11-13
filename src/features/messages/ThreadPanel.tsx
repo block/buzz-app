@@ -25,6 +25,10 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
@@ -138,6 +142,9 @@ export function ThreadPanel(props: ThreadPanelProps) {
     props.channelId,
     props.retainThread ? undefined : props.messageId,
   );
+  const [resolved, setResolved] = useState<{ viewKey: string; root: string }>();
+  const resolvedRoot =
+    resolved?.viewKey === viewKey ? resolved.root : undefined;
   return (
     <aside
       className={
@@ -165,7 +172,18 @@ export function ThreadPanel(props: ThreadPanelProps) {
         <ThreadHeader
           key={`header:${viewKey}`}
           close={close}
-          actions={props.headerActions}
+          actions={
+            <>
+              {resolvedRoot && props.session.threadGovernance?.available && (
+                <ThreadGovernanceChip
+                  session={props.session}
+                  channelId={props.channelId}
+                  root={resolvedRoot}
+                />
+              )}
+              {props.headerActions}
+            </>
+          }
         />
       )}
       {props.parent && (
@@ -177,11 +195,169 @@ export function ThreadPanel(props: ThreadPanelProps) {
         </p>
       )}
       {props.retainThread ? (
-        <RetainedThreadPanel key={viewKey} {...props} />
+        <RetainedThreadPanel
+          key={viewKey}
+          {...props}
+          onResolvedRoot={(root) => {
+            setResolved({ viewKey, root });
+            props.onResolvedRoot?.(root);
+          }}
+        />
       ) : (
-        <OwnedThreadPanel key={viewKey} {...props} />
+        <OwnedThreadPanel
+          key={viewKey}
+          {...props}
+          onResolvedRoot={(root) => {
+            setResolved({ viewKey, root });
+            props.onResolvedRoot?.(root);
+          }}
+        />
       )}
     </aside>
+  );
+}
+
+export function ThreadGovernanceChip({
+  session,
+  channelId,
+  root,
+}: {
+  session: RelaySession;
+  channelId: string;
+  root: string;
+}) {
+  const view = useMemo(
+    () => session.threadGovernance.view({ channelId, root }),
+    [session.threadGovernance, channelId, root],
+  );
+  useEffect(() => {
+    void view.refresh().catch(() => {});
+    return () => view.dispose();
+  }, [view]);
+  const state = useSyncExternalStore(
+    view.subscribe,
+    view.snapshot,
+    view.snapshot,
+  );
+  const canManage = useListedChannel(
+    session.channels,
+    channelId,
+    (channel) =>
+      channel?.viewerRole === "owner" || channel?.viewerRole === "admin",
+  );
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [goal, setGoal] = useState(state.goal ?? "");
+  const [threshold, setThreshold] = useState(state.threshold + 10);
+  const [actionError, setActionError] = useState("");
+  const act = async (
+    action: "extend" | "scope-change" | "closed" | "defer",
+    input?: Readonly<{ reason?: string; threshold?: number; goal?: string }>,
+  ) => {
+    try {
+      setActionError("");
+      await session.threadGovernance.act({ channelId, root }, action, input);
+      setOpen(false);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+  return (
+    <>
+      <Button
+        size="xs"
+        variant={state.tripped ? "attention" : "subtle"}
+        aria-label={`Thread turns ${state.count} of ${state.threshold}${state.tripped ? ", paused" : ""}`}
+        title={
+          state.tripped ? "Thread turn budget reached" : "Thread turn budget"
+        }
+        onClick={() => {
+          setReason("");
+          setGoal(state.goal ?? "");
+          setThreshold(state.threshold + 10);
+          setOpen(true);
+        }}
+      >
+        {state.count}/{state.threshold}
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Thread turn budget"
+        description="The breaker pauses only new agent turns in this thread. Active work is never interrupted."
+        actions={<Button onClick={() => setOpen(false)}>Cancel</Button>}
+      >
+        <div className={styles.threadGovernanceActions}>
+          <p role="status">
+            {state.count} of {state.threshold} agent turns completed
+            {state.tripped ? "; new turns are paused." : "."}
+          </p>
+          {state.goal && <p>Thread-only GOAL: {state.goal}</p>}
+          {actionError && <p role="alert">{actionError}</p>}
+          {canManage ? (
+            <>
+              <div className={styles.threadGovernanceChoice}>
+                <Button onClick={() => void act("closed")}>[CLOSED]</Button>
+                <Button onClick={() => void act("defer")}>
+                  Move remainder to DEFER
+                </Button>
+              </div>
+              <Field label="Approval reason">
+                <Input
+                  value={reason}
+                  onChange={(event) => setReason(event.currentTarget.value)}
+                />
+              </Field>
+              <div className={styles.threadGovernanceChoice}>
+                <Field label="New turn budget">
+                  <Input
+                    type="number"
+                    min={state.threshold + 1}
+                    value={threshold}
+                    onChange={(event) =>
+                      setThreshold(Number(event.currentTarget.value))
+                    }
+                  />
+                </Field>
+                <Button
+                  disabled={
+                    !reason.trim() ||
+                    !Number.isInteger(threshold) ||
+                    threshold <= state.threshold
+                  }
+                  onClick={() =>
+                    void act("extend", { reason: reason.trim(), threshold })
+                  }
+                >
+                  Extend budget
+                </Button>
+              </div>
+              <Field label="Thread-only GOAL override">
+                <Textarea
+                  rows={3}
+                  maxLength={2000}
+                  value={goal}
+                  onChange={(event) => setGoal(event.currentTarget.value)}
+                />
+              </Field>
+              <Button
+                disabled={!reason.trim() || !goal.trim()}
+                onClick={() =>
+                  void act("scope-change", {
+                    reason: reason.trim(),
+                    goal: goal.trim(),
+                  })
+                }
+              >
+                [SCOPE CHANGE]
+              </Button>
+            </>
+          ) : (
+            <p>Only a channel owner or lead can choose the next step.</p>
+          )}
+        </div>
+      </Dialog>
+    </>
   );
 }
 function ThreadHeader({
@@ -430,6 +606,7 @@ function OwnedThreadPanel({
   requireReadyRoot,
   onDraftSaved,
   onSend,
+  onResolvedRoot,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -505,6 +682,7 @@ function OwnedThreadPanel({
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onSend={onSend}
+      onResolvedRoot={onResolvedRoot}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}

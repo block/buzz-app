@@ -107,6 +107,7 @@ export const nativeWriteKinds = [
   40003,
   40100,
   42000,
+  42001,
   45010,
   ...WORKFLOW_KINDS,
 ] as const;

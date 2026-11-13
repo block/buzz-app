@@ -11,6 +11,11 @@ import { newer, hasTag, tag, type RelayEvent } from "./events";
 import type { ChannelSummary } from "./contracts";
 import { channelIdentity } from "./channel-labels";
 
+const exactTag = (event: RelayEvent, name: string) => {
+  const tags = event.tags.filter(([key]) => key === name);
+  return tags.length === 1 && tags[0]?.length === 2 ? tags[0][1] : undefined;
+};
+
 const names = new WeakMap<RelayEvent, string | undefined>();
 /** Display name from signed channel metadata; the content body overrides the tag. */
 export function metadataName(event: RelayEvent): string | undefined {
@@ -330,6 +335,7 @@ export class DiscoveryState {
     {
       members: readonly string[];
       owners: readonly string[];
+      admins: readonly string[];
       viewerRole: ChannelSummary["viewerRole"];
     }
   >();
@@ -343,6 +349,7 @@ export class DiscoveryState {
       parsed = {
         members: rosterKeys(roster),
         owners: rosterKeys(roster, "owner"),
+        admins: rosterKeys(roster, "admin"),
         // A contradictory guest entry cannot restore writing through another role.
         viewerRole: entries.some((entry) => entry[3] === "guest")
           ? "guest"
@@ -426,6 +433,11 @@ export class DiscoveryState {
         : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
+    const candidateGoal = event && exactTag(event, "goal");
+    const goal =
+      candidateGoal && [...candidateGoal].length <= 2000
+        ? candidateGoal
+        : undefined;
     // Legacy generated rooms lack creation proof. This is presentation only;
     // their parent still needs independent signed lifecycle evidence.
     const legacyHuddle =
@@ -449,10 +461,11 @@ export class DiscoveryState {
             visibility: channelVisibility(event),
             joinRole: channelJoinRole(event),
             description: tag(event, "about") ?? "",
+            ...(goal ? { goal, goalVersion: event.id } : {}),
           }
         : {}),
       members: parsed?.members ?? noMembers,
-      ...(parsed ? { owners: parsed.owners } : {}),
+      ...(parsed ? { owners: parsed.owners, admins: parsed.admins } : {}),
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(this.autoJoin(id) ? { autoJoin: true } : {}),

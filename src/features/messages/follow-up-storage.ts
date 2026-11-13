@@ -5,7 +5,7 @@ import {
   writeView,
 } from "../../shared/view-state";
 import type { UploadedAttachment } from "../relay/attachments";
-import type { MentionPicks } from "../relay/messages";
+import type { MentionPicks, ThreadGoalSnapshot } from "../relay/messages";
 import type { ComposerToken } from "./composer-token";
 import { messageTokenTags } from "./message-tokens";
 
@@ -16,6 +16,7 @@ export type FollowUpMessage = {
   attachments: readonly UploadedAttachment[];
   references: readonly string[];
   picks: MentionPicks;
+  threadGoal?: ThreadGoalSnapshot;
   /** The message's chips; publication signs them. */
   tokens?: readonly ComposerToken[];
 };
@@ -195,6 +196,19 @@ function valid(value: unknown): value is SavedFollowUp {
       if (!Array.isArray(v.tokens)) return false;
       messageTokenTags(v.tokens);
     }
+    if (
+      v.threadGoal !== undefined &&
+      (!v.threadGoal ||
+        typeof v.threadGoal.goal !== "string" ||
+        !v.threadGoal.goal ||
+        [...v.threadGoal.goal].length > 2000 ||
+        typeof v.threadGoal.version !== "string" ||
+        !/^[0-9a-f]{64}$/.test(v.threadGoal.version) ||
+        typeof v.threadGoal.decision !== "string" ||
+        !v.threadGoal.decision.trim() ||
+        [...v.threadGoal.decision.trim()].length > 1000)
+    )
+      return false;
   } catch {
     return false;
   }

@@ -2287,23 +2287,49 @@ export class AgentsService extends Service implements Agents {
     this.runners = new AgentRunners({
       prepareSession: async (agent, type, trigger, placement, signal) => {
         if (
-          !type.sessionAdmission ||
-          (trigger.type !== "mention" &&
-            trigger.type !== "plugin" &&
-            trigger.type !== "attention")
+          trigger.type !== "mention" &&
+          trigger.type !== "plugin" &&
+          trigger.type !== "attention"
         )
           return;
-        return this.sessionAdmissions.prepare({
-          agent: agent.key,
-          owner: agent.owner,
-          harness: agent.type,
-          ...placement,
-          invocationId:
-            trigger.type === "mention" ? trigger.event.id : trigger.id,
-          ...(trigger.type === "mention" ? { event: trigger.event } : {}),
-          resumed: trigger.type === "mention" && !!trigger.resumed,
-          signal,
-        });
+        const session = this.bindingOf(agent)?.session;
+        if (!session) throw new Error("The agent community is unavailable");
+        const sourceChannel = session.channels.get?.(
+          placement.source.channelId,
+        );
+        const governance =
+          placement.source.root &&
+          sourceChannel?.channelType !== "dm" &&
+          sourceChannel?.channelType !== "solo"
+            ? await session.threadGovernance.admit(
+                {
+                  channelId: placement.source.channelId,
+                  root: placement.source.root,
+                },
+                agent.pubkey,
+                signal,
+              )
+            : undefined;
+        const admitted = type.sessionAdmission
+          ? await this.sessionAdmissions.prepare({
+              agent: agent.key,
+              owner: agent.owner,
+              harness: agent.type,
+              ...placement,
+              invocationId:
+                trigger.type === "mention" ? trigger.event.id : trigger.id,
+              ...(trigger.type === "mention" ? { event: trigger.event } : {}),
+              resumed: trigger.type === "mention" && !!trigger.resumed,
+              signal,
+            })
+          : undefined;
+        return governance || admitted
+          ? {
+              ...(admitted ?? {}),
+              acknowledged: admitted?.acknowledged ?? (() => {}),
+              completed: governance?.completed ?? (() => {}),
+            }
+          : undefined;
       },
       // Only the copy that runs an agent keeps its watched channels live.
       ownershipChanged: () => {

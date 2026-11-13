@@ -47,6 +47,7 @@ import type { LiveBatch } from "../relay/incoming";
 import { CHANNEL_KINDS, LIVE_REPLAY_LIMIT } from "../relay/live";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
+import { soloChannelMetadata } from "../relay/discovery";
 import {
   addressedTo,
   CHAT_KINDS,
@@ -506,9 +507,11 @@ export type RunnerHost = {
     signal: AbortSignal,
   ): Promise<
     | Readonly<{
-        session: AgentSessionAssociation;
+        session?: AgentSessionAssociation;
         context?: string;
         acknowledged(): void;
+        /** Records this admitted turn after its work settles; never mutates it. */
+        completed(): void;
       }>
     | undefined
   >;
@@ -2740,15 +2743,15 @@ export class AgentRunners {
       woke();
       return run(delivery);
     };
+    let admission:
+      | ReturnType<NonNullable<RunnerHost["prepareSession"]>>
+      | undefined;
     const completion = Promise.resolve().then(async () => {
       this.assertProtected(agent, type, handle);
       const pick = await pickFor(job.trigger, agent, type);
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
-      let admission:
-        | ReturnType<NonNullable<RunnerHost["prepareSession"]>>
-        | undefined;
       const prepareSession: NonNullable<
         import("./service").Delivery["prepareSession"]
       > = async (placement, deferred = false) => {
@@ -2761,8 +2764,8 @@ export class AgentRunners {
             deferred ? lifetime : signal,
           ) ?? Promise.resolve(undefined);
         const admitted = await admission;
-        if (admitted) job.work?.associate(admitted.session);
-        return admitted
+        if (admitted?.session) job.work?.associate(admitted.session);
+        return admitted?.session
           ? {
               session: admitted.session,
               ...(admitted.context ? { context: admitted.context } : {}),
@@ -2772,7 +2775,7 @@ export class AgentRunners {
       signal.throwIfAborted();
       const delivery = Object.freeze({
         trigger: job.trigger,
-        ...(type.sessionAdmission ? { prepareSession } : {}),
+        prepareSession,
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
@@ -2858,6 +2861,7 @@ export class AgentRunners {
     void working.settled
       .then(async () => {
         this.sourceJobs.delete(job);
+        if (attempted) (await admission)?.completed();
         if (
           lifetime.aborted ||
           !working.ok() ||
@@ -3508,8 +3512,51 @@ export class AgentRunners {
       await this.host.starting?.(agent, channel)?.catch(() => {});
       lifetime.throwIfAborted();
     }
+    const custody = this.require();
+    if (
+      channel &&
+      event.kind === 9 &&
+      !event.tags?.some(([name]) => name === "e")
+    ) {
+      const [metadata] = await custody.query(runner.member, [
+        { kinds: [39000], "#d": [channel], limit: 1 },
+      ]);
+      lifetime.throwIfAborted();
+      if (metadata && !soloChannelMetadata(metadata)) {
+        const types = metadata.tags
+          .filter(([name]) => name === "t")
+          .map(([, value]) => value);
+        const goals = metadata.tags.filter(([name]) => name === "goal");
+        const goal =
+          goals.length === 1 && goals[0]?.length === 2
+            ? goals[0][1]
+            : undefined;
+        if (
+          goal &&
+          [...goal].length <= 2000 &&
+          !types.some((type) => type === "dm" || type === "system")
+        ) {
+          const exact = (name: string) => {
+            const tags = event.tags?.filter(([key]) => key === name) ?? [];
+            return tags.length === 1 && tags[0]?.length === 2
+              ? tags[0][1]
+              : undefined;
+          };
+          const decision = exact("buzz:decision")?.trim();
+          if (
+            exact("buzz:goal") !== goal ||
+            exact("buzz:goal-version") !== metadata.id ||
+            !decision ||
+            [...decision].length > 1000
+          )
+            throw new Error(
+              "Starting a thread in this channel requires its current GOAL and a decision this thread changes.",
+            );
+        }
+      }
+    }
     check?.();
-    return this.require().publish(runner.member, event);
+    return custody.publish(runner.member, event);
   }
 }
 

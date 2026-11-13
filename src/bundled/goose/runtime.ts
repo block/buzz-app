@@ -385,6 +385,7 @@ export class GooseRuntime {
     superseded,
     interruptible,
     named,
+    prepareSession,
   }: Delivery) {
     const settings = config(raw);
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
@@ -472,6 +473,18 @@ export class GooseRuntime {
       };
     };
     const { key, text: prepared, place, shown } = await prompt(false);
+    const sourceRoot = wake?.root ?? threadReference(event)?.rootId ?? event.id;
+    const admission = (deferred: boolean) =>
+      prepareSession?.(
+        {
+          source: { channelId: channel, root: sourceRoot },
+          conversation: {
+            channelId: channel,
+            ...(!topLevel ? { root: sourceRoot } : {}),
+          },
+        },
+        deferred,
+      );
     signal.throwIfAborted();
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
@@ -480,6 +493,7 @@ export class GooseRuntime {
         // the short deadline for handing a message to the harness.
         if (this.agents.get(agent.key) !== entry) return;
         if (!deferred) signal.throwIfAborted();
+        await admission(deferred);
         let noteRoot: string | undefined;
         let notes: ReturnType<NonNullable<AgentHandle["notes"]>> = [];
         const prior = entry.policies.get(key);

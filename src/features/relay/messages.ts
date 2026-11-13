@@ -37,6 +37,11 @@ export const MODEL_TAG = "model";
 export type RunPick = Readonly<{ model?: string; effort?: string }>;
 /** The model and effort picked for each addressed agent, by pubkey. */
 export type MentionPicks = Readonly<Record<string, RunPick>>;
+export type ThreadGoalSnapshot = Readonly<{
+  goal: string;
+  version: string;
+  decision: string;
+}>;
 
 /** Domain convenience only. Delivery and read reconciliation remain session-owned. */
 export function createMessages(
@@ -60,6 +65,10 @@ export function createMessages(
   unmentionedRecipients: (channelId: string) => readonly string[] = () => [],
   /** Events whose `buzz:copy-of` tag names this message id (sent-to-channel copies). */
   copiesOf: (id: string) => readonly EventData[] = () => [],
+  goalFor: (
+    channelId: string,
+  ) => Readonly<{ goal: string; version: string }> | undefined = () =>
+    undefined,
 ) {
   const writer = (
     kind: number,
@@ -307,8 +316,21 @@ export function createMessages(
       recovery?: OutboxRecovery,
       references: readonly string[] = [],
       picks: MentionPicks = {},
+      threadGoal?: ThreadGoalSnapshot,
     ) {
       if (!channelId) throw new Error("A channel is required");
+      const goal = goalFor(channelId);
+      if (
+        goal &&
+        (!threadGoal ||
+          threadGoal.goal !== goal.goal ||
+          threadGoal.version !== goal.version ||
+          !threadGoal.decision.trim() ||
+          [...threadGoal.decision.trim()].length > 1000)
+      )
+        throw new Error(
+          "Say what decision this thread changes before starting it.",
+        );
       const message = attachmentMessage(content, attachments, relayOrigin);
       return writer(9, channelId).send(
         {
@@ -319,6 +341,13 @@ export function createMessages(
             ...mentionTags(channelId, withDmAgents(channelId, mentions)),
             ...referenceTags(references),
             ...pickTags(channelId, mentions, picks),
+            ...(goal && threadGoal
+              ? [
+                  ["buzz:goal", goal.goal],
+                  ["buzz:goal-version", goal.version],
+                  ["buzz:decision", threadGoal.decision.trim()],
+                ]
+              : []),
             ...emojiTags(content),
             ...message.tags,
             ...signedMessageTokenTags(),

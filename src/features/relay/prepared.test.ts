@@ -474,6 +474,8 @@ it("hides DM channels behind the NIP-29 hidden tag", async () => {
       hidden: true,
       members: [viewer.pubkey, alice.pubkey].sort(),
       owners: [],
+      admins: [],
+      metadataPending: undefined,
       preview: undefined,
     },
   ]);

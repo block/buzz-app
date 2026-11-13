@@ -213,6 +213,7 @@ function mount(
   control?: LocalAgents,
   viewer?: string,
   agents?: Agents,
+  listedChannel?: Partial<ChannelSummary>,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -319,7 +320,13 @@ function mount(
   };
   const channelList = {
     status: "ready" as const,
-    channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
+    channels: [
+      {
+        id: "channel",
+        members: [first.pubkey, second.pubkey],
+        ...(listedChannel ?? {}),
+      },
+    ],
   };
   const rawSession = {
     // Full-session fixture; the detached editor intentionally omits this capability.
@@ -388,6 +395,9 @@ function mount(
       ),
     },
     channels: {
+      ...(listedChannel
+        ? { get: () => channelList.channels[0] as ChannelSummary }
+        : {}),
       window: () => ({ rows, status: history }),
       subscribeWindow(_id: string, listener: () => void) {
         rowListeners.add(listener);
@@ -474,7 +484,9 @@ function mount(
     reactStrictMode: true,
   });
   const input = () =>
-    within(view.container).getByRole<ComposerInputElement>("textbox");
+    within(view.container).getByRole<ComposerInputElement>("textbox", {
+      name: /^(?:Message |Reply to thread$|Edit message$)/,
+    });
   return {
     ...view,
     input,
@@ -660,6 +672,38 @@ it("keeps a slash command draft when its handler refuses", async () => {
   );
   expect(h.input()).toHaveValue("/leave");
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("requires and publishes the decision for a new thread under a channel GOAL", () => {
+  const version = "f".repeat(64);
+  const h = mount({}, undefined, undefined, undefined, {
+    channelType: "stream",
+    goal: "Choose the release boundary",
+    goalVersion: version,
+  });
+  h.fill("Launch plan");
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeDisabled();
+  fireEvent.change(
+    screen.getByRole("textbox", { name: "Decision this thread changes" }),
+    { target: { value: "Pick the launch date" } },
+  );
+  expect(send).toBeEnabled();
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "Launch plan",
+    [],
+    [],
+    undefined,
+    [],
+    {},
+    {
+      goal: "Choose the release boundary",
+      version,
+      decision: "Pick the launch date",
+    },
+  );
 });
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {

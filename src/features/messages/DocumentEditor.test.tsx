@@ -661,3 +661,26 @@ it.each(
     );
   },
 );
+
+it("pastes office text with an image sidecar into document mode", () => {
+  const h = mount({}, { initialValue: "" });
+  const input = screen.getByRole("textbox", {
+    name: "Document body",
+  }) as ComposerInputElement;
+  const plain = "Quarterly notes";
+  const picture = new File(["png"], "image.png", { type: "image/png" });
+  act(() => input.focus());
+  fireEvent.paste(input, {
+    clipboardData: {
+      items: [{ kind: "file", getAsFile: () => picture }],
+      getData: (type: string) =>
+        type === "text/plain"
+          ? plain
+          : type === "text/html"
+            ? `<p>${plain}</p>`
+            : "",
+    },
+  });
+  expect(input.value).toBe(plain);
+  expect(h.change).toHaveBeenLastCalledWith(plain);
+});

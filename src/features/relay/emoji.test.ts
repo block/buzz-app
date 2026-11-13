@@ -1076,3 +1076,51 @@ it("credential retry leaves an unrequested catalog unread", async () => {
   expect(catalogReads(h)).toBe(0);
   expect(h.session.emoji.snapshot().status).toBe("idle");
 });
+it("retries a ready catalog's timed-out refresh with growing backoff, keeping its entries", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = session();
+    void h.session.emoji.ensure("foreground");
+    await vi.advanceTimersByTimeAsync(0);
+    pendingCatalog(h).respond([set()]);
+    await vi.advanceTimersByTimeAsync(0);
+    const loaded = h.session.emoji.snapshot().entries;
+    void h.session.emoji.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    let reads = 2;
+    for (const delay of [1_000, 2_000, 4_000]) {
+      pendingCatalog(h).fail(
+        new ReadError("unavailable", "Relay read timed out"),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.session.emoji.snapshot()).toMatchObject({
+        status: "ready",
+        entries: loaded,
+        transient: true,
+      });
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(catalogReads(h)).toBe(reads);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(catalogReads(h)).toBe(++reads);
+    }
+    pendingCatalog(h).respond([set()]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.session.emoji.snapshot()).toMatchObject({
+      status: "ready",
+      error: undefined,
+      transient: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(catalogReads(h)).toBe(reads);
+    // A recovered refresh restarts the backoff for the next failure.
+    void h.session.emoji.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    pendingCatalog(h).fail(
+      new ReadError("unavailable", "Relay read timed out"),
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(catalogReads(h)).toBe(reads + 2);
+  } finally {
+    vi.useRealTimers();
+  }
+});

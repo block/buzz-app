@@ -157,7 +157,7 @@ it("shows a recovering catalog as loading and keeps Retry for deterministic fail
     );
     act(() => publish({ ...snapshot, status: "ready", entries: [], mine: [] }));
     expect(screen.queryByText("Loading community emoji…")).toBeNull();
-    // A failed warm refresh is not auto-retried, so it keeps its Retry.
+    // A loaded catalog that recovers a failed refresh stays quiet and usable.
     act(() =>
       publish({
         ...snapshot,
@@ -166,9 +166,8 @@ it("shows a recovering catalog as loading and keeps Retry for deterministic fail
       }),
     );
     expect(screen.queryByText("Loading community emoji…")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Retry emoji" }));
-    expect(refresh).toHaveBeenCalledOnce();
-    refresh.mockClear();
+    expect(screen.queryByText(/timed out/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry emoji" })).toBeNull();
     act(() => publish({ ...snapshot, error: undefined, transient: undefined }));
     act(() =>
       publish({

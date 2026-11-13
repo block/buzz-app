@@ -1,5 +1,5 @@
 import { isTransientFailure } from "./errors";
-import { createRecovery, loadState } from "./recovery";
+import { createRecovery } from "./recovery";
 import type { UploadedAttachment } from "./attachments";
 import { byteSize } from "./budget";
 import {
@@ -48,6 +48,8 @@ export function createEmojiDirectory(
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
   let pendingPriority: Priority = "background";
+  /** Recovery hears when a read ends, even one that publishes nothing. */
+  const settled = new Set<() => void>();
   const lifetime = new AbortController();
   let editing: Promise<unknown> = Promise.resolve();
   let snapshot: EmojiSnapshot = Object.freeze({
@@ -155,6 +157,7 @@ export function createEmojiDirectory(
         if (controller === owned) {
           controller = undefined;
           pending = undefined;
+          for (const listener of [...settled]) listener();
         }
       }
     })();
@@ -328,13 +331,23 @@ export function createEmojiDirectory(
     pending = undefined;
     void load("background");
   }
-  // The catalog's only retry owner: a transient cold failure retries with
-  // the shared capped backoff until it loads. Session recovery stays out of
-  // it; its state and notice describe the relay connection.
+  // The catalog's only retry owner: a transient failure, cold or of a ready
+  // catalog's refresh, retries with the shared capped backoff until it loads.
+  // A read in flight is busy, so a ready catalog's refresh keeps the backoff.
+  // Session recovery stays out of it; its state and notice describe the
+  // relay connection.
   const recovery = createRecovery([
     {
-      status: () => loadState(snapshot),
-      subscribe: queries.subscribe,
+      status: () =>
+        snapshot.transient ? "failed" : pending ? "busy" : "settled",
+      subscribe(listener) {
+        const stop = queries.subscribe(listener);
+        settled.add(listener);
+        return () => {
+          stop();
+          settled.delete(listener);
+        };
+      },
       retry: () => void refresh(),
     },
   ]);

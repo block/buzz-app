@@ -102,6 +102,7 @@ it("injected Markdown preserves safe URLs, formatted Buzz links and image-as-tex
 it.each([
   "x".repeat(MAX_MARKDOWN_LENGTH + 1),
   `${"> ".repeat(MAX_MARKDOWN_DEPTH + 1)}**deep**`,
+  `|${" a |".repeat(200)}\n|${" - |".repeat(200)}\n${"| x |\n".repeat(60)}`,
 ])("falls back to literal text beyond host parsing bounds", async (content) => {
   const { root, runtime, Markdown } = fixture();
   try {
@@ -109,7 +110,7 @@ it.each([
       <Markdown content={content} openLink={() => false} />,
     );
     expect(container.querySelector("pre")?.textContent).toBe(content);
-    expect(container.querySelector("strong, blockquote, a")).toBeNull();
+    expect(container.querySelector("strong, blockquote, a, table")).toBeNull();
   } finally {
     cleanup();
     await runtime.dispose();

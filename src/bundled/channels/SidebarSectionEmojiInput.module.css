@@ -4,8 +4,3 @@
   line-height: 1;
   --sidenav-emoji-size: var(--space-4);
 }
-
-.support {
-  margin-block-start: var(--space-2);
-  min-height: 1lh;
-}

@@ -25,20 +25,22 @@ export function RenameSidebarSection({
   finalFocus: RefObject<HTMLButtonElement | null>;
 }) {
   const formId = useId();
-  const [name, setName] = useState(title);
-  const [icon, setIcon] = useState(initialIcon ?? "");
+  // Live preference updates must not turn untouched draft fields into edits.
+  const [original] = useState({ name: title, icon: initialIcon ?? "" });
+  const [name, setName] = useState(original.name);
+  const [icon, setIcon] = useState(original.icon);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const next = name.trim();
   const submit = async () => {
     if (pending || !next) return;
-    const iconChanged = icon !== (initialIcon ?? "");
-    if (next === title && !iconChanged) return close();
+    const iconChanged = icon !== original.icon;
+    if (next === original.name && !iconChanged) return close();
     setPending(true);
     setError("");
     try {
       await rename({
-        ...(next === title ? {} : { name: next }),
+        ...(next === original.name ? {} : { name: next }),
         ...(iconChanged ? { icon: icon || null } : {}),
       });
       close();

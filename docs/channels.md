@@ -152,10 +152,13 @@ can also be dragged with a pointer onto another saved group, **Starred** or
 **Channels**; the drop is the same Move intent, with the same gate, optimistic
 placement, rollback notice and Retry.
 The **Channels** ellipsis menu also offers **Create section**, which creates an
-empty section without moving a channel. Its dialog retains the name and section
-ID after an attempted write fails and waits for confirmation before closing.
-The submitted name stays read-only and focused; a rejected gate that attempted
-no write leaves the draft editable. Failed confirmation uses plain copy and
+empty section without moving a channel. All four custom Team section creation
+routes, including **New → Team → New section**, offer optional Unicode or community
+emoji through the shared picker beside the name. **Remove emoji** at the top of the picker clears only the
+emoji. The dialog retains the name, selected emoji and section ID after an
+attempted write fails and waits for confirmation before closing. The submitted
+name stays read-only and focused, and emoji controls stay disabled; a rejected
+gate that attempted no write leaves the draft editable. Failed confirmation uses plain copy and
 offers Retry preferences whenever preferences are unavailable, with Create
 disabled until recovery. After a failed creation,
 the session refreshes preferences from the writer before allowing dismissal so
@@ -184,10 +187,15 @@ group; an accent line shows where it lands, and Escape cancels. Its section menu
 **Move up** and **Move down** are the keyboard and single-pointer path. Each move
 rewrites every live section's `order` register with one stamp, so channels, sort
 and collapsed state stay with the group's id; the order shows optimistically and
-a failure rolls back with the same move notice and Retry. **Rename section**
-in the same menu rewrites only that group's `name` register (a dialog keeps the
-entry and shows the error if the save fails), so its channels, order and sort stay
-put. The
+a failure rolls back with the same move notice and Retry. **Edit section**
+in the same menu changes the name, emoji, or both through **Save**. Emoji-only
+changes do not resend the name; omitted fields preserve their latest values, and
+**Remove emoji** writes an explicit null icon register. Changed name/icon leaves
+share one atomic register edit, leaving channels, order, sort and unrelated
+preferences intact. The dialog keeps the draft and shows the error if the save
+fails; saving an unchanged draft closes without a write. The shared picker is a
+transient nested surface: Escape closes only the picker and returns focus to its
+trigger, without creating a history visit. The
 session serializes placement, sort and mute writes through one queue, retaining
 one confirmed preferences snapshot beneath
 pending Move and Sort projections. Each confirmation updates only its owned fields

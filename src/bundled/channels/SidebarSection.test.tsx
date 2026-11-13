@@ -23,10 +23,24 @@ vi.mock("../emoji/EmojiPicker", () => ({
     externalTrigger: {
       id: string;
       close: () => void;
+      remove?: () => void;
       finalFocus: () => HTMLButtonElement | null | false;
     };
   }) => (
     <div id={externalTrigger.id} role="dialog" aria-label="Emoji picker">
+      {externalTrigger.remove && (
+        <button
+          type="button"
+          onClick={() => {
+            externalTrigger.remove?.();
+            externalTrigger.close();
+            const target = externalTrigger.finalFocus();
+            if (target) target.focus();
+          }}
+        >
+          Remove emoji
+        </button>
+      )}
       {["📚", ":books:"].map((icon) => (
         <button
           key={icon}
@@ -605,7 +619,15 @@ it("saves icon-only edits and removes an icon without resending the name", async
     screen.getByRole("button", { name: "Change section emoji" }),
   );
   await user.click(screen.getByRole("button", { name: ":books:" }));
+  expect(screen.queryByRole("button", { name: "Remove emoji" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Change section emoji" }),
+  );
   await user.click(screen.getByRole("button", { name: "Remove emoji" }));
+  expect(screen.queryByRole("dialog", { name: "Emoji picker" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Choose section emoji" }),
+  ).toHaveFocus();
   expect(screen.getByRole("textbox", { name: "Section name" })).toHaveValue(
     "Work",
   );
@@ -614,6 +636,60 @@ it("saves icon-only edits and removes an icon without resending the name", async
   expect(rename).toHaveBeenLastCalledWith({ icon: null });
   owner.dispose();
 });
+
+it.each(["name", "icon", "none"] as const)(
+  "omits untouched fields after a remote update during a %s edit",
+  async (field) => {
+    const user = userEvent.setup();
+    const owner = createRelaySession(null);
+    const rename = vi.fn().mockResolvedValue(undefined);
+    const props = {
+      sectionKey: "group:work",
+      title: "Work",
+      session: owner.session,
+      open: true,
+      onToggle: () => {},
+      onRename: rename,
+      children: <p>Rows</p>,
+    };
+    const view = render(<SidebarSection {...props} />);
+    try {
+      await user.click(
+        screen.getByRole("button", { name: "More actions for Work" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Edit section" }),
+      );
+      const dialog = await screen.findByRole("dialog", {
+        name: "Edit section",
+      });
+      if (field === "name") {
+        const input = within(dialog).getByRole("textbox", {
+          name: "Section name",
+        });
+        await user.clear(input);
+        await user.type(input, "Projects");
+      } else if (field === "icon") {
+        await user.click(
+          within(dialog).getByRole("button", { name: "Choose section emoji" }),
+        );
+        await user.click(screen.getByRole("button", { name: "📚" }));
+      }
+      view.rerender(
+        <SidebarSection {...props} title="Remote name" icon="🚀" />,
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      if (field === "none") expect(rename).not.toHaveBeenCalled();
+      else
+        expect(rename).toHaveBeenCalledExactlyOnceWith(
+          field === "name" ? { name: "Projects" } : { icon: "📚" },
+        );
+    } finally {
+      owner.dispose();
+    }
+  },
+);
 
 it("offers rename only for saved sections with a rename writer", async () => {
   const user = userEvent.setup();

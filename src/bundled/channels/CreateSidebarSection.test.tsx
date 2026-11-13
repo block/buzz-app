@@ -21,10 +21,24 @@ vi.mock("../emoji/EmojiPicker", () => ({
     externalTrigger: {
       id: string;
       close: () => void;
+      remove?: () => void;
       finalFocus: () => HTMLButtonElement | null | false;
     };
   }) => (
     <div id={externalTrigger.id} role="dialog" aria-label="Emoji picker">
+      {externalTrigger.remove && (
+        <button
+          type="button"
+          onClick={() => {
+            externalTrigger.remove?.();
+            externalTrigger.close();
+            const target = externalTrigger.finalFocus();
+            if (target) target.focus();
+          }}
+        >
+          Remove emoji
+        </button>
+      )}
       {["📚", ":books:"].map((icon) => (
         <button
           key={icon}
@@ -302,7 +316,15 @@ it("clears a selected community emoji without clearing the name", async () => {
     screen.getByRole("textbox", { name: "Section name" }),
     "Projects",
   );
+  expect(screen.queryByRole("button", { name: "Remove emoji" })).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Change section emoji" }),
+  );
   await user.click(screen.getByRole("button", { name: "Remove emoji" }));
+  expect(screen.queryByRole("dialog", { name: "Emoji picker" })).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Choose section emoji" }),
+  ).toHaveFocus();
   expect(screen.getByRole("textbox", { name: "Section name" })).toHaveValue(
     "Projects",
   );

@@ -48,6 +48,19 @@ test("Channels offers empty-section creation with keyboard focus, emoji and conf
   await placeholder.click();
   const search = page.getByRole("searchbox", { name: "Search emoji" });
   await expect(search).toBeFocused();
+  const picker = page.getByRole("dialog", {
+    name: "Emoji picker",
+    exact: true,
+  });
+  await expect(picker).toHaveAttribute("data-side", "bottom");
+  await expect(
+    picker.getByRole("button", { name: "Remove emoji" }),
+  ).toHaveCount(0);
+  await expect(dialog.getByText("Emoji is optional")).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("create-section-picker-below-light.png"),
+    clip: { x: 480, y: 270, width: 520, height: 665 },
+  });
   await search.press("Escape");
   await expect(search).toHaveCount(0);
   await expect(dialog).toBeVisible();
@@ -261,7 +274,38 @@ test("New → Team → New section keeps selected artwork centered at enlarged t
   await dialog.getByRole("button", { name: "Choose section emoji" }).click();
   await page.getByRole("searchbox", { name: "Search emoji" }).fill("bus");
   await page.getByRole("button", { name: "🚌", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Emoji picker", exact: true }),
+  ).toHaveCount(0);
   await field.fill("From New");
+  await dialog.getByRole("button", { name: "Change section emoji" }).click();
+  const search = page.getByRole("searchbox", { name: "Search emoji" });
+  const picker = page.getByRole("dialog", {
+    name: "Emoji picker",
+    exact: true,
+  });
+  await expect(search).toBeFocused();
+  await expect(
+    picker.getByRole("button", { name: "Remove emoji" }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => {
+      const bounds = await picker.boundingBox();
+      return (
+        bounds.x >= 0 &&
+        bounds.y >= 0 &&
+        bounds.x + bounds.width <= 480 &&
+        bounds.y + bounds.height <= 800
+      );
+    })
+    .toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("create-section-picker-narrow-enlarged.png"),
+  });
+  await search.press("Escape");
+  await expect(
+    dialog.getByRole("button", { name: "Change section emoji" }),
+  ).toBeFocused();
   await expectIconCentered(dialog);
   await dialog.screenshot({
     path: testInfo.outputPath("create-section-narrow-enlarged.png"),

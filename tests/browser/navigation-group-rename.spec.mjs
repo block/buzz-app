@@ -150,15 +150,74 @@ test("section emoji edits are centered, keyboard-safe, independently removable a
   expect(blob.meta.s.work.icon[2]).toBe(":stamp:");
   await expect(work.locator("[data-sidebar-group-icon] img")).toBeVisible();
 
+  // Keyboard removal changes only the draft; Cancel leaves the saved icon intact.
   dialog = await openEditor();
-  await dialog
-    .getByRole("button", { name: "Remove emoji", exact: true })
-    .click();
+  await dialog.getByRole("button", { name: "Change section emoji" }).click();
+  const picker = page.getByRole("dialog", {
+    name: "Emoji picker",
+    exact: true,
+  });
+  await expect(search).toBeFocused();
+  await expectPickerBelow(dialog, picker);
+  await page.screenshot({
+    path: testInfo.outputPath("edit-section-picker-below-dark.png"),
+    clip: { x: 480, y: 270, width: 520, height: 665 },
+  });
+  await search.press("Shift+Tab");
+  // The shared Tabs panel is a native tab stop between its search and the action.
+  await expect(picker.getByRole("tabpanel")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  const remove = picker.getByRole("button", {
+    name: "Remove emoji",
+    exact: true,
+  });
+  await expect(remove).toBeFocused();
+  await remove.press("Enter");
+  await expect(picker).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Choose section emoji" }),
+  ).toBeFocused();
+  await expect(input).toHaveValue("Work");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(app.report.sidebarPublications).toHaveLength(2);
+
+  dialog = await openEditor();
+  await expect(
+    dialog.getByRole("button", { name: "Change section emoji" }),
+  ).toHaveAttribute("aria-description", "Selected section emoji: :stamp:");
+  await dialog.getByRole("button", { name: "Change section emoji" }).click();
+  await expect(search).toBeFocused();
+  // A centered compact dialog still fits below at short heights. Move the real
+  // dialog down within that viewport to establish a genuine bottom collision.
+  await page.setViewportSize({ width: 1440, height: 650 });
+  await dialog.evaluate((element) => {
+    element.style.translate = "0 120px";
+  });
+  await expect(picker).toHaveAttribute("data-side", "top");
+  await expectPickerInViewport(picker, page);
+  await dialog.evaluate((element) => {
+    element.style.translate = "";
+  });
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await expectPickerBelow(dialog, picker);
+  await remove.click();
+  await expect(picker).toHaveCount(0);
   await expect(input).toHaveValue("Work");
   await expect(
     dialog.getByRole("button", { name: "Choose section emoji" }),
   ).toBeVisible();
   await expectIconCentered(dialog);
+  await expect(
+    dialog.getByRole("button", { name: "Choose section emoji" }),
+  ).toBeFocused();
+  await dialog.screenshot({
+    path: testInfo.outputPath("edit-section-removed-dark.png"),
+  });
+  await dialog.getByRole("button", { name: "Choose section emoji" }).click();
+  await expect(search).toBeFocused();
+  await expect(remove).toHaveCount(0);
+  await search.press("Escape");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect.poll(() => app.report.sidebarPublications?.length ?? 0).toBe(3);
@@ -213,4 +272,34 @@ async function expectIconCentered(dialog) {
   expect(metrics.x).toBeLessThanOrEqual(1);
   expect(metrics.y).toBeLessThanOrEqual(1);
   expect(metrics.nameY).toBeLessThanOrEqual(1);
+}
+
+async function expectPickerBelow(dialog, picker) {
+  await expect(picker).toHaveAttribute("data-side", "bottom");
+  // Retry until Base UI has applied its collision position, not its entry transform.
+  await expect
+    .poll(async () => {
+      const field = await dialog.locator(".buzz-input-group").boundingBox();
+      const popup = await picker.boundingBox();
+      return Math.max(
+        Math.abs(popup.x - field.x),
+        Math.abs(popup.y - field.y - field.height - 6),
+      );
+    })
+    .toBeLessThanOrEqual(1);
+}
+
+async function expectPickerInViewport(picker, page) {
+  await expect
+    .poll(async () => {
+      const popup = await picker.boundingBox();
+      const viewport = page.viewportSize();
+      return (
+        popup.x >= 0 &&
+        popup.y >= 0 &&
+        popup.x + popup.width <= viewport.width &&
+        popup.y + popup.height <= viewport.height
+      );
+    })
+    .toBe(true);
 }

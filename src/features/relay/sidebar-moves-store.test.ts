@@ -657,50 +657,56 @@ it("refreshes an accepted creation before reporting a lost response, superseding
   }
 });
 
-it("does not accept a same-ID recovery read that loses the requested icon", async () => {
-  const h = await setup();
-  const save = h.assignment.getMockImplementation();
-  assert(save);
-  h.assignment.mockImplementationOnce(async (intent) => {
-    await save(intent);
-    throw new Error("response lost");
-  });
-  const section = { id: "accepted", name: "Launch", icon: "📚" };
-  h.readAfterWrite.mockImplementationOnce(async () => {
-    const current = await h.read();
-    return {
-      ...current,
-      // Deliberately omit only the accepted creation's supplied icon.
-      sections: current.sections.map((entry) =>
-        entry.id === section.id
-          ? { id: entry.id, name: entry.name, order: entry.order }
-          : entry,
-      ),
-    };
-  });
-  try {
-    await expect(h.prefs.createSection(section)).rejects.toThrow(
-      "response lost",
-    );
-    expect(h.prefs.snapshot()).toMatchObject({
-      status: "error",
-      error: "The new section changed; reload and try again",
+it.each([{ name: "Renamed", icon: "📚" }, { name: "Launch" }])(
+  "reconciles changed creation state after a lost response: %j",
+  async (remote) => {
+    const h = await setup();
+    const save = h.assignment.getMockImplementation();
+    assert(save);
+    h.assignment.mockImplementationOnce(async (intent) => {
+      await save(intent);
+      throw new Error("response lost");
     });
-    expect(h.prefs.sectionCreationWritable).toBe(false);
-    expect(
-      h.prefs.snapshot().data?.sections.some(({ id }) => id === section.id),
-    ).toBe(false);
-    await expect(
-      h.prefs.createSection({ id: "duplicate", name: "Launch" }),
-    ).rejects.toThrow("unavailable");
-    await h.prefs.refresh();
-    expect(h.prefs.sectionCreationWritable).toBe(true);
-    expect(h.prefs.snapshot().data?.sections.at(-1)).toMatchObject(section);
-    expect(h.assignment).toHaveBeenCalledOnce();
-  } finally {
-    h.owner.dispose();
-  }
-});
+    const section = { id: "accepted", name: "Launch", icon: "📚" };
+    h.readAfterWrite.mockImplementation(async () => {
+      const current = await h.read();
+      const recovered = {
+        ...current,
+        sections: current.sections.map((entry) =>
+          entry.id === section.id
+            ? { id: entry.id, order: entry.order, ...remote }
+            : entry,
+        ),
+      };
+      h.read.mockResolvedValue(recovered);
+      return recovered;
+    });
+    try {
+      // Recovering authoritative preferences is not confirmation of this intent.
+      await expect(h.prefs.createSection(section)).rejects.toThrow(
+        "response lost",
+      );
+      expect(h.prefs.snapshot()).toMatchObject({ status: "ready" });
+      expect(h.prefs.snapshot().data?.sections.at(-1)).toEqual({
+        id: section.id,
+        order: 2,
+        ...remote,
+      });
+      expect(h.prefs.writable).toBe(true);
+      expect(h.prefs.sectionCreationWritable).toBe(true);
+      await h.prefs.refresh();
+      expect(h.prefs.snapshot()).toMatchObject({ status: "ready" });
+      expect(h.prefs.snapshot().data?.sections.at(-1)).toEqual({
+        id: section.id,
+        order: 2,
+        ...remote,
+      });
+      expect(h.assignment).toHaveBeenCalledOnce(); // Never replay the stale creation.
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
 
 it.each([false, true])(
   "gates new creation until writer reconciliation succeeds (clear cache: %s)",

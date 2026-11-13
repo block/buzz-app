@@ -131,7 +131,7 @@ export function createSidebarPreferencesStore({
   let readFailure: string | undefined;
   let readTransient = false;
   // Retain writer routing through failed reads and cache clears until reconciled.
-  let creationUncertain: SidebarSectionDraft | undefined;
+  let creationUncertain = false;
   const writable = () =>
     !closed &&
     !!confirmed &&
@@ -388,23 +388,12 @@ export function createSidebarPreferencesStore({
               return;
             }
             if (invalidation !== refreshInvalidation) continue;
-            if (creationUncertain) {
-              const found = data.sections.find(
-                ({ id }) => id === creationUncertain?.id,
-              );
-              if (
-                found &&
-                (found.name !== creationUncertain.name.trim() ||
-                  (creationUncertain.icon !== undefined &&
-                    found.icon !== creationUncertain.icon))
-              )
-                throw new Error(
-                  "The new section changed; reload and try again",
-                );
-            }
+            // Reconciliation installs current preferences, not confirmation of
+            // the failed creation. Its caller retains the error and exact draft;
+            // a conflicting retry is rejected by the existing writer policy.
             if (authoritative) reconciled = refreshInvalidation;
             readFailure = undefined;
-            creationUncertain = undefined;
+            creationUncertain = false;
             confirmed = data;
             project();
             return;
@@ -765,7 +754,7 @@ export function createSidebarPreferencesStore({
               // joining a read that began before publication.
               active?.controller.abort();
               active = undefined;
-              creationUncertain = section;
+              creationUncertain = true;
               await refresh();
             }
             throw error;

@@ -899,6 +899,12 @@ and are asked to sign in again in Buzz.
   for that community and identity. Collapsed section headings highlight when
   their channels have unread messages or thread replies. Muted channels do not
   highlight the heading.
+- **Custom Team sections** can have an optional Unicode or community emoji.
+  Choose it beside the name when creating a section, or use the section's
+  menu → **Edit section** to change its name or emoji, then **Save**.
+  Open the emoji picker and choose **Remove emoji** to clear only the emoji;
+  the name and channels stay unchanged. These controls require
+  writable saved sidebar preferences.
 - Saved sidebar groups, stars, mutes, sorting and filters from another device or
   a paired CLI update the open sidebar automatically while connected, in hosts
   that support saved sidebar preferences. A CLI section-only move keeps a

@@ -9,7 +9,6 @@ import {
 import type { RelaySession } from "../../features/relay/session";
 import { EmojiPicker } from "../emoji/EmojiPicker";
 import { SmileyIcon } from "../../shared/design-system/icons";
-import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
@@ -35,6 +34,7 @@ export function SidebarSectionEmojiInput({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLDivElement>(null);
   const pickerId = `section-emoji-${useId()}`;
   const close = useCallback(() => setPickerOpen(false), []);
   useEffect(() => {
@@ -44,6 +44,7 @@ export function SidebarSectionEmojiInput({
   return (
     <>
       <InputGroup
+        ref={field}
         leading={
           <IconButton
             ref={trigger}
@@ -87,6 +88,9 @@ export function SidebarSectionEmojiInput({
           reaction
           externalTrigger={{
             ref: trigger,
+            anchor: field,
+            side: "bottom",
+            remove: icon ? () => onIconChange("") : undefined,
             id: pickerId,
             close,
             finalFocus: () =>
@@ -96,21 +100,6 @@ export function SidebarSectionEmojiInput({
           }}
         />
       )}
-      <div className={styles.support}>
-        {icon ? (
-          <Button
-            type="button"
-            variant="link"
-            size="text"
-            disabled={disabled}
-            onClick={() => onIconChange("")}
-          >
-            Remove emoji
-          </Button>
-        ) : (
-          <span className="text-body-sm text-subtle">Emoji is optional</span>
-        )}
-      </div>
     </>
   );
 }

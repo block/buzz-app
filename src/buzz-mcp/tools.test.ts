@@ -570,12 +570,14 @@ it("skips known-archived namesakes for @Name but keeps explicit keys reaching th
   });
   expect(published.at(-1)?.tags).toContainEqual(["p", alice]);
   expect(published.at(-1)?.tags).not.toContainEqual(["p", retired]);
-  // This agent's own name still resolves even if the snapshot lists it.
-  await callTool(tagged, context, "send", {
-    audience: "everyone",
-    text: "@Alice hi",
-  });
-  expect(published.at(-1)?.tags).toContainEqual(["p", me]);
+  // This agent's own name still resolves even if the snapshot lists it, so it
+  // reaches the self-mention refusal rather than being hidden as archived.
+  await expect(
+    callTool(tagged, context, "send", {
+      audience: "everyone",
+      text: "@Alice hi",
+    }),
+  ).rejects.toThrow("Self-mentions do not wake your other sessions");
   // Exact keys and npub links reach an archived member; membership still applies.
   await callTool(tagged, context, "send", {
     audience: "everyone",

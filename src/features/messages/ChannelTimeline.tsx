@@ -705,7 +705,12 @@ function Timeline({
     setAway({
       token: visitToken,
       messageIds: entry ?? new Set(rows.map((row) => row.id)),
-      newest: Math.max(0, ...rows.map((row) => row.createdAt)),
+      // Only rows that could be unread: a reply in the same second as the
+      // viewer's own last post is still an arrival.
+      newest: Math.max(
+        0,
+        ...rows.filter(classifiable).map((row) => row.createdAt),
+      ),
       revision:
         (boundaryPending ? baseline.revision : undefined) ??
         queries.unread.revision(),

@@ -4178,6 +4178,30 @@ it("holds reading on return while the window refreshes, then places the line bef
   }
 });
 
+it("marks a reply sent in the same second as the viewer's last post", async () => {
+  const { h, mounted, read } = await settledReader();
+  try {
+    const own = h.row(message(h.viewer, "c", "Own post before blur", 11));
+    h.publish();
+    mounted.rerender(h.tree("c", [read, own]));
+    await h.dwell();
+    setDocumentActive(false);
+    await arriveWhileAway(
+      h,
+      mounted,
+      [read, own],
+      [{ content: "Reply in the same second", at: 11 }],
+    );
+    setDocumentActive(true);
+    expect(
+      precedes(divider(), screen.getByText("Reply in the same second")),
+    ).toBe(true);
+  } finally {
+    mounted.unmount();
+    vi.useRealTimers();
+  }
+});
+
 it("holds reading on return while a reconnect head read is owed, then places the line above what it delivers", async () => {
   const { h, mounted, read } = await settledReader();
   try {

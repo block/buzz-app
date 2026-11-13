@@ -411,7 +411,23 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
 ];
 /// The matching Builderlab API base path, or empty when unconfigured.
 pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");
+/// The origin of the build's community plugin index URL, or empty when it has none.
+pub const COMMUNITY_PLUGIN_INDEX_ORIGIN: &str = env!("BUZZ_COMMUNITY_PLUGIN_INDEX_ORIGIN");
 pub fn bundled_manifests() -> Vec<Manifest> {
+    let mut community_plugins: Manifest = serde_json::from_str(include_str!(
+        "../../../src/bundled/community-plugins/manifest.json"
+    ))
+    .expect("community plugins manifest");
+    community_plugins.host = (!COMMUNITY_PLUGIN_INDEX_ORIGIN.is_empty()).then(|| {
+        let mut network_origins = vec![COMMUNITY_PLUGIN_INDEX_ORIGIN.to_string()];
+        if COMMUNITY_PLUGIN_INDEX_ORIGIN != "https://api.github.com" {
+            network_origins.push("https://api.github.com".into());
+        }
+        HostGrants {
+            network_origins,
+            ..HostGrants::default()
+        }
+    });
     let mut builderlab: Manifest = serde_json::from_str(include_str!(
         "../../../src/bundled/builderlab/manifest.json"
     ))
@@ -538,6 +554,7 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/changesets/manifest.json"
         ))
         .expect("changesets manifest"),
+        community_plugins,
     ]
 }
 /// New bundles must opt in to the default-on policy.
@@ -570,6 +587,7 @@ fn enabled_by_default(id: &str) -> bool {
             | "buzz.relay-staff"
             | "buzz.typesafe"
             | "buzz.plugin-development"
+            | "buzz.community-plugins"
     )
 }
 /// Bundled ids that older profiles may still hold as installed plugins.

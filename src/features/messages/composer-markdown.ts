@@ -65,7 +65,11 @@ export function composerMarkdown(
         : node.copy(Fragment.fromArray(node.content.content.map(project)));
   const doc = project(readComposerDocument(draft, []));
   const wire = (body: EditorNode) =>
-    [...(draft.chatCards ?? []), blocksMarkdown(body, mode), ...(draft.gifs ?? [])]
+    [
+      ...(draft.chatCards ?? []),
+      blocksMarkdown(body, mode),
+      ...(draft.gifs ?? []),
+    ]
       .filter(Boolean)
       .join("\n\n");
   const qualified = authored ? doc : qualifyNamesakes(doc, mode);

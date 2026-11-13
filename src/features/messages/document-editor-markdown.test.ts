@@ -131,3 +131,14 @@ it.each([1, 2, 3])(
     ).toEqual(semanticTree(fromMarkdown(`${prefix}  \nnext`)));
   },
 );
+
+it("keeps namesake-looking document source literal without signed recipients", () => {
+  for (const source of [
+    "@Honey @Honey",
+    `@Honey (${"a".repeat(64)}) @Honey (${"b".repeat(64)})`,
+  ]) {
+    const draft = documentEditorDraft(source);
+    expect(draft.recipients).toEqual([]);
+    expect(documentEditorMarkdown(draft)).toBe(source);
+  }
+});

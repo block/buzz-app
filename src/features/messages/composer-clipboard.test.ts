@@ -235,3 +235,24 @@ it("keeps default chat clipboard output when document list metadata is present",
   const imported = buzzCopyDocument(copied.html);
   expect(imported?.lastChild?.attrs.spread).toBe(false);
 });
+
+it.each(["chat", "document"] as const)(
+  "copies namesake chips as authored text in %s mode",
+  (mode) => {
+    const chips = ["a", "b"].flatMap((key, index) => [
+      ...(index ? [composerSchema.text(" ")] : []),
+      token.create({
+        source: "@Honey",
+        recipient: { pubkey: key.repeat(64), name: "Honey" },
+      }),
+    ]);
+    const copied = composerClipboard(
+      doc.create(null, paragraph.create(null, chips)),
+      document,
+      mode,
+    );
+    expect(copied.text).toBe("@Honey @Honey");
+    // HTML retains identity destinations for paste; plain text has no send-only keys.
+    expect(copied.html.match(/<a /g)).toHaveLength(2);
+  },
+);

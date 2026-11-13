@@ -70,7 +70,7 @@ export function workspaceCanvas(input: Workspace): string {
         ),
         `- Before starting new work, fetch the latest \`${value.worktree.baseBranch}\` branch from origin.`,
         `- For each repository that needs changes, create a new worktree under \`${value.worktree.location}\` from \`origin/${value.worktree.baseBranch}\`.`,
-        "- Make all changes in that new worktree.",
+        "- Make code changes in that new worktree. A task that only reads code, or does not use a repository, usually does not need one.",
       ]
     : [
         "## Project folders",

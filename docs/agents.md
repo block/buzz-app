@@ -87,8 +87,13 @@ and root, independently of the native conversation: several source threads may
 share one native session without sharing a budget. A completed turn is recorded
 only after the runner's actual work settles. Agent identity comes only from a
 cryptographically verified profile `auth` tag; the display-only `is_agent` field
-does not count. A trip refuses the new admission and never interrupts a session,
-aborts a runner, clears a runtime queue, or changes work already admitted.
+does not count. Profile classification always follows the newest retained signed
+profile head, including an `auth` revocation. Management records are accepted only
+against the relay-signed administrator head effective in the complete accepted
+NIP-29 member-change sequence, so a demoted lead cannot reuse an older head while
+earlier approved actions remain durable. A trip refuses the new admission and never
+interrupts a session, aborts a runner, clears a runtime queue, or changes work
+already admitted.
 
 ## Local lifecycle evidence
 

@@ -250,13 +250,13 @@ export function ThreadGovernanceChip({
   const [goal, setGoal] = useState(state.goal ?? "");
   const [threshold, setThreshold] = useState(state.threshold + 10);
   const [actionError, setActionError] = useState("");
-  const act = (
+  const act = async (
     action: "extend" | "scope-change" | "closed" | "defer",
     input?: Readonly<{ reason?: string; threshold?: number; goal?: string }>,
   ) => {
     try {
       setActionError("");
-      session.threadGovernance.act({ channelId, root }, action, input);
+      await session.threadGovernance.act({ channelId, root }, action, input);
       setOpen(false);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -297,8 +297,8 @@ export function ThreadGovernanceChip({
           {canManage ? (
             <>
               <div className={styles.threadGovernanceChoice}>
-                <Button onClick={() => act("closed")}>[CLOSED]</Button>
-                <Button onClick={() => act("defer")}>
+                <Button onClick={() => void act("closed")}>[CLOSED]</Button>
+                <Button onClick={() => void act("defer")}>
                   Move remainder to DEFER
                 </Button>
               </div>
@@ -326,7 +326,7 @@ export function ThreadGovernanceChip({
                     threshold <= state.threshold
                   }
                   onClick={() =>
-                    act("extend", { reason: reason.trim(), threshold })
+                    void act("extend", { reason: reason.trim(), threshold })
                   }
                 >
                   Extend budget
@@ -343,7 +343,7 @@ export function ThreadGovernanceChip({
               <Button
                 disabled={!reason.trim() || !goal.trim()}
                 onClick={() =>
-                  act("scope-change", {
+                  void act("scope-change", {
                     reason: reason.trim(),
                     goal: goal.trim(),
                   })

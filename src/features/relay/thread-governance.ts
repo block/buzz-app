@@ -1,5 +1,5 @@
 import type { ProfileQueries } from "./profile-directory";
-import type { EventData, RelayEvent } from "./events";
+import { eventDto, newer, type EventData, type RelayEvent } from "./events";
 import { messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import type { Outbox } from "./outbox";
@@ -11,6 +11,7 @@ import { lifecycleChannelId } from "./channel-lifecycle-protocol";
 
 export const THREAD_GOVERNANCE_KIND = 42001;
 export const THREAD_TURN_THRESHOLD = 10;
+const PAGE = 500;
 const TYPE = "buzz.thread-governance/v1";
 const HEX = /^[0-9a-f]{64}$/;
 
@@ -74,7 +75,7 @@ export interface ThreadGovernanceCapability {
     source: ThreadGovernanceSource,
     action: Exclude<ThreadGovernanceAction, "completed">,
     input?: Readonly<{ reason?: string; threshold?: number; goal?: string }>,
-  ): void;
+  ): Promise<void>;
 }
 
 type GovernanceRecord = Readonly<{
@@ -84,6 +85,12 @@ type GovernanceRecord = Readonly<{
   reason?: string;
   threshold?: number;
   goal?: string;
+  approval?: RelayEvent;
+}>;
+
+type OwnerHead = Readonly<{
+  profile: RelayEvent;
+  owner?: string;
 }>;
 
 const emptyState = (): ThreadGovernanceState =>
@@ -157,7 +164,12 @@ function record(
       [...body.goal.trim()].length <= 2000
         ? body.goal.trim()
         : undefined;
+    const approval =
+      action === "completed" || body.approval === undefined
+        ? undefined
+        : eventDto(body.approval);
     if (action === "completed" && !agent) return;
+    if (action !== "completed" && !approval) return;
     if (action === "extend" && (!reason || threshold === undefined)) return;
     if (action === "scope-change" && (!reason || !goal)) return;
     if (["blocker-open", "blocker-resolved"].includes(action) && !reason)
@@ -169,6 +181,7 @@ function record(
       ...(reason ? { reason } : {}),
       ...(threshold ? { threshold } : {}),
       ...(goal ? { goal } : {}),
+      ...(approval ? { approval } : {}),
     };
   } catch {
     return;
@@ -178,12 +191,149 @@ function record(
 const order = (a: EventData, b: EventData) =>
   eventMs(a) - eventMs(b) || a.id.localeCompare(b.id);
 
+type AdministratorHead = Readonly<{
+  event: RelayEvent;
+  roles: ReadonlyMap<string, "owner" | "admin">;
+}>;
+
+type ManagementAuthority = Readonly<{
+  heads: readonly AdministratorHead[];
+  roleChanges: readonly Readonly<{
+    event: RelayEvent;
+    target: string;
+    role?: string;
+  }>[];
+}>;
+
+function administratorHead(
+  value: unknown,
+  source: ThreadGovernanceSource,
+  relayAuthor?: string,
+): AdministratorHead | undefined {
+  if (!relayAuthor) return;
+  let approval: RelayEvent;
+  try {
+    approval = eventDto(value);
+  } catch {
+    return;
+  }
+  if (
+    approval.kind !== 39001 ||
+    approval.pubkey !== relayAuthor ||
+    exactTag(approval, "d") !== source.channelId
+  )
+    return;
+  const roles = new Map<string, "owner" | "admin">();
+  for (const entry of approval.tags.filter(([name]) => name === "p")) {
+    const [, pubkey, role] = entry;
+    if (
+      entry.length !== 3 ||
+      !pubkey ||
+      !HEX.test(pubkey) ||
+      (role !== "owner" && role !== "admin") ||
+      roles.has(pubkey)
+    )
+      return;
+    roles.set(pubkey, role);
+  }
+  return {
+    event: approval,
+    roles,
+  };
+}
+
+function managementAuthority(
+  source: ThreadGovernanceSource,
+  events: readonly EventData[],
+  records: ReadonlyMap<string, GovernanceRecord>,
+  relayAuthor?: string,
+): ManagementAuthority {
+  const heads = new Map<string, AdministratorHead>();
+  const roleChanges = new Map<
+    string,
+    Readonly<{ event: RelayEvent; target: string; role?: string }>
+  >();
+  const addHead = (value: unknown) => {
+    const head = administratorHead(value, source, relayAuthor);
+    if (head) heads.set(head.event.id, head);
+  };
+  for (const event of events) {
+    if (event.kind === 39001) addHead(event);
+    const embedded = records.get(event.id)?.approval;
+    if (embedded) addHead(embedded);
+    if (![9000, 9001].includes(event.kind)) continue;
+    let verified: RelayEvent;
+    try {
+      verified = eventDto(event);
+    } catch {
+      continue;
+    }
+    if (exactTag(verified, "h") !== source.channelId) continue;
+    const sharedRole = exactTag(verified, "role");
+    for (const entry of verified.tags.filter(([name]) => name === "p")) {
+      const [, target, targetRole] = entry;
+      if (
+        (entry.length !== 2 && entry.length !== 3) ||
+        !target ||
+        !HEX.test(target)
+      )
+        continue;
+      const role = targetRole || sharedRole;
+      roleChanges.set(`${verified.id}:${target}`, {
+        event: verified,
+        target,
+        ...(role ? { role } : {}),
+      });
+    }
+  }
+  return {
+    heads: [...heads.values()],
+    roleChanges: [...roleChanges.values()],
+  };
+}
+
+function managementApproval(
+  approval: RelayEvent | undefined,
+  actor: string,
+  source: ThreadGovernanceSource,
+  relayAuthor?: string,
+  action?: EventData,
+  authority?: ManagementAuthority,
+) {
+  const approved = administratorHead(approval, source, relayAuthor);
+  if (!approved?.roles.has(actor)) return false;
+  if (!action || !authority) return true;
+  const actionAt = eventMs(action);
+  if (eventMs(approved.event) > actionAt) return false;
+  const effective = authority.heads
+    .filter(({ event }) => eventMs(event) <= actionAt)
+    .reduce<AdministratorHead | undefined>((current, candidate) => {
+      if (!current) return candidate;
+      return newer(current.event, candidate.event) === candidate.event
+        ? candidate
+        : current;
+    }, undefined);
+  if (effective?.event.id !== approved.event.id) return false;
+  // NIP-29 moderation events are immutable relay-accepted authority changes.
+  // Any later command that changes this actor's elevated role retires the
+  // embedded roster head, even if a still-later command promotes them again.
+  // Role-preserving additions do not manufacture a change. The next action
+  // after a real change must bind the fresh relay-authored 39001 head.
+  return !authority.roleChanges.some(
+    ({ event, target, role }) =>
+      target === actor &&
+      (event.kind === 9001 ||
+        (role !== undefined && role !== approved.roles.get(actor))) &&
+      order(approved.event, event) < 0 &&
+      order(event, action) <= 0,
+  );
+}
+
 /** Pure authority fold. Owner-attested profiles, never `is_agent`, classify turns. */
 export function foldThreadGovernance(
   source: ThreadGovernanceSource,
   events: readonly EventData[],
   ownerOf: (pubkey: string) => string | undefined,
-  canManage: (pubkey: string) => boolean,
   relayAuthor?: string,
 ): ThreadGovernanceState {
   let count = 0;
@@ -193,17 +343,39 @@ export function foldThreadGovernance(
   let goal: string | undefined;
   const resets: ThreadGovernanceState["resets"][number][] = [];
   const extensions: ThreadGovernanceState["extensions"][number][] = [];
-  for (const event of [
+  const eventsByTime = [
     ...new Map(events.map((event) => [event.id, event])).values(),
-  ].sort(order)) {
+  ].sort(order);
+  const records = new Map<string, GovernanceRecord>();
+  for (const event of eventsByTime) {
     const governance = record(event, source);
+    if (governance) records.set(event.id, governance);
+  }
+  const authority = managementAuthority(
+    source,
+    eventsByTime,
+    records,
+    relayAuthor,
+  );
+  for (const event of eventsByTime) {
+    const governance = records.get(event.id);
     if (governance) {
       const actor = messageAuthor(event, relayAuthor);
       if (governance.action === "completed") {
         if (governance.agent && ownerOf(governance.agent) === actor) count++;
         continue;
       }
-      if (!canManage(actor)) continue;
+      if (
+        !managementApproval(
+          governance.approval,
+          actor,
+          source,
+          relayAuthor,
+          event,
+          authority,
+        )
+      )
+        continue;
       const { action, reason } = governance;
       if (action === "closed") {
         closed = true;
@@ -254,20 +426,6 @@ export function foldThreadGovernance(
       });
       continue;
     }
-    const scope = content.match(/^\[SCOPE CHANGE\]\s+([\s\S]+)$/i);
-    if (scope && canManage(actor)) {
-      count = 0;
-      closed = false;
-      deferred = false;
-      goal = scope[1]?.trim();
-      resets.push({
-        action: "scope-change",
-        by: actor,
-        at: eventMs(event),
-        reason: "Signed thread message",
-      });
-      continue;
-    }
     if (!ownerOf(actor)) {
       count = 0;
       closed = false;
@@ -295,12 +453,15 @@ function template(
     reason?: string;
     threshold?: number;
     goal?: string;
+    approval?: RelayEvent;
   }> = {},
 ) {
   lifecycleChannelId(source.channelId);
   if (!HEX.test(source.root)) throw new Error("Invalid thread source");
   if (action === "completed" && (!input.agent || !HEX.test(input.agent)))
     throw new Error("Invalid agent identity");
+  if (action !== "completed" && !input.approval)
+    throw new Error("Current owner or lead approval is required");
   if (
     action === "extend" &&
     (!input.reason?.trim() ||
@@ -359,7 +520,7 @@ export function createThreadGovernance({
     Set<{
       source: ThreadGovernanceSource;
       events: EventData[];
-      owners: Map<string, string>;
+      owners: Map<string, OwnerHead>;
       state: ThreadGovernanceState;
       listeners: Set<() => void>;
       disposed: boolean;
@@ -370,7 +531,11 @@ export function createThreadGovernance({
   const local = () =>
     outbox
       ?.snapshot()
-      .filter((item) => item.delivery !== "failed")
+      .filter(
+        (item) =>
+          item.delivery !== "failed" &&
+          item.event.kind === THREAD_GOVERNANCE_KIND,
+      )
       .map((item) => item.event) ?? [];
   const failedCompletion = (source: ThreadGovernanceSource) =>
     outbox
@@ -381,11 +546,20 @@ export function createThreadGovernance({
           record(item.event, source)?.action === "completed",
       ) ?? false;
   const publish = (view: NonNullable<ReturnType<typeof make>>) => {
+    const owner = (pubkey: string) => {
+      const current = profiles.event?.(pubkey);
+      const cached = view.owners.get(pubkey);
+      return (
+        profiles.owner?.(pubkey) ??
+        (current && cached?.profile.id === current.id
+          ? cached.owner
+          : undefined)
+      );
+    };
     const state = foldThreadGovernance(
       view.source,
       [...view.events, ...local()],
-      (pubkey) => profiles.owner?.(pubkey) ?? view.owners.get(pubkey),
-      (pubkey) => canManage(pubkey, view.source.channelId),
+      owner,
       relayAuthor,
     );
     if (JSON.stringify(state) === JSON.stringify(view.state)) return;
@@ -407,22 +581,40 @@ export function createThreadGovernance({
     await profiles.ensure(authors, "foreground");
     const owners = await Promise.all(
       authors.map(async (author) => {
-        const event = profiles.event?.(author);
-        const owner = event ? await attestedOwner(event) : undefined;
-        return owner ? ([author, owner] as const) : undefined;
+        const profile = profiles.event?.(author);
+        if (!profile) return;
+        const owner = await attestedOwner(profile);
+        return [author, { profile, ...(owner ? { owner } : {}) }] as const;
       }),
     );
     return new Map(
-      owners.filter((item): item is readonly [string, string] => !!item),
+      owners.filter(
+        (item): item is readonly [string, OwnerHead] => item !== undefined,
+      ),
     );
+  }
+  function installOwners(
+    view: NonNullable<ReturnType<typeof make>>,
+    incoming: ReadonlyMap<string, OwnerHead>,
+    replace = false,
+  ) {
+    const next = replace ? new Map<string, OwnerHead>() : new Map(view.owners);
+    for (const [author, head] of incoming)
+      if (profiles.event?.(author)?.id === head.profile.id)
+        next.set(author, head);
+    view.owners = next;
   }
   const accept = (incoming: readonly EventData[]) => {
     for (const group of views.values())
       for (const view of group) {
-        const matched = incoming.filter((event) =>
-          event.tags.some(
-            ([name, value]) => name === "h" && value === view.source.channelId,
-          ),
+        const matched = incoming.filter(
+          (event) =>
+            event.tags.some(
+              ([name, value]) =>
+                name === "h" && value === view.source.channelId,
+            ) ||
+            (event.kind === 39001 &&
+              exactTag(event, "d") === view.source.channelId),
         );
         if (!matched.length) continue;
         const byId = new Map(
@@ -433,7 +625,7 @@ export function createThreadGovernance({
         void verifiedOwners(view.source, matched)
           .then((owners) => {
             if (view.disposed) return;
-            view.owners = new Map([...view.owners, ...owners]);
+            installOwners(view, owners);
             publish(view);
           })
           .catch(() => {});
@@ -451,7 +643,7 @@ export function createThreadGovernance({
     return {
       source,
       events: [] as EventData[],
-      owners: new Map<string, string>(),
+      owners: new Map<string, OwnerHead>(),
       state: emptyState(),
       listeners: new Set<() => void>(),
       disposed: false,
@@ -463,39 +655,114 @@ export function createThreadGovernance({
   ) {
     if (!reader)
       throw new Error("Thread controls are unavailable on this connection");
-    const events = await reader.read(
-      [
-        {
+    const readAll = async (filter: {
+      kinds: readonly number[];
+      "#h": readonly string[];
+      "#e"?: readonly string[];
+    }) => {
+      const found: RelayEvent[] = [];
+      let cursor: { until: number; before_id: string } | undefined;
+      for (;;) {
+        const page = [
+          ...(await reader.read(
+            [{ ...filter, ...cursor, limit: PAGE, consistency: "strong" }],
+            {
+              ...(signal ? { signal } : {}),
+              fresh: true,
+              priority: "foreground",
+            },
+          )),
+        ].sort(
+          (a, b) =>
+            b.created_at - a.created_at ||
+            (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        );
+        signal?.throwIfAborted();
+        const previous = cursor;
+        if (
+          previous &&
+          page.some(
+            (event) =>
+              event.created_at > previous.until ||
+              (event.created_at === previous.until &&
+                event.id <= previous.before_id),
+          )
+        )
+          throw new Error("Thread governance history did not advance");
+        found.push(...page);
+        if (page.length < PAGE) return found;
+        const last = page.at(-1);
+        if (!last) return found;
+        cursor = { until: last.created_at, before_id: last.id };
+      }
+    };
+    const readAdministrators = () =>
+      relayAuthor
+        ? reader.read(
+            [
+              {
+                kinds: [39001],
+                authors: [relayAuthor],
+                "#d": [view.source.channelId],
+                limit: 1,
+                consistency: "strong",
+              },
+            ],
+            {
+              ...(signal ? { signal } : {}),
+              fresh: true,
+              priority: "foreground",
+            },
+          )
+        : Promise.resolve<readonly RelayEvent[]>([]);
+    const [governance, messages, roleChanges, administrators, root] =
+      await Promise.all([
+        readAll({
           kinds: [THREAD_GOVERNANCE_KIND],
           "#h": [view.source.channelId],
           "#e": [view.source.root],
-          limit: 500,
-          consistency: "strong",
-        },
-        {
+        }),
+        readAll({
           kinds: [9, 40002],
           "#h": [view.source.channelId],
           "#e": [view.source.root],
-          limit: 500,
-          consistency: "strong",
-        },
-        {
-          kinds: [9, 40002],
+        }),
+        readAll({
+          kinds: [9000, 9001],
           "#h": [view.source.channelId],
-          ids: [view.source.root],
-          limit: 1,
-          consistency: "strong",
-        },
-      ],
-      { ...(signal ? { signal } : {}), fresh: true, priority: "foreground" },
-    );
+        }),
+        readAdministrators(),
+        reader.read(
+          [
+            {
+              kinds: [9, 40002],
+              "#h": [view.source.channelId],
+              ids: [view.source.root],
+              limit: 1,
+              consistency: "strong",
+            },
+          ],
+          {
+            ...(signal ? { signal } : {}),
+            fresh: true,
+            priority: "foreground",
+          },
+        ),
+      ]);
+    const events = [
+      ...governance,
+      ...messages,
+      ...roleChanges,
+      ...administrators,
+      ...root,
+    ];
     const owners = await verifiedOwners(view.source, events);
     signal?.throwIfAborted();
     if (view.disposed) return;
     view.events = [
       ...new Map(events.map((event) => [event.id, event])).values(),
     ];
-    view.owners = owners;
+    installOwners(view, owners, true);
     publish(view);
   }
   function send(
@@ -506,6 +773,7 @@ export function createThreadGovernance({
       reason?: string;
       threshold?: number;
       goal?: string;
+      approval?: RelayEvent;
     }>,
   ) {
     if (!outbox?.supports(THREAD_GOVERNANCE_KIND))
@@ -573,7 +841,7 @@ export function createThreadGovernance({
         },
       });
     },
-    act(
+    async act(
       source: ThreadGovernanceSource,
       action: Exclude<ThreadGovernanceAction, "completed">,
       input?: Readonly<{ reason?: string; threshold?: number; goal?: string }>,
@@ -582,7 +850,30 @@ export function createThreadGovernance({
         throw new Error(
           "Only a channel owner or lead can change the thread budget",
         );
-      send(source, action, input);
+      if (!reader || !relayAuthor)
+        throw new Error("Thread controls are unavailable on this connection");
+      const approvals = await reader.read(
+        [
+          {
+            kinds: [39001],
+            authors: [relayAuthor],
+            "#d": [source.channelId],
+            limit: 1,
+            consistency: "strong",
+          },
+        ],
+        { fresh: true, priority: "foreground" },
+      );
+      const [approval] = approvals;
+      if (
+        approvals.length !== 1 ||
+        !approval ||
+        !managementApproval(approval, viewer, source, relayAuthor)
+      )
+        throw new Error(
+          "Current owner or lead approval could not be verified. Refresh membership and try again.",
+        );
+      send(source, action, { ...input, approval });
     },
   });
   return capability;

@@ -1452,7 +1452,13 @@ record **[SCOPE CHANGE]** with a thread-only GOAL override, or move the remainde
 to **DEFER**. Extensions, scope changes, human turns and blocker-open/resolved
 events reset the counter. The ledger, reset history and approval reason are
 relay-backed and survive reload; the override expires with the thread and never
-changes Channel Settings.
+changes Channel Settings. Reload folds the complete paged ledger and message
+history, not a bounded activity window. Each management record embeds the
+relay-signed owner/admin head used for approval. The fold also pages the complete
+relay-accepted NIP-29 add/remove history and reads the current administrator head,
+binding that approval to the authority sequence effective for the action. Demotion
+therefore retires an old head for new actions; later role changes neither erase an
+earlier approval nor reactivate a stale record.
 
 The footer reuses `MessageComposer` and defaults to a direct reply to the resolved
 root through `session.messages.reply`. Reply on a child selects that message as the

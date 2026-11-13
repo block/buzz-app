@@ -118,6 +118,19 @@ const governanceRead = (sent: RelayEvent): readonly ReadFilter[] => [
     consistency: "strong",
   },
   {
+    kinds: [9000, 9001],
+    "#h": [channel],
+    limit: 500,
+    consistency: "strong",
+  },
+  {
+    kinds: [39001],
+    authors: [relayKey.pubkey],
+    "#d": [channel],
+    limit: 1,
+    consistency: "strong",
+  },
+  {
     kinds: [40002, 9],
     "#h": [channel],
     ids: [sent.id],
@@ -135,6 +148,7 @@ function countedTransport(records: RelayEvent[]) {
   const transport = {
     viewer: owner.pubkey,
     relayAuthor: relayKey.pubkey,
+    archiveAuthority: relayKey.pubkey,
     scope: origin,
     media: () => undefined,
     async query(filters: readonly ReadFilter[]) {
@@ -341,9 +355,10 @@ const recentNotesRead = (request: Request) =>
   /^mem\/notes\/\d{4}-\d{2}-\d{2}$/.test(request.memory.slug ?? "");
 
 /** Apart from the post-run core refresh, and with `notes` a start's recent
- * notes reads, the recorded requests are exactly one final admission read for
+ * notes reads, the recorded requests are exactly the final admission reads for
  * each invocation followed by the runtime conversation reads, in order: an
- * extra, wider or different read fails. */
+ * extra, wider or different read fails. Governance histories page separately
+ * so their independent cursors cannot truncate either ledger. */
 function expectOnlyAllowed(
   f: Fixture,
   invocations: readonly RelayEvent[] = [],
@@ -358,7 +373,9 @@ function expectOnlyAllowed(
       )
       .map((request) => request.filters),
   ).toEqual([
-    ...invocations.map(governanceRead),
+    ...invocations.flatMap((sent) =>
+      governanceRead(sent).map((filter) => [filter]),
+    ),
     ...conversations.map(conversationRead),
   ]);
 }
@@ -579,9 +596,11 @@ it("starts a Codex thread and turn from synced copies, with admission before con
   // Admission is the final pre-delivery seam, so its strong read fails before
   // the runtime can ask for the conversation.
   expectOnlyAllowed(f, [second]);
-  expect(
-    f.requests.filter((request) => !postRunCoreRefresh(request)),
-  ).toMatchObject([{ failed: true }]);
+  const admission = f.requests.filter(
+    (request) => !postRunCoreRefresh(request),
+  );
+  expect(admission).toHaveLength(5);
+  expect(admission.every((request) => request.failed)).toBe(true);
   await expectCounterSeesSync(f);
 });
 

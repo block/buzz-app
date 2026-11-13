@@ -157,6 +157,19 @@ it("shows a recovering catalog as loading and keeps Retry for deterministic fail
     );
     act(() => publish({ ...snapshot, status: "ready", entries: [], mine: [] }));
     expect(screen.queryByText("Loading community emoji…")).toBeNull();
+    // A failed warm refresh is not auto-retried, so it keeps its Retry.
+    act(() =>
+      publish({
+        ...snapshot,
+        error: "ReadError: Relay read timed out",
+        transient: true,
+      }),
+    );
+    expect(screen.queryByText("Loading community emoji…")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry emoji" }));
+    expect(refresh).toHaveBeenCalledOnce();
+    refresh.mockClear();
+    act(() => publish({ ...snapshot, error: undefined, transient: undefined }));
     act(() =>
       publish({
         ...snapshot,

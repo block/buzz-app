@@ -349,14 +349,16 @@ export function EmojiPicker({
             Loading community emoji…
           </p>
         )}
-      {tab === "emoji" && catalog.error && !catalog.transient && (
-        <div className={styles.emojiStatus}>
-          <p role="alert">{catalog.error}</p>
-          <Button type="button" onClick={() => void session.emoji.refresh()}>
-            Retry emoji
-          </Button>
-        </div>
-      )}
+      {tab === "emoji" &&
+        catalog.error &&
+        !(catalog.status === "error" && catalog.transient) && (
+          <div className={styles.emojiStatus}>
+            <p role="alert">{catalog.error}</p>
+            <Button type="button" onClick={() => void session.emoji.refresh()}>
+              Retry emoji
+            </Button>
+          </div>
+        )}
     </div>
   );
   const button = (

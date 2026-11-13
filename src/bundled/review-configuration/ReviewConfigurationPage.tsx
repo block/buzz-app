@@ -1,3 +1,8 @@
+import { reviewChannelMember } from "./access";
+import {
+  RepositoryConfigurations,
+  SubmissionRepository,
+} from "./RepositoryConfigurations";
 import { submissionRoute } from "./submission-route";
 import { useReviewChannel } from "./submission-updates";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -15,13 +20,14 @@ const publicStatusReader = createPullStatusReader();
 const publicAdmissionReader = createAdmissionReader();
 import { LaneRules, ruleDescription } from "./LaneRules";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { useAgentChoices } from "../../features/agents/use-choices";
+import { useReviewAgents } from "./use-review-agents";
 import type { PageNavigation } from "../../features/navigation/service";
 import { messageRoute, ReviewMessageDialog } from "./ReviewMessageDialog";
 import { ReviewSubmissions } from "./ReviewSubmissions";
@@ -326,7 +332,24 @@ export function ReviewConfigurationCommunity({
 }) {
   const list = useChannelList(session.channels);
   const [savedChannel, setChannel] = useReviewChannel(session.scope);
-  const channel = messageChannel ?? savedChannel;
+  const [submitSelection, setSubmitSelection] = useState({
+    repository: "",
+    channel: "",
+  });
+  const selectSubmission = useCallback(
+    (repository: string, channel: string) => {
+      setSubmitSelection((previous) =>
+        previous.repository === repository && previous.channel === channel
+          ? previous
+          : { repository, channel },
+      );
+      if (channel) setChannel(channel);
+    },
+    [setChannel],
+  );
+  const channel =
+    messageChannel ??
+    (page === "submit" ? submitSelection.channel : savedChannel);
   useEffect(() => {
     if (messageChannel) setChannel(messageChannel);
   }, [messageChannel, setChannel]);
@@ -345,6 +368,7 @@ export function ReviewConfigurationCommunity({
   }
   const channels = list.channels.filter(
     (item) =>
+      reviewChannelMember(item, session.viewer) &&
       !item.metadataPending &&
       !item.huddle &&
       !item.archived &&
@@ -353,6 +377,7 @@ export function ReviewConfigurationCommunity({
   );
   useEffect(() => {
     if (
+      page !== "all" ||
       messageChannel ||
       list.status !== "ready" ||
       list.coverage === "partial" ||
@@ -363,6 +388,7 @@ export function ReviewConfigurationCommunity({
     if (channel && channels.some((item) => item.id === channel)) return;
     setChannel(channels.length === 1 ? (channels[0]?.id ?? "") : "");
   }, [
+    page,
     messageChannel,
     list.status,
     list.coverage,
@@ -449,49 +475,55 @@ export function ReviewConfigurationCommunity({
         </div>
       )}
       {navigationError && <p role="alert">{navigationError}</p>}
-      {!submission && (page !== "configuration" || !channel) && channelSelector}
+      {page === "configuration" && (
+        <RepositoryConfigurations
+          session={session}
+          onEditingChange={setEditing}
+          onSubmit={onNavigate ? () => void navigate("submit") : undefined}
+          onShowPulls={onNavigate ? () => void navigate("all") : undefined}
+        />
+      )}
+      {page === "submit" && (
+        <SubmissionRepository
+          session={session}
+          disabled={editing}
+          onSelection={selectSubmission}
+        />
+      )}
+      {!submission && page === "all" && channelSelector}
       {submission && !readable && (
         <p role="status">
           Pull request details are unavailable until access to the review
           channel is confirmed.
         </p>
       )}
-      {channel &&
-        (page !== "configuration" ? (
-          <ReviewSubmissions
-            key={`${channel}:${page}`}
-            mode={page}
-            submission={submission}
-            onOpenSubmission={onOpenSubmission}
-            readable={readable}
-            session={session}
-            channel={channel}
-            writable={writable}
-            onEditingChange={setEditing}
-            onOpenThread={onOpenThread}
-            onOpenMessage={onOpenMessage}
-            readPull={readPull}
-            readStatus={readStatus}
-            readAdmission={readAdmission}
-            describeTool={describeTool}
-          />
-        ) : (
-          <ChannelConfiguration
-            key={channel}
-            session={session}
-            channel={channel}
-            writable={writable}
-            onEditingChange={setEditing}
-            channelSelector={channelSelector}
-            onSubmit={onNavigate ? () => void navigate("submit") : undefined}
-            onShowPulls={onNavigate ? () => void navigate("all") : undefined}
-          />
-        ))}
+      {channel && page !== "configuration" && (
+        <ReviewSubmissions
+          key={`${channel}:${page}:${page === "submit" ? submitSelection.repository : ""}`}
+          mode={page}
+          repository={
+            page === "submit" ? submitSelection.repository : undefined
+          }
+          submission={submission}
+          onOpenSubmission={onOpenSubmission}
+          readable={readable}
+          session={session}
+          channel={channel}
+          writable={writable}
+          onEditingChange={setEditing}
+          onOpenThread={onOpenThread}
+          onOpenMessage={onOpenMessage}
+          readPull={readPull}
+          readStatus={readStatus}
+          readAdmission={readAdmission}
+          describeTool={describeTool}
+        />
+      )}
     </Frame>
   );
 }
 
-function ChannelConfiguration({
+export function ChannelConfiguration({
   session,
   channel,
   writable,
@@ -499,7 +531,15 @@ function ChannelConfiguration({
   channelSelector,
   onSubmit,
   onShowPulls,
+  initialRepository = "",
+  initiallyCreating = false,
+  onBack,
+  onRegistered,
 }: {
+  initialRepository?: string;
+  initiallyCreating?: boolean;
+  onBack?: () => void;
+  onRegistered?: (repository: string) => void;
   channelSelector: ReactNode;
   onSubmit?: (() => void) | undefined;
   onShowPulls?: (() => void) | undefined;
@@ -508,7 +548,7 @@ function ChannelConfiguration({
   writable: boolean;
   onEditingChange: (editing: boolean) => void;
 }) {
-  const choices = useAgentChoices(session, true, true);
+  const choices = useReviewAgents(session, channel);
   const [admissionEditing, setAdmissionEditing] = useState(false);
   const [laneId, setLaneId] = useState<string>();
   const [rows, setRows] = useState<SavedReviewConfig[]>([]);
@@ -518,8 +558,10 @@ function ChannelConfiguration({
   const [warning, setWarning] = useState("");
   const [remaining, setRemaining] = useState(0);
   const [reload, setReload] = useState(0);
-  const [editor, setEditor] = useState<SavedReviewConfig | "new">();
-  const [repository, setRepository] = useState("");
+  const [editor, setEditor] = useState<SavedReviewConfig | "new" | undefined>(
+    initiallyCreating ? "new" : undefined,
+  );
+  const [repository, setRepository] = useState(initialRepository);
   const selected = rows.find((row) => row.config.repository === repository);
   const editorTrigger = useRef<HTMLElement | null>(null);
   const lanesRegion = useRef<HTMLElement | null>(null);
@@ -579,7 +621,10 @@ function ChannelConfiguration({
     return () => controller.abort();
   }, [session, channel, reload]);
   function saved(next: SavedReviewConfig) {
-    if (editor === "new") setRemaining((value) => value - 1);
+    if (editor === "new") {
+      setRemaining((value) => value - 1);
+      onRegistered?.(next.config.repository);
+    }
     setRows((current) =>
       [
         ...current.filter((row) => row.artifactId !== next.artifactId),
@@ -590,6 +635,18 @@ function ChannelConfiguration({
     setEditor(undefined);
     setNotice(`Saved ${next.config.repository}.`);
   }
+  if (initialRepository && !selected && editor !== "new")
+    return (
+      <>
+        <Button onClick={onBack}>Back to repositories</Button>
+        <p role="status">
+          {loading
+            ? "Loading configuration…"
+            : error ||
+              "This configuration is unavailable. Return to repositories and reload."}
+        </p>
+      </>
+    );
   return (
     <>
       {!selected && editor !== "new" ? (
@@ -669,7 +726,8 @@ function ChannelConfiguration({
               <Button
                 disabled={admissionEditing}
                 onClick={() => {
-                  setRepository("");
+                  if (onBack) onBack();
+                  else setRepository("");
                   setNotice("");
                 }}
               >
@@ -695,7 +753,11 @@ function ChannelConfiguration({
                     previous={editor === "new" ? undefined : editor}
                     laneId={laneId}
                     existing={rows}
-                    onCancel={() => setEditor(undefined)}
+                    onCancel={() =>
+                      initiallyCreating && onBack
+                        ? onBack()
+                        : setEditor(undefined)
+                    }
                     onSaved={saved}
                   />
                 ) : (
@@ -834,14 +896,22 @@ function ChannelConfiguration({
               </section>
             </>
           )}
+          {editor === "new" && !loading && remaining <= 0 && (
+            <p role="alert">
+              This channel has reached its configuration limit. Choose another
+              channel.
+            </p>
+          )}
           {editor === "new" && (
             <ConfigurationEditor
               session={session}
               channel={channel}
-              writable={writable}
+              writable={writable && !loading && !error && remaining > 0}
               previous={undefined}
               existing={rows}
-              onCancel={() => setEditor(undefined)}
+              onCancel={() =>
+                initiallyCreating && onBack ? onBack() : setEditor(undefined)
+              }
               onSaved={saved}
             />
           )}
@@ -871,7 +941,7 @@ function ConfigurationEditor({
   onCancel: () => void;
   onSaved: (saved: SavedReviewConfig) => void;
 }) {
-  const choices = useAgentChoices(session, true, true);
+  const choices = useReviewAgents(session, channel);
   const [refreshingAgents, setRefreshingAgents] = useState(false);
   const [agentRefreshError, setAgentRefreshError] = useState("");
   const original = previous?.config.lanes.find((lane) => lane.id === laneId);

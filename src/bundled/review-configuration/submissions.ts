@@ -1,3 +1,8 @@
+import {
+  reviewChannel,
+  confirmReviewChannel,
+  confirmReviewAgents,
+} from "./access";
 import { rememberTriage, forgetTriage } from "./triage-recovery";
 import { admissionFailure, type ReadAdmission } from "./admission";
 import {
@@ -20,7 +25,6 @@ import {
   ARTIFACT_KIND,
   uuidv5,
 } from "../../features/agents/agent-config-artifacts";
-import { attestedOwner } from "../../features/agents/owner-attestation";
 import type { EventData } from "../../features/relay/events";
 import type { Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
@@ -214,6 +218,7 @@ export async function loadSubmissions(
 ) {
   if (!session.snapshotRead)
     throw new Error("This connection cannot read submissions.");
+  reviewChannel(session, channel);
   const events = await session.snapshotRead(
     [
       {
@@ -285,6 +290,7 @@ export async function loadSubmissions(
       reports.push(...page);
     }
   }
+  reviewChannel(session, channel);
   return {
     rows: rows.map((row) =>
       applyReviewReports(
@@ -362,6 +368,7 @@ async function write(
   previous: SavedSubmission | undefined,
   signal: AbortSignal,
 ): Promise<SavedSubmission> {
+  reviewChannel(session, channel, true);
   const writer = session.configArtifactWriter;
   if (!writer) throw new Error("This connection cannot save submissions.");
   signal.throwIfAborted();
@@ -391,6 +398,7 @@ async function write(
       value.threads.some((thread) => !thread.delivered))
   )
     rememberTriage(session.scope, { channel, artifact: artifactId });
+  reviewChannel(session, channel, true);
   await writer.publish(event, signal);
   if (
     value.triage &&
@@ -410,6 +418,7 @@ export async function deleteSubmission(
   previous: SavedSubmission,
   signal: AbortSignal,
 ) {
+  await confirmReviewChannel(session, channel, signal);
   if (!session.viewer || previous.value.submitter !== session.viewer)
     throw new Error("Only the original submitter can delete this submission.");
   const read = session.snapshotRead;
@@ -548,6 +557,7 @@ Add your authenticated GitHub account to requested reviewers, preserving others.
 
 async function eligible(
   session: RelaySession,
+  channel: string,
   value: Submission,
   signal: AbortSignal,
 ) {
@@ -565,31 +575,11 @@ async function eligible(
         : value.config.lanes.map((lane) => lane.reviewers[0] ?? ""),
     ),
   ];
-  if (
-    keys.some(
-      (key) => !choices.selectable.some((choice) => choice.pubkey === key),
-    )
-  )
+  if (keys.some((key) => choices.archives.archived?.includes(key)))
     throw new Error(
-      "A selected reviewer is unavailable. Update the saved reviewer assignments.",
+      "A selected reviewer is archived. Update the saved reviewer assignments.",
     );
-  if (!session.snapshotRead)
-    throw new Error("Submission reads are unavailable.");
-  const profiles = await session.snapshotRead(
-    [{ kinds: [0], authors: keys, limit: keys.length, consistency: "strong" }],
-    { signal },
-  );
-  for (const key of keys) {
-    const profile = profiles
-      .filter((event) => event.kind === 0 && event.pubkey === key)
-      .sort(
-        (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-      )[0];
-    if (!profile || (await attestedOwner(profile)) !== session.viewer)
-      throw new Error(
-        "Submission currently requires reviewers with verified ownership by your signed-in identity.",
-      );
-  }
+  return confirmReviewAgents(session, channel, keys, signal, true);
 }
 
 function delivered(
@@ -654,8 +644,9 @@ async function notifyReviewers(
     throw new Error(
       "Finish the pending reminder before reminding another lane.",
     );
-  await eligible(
+  const assertAgents = await eligible(
     session,
+    channel,
     laneId
       ? {
           ...record.value,
@@ -702,9 +693,17 @@ async function notifyReviewers(
     if (!lane || !thread.id) continue; // Older submissions also have an overview.
     if (laneId && lane.id !== laneId) continue;
     signal.throwIfAborted();
+    assertAgents();
     const key = `review-notify:${record.artifactId}:${thread.id}:${thread.request}`;
     const recovery = await outbox.recovery(key);
-    const active = () => !signal.aborted;
+    const active = () => {
+      try {
+        assertAgents();
+        return !signal.aborted;
+      } catch {
+        return false;
+      }
+    };
     let id: string;
     if (recovery) {
       id = recovery.event.id;
@@ -771,6 +770,7 @@ export async function remindSubmission(
   const outbox = session.outbox;
   if (!read || !outbox?.supports(9) || !navigator.locks)
     throw new Error("Reviewer reminders are unavailable on this client.");
+  await confirmReviewChannel(session, channel, signal);
   if (!session.viewer || previous.value.submitter !== session.viewer)
     throw new Error("Only the original submitter can remind these reviewers.");
   return navigator.locks.request(
@@ -895,6 +895,7 @@ export async function submitReview(
     throw new Error(
       "This client cannot submit reviews. Use a client with durable message delivery.",
     );
+  await confirmReviewChannel(session, channel, signal);
   if (!session.viewer) throw new Error("Sign in before submitting a review.");
   const viewer = session.viewer;
   const pr = pullRequest(input, saved.config.repository);
@@ -917,6 +918,9 @@ export async function submitReview(
         ],
         { signal },
       );
+      let assertAgents: () => void = () => {
+        throw new Error("Reviewer access has not been confirmed.");
+      };
       let record: SavedSubmission;
       const head = events[0];
       const previous = head ? await decodeSubmission(head, channel) : undefined;
@@ -1005,7 +1009,7 @@ export async function submitReview(
             }),
           ),
         };
-        await eligible(session, value, signal);
+        assertAgents = await eligible(session, channel, value, signal);
         record = await write(session, channel, value, previous, signal);
       }
       if (
@@ -1088,7 +1092,8 @@ export async function submitReview(
               ? config.lanes.map(() => ({ request: crypto.randomUUID() }))
               : [],
           };
-          if (admitted) await eligible(session, value, signal);
+          if (admitted)
+            assertAgents = await eligible(session, channel, value, signal);
           record = await write(session, channel, value, record, signal);
         }
       }
@@ -1122,9 +1127,10 @@ export async function submitReview(
         throw new Error(
           "This PR is already submitted. Resume incomplete delivery from the original browser profile; existing threads remain available here.",
         );
-      if (existing) await eligible(session, record.value, signal);
+      if (existing)
+        assertAgents = await eligible(session, channel, record.value, signal);
       for (const [index, thread] of deliveryThreads(record.value).entries()) {
-        signal.throwIfAborted();
+        assertAgents();
         // Keep legacy recovery keys readable, but isolate each post-delete review.
         const key =
           record.value.version === 3 || record.value.version === 4
@@ -1162,7 +1168,14 @@ export async function submitReview(
               "The saved message is unavailable and its local recovery is missing. Delivery stopped to avoid creating a duplicate thread.",
             );
         } else {
-          const active = () => !signal.aborted;
+          const active = () => {
+            try {
+              assertAgents();
+              return !signal.aborted;
+            } catch {
+              return false;
+            }
+          };
           if (recovery) {
             if (!outbox.snapshot().some((item) => item.event.id === id))
               throw new Error(

@@ -1,3 +1,4 @@
+import { reviewChannelMember } from "./access";
 import type { RelayData } from "../../features/relay/service";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import { CountBadge } from "../../shared/design-system/ui/CountBadge";
@@ -11,7 +12,9 @@ export function ReviewUpdatesBadge({ relay }: { relay: RelayData }) {
   const selected = list.channels.find((item) => item.id === channel);
   const readable =
     connection.status === "ready" &&
+    list.status === "ready" &&
     !!selected &&
+    reviewChannelMember(selected, session.viewer) &&
     !selected.cached &&
     !selected.metadataCached &&
     !selected.metadataPending &&

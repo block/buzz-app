@@ -1,3 +1,4 @@
+import { reviewTestAccess } from "./testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex } from "nostr-tools/utils";
@@ -46,9 +47,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function fixture() {
+async function fixture(sharedOwner = false) {
   const owner = keypair(),
     agent = keypair();
+  const reviewerOwner = sharedOwner ? keypair() : owner;
+  const access = reviewTestAccess(owner.pubkey, channel, [
+    agent.pubkey,
+    reviewerOwner.pubkey,
+  ]);
+  let persistGate: Promise<void> | undefined;
+  let persisted = () => {};
   const proof = bytesToHex(
     schnorr.sign(
       new Uint8Array(
@@ -57,13 +65,13 @@ async function fixture() {
           new TextEncoder().encode(`nostr:agent-auth:${agent.pubkey}:`),
         ),
       ),
-      owner.secret,
+      reviewerOwner.secret,
     ),
   );
   let profile = signed(agent, {
     kind: 0,
     content: "{}",
-    tags: [["auth", owner.pubkey, "", proof]],
+    tags: [["auth", reviewerOwner.pubkey, "", proof]],
   });
   const heads = new Map<string, EventData>();
   const messages = new Map<string, EventData>();
@@ -76,7 +84,11 @@ async function fixture() {
     { sign: async (template) => signed(owner, template), publish },
     {
       load: () => structuredClone(journal),
-      save: (next) => {
+      save: async (next) => {
+        if (persistGate) {
+          persisted();
+          await persistGate;
+        }
         journal = structuredClone(next);
       },
     },
@@ -91,6 +103,7 @@ async function fixture() {
     return event.id;
   });
   const session = {
+    ...access,
     viewer: owner.pubkey,
     scope: `https://example.org:${owner.pubkey}`,
     outbox: box.outbox,
@@ -178,6 +191,27 @@ async function fixture() {
     owner,
     agent,
     profile,
+    reviewerOwner,
+    removeReviewerOwner() {
+      const list = access.channels.list();
+      const current = list.channels[0];
+      if (!current) throw new Error("Missing test channel");
+      list.channels[0] = {
+        ...current,
+        members:
+          current.members?.filter((key) => key !== reviewerOwner.pubkey) ?? [],
+      };
+    },
+    gatePersistence() {
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        persisted = resolve;
+      });
+      persistGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { started, release };
+    },
     heads,
     messages,
     session,
@@ -746,7 +780,10 @@ it("rejects foreign submitters and stale deletion without changing the saved lis
   const record = await f.run();
   await expect(
     deleteSubmission(
-      { ...f.session, viewer: keypair().pubkey },
+      {
+        ...f.session,
+        ...reviewTestAccess(keypair().pubkey, channel, [f.agent.pubkey]),
+      } as unknown as RelaySession,
       channel,
       record,
       new AbortController().signal,
@@ -833,7 +870,10 @@ it("refuses a foreign submitter replacing a deleted record", async () => {
   );
   await expect(
     submitReview(
-      { ...f.session, viewer: keypair().pubkey },
+      {
+        ...f.session,
+        ...reviewTestAccess(keypair().pubkey, channel, [f.agent.pubkey]),
+      } as unknown as RelaySession,
       channel,
       f.config,
       "123",
@@ -1642,4 +1682,20 @@ it("keeps current statuses readable when historical review reports reach the cap
   expect(result.rows[0]?.reviewStates).toEqual(["need_review", "need_review"]);
   expect(result.rows[0]?.reviewHistoryIncomplete).toBe(true);
   expect(result.warning).toContain("last-reviewed dates are unavailable");
+});
+
+it("fences a shared agent notification when its owner leaves during outbox persistence", async () => {
+  const f = await fixture(true);
+  await f.box.outbox.ready();
+  const gate = f.gatePersistence();
+  const submission = f.run();
+  const outcome = expect(submission).rejects.toThrow();
+  try {
+    await gate.started;
+    f.removeReviewerOwner();
+  } finally {
+    gate.release();
+  }
+  await outcome;
+  expect(f.publish).not.toHaveBeenCalled();
 });

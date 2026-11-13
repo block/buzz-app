@@ -9,6 +9,42 @@ import {
   type IdentityArchives,
 } from "../relay/identity-archives";
 import { relayPartition } from "../relay/partition";
+import type { ProfileQueries } from "../relay/profile-directory";
+
+/** Channel-scoped selection combines shared inventory with attested members.
+ * It conveys neither custody nor permission to run another owner's agent. */
+export function channelAgentChoices(
+  choices: AgentChoicesSnapshot,
+  members: readonly string[],
+  profiles: ProfileQueries,
+): AgentChoicesSnapshot {
+  const identities = new Map(
+    choices.identities.map((agent) => [agent.pubkey, agent]),
+  );
+  for (const pubkey of members) {
+    const owner = profiles.owner?.(pubkey);
+    if (!owner || !members.includes(owner) || identities.has(pubkey)) continue;
+    const profile = profiles.snapshot().get(pubkey);
+    identities.set(pubkey, {
+      pubkey,
+      name: profile?.name ?? pubkey,
+      managed: false,
+      ...(profile?.picture ? { avatar: profile.picture } : {}),
+    });
+  }
+  const selectable =
+    choices.archives.status === "ready" && !choices.archives.error
+      ? [...identities.values()].filter((agent) => {
+          const owner = profiles.owner?.(agent.pubkey);
+          return (
+            !!owner &&
+            members.includes(owner) &&
+            !choices.archives.archived.includes(agent.pubkey)
+          );
+        })
+      : [];
+  return { ...choices, identities: [...identities.values()], selectable };
+}
 
 /** Community evidence, not process readiness or permission to grant access. */
 export function sameCommunityAgents(

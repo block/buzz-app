@@ -1,3 +1,4 @@
+import { reviewChannel, confirmReviewAgents } from "./access";
 import { validateRouting, type LaneRouting } from "./routing";
 import {
   ARTIFACT_KIND,
@@ -171,6 +172,63 @@ const tag = (event: EventData, name: string) =>
 const identity = (channel: string, repository: string) =>
   uuidv5(channel, `${REVIEW_CONFIG_TYPE}:${repository}`);
 
+export async function loadRepositoryDirectory(
+  session: RelaySession,
+  channels: readonly string[],
+  signal: AbortSignal,
+) {
+  if (!session.snapshotRead)
+    throw new Error("Review configuration reads are unavailable.");
+  for (const channel of channels) reviewChannel(session, channel);
+  if (!channels.length) return { rows: [], incomplete: false };
+  // At most 255 channel values plus the type value per relay predicate budget.
+  // Total results remain bounded across batches, including unreadable records.
+  const events: EventData[] = [];
+  for (
+    let offset = 0;
+    offset < channels.length && events.length < 500;
+    offset += 255
+  ) {
+    events.push(
+      ...(await session.snapshotRead(
+        [
+          {
+            kinds: [ARTIFACT_KIND],
+            "#h": channels.slice(offset, offset + 255),
+            "#type": [REVIEW_CONFIG_TYPE],
+            artifact: "current",
+            limit: 500 - events.length,
+          },
+        ],
+        { signal },
+      )),
+    );
+  }
+  const rows: (SavedReviewConfig & { channel: string })[] = [];
+  let incomplete = events.length >= 500;
+  for (const event of events.slice(0, 500)) {
+    const channel = tag(event, "h");
+    if (!channel || !channels.includes(channel))
+      throw new Error("Unexpected review channel response.");
+    reviewChannel(session, channel);
+    try {
+      const config = validateConfig(JSON.parse(event.content));
+      const artifactId = await identity(channel, config.repository);
+      if (
+        event.kind !== ARTIFACT_KIND ||
+        tag(event, "type") !== REVIEW_CONFIG_TYPE ||
+        tag(event, "d") !== artifactId
+      )
+        throw new Error("Invalid configuration identity.");
+      rows.push({ config, channel, revision: event.id, artifactId });
+    } catch {
+      incomplete = true;
+    }
+  }
+  for (const channel of channels) reviewChannel(session, channel);
+  return { rows, incomplete };
+}
+
 /** One bounded read when the user opens or reloads a channel; never a polling loop. */
 export async function loadConfigurations(
   session: RelaySession,
@@ -181,6 +239,7 @@ export async function loadConfigurations(
   unreadable: number;
   truncated: boolean;
 }> {
+  reviewChannel(session, channel);
   if (!session.snapshotRead)
     throw new Error("This connection cannot read review configuration.");
   const events = await session.snapshotRead(
@@ -195,6 +254,7 @@ export async function loadConfigurations(
     ],
     { signal },
   );
+  reviewChannel(session, channel);
   const results = await Promise.allSettled(
     events.slice(0, 100).map(async (event) => {
       if (
@@ -214,6 +274,7 @@ export async function loadConfigurations(
       return { config, revision: event.id, artifactId };
     }),
   );
+  reviewChannel(session, channel);
   const rows = results.flatMap((result) =>
     result.status === "fulfilled" ? [result.value] : [],
   );
@@ -238,6 +299,15 @@ export async function saveConfiguration(
   if (!writer)
     throw new Error("This connection cannot save review configuration.");
   const config = validateConfig(draft);
+  const assertAgents = await confirmReviewAgents(
+    session,
+    channel,
+    [
+      ...config.lanes.flatMap((lane) => lane.reviewers),
+      ...(config.admission?.triage ? [config.admission.agent] : []),
+    ],
+    signal,
+  );
   for (const lane of config.lanes) {
     const saved = previous?.config.lanes.find((item) => item.id === lane.id);
     // Preserve readable legacy lanes until they are edited; new/changed lanes require rules.
@@ -259,6 +329,7 @@ export async function saveConfiguration(
     throw new Error(
       "Create a new configuration to change the repository or channel.",
     );
+  assertAgents();
   const event = await writer.sign(
     {
       kind: ARTIFACT_KIND,
@@ -276,6 +347,7 @@ export async function saveConfiguration(
     },
     signal,
   );
+  assertAgents();
   await writer.publish(event, signal);
   return { config, artifactId, revision: event.id };
 }

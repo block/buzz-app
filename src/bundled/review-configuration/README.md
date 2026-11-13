@@ -1,7 +1,7 @@
 # Review Configuration
 
 An optional bundled plugin with dock pages for repository review settings and pull requests. Enable **Review Configuration** in Settings → Plugins → Manage plugins.
-Choose a channel, register a GitHub repository, add named lanes, reviewer agents, and instructions,
+Register a GitHub repository in a private channel you belong to, add named lanes, reviewer agents, and instructions,
 and save. Open a repository row to manage its lanes. Saved cards show agents,
 instructions, and routing rules. **Edit lane** opens one lane; **Save lane** persists
 it before another can be added. **Back to lanes** cancels edits; **Back to repositories**
@@ -43,14 +43,13 @@ share an event-driven reader; there is no periodic polling.
 All three pages use the shell's page navigation. Review Configuration and Pull requests each have their own dock icon. The first opens repository and lane setup; the second opens the PR list directly. Its Submit PR button opens the submission form. Existing configuration actions and Back buttons remain available. Repository and lane editing
 remain local sections; reloading returns Configuration to its repository list.
 Restarted submissions use a versioned delivery generation; older plugin versions cannot read or resume them.
-The channel selection is remembered per identity/community; one eligible channel
-is selected automatically. Submit results can be recovered from the Pull requests table
+Repository Configuration groups each repository’s channel configurations. Set a personal default channel per repository; Submit PR uses it and permits an override. Defaults persist on this device per identity/community and never grant access. An unavailable default requires another selection. With no saved default, a repository with one eligible configuration selects it automatically. Submit results can be recovered from the Pull requests table
 following reload; navigation never replays Submit automatically.
 
 ## Getting started
 
 Enable this plugin in **Settings → Plugins → Manage plugins**, then open its
-Review Configuration dock icon. Choose a channel and register a repository. For each lane, select
+Review Configuration dock icon. Register a repository and choose a private channel you belong to. For each lane, select
 reviewer agents, enter instructions, and configure at least one routing rule, then save. Open the repository to edit settings.
 These selections do not start reviews or grant agents access to the channel.
 
@@ -80,9 +79,7 @@ The signed event's `h` tag is its review channel. Its content is:
 
 The existing relay artifact writer persists the current head in `artifact_heads`,
 the accepted revisions in `artifact_revisions`, and the signed payload in `events`.
-There is no new SQL migration or local-only settings store. Ordinary channel
-authorization applies: readers can see instructions, and members who can post
-can edit them. Configuration is scoped to a channel, not globally unique across
+There is no new SQL migration or local-only settings store. Private-channel relay authorization protects records and threads. The app requires current channel membership for discovery, reads and actions; members who can post can edit configuration. Public channels are excluded because the relay permits non-member reads there. Existing public-channel records are not moved or deleted. Configuration is scoped to a channel, not globally unique across
 the community. No GitHub credentials are stored or requested, and repository
 existence/access is checked when loading PR details for submission.
 
@@ -90,9 +87,9 @@ Edits carry the revision that the form loaded in `prev`; the relay rejects a
 stale edit atomically. A failed or uncertain save keeps the draft. Copy any
 changes before Cancel → Reload, then inspect the saved version before retrying.
 An unsupported or malformed row shows a warning without hiding valid rows.
-Channel metadata reconfirmation disables Save while retaining an open draft.
+Loss of confirmed channel access hides the configuration and closes its editor. Reopen it after access is restored; unsaved drafts are not retained through that access change.
 
-Opening a channel or clicking Reload makes one bounded snapshot query. Configuration reads do not poll. The first version supports
+The repository directory reads at most 500 configurations, in batches of up to 255 member channels per query. Opening a channel configuration or clicking Reload makes a bounded snapshot query. Configuration reads do not poll. The first version supports
 100 configurations per channel, 12 lanes per repository, and a 32 KB payload.
 Larger result sets are explicitly marked incomplete; use a separate channel.
 The reminder interval is saved for the planned executor but has no effect yet.
@@ -100,20 +97,20 @@ The reminder interval is saved for the planned executor but has no effect yet.
 ## Try it
 
 1. Enable the plugin and open the **Review Configuration** dock icon.
-2. Choose a writable stream or forum channel and click **Register repository**.
-3. Enter a repository, select lane reviewers, add instructions, then **Save settings**.
-4. Reload the page, choose the same channel, and verify the repository row.
+2. Click **Register repository**, then choose a private stream or forum channel you belong to.
+3. Enter a repository, select lane reviewers, add instructions, then **Save lane**.
+4. Reload the page and verify the repository lists its channel. Choose your default channel.
 5. Edit the instructions, save, and use **Reload** to confirm the new version.
 6. In two clients, edit the same version; the second save must fail without
    discarding its draft after the first client saves.
 
 Use a test channel. Saving does not activate any review automation.
 
-Reviewer choices come from the session’s shared agent inventory. Saved public keys
+Reviewer choices combine the session’s shared agent inventory and attested agents already in the chosen channel. Only agents with verified owners who belong to that channel are selectable. Saved public keys
 remain visible and removable if an agent disappears or is archived. Unassigned
 lanes may be saved as drafts. Submission requires one available reviewer per matching lane,
-verified ownership by the signed-in user, and existing channel membership. The
-outbox rechecks membership before publishing mentions. Agent ownership is checked
+verified ownership by a channel member, and existing reviewer channel membership. The
+outbox rechecks submitter, reviewer and verified-owner membership before publishing or retrying mentions. Agent ownership is checked
 from fresh signed profiles; archive evidence and shared agent choices must be
 available. Run a connected agent in the desktop app to receive replies. A browser
 lab with registered identities alone cannot execute a review.

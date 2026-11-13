@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useAgentChoices } from "../../features/agents/use-choices";
+import { useReviewAgents } from "./use-review-agents";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -29,7 +29,7 @@ export function AdmissionEditor({
   onSaved: (value: SavedReviewConfig) => void;
   onEditingChange: (editing: boolean) => void;
 }) {
-  const choices = useAgentChoices(session, true, true);
+  const choices = useReviewAgents(session, channel);
   const [draft, setDraft] = useState(
     previous.config.admission ?? DEFAULT_ADMISSION,
   );

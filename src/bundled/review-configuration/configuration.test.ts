@@ -1,3 +1,4 @@
+import { reviewAgentProfile, reviewTestAccess } from "./testing";
 import { expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { EventData } from "../../features/relay/events";
@@ -14,6 +15,7 @@ import {
 const channel = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
 const signal = () => AbortSignal.timeout(5000);
+const agent = keypair();
 const config: ReviewConfig = {
   version: 1,
   repository: "example-org/project",
@@ -23,7 +25,7 @@ const config: ReviewConfig = {
       id: "general",
       name: "General",
       instructions: "Check authorization and tests.",
-      reviewers: ["a".repeat(64)],
+      reviewers: [agent.pubkey],
       routing: {
         mode: "all",
         rules: [
@@ -40,13 +42,28 @@ if (!firstLane) throw new Error("Missing lane fixture");
 function host() {
   const key = keypair();
   let events: EventData[] = [];
-  const snapshotRead = vi.fn(async () => events);
+  const profile = reviewAgentProfile(key, agent);
+  const snapshotRead = vi.fn(async (filters: { kinds?: number[] }[]) =>
+    filters[0]?.kinds?.includes(0) ? [profile] : events,
+  );
   const publish = vi.fn(async (event: EventData) => {
     events = [event];
     return event.id;
   });
   const sign = vi.fn(async (template: EventTemplate) => signed(key, template));
   const session = {
+    ...reviewTestAccess(key.pubkey, channel, [agent.pubkey]),
+    channels: {
+      ...reviewTestAccess(key.pubkey, channel).channels,
+      list: () => ({
+        status: "ready",
+        channels: [channel, other].map(
+          (id) =>
+            reviewTestAccess(key.pubkey, id, [agent.pubkey]).channels.list()
+              .channels[0],
+        ),
+      }),
+    },
     snapshotRead,
     configArtifactWriter: { sign, publish },
   } as unknown as RelaySession;
@@ -121,7 +138,11 @@ it("never fetches a newer revision to overwrite a concurrent edit; propagates re
   await expect(
     saveConfiguration(test.session, channel, config, first, signal()),
   ).rejects.toThrow("head changed");
-  expect(test.snapshotRead).not.toHaveBeenCalled();
+  expect(
+    test.snapshotRead.mock.calls.every(([filters]) =>
+      filters[0]?.kinds?.includes(0),
+    ),
+  ).toBe(true);
   expect(test.publish.mock.calls[1]?.[0].tags).toContainEqual([
     "prev",
     first.revision,

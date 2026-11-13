@@ -63,6 +63,7 @@ export function ReviewSubmissions({
   session,
   mode = "submit",
   submission,
+  repository: selectedRepository,
   onOpenSubmission,
   channel,
   writable,
@@ -78,6 +79,7 @@ export function ReviewSubmissions({
   session: RelaySession;
   mode?: "submit" | "all";
   submission?: string | undefined;
+  repository?: string | undefined;
   onOpenSubmission?:
     | ((channel: string, submission?: string) => Promise<void>)
     | undefined;
@@ -316,6 +318,10 @@ export function ReviewSubmissions({
     let alreadyComplete: boolean | undefined;
     try {
       const repository = pullRepository(pr);
+      if (selectedRepository && repository !== selectedRepository)
+        throw new Error(
+          "This PR belongs to a different repository. Choose that repository before submitting.",
+        );
       const configurations = await loadConfigurations(session, channel, signal);
       const saved = configurations.rows.find(
         (row) => row.config.repository === repository,

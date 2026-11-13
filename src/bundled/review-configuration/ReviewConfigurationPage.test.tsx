@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { SubmissionRepository } from "./RepositoryConfigurations";
+import { reviewAgentProfile, reviewTestAccess } from "./testing";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -21,22 +23,28 @@ afterEach(() => {
 const channel = "11111111-1111-4111-8111-111111111111";
 function fixture() {
   const key = keypair();
+  const agentKeys = [keypair(), keypair()];
+  const profiles = agentKeys.map((agent) => reviewAgentProfile(key, agent));
   let events: EventData[] = [];
   let list = {
     status: "ready",
     channels: [
-      { id: channel, name: "Reviews", channelType: "stream" } as ChannelSummary,
+      reviewTestAccess(
+        key.pubkey,
+        channel,
+        agentKeys.map((agent) => agent.pubkey),
+      ).channels.list().channels[0] as ChannelSummary,
     ],
   };
   const listeners = new Set<() => void>();
   const agents = [
     {
-      pubkey: "a".repeat(64),
+      pubkey: agentKeys[0]?.pubkey ?? "",
       name: "Backend reviewer",
       managed: true,
       avatar: "https://example.org/agent.png",
     },
-    { pubkey: "b".repeat(64), name: "UI reviewer", managed: true },
+    { pubkey: agentKeys[1]?.pubkey ?? "", name: "UI reviewer", managed: true },
   ];
   let choices = {
     error: undefined as string | undefined,
@@ -47,18 +55,34 @@ function fixture() {
     selectable: agents,
     archives: {
       status: "ready",
-      archived: [],
+      archived: [] as string[],
       error: undefined as string | undefined,
     },
     definitions: [],
   };
-  const snapshotRead = vi.fn(async () => events);
+  const snapshotRead = vi.fn(async (filters: { kinds?: number[] }[]) =>
+    filters[0]?.kinds?.includes(0) ? profiles : events,
+  );
   const publish = vi.fn(async (event: EventData) => {
     events = [event];
     return event.id;
   });
+  const profileSnapshot = new Map(
+    agents.map((agent) => [agent.pubkey, { name: agent.name }]),
+  );
   const session = {
+    ...reviewTestAccess(key.pubkey, channel),
+    profiles: {
+      snapshot: () => profileSnapshot,
+      subscribe: () => () => {},
+      ensure: async () => {},
+      owner: (pubkey: string) =>
+        agents.some((agent) => agent.pubkey === pubkey)
+          ? key.pubkey
+          : undefined,
+    },
     scope: "review-test-scope",
+    subscribeLive: () => () => {},
     agentChoices: {
       snapshot: () => choices,
       subscribe: (listener: () => void) => {
@@ -78,6 +102,7 @@ function fixture() {
       retain: () => () => {},
     },
     channels: {
+      refreshRoster: async () => true,
       ensureList() {},
       list: () => list,
       subscribeList: (listener: () => void) => {
@@ -93,10 +118,21 @@ function fixture() {
   } as unknown as RelaySession;
   return {
     session,
+    agents,
     publish,
     snapshotRead,
     setChannels(channels: ChannelSummary[]) {
-      list = { ...list, channels };
+      list = {
+        ...list,
+        channels: channels.map((item) => ({
+          ...reviewTestAccess(
+            key.pubkey,
+            item.id,
+            agents.map((agent) => agent.pubkey),
+          ).channels.list().channels[0],
+          ...item,
+        })),
+      };
       for (const listener of listeners) listener();
     },
     failAgents() {
@@ -109,7 +145,14 @@ function fixture() {
       for (const listener of listeners) listener();
     },
     hideAgents() {
-      choices = { ...choices, selectable: [] };
+      choices = {
+        ...choices,
+        selectable: [],
+        archives: {
+          ...choices.archives,
+          archived: agents.map((agent) => agent.pubkey),
+        },
+      };
       for (const listener of listeners) listener();
     },
     metadataCached(cached: boolean) {
@@ -117,9 +160,13 @@ function fixture() {
         ...list,
         channels: [
           {
+            ...reviewTestAccess(
+              key.pubkey,
+              channel,
+              agentKeys.map((agent) => agent.pubkey),
+            ).channels.list().channels[0],
             id: channel,
             name: "Reviews",
-            channelType: "stream",
             ...(cached ? { metadataCached: true } : {}),
           },
         ],
@@ -131,12 +178,9 @@ function fixture() {
 
 async function openDraft() {
   const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Register repository" }));
   await user.click(screen.getByRole("combobox", { name: "Review channel" }));
   await user.click(await screen.findByRole("option", { name: "Reviews" }));
-  await screen.findByText(
-    "No repositories configured in this channel. Register one to save its review lanes.",
-  );
-  await user.click(screen.getByRole("button", { name: "Register repository" }));
   await user.type(
     screen.getByRole("textbox", { name: "GitHub repository" }),
     "example-org/project",
@@ -211,35 +255,16 @@ it("keeps the draft on rejection, prevents duplicate submissions, and recovers",
   await screen.findByText("Saved example-org/project.");
 });
 
-it("preserves the draft while channel authorization reconfirms, but gates Save", async () => {
+it("hides the editor and prevents publication when channel access is no longer confirmed", async () => {
   const test = fixture();
   render(<ReviewConfigurationCommunity session={test.session} />);
   await openDraft();
   act(() => test.metadataCached(true));
-  expect(
-    (screen.getByRole("button", { name: "Save lane" }) as HTMLButtonElement)
-      .disabled,
-  ).toBe(true);
-  expect(
-    (
-      screen.getByRole("textbox", {
-        name: "Instructions",
-      }) as HTMLTextAreaElement
-    ).value,
-  ).toContain("keyboard navigation");
-  act(() => test.metadataCached(false));
-  expect(
-    (screen.getByRole("button", { name: "Save lane" }) as HTMLButtonElement)
-      .disabled,
-  ).toBe(false);
-  expect(
-    (
-      screen.getByRole("textbox", {
-        name: "Instructions",
-      }) as HTMLTextAreaElement
-    ).value,
-  ).toContain("keyboard navigation");
+  expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save lane" })).toBeNull();
   expect(test.publish).not.toHaveBeenCalled();
+  act(() => test.metadataCached(false));
+  await screen.findByRole("textbox", { name: "Instructions" });
 });
 
 it("aborts an unfinished write when the page leaves its session", async () => {
@@ -262,10 +287,10 @@ it("aborts an unfinished write when the page leaves its session", async () => {
   expect(publish.mock.calls[0]?.[1].aborted).toBe(true);
 });
 
-it("counts unreadable records toward the limit when a new repository is saved", async () => {
+it("counts unreadable records toward the channel registration limit", async () => {
   const test = fixture();
   test.snapshotRead.mockResolvedValue(
-    Array.from({ length: 99 }, () => ({
+    Array.from({ length: 100 }, () => ({
       kind: 45010,
       id: "a".repeat(64),
       pubkey: "b".repeat(64),
@@ -279,32 +304,13 @@ it("counts unreadable records toward the limit when a new repository is saved", 
     })),
   );
   render(<ReviewConfigurationCommunity session={test.session} />);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "Review channel" }));
-  await user.click(await screen.findByRole("option", { name: "Reviews" }));
-  await screen.findByText("No readable configurations in this channel.");
-  await user.click(screen.getByRole("button", { name: "Register repository" }));
-  await user.type(
-    screen.getByRole("textbox", { name: "GitHub repository" }),
-    "example-org/project",
-  );
-  await user.type(
-    screen.getByRole("textbox", { name: "Instructions" }),
-    "Check tests.",
-  );
-  await user.type(screen.getByRole("textbox", { name: "Value" }), "review");
-  await user.click(screen.getByRole("button", { name: "Save lane" }));
-  await screen.findByText("Saved example-org/project.");
-  await user.click(
-    screen.getByRole("button", { name: "Back to repositories" }),
-  );
+  await openDraft();
+  await screen.findByText(/This channel has reached its configuration limit/);
   expect(
-    (
-      screen.getByRole("button", {
-        name: "Register repository",
-      }) as HTMLButtonElement
-    ).disabled,
+    (screen.getByRole("button", { name: "Save lane" }) as HTMLButtonElement)
+      .disabled,
   ).toBe(true);
+  expect(test.publish).not.toHaveBeenCalled();
 });
 
 it("saves multiple lane reviewers, reloads their identities, and preserves unavailable selections", async () => {
@@ -313,18 +319,17 @@ it("saves multiple lane reviewers, reloads their identities, and preserves unava
   const user = await openDraft();
   await user.click(screen.getByRole("combobox", { name: "Agents" }));
   await user.click(
-    await screen.findByRole("option", { name: "Backend reviewer (aaaaaaaa)" }),
+    await screen.findByRole("option", { name: /^Backend reviewer \(/ }),
   );
   await user.click(screen.getByRole("combobox", { name: "Agents" }));
   await user.click(
-    await screen.findByRole("option", { name: "UI reviewer (bbbbbbbb)" }),
+    await screen.findByRole("option", { name: /^UI reviewer \(/ }),
   );
   await user.click(screen.getByRole("button", { name: "Save lane" }));
   await screen.findByText("Saved example-org/project.");
   const content = test.publish.mock.calls[0]?.[0].content;
   expect(JSON.parse(content ?? "{}").lanes[0].reviewers).toEqual([
-    "a".repeat(64),
-    "b".repeat(64),
+    ...test.agents.map((agent) => agent.pubkey),
   ]);
   await user.click(screen.getByRole("button", { name: "Reload" }));
   await user.click(
@@ -343,7 +348,7 @@ it("saves multiple lane reviewers, reloads their identities, and preserves unava
   expect(
     JSON.parse(test.publish.mock.calls[1]?.[0].content ?? "{}").lanes[0]
       .reviewers,
-  ).toEqual(["b".repeat(64)]);
+  ).toEqual([test.agents[1]?.pubkey]);
 });
 
 it("refreshes failed agent and archive reads without discarding the draft", async () => {
@@ -357,61 +362,44 @@ it("refreshes failed agent and archive reads without discarding the draft", asyn
   expect(test.session.agentChoices.refresh).toHaveBeenCalledWith(true);
   await user.click(screen.getByRole("combobox", { name: "Agents" }));
   await user.click(
-    await screen.findByRole("option", { name: "Backend reviewer (aaaaaaaa)" }),
+    await screen.findByRole("option", { name: /^Backend reviewer \(/ }),
   );
   await user.click(screen.getByRole("button", { name: "Save lane" }));
   await screen.findByText("Saved example-org/project.");
   expect(
     JSON.parse(test.publish.mock.calls[0]?.[0].content ?? "null").lanes[0]
       .reviewers,
-  ).toEqual(["a".repeat(64)]);
+  ).toEqual([test.agents[0]?.pubkey]);
 });
 
-it("selects the only channel, remembers another selection, and scopes it to the session", async () => {
+it("stores a personal default per repository and isolates it between sessions", async () => {
   const test = fixture();
   const view = render(<ReviewConfigurationCommunity session={test.session} />);
-  await screen.findByRole("button", { name: "Register repository" });
-  expect(localStorage.getItem("buzz.review.channel:review-test-scope")).toBe(
-    channel,
-  );
-  const second = "22222222-2222-4222-8222-222222222222";
-  act(() =>
-    test.setChannels([
-      { id: channel, name: "Reviews", channelType: "stream" } as ChannelSummary,
-      {
-        id: second,
-        name: "Other reviews",
-        channelType: "stream",
-      } as ChannelSummary,
-    ]),
-  );
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "Review channel" }));
+  const user = await openDraft();
+  await user.click(screen.getByRole("button", { name: "Save lane" }));
+  await screen.findByText("Saved example-org/project.");
   await user.click(
-    await screen.findByRole("option", { name: "Other reviews" }),
+    screen.getByRole("button", { name: "Back to repositories" }),
   );
-  expect(localStorage.getItem("buzz.review.channel:review-test-scope")).toBe(
-    second,
-  );
+  const label = "Default channel for example-org/project";
+  await user.click(await screen.findByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: "Reviews" }));
   view.unmount();
   const restored = render(
     <ReviewConfigurationCommunity session={test.session} />,
   );
   expect(
-    screen.getByRole("combobox", { name: "Review channel" }).textContent,
-  ).toContain("Other reviews");
+    (await screen.findByRole("combobox", { name: label })).textContent,
+  ).toContain("Reviews");
   restored.unmount();
   render(
     <ReviewConfigurationCommunity
-      session={{ ...test.session, scope: "another-scope" } as RelaySession}
+      session={{ ...test.session, scope: "another-scope" }}
     />,
   );
   expect(
-    screen.queryByRole("button", { name: "Register repository" }),
-  ).toBeNull();
-  expect(localStorage.getItem("buzz.review.channel:review-test-scope")).toBe(
-    second,
-  );
+    (await screen.findByRole("combobox", { name: label })).textContent,
+  ).toContain("Choose your default");
 });
 
 it("saves path rules through field changes and preserves them after reload", async () => {
@@ -465,7 +453,7 @@ it("preserves the remembered channel until pending metadata finishes", async () 
     { id: channel, name: "Reviews", channelType: "stream" } as ChannelSummary,
     { id: second, metadataPending: true } as ChannelSummary,
   ]);
-  render(<ReviewConfigurationCommunity session={test.session} />);
+  render(<ReviewConfigurationCommunity session={test.session} page="all" />);
   expect(localStorage.getItem("buzz.review.channel:review-test-scope")).toBe(
     second,
   );
@@ -479,7 +467,7 @@ it("preserves the remembered channel until pending metadata finishes", async () 
       } as ChannelSummary,
     ]),
   );
-  await screen.findByRole("button", { name: "Register repository" });
+  await screen.findByRole("combobox", { name: "Review channel" });
   expect(
     screen.getByRole("combobox", { name: "Review channel" }).textContent,
   ).toContain("Remembered reviews");
@@ -517,10 +505,12 @@ it("opens dedicated pages from configuration and blocks leaving lane drafts", as
   await user.click(screen.getByRole("button", { name: "Submit PR" }));
   expect(onNavigate).toHaveBeenCalledWith("submit");
   await user.click(
-    screen.getByRole("button", { name: "Open example-org/project" }),
+    await screen.findByRole("button", {
+      name: "Open example-org/project in Reviews",
+    }),
   );
   expect(
-    screen.getByRole("button", { name: "Edit General lane" }),
+    await screen.findByRole("button", { name: "Edit General lane" }),
   ).toBeTruthy();
 });
 
@@ -549,25 +539,22 @@ it("blocks editor entry while a reload can replace the repository", async () => 
   } finally {
     await act(async () => finish([]));
   }
-  await screen.findByRole("button", { name: "Register repository" });
+  await screen.findByText(/This configuration is unavailable/);
   expect(
-    (
-      screen.getByRole("combobox", {
-        name: "Review channel",
-      }) as HTMLButtonElement
-    ).disabled,
-  ).toBe(false);
+    screen.queryByRole("button", { name: "Edit General lane" }),
+  ).toBeNull();
+  await user.click(
+    screen.getByRole("button", { name: "Back to repositories" }),
+  );
+  await screen.findByRole("button", { name: "Register repository" });
 });
 
-it("opens the separate submit page without repository or lane configuration", async () => {
+it("requires repository and channel selection before showing the submit form", async () => {
   const test = fixture();
   render(<ReviewConfigurationCommunity session={test.session} page="submit" />);
-  await screen.findByRole("textbox", { name: "GitHub PR URL" });
-  expect(screen.getByRole("button", { name: "Submit PR" })).toBeTruthy();
-  expect(
-    screen.queryByRole("button", { name: "Register repository" }),
-  ).toBeNull();
-  expect(screen.queryByText("Repositories")).toBeNull();
+  await screen.findByRole("combobox", { name: "Repository" });
+  expect(screen.queryByRole("textbox", { name: "GitHub PR URL" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save lane" })).toBeNull();
 });
 
 it("opens Submit PR directly from Pull requests and preserves configuration navigation", async () => {
@@ -623,7 +610,7 @@ it("requires a routing value and saves each lane before allowing another", async
   ).toBe(true);
   await user.click(screen.getByRole("combobox", { name: "Agents" }));
   await user.click(
-    await screen.findByRole("option", { name: "Backend reviewer (aaaaaaaa)" }),
+    await screen.findByRole("option", { name: /^Backend reviewer \(/ }),
   );
   expect(
     screen.getByRole("img", { name: "Backend reviewer avatar" }),
@@ -747,7 +734,7 @@ it("saves independent admission checkboxes and preserves them through lane edits
     ci: false,
     conflicts: false,
     triage: true,
-    agent: "a".repeat(64),
+    agent: test.agents[0]?.pubkey,
     instructions: "Reject duplicate PRs.",
   });
   await user.click(screen.getByRole("button", { name: "Edit General lane" }));
@@ -809,4 +796,45 @@ it("keeps the addressed detail during a transient navigation handoff, then retur
     } as unknown as PageNavigation),
   );
   expect(screen.getByText("Submitted pull requests")).toBeTruthy();
+});
+
+it("requires a new choice for an unavailable default and clears revoked access", async () => {
+  const test = fixture();
+  const view = render(<ReviewConfigurationCommunity session={test.session} />);
+  const user = await openDraft();
+  await user.click(screen.getByRole("button", { name: "Save lane" }));
+  await screen.findByText("Saved example-org/project.");
+  view.unmount();
+  localStorage.setItem(
+    `buzz.review.channel:repository:${test.session.scope}`,
+    "example-org/project",
+  );
+  localStorage.setItem(
+    `buzz.review.channel:default:${test.session.scope}:example-org/project`,
+    "unavailable-channel",
+  );
+  const selected = vi.fn();
+  render(
+    <SubmissionRepository
+      session={test.session}
+      disabled={false}
+      onSelection={selected}
+    />,
+  );
+  await screen.findByText(
+    "Your previous channel is unavailable. Choose another configuration.",
+  );
+  expect(selected).toHaveBeenLastCalledWith("example-org/project", "");
+  await user.click(screen.getByRole("combobox", { name: "Review channel" }));
+  await user.click(await screen.findByRole("option", { name: "Reviews" }));
+  await waitFor(() =>
+    expect(selected).toHaveBeenLastCalledWith("example-org/project", channel),
+  );
+  act(() => test.setChannels([]));
+  await waitFor(() =>
+    expect(selected).toHaveBeenLastCalledWith("example-org/project", ""),
+  );
+  expect(
+    screen.getByRole("combobox", { name: "Review channel" }).textContent,
+  ).toContain("Choose a channel");
 });

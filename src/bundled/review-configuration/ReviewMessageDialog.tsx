@@ -1,3 +1,5 @@
+import { useChannelList } from "../../features/relay/react";
+import { reviewChannelMember } from "./access";
 import {
   MarkdownDocument,
   sharedComponents,
@@ -40,12 +42,22 @@ export function ReviewMessageDialog({
   onClose(): void;
   finalFocus(): HTMLElement | null;
 }) {
+  const channels = useChannelList(session.channels);
+  const channel = channels.channels.find((item) => item.id === target.channel);
+  const readable =
+    channels.status === "ready" &&
+    !!channel &&
+    reviewChannelMember(channel, session.viewer);
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState("");
   useEffect(() => {
     let owned: ThreadView | undefined;
     setError("");
     setView(undefined);
+    if (!readable) {
+      setError("This review channel is unavailable.");
+      return;
+    }
     try {
       owned = session.thread(target.channel, target.message, { exact: true });
       setView(owned);
@@ -54,7 +66,7 @@ export function ReviewMessageDialog({
       setError("This message is unavailable.");
     }
     return () => owned?.dispose();
-  }, [session, target.channel, target.message]);
+  }, [session, target.channel, target.message, readable]);
   return (
     <Dialog
       open
@@ -68,7 +80,9 @@ export function ReviewMessageDialog({
       finalFocus={finalFocus}
       actions={<Button onClick={onClose}>Close</Button>}
     >
-      {error ? (
+      {!readable ? (
+        <p role="alert">This review channel is unavailable.</p>
+      ) : error ? (
         <p role="alert">{error}</p>
       ) : view ? (
         <MessageBody view={view} id={target.message} />

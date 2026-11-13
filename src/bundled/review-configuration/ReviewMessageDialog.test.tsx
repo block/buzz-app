@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { reviewTestAccess } from "./testing";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
@@ -34,6 +35,7 @@ it("loads the exact message, shows the whole body, and releases the read on clos
   let notify = () => {};
   const dispose = vi.fn();
   const session = {
+    ...reviewTestAccess("b".repeat(64), "channel"),
     thread: vi.fn(() => ({
       snapshot: () => snapshot,
       subscribe: (fn: () => void) => {

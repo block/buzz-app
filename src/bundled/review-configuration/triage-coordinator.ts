@@ -1,3 +1,4 @@
+import { reviewChannel } from "./access";
 import type { RelaySession } from "../../features/relay/session";
 import { REVIEW_SUBMISSION } from "../../features/agents/pr-review";
 import { TRIAGE_REPORT } from "../../features/agents/pr-triage";
@@ -41,6 +42,7 @@ export function watchTriage(
           controller.signal,
           AbortSignal.timeout(120_000),
         ]);
+        reviewChannel(session, hint.channel, true);
         const head = (
           await session.snapshotRead(
             [

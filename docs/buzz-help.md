@@ -1279,14 +1279,14 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   when no choice was saved. Enable or disable them in **Manage plugins**; saved
   choices persist. A deliberate plugin-settings reset uses the current defaults.
 - **Review Configuration** is optional and starts off. Enable it in **Manage
-  plugins** to add separate **Review Configuration** and **Pull requests** dock icons. Choose a review channel,
-  register a GitHub repository, and save named lanes with reviewer agents and
+  plugins** to add separate **Review Configuration** and **Pull requests** dock icons. Register a repository in a private review channel you belong to,
+  then save named lanes with reviewer agents and
   instructions. Each lane supports multiple reviewers. Saved
   repositories appear in a list; open one to manage its lanes. **Reload**
   reads the latest saved versions. Settings live on the community relay and are
-  visible to channel readers; members who can post can edit them. A conflicting
+  visible to channel members; members who can post can edit them. A conflicting
   edit preserves your draft: copy your changes before cancelling and reloading.
-  **Review Configuration** has matching **Register repository**, **Submit PR**, and **Pull requests** actions at the top, followed by **Repositories**. **Edit lane**
+  **Review Configuration** has matching **Register repository**, **Submit PR**, and **Pull requests** actions at the top, followed by **Repositories**, grouped with their channel configurations. Set a personal default channel per repository; Submit PR uses it and allows an override. Defaults are saved on this device per identity/community. If access to a default is lost, choose another configuration. Only current members can use a private review channel; existing open-channel configurations are excluded and left unchanged. **Edit lane**
   opens one lane; **Save lane** persists it before **Add lane** starts another.
   **Back to lanes** cancels the editor; **Back to repositories** returns to the list.
   Every new or edited lane requires at least one all/any routing rule matching
@@ -1319,7 +1319,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   Completed outcomes are green, pending review is amber, and changes requested are red; labels still distinguish approval from completion. **Submitted** shows the original submission date (older records say **Not recorded**). **Last reviewed** shows the latest result, including previous reminder rounds; accepting a review does not count. Dates use your local timezone.
   The **Pull requests** dock badge counts PRs with unseen status updates in the selected review channel. Opening Pull requests clears the badge for the loaded updates. Affected PRs and lanes keep an **Updated** marker during that visit, including list → PR details, so you can see what changed. Live changes while the page is open are highlighted too. Each lane shows **Last updated** from its latest status report or thread message, including reminders. Seen state persists on this device for your identity, community, and channel; later changes mark the PR again.
   The separate Submit PR form has a **Back to Review Configuration** button. All pages remember the selected
-  review channel. Reviewers must be owned by the signed-in identity and already
+  review channel. Reviewers must have a verified owner who belongs to the selected channel, and already
   belong to the channel. A connected agent runtime is needed for replies;
   delivery alone does not mean a review started. Desktop uses signed-in GitHub
   access; browser metadata reads support public PRs and may hit rate limits.

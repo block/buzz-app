@@ -51,6 +51,12 @@ export function useReviewChannel(scope: string) {
   return [channel, select] as const;
 }
 
+/** Preferences only: every consumer checks current membership and configuration. */
+export const useReviewRepository = (scope: string) =>
+  useReviewChannel(`repository:${scope}`);
+export const useRepositoryDefault = (scope: string, repository: string) =>
+  useReviewChannel(`default:${scope}:${repository}`);
+
 export function reviewVersion(row: SavedSubmission) {
   return JSON.stringify([
     row.value.generation ?? row.value.submittedAt ?? "",

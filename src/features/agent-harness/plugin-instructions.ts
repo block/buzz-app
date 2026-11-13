@@ -37,8 +37,9 @@ export function pluginInstructions(entries: readonly TurnInstructions[] = []) {
  * named by the plugin that gave them; cleared ones say none apply now. */
 export function ownerInstructions(entry: TurnInstructions | undefined) {
   if (!entry) return undefined;
-  const source = `source="${attribute(entry.plugin)}"`;
-  return entry.text.trim()
-    ? `<owner-instructions ${source}>\nYour owner's standing instructions for you in this conversation, as of this message. They replace any earlier <owner-instructions>. Your owner's messages override them. Where they conflict with a workspace Canvas, follow these.\n\n${body(entry.text)}\n</owner-instructions>`
-    : `<owner-instructions ${source}>\nYour owner has no standing instructions for you in this conversation now. Disregard any earlier <owner-instructions>.\n</owner-instructions>`;
+  const text = body(entry.text);
+  const content = text
+    ? `Your owner's standing instructions for you in this conversation, as of this message. They replace any earlier <owner-instructions>. Your owner's messages override them. Where they conflict with a workspace Canvas, follow these.\n\n${text}`
+    : "Your owner has no standing instructions for you in this conversation now. Disregard any earlier <owner-instructions>.";
+  return `<owner-instructions source="${attribute(entry.plugin)}">\n${content}\n</owner-instructions>`;
 }

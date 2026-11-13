@@ -9,7 +9,7 @@ test.use({ historyCounts: { alpha: 1, beta: 0 } });
 test("PR metadata wraps into readable rows at enlarged text size", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   const target = "https://github.com/sample/project/pull/1";
   const author = "averylonggithubusernamewithoutwordbreaks";
   const longLabel = "external-label-without-word-breaks-0123456789abcdef";
@@ -122,5 +122,10 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
         }),
       )
       .toBeGreaterThan(1);
+    await label.scrollIntoViewIfNeeded();
+    await expect(label).toBeInViewport({ ratio: 1 });
+    await panel.screenshot({
+      path: testInfo.outputPath(`github-metadata-${mode}-enlarged.png`),
+    });
   }
 });

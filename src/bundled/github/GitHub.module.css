@@ -462,7 +462,7 @@
   min-width: 0;
   padding: var(--space-half) var(--space-1h);
   border: 1px solid var(--external-label-light-border, var(--border-standard));
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-chip);
   background: var(--external-label-light-fill, var(--surface-inset));
   color: var(--external-label-light-ink, var(--text-standard));
   font-size: var(--text-caption);

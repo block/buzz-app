@@ -285,6 +285,11 @@ test("public labels wrap in both host themes and preserve partial data with a us
             }),
           )
           .toBeGreaterThan(1);
+        // Wrapped lines need bounded chip corners; full pill ends crowd the text.
+        await expect(labelItems.nth(3)).toHaveCSS(
+          "border-top-left-radius",
+          "12px",
+        );
       }
       await panel.screenshot({
         path: testInfo.outputPath(`github-checklist-${mode}-${width}.png`),

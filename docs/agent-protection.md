@@ -202,6 +202,11 @@ is saved, and once it expires or is revoked, Claude reviews fail closed; save a
 new token or choose another review model. A review's 60-second budget includes
 waiting for Buzz to download that release the first time; a longer download
 fails the review closed and carries on for later reviews.
+Where its community routes through the agent gateway, a protected Claude
+agent's turns go through the gateway on this same protected launch: the
+forwarding URL is a flag setting, and the policy gate, containment and hooks
+are unchanged. Its security reviews keep their own sign-in and never go
+through the gateway, so gateway usage leaves out a protected agent's reviews.
 Known Claude gaps: while a review runs, other processes of yours, likely
 contained agents too (not checked against the pinned release), can read its
 sign-in from the review's process environment. Protected Claude agents, unlike

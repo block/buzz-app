@@ -3285,6 +3285,8 @@ it("forwards a protected agent's gateway turn on its protected launch, reviews i
   expect(g.opens.map((open) => open.routeRevision)).toEqual([2]);
   const worker = f.claudes().find((candidate) => candidate.prompts.length);
   if (!worker) throw new Error("Claude did not start");
+  // The pinned protected release, not Buzz's own copy.
+  expect(worker.id).toBe("claude-protected-arm64");
   const args = worker.options.args ?? [];
   // The forwarding URL rides on the protected launch, which reads no
   // settings files.

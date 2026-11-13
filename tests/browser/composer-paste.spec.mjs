@@ -536,6 +536,123 @@ test("undo and redo walk pastes made before deferred chips render", async ({
   }
 });
 
+// Input before a long paste's chips render adopts them first, so editing,
+// pasting an identity inside the pasted text, and undo and redo behave as
+// they do once the chips have rendered.
+test("input before deferred chips render edits and undoes as usual", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const recipients = page.getByRole("region", { name: "Explicit mentions" });
+  const long = Array.from(
+    { length: 20 },
+    (_, line) =>
+      `Line ${line} links https://example.com/review/${line} for notes.`,
+  ).join("\n");
+  const identity = `[@Fixture Reader](nostr:${npubEncode(app.viewer)}) `;
+  // Paste with the paint that renders the chips held until `release`.
+  const paste = (texts) =>
+    input.evaluate((element, texts) => {
+      if (!window.heldFrames) {
+        window.heldFrames = [];
+        window.paintFrame = window.requestAnimationFrame;
+        window.requestAnimationFrame = (callback) =>
+          window.heldFrames.push(callback);
+      }
+      for (const text of texts) {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", text);
+        element.dispatchEvent(
+          new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+      }
+    }, texts);
+  const release = () =>
+    page.evaluate(() => {
+      window.requestAnimationFrame = window.paintFrame;
+      for (const callback of window.heldFrames) callback(0);
+      window.heldFrames = undefined;
+    });
+  const pending = () => expect(input.locator("[data-source]")).toHaveCount(0);
+  await input.click();
+
+  // Replace the last link and the text after it.
+  await paste([long]);
+  await pending();
+  for (let key = 0; key < 12; key++) await input.press("Shift+ArrowLeft");
+  await page.keyboard.type("changed");
+  await release();
+  const changed = long.replace(
+    "https://example.com/review/19 for notes.",
+    "changed",
+  );
+  await expect(input).toHaveJSProperty("value", changed);
+  await expect(input.locator("[data-source]")).toHaveCount(19);
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", long);
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "");
+  await input.press("ControlOrMeta+Shift+z");
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty("value", changed);
+  await input.fill("");
+
+  // Delete inside the pasted text.
+  await paste([long]);
+  await pending();
+  await input.press("ArrowUp");
+  await input.press("Backspace");
+  await release();
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", long);
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "");
+  await input.fill("");
+
+  // Undo and redo both pastes before either renders its chips.
+  await paste([long, " https://example.com/short"]);
+  await input.press("ControlOrMeta+z");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "");
+  await input.press("ControlOrMeta+Shift+z");
+  await input.press("ControlOrMeta+Shift+z");
+  await release();
+  await expect(input).toHaveJSProperty(
+    "value",
+    `${long} https://example.com/short`,
+  );
+  await expect(input.locator("[data-source]")).toHaveCount(21);
+  await input.press("ControlOrMeta+z");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "");
+
+  // Paste an identity inside the pasted text.
+  await paste([long]);
+  await pending();
+  await input.press("ArrowUp");
+  await paste([identity]);
+  await release();
+  await expect(
+    input.locator(".inline-chip", { hasText: "@Fixture Reader" }),
+  ).toHaveCount(1);
+  await expect(recipients).toBeVisible();
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.tags).toContainEqual([
+    "p",
+    app.viewer,
+  ]);
+});
+
 // A long paste joined onto a link or a mention changes them in its own undo
 // step, even though its inner chips render after the next paint.
 test("undoing a long paste restores the link and mention it joined", async ({

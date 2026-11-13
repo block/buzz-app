@@ -10,6 +10,21 @@ tokio::task_local! {
     pub(super) static HEADERS_RECEIVED: std::sync::Arc<tokio::sync::Notify>;
 }
 
+// Tests pin the wall clock a token is validated against, so a fixture's
+// relative `iat` cannot cross a second boundary before validation.
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static WALL_NOW: SystemTime;
+}
+/// The wall-clock reading an issued token is validated against.
+pub(super) fn wall_now() -> SystemTime {
+    #[cfg(test)]
+    if let Ok(pinned) = WALL_NOW.try_with(|pinned| *pinned) {
+        return pinned;
+    }
+    SystemTime::now()
+}
+
 pub(super) const DEADLINE: Duration = Duration::from_secs(30);
 /// How far ahead of this clock a signed timestamp may be, and how far a
 /// verifier accepts one behind or ahead of its own (NIP-FI, NIP-98).

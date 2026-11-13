@@ -2166,7 +2166,10 @@ async fn skewed_agent(
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let real = now().unwrap();
+    let real = crate::federated_identity::protocol::wall_now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
     let mut replies = vec![(
         Duration::ZERO,
         raw("200 OK", "", &enrolled(&"b".repeat(64)).to_string()),
@@ -2207,8 +2210,15 @@ fn left(admission: &Admission) -> Duration {
 #[tokio::test]
 async fn an_agent_assertion_may_be_minted_up_to_120_s_ahead() {
     for (skew, accepted) in [(119, true), (120, true), (121, false)] {
-        let (f, _) = skewed_agent(vec![(secs(0), OK, skew, 300)]).await;
-        assert_eq!(admitted(&f).await.is_ok(), accepted, "iat +{skew}");
+        // Fixture and validation read the same pinned second.
+        let pinned = std::time::UNIX_EPOCH + secs(now().unwrap() as u64);
+        let ok = crate::federated_identity::protocol::WALL_NOW
+            .scope(pinned, async {
+                let (f, _) = skewed_agent(vec![(secs(0), OK, skew, 300)]).await;
+                admitted(&f).await.is_ok()
+            })
+            .await;
+        assert_eq!(ok, accepted, "iat +{skew}");
     }
 }
 

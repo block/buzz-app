@@ -526,6 +526,7 @@ impl FederatedIdentity {
             .and_then(|result| result.as_ref().ok())
             .filter(|assertion| Instant::now() < assertion.refresh_at)
         {
+            self.note_clock_offset(None);
             authorization.assertion = Some(assertion.clone());
             self.admit_authorization(identity, &authorization).await?;
             return Ok(authorization);
@@ -567,12 +568,18 @@ impl FederatedIdentity {
                     if !state.closed && state.snapshot.revision == revision {
                         if failure.session_denied {
                             self.signal(super::SessionChange::Expired);
-                            self.retire_state(
+                            let retired = self.retire_state(
                                 &mut state,
                                 Status::ReauthenticationRequired,
                                 Some(failure.code),
-                            )
-                            .map(|session| (session, state.snapshot.revision.clone()))
+                            );
+                            // Retiring clears the last session's hint; this
+                            // refusal's own hint stays with it.
+                            if failure.clock_offset.is_some() {
+                                state.snapshot.clock_offset = failure.clock_offset;
+                                self.publish(&state);
+                            }
+                            retired.map(|session| (session, state.snapshot.revision.clone()))
                         } else {
                             state.snapshot.failure = Some(failure.code);
                             self.publish(&state);
@@ -829,7 +836,7 @@ impl FederatedIdentity {
         // conversion to a monotonic deadline. Sampling the monotonic clock first
         // keeps the derived deadline at or before the issuer's whole-second exp.
         let monotonic_now = Instant::now();
-        let wall_now = std::time::SystemTime::now();
+        let wall_now = protocol::wall_now();
         let now = wall_now
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "clock-unavailable")?
@@ -1230,7 +1237,10 @@ mod tests {
         let relay = "wss://relay.example";
         let identity = IdentityHost::fixture();
         let viewer = identity.viewer().await.unwrap();
-        let real = now().unwrap();
+        let real = protocol::wall_now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         let replies = replies
             .into_iter()
             .map(|(delay, status, skew, lifetime)| {
@@ -1272,6 +1282,9 @@ mod tests {
             .unwrap()
     }
     const OK: &str = "200 OK";
+    pub(crate) fn pinned_second() -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + secs(now().unwrap() as u64)
+    }
     fn secs(value: u64) -> std::time::Duration {
         std::time::Duration::from_secs(value)
     }
@@ -1279,8 +1292,13 @@ mod tests {
     #[tokio::test]
     async fn acquisition_accepts_iat_up_to_120_s_ahead() {
         for (skew, accepted) in [(119, true), (120, true), (121, false)] {
-            let (host, identity, url, _) = skewed(vec![(secs(0), OK, skew, 60)]).await;
-            let result = host.assertion_for_relay(&identity, &url).await;
+            // Fixture and validation read the same pinned second.
+            let (result, _) = protocol::WALL_NOW
+                .scope(pinned_second(), async {
+                    let (host, identity, url, heads) = skewed(vec![(secs(0), OK, skew, 60)]).await;
+                    (host.assertion_for_relay(&identity, &url).await, heads)
+                })
+                .await;
             assert_eq!(result.is_ok(), accepted, "iat +{skew}");
             if !accepted {
                 assert_eq!(result.err().as_deref(), Some("clock-skew"));
@@ -1407,10 +1425,43 @@ mod tests {
             Some("authorization-denied")
         );
         assert!(host.snapshot().clock_offset.is_some());
+        // B's cached success clears it again.
+        assert!(host.assertion_for_relay(&identity, &url(b)).await.is_ok());
+        assert_eq!(host.snapshot().clock_offset, None);
         assert_eq!(server.await.unwrap().len(), 2);
         // A new session starts without it.
         host.switch_account_for_test();
         assert_eq!(host.snapshot().clock_offset, None);
+    }
+
+    #[tokio::test]
+    async fn a_session_ending_refusal_keeps_its_own_hint() {
+        let relay = "wss://relay.example";
+        let identity = IdentityHost::fixture();
+        let date = (chrono::Utc::now() + chrono::Duration::seconds(130)).to_rfc2822();
+        let (base, server) = scripted_issuer(vec![(
+            secs(0),
+            raw(
+                "401 Unauthorized",
+                &format!("Date: {date}\r\n"),
+                r#"{"error":"session_expired"}"#,
+            ),
+        )])
+        .await;
+        let host = super::super::testing::signed_in(base, relay, true);
+        host.note_clock_offset(Some(-500)); // left from before: replaced
+        let url = Url::parse("https://relay.example").unwrap();
+        assert_eq!(
+            host.assertion_for_relay(&identity, &url)
+                .await
+                .err()
+                .as_deref(),
+            Some("reauthentication-required")
+        );
+        server.await.unwrap();
+        let snapshot = host.snapshot();
+        assert!(snapshot.status == Status::ReauthenticationRequired);
+        assert!(snapshot.clock_offset.is_some_and(|offset| offset >= 129));
     }
 
     #[test]

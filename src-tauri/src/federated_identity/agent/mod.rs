@@ -912,7 +912,7 @@ impl AgentTokens {
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
         let monotonic_now = tokio::time::Instant::now();
-        let wall_now = std::time::SystemTime::now();
+        let wall_now = protocol::wall_now();
         let now = wall_now
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "clock-unavailable")?

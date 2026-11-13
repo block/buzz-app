@@ -418,9 +418,11 @@ it("ignores an invalid list set at run time, keeping the last good one", () => {
     // list might carry.
     const bad = [{ ...GOOSE, harness: "other" }] as never;
     expect(setRuntimeRecommendation({ candidates: bad })).toBe(false);
-    expect(setRuntimeRecommendation({ candidates: [{ ...CODEX, sandbox: "off" }] } as never)).toBe(
-      false,
-    );
+    expect(
+      setRuntimeRecommendation({
+        candidates: [{ ...CODEX, sandbox: "off" }],
+      } as never),
+    ).toBe(false);
     expect(recommendedCandidates()).toEqual([GOOSE]);
   } finally {
     setRuntimeRecommendation(undefined);

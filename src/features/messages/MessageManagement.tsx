@@ -29,6 +29,7 @@ import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import type { AgentOwnerAuthorization } from "../relay/messages";
 import type { OutgoingEvent } from "../relay/outbox";
+import { forgetThreadTabName } from "../../bundled/channels/useChannelTabState";
 import { followUpQueue } from "./follow-up-queue";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { useAfterMessageMenuClose } from "./MessageActionBar";
@@ -805,6 +806,7 @@ function DeleteMessageDialog({
         dispatched(operationId, dialog);
       } else {
         const id = session.messages.remove([row.id], authorization);
+        forgetThreadTabName(session, row.channelId, row.id);
         setOperationId(id);
         dispatched(id, dialog);
       }

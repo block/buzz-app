@@ -5,6 +5,7 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import type { ComposerInputElement } from "./composer-dom";
+import { readView, writeView } from "../../shared/view-state";
 import { MessageComposer } from "./MessageComposer";
 import {
   act,
@@ -535,10 +536,15 @@ it("offers deletion for an empty edit, permits cancel and then confirms deletion
   await waitFor(() => expect(confirmation).not.toBeInTheDocument());
   expect(editor()).toHaveValue("");
   expect(h.publications).toHaveLength(0);
+  // Deleting a thread root here forgets its tab's saved name.
+  const { session } = h.owner;
+  const id = session.channels.window("room").rows[0]?.id;
+  writeView(session.scope, "tab-names", { [`room:${id}`]: "Launch plan" });
   submit();
   fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
   await waitFor(() => expect(h.publications).toHaveLength(1));
   expect(h.publication(0).event.kind).toBe(5);
+  expect(readView(session.scope, "tab-names", undefined)).toEqual({});
   await act(async () => h.publication(0).result.resolve());
   await waitFor(() => expect(screen.queryByText("Editing message")).toBeNull());
 });

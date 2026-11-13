@@ -16,8 +16,10 @@ import type {
   PanelOpening,
   RegisteredPanel,
 } from "../../features/panels/service";
+import { readView, writeView } from "../../shared/view-state";
 import {
   channelTabs,
+  forgetThreadTabName,
   panelTabId,
   rootOfTab,
   useChannelTabState,
@@ -1414,6 +1416,72 @@ test("a provisional tab merging into an open root keeps the root's clear across 
   expect(third.tabs.list("alpha")).toMatchObject([
     { root: "r1", name: undefined },
   ]);
+});
+
+test("a scope keeps its 256 newest tab names", () => {
+  const scope = crypto.randomUUID();
+  writeView(
+    scope,
+    "tab-names",
+    Object.fromEntries(
+      Array.from({ length: 256 }, (_, index) => [`alpha:old${index}`, "Old"]),
+    ),
+  );
+  const first = launch(scope);
+  act(() => first.tabs.open("alpha", "r1"));
+  first.rename("thread:alpha:r1", "Launch plan");
+  const names = Object.keys(readView(scope, "tab-names", {}));
+  expect(names).toHaveLength(256);
+  expect(names[0]).toBe("alpha:old1");
+  expect(names.at(-1)).toBe("alpha:r1");
+  // Renaming makes a name the newest again.
+  first.rename("thread:alpha:r1", "Retro");
+  first.page.unmount();
+  const second = launch(scope);
+  act(() => {
+    second.tabs.open("alpha", "old0");
+    second.tabs.open("alpha", "old1");
+    second.tabs.open("alpha", "r1");
+  });
+  expect(second.tabs.list("alpha")).toMatchObject([
+    { root: "old0", name: undefined },
+    { root: "old1", name: "Old" },
+    { root: "r1", name: "Retro" },
+  ]);
+});
+
+test("deleting a thread or channel here forgets its tab names", () => {
+  const scope = crypto.randomUUID();
+  const removals = new Set<(channelId: string) => void>();
+  const session = {
+    ...tabSession(),
+    scope,
+    viewer: "viewer",
+    channelLifecycle: {
+      observeRemoval(listener: (channelId: string) => void) {
+        removals.add(listener);
+        return () => removals.delete(listener);
+      },
+    },
+  } as unknown as RelaySession;
+  const tabs = channelTabs(session);
+  act(() => {
+    tabs.open("alpha", "r1");
+    tabs.open("alpha", "r2");
+    tabs.rename("alpha", "r1", "Launch plan");
+    tabs.rename("alpha", "r2", "Retro");
+  });
+  writeView(scope, "tab-names", {
+    ...readView(scope, "tab-names", {}),
+    "beta:r1": "Elsewhere",
+  });
+  forgetThreadTabName(session, "alpha", "r1");
+  expect(readView(scope, "tab-names", {})).toEqual({
+    "alpha:r2": "Retro",
+    "beta:r1": "Elsewhere",
+  });
+  for (const listener of removals) listener("alpha");
+  expect(readView(scope, "tab-names", {})).toEqual({ "beta:r1": "Elsewhere" });
 });
 
 test("sessions without a viewer keep tab names in memory only", () => {

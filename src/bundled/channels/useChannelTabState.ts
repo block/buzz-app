@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import { clearView, readView, writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 import type { PanelOpening } from "../../features/panels/service";
 import type { ChannelDrawerOpening } from "./useChannelPanels";
 import {
@@ -248,19 +248,48 @@ const forgetVisits = (scope: string) => {
 };
 // Thread tab names are durable view intent for an account/community, unlike
 // the layout: a thread's tab takes its name again when it reopens after a
-// restart. Leaving the community clears them with its other view state.
+// restart. One record keeps the 256 newest names, "" for a cleared one,
+// oldest first. Deleting the thread or channel here, or leaving the community,
+// forgets them.
 type ThreadTab = Extract<ConversationTab, { kind: "thread" }>;
-const nameKey = (tab: ThreadTab) =>
-  `tab-name:${tab.channelId}:${rootOfTab(tab)}`;
-const saveName = (scope: string, key: string, name: string | undefined) => {
-  if (name) writeView(scope, key, name);
-  else
-    try {
-      clearView(scope, key);
-    } catch {
-      // The open tab keeps its automatic title for this session.
-    }
+const NAMES = "tab-names";
+const MAX_NAMES = 256;
+const nameKey = (tab: ThreadTab) => `${tab.channelId}:${rootOfTab(tab)}`;
+const savedNames = (scope: string) => {
+  const names = readView<unknown>(scope, NAMES, undefined);
+  return new Map(
+    names && typeof names === "object" && !Array.isArray(names)
+      ? Object.entries(names)
+      : [],
+  );
 };
+const readName = (scope: string, key: string) => {
+  const name = savedNames(scope).get(key);
+  return typeof name === "string" ? name : undefined;
+};
+/** Applies `edit`, which reports whether it changed the names. */
+const editNames = (
+  scope: string,
+  edit: (names: Map<string, unknown>) => boolean,
+) => {
+  const names = savedNames(scope);
+  if (edit(names))
+    writeView(scope, NAMES, Object.fromEntries([...names].slice(-MAX_NAMES)));
+};
+/** Saves a name as the newest; undefined forgets it. */
+const saveName = (scope: string, key: string, name: string | undefined) =>
+  editNames(scope, (names) => {
+    const existed = names.delete(key);
+    if (name !== undefined) names.set(key, name);
+    return existed || name !== undefined;
+  });
+const forgetChannelNames = (scope: string, channelId: string) =>
+  editNames(scope, (names) => {
+    const before = names.size;
+    for (const key of names.keys())
+      if (key.startsWith(`${channelId}:`)) names.delete(key);
+    return names.size !== before;
+  });
 function withSavedNames(scope: string, previous: State, next: State): State {
   if (next.tabs === previous.tabs) return next;
   let restored = false;
@@ -273,7 +302,7 @@ function withSavedNames(scope: string, previous: State, next: State): State {
     if (prior && nameKey(prior) === key) {
       // A cleared name is kept as "" so a stale provisional name cannot
       // replace it later.
-      if (prior.name !== tab.name) writeView(scope, key, tab.name ?? "");
+      if (prior.name !== tab.name) saveName(scope, key, tab.name ?? "");
       return tab;
     }
     if (tab.name) {
@@ -282,8 +311,8 @@ function withSavedNames(scope: string, previous: State, next: State): State {
       // its tab.
       if (prior) {
         saveName(scope, nameKey(prior), undefined);
-        const saved = readView<unknown>(scope, key, undefined);
-        if (typeof saved === "string") {
+        const saved = readName(scope, key);
+        if (saved !== undefined) {
           restored = true;
           return { ...tab, name: saved || undefined };
         }
@@ -291,8 +320,8 @@ function withSavedNames(scope: string, previous: State, next: State): State {
       }
       return tab;
     }
-    const name = readView<unknown>(scope, key, undefined);
-    if (typeof name !== "string" || !name) return tab;
+    const name = readName(scope, key);
+    if (!name) return tab;
     restored = true;
     return { ...tab, name };
   });
@@ -353,12 +382,8 @@ function createTabStore(scope?: string) {
       }
     },
     /** A thread's saved name, "" once cleared, or undefined if never named. */
-    savedName(tab: ThreadTab) {
-      const name = scope
-        ? readView<unknown>(scope, nameKey(tab), undefined)
-        : undefined;
-      return typeof name === "string" ? name : undefined;
-    },
+    savedName: (tab: ThreadTab) =>
+      scope ? readName(scope, nameKey(tab)) : undefined,
     /** A provisional tab merged into its root's tab gives up its hint's name. */
     forgetName(tab: ThreadTab, owner: ThreadTab) {
       if (scope && !tab.rootId && nameKey(tab) !== nameKey(owner))
@@ -397,12 +422,26 @@ const keyOf = (page: string, channelId: string) =>
 function storeOf(session: RelaySession) {
   let store = sessions.get(session);
   if (!store) {
-    store = createTabStore(session.viewer ? session.scope : undefined);
+    const scope = session.viewer ? session.scope : undefined;
+    store = createTabStore(scope);
     sessions.set(session, store);
+    if (scope)
+      session.channelLifecycle?.observeRemoval((channelId) =>
+        forgetChannelNames(scope, channelId),
+      );
   }
   return store;
 }
 
+/** A thread deleted on this device forgets its tab's name. */
+export function forgetThreadTabName(
+  session: RelaySession,
+  channelId: string,
+  rootId: string,
+) {
+  if (session.viewer)
+    saveName(session.scope, `${channelId}:${rootId}`, undefined);
+}
 /** A blank name restores the tab's automatic title. */
 const named = (tab: ConversationTab, name: string): ConversationTab =>
   tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;

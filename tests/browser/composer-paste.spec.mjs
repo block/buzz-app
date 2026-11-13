@@ -369,6 +369,59 @@ test("copied office text pastes as text, not its picture", async ({
   await expect(attachments).toHaveCount(0);
 });
 
+// A long paste paints as text before its links become chips, then keeps
+// one undo step for the whole paste.
+test("a long pasted text with links shows before its chips", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const text = Array.from(
+    { length: 40 },
+    (_, line) =>
+      `Line ${line} of the notes links https://example.com/notes/${line} for review.`,
+  ).join("\n");
+  await input.click();
+  await input.pressSequentially("Notes: ");
+  const pasted = await input.evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+    return {
+      value: element.value,
+      chips: element.querySelectorAll("[data-source]").length,
+    };
+  }, text);
+  expect(pasted).toEqual({ value: `Notes: ${text}`, chips: 0 });
+  await expect(input.locator("[data-source]")).toHaveCount(40);
+  await expect(input).toHaveJSProperty("value", `Notes: ${text}`);
+  // The caret stays after the pasted text once its chips render.
+  expect(
+    await input.evaluate((element) => {
+      const caret = getSelection()?.getRangeAt(0);
+      const after = document.createRange();
+      after.setStart(caret.endContainer, caret.endOffset);
+      after.setEnd(element, element.childNodes.length);
+      return caret.collapsed && after.toString();
+    }),
+  ).toBe("");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "Notes: ");
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty("value", `Notes: ${text}`);
+  await expect(input.locator("[data-source]")).toHaveCount(40);
+});
+
 // Browser integration: a native paste event over a selection reaches
 // the editor's link path, renders the anchor and publishes the linked label.
 test("pasting a URL over selected text links it in the composer and sent message", async ({

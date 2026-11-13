@@ -143,6 +143,8 @@ export type EditorDecoration = {
 const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
 /** The control characters typed text holds: tab, newline and carriage return. */
 const TYPED_CONTROLS = /[\t\n\r]/u;
+/** Pastes from this length paint as text before their chips render. */
+const deferredPasteLength = 1000;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** True when a native text insertion holds only control characters. Text that
  * mixes them with real characters is not control text and passes untouched. */
@@ -563,6 +565,9 @@ export function EditableInput({
       }
       editor.dom.dispatchEvent(new Event("select"));
     };
+    // A long paste paints as text first; its chips follow after that paint, so
+    // building every chip's artwork never delays the pasted text appearing.
+    let tokensDeferred = false;
     const normalize = new Plugin({
       filterTransaction(tr) {
         return (
@@ -590,6 +595,23 @@ export function EditableInput({
             .find((tr) => tr.getMeta("composer-edit"))
             ?.getMeta("composer-edit"),
         );
+        if (
+          !tokensDeferred &&
+          transactions.some((tr) => tr.getMeta("composer-defer-tokens"))
+        ) {
+          tokensDeferred = true;
+          requestAnimationFrame(() =>
+            setTimeout(() => {
+              tokensDeferred = false;
+              if (editor.isDestroyed) return;
+              const tr = editor.state.tr
+                .setMeta("composer-decorations", true)
+                .setMeta("addToHistory", false);
+              editor.dispatch(editor.hasFocus() ? tr.scrollIntoView() : tr);
+            }),
+          );
+        }
+        if (tokensDeferred) return;
         const safe = mentionDraft(next.draft);
         const decorations = current.current
           .decorationsFor(safe)
@@ -903,6 +925,14 @@ export function EditableInput({
         onTooLong?.();
         return !!terminator; // The typed colon landed even if conversion cannot.
       }
+      // Only pastes report overlong text. Pasted identity links become
+      // recipients at once, so they need their chips in this transaction.
+      if (
+        onTooLong &&
+        text.length >= deferredPasteLength &&
+        !text.includes("nostr:")
+      )
+        tr.setMeta("composer-defer-tokens", true);
       const unconverted = editor.state;
       editor.dispatch(focus ? tr.scrollIntoView() : tr);
       if (terminator && editor.state !== unconverted) separateHistory = true;

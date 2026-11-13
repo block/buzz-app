@@ -73,6 +73,12 @@ pub(crate) fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Whether Buzz's icon is in the notification area, so a closed window can
+/// come back.
+pub(crate) fn installed<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.tray_by_id(TRAY_ID).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +92,16 @@ mod tests {
             button,
             button_state,
         }
+    }
+
+    #[test]
+    fn installed_only_after_install() {
+        let app = tauri::test::mock_builder()
+            .build(crate::app_context())
+            .expect("mock app");
+        assert!(!installed(app.handle()));
+        install(app.handle()).expect("tray icon");
+        assert!(installed(app.handle()));
     }
 
     #[test]

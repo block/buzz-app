@@ -11,7 +11,6 @@ import {
   Virtualizer,
   type VirtualizerHandle,
 } from "virtua";
-import { SafeMarkdown } from "../../features/messages/SafeMarkdown";
 import type { RelaySession } from "../../features/relay/session";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { ListBulletsIcon } from "../../shared/design-system/icons";
@@ -42,6 +41,7 @@ import {
   rehypeHighlight,
 } from "./highlight";
 import { type BufferControl, PartBuffer } from "./part-buffer";
+import { type MediaSource, PartMarkdown } from "./PartMarkdown";
 import type { FileTarget } from "./target";
 import styles from "./FileViewer.module.css";
 
@@ -56,8 +56,6 @@ const OUTLINE_STEPS: Partial<Record<string, number>> = {
 };
 /** How far below the top of the view a heading still counts as the current section. */
 const SECTION_SLACK = 8;
-
-export type MediaSource = (url: string) => string | undefined;
 
 type Highlighted = ReturnType<typeof highlight>;
 type HastNode = Highlighted["children"][number];
@@ -160,12 +158,6 @@ function IndexedDocument({
     [doc],
   );
 
-  const picture = useCallback(
-    ({ src, alt }: { src: string; alt: string }) => (
-      <Picture src={src} alt={alt} media={media} />
-    ),
-    [media],
-  );
   const slice = useCallback(
     (index: number) => {
       const part = doc.parts[index];
@@ -210,21 +202,21 @@ function IndexedDocument({
           </>
         );
       return (
-        <SafeMarkdown
+        <PartMarkdown
           content={prepared}
           openLink={openLink}
           session={session}
-          remarkPlugins={[remarkPartHeadings(doc, index)]}
-          rehypePlugins={[
+          transforms={[remarkPartHeadings(doc, index)]}
+          rehype={[
             rehypePartFootnotes(doc, index),
             [rehypeHighlight, { highlight: highlighter }],
           ]}
-          image={picture}
+          media={media}
           onAnchor={scrollTo}
         />
       );
     },
-    [doc, kind, slice, openLink, session, picture, scrollTo, highlighter],
+    [doc, kind, slice, openLink, session, media, scrollTo, highlighter],
   );
 
   const meta = useMemo(() => {
@@ -343,29 +335,6 @@ function renderHast(nodes: readonly HastNode[]): ReactNode[] {
 
 /** A community image, drawn through the session's media source; any other
  * image, or one that fails to load, is its alt text. */
-function Picture({
-  src,
-  alt,
-  media,
-}: {
-  src: string;
-  alt: string;
-  media: MediaSource | undefined;
-}) {
-  const source = media?.(src);
-  const [failed, setFailed] = useState(false);
-  if (!source || failed) return alt;
-  return (
-    <img
-      className={styles.picture}
-      src={source}
-      alt={alt}
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
 /** The outline's button and list. The list opens at the current section: the
  * last heading at or above the top of the view. */
 function Outline({

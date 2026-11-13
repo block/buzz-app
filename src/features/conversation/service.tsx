@@ -27,6 +27,7 @@ import type {
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
+  ComposerAnnotator,
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
@@ -35,6 +36,7 @@ import type {
   MessageAction,
   ContributionReader,
   PageTabsProps,
+  ConversationWorkspaceProps,
 } from "./contracts";
 import type { RelaySession } from "../relay/session";
 
@@ -72,6 +74,9 @@ export type Conversation = {
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
   registerCompletion(provider: ComposerCompletion): void;
+  annotators: ContributionReader<ComposerAnnotator>;
+  /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
+  registerAnnotator(annotator: ComposerAnnotator): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   links: ContributionReader<LinkRenderer>;
@@ -99,9 +104,15 @@ export type Conversation = {
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
+    /** A permanent conversation with a side pane; supplied by Channels. */
+    readonly Workspace?:
+      | ((props: ConversationWorkspaceProps) => ReactNode)
+      | undefined;
   };
   /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
+  /** Provides `ui.Workspace` while the plugin runs; the first one wins. */
+  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>): void;
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
   /** Shows `component` as each Solo chat's sidebar icon while the providing
@@ -132,6 +143,7 @@ function validate(
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
+    | ComposerAnnotator
     | ComposerAccessory
     | LinkRenderer
     | LinkPreviewRenderer
@@ -161,6 +173,8 @@ export class ConversationService extends Service implements Conversation {
   private readonly accessoryEntries;
   readonly completions;
   private readonly completionEntries;
+  readonly annotators;
+  private readonly annotatorEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
@@ -175,6 +189,7 @@ export class ConversationService extends Service implements Conversation {
   readonly identityMarks;
   private readonly identityMarkEntries;
   private readonly tabEntries;
+  private readonly workspaceEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
   readonly chatIcons;
@@ -206,6 +221,12 @@ export class ConversationService extends Service implements Conversation {
     this.completions = {
       snapshot: completions.snapshot,
       subscribe: completions.subscribe,
+    };
+    const annotators = createContributions<ComposerAnnotator>(ctx);
+    this.annotatorEntries = annotators;
+    this.annotators = {
+      snapshot: annotators.snapshot,
+      subscribe: annotators.subscribe,
     };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
@@ -241,6 +262,11 @@ export class ConversationService extends Service implements Conversation {
       component: ComponentType<PageTabsProps>;
     }>(ctx);
     this.tabEntries = tabs;
+    const workspaces = createContributions<{
+      id: string;
+      component: ComponentType<ConversationWorkspaceProps>;
+    }>(ctx);
+    this.workspaceEntries = workspaces;
     const chatMenus = createContributions<ChatMenu>(ctx);
     this.chatMenuEntries = chatMenus;
     this.chatMenus = {
@@ -255,6 +281,10 @@ export class ConversationService extends Service implements Conversation {
     };
     const Tabs = (props: PageTabsProps) => {
       const Provided = tabs.snapshot()[0]?.component;
+      return Provided ? <Provided {...props} /> : null;
+    };
+    const Workspace = (props: ConversationWorkspaceProps) => {
+      const Provided = workspaces.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
     };
     this.ui = {
@@ -275,12 +305,20 @@ export class ConversationService extends Service implements Conversation {
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;
       },
+      get Workspace() {
+        return workspaces.snapshot().length ? Workspace : undefined;
+      },
     };
   }
   registerTabs(component: ComponentType<PageTabsProps>) {
     if (typeof component !== "function")
       throw new Error("Page tabs need a component");
     this.tabEntries.register(this.ctx, { id: "tabs", component });
+  }
+  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>) {
+    if (typeof component !== "function")
+      throw new Error("A conversation workspace needs a component");
+    this.workspaceEntries.register(this.ctx, { id: "workspace", component });
   }
   registerChatMenu(component: ComponentType<ChatMenuProps>) {
     if (typeof component !== "function")
@@ -349,6 +387,10 @@ export class ConversationService extends Service implements Conversation {
     if (typeof value.match !== "function")
       throw new Error("A completion provider needs a matcher");
     this.completionEntries.register(this.ctx, value);
+  }
+  registerAnnotator(value: ComposerAnnotator) {
+    validate(value);
+    this.annotatorEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

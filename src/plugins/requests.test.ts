@@ -367,6 +367,8 @@ describe("update, enable and remove requests", () => {
     expect(checkGit).toHaveBeenCalledWith(
       "https://example.com/plugins.git",
       "main",
+      undefined,
+      { path: "notes" },
     );
     expect(requests.pending()[0]).toMatchObject({
       id: requestId,

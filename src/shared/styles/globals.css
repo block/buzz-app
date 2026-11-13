@@ -220,6 +220,10 @@
     min-height: 0;
   }
   .shell-dock-pages {
+    /* Keep corner counts and focus rings inside the scrollport without
+       changing the dock width or the tile positions. */
+    padding: var(--space-3);
+    margin: calc(-1 * var(--space-3));
     min-height: 0;
     flex: 1;
     overflow-y: auto;

@@ -42,75 +42,12 @@
   line-height: var(--text-message--line-height);
   letter-spacing: var(--text-message--letter-spacing);
 }
-.markdown .part > * {
-  margin-block: 0;
-}
-.markdown .part > * + *,
 .markdown .part + .part {
   margin-block-start: var(--space-4);
-}
-.markdown h1,
-.markdown h2 {
-  font-size: var(--text-heading);
-  line-height: var(--text-heading--line-height);
-  letter-spacing: var(--text-heading--letter-spacing);
-  font-weight: var(--text-heading--font-weight);
-}
-.markdown h1 {
-  font-size: var(--text-title);
-  line-height: var(--text-title--line-height);
-  letter-spacing: var(--text-title--letter-spacing);
-}
-.markdown h3,
-.markdown h4,
-.markdown h5,
-.markdown h6 {
-  font-size: var(--text-label);
-  line-height: var(--text-label--line-height);
-  font-weight: var(--text-label--font-weight);
-}
-.markdown code {
-  font-family: var(--font-mono);
-}
-.markdown blockquote {
-  margin-inline: 0;
-  padding-inline-start: var(--space-3);
-  border-inline-start: 2px solid var(--border-standard);
-  color: var(--text-secondary);
-}
-.markdown th,
-.markdown td {
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-standard);
-}
-.markdown pre {
-  overflow: auto;
-  white-space: pre-wrap;
-}
-.markdown a:not([data-solo-link]) {
-  color: var(--text-link);
-  text-decoration: underline;
-}
-.markdown table {
-  display: block;
-  overflow: auto;
 }
 .picture {
   max-width: 100%;
   height: auto;
-}
-.markdown ul,
-.markdown ol {
-  padding-inline-start: var(--space-6);
-}
-.markdown ul {
-  list-style: disc;
-}
-.markdown ol {
-  list-style: decimal;
-}
-.markdown li:has(> input[type="checkbox"]) {
-  list-style: none;
 }
 .text {
   margin: 0;

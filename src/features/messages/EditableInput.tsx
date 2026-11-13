@@ -49,7 +49,10 @@ import {
   resourceBlockingMarks,
 } from "./composer-document";
 import { scanMarkdown } from "../relay/message-content";
-import type { ComposerResource } from "../conversation/contracts";
+import type {
+  AnnotationObservation,
+  ComposerResource,
+} from "../conversation/contracts";
 import {
   composerToken,
   composerTokenName,
@@ -74,10 +77,21 @@ import {
 } from "./composer-inline-input";
 import { composerMarkdown } from "./composer-markdown";
 import {
+  annotationAt,
+  annotationPlugin,
+  annotationRevision,
+  proseSpans,
+  replaceAnnotation,
+  showAnnotations,
+  shownAnnotations,
+  type AnnotationMark,
+} from "./composer-annotations";
+import {
   buzzCopyDocument,
   externalLinkMarkdown,
   composerClipboard,
   identityLink,
+  pastedFiles,
 } from "./composer-clipboard";
 import {
   mentionBoundary,
@@ -95,6 +109,7 @@ import {
   type ComposerFormatBinding,
   type ComposerLinkEdit,
   type ComposerInputElement,
+  type AnnotationMenuRequest,
 } from "./composer-dom";
 import { isApplePlatform } from "../shortcuts/format";
 import { macWebKit, webKit } from "./mac-webkit";
@@ -128,6 +143,8 @@ export type EditorDecoration = {
 const CONTROL_CHARACTERS = /[\p{Cc}\uF700-\uF747]/gu;
 /** The control characters typed text holds: tab, newline and carriage return. */
 const TYPED_CONTROLS = /[\t\n\r]/u;
+/** Pastes from this length paint as text before their chips render. */
+const deferredPasteLength = 1000;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** True when a native text insertion holds only control characters. Text that
  * mixes them with real characters is not control text and passes untouched. */
@@ -396,6 +413,8 @@ export type EditableInputProps = Omit<
   /** Vet a pasted identity link as a notification recipient: the recipient under
    * its current name, or null to keep the display-only chip. */
   acceptRecipient?(pubkey: string): MentionRecipient | null;
+  /** Right-click or Mod+. on a shown annotation. Without it, marks are inert. */
+  onAnnotationMenu?: ((request: AnnotationMenuRequest) => void) | undefined;
 };
 
 /** ProseMirror owns native editing, composition, selection and a single history.
@@ -413,6 +432,7 @@ export function EditableInput({
   onEditLink,
   onPasteTooLong,
   acceptRecipient,
+  onAnnotationMenu,
   ...events
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -430,6 +450,7 @@ export function EditableInput({
     onEditLink,
     onPasteTooLong,
     acceptRecipient,
+    onAnnotationMenu,
     disabled,
     placeholder,
     autocorrect,
@@ -443,6 +464,7 @@ export function EditableInput({
     onEditLink,
     onPasteTooLong,
     acceptRecipient,
+    onAnnotationMenu,
     disabled,
     placeholder,
     autocorrect,
@@ -476,6 +498,8 @@ export function EditableInput({
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
   const emitted = useRef(draft);
+  /** Opens the actions for the annotation at a document position, if any. */
+  const openAnnotation = useRef<(position: number) => boolean>(undefined);
   const api = useRef<{
     sync(draft: MentionDraft, reset?: boolean): void;
     /** Applies the settles held through the composition that has just ended. */
@@ -541,6 +565,30 @@ export function EditableInput({
       }
       editor.dom.dispatchEvent(new Event("select"));
     };
+    // A long paste paints as text first; its chips follow after that paint, so
+    // building every chip's artwork never delays the pasted text appearing.
+    // Until then no pass adopts chips inside the pasted text, so none enters
+    // a history event; the reconcile that adopts them stays out of history.
+    // Input and history commands adopt them first: a history step inside the
+    // unconverted text would lose its inverse positions to the conversion.
+    let pendingTokens: { from: number; to: number }[] = [];
+    const mapPending = (mapping: Transaction["mapping"]) => {
+      pendingTokens = pendingTokens
+        .map(({ from, to }) => ({
+          from: mapping.map(from, 1),
+          to: mapping.map(to, -1),
+        }))
+        .filter(({ from, to }) => from < to);
+    };
+    const flushTokens = () => {
+      if (editor.isDestroyed || editor.composing || !pendingTokens.length)
+        return;
+      pendingTokens = [];
+      const tr = editor.state.tr
+        .setMeta("composer-decorations", true)
+        .setMeta("addToHistory", false);
+      editor.dispatch(editor.hasFocus() ? tr.scrollIntoView() : tr);
+    };
     const normalize = new Plugin({
       filterTransaction(tr) {
         return (
@@ -550,6 +598,14 @@ export function EditableInput({
         );
       },
       appendTransaction(transactions, old, state) {
+        for (const tr of transactions) {
+          mapPending(tr.mapping);
+          const pasted = tr.getMeta("composer-defer-tokens");
+          if (!pasted) continue;
+          if (!pendingTokens.length)
+            requestAnimationFrame(() => setTimeout(flushTokens));
+          pendingTokens.push(pasted);
+        }
         if (
           !transactions.some(
             (tr) => tr.docChanged || tr.getMeta("composer-decorations"),
@@ -568,6 +624,10 @@ export function EditableInput({
             .find((tr) => tr.getMeta("composer-edit"))
             ?.getMeta("composer-edit"),
         );
+        const deferred = pendingTokens.map(({ from, to }) => ({
+          start: next.source(from),
+          end: next.source(to),
+        }));
         const safe = mentionDraft(next.draft);
         const decorations = current.current
           .decorationsFor(safe)
@@ -635,6 +695,12 @@ export function EditableInput({
             to = next.position(item.end, -1);
           if (next.source(from) !== item.start || next.source(to) !== item.end)
             continue;
+          if (
+            deferred.some(
+              (range) => item.start >= range.start && item.end <= range.end,
+            )
+          )
+            continue;
           tr.replaceWith(
             from,
             to,
@@ -692,6 +758,8 @@ export function EditableInput({
             composerSchema.text(token.node.attrs.source, token.node.marks),
           );
         if (!tr.docChanged) return;
+        // ProseMirror never passes a plugin its own appended transaction.
+        mapPending(tr.mapping);
         if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
         return tr.setMeta("composer-normalized", true);
       },
@@ -728,8 +796,13 @@ export function EditableInput({
         },
       },
     });
+    let observed: { doc: EditorNode; value: AnnotationObservation } | undefined;
+    const annotations = annotationPlugin(
+      styles.annotation ?? "",
+      () => composing.current || !!editor?.composing,
+    );
     const state = (doc = initial) =>
-      EditorState.create({ doc, plugins: [history(), normalize] });
+      EditorState.create({ doc, plugins: [history(), normalize, annotations] });
     const setRange = (start: number, end: number, direction?: string) => {
       openTokens(start, end);
       const source = projection();
@@ -785,6 +858,7 @@ export function EditableInput({
       onTooLong?: () => void,
     ) => {
       if (!editable() || composing.current || editor.composing) return false;
+      flushTokens();
       // The key that ended a name follows its mention in place of the space;
       // only text records its terminator before converting.
       const after = (recipient && terminator) || " ";
@@ -876,6 +950,14 @@ export function EditableInput({
         onTooLong?.();
         return !!terminator; // The typed colon landed even if conversion cannot.
       }
+      // Only pastes report overlong text. Pasted identity links become
+      // recipients at once, so they need their chips in this transaction.
+      if (
+        onTooLong &&
+        text.length >= deferredPasteLength &&
+        !text.includes("nostr:")
+      )
+        tr.setMeta("composer-defer-tokens", { from, to: from + text.length });
       const unconverted = editor.state;
       editor.dispatch(focus ? tr.scrollIntoView() : tr);
       if (terminator && editor.state !== unconverted) separateHistory = true;
@@ -963,6 +1045,42 @@ export function EditableInput({
       editor.dispatch(tr.scrollIntoView());
       editor.focus();
       return { from, to: editor.state.selection.to };
+    };
+    /** Quote copied timeline content after the draft, wherever its caret is,
+     * and continue on a new line below it. A blank last paragraph, such as an
+     * empty draft's, gives way to the quote. Quoted identity links stay
+     * references: unlike a paste, quoting someone never notifies them. */
+    const insertQuote = (html: string) => {
+      if (!editable() || composing.current || editor.composing) return false;
+      const copy = buzzCopyDocument(html);
+      if (!copy?.textContent.trim()) return false;
+      const { nodes } = composerSchema;
+      const tr = closeHistory(editor.state.tr);
+      const end = tr.doc.content.size;
+      const last = tr.doc.lastChild;
+      const from =
+        last?.type === nodes.paragraph && !last.content.size
+          ? end - last.nodeSize
+          : end;
+      tr.replaceWith(from, end, [
+        nodes.blockquote.create(null, copy.content),
+        nodes.paragraph.create(),
+      ]);
+      tr.setSelection(Selection.atEnd(tr.doc));
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      ) {
+        current.current.onPasteTooLong?.();
+        return false;
+      }
+      const before = editor.state;
+      editor.dispatch(tr.scrollIntoView());
+      if (editor.state === before) return false;
+      // The reply typed below the quote is its own undo step.
+      separateHistory = true;
+      editor.focus();
+      return true;
     };
     const replaceRecipients = (recipients: readonly MentionRecipient[]) => {
       if (!editable() || composing.current || editor.composing) return false;
@@ -1286,6 +1404,7 @@ export function EditableInput({
     };
     const toggleFormat = (format: ComposerFormat) => {
       if (!editable() || composing.current || editor.composing) return;
+      flushTokens();
       // Formatting operates on textblock contents, not the document's outer edges.
       if (editor.state.selection instanceof AllSelection) {
         const doc = editor.state.doc;
@@ -1600,6 +1719,7 @@ export function EditableInput({
     };
     const historyCommand = (forward: boolean) => {
       if (!editable() || composing.current || editor.composing) return;
+      flushTokens();
       (forward ? redo : undo)(editor.state, editor.dispatch);
       editor.focus();
     };
@@ -2124,6 +2244,7 @@ export function EditableInput({
             return false;
           },
           mousedown() {
+            flushTokens();
             plainPaste = false;
             return false;
           },
@@ -2140,13 +2261,19 @@ export function EditableInput({
           // Send/completion/cancel policy belongs to the host. ProseMirror's
           // default capture otherwise prevents Escape before React can cancel edits.
           keydown(_view, event) {
+            flushTokens();
             return (
               (event.key === "Enter" || event.key === "Escape") &&
               !event.isComposing &&
               !composing.current
             );
           },
+          compositionstart() {
+            flushTokens();
+            return false;
+          },
           beforeinput(_view, event) {
+            flushTokens();
             // Native insertion can restore focus before its input/selectionchange
             // events. That focus must not overwrite the just-advanced caret.
             // Hold until the task ends: ProseMirror reads the inserted text in
@@ -2208,6 +2335,7 @@ export function EditableInput({
             return true;
           },
           cut(_view, event) {
+            flushTokens();
             copySelection(event);
             if (editable())
               editor.dispatch(closeHistory(editor.state.tr.deleteSelection()));
@@ -2215,15 +2343,11 @@ export function EditableInput({
           },
           paste(_view, event) {
             event.preventDefault();
+            flushTokens();
             const raw = plainPaste;
             plainPaste = false;
             // File paste belongs to the host attachment capture; never replace text.
-            if (
-              Array.from(event.clipboardData?.items ?? []).some(
-                (item) => item.kind === "file",
-              )
-            )
-              return true;
+            if (pastedFiles(event.clipboardData).length) return true;
             const plain = event.clipboardData?.getData("text/plain") ?? "";
             // Raw text replaces the selection with the caret's marks: no copied
             // structure, links, selection linking, URL spacing or recipients.
@@ -2441,6 +2565,7 @@ export function EditableInput({
         },
       },
       editLink: { configurable: true, value: editLink },
+      insertQuote: { configurable: true, value: insertQuote },
       removeRecipient: {
         configurable: true,
         value: (pubkey: string) => {
@@ -2468,6 +2593,7 @@ export function EditableInput({
       checkpoint: {
         configurable: true,
         value: () => {
+          flushTokens();
           const saved = editor.state;
           const savedDraft = emitted.current;
           const savedPlain = [...plain.current];
@@ -2475,6 +2601,7 @@ export function EditableInput({
           return () => {
             if (view.current !== editor) return;
             plain.current = savedPlain;
+            pendingTokens = [];
             separateHistory = savedSeparateHistory;
             emitted.current = savedDraft;
             editor.updateState(saved);
@@ -2487,7 +2614,118 @@ export function EditableInput({
         configurable: true,
         value: (next: MentionDraft) => api.current?.sync(next, true),
       },
+      shownAnnotations: {
+        configurable: true,
+        get: () => shownAnnotations(editor.state),
+      },
+      annotationObservation: {
+        configurable: true,
+        value: () => {
+          if (
+            view.current !== editor ||
+            !editable() ||
+            composing.current ||
+            editor.composing ||
+            !editor.hasFocus()
+          )
+            return null;
+          // One object per document, so a publication for it stays current.
+          const doc = editor.state.doc;
+          if (observed?.doc !== doc)
+            observed = {
+              doc,
+              value: Object.freeze({
+                revision: annotationRevision(doc),
+                text: projection().draft.text,
+                prose: Object.freeze(proseSpans(doc)),
+              }),
+            };
+          return observed.value;
+        },
+      },
+      showAnnotations: {
+        configurable: true,
+        value: (revision: number, marks: readonly AnnotationMark[]) => {
+          // Owners may clear their marks after the editor has unmounted.
+          if (view.current !== editor) return !marks.length;
+          if (
+            marks.length &&
+            (!editable() || composing.current || editor.composing)
+          )
+            return false;
+          const tr = showAnnotations(editor.state, revision, marks);
+          if (tr) editor.dispatch(tr);
+          return !!tr || !marks.length;
+        },
+      },
+      replaceAnnotation: {
+        configurable: true,
+        value: (
+          revision: number,
+          target: { start: number; end: number; text: string },
+          replacement: string,
+        ) => {
+          if (
+            view.current !== editor ||
+            !editable() ||
+            composing.current ||
+            editor.composing
+          )
+            return false;
+          const tr = replaceAnnotation(
+            editor.state,
+            revision,
+            target,
+            replacement,
+          );
+          if (!tr) return false;
+          const before = editor.state;
+          editor.dispatch(tr.scrollIntoView());
+          if (editor.state === before) return false;
+          // Typing after the replacement starts its own undo step.
+          separateHistory = true;
+          editor.focus();
+          return true;
+        },
+      },
     });
+    openAnnotation.current = (position: number) => {
+      const mark = annotationAt(editor.state, position);
+      const open = current.current.onAnnotationMenu;
+      if (
+        !mark ||
+        !open ||
+        !editable() ||
+        composing.current ||
+        editor.composing
+      )
+        return false;
+      const source = projectComposerDocument(editor.state.doc);
+      const from = source.position(mark.start),
+        to = source.position(mark.end, -1);
+      open({
+        revision: annotationRevision(editor.state.doc),
+        mark,
+        anchor: {
+          getBoundingClientRect() {
+            try {
+              const start = editor.coordsAtPos(from, 1),
+                end = editor.coordsAtPos(to, -1);
+              const left = Math.min(start.left, end.left);
+              return new DOMRect(
+                left,
+                start.top,
+                Math.max(start.right, end.right) - left,
+                Math.max(start.bottom, end.bottom) - start.top,
+              );
+            } catch {
+              return editor.dom.getBoundingClientRect();
+            }
+          },
+        },
+      });
+      return true;
+    };
     api.current = {
       settleHeld() {
         // ProseMirror skips its own compositionend handler while the view is
@@ -2504,6 +2742,7 @@ export function EditableInput({
         )
           return;
         plain.current = [];
+        pendingTokens = [];
         const doc = readComposerDocument(
           next,
           current.current.decorationsFor(next),
@@ -2533,6 +2772,7 @@ export function EditableInput({
       ref.current = null;
       view.current = null;
       api.current = null;
+      openAnnotation.current = undefined;
       for (const held of heldSettles.current.splice(0)) held.resolve(false);
       editor.destroy();
     };
@@ -2641,6 +2881,19 @@ export function EditableInput({
           )
             return;
           events.onKeyDown?.(event as KeyboardEvent<ComposerInputElement>);
+          const apple = isApplePlatform(navigator.platform);
+          if (
+            !event.defaultPrevented &&
+            event.key === "." &&
+            (apple
+              ? event.metaKey && !event.ctrlKey
+              : event.ctrlKey && !event.metaKey) &&
+            !event.altKey &&
+            !event.shiftKey &&
+            view.current &&
+            openAnnotation.current?.(view.current.state.selection.head)
+          )
+            event.preventDefault();
           if (!event.defaultPrevented && event.key === "Enter") {
             event.preventDefault();
             ref.current?.insertLineBreak();
@@ -2652,6 +2905,21 @@ export function EditableInput({
             crossTokenLine(view.current, hosts.current, event.key, event)
           )
             event.preventDefault();
+        }}
+        onContextMenu={(event) => {
+          const editor = view.current;
+          const target =
+            event.target instanceof Element
+              ? event.target.closest("[data-annotation]")
+              : null;
+          if (
+            editor &&
+            target &&
+            editor.dom.contains(target) &&
+            openAnnotation.current?.(editor.posAtDOM(target, 0))
+          )
+            event.preventDefault();
+          events.onContextMenu?.(event as never);
         }}
         onCompositionStart={(event) => {
           composing.current = true;

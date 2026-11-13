@@ -889,12 +889,26 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   assert.ok(!left.some(s=>s.request==='l1'));
   await pi.rpc('close',{agent:who});
   result.left=true;}
- // Work in the other mode that shows no progress for the host's bound fails
- // the turn waiting for it visibly, and its record goes with it.
+ // A run in the other mode that works silently past the host's bound, as a
+ // long tool call does, keeps the turn waiting for it, which starts once it
+ // ends. Work in the other mode with no run seen working and no progress for
+ // the bound fails the waiting turn visibly, and its record goes with it.
  {await pi.stop();pi=start(undefined,{parkMs:300});
   const who='7'.repeat(64),key='chan/stuck';
   await pi.rpc('open',{agent:who,tools});
   const ordinary={key,provider:'faux',model:'faux-1',gatewayTurn:undefined};
+  {const asked=Promise.withResolvers();
+   faux.setResponses([async()=>{asked.resolve();await new Promise(r=>setTimeout(r,1000));return fauxAssistantMessage('slow done');}]);
+   const g=await pi.rpc('deliver',turn('s0',{agent:who,...ordinary}));
+   await asked.promise;
+   const from=requests.length,started=Date.now();replies.push(say('after slow'));
+   const w=await within(pi.rpc('deliver',turn('s01',{agent:who,key})),'a turn behind a silent run');
+   assert.ok(Date.now()-started>=600);
+   assert.equal((await pi.rpc('wait',{agent:who,submission:g.submission,request:'s0'})).text,'slow done');
+   assert.equal((await pi.rpc('wait',{agent:who,submission:w.submission,request:'s01'})).status,'done');
+   assert.deepEqual(sent(from).map(msg),['s01']);}
+  // Its run's start held from the host's watch: no run is seen working.
+  const unseen=Promise.withResolvers();runStart=async()=>{runStart=undefined;await unseen.promise;};
   const asked=Promise.withResolvers();
   faux.setResponses([async(c,options)=>{asked.resolve();await new Promise((_,reject)=>options?.signal?.addEventListener('abort',()=>reject(new Error('aborted'))));}]);
   const from=requests.length;
@@ -904,6 +918,7 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   await assert.rejects(within(pi.rpc('deliver',turn('s2',{agent:who,key})),'a turn after stuck work'),/previous run didn't finish/);
   assert.ok(Date.now()-started>=250);
   assert.equal(requests.length,from);assert.equal((await records()).s2,undefined);
+  unseen.resolve();
   await pi.rpc('session',{agent:who,key,action:'interrupt'});
   assert.equal((await pi.rpc('wait',{agent:who,submission:g.submission,request:'s1'})).status,'unanswered');
   await pi.rpc('close',{agent:who});

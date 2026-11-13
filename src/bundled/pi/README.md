@@ -113,8 +113,9 @@ provider and model, as a blocked turn does.
 A turn steers only a run in its own mode, through the gateway or not. A turn
 in the other mode waits until Pi holds no work in that mode, read from Pi's
 storage. Its own wait for that work continues work a stopped host left. It
-fails visibly ("The previous run didn't finish") once that work shows no
-progress for 15 minutes. Interrupt withdraws every turn of the conversation
+fails visibly ("The previous run didn't finish") once no run works in the
+conversation and that work shows no progress for 15 minutes; a run that works
+silently, such as a long tool call, never fails it. Interrupt withdraws every turn of the conversation
 that Pi doesn't have yet, and Stop on a waiting turn's Activity withdraws
 that turn alone. A withdrawn turn is never submitted, and its record and
 reply destination are removed.

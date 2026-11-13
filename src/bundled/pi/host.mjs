@@ -1692,7 +1692,9 @@ export function serve({
    * Stop came for it. Woken when a run ends or such an input settles; its
    * own wait for each asks Pi for progress, which continues work a restart
    * left. A crash-parked task is stopped, failing its requests, as a wait
-   * does. With no activity in the conversation for `parkMs`, it fails. A
+   * does. With no run working in the conversation and no activity in it
+   * for `parkMs`, it fails: a run that works silently, as a long tool
+   * call does, never fails it. A
    * closing agent ends the wait. */
   async function settledMode(opened, conversation, state, bound, waiting) {
     const closed = () => new Error("This agent was closed.");
@@ -1726,7 +1728,8 @@ export function serve({
       }
       if (!other.length) return;
       if (waiting.interrupted) return WITHDRAWN;
-      if (state.events !== seen) {
+      // The bound runs only while no run works in the conversation.
+      if (state.busy || state.events !== seen) {
         seen = state.events;
         since = Date.now();
       }

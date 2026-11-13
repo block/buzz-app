@@ -1215,6 +1215,216 @@ test("an agent's tab name stays with the tab until cleared", () => {
   expect(remounted.result.current.tabs[0]).toMatchObject({ name: undefined });
 });
 
+/** One app launch: a new relay session for the same account and community. */
+function launch(scope: string, by: "agent" | "page" = "agent") {
+  const session = { ...tabSession(), scope, viewer: "viewer" } as RelaySession;
+  const page = renderHook(() => useChannelTabState(session, "alpha"));
+  const tabs = channelTabs(session);
+  const rename = (id: string, name: string) =>
+    act(() => {
+      if (by === "agent") tabs.rename("alpha", id.split(":")[2] ?? "", name);
+      else page.result.current.renameTab(id, name);
+    });
+  return { page, tabs, rename };
+}
+
+test.each(["agent", "page"] as const)(
+  "a thread tab renamed by the %s keeps its name across a restart until cleared",
+  (by) => {
+    const scope = crypto.randomUUID();
+    const first = launch(scope, by);
+    act(() => {
+      first.tabs.open("alpha", "r1");
+      first.tabs.open("alpha", "r2");
+    });
+    first.rename("thread:alpha:r1", "Launch plan");
+    first.rename("thread:alpha:r2", "Retro");
+    first.page.unmount();
+    // A restart starts with an empty tab store; reopened threads take their names.
+    const second = launch(scope, by);
+    expect(second.tabs.list("alpha")).toEqual([]);
+    act(() => {
+      second.tabs.open("alpha", "r1");
+      second.page.result.current.openThreadTab("alpha", "r2", "r2");
+    });
+    expect(second.page.result.current.tabs).toMatchObject([
+      { id: "thread:alpha:r1", name: "Launch plan" },
+      { id: "thread:alpha:r2", name: "Retro" },
+    ]);
+    second.rename("thread:alpha:r1", "  ");
+    expect(second.page.result.current.tabs[0]).toMatchObject({
+      name: undefined,
+    });
+    second.page.unmount();
+    const third = launch(scope, by);
+    act(() => {
+      third.tabs.open("alpha", "r1");
+      third.tabs.open("alpha", "r2");
+    });
+    expect(third.tabs.list("alpha")).toMatchObject([
+      { root: "r1", name: undefined },
+      { root: "r2", name: "Retro" },
+    ]);
+    // Another account or community never sees these names.
+    third.page.unmount();
+    const other = launch(crypto.randomUUID(), by);
+    act(() => {
+      other.tabs.open("alpha", "r2");
+    });
+    expect(other.tabs.list("alpha")).toMatchObject([
+      { root: "r2", name: undefined },
+    ]);
+  },
+);
+
+test("a provisional tab's saved name moves to its verified root", () => {
+  const scope = crypto.randomUUID();
+  const first = launch(scope, "page");
+  act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
+  first.rename("thread:alpha:hint", "Launch plan");
+  act(() =>
+    first.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+  );
+  first.page.unmount();
+  const second = launch(scope, "page");
+  act(() => {
+    second.tabs.open("alpha", "hint");
+    second.tabs.open("alpha", "r1");
+  });
+  expect(second.tabs.list("alpha")).toMatchObject([
+    { root: "hint", name: undefined },
+    { root: "r1", name: "Launch plan" },
+  ]);
+});
+
+test.each(["renamed", "cleared"] as const)(
+  "a merged provisional tab's name never returns to a root later %s",
+  (change) => {
+    const scope = crypto.randomUUID();
+    const first = launch(scope, "page");
+    act(() => first.tabs.open("alpha", "r1"));
+    first.rename("thread:alpha:r1", "Launch plan");
+    act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
+    first.rename("thread:alpha:hint", "Draft");
+    act(() =>
+      first.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    );
+    expect(first.page.result.current.tabs).toMatchObject([
+      { id: "thread:alpha:r1", name: "Launch plan" },
+    ]);
+    first.rename("thread:alpha:r1", change === "renamed" ? "Retro" : "  ");
+    first.page.unmount();
+    // The hint reopens without the merged name and resolves to the same root.
+    const second = launch(scope, "page");
+    act(() => second.page.result.current.openThreadTab("alpha", "r2", "hint"));
+    expect(second.page.result.current.tabs[0]).toMatchObject({
+      name: undefined,
+    });
+    act(() =>
+      second.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    );
+    second.page.unmount();
+    const third = launch(scope, "page");
+    act(() => third.tabs.open("alpha", "r1"));
+    expect(third.tabs.list("alpha")).toMatchObject([
+      { root: "r1", name: change === "renamed" ? "Retro" : undefined },
+    ]);
+  },
+);
+
+test.each(["named", "cleared"] as const)(
+  "a closed provisional tab's name defers to its root's own %s name",
+  (root) => {
+    const scope = crypto.randomUUID();
+    const first = launch(scope, "page");
+    act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
+    first.rename("thread:alpha:hint", "Draft");
+    act(() => first.page.result.current.closeTabs(""));
+    act(() => first.tabs.open("alpha", "r1"));
+    first.rename("thread:alpha:r1", "Launch plan");
+    if (root === "cleared") first.rename("thread:alpha:r1", "  ");
+    const name = root === "named" ? "Launch plan" : undefined;
+    first.page.unmount();
+    // An explicit close keeps the hint's name; its root's own name still wins.
+    const second = launch(scope, "page");
+    act(() => second.page.result.current.openThreadTab("alpha", "r2", "hint"));
+    expect(second.page.result.current.tabs[0]).toMatchObject({ name: "Draft" });
+    act(() =>
+      second.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    );
+    expect(second.page.result.current.tabs[0]).toMatchObject({ name });
+    second.page.unmount();
+    const third = launch(scope, "page");
+    act(() => third.tabs.open("alpha", "r1"));
+    expect(third.tabs.list("alpha")).toMatchObject([{ root: "r1", name }]);
+  },
+);
+
+test.each(["foreground", "background"] as const)(
+  "a provisional tab merging into an open root keeps the root's clear (%s)",
+  (branch) => {
+    const scope = crypto.randomUUID();
+    const first = launch(scope, "page");
+    act(() => first.page.result.current.openThreadTab("alpha", "r1", "r1"));
+    first.rename("thread:alpha:r1", "Launch plan");
+    first.rename("thread:alpha:r1", "  ");
+    act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
+    first.rename("thread:alpha:hint", "Draft");
+    if (branch === "background")
+      act(() => first.page.result.current.select("thread:alpha:r1"));
+    act(() =>
+      first.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    );
+    expect(first.page.result.current.tabs).toMatchObject([
+      { id: "thread:alpha:r1", name: undefined },
+    ]);
+    // A deliberate rename still replaces the clear.
+    first.rename("thread:alpha:r1", "Retro");
+    first.page.unmount();
+    const second = launch(scope, "page");
+    act(() => second.tabs.open("alpha", "r1"));
+    expect(second.tabs.list("alpha")).toMatchObject([
+      { root: "r1", name: "Retro" },
+    ]);
+  },
+);
+
+test("a provisional tab merging into an open root keeps the root's clear across a restart", () => {
+  const scope = crypto.randomUUID();
+  const first = launch(scope, "page");
+  act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
+  first.rename("thread:alpha:hint", "Draft");
+  act(() => first.page.result.current.closeTabs(""));
+  act(() => first.tabs.open("alpha", "r1"));
+  first.rename("thread:alpha:r1", "Launch plan");
+  first.rename("thread:alpha:r1", "  ");
+  first.page.unmount();
+  const second = launch(scope, "page");
+  act(() => second.tabs.open("alpha", "r1"));
+  act(() => second.page.result.current.openThreadTab("alpha", "r2", "hint"));
+  act(() =>
+    second.page.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+  );
+  expect(second.page.result.current.tabs).toMatchObject([
+    { id: "thread:alpha:r1", name: undefined },
+  ]);
+  second.page.unmount();
+  const third = launch(scope, "page");
+  act(() => third.tabs.open("alpha", "r1"));
+  expect(third.tabs.list("alpha")).toMatchObject([
+    { root: "r1", name: undefined },
+  ]);
+});
+
+test("sessions without a viewer keep tab names in memory only", () => {
+  const session = tabSession();
+  const tabs = channelTabs(session);
+  tabs.open("alpha", "r1");
+  tabs.rename("alpha", "r1", "Launch plan");
+  expect(tabs.list("alpha")[0]).toMatchObject({ name: "Launch plan" });
+  expect(localStorage.length).toBe(0);
+});
+
 test.each(["foreground", "background"])(
   "a renamed provisional tab keeps its name when it merges into an unnamed tab (%s)",
   (branch) => {

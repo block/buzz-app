@@ -41,7 +41,10 @@ test("link previews draw web cards below messages and let a plugin claim its own
     await expect(
       second.getByRole("link", { name: /Docs reached through a redirect/ }),
     ).toBeVisible();
-    await expect(second.getByRole("link")).toHaveCount(1);
+    await expect(
+      second.getByRole("link", { name: /evil\.example\.com\// }),
+    ).toBeVisible();
+    await expect(second.getByRole("link")).toHaveCount(2);
     const asked = await page.evaluate(() => window.linkPreviewFixture.asked);
     expect(asked).not.toContain("https://quiet.example.com/");
     expect(asked).not.toContain("https://code.example.com/");
@@ -78,7 +81,7 @@ test("link previews draw web cards below messages and let a plugin claim its own
     await expect(launch).toBeVisible();
     await expect(first.locator("img")).toBeVisible();
     expect(await heights()).toHaveLength(1);
-    expect(await launchReads()).toBe(1);
+    expect(await launchReads()).toBe(2);
     await page.getByRole("button", { name: "Enable tracker plugin" }).click();
     await page.getByRole("button", { name: "Toggle theme" }).click();
     await expect(first.locator("[data-tracker-card]")).toBeVisible();

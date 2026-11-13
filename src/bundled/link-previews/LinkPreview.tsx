@@ -4,8 +4,6 @@ import type { Loader, Page } from "./loader";
 import { domainOf } from "./safety";
 import styles from "./LinkPreview.module.css";
 
-/** The thumbnail box is always the same size, so the card never changes
- * height when its image arrives, fails or is evicted. */
 function Media({
   loader,
   image,
@@ -41,30 +39,36 @@ function Media({
   );
 }
 
+/** Every card has the same height from its first frame, whether its page
+ * is loading, read, or unreadable, so a preview never moves the reader. */
 export function LinkPreview({
   url,
   open,
   loader,
 }: LinkPreviewProps & { loader: Loader }) {
-  const [page, setPage] = useState<Page | null>(() => loader.peek(url) ?? null);
+  const [page, setPage] = useState<Page | null | undefined>(() =>
+    loader.peek(url),
+  );
   useEffect(() => {
     let live = true;
-    void loader.page(url).then((found) => live && setPage(found));
+    setPage(loader.peek(url));
+    const lease = loader.page(url);
+    void lease.value.then((found) => live && setPage(found));
     return () => {
       live = false;
+      lease.release();
     };
   }, [loader, url]);
-  if (!page) return null;
   const domain = domainOf(url);
   const site =
-    page.siteName && page.siteName.toLowerCase() !== domain.toLowerCase()
+    page?.siteName && page.siteName.toLowerCase() !== domain.toLowerCase()
       ? `${page.siteName} · ${domain}`
       : domain;
   return (
     <a
       className={styles.card}
       href={url}
-      data-media={page.image ? "" : undefined}
+      aria-busy={page === undefined || undefined}
       onClick={(event) => {
         event.preventDefault();
         open();
@@ -72,14 +76,16 @@ export function LinkPreview({
     >
       <span className={styles.body}>
         <span className={styles.site}>{site}</span>
-        <span className={styles.title}>{page.title}</span>
-        {page.description && (
+        <span className={styles.title}>{page?.title ?? bareUrl(url)}</span>
+        {page?.description && (
           <span className={styles.description}>{page.description}</span>
         )}
       </span>
-      {page.image && (
+      {page?.image && (
         <Media loader={loader} image={page.image} alt={page.imageAlt ?? ""} />
       )}
     </a>
   );
 }
+
+const bareUrl = (url: string) => url.replace(/^https:\/\//i, "");

@@ -1,3 +1,4 @@
+import { agentCardLinkId } from "../agents/AgentCardLink";
 import { linkKind } from "../links/InlineLink";
 
 const MAX_URL = 2048;
@@ -59,8 +60,10 @@ export const domainOf = (url: string) => {
   }
 };
 
-/** Links that get a page card. Recognised services and Buzz links already
- * show a labelled inline link, and GitHub has its own card, so a page card
+/** Links that get a page card. Recognised services, Buzz links and agent
+ * share links already show a labelled inline link or card, so a page card
  * would repeat them. */
 export const wantsCard = (href: string) =>
-  linkKind(href) === "web" && !!previewable(href);
+  linkKind(href) === "web" &&
+  agentCardLinkId(href) === null &&
+  !!previewable(href);

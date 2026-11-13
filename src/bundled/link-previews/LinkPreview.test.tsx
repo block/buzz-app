@@ -9,7 +9,7 @@ afterEach(cleanup);
 const loader = (page: Page | null): Loader =>
   ({
     available: true,
-    page: vi.fn(async () => page),
+    page: vi.fn(() => ({ value: Promise.resolve(page), release: vi.fn() })),
     peek: vi.fn(() => undefined),
     peekImage: vi.fn(() => undefined),
     image: vi.fn(() => ({ src: Promise.resolve(null), release: vi.fn() })),
@@ -39,18 +39,20 @@ it("shows the link's real domain beside the page's own site name", async () => {
   expect(open).toHaveBeenCalledOnce();
 });
 
-it("renders nothing when the page has no preview", async () => {
+it("keeps the card, with the bare link, when the page can't be read", async () => {
   const empty = loader(null);
-  const { container } = render(
+  render(
     <LinkPreview
-      url="https://example.com/"
+      url="https://example.com/a/b"
       messageId="m"
       open={() => true}
       loader={empty}
     />,
   );
-  await vi.waitFor(() => expect(empty.page).toHaveBeenCalled());
-  expect(container.innerHTML).toBe("");
+  const card = screen.getByRole("link", { name: /example\.com\/a\/b/ });
+  expect(card.getAttribute("aria-busy")).toBe("true");
+  await vi.waitFor(() => expect(card.getAttribute("aria-busy")).toBeNull());
+  expect(screen.getByText("example.com/a/b")).toBeTruthy();
 });
 
 it("draws a page it has already read on its first render", () => {

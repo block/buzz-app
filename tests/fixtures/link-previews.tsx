@@ -69,13 +69,13 @@ const requestBytes = async () => {
   };
 };
 const asked: string[] = [];
-const loader = createLoader({
-  readPage: (url, options) => {
+const host = {
+  readPage: (url: string, options?: { timeoutMs?: number }) => {
     asked.push(url);
     return readPage(url, options);
   },
   requestBytes,
-});
+};
 const heights: number[] = [];
 new MutationObserver(() => {
   const card = document.querySelector<HTMLElement>(
@@ -89,6 +89,8 @@ Object.assign(window, { linkPreviewFixture: { asked, heights } });
 const webPreviews: PluginModule = {
   inject: ["conversation"],
   apply(ctx) {
+    const loader = createLoader(host as never);
+    ctx.effect(() => () => loader.stop());
     ctx.conversation.registerLinkPreview({
       id: "web",
       title: "Web page preview",

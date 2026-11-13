@@ -30,6 +30,7 @@ describe("previewable", () => {
       "https://docs.google.com/document/d/x",
       "https://www.figma.com/file/x",
       "https://www.youtube.com/watch?v=x",
+      "https://app.builderlab.xyz/a/av_Q430oIuy2pHC345U08CVjg",
     ])
       expect(wantsCard(url), url).toBe(false);
   });
@@ -51,7 +52,7 @@ describe("createLoader", () => {
     );
     const loader = createLoader({ readPage });
     expect(loader.peek("https://short.example.com/x")).toBeUndefined();
-    const page = await loader.page("https://short.example.com/x");
+    const page = await loader.page("https://short.example.com/x").value;
     expect(loader.peek("https://short.example.com/x")).toEqual(page);
     expect(page).toEqual({
       url: "https://short.example.com/final",
@@ -59,7 +60,7 @@ describe("createLoader", () => {
       siteName: "Example",
       image: "https://img.example.com/a.png",
     });
-    await loader.page("https://short.example.com/x");
+    await loader.page("https://short.example.com/x").value;
     expect(readPage).toHaveBeenCalledTimes(2);
   });
 
@@ -69,20 +70,70 @@ describe("createLoader", () => {
       location: "https://intranet.corp/secret",
     }));
     const loader = createLoader({ readPage });
-    expect(await loader.page("https://example.com/")).toBeNull();
+    expect(await loader.page("https://example.com/").value).toBeNull();
     expect(readPage).toHaveBeenCalledTimes(1);
   });
 
-  it("shows nothing for a page without a title and forgets failures", async () => {
+  it("keeps a failure for a cooldown, then reads the page again", async () => {
+    let time = 0;
     const readPage = vi
       .fn()
       .mockResolvedValueOnce({ status: 200, preview: {} })
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ status: 200, preview: { title: "Back" } });
+    const loader = createLoader({ readPage }, () => time);
+    const url = "https://a.example.com/";
+    expect(await loader.page(url).value).toBeNull();
+    expect(loader.peek(url)).toBeNull();
+    expect(await loader.page(url).value).toBeNull();
+    expect(readPage).toHaveBeenCalledTimes(1);
+    time += 5 * 60_000 + 1;
+    expect(loader.peek(url)).toBeUndefined();
+    expect(await loader.page(url).value).toBeNull();
+    time += 5 * 60_000 + 1;
+    expect((await loader.page(url).value)?.title).toBe("Back");
+  });
+
+  it("reads the newest request first and never sends a withdrawn one", async () => {
+    const held = new Map<string, () => void>();
+    const readPage = vi.fn(
+      (url: string) =>
+        new Promise<{ status: number; preview: { title: string } }>(
+          (resolve) => {
+            held.set(url, () =>
+              resolve({ status: 200, preview: { title: url } }),
+            );
+          },
+        ),
+    );
     const loader = createLoader({ readPage });
-    expect(await loader.page("https://a.example.com/")).toBeNull();
-    expect(await loader.page("https://a.example.com/")).toBeNull();
-    expect((await loader.page("https://a.example.com/"))?.title).toBe("Back");
+    const url = (i: number) => `https://p${i}.example.com/`;
+    const leases = Array.from({ length: 10 }, (_, i) => loader.page(url(i)));
+    expect(readPage.mock.calls.map(([asked]) => asked)).toEqual(
+      [0, 1, 2, 3].map(url),
+    );
+    for (const i of [4, 5, 6, 7, 8]) leases[i]?.release();
+    held.get(url(0))?.();
+    await leases[0]?.value;
+    await vi.waitFor(() => expect(readPage).toHaveBeenCalledTimes(5));
+    expect(readPage).toHaveBeenLastCalledWith(url(9), expect.anything());
+    for (const i of [1, 2, 3, 9]) held.get(url(i))?.();
+    await Promise.all([1, 2, 3, 9].map((i) => leases[i]?.value));
+    expect(readPage).toHaveBeenCalledTimes(5);
+  });
+
+  it("keeps one read per page however many pages are waiting", async () => {
+    const readPage = vi.fn((_url: string) => new Promise<never>(() => {}));
+    const loader = createLoader({ readPage });
+    const first = loader.page("https://first.example.com/");
+    for (let i = 0; i < 250; i++) loader.page(`https://p${i}.example.com/`);
+    const again = loader.page("https://first.example.com/");
+    expect(again.value).toBe(first.value);
+    expect(
+      readPage.mock.calls.filter(
+        ([asked]) => asked === "https://first.example.com/",
+      ),
+    ).toHaveLength(1);
   });
 
   it("revokes an evicted image only after every card using it lets go", async () => {
@@ -104,20 +155,20 @@ describe("createLoader", () => {
       const others = Array.from({ length: 61 }, (_, i) =>
         loader.image(`https://img.example.com/${i + 1}.png`),
       );
-      for (const lease of others) lease.release();
       const src = await shown.src;
-      await Promise.all(others.map((lease) => lease.src));
+      const srcs = await Promise.all(others.map((lease) => lease.src));
+      for (const lease of others) lease.release();
       await Promise.resolve();
-      expect(src).toBe("blob:test/0");
+      expect(src).toMatch(/^blob:test\//);
       expect(revoke).not.toHaveBeenCalledWith(src);
-      expect(revoke).toHaveBeenCalledWith("blob:test/1");
-      expect(revoke).not.toHaveBeenCalledWith("blob:test/61");
+      expect(revoke).toHaveBeenCalledWith(srcs[0]);
+      expect(revoke).not.toHaveBeenCalledWith(srcs[60]);
       shown.release();
       await Promise.resolve();
       expect(revoke).toHaveBeenCalledWith(src);
       loader.stop();
       await Promise.resolve();
-      expect(revoke).toHaveBeenCalledWith("blob:test/61");
+      expect(revoke).toHaveBeenCalledWith(srcs[60]);
     } finally {
       create.mockRestore();
       revoke.mockRestore();
@@ -127,6 +178,6 @@ describe("createLoader", () => {
   it("is unavailable without a page reader", async () => {
     const loader = createLoader(undefined);
     expect(loader.available).toBe(false);
-    expect(await loader.page("https://example.com/")).toBeNull();
+    expect(await loader.page("https://example.com/").value).toBeNull();
   });
 });

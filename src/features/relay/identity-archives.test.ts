@@ -965,3 +965,51 @@ it("ensure records demand after a live snapshot so a cut reconnect repairs once"
   expect(await drain(h, [snapshot(6, [])])).toBe(1);
   expect(h.archives.state(target.pubkey)).toBe("not-archived");
 });
+it("a read completed during the outage doesn't stand in for catch-up after a cut reconnect", async () => {
+  const h = harness();
+  h.live.state({ status: "connected", routes: [] });
+  await drain(h, []);
+  await read(h, [snapshot(1, [])]);
+  h.live.state({ status: "retrying", routes: [] });
+  // An HTTP read while the stream is down makes the list ready again...
+  await read(h, [snapshot(1, [])]);
+  expect(h.archives.state(target.pubkey)).toBe("not-archived");
+  // ...but a change after it reaches no one until the stream re-establishes.
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: false });
+  expect(await drain(h, [snapshot(2)])).toBe(1);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+  // A continuous replay still covers the gap without a read.
+  h.live.state({ status: "retrying", routes: [] });
+  await read(h, [snapshot(2)]);
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: true });
+  expect(await drain(h, [])).toBe(0);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+});
+it("a read outstanding across a cut reconnect is fenced and replaced by a fresh one", async () => {
+  const h = harness();
+  h.live.state({ status: "connected", routes: [] });
+  await drain(h, []);
+  await read(h, [snapshot(1, [])]);
+  h.live.state({ status: "retrying", routes: [] });
+  const early = h.archives.ensure();
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
+  const outage = h.wire.next();
+  h.live.state({ status: "connected", routes: [] });
+  h.live.established(undefined, { route: "profiles", continuous: false });
+  // Re-establishment issues its own read rather than reusing the outstanding one.
+  await vi.waitFor(() =>
+    expect(
+      h.wire.pending.filter((entry) =>
+        entry.filters.some((f) => f.kinds?.includes(13535)),
+      ),
+    ).toHaveLength(1),
+  );
+  // The read issued before re-establishment answers with the old head.
+  outage.respond([snapshot(1, [])]);
+  await early;
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
+  expect(await drain(h, [snapshot(2)])).toBe(1);
+  expect(h.archives.state(target.pubkey)).toBe("archived");
+});

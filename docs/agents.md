@@ -1221,7 +1221,10 @@ overtakes cannot report a stale or failed read as an error. A disconnect keeps k
 display but makes `state()` unknown. When the profiles route re-establishes, a
 continuous replay (which delivered any snapshot published meanwhile) restores
 complete evidence without a read; a cut, failed or unreported replay rereads
-once, and only if this session ever demanded archives. Fleet cost per reconnect
+once, and only if this session ever demanded archives. That reread is required
+even when a read finished while the stream was down, and a read still outstanding
+from before re-establishment is abandoned, since neither can cover a change the
+dropped stream missed. Fleet cost per reconnect
 is zero reads for sessions that never used archives and at most one limit-1 read
 otherwise. Only explicit 8002/8003 deltas remain unprocessed.
 
@@ -1238,7 +1241,10 @@ name, and two live namesakes are still disambiguated. Because live replay starts
 near the connection time, the directory demands the lazy archive read the first
 time two keys share a display name; distinct names never read. Buzz MCP automatic `@Name`
 resolution reads the relay's latest 13535 (from the connection's trusted relay
-key) and skips known-archived members other than the agent itself; explicit
+key) and skips known-archived members other than the agent itself. It matches
+the longest member name before skipping, so a name held only by archived members
+is refused rather than read as a shorter live name (`@Alex Smith` never notifies a
+live `Alex`); explicit
 `mentions` keys and `nostr:npub` links still reach archived members under the
 same membership check. An unreadable snapshot hides no one.
 

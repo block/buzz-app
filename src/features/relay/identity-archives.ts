@@ -84,6 +84,9 @@ export function createIdentityArchives(
   // evidence held before the stream dropped was a complete current snapshot.
   let requested = false;
   let resumable = false;
+  // Whether the stream dropped since the last re-establishment: until then a
+  // read can't prove it saw changes the dropped stream missed.
+  let dropped = false;
   let snapshot: IdentityArchiveSnapshot = Object.freeze({
     status: available ? "idle" : "unavailable",
     archived: empty,
@@ -330,7 +333,19 @@ export function createIdentityArchives(
    * every snapshot since the drop, so complete evidence is current again;
    * anything else rereads once if this session ever demanded archives. */
   function resume(continuous: boolean) {
-    if (closed || !available || snapshot.status === "ready") return;
+    if (closed || !available) return;
+    const gap = dropped;
+    dropped = false;
+    if (!continuous && gap) {
+      // Nothing covered the gap: reads from before re-establishment, done or
+      // outstanding, may predate a missed change, so read again now.
+      controller?.abort();
+      controller = undefined;
+      pending = undefined;
+      if (requested) void refresh();
+      return;
+    }
+    if (snapshot.status === "ready") return;
     if (continuous && resumable && !pending)
       publish({ ...snapshot, status: "ready" });
     else if (requested) void refresh();
@@ -350,6 +365,7 @@ export function createIdentityArchives(
   /** After a reconnect: the next ensure() rereads, and until it replaces them
    * the last known archives stay known. */
   function stale() {
+    dropped = true;
     resumable = snapshot.status === "ready";
     const { error: _, ...known } = snapshot;
     publish({ ...known, status: stop() });

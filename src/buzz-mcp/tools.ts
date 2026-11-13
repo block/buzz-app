@@ -2240,12 +2240,14 @@ class Tools {
         this.archived(),
         this.aliases(members.map((member) => member.pubkey)),
       ]);
-      for (const [name, holders] of byName) {
-        for (const key of holders.keys())
-          if (key !== this.client.pubkey && archived.has(key))
-            holders.delete(key);
-        if (!holders.size) byName.delete(name);
-      }
+      // Match the longest name among all holders first, so an archived
+      // "Alex Smith" is never read as a live "Alex" followed by " Smith".
+      const live = (holders: ReadonlyMap<string, number> | undefined) =>
+        new Map(
+          [...(holders ?? [])].filter(
+            ([key]) => key === this.client.pubkey || !archived.has(key),
+          ),
+        );
       const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
       const unknown: string[] = [];
       for (const match of prose.matchAll(/(^|\s)@/g)) {
@@ -2257,12 +2259,14 @@ class Tools {
             rest.startsWith(candidate) &&
             /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
         );
-        const found = name ? bestNamed(byName.get(name)) : [];
+        const holders = name ? live(byName.get(name)) : undefined;
+        const found = bestNamed(holders);
         if (found.length === 1) keys.add(found[0] as string);
         else {
           const token = name ?? rest.match(/^[a-z0-9._-]+/)?.[0];
-          if (token)
-            unknown.push(`@${token}${found.length ? " (ambiguous)" : ""}`);
+          // A matched name with no live holder belongs only to archived members.
+          const why = found.length ? " (ambiguous)" : name ? " (archived)" : "";
+          if (token) unknown.push(`@${token}${why}`);
         }
       }
       if (unknown.length && !explicit.length)

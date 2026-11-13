@@ -9,7 +9,7 @@ import {
   LinkInteractiveContext,
   LinkLabelContext,
 } from "../../features/conversation/LinkLabelContext";
-import { RubberStampIcon } from "../../shared/design-system/icons/index";
+import { CheckIcon } from "../../shared/design-system/icons/index";
 import { LinkLabel } from "../links/InlineLink";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import {
@@ -84,7 +84,7 @@ export function PullLink({ url, states }: { url: string; states: PullStates }) {
         >
           <Icon aria-hidden="true" className={inlineStyles.icon} />
           {approved && (
-            <RubberStampIcon
+            <CheckIcon
               aria-hidden="true"
               className={`${inlineStyles.icon} ${styles.pullApproved}`}
             />

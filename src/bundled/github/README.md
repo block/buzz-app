@@ -7,7 +7,7 @@ Preview GitHub repositories, pull requests, issues, and commits without leaving 
 1. Pull request and issue links in messages show their state as their icon,
    and a pasted one shows its repository, number and title, such as
    `buzz#42 · Fix the thing`, all kept current while shown. With the `gh` CLI
-   signed in, an open or draft pull request also shows a rubber stamp once it has
+   signed in, an open or draft pull request also shows a check once it has
    every approval its repository requires, such as a code owner's. A pasted
    repository link shows `owner/repo` and a commit link `repo@abc1234`. Click any
    github.com link to open it in a side panel. In **Settings → Plugins → GitHub →

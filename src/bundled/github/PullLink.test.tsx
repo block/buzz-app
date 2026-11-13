@@ -27,7 +27,7 @@ import { apply as applyLinks } from "../links/index";
 import { apply } from "./index";
 import styles from "./GitHub.module.css";
 import { PullLink } from "./PullLink";
-import { RubberStampIcon } from "../../shared/design-system/icons/index";
+import { CheckIcon } from "../../shared/design-system/icons/index";
 import { issueIcons, stateIcons } from "./pull-state-view";
 import type { PullState, PullStates } from "./pull-states";
 
@@ -73,7 +73,7 @@ const glyph = (
     <Icon aria-hidden="true" className={inlineStyles.icon} />,
   );
 const approvedGlyph = renderToStaticMarkup(
-  <RubberStampIcon
+  <CheckIcon
     aria-hidden="true"
     className={`${inlineStyles.icon} ${styles.pullApproved}`}
   />,

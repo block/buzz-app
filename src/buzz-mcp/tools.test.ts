@@ -4390,6 +4390,40 @@ it("reads agents and teams and drafts team changes without members", async () =>
     instructions: "",
   });
 });
+it("drafts a workspace proposal from its fields", async () => {
+  const { client } = fake([]);
+  await expect(
+    callTool(client, {}, "workspace_create", { name: "Repo" }),
+  ).rejects.toThrow("unavailable");
+  client.createWorkspace = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  await expect(callTool(client, {}, "workspace_create", {})).rejects.toThrow(
+    "required",
+  );
+  await expect(
+    callTool(client, {}, "workspace_create", { name: "Repo", worktree: "/w" }),
+  ).rejects.toThrow("go together");
+  expect(
+    JSON.parse(
+      (await callTool(client, {}, "workspace_create", {
+        name: " Repo ",
+        folders: ["/repo", 1],
+        worktree: "/w",
+        base_branch: "main",
+        instructions: " ",
+        chats: ["chat"],
+      })) as string,
+    ),
+  ).toEqual({ requestId: "draft", saved: false });
+  expect(client.createWorkspace).toHaveBeenCalledWith({
+    name: "Repo",
+    folders: ["/repo"],
+    worktree: { location: "/w", baseBranch: "main" },
+    chats: ["chat"],
+  });
+});
 it("validates change drafts and passes only the proposed fields", async () => {
   const { client } = fake([]);
   await expect(

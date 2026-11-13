@@ -22,6 +22,7 @@ import type {
   AgentUpdateInput,
   TeamReadout,
   TeamUpdateInput,
+  WorkspaceCreateInput,
   AgentHandoff,
   RegisteredAgentType,
   Trigger,
@@ -533,6 +534,10 @@ export type RunnerHost = {
   updateTeam(
     agent: Agent,
     input: TeamUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  createWorkspace(
+    agent: Agent,
+    input: WorkspaceCreateInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins as the agent's handle offers them. */
   plugins?(agent: Agent): AgentHandle["plugins"];
@@ -3042,6 +3047,10 @@ export class AgentRunners {
         updateTeam: async (input: TeamUpdateInput) => {
           lifetime.throwIfAborted();
           return this.host.updateTeam(agent, input);
+        },
+        createWorkspace: async (input: WorkspaceCreateInput) => {
+          lifetime.throwIfAborted();
+          return this.host.createWorkspace(agent, input);
         },
         // Only a run hands off or manages plugins: through `Agents.handle` a
         // plugin's call would read as the agent's own.

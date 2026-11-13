@@ -452,6 +452,8 @@ function setup(
     teamUpdateRequests: () => [],
     dismissTeamUpdate: vi.fn(),
     approveTeamUpdate: vi.fn(async () => {}),
+    workspaceCreateRequests: () => [],
+    dismissWorkspaceCreate: vi.fn(),
     addedTabs: () =>
       linkTab
         ? [

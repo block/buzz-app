@@ -81,8 +81,9 @@ export type ThreadPanelProps = {
   retainThread?: boolean | undefined;
   /** The hosting tab strip owns the title, close and Escape. */
   tabbed?: boolean | undefined;
-  /** Called with the reader's verified thread root once it is known. */
-  onResolvedRoot?: ((rootId: string) => void) | undefined;
+  /** Called with the reader's verified thread root once it is known, and
+   * again for each message it confirms under that root, naming the message. */
+  onResolvedRoot?: ((rootId: string, messageId: string) => void) | undefined;
   /** Workspace identity is retained when a link's claimed root was wrong. */
   onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
   /** Retry a failed routed opening with fresh navigation authority. */
@@ -618,9 +619,14 @@ function ThreadMessages({
   const resolvedRoot = snapshot.root?.id;
   const reportRoot = useRef(onResolvedRoot);
   reportRoot.current = onResolvedRoot;
+  // `messageId` is the message this reader settled on: a reply selected in
+  // the shown thread is confirmed under its root only once retarget agrees.
+  // Each routed selection reports again, even one leaving both unchanged: a
+  // fresh visit to the message already shown has its own record to verify.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: navigation changes only once a routed selection is confirmed.
   useEffect(() => {
-    if (resolvedRoot) reportRoot.current?.(resolvedRoot);
-  }, [resolvedRoot]);
+    if (resolvedRoot) reportRoot.current?.(resolvedRoot, messageId);
+  }, [resolvedRoot, messageId, navigation]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
     const current = view.snapshot();

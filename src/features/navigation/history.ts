@@ -7,7 +7,7 @@ export type NavigationEntry = Readonly<{ id: string; target: OpenTarget }>;
 /** Match a logical dialog (including its sections), or exact content visits. */
 export type DismissedVisits =
   | readonly string[]
-  | ((target: OpenTarget) => boolean);
+  | ((target: OpenTarget, entryId: string) => boolean);
 export type HistorySnapshot = Readonly<{
   current: NavigationEntry;
   /** Managed, non-dismissed return window, including identities retained across reload. */
@@ -118,7 +118,7 @@ export function createMemoryHistory(
       const fallback = parseOpenTarget(input);
       const closing = entries.filter((entry) =>
         typeof visits === "function"
-          ? visits(entry.target)
+          ? visits(entry.target, entry.id)
           : visits.includes(entry.id),
       );
       for (const entry of closing) dismissed.add(entry.id);

@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -12,7 +13,7 @@ import {
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import userEvent from "@testing-library/user-event";
 import type { RegisteredPanel } from "../../features/panels/service";
-import type { ReactNode } from "react";
+import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
 import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
@@ -23,8 +24,14 @@ import {
   createNavigationController,
   type Navigation,
 } from "../../features/navigation/controller";
-import { createMemoryHistory } from "../../features/navigation/history";
-import type { PageNavigation } from "../../features/navigation/service";
+import {
+  createMemoryHistory,
+  homeTarget,
+} from "../../features/navigation/history";
+import {
+  provideNavigation,
+  type PageNavigation,
+} from "../../features/navigation/service";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import { createRelaySession } from "../../features/relay/session";
 import {
@@ -46,6 +53,9 @@ import { bestieRoute } from "./routes";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { useBestieConversation } from "../../app/shell/bestie-context";
 import type { RegisteredPage } from "../../features/pages/service";
+import type { Panels } from "../../features/panels/service";
+import { useChannelList } from "../../features/relay/react";
+import { ChannelsPage } from "../channels/ChannelsPage";
 
 // jsdom has no virtualized layout. Keep the real rows, thread reader and React
 // lifecycle; model only Virtua's imperative layout boundary, not scroll behavior.
@@ -109,9 +119,19 @@ async function fixture({
   archived = false,
   withReply = false,
   hasOlder = false,
+  holdHead = false,
+  holdThread = false,
+  withLink = false,
+  olderRoot = false,
+  holdOlder = false,
+  withActivity = false,
 } = {}) {
-  // jsdom has no native scrolling; thread reveals still use this DOM boundary.
-  HTMLElement.prototype.scrollIntoView = vi.fn();
+  // jsdom has no native scrolling; reveals still use this DOM boundary. Rows
+  // revealed in the chat history or a thread, in order.
+  const scrolled: HTMLElement[] = [];
+  HTMLElement.prototype.scrollIntoView = vi.fn(function (this: HTMLElement) {
+    scrolled.push(this);
+  });
   // The timeline waits for a measurable host before mounting its virtualizer.
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
@@ -151,10 +171,35 @@ async function fixture({
     1_700_000_001,
     [["e", root.id, "", "reply"]],
   );
+  // A later message linking to the root, as a reply quote or a copied link does.
+  const link = message(
+    keypair(),
+    pollenDM,
+    `see buzz://channel/${pollenDM}/${root.id}`,
+    1_700_000_002,
+  );
+  // An agent's update, retired from the chat by its public reply.
+  const agent = keypair();
+  const step = message(
+    agent,
+    pollenDM,
+    "Checking the calendar…",
+    1_700_000_003,
+    [["audience", "agents"]],
+  );
+  const done = message(agent, pollenDM, "Nothing on today.", 1_700_000_004);
   const gate = deferred();
   const olderGate = deferred();
   const olderStarted = vi.fn();
   disposals.push(olderGate.resolve);
+  // Hold the DM's head read, its thread read or the older page holding the
+  // root, to order their reveals.
+  const reads = { head: deferred(), thread: deferred(), older: deferred() };
+  const end = (before: RelayEvent) =>
+    bounds(relayKey, pollenDM, `${before.created_at}:${before.id}`, {
+      has_more: false,
+      next_cursor: null,
+    });
   if (existing) dm(pollen);
   const open = vi.fn(async (keys: readonly string[], _signal: AbortSignal) => {
     if (hold && keys[0] === pollen) await gate.promise;
@@ -186,6 +231,10 @@ async function fixture({
         )
           return [...discovery.values()].flat();
         const history = filters.find((filter) => filter.top_level);
+        if (withReply && olderRoot && history?.until) {
+          if (holdOlder) await reads.older.promise;
+          return [root, end(link)];
+        }
         if (history?.before_id) {
           olderStarted();
           if (hasOlder) await olderGate.promise;
@@ -201,13 +250,27 @@ async function fixture({
             ),
           ];
         }
-        if (withReply && history)
+        if (withReply && history) {
+          if (holdHead) await reads.head.promise;
+          const thread = summary(relayKey, pollenDM, root.id, {
+            reply_count: 1,
+            participants: [response.pubkey],
+          });
+          // The root is older than the loaded head, behind the link to it.
+          if (olderRoot)
+            return [
+              link,
+              thread,
+              bounds(relayKey, pollenDM, "head", {
+                has_more: true,
+                next_cursor: { created_at: link.created_at, id: link.id },
+              }),
+            ];
           return [
             root,
-            summary(relayKey, pollenDM, root.id, {
-              reply_count: 1,
-              participants: [response.pubkey],
-            }),
+            ...(withLink ? [link] : []),
+            ...(withActivity ? [step, done] : []),
+            thread,
             bounds(relayKey, pollenDM, "head", {
               has_more: hasOlder,
               next_cursor: hasOlder
@@ -215,13 +278,27 @@ async function fixture({
                 : null,
             }),
           ];
+        }
+        // The link's own thread: a top-level message with no replies.
+        if (
+          withLink &&
+          filters.some(
+            (f) => f.ids?.includes(link.id) || f["#e"]?.includes(link.id),
+          )
+        )
+          return [link];
         if (
           withReply &&
           filters.some(
-            (f) => f.ids?.includes(root.id) || f["#e"]?.includes(root.id),
+            (f) =>
+              f.ids?.includes(root.id) ||
+              f.ids?.includes(response.id) ||
+              f["#e"]?.includes(root.id),
           )
-        )
+        ) {
+          if (holdThread) await reads.thread.promise;
           return [root, response];
+        }
         if (history)
           return [
             bounds(relayKey, history["#h"]?.[0] ?? pollenDM, "head", {
@@ -400,6 +477,25 @@ async function fixture({
       </ToastProvider>
     ),
     rootId: root.id,
+    replyId: response.id,
+    linkId: link.id,
+    stepId: step.id,
+    release: {
+      head: reads.head.resolve,
+      thread: reads.thread.resolve,
+      older: reads.older.resolve,
+    },
+    /** The chat history's row for a message, once revealed there. */
+    revealed: (messageId: string) =>
+      scrolled.find(
+        (row) =>
+          row.dataset.messageId === messageId &&
+          !row.closest('[aria-label="Thread"]'),
+      ),
+    /** Forgets the rows revealed so far, to assert later reveals alone. */
+    forgetReveals: () => {
+      scrolled.length = 0;
+    },
     mount: () =>
       render(
         <ToastProvider>
@@ -585,6 +681,625 @@ it("keeps the promoted verified DM usable through discovery failure until absenc
   expect(f.open).not.toHaveBeenCalled();
 });
 
+// The "In DM" link on a thread tab opened from Activity, a notification or a
+// permalink is a Messages visit. Messages omits the promoted DM, so the visit
+// opens on Bestie's page with its thread, as Bestie's own thread links do.
+// A link to the promoted DM from another page, as App's page switch shows it:
+// Messages takes conversation visits and hands the promoted DM's to Bestie.
+async function linkedVisit(
+  visit: (ids: {
+    rootId: string;
+    replyId: string;
+    linkId: string;
+    stepId: string;
+  }) => {
+    messageId: string;
+    threadRootId?: string;
+  },
+  hold: {
+    holdHead?: boolean;
+    holdThread?: boolean;
+    olderRoot?: boolean;
+    holdOlder?: boolean;
+    withLink?: boolean;
+    withActivity?: boolean;
+  } = {},
+) {
+  const f = await fixture({ existing: true, withReply: true, ...hold });
+  f.choose(pollen);
+  // Browser history outlives the previous test's host; start at Home.
+  window.history.replaceState(null, "", "/");
+  sessionStorage.clear();
+  const { Context } = await import("@deepseek-ai/cordis");
+  const ctx = new Context();
+  const host = provideNavigation(ctx);
+  disposals.push(() => void ctx.fiber.dispose());
+  const page: RegisteredPage = {
+    id: "bestie",
+    key: "buzz.bestie/bestie",
+    pluginId: "buzz.bestie",
+    revision: "bundled",
+    title: "Bestie",
+    component: () => null,
+  };
+  const panels = {
+    snapshot: () => empty,
+    subscribe: () => () => {},
+    resolve: () => undefined,
+    handleOpenRequests: () => () => {},
+  } as unknown as Panels;
+  function Pages() {
+    const { attempt, entry } = useSyncExternalStore(
+      host.navigation.subscribe,
+      host.navigation.snapshot,
+    );
+    const navigation = useMemo(
+      () =>
+        host.request(attempt, { valid: () => true, subscribe: () => () => {} })
+          .request,
+      [attempt],
+    );
+    // The shell's sidebar has already read the channel list.
+    useChannelList(f.session.channels);
+    const promoted = useBestieConversation(f.session);
+    if (entry.target.kind === "conversation")
+      return (
+        <ToastProvider>
+          <ChannelsPage
+            relay={f.relay}
+            panels={panels}
+            navigation={navigation}
+            navigator={host.navigation}
+          />
+        </ToastProvider>
+      );
+    if (entry.target.kind === "page" && entry.target.pluginId === "buzz.bestie")
+      return f.element({ renderedNavigator: host.navigation, navigation });
+    return <output aria-label="promoted DM">{promoted ?? "none"}</output>;
+  }
+  render(
+    <BestieNavigationProvider pages={[page]} relay={f.relay}>
+      <Pages />
+    </BestieNavigationProvider>,
+    { reactStrictMode: true },
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("promoted DM")).toHaveTextContent(pollenDM),
+  );
+  const scope = { viewer: f.viewer, communityOrigin: "https://test.example" };
+  act(() => {
+    void host.navigation.open({
+      version: 1,
+      kind: "conversation",
+      scope,
+      channelId: pollenDM,
+      ...visit(f),
+    });
+  });
+  return { f, host, scope, revealed: f.revealed };
+}
+
+/** Resolves after `count` animation frames queued from now. A reveal runs two
+ * frames after its effect, so frames queued after a visit's render run after
+ * any reveal that visit could have started. */
+const frames = (count: number) =>
+  new Promise<void>((resolve) => {
+    const step = (left: number) =>
+      left ? requestAnimationFrame(() => step(left - 1)) : resolve();
+    step(count);
+  });
+/** The chat history's own element for a selector, never the thread's. */
+const inChat = (selector: string) =>
+  [...document.querySelectorAll<HTMLElement>(selector)].find(
+    (element) => !element.closest('[aria-label="Thread"]'),
+  );
+/** The chat history's row for a message, in or out of view. */
+const chatRow = (messageId: string) =>
+  inChat(`[data-message-scroller] [data-message-id="${messageId}"]`);
+
+/** Bestie's page target for a handed-off visit, at one of its routes. */
+const bestieTarget = (
+  h: Awaited<ReturnType<typeof linkedVisit>>,
+  route?: Record<string, string>,
+) => ({
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.bestie",
+  pageId: "bestie",
+  scope: h.scope,
+  ...(route && {
+    route: { version: 1, params: { channelId: pollenDM, ...route } },
+  }),
+});
+function bestieVisit(
+  h: Awaited<ReturnType<typeof linkedVisit>>,
+  route: Record<string, string>,
+) {
+  expect(
+    screen.getByRole("textbox", { name: "Message Pollen" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Channels" })).toBeNull();
+  expect(h.host.navigation.snapshot().entry.target).toEqual(
+    bestieTarget(h, route),
+  );
+}
+
+it("opens a thread linked from another page in Bestie's page, at its root, not Messages", async () => {
+  const h = await linkedVisit(({ rootId, replyId }) => ({
+    messageId: replyId,
+    threadRootId: rootId,
+  }));
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  // The chat history shows the thread's root beside it.
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  bestieVisit(h, { messageId: h.f.replyId, threadRootId: h.f.rootId });
+});
+
+it("opens a message linked from another page at that message in Bestie's page", async () => {
+  const h = await linkedVisit(({ rootId }) => ({ messageId: rootId }));
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  expect(screen.queryByLabelText("Thread")).toBeNull();
+  bestieVisit(h, { messageId: h.f.rootId });
+});
+
+it("opens a reply linked without its thread as its thread in Bestie's page", async () => {
+  const h = await linkedVisit(({ replyId }) => ({ messageId: replyId }));
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  bestieVisit(h, { messageId: h.f.replyId });
+});
+
+// A link's thread hint is not trusted: the root marked in the chat history is
+// the one the thread's reader verifies, so an unrelated hinted message is
+// never revealed, and the reply's real thread opens.
+it("reveals a reply's verified root, not the unrelated message its link hinted", async () => {
+  const h = await linkedVisit(
+    ({ replyId, linkId }) => ({ messageId: replyId, threadRootId: linkId }),
+    { withLink: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(within(thread).getByText("Are you there?")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  expect(h.revealed(h.f.linkId)).toBeUndefined();
+});
+
+// An open thread's earlier verification is no evidence for a new link into
+// it: its tab takes the reply before its reader agrees, so the hinted root
+// stays unmarked until the reply's own ancestry is verified.
+it("never reveals an open hinted thread's root while a reply linked into it is looked up", async () => {
+  const h = await linkedVisit(
+    ({ linkId }) => ({ messageId: linkId, threadRootId: linkId }),
+    { withLink: true, holdThread: true },
+  );
+  // The hinted thread is open and verified: its own visit revealed its root.
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.linkId)).toBeDefined());
+  h.f.forgetReveals();
+  act(() => {
+    void h.host.navigation.open({
+      version: 1,
+      kind: "conversation",
+      scope: h.scope,
+      channelId: pollenDM,
+      messageId: h.f.replyId,
+      threadRootId: h.f.linkId,
+    });
+  });
+  await waitFor(() =>
+    bestieVisit(h, { messageId: h.f.replyId, threadRootId: h.f.linkId }),
+  );
+  // The hinted root is loaded, but the held reply is not yet verified under
+  // any root: nothing is revealed.
+  expect(chatRow(h.f.linkId)).toBeDefined();
+  await act(() => frames(2));
+  expect(h.revealed(h.f.linkId)).toBeUndefined();
+  await act(async () => h.f.release.thread());
+  // The reply's real thread opens in its own tab beside the hinted one, and
+  // only its verified root is marked in the chat.
+  const reply = await screen.findByText("Yep, here. What’s up?");
+  expect(reply.closest('[aria-label="Thread"]')).not.toBeNull();
+  await waitFor(() =>
+    expect(
+      within(screen.getByLabelText("Bestie panel tabs")).getByRole("tab", {
+        selected: true,
+      }),
+    ).toHaveTextContent("Are you there?"),
+  );
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  expect(h.revealed(h.f.linkId)).toBeUndefined();
+});
+
+// A fresh link to the message a retained thread already shows retargets its
+// reader without changing its root or message. The new visit still has its
+// own record to verify, so its root is revealed once the reader confirms it.
+it("reveals the root for a fresh link to the message its retained thread shows", async () => {
+  const h = await linkedVisit(({ rootId, replyId }) => ({
+    messageId: replyId,
+    threadRootId: rootId,
+  }));
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  // The plain Bestie destination keeps the thread tab, and its reader.
+  const bestie = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.bestie",
+    pageId: "bestie",
+    scope: h.scope,
+  } as const;
+  act(() => {
+    void h.host.navigation.open(bestie);
+  });
+  await waitFor(() =>
+    expect(h.host.navigation.snapshot().entry.target).toEqual(bestieTarget(h)),
+  );
+  expect(screen.getByLabelText("Thread")).toBeInTheDocument();
+  h.f.forgetReveals();
+  // A chat permalink to the reply opens this page's own address in place,
+  // as openLink does, without remounting the page or its retained reader.
+  const route = { messageId: h.f.replyId, threadRootId: h.f.rootId };
+  act(() => {
+    void h.host.navigation.open({
+      ...bestie,
+      route: { version: 1, params: { channelId: pollenDM, ...route } },
+    });
+  });
+  await waitFor(() => bestieVisit(h, route));
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+  // The thread keeps focus, on the reply the link named; the root in the chat
+  // is context, revealed without taking it.
+  await waitFor(() =>
+    expect(
+      document.activeElement?.closest('[aria-label="Thread"]'),
+    ).not.toBeNull(),
+  );
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
+});
+
+// The linked reply keeps focus whichever reveal finishes last; the root in the
+// chat history is context, shown without taking focus.
+it("keeps focus in the thread when its root is revealed as the thread arrives", async () => {
+  const h = await linkedVisit(
+    ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
+    { holdThread: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  // The loaded history holds the root, but it is only a hint until the held
+  // thread verifies it: nothing is revealed yet.
+  await waitFor(() => expect(chatRow(h.f.rootId)).toBeDefined());
+  await act(() => frames(2));
+  expect(h.revealed(h.f.rootId)).toBeUndefined();
+  await act(async () => h.f.release.thread());
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
+  await waitFor(() => expect(inThreadPane()).toBe(true));
+});
+
+/** Whether focus is in the side pane that holds the thread. */
+const inThreadPane = () =>
+  !!document.activeElement?.closest('[aria-label="Bestie panel tabs"]');
+
+it("keeps focus in the thread when its root is revealed last", async () => {
+  const h = await linkedVisit(
+    ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
+    { holdHead: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  await waitFor(() => expect(inThreadPane()).toBe(true));
+  await act(async () => h.f.release.head());
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(inThreadPane()).toBe(true);
+  expect(document.activeElement).not.toBe(h.revealed(h.f.rootId));
+});
+
+/** A thread link whose root is behind the loaded head: the chat shows the
+ * head and reads the older page, held, while the thread opens. */
+async function olderRootVisit() {
+  const h = await linkedVisit(
+    ({ rootId, replyId }) => ({ messageId: replyId, threadRootId: rootId }),
+    { olderRoot: true, holdOlder: true },
+  );
+  const thread = await screen.findByLabelText("Thread");
+  expect(
+    await within(thread).findByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(await screen.findByRole("link", { name: "Pollen" })).toBeVisible();
+  expect(await screen.findByText("Loading older…")).toBeVisible();
+  expect(chatRow(h.f.rootId)).toBeUndefined();
+  return h;
+}
+
+it("reveals a thread's root found in older history beside the thread", async () => {
+  const h = await olderRootVisit();
+  await act(async () => h.f.release.older());
+  await waitFor(() => expect(h.revealed(h.f.rootId)).toBeDefined());
+  expect(h.revealed(h.f.rootId)).toHaveTextContent("Are you there?");
+});
+
+// Pulling the reader to the root seconds after they moved on would take them
+// from where they scrolled, or stop the chat following new messages.
+it.each([
+  [
+    "scrolled",
+    () =>
+      fireEvent.wheel(inChat("[data-message-scroller]") as HTMLElement, {
+        deltaY: -40,
+      }),
+  ],
+  [
+    "sent",
+    async () => {
+      const composer = screen.getByRole("textbox", { name: "Message Pollen" });
+      await userEvent.type(composer, "Still here");
+      await userEvent.click(
+        within(composer.closest("form") as HTMLElement).getByRole("button", {
+          name: "Send message",
+        }),
+      );
+      // The composer clears once the send is reported.
+      await waitFor(() => expect(composer).not.toHaveTextContent("Still here"));
+    },
+  ],
+])(
+  "leaves the chat where the reader %s while a thread's older root was sought",
+  async (_, interact) => {
+    const h = await olderRootVisit();
+    await interact();
+    await act(async () => h.f.release.older());
+    await waitFor(() => expect(chatRow(h.f.rootId)).toBeDefined());
+    await act(() => frames(2));
+    expect(h.revealed(h.f.rootId)).toBeUndefined();
+  },
+);
+
+// A message visit's reveal is the visit itself: the chat shows a retired agent
+// update only as the revealed message, so it must outlast the reader's gestures.
+it("keeps a revealed retired agent update, and its focus, through the reader's first gesture", async () => {
+  const h = await linkedVisit(({ stepId }) => ({ messageId: stepId }), {
+    withActivity: true,
+  });
+  await waitFor(() => expect(h.revealed(h.f.stepId)).toBeDefined());
+  const row = h.revealed(h.f.stepId) as HTMLElement;
+  expect(row).toHaveTextContent("Checking the calendar…");
+  await waitFor(() => expect(document.activeElement).toBe(row));
+  fireEvent.wheel(inChat("[data-message-scroller]") as HTMLElement, {
+    deltaY: -40,
+  });
+  await act(() => frames(2));
+  expect(row).toBeInTheDocument();
+  expect(document.activeElement).toBe(row);
+});
+
+it("returns to a reply's thread after leaving Bestie for another page", async () => {
+  // In the main pane, the thread shows only while its visit selects it.
+  localStorage.setItem("buzz-thread-placement.v1", "main");
+  const h = await linkedVisit(({ replyId }) => ({ messageId: replyId }));
+  const selected = () =>
+    within(screen.getByLabelText("Bestie conversation tabs")).getByRole("tab", {
+      selected: true,
+    });
+  expect(
+    await within(await screen.findByLabelText("Thread")).findByText(
+      "Yep, here. What’s up?",
+    ),
+  ).toBeVisible();
+  expect(selected()).toHaveTextContent("Are you there?");
+  act(() => {
+    void h.host.navigation.open(homeTarget);
+  });
+  await waitFor(() => expect(screen.queryByLabelText("Thread")).toBeNull());
+  act(() => h.host.navigation.back());
+  // The remounted page reads how the visit resolved from the tab store.
+  await waitFor(() => expect(selected()).toHaveTextContent("Are you there?"));
+  expect(
+    within(screen.getByLabelText("Thread")).getByText("Yep, here. What’s up?"),
+  ).toBeVisible();
+  expect(h.host.navigation.snapshot().entry.target).toEqual(
+    bestieTarget(h, { messageId: h.f.replyId }),
+  );
+});
+
+it("returns to a reply's thread after leaving Bestie before history answered", async () => {
+  const h = await linkedVisit(({ replyId }) => ({ messageId: replyId }), {
+    holdHead: true,
+  });
+  expect(await screen.findByText("Loading messages…")).toBeVisible();
+  act(() => {
+    void h.host.navigation.open(homeTarget);
+  });
+  expect(await screen.findByLabelText("promoted DM")).toBeInTheDocument();
+  act(() => h.host.navigation.back());
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeInTheDocument();
+  // Back enters the visit once history says where the message is.
+  await act(async () => h.f.release.head());
+  expect(
+    await within(await screen.findByLabelText("Thread")).findByText(
+      "Yep, here. What’s up?",
+    ),
+  ).toBeVisible();
+  expect(h.host.navigation.snapshot().entry.target).toEqual(
+    bestieTarget(h, { messageId: h.f.replyId }),
+  );
+});
+
+it("resolves message visits with no stored resolution on Back, without revealing them", async () => {
+  // In the main pane, each visit's resolution shows in the selected tab.
+  localStorage.setItem("buzz-thread-placement.v1", "main");
+  const f = await threadHistoryFixture();
+  const { navigator, rerender, bestie } = f;
+  const selected = () =>
+    within(screen.getByLabelText("Bestie conversation tabs")).getByRole("tab", {
+      selected: true,
+    });
+  expect(await screen.findByText("Are you there?")).toBeVisible();
+  const message = (messageId: string) =>
+    ({
+      ...bestie,
+      route: { version: 1, params: { channelId: pollenDM, messageId } },
+    }) as const;
+  // Visits this page never presented, as after a reload: the tab store has
+  // no record of how they resolved.
+  void navigator.open(message(f.rootId));
+  void navigator.open(message(f.replyId));
+  void navigator.open(f.previous);
+  act(() => navigator.back());
+  rerender();
+  expect(
+    await within(await screen.findByLabelText("Thread")).findByText(
+      "Yep, here. What’s up?",
+    ),
+  ).toBeVisible();
+  expect(selected()).toHaveTextContent("Are you there?");
+  act(() => navigator.back());
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual(message(f.rootId));
+  await waitFor(() => expect(selected()).toHaveTextContent("Pollen"));
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+});
+
+it("leaves the chat history in place for View thread and for Back and Forward", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender } = f;
+  const row = (await screen.findByText("Are you there?")).closest(
+    "[data-message-id]",
+  );
+  expect(row).not.toBeNull();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
+  expect(row).toBeInTheDocument();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+  act(() => navigator.back());
+  rerender();
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeVisible();
+  act(() => navigator.forward());
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
+  expect(row).toBeInTheDocument();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+});
+
+it("leaves the chat history in place when View thread opens its shown thread again", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender } = f;
+  const viewThread = await screen.findByRole("button", {
+    name: "View thread: 1 reply",
+  });
+  await userEvent.click(viewThread);
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  const visit = navigator.snapshot().entry.id;
+  const attempt = navigator.snapshot().attempt.id;
+  fireEvent.wheel(inChat("[data-message-scroller]") as HTMLElement, {
+    deltaY: -40,
+  });
+  await userEvent.click(viewThread);
+  rerender();
+  // The same visit restarts under its id; it is still this page's own.
+  expect(navigator.snapshot().entry.id).toBe(visit);
+  expect(navigator.snapshot().attempt.id).not.toBe(attempt);
+  await act(() => frames(2));
+  expect(f.revealed(f.rootId)).toBeUndefined();
+  expect(screen.queryByText("Loading messages…")).toBeNull();
+});
+
+it("keeps a message visit that showed the chat when its View thread tab closes", async () => {
+  const f = await threadHistoryFixture();
+  const { navigator, rerender, bestie } = f;
+  const message = {
+    ...bestie,
+    route: {
+      version: 1,
+      params: { channelId: pollenDM, messageId: f.rootId },
+    },
+  } as const;
+  void navigator.open(message);
+  rerender();
+  expect(
+    await screen.findByRole("textbox", { name: "Message Pollen" }),
+  ).toBeVisible();
+  expect(screen.queryByLabelText("Thread")).toBeNull();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  rerender();
+  expect(await screen.findByLabelText("Thread")).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Close Are you there? tab" }),
+  );
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+  // Close retires the thread's visit only; the message visit remains a stop.
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(message);
+});
+
+it("retires a message visit that opened as its thread when that thread closes", async () => {
+  // A message history no longer holds opens as its thread.
+  const h = await linkedVisit(() => ({ messageId: "f".repeat(64) }));
+  const pane = await screen.findByLabelText("Bestie panel tabs");
+  await userEvent.click(
+    within(pane).getByRole("button", { name: /^Close .* tab$/ }),
+  );
+  // Close retires the visit that showed this thread, whatever its address.
+  await waitFor(() =>
+    expect(h.host.navigation.snapshot().entry.target).toEqual(bestieTarget(h)),
+  );
+  act(() => h.host.navigation.back());
+  await waitFor(() =>
+    expect(h.host.navigation.snapshot().entry.target).toEqual(homeTarget),
+  );
+});
+
+it("opens a chat link into this DM as its own visit, without a Messages stop", async () => {
+  const f = await threadHistoryFixture(true);
+  const { navigator, rerender, bestie } = f;
+  // The chat link renders under the DM's name.
+  await userEvent.click(await screen.findByRole("link", { name: "Pollen" }));
+  rerender();
+  expect(navigator.snapshot().entry.target).toEqual({
+    ...bestie,
+    scope: { viewer: f.viewer, communityOrigin: "https://test.example" },
+    route: {
+      version: 1,
+      params: { channelId: pollenDM, messageId: f.rootId },
+    },
+  });
+  act(() => navigator.back());
+  expect(navigator.snapshot().entry.target).toEqual(bestie);
+});
+
 it("follows a bestie changed elsewhere without carrying the old DM draft or modifying the Solo draft", async () => {
   const f = await fixture();
   const user = userEvent.setup();
@@ -677,8 +1392,8 @@ it("keeps a failed DM retry focused and announces another failure", async () => 
   expect(retry).toHaveFocus();
 });
 
-async function threadHistoryFixture() {
-  const f = await fixture({ existing: true, withReply: true });
+async function threadHistoryFixture(withLink = false) {
+  const f = await fixture({ existing: true, withReply: true, withLink });
   f.choose(pollen);
   const previous = {
     version: 1,
@@ -703,6 +1418,7 @@ async function threadHistoryFixture() {
       target: entry.target,
       signal: attempt.signal,
       ...(attempt.focus ? { focus: attempt.focus } : {}),
+      ...(attempt.traversal ? { traversal: true } : {}),
       position: () => undefined,
       savePosition() {},
       passThrough: () => () => {},

@@ -101,10 +101,11 @@ history entries may remain physically present; skipping them must produce the
 same visible result through app controls and native browser history.
 
 Call `navigation.dismiss(visits, fallback)` only after the feature permits the
-close. Content tabs can supply exact visit IDs; dialogs can supply a target
-predicate matching their identity and account/community scope, including section
-visits. The drivers retire the matching known entries in one transaction; a
-feature must not add a second history store or record unmount as dismissal.
+close. Content tabs can supply exact visit IDs; dialogs can supply a predicate
+over each visit's target and ID matching their identity and account/community
+scope, including section visits. The drivers retire the matching known entries
+in one transaction; a feature must not add a second history store or record
+unmount as dismissal.
 The legacy `open(target, { dismiss: true })` and `returnTo` helpers do not retire
 visits; do not use them for explicit Close.
 

@@ -37,7 +37,7 @@ vi.mock("./ConversationTab", () => ({
     tab: Tab;
     channel: { name: string };
     visit: boolean;
-    onResolvedRoot?: (rootId: string) => void;
+    onResolvedRoot?: (rootId: string, messageId: string) => void;
     parent?: { label: string; open(): void };
   }) => (
     <p
@@ -52,7 +52,10 @@ vi.mock("./ConversationTab", () => ({
       {tab.kind} in {channel.name}
       {!visit && " unvisited"}
       {onResolvedRoot && (
-        <button type="button" onClick={() => onResolvedRoot("older")}>
+        <button
+          type="button"
+          onClick={() => onResolvedRoot("older", tab.messageId ?? "")}
+        >
           Resolve root
         </button>
       )}

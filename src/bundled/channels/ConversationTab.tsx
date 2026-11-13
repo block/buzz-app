@@ -46,7 +46,7 @@ type ConversationTabProps = {
   /** The current route's request, only for the thread it addresses. */
   navigation?: PageNavigation | undefined;
   onRetryNavigation?: (() => void) | undefined;
-  onResolvedRoot?: ((rootId: string) => void) | undefined;
+  onResolvedRoot?: ((rootId: string, messageId: string) => void) | undefined;
   onDifferentThread?: ((requested: string, kept: string) => void) | undefined;
   /** Where a thread shown here lives, when it can open there. */
   parent?: ThreadPanelProps["parent"];

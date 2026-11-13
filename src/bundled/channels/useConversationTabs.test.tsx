@@ -354,7 +354,11 @@ it("retained offline tabs can close and open threads without activating connecte
   expect(h.result.current.state.tabs).toHaveLength(1);
   act(() => h.result.current.state.openThreadTab("alpha", "reply", "hint"));
   act(() =>
-    h.result.current.state.resolveThreadRoot("thread:alpha:hint", "root"),
+    h.result.current.state.resolveThreadRoot(
+      "thread:alpha:hint",
+      "root",
+      "reply",
+    ),
   );
   const label = () =>
     h.result.current.workspace.items.find(

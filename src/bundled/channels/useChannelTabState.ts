@@ -57,6 +57,14 @@ type VisitSelection = {
   mainSelected?: string | undefined;
   paneOpen: boolean;
 };
+/** An addressed thread visit. `rootId` is the link's hint until `verified`:
+ * a reader confirmed it as `messageId`'s root. */
+type RoutedVisit = {
+  channelId: string;
+  messageId: string;
+  rootId: string;
+  verified?: boolean | undefined;
+};
 type State = {
   entries: PanelOpening[];
   /** Panel tabs moved to the main pane, by tab id; the rest are in the side. */
@@ -66,9 +74,7 @@ type State = {
   /** Selected main-pane tab; undefined is the channel conversation. */
   mainSelected?: string | undefined;
   /** Addressed thread visits, separate from the bounded layout snapshots. */
-  routedVisits?:
-    | Record<string, { channelId: string; messageId: string; rootId: string }>
-    | undefined;
+  routedVisits?: Record<string, RoutedVisit> | undefined;
   /** The last history visit applied, so remounting never reapplies it. */
   visit?: string | undefined;
   /** Selection each recent visit had when it was left. */
@@ -583,12 +589,18 @@ export function useChannelTabState(
           state.routedVisits?.[visit.slice(0, -":thread".length)];
         // Reconstruct the same address without downgrading its verified root
         // to the route hint while the successor reader is still resolving.
-        const thread =
+        const record =
           routed &&
-          retained?.channelId === routed.channelId &&
+          (retained?.channelId === routed.channelId &&
           retained.messageId === routed.messageId
-            ? { ...routed, rootId: retained.rootId }
-            : routed;
+            ? retained
+            : {
+                channelId: routed.channelId,
+                messageId: routed.messageId,
+                rootId: routed.rootId,
+              });
+        const thread =
+          routed && record ? { ...routed, rootId: record.rootId } : routed;
         const visits = state.left ? state.visits : remember(state);
         const next: State = {
           ...state,
@@ -602,14 +614,10 @@ export function useChannelTabState(
               }
             : state.detailVisits,
           routedVisits:
-            thread && visit.endsWith(":thread")
+            record && visit.endsWith(":thread")
               ? {
                   ...state.routedVisits,
-                  [visit.slice(0, -":thread".length)]: {
-                    channelId: thread.channelId,
-                    messageId: thread.messageId,
-                    rootId: thread.rootId,
-                  },
+                  [visit.slice(0, -":thread".length)]: record,
                 }
               : state.routedVisits,
         };
@@ -700,30 +708,29 @@ export function useChannelTabState(
   );
   // Once a reader verifies its root, a tab opened from a wrong hint merges
   // into the tab already holding that thread instead of duplicating it.
+  // `messageId` is the message the reader confirmed under `rootId`, not the
+  // tab's, which a link into an open thread changes before its reader agrees.
   const resolveThreadRoot = useCallback(
-    (id: string, rootId: string) =>
+    (id: string, rootId: string, messageId: string) =>
       update((previous) => {
         let state = previous;
         const tab = state.tabs.find((item) => item.id === id);
         if (tab?.kind !== "thread") return state;
-        // A link's root is a hint. Retire visits under the verified thread,
-        // without also retiring visits to a different thread named by that hint.
-        if (
-          Object.values(state.routedVisits ?? {}).some(
-            (visit) =>
-              visit.channelId === tab.channelId &&
-              visit.messageId === tab.messageId &&
-              visit.rootId !== rootId,
-          )
-        ) {
+        // A link's root is a hint. Record the verified root for visits to the
+        // confirmed message, retiring them under the verified thread without
+        // also retiring visits to a different thread named by that hint.
+        const unverified = (visit: RoutedVisit) =>
+          visit.channelId === tab.channelId &&
+          visit.messageId === messageId &&
+          (visit.rootId !== rootId || !visit.verified);
+        if (Object.values(state.routedVisits ?? {}).some(unverified)) {
           state = {
             ...state,
             routedVisits: Object.fromEntries(
               Object.entries(state.routedVisits ?? {}).map(([id, visit]) => [
                 id,
-                visit.channelId === tab.channelId &&
-                visit.messageId === tab.messageId
-                  ? { ...visit, rootId }
+                unverified(visit)
+                  ? { ...visit, rootId, verified: true }
                   : visit,
               ]),
             ),

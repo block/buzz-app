@@ -1052,8 +1052,8 @@ export function useConversationTabs({
               extensions={extensions}
               navigation={route}
               onRetryNavigation={onRetryNavigation}
-              onResolvedRoot={(rootId) =>
-                tabState.resolveThreadRoot(tab.id, rootId)
+              onResolvedRoot={(rootId, messageId) =>
+                tabState.resolveThreadRoot(tab.id, rootId, messageId)
               }
               onDifferentThread={(requested, kept) =>
                 tabState.divertThread(tab.id, requested, kept)

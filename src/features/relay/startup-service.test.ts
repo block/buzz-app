@@ -4,7 +4,7 @@ import type { HeadPersistence, SavedHead, SavedStartup } from "./persistence";
 import type { ReadTransport } from "./transport";
 import { ReadError } from "./errors";
 import { bounds, keypair, message, metadata, roster, signed } from "./testing";
-import { eventDto, type RelayEvent } from "./events";
+import { eventDto } from "./events";
 import { provideRelay } from "./service";
 
 const storage = vi.hoisted(() => ({ create: vi.fn() }));
@@ -26,12 +26,14 @@ function deferred<T>() {
 function setup({
   saved = true,
   profiles = [],
+  headProfiles = [],
   verifyStored,
   relay = keypair(),
   verifiedProfiles,
 }: {
   saved?: boolean;
   profiles?: unknown[];
+  headProfiles?: unknown[];
   verifyStored?: ReadTransport["verifyStored"];
   relay?: ReturnType<typeof keypair>;
   verifiedProfiles?: unknown;
@@ -53,7 +55,7 @@ function setup({
         {
           channelId: "alpha",
           savedAt: Date.now(),
-          profiles: [],
+          profiles: headProfiles,
           events: [
             message(viewer, "alpha", "Saved history", 20),
             bounds(relay, "alpha", "head", {
@@ -120,28 +122,46 @@ function setup({
   };
   return { ctx, data, disk, connections, source, restored };
 }
-it("verifies cached profiles through the host before publishing while offline", async () => {
-  const profile = signed(keypair(), {
-    kind: 0,
-    tags: [],
-    content: JSON.stringify({ name: "Saved member" }),
-  });
-  const checking = deferred<RelayEvent[]>();
-  const verifyStored = vi.fn(() => checking.promise);
-  const { data, restored, source } = setup({
-    profiles: [profile],
-    verifyStored,
-  });
-  await vi.waitFor(() => expect(verifyStored).toHaveBeenCalledTimes(1));
-  expect(data.snapshot().cached).toBeUndefined();
-  checking.resolve([eventDto(JSON.parse(JSON.stringify(profile)))]);
-  const snapshot = await restored();
-  expect(snapshot.session.profiles.snapshot().get(profile.pubkey)?.name).toBe(
-    "Saved member",
-  );
-  expect(snapshot.status).toBe("connecting");
-  expect(source.query).not.toHaveBeenCalled();
-});
+it.each(["profile mirror", "discovery", "history", "head profiles"])(
+  "waits for host verification of cached %s before publishing while offline",
+  async (stage) => {
+    const profile = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "Saved member" }),
+    });
+    const checking = deferred<void>();
+    const kind = stage === "discovery" ? 39002 : stage === "history" ? 9 : 0;
+    const holds = (values: readonly unknown[]) =>
+      values.some((value) => (value as { kind: number }).kind === kind);
+    const verifyStored = vi.fn(async (values: readonly unknown[]) => {
+      if (holds(values)) await checking.promise;
+      return values.map((value) => eventDto(JSON.parse(JSON.stringify(value))));
+    });
+    const { data, restored, source } = setup({
+      profiles: stage === "profile mirror" ? [profile] : [],
+      headProfiles: stage === "head profiles" ? [profile] : [],
+      verifyStored,
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(verifyStored.mock.calls.some(([values]) => holds(values))).toBe(
+          true,
+        ),
+      );
+      expect(data.snapshot().cached).toBeUndefined();
+    } finally {
+      checking.resolve();
+    }
+    const snapshot = await restored();
+    if (kind === 0)
+      expect(
+        snapshot.session.profiles.snapshot().get(profile.pubkey)?.name,
+      ).toBe("Saved member");
+    expect(snapshot.status).toBe("connecting");
+    expect(source.query).not.toHaveBeenCalled();
+  },
+);
 it.each([false, true])(
   "restores valid cached profiles with JS when host verification fails or is absent (host=%s)",
   async (host) => {
@@ -154,17 +174,29 @@ it.each([false, true])(
       ...profile,
       content: JSON.stringify({ name: "Changed bytes" }),
     };
+    const embedded = signed(keypair(), {
+      kind: 0,
+      tags: [],
+      content: JSON.stringify({ name: "History author" }),
+    });
     const verifyStored = host
       ? vi.fn(async () => {
           throw new Error("Host unavailable");
         })
       : undefined;
-    const { restored } = setup({ profiles: [invalid, profile], verifyStored });
+    const { restored } = setup({
+      profiles: [invalid, profile],
+      headProfiles: [profile, embedded],
+      verifyStored,
+    });
     const snapshot = await restored();
     expect(snapshot.session.profiles.snapshot().get(profile.pubkey)?.name).toBe(
       "Saved member",
     );
-    if (verifyStored) expect(verifyStored).toHaveBeenCalledTimes(1);
+    expect(
+      snapshot.session.profiles.snapshot().get(embedded.pubkey)?.name,
+    ).toBe("History author");
+    if (verifyStored) expect(verifyStored).toHaveBeenCalled();
   },
 );
 it.each([

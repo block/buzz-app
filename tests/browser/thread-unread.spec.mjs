@@ -616,6 +616,112 @@ test("a cold link to an absorbed failure expands its activity history once the w
     .not.toContain(failure.content);
 });
 
+// A normal agent send signs the request it answers but links its reply to the
+// thread root. The first agent's update claims a request nested under another
+// reply, which the thread has not received yet, so one history holds that
+// update with the second agent's update and failure. When the request
+// arrives, the claim moves the first update to a history of its own. The
+// reader collapsed nothing, so the opened failure must stay shown and focused
+// in the history that now starts at the second agent's update.
+test("a late request that splits an opened failure's activity history leaves the failure shown and focused", async ({
+  page,
+  app,
+}) => {
+  const [first, second, requester] = [0, 1, 2].map(() => generateSecretKey());
+  app.serveProfile(first, { name: "First agent", is_agent: true });
+  app.serveProfile(second, { name: "Remote tester", is_agent: true });
+  app.serveProfile(requester, { name: "Requester" });
+  await holdReadingFocus(page);
+  await open(page, app);
+  const history = app.histories.get("primary/alpha");
+  const root = history.find((row) => row.content === "Thread root 0");
+  const sibling = history.find((row) => row.content === "Broadcast reply");
+  const request = finalizeEvent(
+    {
+      kind: 9,
+      content: "Check the headings too.",
+      tags: [
+        ["h", "alpha"],
+        ["e", root.id, "", "root"],
+        ["e", sibling.id, "", "reply"],
+      ],
+      created_at: Math.floor(Date.now() / 1000) - 2,
+    },
+    requester,
+  );
+  publishReply(
+    app,
+    "alpha",
+    root.id,
+    first,
+    "Checked the headings.",
+    [
+      ["audience", "agents"],
+      ["buzz:request", request.id],
+    ],
+    -1,
+  );
+  const failure = publishAbsorbedFailure(app, "alpha", root.id, second);
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  await alpha.hover();
+  const item = page
+    .getByRole("dialog", { name: "Activity in Alpha" })
+    .getByRole("button", { name: /Open unread thread from/ })
+    .filter({ hasText: failure.content });
+  await expect(item).toBeVisible();
+  await releaseReadingFocus(page);
+  await item.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const row = thread.locator(`[data-message-id="${failure.id}"]`);
+  const histories = (state) =>
+    thread.getByRole("button", {
+      name: new RegExp(`^${state} activity history:`),
+    });
+  await expect(row).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
+  // One history holds both agents' updates and the failure.
+  await expect(histories("Collapse")).toHaveCount(1);
+  await expect(histories("Show")).toHaveCount(0);
+  history.push(request);
+  app.relay.publish("primary", request);
+  // The first agent's update left for its own, collapsed history.
+  await expect(histories("Show")).toHaveCount(1);
+  await expect(histories("Collapse")).toHaveCount(1);
+  await expect(row).toBeInViewport();
+  await expect(row).toBeFocused();
+});
+
+/** One reply to a thread root, in history and, once the page has a live
+ * stream, published to it. Tags with an audience make it an agent-only update. */
+function publishReply(
+  app,
+  channel,
+  rootId,
+  key,
+  content,
+  tags,
+  offset,
+  live = true,
+) {
+  const event = finalizeEvent(
+    {
+      kind: tags.some(([name]) => name === "audience") ? 40002 : 9,
+      content,
+      tags: [["h", channel], ["e", rootId, "", "reply"], ...tags],
+      created_at: Math.floor(Date.now() / 1000) + offset,
+    },
+    key,
+  );
+  app.histories.get(`primary/${channel}`).push(event);
+  if (live) app.relay.publish("primary", event);
+  return event;
+}
+
 /** An agent-only update, then the same agent's public execution failure, as
  * direct replies to the viewer's thread root. The failure is unread; the
  * thread folds it into the update's activity history. Before the page loads
@@ -627,21 +733,8 @@ function publishAbsorbedFailure(
   key,
   { live = true } = {},
 ) {
-  const history = app.histories.get(`primary/${channel}`);
-  const publish = (content, tags, offset) => {
-    const event = finalizeEvent(
-      {
-        kind: tags.some(([name]) => name === "audience") ? 40002 : 9,
-        content,
-        tags: [["h", channel], ["e", rootId, "", "reply"], ...tags],
-        created_at: Math.floor(Date.now() / 1000) + offset,
-      },
-      key,
-    );
-    history.push(event);
-    if (live) app.relay.publish("primary", event);
-    return event;
-  };
+  const publish = (content, tags, offset) =>
+    publishReply(app, channel, rootId, key, content, tags, offset, live);
   publish(
     "Read the release notes and checked the headings.",
     [["audience", "agents"]],

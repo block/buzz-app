@@ -165,8 +165,6 @@ import TablerCheckIcon from "@tabler/icons-react/dist/esm/icons/IconCheck.mjs";
 export const CheckIcon = defineIcon("tabler", TablerCheckIcon);
 import TablerChecksIcon from "@tabler/icons-react/dist/esm/icons/IconChecks.mjs";
 export const ChecksIcon = defineIcon("tabler", TablerChecksIcon);
-import TablerRubberStampIcon from "@tabler/icons-react/dist/esm/icons/IconRubberStamp.mjs";
-export const RubberStampIcon = defineIcon("tabler", TablerRubberStampIcon);
 import TablerTicketIcon from "@tabler/icons-react/dist/esm/icons/IconTicket.mjs";
 export const TicketIcon = defineIcon("tabler", TablerTicketIcon);
 import TablerCopyIcon from "@tabler/icons-react/dist/esm/icons/IconCopy.mjs";

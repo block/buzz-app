@@ -675,8 +675,10 @@ and are asked to sign in again in Buzz.
   choice starts off. On macOS, Command+Up Arrow keeps editing directly from an
   empty composer with either choice.
 - **File sharing** is available through **Attach files** in the composer when
-  uploads are available. Files and media are shared with the conversation's
-  members. If some of the files you pick, paste or drop can't be attached, such
+  uploads are available. ⌘O (Ctrl+O elsewhere) opens the same picker for
+  the composer you're typing in, or else the pane's composer. It does nothing
+  while you edit a message, and you can rebind it in **Settings → Shortcuts**.
+  Files and media are shared with the conversation's members. If some of the files you pick, paste or drop can't be attached, such
   as an empty file or any past 10 per message, the rest still attach and a
   notice says how many were left out and why, naming the first few.
   If an upload fails, its attachment shows the reason, **Retry**, and

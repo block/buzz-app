@@ -564,6 +564,141 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
   },
 );
 
+it.each(["MacIntel", "Win32"])(
+  "%s Mod+O presses the focused composer's Attach files, else the pane's",
+  async (platform) => {
+    const h = harness(platform);
+    const apple = platform === "MacIntel";
+    // jsdom has no layout. The browser journey opens the real file chooser.
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([
+      {},
+    ] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(
+          this.closest("[data-panel-workspace]") ? 200 : 0,
+          0,
+          100,
+          100,
+        );
+      },
+    );
+    Object.defineProperty(document, "elementsFromPoint", {
+      configurable: true,
+      value: (x: number) => [
+        document.querySelector(
+          x < 200 ? "[data-main-workspace]" : "[data-panel-workspace]",
+        ),
+      ],
+    });
+    const composer = (name: string) => (
+      <form data-composer-surface="" aria-label={name}>
+        <input data-tab-focus="" aria-label={`${name} draft`} />
+        <button type="button" data-attach-files="">
+          Attach to {name}
+        </button>
+      </form>
+    );
+    try {
+      render(
+        <>
+          <button type="button">Outside</button>
+          <main id="main-content">
+            <div data-main-workspace="">{composer("Channel")}</div>
+            <div data-panel-workspace="">
+              <button type="button" role="tab" aria-selected="true">
+                Thread tab
+              </button>
+              {composer("Thread")}
+            </div>
+          </main>
+          <div className="xterm">
+            <textarea aria-label="Drawer terminal" />
+          </div>
+        </>,
+      );
+      const clicked: string[] = [];
+      for (const button of screen.getAllByRole("button", { name: /^Attach/ }))
+        button.addEventListener("click", () =>
+          clicked.push(button.textContent ?? ""),
+        );
+      const chord = (key: string) => ({
+        key,
+        ctrlKey: !apple,
+        metaKey: apple,
+      });
+      const attach = (target: HTMLElement, key = "o") => {
+        target.focus();
+        clicked.length = 0;
+        const prevented = press(target, chord(key)).defaultPrevented;
+        return { prevented, clicked: [...clicked] };
+      };
+      const channel = screen.getByRole("textbox", { name: "Channel draft" });
+      const thread = screen.getByRole("textbox", { name: "Thread draft" });
+      const outside = screen.getByRole("button", { name: "Outside" });
+      expect(
+        h.shortcuts.hostSnapshot().find(({ id }) => id === "attach-files")
+          ?.binding,
+      ).toEqual([{ key: "o", mod: true }]);
+      // The focused composer gets the files; Mod+U stays free.
+      expect(attach(channel)).toEqual({
+        prevented: true,
+        clicked: ["Attach to Channel"],
+      });
+      expect(attach(channel, "u")).toEqual({ prevented: false, clicked: [] });
+      expect(attach(thread)).toEqual({
+        prevented: true,
+        clicked: ["Attach to Thread"],
+      });
+      // Elsewhere in a pane, that pane's composer; outside any, the main one.
+      expect(attach(screen.getByRole("tab", { name: "Thread tab" }))).toEqual({
+        prevented: true,
+        clicked: ["Attach to Thread"],
+      });
+      expect(attach(outside)).toEqual({
+        prevented: true,
+        clicked: ["Attach to Channel"],
+      });
+      // An editing composer disables its button: the key does nothing, rather
+      // than attaching to another composer.
+      screen
+        .getByRole("button", { name: "Attach to Thread" })
+        .setAttribute("disabled", "");
+      expect(attach(thread)).toEqual({ prevented: false, clicked: [] });
+      // Exact modifiers, a shell's Ctrl+O and modals keep the key.
+      channel.focus();
+      for (const extra of [{ shiftKey: true }, { altKey: true }]) {
+        clicked.length = 0;
+        expect(
+          press(channel, { ...chord("o"), ...extra }).defaultPrevented,
+        ).toBe(false);
+        expect(clicked).toEqual([]);
+      }
+      expect(
+        attach(screen.getByRole("textbox", { name: "Drawer terminal" })),
+      ).toEqual({ prevented: false, clicked: [] });
+      const modal = document.createElement("div");
+      modal.setAttribute("aria-modal", "true");
+      document.body.append(modal);
+      expect(attach(channel)).toEqual({ prevented: false, clicked: [] });
+      modal.remove();
+      // A rebind replaces the default.
+      act(() => h.bindings.set("attach-files", { key: "j", mod: true }));
+      expect(attach(channel)).toEqual({ prevented: false, clicked: [] });
+      expect(attach(channel, "j")).toEqual({
+        prevented: true,
+        clicked: ["Attach to Channel"],
+      });
+      act(() => h.bindings.set("attach-files", null));
+      h.remove();
+      expect(attach(channel)).toEqual({ prevented: false, clicked: [] });
+    } finally {
+      Reflect.deleteProperty(document, "elementsFromPoint");
+      await h.dispose();
+    }
+  },
+);
+
 it.each([
   ["Win32", { ctrlKey: true }],
   ["MacIntel", { metaKey: true }],

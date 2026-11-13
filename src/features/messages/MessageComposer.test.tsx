@@ -72,6 +72,7 @@ import { ConversationPresentation } from "../conversation/ConversationPresentati
 import { AgentsContext } from "../agents/react";
 import type { Agents, Models } from "../agents/service";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { attachFilesTrigger } from "../../app/focus-navigation";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
@@ -12601,6 +12602,39 @@ it("drops the attachments mark while a row-requested edit holds pending items", 
   await waitFor(() =>
     expect(within(view.container).getByText("pending.txt")).toBeVisible(),
   );
+});
+
+it("offers its Attach files button to the shortcut, except while editing", async () => {
+  const h = await mountUploadComposer({ editable: true });
+  const viewer = h.owner.session.viewer;
+  if (!viewer) throw new Error("Expected upload viewer");
+  h.unmount();
+  let scope: ReturnType<typeof useMessageEditScope>;
+  function Probe() {
+    scope = useMessageEditScope();
+    return null;
+  }
+  const row = editableMessage({ authorId: viewer });
+  const view = render(
+    <MessageEditScope>
+      <Probe />
+      <MessageComposer
+        session={h.owner.session}
+        scope={h.scope}
+        channelId="channel"
+        channelName="General"
+        editMessages={[row]}
+      />
+    </MessageEditScope>,
+    { wrapper: ToastProvider },
+  );
+  within(view.container).getByRole("textbox").focus();
+  expect(attachFilesTrigger()).toBe(
+    within(view.container).getByRole("button", { name: "Attach files" }),
+  );
+  act(() => scope?.current?.(row));
+  within(view.container).getByRole("textbox").focus();
+  expect(attachFilesTrigger()).toBeUndefined();
 });
 
 it("stages chat cards above an ordinary caption editor, persists them, and sends both", async () => {

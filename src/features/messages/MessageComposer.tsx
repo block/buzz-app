@@ -3324,6 +3324,8 @@ function Composer({
             type="button"
             aria-label="Attach files"
             title="Attach files"
+            // The Attach files shortcut presses this button.
+            data-attach-files=""
             disabled={editingDisabled || !!editing.target}
             onClick={() => picker.current?.click()}
             icon={<PaperclipIcon size={16} />}

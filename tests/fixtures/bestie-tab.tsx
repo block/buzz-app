@@ -125,7 +125,14 @@ const agent = {
   },
 } as unknown as Agent;
 const navigation = { open: async () => {} };
-const tab = (former ? formerBestieTab : bestieTab)(relay, agents, navigation);
+// Usage is on, so the row offers Open Usage too.
+const settingsCards = { has: () => true, subscribe: () => () => {} };
+const tab = (former ? formerBestieTab : bestieTab)(
+  relay,
+  agents,
+  navigation,
+  settingsCards,
+);
 const Tab = tab.component;
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing fixture root");

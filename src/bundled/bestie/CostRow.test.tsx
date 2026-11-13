@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
   Agent,
   Agents,
@@ -13,7 +13,16 @@ import { dayStart } from "../usage/stats";
 import { CostRow } from "./CostRow";
 import { weekCost } from "./cost";
 
-afterEach(cleanup);
+// The rendered row reads its week back from now: hold now at NOW. Only Date
+// is faked, so the row's reads and user events still run on real timers.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const NOW = new Date(2026, 10, 13, 15).getTime();
 const agent = {
@@ -41,6 +50,24 @@ const session = (
   lastAt: Math.max(...observations.map((entry) => entry.at)),
   observations,
 });
+/** Settings cards with Usage's registered while `usage.on`; `turn` changes
+ * that and tells subscribers. */
+const cards = (on: boolean) => {
+  const listeners = new Set<() => void>();
+  const usage = { on };
+  return {
+    has: (key: string) => usage.on && key === "buzz.usage/usage",
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    turn(next: boolean) {
+      usage.on = next;
+      for (const listener of listeners) listener();
+    },
+  };
+};
+const usageOn = cards(true);
 /** Agents whose type reads `usage`, or none when it is left out. */
 const agentsWith = (usage?: unknown) =>
   ({
@@ -80,6 +107,7 @@ it("shows the total and a daily sparkline, and opens Usage", async () => {
       ])}
       agent={agent}
       open={open}
+      settingsCards={usageOn}
     />,
   );
   expect(await screen.findByText("$1.75")).toBeVisible();
@@ -93,8 +121,41 @@ it("shows the total and a daily sparkline, and opens Usage", async () => {
   });
 });
 
+it("shows the cost but offers no Open Usage while Usage is off, until it is on", async () => {
+  const user = userEvent.setup();
+  const open = vi.fn();
+  const settingsCards = cards(false);
+  render(
+    <CostRow
+      agents={agentsWith(async () => [session("one", [request(0, 0.25)])])}
+      agent={agent}
+      open={open}
+      settingsCards={settingsCards}
+    />,
+  );
+  expect(await screen.findByText("$0.25")).toBeVisible();
+  expect(screen.getByRole("img", { name: /Daily cost/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Open Usage" })).toBeNull();
+  act(() => settingsCards.turn(true));
+  await user.click(screen.getByRole("button", { name: "Open Usage" }));
+  expect(open).toHaveBeenCalledWith({
+    version: 1,
+    kind: "settings",
+    section: "buzz.usage/usage",
+  });
+  act(() => settingsCards.turn(false));
+  expect(screen.queryByRole("button", { name: "Open Usage" })).toBeNull();
+});
+
 it("says so when the agent type reports no usage", () => {
-  render(<CostRow agents={agentsWith()} agent={agent} open={vi.fn()} />);
+  render(
+    <CostRow
+      agents={agentsWith()}
+      agent={agent}
+      open={vi.fn()}
+      settingsCards={usageOn}
+    />,
+  );
   expect(
     screen.getByText(/this agent's type doesn't report its usage/),
   ).toBeVisible();
@@ -108,6 +169,7 @@ it("says so, without reading, for an agent that runs elsewhere", () => {
       agents={agentsWith(usage)}
       agent={{ ...agent, place: "hosted" } as Agent}
       open={vi.fn()}
+      settingsCards={usageOn}
     />,
   );
   expect(screen.getByText(/this agent runs elsewhere/)).toBeVisible();
@@ -120,7 +182,14 @@ it("shows a quiet error when the read rejects, and reads again on Retry", async 
     .fn()
     .mockRejectedValueOnce(new Error("a transcript was too large"))
     .mockResolvedValue([session("one", [request(0, 0.4)])]);
-  render(<CostRow agents={agentsWith(usage)} agent={agent} open={vi.fn()} />);
+  render(
+    <CostRow
+      agents={agentsWith(usage)}
+      agent={agent}
+      open={vi.fn()}
+      settingsCards={usageOn}
+    />,
+  );
   expect(
     await screen.findByText("Couldn't read this agent's sessions."),
   ).toBeVisible();
@@ -139,7 +208,12 @@ it("stops reading when the tab closes", async () => {
       }),
   );
   const { unmount } = render(
-    <CostRow agents={agentsWith(usage)} agent={agent} open={vi.fn()} />,
+    <CostRow
+      agents={agentsWith(usage)}
+      agent={agent}
+      open={vi.fn()}
+      settingsCards={usageOn}
+    />,
   );
   expect(screen.getByText("Reading its sessions…")).toBeVisible();
   await vi.waitFor(() => expect(signal).toBeDefined());

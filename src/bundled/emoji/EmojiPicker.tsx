@@ -341,7 +341,15 @@ export function EmojiPicker({
           </Button>
         </div>
       )}
-      {tab === "emoji" && catalog.error && (
+      {/* Session recovery retries a transient failure; Unicode stays usable. */}
+      {tab === "emoji" &&
+        (catalog.status === "loading" ||
+          (catalog.status === "error" && catalog.transient)) && (
+          <p role="status" className={styles.emojiStatus}>
+            Loading community emoji…
+          </p>
+        )}
+      {tab === "emoji" && catalog.error && !catalog.transient && (
         <div className={styles.emojiStatus}>
           <p role="alert">{catalog.error}</p>
           <Button type="button" onClick={() => void session.emoji.refresh()}>

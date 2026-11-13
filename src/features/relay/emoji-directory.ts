@@ -1,4 +1,5 @@
-import { retryRead } from "./read-retry";
+import { isTransientFailure } from "./errors";
+import { createRecovery, loadState } from "./recovery";
 import type { UploadedAttachment } from "./attachments";
 import { byteSize } from "./budget";
 import {
@@ -21,6 +22,8 @@ export type EmojiSnapshot = Readonly<{
   /** The viewer's own latest set: the only one this client may republish. */
   mine: readonly CustomEmoji[];
   error?: string | undefined;
+  /** The error is a failure session recovery retries; see recovery.ts. */
+  transient?: true | undefined;
 }>;
 export type EmojiAuthoring = Readonly<{
   writer: RelayWriter;
@@ -77,6 +80,7 @@ export function createEmojiDirectory(
           status: "error",
           entries: Object.freeze([]),
           mine: Object.freeze([]),
+          transient: undefined,
           error:
             "Community emoji exceeds the catalog budget. Retry after reducing the catalog.",
         });
@@ -118,17 +122,14 @@ export function createEmojiDirectory(
     // A loaded catalog stays ready while it revalidates: sends keep their tags
     // and pickers their custom category. Only a cold catalog shows loading.
     if (snapshot.status !== "ready")
-      publish({ status: "loading", error: undefined });
-    else if (snapshot.error) publish({ error: undefined });
+      publish({ status: "loading", error: undefined, transient: undefined });
+    else if (snapshot.error)
+      publish({ error: undefined, transient: undefined });
     pending = (async () => {
       try {
-        const events = await retryRead(
-          (signal) =>
-            reader.read([{ kinds: [30030], "#d": [EMOJI_SET], limit: LIMIT }], {
-              signal,
-              priority,
-            }),
-          owned.signal,
+        const events = await reader.read(
+          [{ kinds: [30030], "#d": [EMOJI_SET], limit: LIMIT }],
+          { signal: owned.signal, priority },
         );
         if (closed || owned.signal.aborted) return;
         accept(events);
@@ -148,6 +149,7 @@ export function createEmojiDirectory(
           publish({
             status: snapshot.status === "ready" ? "ready" : "error",
             error: String(error),
+            transient: isTransientFailure(error) || undefined,
           });
       } finally {
         if (controller === owned) {
@@ -311,6 +313,7 @@ export function createEmojiDirectory(
       entries: Object.freeze([]),
       mine: Object.freeze([]),
       error: undefined,
+      transient: undefined,
     });
     // Authority can cancel the initial optional read. Restart once per clear, not per render.
     if (requested && !closed)
@@ -325,6 +328,16 @@ export function createEmojiDirectory(
     pending = undefined;
     void load("background");
   }
+  // The catalog's only retry owner: a transient cold failure retries with
+  // the shared capped backoff until it loads. Session recovery stays out of
+  // it; its state and notice describe the relay connection.
+  const recovery = createRecovery([
+    {
+      status: () => loadState(snapshot),
+      subscribe: queries.subscribe,
+      retry: () => void refresh(),
+    },
+  ]);
   return {
     queries,
     accept,
@@ -358,6 +371,7 @@ export function createEmojiDirectory(
     },
     dispose() {
       closed = true;
+      recovery.dispose();
       lifetime.abort();
       clear();
       listeners.clear();

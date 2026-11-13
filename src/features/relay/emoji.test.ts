@@ -11,6 +11,7 @@ import {
 import { createRelaySession } from "./session";
 import { foldMessages } from "./fold";
 import { PublishRejected } from "./outbox";
+import { ReadError } from "./errors";
 import {
   flush,
   keypair,
@@ -989,4 +990,89 @@ it("suggests Desktop's file-first shortcode and admits only canonical own sets",
     },
   ])
     expect(validEmojiSetTemplate({ ...template, ...patch }, now)).toBe(false);
+});
+const catalogReads = (h: ReturnType<typeof session>) =>
+  h.query.mock.calls.filter(([filters]) => filters[0]?.kinds?.includes(30030))
+    .length;
+const pendingCatalog = (h: ReturnType<typeof session>) => {
+  const index = h.wire.pending.findIndex((p) =>
+    p.filters[0]?.kinds?.includes(30030),
+  );
+  const [read] = index < 0 ? [] : h.wire.pending.splice(index, 1);
+  if (!read) throw new Error("No pending catalog read");
+  return read;
+};
+async function timeOut(h: ReturnType<typeof session>) {
+  pendingCatalog(h).fail(new ReadError("unavailable", "Relay read timed out"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.session.emoji.snapshot()).toMatchObject({
+    status: "error",
+    transient: true,
+  });
+}
+it("retries a timed-out catalog with one read per growing backoff step until it loads", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = session();
+    void h.session.emoji.ensure("foreground");
+    await vi.advanceTimersByTimeAsync(0);
+    let reads = 1;
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+      await timeOut(h);
+      await vi.advanceTimersByTimeAsync(delay - 1);
+      expect(catalogReads(h)).toBe(reads);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(catalogReads(h)).toBe(++reads);
+      expect(h.session.emoji.snapshot().status).toBe("loading");
+    }
+    // The catalog's retry is its own: session recovery and its notice stay idle.
+    expect(h.session.recovery?.snapshot()).toMatchObject({
+      recovering: false,
+      shown: false,
+    });
+    pendingCatalog(h).respond([set()]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.session.emoji.snapshot()).toMatchObject({
+      status: "ready",
+      entries: [{ shortcode: "party", url }],
+      error: undefined,
+      transient: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(catalogReads(h)).toBe(reads);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("leaves deterministic catalog failures to Retry and stops retrying at close", async () => {
+  vi.useFakeTimers();
+  try {
+    const denied = session("a");
+    void denied.session.emoji.ensure("foreground");
+    await vi.advanceTimersByTimeAsync(0);
+    pendingCatalog(denied).fail(new Error("restricted: not a member"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(denied.session.emoji.snapshot()).toMatchObject({
+      status: "error",
+      transient: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(catalogReads(denied)).toBe(1);
+    const closing = session("b");
+    void closing.session.emoji.ensure("foreground");
+    await vi.advanceTimersByTimeAsync(0);
+    await timeOut(closing);
+    closing.dispose();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(catalogReads(closing)).toBe(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("credential retry leaves an unrequested catalog unread", async () => {
+  const h = session();
+  h.session.recovery?.retryAll();
+  await flush();
+  expect(catalogReads(h)).toBe(0);
+  expect(h.session.emoji.snapshot().status).toBe("idle");
 });

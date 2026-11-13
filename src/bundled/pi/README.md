@@ -43,20 +43,28 @@ npm install --package-lock-only --ignore-scripts --omit-lockfile-registry-resolv
 
 ## Gateway mode
 
-A Pi agent whose route the configured model gateway makes eligible, and which
-that gateway enables for Pi, runs only the gateway's models, through the Pi
-upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor. Without that
-descriptor, or without a Pi upstream in it, every route is external.
-Every other provider is listed as unavailable while the route is eligible.
+Gateway mode changes only how a turn reaches its model. Creation, Settings,
+the provider and model pickers and Test connection are Pi's own, as without a
+gateway; nothing is saved or rewritten for it.
+
+When the runner sends a Pi agent's turn through the configured model gateway
+(its route is eligible and the gateway enables Pi), the host sends it through
+the Pi upstream base of the build's `BUZZ_AGENT_GATEWAY` descriptor if the
+gateway serves the turn's model: the agent's own provider and model, or Pi's
+default. The gateway serves a model of Pi's own `anthropic`, `openai`,
+`openai-codex` or `google` provider when an endpoint of the matching family
+(`claude`, `gpt`, `gpt`, `gemini`) is named `databricks-` followed by the
+model's ID with `.` as `-`: `openai/gpt-5.5` is `databricks-gpt-5-5`. Any other
+model runs on Pi's own provider, as the turn would without the gateway, with
+no binding or Buzz headers. The gateway's models are listed as the host takes
+the agent's route. Without the descriptor, or without a Pi upstream in it,
+every route is external.
 
 When the runner sends a turn without the gateway (a blocked route: readiness,
-identity, auth or network failure), Pi runs it on the agent's ordinary
-configured provider and model, with the runner's shared fallback notice on the
-prompt. The saved choice is never rewritten. An agent whose saved provider is
-the gateway's has no ordinary choice, so its turn fails visibly with the reason;
-Pi never switches it to another model. A request already bound to the gateway
-keeps that mode when asked again and is never resent without it. Revocation
-during a gateway run stops it visibly.
+identity, auth or network failure), Pi runs it on the agent's configured
+provider and model, with the runner's shared fallback notice on the prompt. A
+request already bound to the gateway keeps that mode when asked again and is
+never resent without it. Revocation during a gateway run stops it visibly.
 
 Each serving endpoint uses the one protocol verified for its family, with
 pi-ai 1.4.0's own client. Nothing retries a request on another protocol:
@@ -70,12 +78,13 @@ pi-ai 1.4.0's own client. Nothing retries a request on another protocol:
 pi-ai's Anthropic client sends Messages through the SDK's beta resource, so
 its path is `anthropic/v1/messages?beta=true`.
 
-Endpoints that offer none of these are not listed. That includes Gemini,
-embeddings, endpoints that are not ready, and endpoints without function
-calling. The probes listed above are synthetic, so other endpoints are
-untested on their protocol. Gateway models are listed with no reasoning
-levels, a 128k context window, a 16k output limit, and no cost. Images are
-the endpoint's `image_input`.
+Endpoints that offer none of these serve nothing. That includes Gemini's own
+protocol, embeddings, endpoints that are not ready, and endpoints without
+function calling. The probes listed above are synthetic, so other endpoints
+are untested on their protocol. A served model keeps its own context window,
+output limit, cost and thinking levels; it reasons only on its family's
+verified protocol, not on `mlflow/v1/chat/completions`. Images are the
+endpoint's `image_input`.
 
 Every model request carries:
 - the Buzz context headers of the request its durable task serves, recorded

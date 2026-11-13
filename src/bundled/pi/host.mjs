@@ -187,13 +187,32 @@ const CORRELATION =
 /** The gateway's own credential stands in for this placeholder. */
 const GATEWAY_KEY = "buzz-gateway";
 
-/** What every gateway model has: what a run sizes its context by. */
-const GATEWAY_LIMITS = {
+/** What a held gateway model has until its route's catalog replaces it. */
+const HELD_LIMITS = {
   reasoning: false,
   contextWindow: 128_000,
   maxTokens: 16_384,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
+/** The Pi providers whose models a gateway family serves: the vendors' own,
+ * whose model ids the gateway's endpoint names carry. */
+const FAMILIES = {
+  claude: ["anthropic"],
+  gpt: ["openai", "openai-codex"],
+  gemini: ["google"],
+};
+/** The gateway's endpoint name for a vendor's model id: the vendor's id,
+ * `.` as `-`, after `databricks-`. Only an exact match serves it. */
+export const endpointName = (id) => `databricks-${id.replaceAll(".", "-")}`;
+/** The gateway `catalog`'s model that serves Pi's `native` one, if any. */
+export const servedBy = (catalog, native) =>
+  catalog
+    .getModels(GATEWAY)
+    .find(
+      (model) =>
+        model.native?.provider === native.provider &&
+        model.native?.id === native.id,
+    );
 /** The api of a held gateway model, which no provider serves. */
 const HELD = "buzz-held";
 
@@ -227,7 +246,7 @@ function heldModels(current) {
       current().catalog.getModel(provider, id) ??
       (current().held && provider === GATEWAY
         ? {
-            ...GATEWAY_LIMITS,
+            ...HELD_LIMITS,
             id,
             name: id,
             api: HELD,
@@ -256,32 +275,44 @@ function heldModels(current) {
 const rootOf = (route) => `${route.gatewayOrigin}${route.base}`;
 
 /** The gateway's models for its serving endpoints under `root`: each served
- * by the protocol its family is verified on, when the endpoint offers it. */
-export function gatewayModels(root, endpoints) {
+ * by the protocol its family is verified on, when the endpoint offers it,
+ * and only for a model of Pi's own `native` catalog that it serves. That
+ * model's capabilities are its own, and `native` names it: an agent keeps
+ * the provider and model it chose, and the gateway only carries it. */
+export function gatewayModels(root, endpoints, native) {
   const models = [];
   for (const endpoint of endpoints) {
     const served = endpoint.config?.served_entities?.[0]?.foundation_model;
     const types = served?.api_types ?? [];
-    const protocol = [
-      NATIVE[served?.model_class],
-      "mlflow/v1/chat/completions",
-    ].find((type) => type && types.includes(type));
+    const verified = NATIVE[served?.model_class];
+    const protocol = [verified, "mlflow/v1/chat/completions"].find(
+      (type) => type && types.includes(type),
+    );
     if (
       !protocol ||
       endpoint.state?.ready !== "READY" ||
       endpoint.capabilities?.function_calling !== true
     )
       continue;
+    const model = (FAMILIES[served.model_class] ?? [])
+      .flatMap((provider) => native.getModels(provider))
+      .find((model) => endpointName(model.id) === endpoint.name);
+    if (!model) continue;
     const { api, path, compat } = PROTOCOLS[protocol];
     models.push({
+      ...model,
       id: endpoint.name,
       name: served.display_name || endpoint.name,
       api,
       provider: GATEWAY,
       baseUrl: `${root}/ai-gateway/${path}`,
       input: endpoint.capabilities.image_input ? ["text", "image"] : ["text"],
-      ...GATEWAY_LIMITS,
-      ...(compat ? { compat } : {}),
+      // Reasoning is sent only on the protocol the family is verified on.
+      ...(protocol === verified ? {} : { reasoning: false }),
+      headers: undefined,
+      // Its own protocol's compat holds on the gateway's; another's doesn't.
+      compat: model.api === api ? { ...model.compat, ...compat } : compat,
+      native: { provider: model.provider, id: model.id },
     });
   }
   const provider = createProvider({
@@ -1018,9 +1049,16 @@ export function serve({
       write({ id, method, params });
     });
 
+  /** Whether the gateway serves the turn's model on the agent's route. */
+  const serves = (opened, turn) =>
+    choose(turn, opened.catalog).then(
+      () => true,
+      () => false,
+    );
+
   /** The model a turn runs on: the owner's pick, the agent's, or else Pi's
-   * default; from the gateway's `catalog` for a turn bound to it, else from
-   * Pi's own providers. */
+   * default, from Pi's own providers. For a turn bound to the gateway, the
+   * model of its `catalog` that serves that choice, which it must have. */
   async function choose({ provider, model, thinking, pick = {} }, catalog) {
     const defaults = await piDefaults(dir);
     const id = provider || defaults.provider;
@@ -1028,29 +1066,22 @@ export function serve({
       pick.model ||
       model ||
       (id === defaults.provider ? defaults.model : undefined);
-    // Never another provider in gateway mode, nor another model.
-    if (catalog && id !== GATEWAY)
-      throw new Error(
-        `${models.getProvider(id)?.name ?? id ?? "Pi's default provider"} is unavailable in gateway mode. Choose a gateway model in the agent's Identity tab.`,
-      );
-    // A turn the runner sent without the gateway, on a gateway-only model.
-    // Pending a product decision: fails visibly, never another model.
-    if (!catalog && id === GATEWAY)
-      throw new Error(
-        "This agent's model is available only through the model gateway, which this turn ran without. Choose another model in its Identity tab, or try again later.",
-      );
-    catalog ??= models;
-    if (id && !catalog.getProvider(id))
+    if (id && !models.getProvider(id))
       throw new Error(unknownProvider(id, packages.errors));
     if (!id || !modelId)
       throw new Error(
         "This agent has no model. Choose a provider and model in its Identity tab.",
       );
-    const found = catalog.getModel(id, modelId);
-    if (!found) throw new Error(`Pi has no model ${modelId} from ${id}`);
+    const native = models.getModel(id, modelId);
+    if (!native) throw new Error(`Pi has no model ${modelId} from ${id}`);
+    const served = catalog && servedBy(catalog, native);
+    // Bound to the gateway, a turn never runs another way.
+    if (catalog && !served)
+      throw new Error("This agent's model route changed. Try again.");
+    const found = served ?? native;
     return {
       found,
-      model: { provider: id, modelId },
+      model: { provider: found.provider, modelId: found.id },
       thinkingLevel: clampThinkingLevel(
         found,
         pick.thinking || thinking || defaults.thinking || THINKING,
@@ -1082,7 +1113,11 @@ export function serve({
     try {
       const catalog =
         route.kind === "eligible"
-          ? gatewayModels(rootOf(route), await discover(opened.agent, route))
+          ? gatewayModels(
+              rootOf(route),
+              await discover(opened.agent, route),
+              models,
+            )
           : createModels();
       // Another open took a route while this one discovered.
       if (opened.taking !== taking)
@@ -1377,20 +1412,6 @@ export function serve({
     return started;
   }
 
-  /** An open agent's gateway models, listed again, when its route is
-   * eligible; none when it runs Pi's own providers. */
-  async function listed(agent) {
-    const opened = await agentOf(agent);
-    if (!opened.route)
-      throw new Error("This agent's model route is not known yet");
-    if (opened.route.kind !== "eligible") return;
-    opened.catalog = gatewayModels(
-      rootOf(opened.route),
-      await discover(agent, opened.route),
-    );
-    return opened.catalog;
-  }
-
   async function agentOf(agent) {
     const opened = await agents.get(agent);
     if (!opened || opened.closing) throw new Error("The agent is not open");
@@ -1678,13 +1699,19 @@ export function serve({
         reset = undefined;
       else record = undefined;
     }
-    // Only a turn the runner sent through the gateway binds.
-    if (gatewayTurn && !record) {
+    // Only a turn the runner sent through the gateway binds, and only on a
+    // model the gateway serves: any other runs on Pi's own providers, as it
+    // would without the gateway. An owner's compaction keeps the model its
+    // conversation has.
+    if (
+      gatewayTurn &&
+      !record &&
+      (manual ||
+        opened.route?.kind !== "eligible" ||
+        (await serves(opened, turn)))
+    ) {
       if (opened.route?.kind !== "eligible")
         throw new Error("This agent's model route changed. Try again.");
-      // A model gateway mode refuses binds nothing; an owner's compaction
-      // keeps the model its conversation has.
-      if (!manual) await choose(turn, opened.catalog);
       const bound = await call("gateway", {
         op: "bind",
         agent: opened.agent,
@@ -1944,19 +1971,8 @@ export function serve({
         auth: dir,
       };
     },
-    /** Pi's providers; for an agent in gateway mode, the gateway's, with every
-     * other one listed as unavailable. */
-    async providers({ agent } = {}) {
-      const gated = agent && (await listed(agent));
+    async providers() {
       const providers = [];
-      if (gated)
-        providers.push({
-          id: GATEWAY,
-          name: "Model gateway",
-          key: false,
-          signsIn: false,
-          configured: "gateway",
-        });
       for (const provider of models.getProviders()) {
         if (!models.getModels(provider.id).length) continue;
         const auth = await models.checkAuth(provider.id).catch(() => undefined);
@@ -1966,25 +1982,17 @@ export function serve({
           key: Boolean(provider.auth.apiKey),
           signsIn: Boolean(provider.auth.oauth),
           ...(auth ? { configured: auth.source ?? auth.type } : {}),
-          ...(gated ? { unavailable: "Unavailable in gateway mode" } : {}),
         });
       }
-      // The gateway, the only one a gated agent may use, first; then by name.
-      providers.sort(
-        (a, b) =>
-          Number(a.id !== GATEWAY) - Number(b.id !== GATEWAY) ||
-          a.name.localeCompare(b.name),
-      );
+      providers.sort((a, b) => a.name.localeCompare(b.name));
       return { providers, defaults: await piDefaults(dir) };
     },
     /** What Pi's settings pick now, which the `pi` command changes. */
     defaults() {
       return piDefaults(dir);
     },
-    async models({ provider, agent }) {
-      const gated = agent && (await listed(agent));
-      if (gated && provider !== GATEWAY) return [];
-      return (gated || models).getModels(provider).map((model) => ({
+    models({ provider }) {
+      return models.getModels(provider).map((model) => ({
         id: model.id,
         name: model.name,
         thinking: getSupportedThinkingLevels(model),
@@ -2057,10 +2065,14 @@ export function serve({
         opened.tools = listed;
       }
       // Whether it has the gateway's models, which its gateway runs need,
-      // and whether runs it left wait for them.
+      // whether runs it left wait for them, and which of Pi's own models the
+      // gateway serves it.
       return {
         gateway: opened.route?.kind === "eligible",
         held: Boolean(opened.held),
+        served: opened.catalog
+          .getModels(GATEWAY)
+          .map(({ native }) => `${native.provider}/${native.id}`),
       };
     },
     /** The agent's Buzz conversations: each key's Pi conversation, and the
@@ -2432,10 +2444,19 @@ export function serve({
         await resetPending(harness, conversation, key);
         // The compaction's own request, which its task's trace carries.
         const request = `manual/${randomUUID()}`;
+        // It runs in its conversation's mode: bound only if that is the
+        // gateway's.
         await bind(
           opened,
           { request },
-          { key, gatewayTurn, conversation: conversation.id, manual: true },
+          {
+            key,
+            gatewayTurn: (await gatewayRun(conversation))
+              ? gatewayTurn
+              : undefined,
+            conversation: conversation.id,
+            manual: true,
+          },
         );
         return conversation.compact(
           undefined,

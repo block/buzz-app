@@ -5,6 +5,7 @@ import {
   createCommunities,
   SESSION_LIMIT,
 } from "./service";
+import { createCommunityUnreads } from "../notifications/community-unread";
 import { communityDestination } from "./destination";
 import { localCommunityNameKey } from "./names";
 import * as destinations from "./destination";
@@ -282,6 +283,73 @@ it("an agent reopening its community on the eviction notice reuses the stored se
   expect(inner[0]).toBe(outer);
   expect(connect.mock.calls.filter(([each]) => each === agent)).toHaveLength(1);
   expect(refused).toEqual([]);
+});
+it("with the real unread projection, a broker selection gets one session, is never badge-only and is never evicted", async () => {
+  // Startup connects c0 (selected) and one badge, c1; selecting c2 takes the
+  // kept slot. c3 and c4 are opened later for their own work.
+  const ids = Array.from({ length: 5 }, (_, i) => `https://c${i}.example.test`);
+  const client = setup({
+    profile: { name: "Local", picture: "" },
+    memberships: ids.map((id) => ({ id, name: id })),
+    selected: ids[0],
+  });
+  await flush();
+  const unreads = createCommunityUnreads(client);
+  await flush();
+  const opened = (id: string, path: string) =>
+    requests.filter(
+      (url) => url === `/api/relay/${encodeURIComponent(id)}/${path}`,
+    ).length;
+  const [, badge, chosen, work, later] = ids as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  expect(opened(badge, "session")).toBe(1);
+  expect(opened(chosen, "session")).toBe(0);
+  client.select(chosen);
+  await flush();
+  await flush();
+  const selected = client.open(chosen, true);
+  expect(selected).toBeDefined();
+  // A foreground open closes the only badge-only session, c1.
+  expect(client.open(work)).toBeDefined();
+  await flush();
+  await flush();
+  expect(client.open(badge, true)).toBeUndefined();
+  // None is left, so nothing more is closed; a badge-only c2 would be.
+  expect(client.open(later)).toBeDefined();
+  await flush();
+  await flush();
+  expect(client.open(chosen, true)).toBe(selected);
+  expect(opened(chosen, "session")).toBe(1);
+  expect(opened(chosen, "stream")).toBeLessThanOrEqual(1);
+  unreads.dispose();
+});
+it("with the real unread projection, a native selection at the full limit gets one connection, is never badge-only and is never evicted", async () => {
+  const { client, id, held, refused, connect } = await nativeAtLimit();
+  const unreads = createCommunityUnreads(client);
+  await flush();
+  const chosen = id(SESSION_LIMIT);
+  client.select(chosen);
+  await flush();
+  await flush();
+  expect(held.size).toBe(SESSION_LIMIT);
+  const selected = client.open(chosen, true);
+  // A foreground open at the limit closes the oldest badge, never the selection.
+  expect(client.open(id(SESSION_LIMIT + 1))).toBeDefined();
+  await flush();
+  await flush();
+  expect(refused).toEqual([]);
+  expect(held.has(id(1))).toBe(false);
+  expect(held.has(chosen)).toBe(true);
+  expect(client.open(chosen, true)).toBe(selected);
+  expect(connect.mock.calls.filter(([each]) => each === chosen)).toHaveLength(
+    1,
+  );
+  unreads.dispose();
 });
 it("keeps badge-only sessions within the broker's session limit", async () => {
   const ids = Array.from(

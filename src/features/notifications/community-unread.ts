@@ -110,7 +110,7 @@ export function observeCommunityUnread(
   };
 }
 
-/** Background sessions opened for unread. The native host refuses a 17th
+/** Background sessions opened for unread. The native host refuses a 33rd
  * relay socket (`socket.rs`), and each session holds one; the remainder keeps
  * room for the selected community, agents' communities and visits. */
 export const BACKGROUND_UNREAD_LIMIT = 24;

@@ -123,16 +123,30 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   app,
 }) => {
   await holdReadingFocus(page);
-  // The held unread read must outlive the app's 10s read deadline on slow
-  // runners. Only 10s deadlines started while it is held are suspended; the
-  // test releases it explicitly, so that deadline is not under test.
+  // The held unread read must outlive the app's 10s read deadline and the
+  // broker's 20s upstream deadline on slow runners. Only those deadlines
+  // started while it is held are suspended; the test releases it explicitly,
+  // so neither deadline is under test. The broker runs in this process.
+  const timeout = AbortSignal.timeout;
+  let holdUpstreamDeadline = true;
+  AbortSignal.timeout = (ms) =>
+    holdUpstreamDeadline && ms === 20_000
+      ? new AbortController().signal
+      : timeout.call(AbortSignal, ms);
+  // The caller's deadline is an abort signal and the reader's is a timer; a
+  // suspended timer still gets a clearable id, but never fires.
   await page.addInitScript(() => {
     const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const schedule = window.setTimeout.bind(window);
     window.__holdReadDeadline = true;
     AbortSignal.timeout = (ms) =>
       window.__holdReadDeadline && ms === 10_000
         ? new AbortController().signal
         : timeout(ms);
+    window.setTimeout = (callback, ms, ...args) =>
+      window.__holdReadDeadline && ms === 10_000
+        ? schedule(() => {}, ms)
+        : schedule(callback, ms, ...args);
   });
   const alphaHeads = () =>
     app.report.queries.filter(
@@ -177,6 +191,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     await page.evaluate(() => {
       window.__holdReadDeadline = false;
     });
+    holdUpstreamDeadline = false;
     app.relay.releaseUnread();
     await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
     await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
@@ -195,6 +210,7 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
     ]);
     expect(app.report.readPublications).toEqual([]);
   } finally {
+    AbortSignal.timeout = timeout;
     app.relay.releaseEose("alpha");
     app.relay.releaseUnread();
     await opening;

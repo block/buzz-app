@@ -367,6 +367,8 @@ export function CommunityDialog({
     } else if (step === "access") {
       if (!allowed || !destination) return;
       await work(async () => {
+        // The admission follows the issuer reset, so Close waits from here.
+        beginWrite();
         await askAgain(destination.url);
         await admit(id, destination.url, policy);
       });

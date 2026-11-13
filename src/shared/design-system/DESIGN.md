@@ -484,6 +484,16 @@ an actual use, document it in the registry and measure its intended pairings.
 Legacy utilities and host aliases remain while their callers migrate. Do not
 add new uses. Whole materials such as glass still travel as one shared recipe.
 
+For externally supplied metadata colors that must retain their identity, such as
+GitHub's static pull-request labels, use `externalLabelStyle` from
+`external-labels.ts`. It accepts only a validated six-digit color and returns
+paired opaque light/dark ink, tint and border values; tune text for its fill
+rather than using the source as either. The consumer selects the effective host
+`data-color-mode`, never only the OS preference. Missing or invalid colors use
+the caller's neutral semantic roles. This recipe is not an interactive Tag or a
+status color, and its tests measure WCAG and APCA instead of adding a
+feature-private palette or contrast exception.
+
 Solo, Multiplayer and Settings compose `SidebarNavigation` with the existing
 NavigationItem and NavigationSection children. This component owns the appearance
 already shipped in main: `text-navigation` read labels, body-sm Regular type,

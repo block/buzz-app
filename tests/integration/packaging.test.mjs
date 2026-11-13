@@ -37,7 +37,7 @@ test("candidate version embeds the updater only when both values are set, never 
           RUNNER_TEMP: directory,
           GITHUB_ENV: output,
           GITHUB_OUTPUT: join(directory, "outputs"),
-          PREVIEW_VERSION: "1.0.2-preview.42.2",
+          PREVIEW_VERSION: "1.0.2-preview.42",
         },
       },
     );
@@ -45,12 +45,12 @@ test("candidate version embeds the updater only when both values are set, never 
     assert.deepEqual(
       JSON.parse(readFileSync(join(directory, "candidate.json"))),
       {
-        version: "1.0.2-preview.42.2",
+        version: "1.0.2-preview.42",
         bundle: { createUpdaterArtifacts: false },
         ...(plugins && { plugins }),
       },
     );
-    assert.equal(readFileSync(output, "utf8"), "VERSION=1.0.2-preview.42.2\n");
+    assert.equal(readFileSync(output, "utf8"), "VERSION=1.0.2-preview.42\n");
   }
 });
 
@@ -128,7 +128,7 @@ test("all-platform releases preserve candidate isolation and read-only installer
     true,
   );
   assert.equal(
-    selected(desktop, { promote_version: "0.0.0-preview.42.2" }),
+    selected(desktop, { promote_version: "0.0.0-preview.42" }),
     false,
   );
   assert.equal(

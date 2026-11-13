@@ -21,7 +21,7 @@ if (release) {
   // Computed once per run by scripts/preview-version.mjs.
   assert.match(
     preview ?? "",
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.[1-9]\d*\.[1-9]\d*$/,
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.[1-9]\d*$/,
   );
   version = preview;
 }

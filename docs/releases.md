@@ -18,7 +18,7 @@ where it updates from. Preview builds check the
 [preview feed](#preview-updater-feed-automatic-promotion-manual-recovery);
 stable releases check the [stable feed](#stable-updater-feed).
 
-- **Join:** install a preview (a prerelease named `Buzz X.Y.Z-preview.R.A`)
+- **Join:** install a preview (a prerelease named `Buzz X.Y.Z-preview.N`)
   from the [Releases page](https://github.com/block/buzz-app/releases). From then
   on the app updates to each new preview.
 - **Leave:** install the release marked **Latest** from the same page. From then
@@ -36,7 +36,7 @@ leaving the channel.
 
 The **Desktop previews** workflow (`release.yml`) builds all supported desktop
 platforms and publishes one GitHub prerelease, tagged
-`v<version>-preview.<run-number>.<attempt>` at the built commit. The
+`v<version>-preview.<N>` at the built commit. The
 build, verification, updater signing and publication jobs live in the reusable
 `desktop-build.yml`, which [stable and beta releases](#stable-and-beta-releases)
 share, so every lane publishes the same assets:
@@ -51,8 +51,9 @@ Publication waits for every platform job, their existing payload checks and
 the Windows/Linux updater signatures. A failed platform blocks publication and
 automatic feed promotion; it does not publish a partial release. Downloads are
 checked against each job's checksums before assembly. If a job fails, use
-**Re-run all jobs**, not just failed jobs: the run attempt is part of the version,
-and publication rejects mixed-version artifacts. Windows/Linux previews are not
+**Re-run all jobs**. A run that failed before publishing created no tag, so the
+re-run gets the same version; publication still rejects artifacts built as any
+other version. Windows/Linux previews are not
 Authenticode-signed Windows releases or evidence of completed desktop acceptance.
 
 Previews build from three triggers:
@@ -69,13 +70,20 @@ Previews build from three triggers:
 
 The version is set automatically, once per run, before any platform builds:
 one patch above the highest stable `vX.Y.Z` tag in the built commit's history,
-then `-preview.<run-number>.<attempt>`. After `v1.0.1`, previews are
-`1.0.2-preview.<run>.<attempt>`; after `v1.1.0`, `1.1.1-preview.<run>.<attempt>`.
+then `-preview.<N>`. `N` is one above the highest existing
+`v<base>-preview.<N>` tag (compared numerically), or 1 if there is none, so it
+counts published previews of that base and starts over with each new base.
+After `v1.0.1`, previews are `1.0.2-preview.1`, `.2`, `.3`…; after `v1.1.0`,
+`1.1.1-preview.1`, and so on. A daily run, the run after a stable release and
+a manual run each take the next number; failed runs take none.
 `tauri.conf.json`'s version is not used, and beta and preview tags never count.
 A run whose commit has no stable tag in its history fails. By SemVer
 precedence a preview sorts above the stable release it follows and below the
-next one (`1.1.0-preview.290` < `1.1.0` < `1.1.1-preview.300`), and the
-ever-increasing run number orders previews of the same base.
+next one (`1.1.0-preview.9` < `1.1.0` < `1.1.1-preview.1`), and `N` orders
+previews of the same base. Runs share one concurrency group, so two previews
+never compute the same number; candidate runs compute one but never publish.
+Cleanup always keeps the newest previews, so the highest `N` is never deleted
+and never reused. Older `-preview.<run>.<attempt>` previews are left as they are.
 
 The macOS builds run on Apple Silicon `macos-latest` with the repository's
 pinned toolchain; the Intel build cross-compiles `x86_64-apple-darwin` after
@@ -123,7 +131,7 @@ repromotion, dispatch an existing version from `main`:
 
 ```sh
 gh workflow run release.yml --repo block/buzz-app --ref main \
-  -f promote_version=1.0.2-preview.<run>.<attempt>
+  -f promote_version=1.0.2-preview.<N>
 ```
 
 After the first eligible build publishes, exercise discovery, signature
@@ -180,8 +188,8 @@ old versioned preview releases **and their Git tags**, keeping the union of:
 - the preview currently referenced by `preview-feed/latest.json`.
 
 Cleanup only considers non-draft prereleases with canonical
-`v<version>-preview.<run-number>.<attempt>` tags. Stable releases, other tag
-formats, and the rolling `preview-feed` release are never deleted. The feed is
+`v<version>-preview.<N>` tags. Stable releases, other tag formats (including
+old `-preview.<run>.<attempt>` previews), and the rolling `preview-feed` release are never deleted. The feed is
 read again before cleanup; an unavailable/invalid feed, missing target, failed
 listing, or invalid preview publication date aborts before deletion. A deletion
 failure stops cleanup and fails the job, without rolling back the promoted feed;
@@ -216,7 +224,7 @@ twelve assets and `SHA256SUMS` as previews, with two differences:
 
 A stable tag publishes a full release marked **Latest**; a beta publishes a
 prerelease. Both publish on the existing tag (`--verify-tag`) and never create
-or move one. Previews' own tags (`v…-preview.N.M`) and the internal
+or move one. Previews' own tags (`v…-preview.N`) and the internal
 `desktop-v*` tags described below never start this workflow.
 
 The workflow first refuses, before building, unless:

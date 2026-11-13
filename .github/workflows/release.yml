@@ -17,7 +17,7 @@ on:
         type: boolean
         default: false
       promote_version:
-        description: Promote a validated version (e.g. 1.0.2-preview.22.1) to the preview updater feed; no build
+        description: Promote a validated version (e.g. 1.0.2-preview.3) to the preview updater feed; no build
         type: string
         default: ""
 
@@ -50,7 +50,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # All history for the stable base and every tag for the preview counter.
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - name: Derive the preview version
         id: version

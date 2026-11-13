@@ -15,7 +15,7 @@ on:
         type: string
         default: ""
       preview_version:
-        description: Preview version (X.Y.Z-preview.R.A) for every platform; required without release_version
+        description: Preview version (X.Y.Z-preview.N) for every platform; required without release_version
         type: string
         default: ""
     outputs:
@@ -251,8 +251,7 @@ jobs:
           for platform in macos-aarch64 macos-x64 windows linux; do
             (cd "build-assets/$platform" && sha256sum --check SHA256SUMS)
           done
-          # Exact names also reject mixed versions after a partial-job rerun.
-          # Rerun all jobs so every platform uses the same run attempt/version.
+          # Exact names also reject artifacts built as a different version.
           mkdir release-assets
           for arch in aarch64 x64; do
             for asset in dmg app.tar.gz app.tar.gz.sig; do

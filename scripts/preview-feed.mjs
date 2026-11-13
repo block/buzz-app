@@ -15,8 +15,7 @@ const publicKeyBase64 =
 // share one; betas match neither and are never served.
 const channels = {
   preview: {
-    pattern:
-      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
+    pattern: /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.([1-9]\d*)$/,
     feed: "preview-feed",
     notes: "desktop preview",
   },

@@ -20,7 +20,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const { jobs } = parse(
   readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8"),
 );
-const version = "1.0.2-preview.42.2";
+const version = "1.0.2-preview.42";
 const sha = "a".repeat(40);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const assets = {
@@ -101,8 +101,6 @@ test("every platform takes its version from one generator: preview from the run'
     const dir = temp(t);
     const env = {
       ...process.env,
-      GITHUB_RUN_NUMBER: "42",
-      GITHUB_RUN_ATTEMPT: "2",
       RUNNER_TEMP: dir,
       GITHUB_ENV: join(dir, "env"),
       GITHUB_OUTPUT: join(dir, "outputs"),
@@ -137,7 +135,13 @@ test("every platform takes its version from one generator: preview from the run'
   };
   assert.equal(generate(""), version);
   // Previews never fall back to tauri.conf.json.
-  for (const invalid of ["", "1.0.2", "1.0.2-preview.0.1", "1.0.2-beta.1"])
+  for (const invalid of [
+    "",
+    "1.0.2",
+    "1.0.2-preview.0",
+    "1.0.2-preview.4.1",
+    "1.0.2-beta.1",
+  ])
     assert.equal(generate("", invalid), undefined, invalid);
   assert.equal(generate("1.0.0"), "1.0.0");
   assert.equal(generate("1.2.3-beta.4"), "1.2.3-beta.4");
@@ -146,7 +150,7 @@ test("every platform takes its version from one generator: preview from the run'
     "01.0.0",
     "1.0.0-beta.0",
     "1.0.0-rc.1",
-    "1.0.0-preview.1.1",
+    "1.0.0-preview.1",
     "v1.0.0",
   ])
     assert.equal(generate(invalid), undefined, invalid);
@@ -214,7 +218,7 @@ for (const failure of [
     const file = assets.windows[0];
     if (failure === "corrupt") writeFileSync(join(windows, file), "corrupted");
     if (failure === "mixed version") {
-      const older = file.replace("42.2", "42.1");
+      const older = file.replace("preview.42", "preview.41");
       renameSync(join(windows, file), join(windows, older));
       writeFileSync(join(windows, "SHA256SUMS"), `${hash(file)}  ./${older}\n`);
     }
@@ -359,7 +363,7 @@ test("preview version is one patch above the highest stable tag reachable from t
       "-qm",
       "fixture",
     );
-  const derive = (ref = "HEAD", attempt = "2") => {
+  const derive = (ref = "HEAD") => {
     const output = join(dir, `output-${Math.random()}`);
     const result = spawnSync(
       process.execPath,
@@ -368,8 +372,6 @@ test("preview version is one patch above the highest stable tag reachable from t
         cwd: dir,
         env: {
           ...process.env,
-          GITHUB_RUN_NUMBER: "301",
-          GITHUB_RUN_ATTEMPT: attempt,
           GITHUB_OUTPUT: output,
         },
         encoding: "utf8",
@@ -384,21 +386,38 @@ test("preview version is one patch above the highest stable tag reachable from t
   commit();
   assert.match(derive().error, /No stable vX\.Y\.Z tag is reachable/);
   // Betas, previews and malformed tags never count.
-  for (const tag of ["v9.0.0-beta.1", "v9.0.0-preview.1.1", "v09.0.0", "9.0.0"])
+  for (const tag of ["v9.0.0-beta.1", "v9.0.0-preview.1", "v09.0.0", "9.0.0"])
     git("tag", tag);
   assert.match(derive().error, /No stable/);
   git("tag", "v1.0.1");
-  assert.equal(derive(), "1.0.2-preview.301.2");
-  assert.equal(derive("HEAD", "1"), "1.0.2-preview.301.1");
+  assert.equal(derive(), "1.0.2-preview.1");
+  // The counter follows published preview tags of the same base, on any
+  // commit, compared numerically; old-format, beta and malformed tags are ignored.
+  git("tag", "v1.0.2-preview.1");
+  assert.equal(derive(), "1.0.2-preview.2");
+  for (const tag of [
+    "v1.0.2-preview.9",
+    "v1.0.2-preview.10",
+    "v1.0.2-preview.300.1",
+    "v1.0.2-preview.099",
+    "v1.0.2-beta.50",
+    "v1.0.20-preview.70",
+    "v1.0.2-preview.80-x",
+  ])
+    git("tag", tag);
+  assert.equal(derive(), "1.0.2-preview.11");
+  // Unchanged until its tag is published, so a re-run reuses the number.
+  assert.equal(derive(), "1.0.2-preview.11");
   // Numeric, not lexical, order picks the highest release.
   commit();
   git("tag", "v1.0.10");
   git("tag", "v1.0.9");
-  assert.equal(derive(), "1.0.11-preview.301.2");
+  // A new base starts over at 1.
+  assert.equal(derive(), "1.0.11-preview.1");
   // A tag on a later commit is not in an earlier commit's history.
   commit();
   git("tag", "v1.1.0");
-  assert.equal(derive(), "1.1.1-preview.301.2");
-  assert.equal(derive("HEAD~1"), "1.0.11-preview.301.2");
-  assert.match(derive("HEAD", "0").error, /GITHUB_RUN_ATTEMPT/);
+  git("tag", "v1.1.1-preview.4", "HEAD~2");
+  assert.equal(derive(), "1.1.1-preview.5");
+  assert.equal(derive("HEAD~1"), "1.0.11-preview.1");
 });

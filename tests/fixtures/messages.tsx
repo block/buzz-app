@@ -309,7 +309,7 @@ const owner = createRelaySession({
                 rootId,
                 filter.limit,
                 100,
-                [9, 40002],
+                [9, 40002, 45001, 45003],
                 filter.until === undefined
                   ? null
                   : [filter.until, filter.before_id],

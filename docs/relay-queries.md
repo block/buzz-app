@@ -203,7 +203,7 @@ belong to the session.
 The owner resolves marked NIP-10 ancestry to the actual root, fetches that root by
 ID, and traverses with explicit content kinds, `#h`, one root `#e`, depth 100 and
 `include_aux`. Canonical UUID channels probe `thread_window: true` separately from
-the root lookup. Strict windows request kinds 9 and 40002 only: the relay's
+the root lookup. Strict windows request chat kinds 9/40002 and forum kinds 45001/45003: the relay's
 window row allowlist rejects legacy diff kind 40008, so strict threads omit diff
 replies until the relay accepts that kind; legacy traversal still includes it. The existing verified reader validates exactly one kind-39007
 bounds event, relay signer, exact tags, version/direction and full host/viewer/request

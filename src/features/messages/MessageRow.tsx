@@ -446,6 +446,7 @@ function MessageRowContent({
     row.authorId === viewer;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
+    !row.forum &&
     extensions &&
     session &&
     scope &&

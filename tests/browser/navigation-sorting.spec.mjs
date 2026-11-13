@@ -842,8 +842,8 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect(rows.first()).toBeVisible();
   const alphaOrder = await order();
   expect(alphaOrder.length).toBeGreaterThan(2);
-  const activity = app.report.queries.filter((q) =>
-    q.filter.kinds?.includes(45003),
+  const activity = app.report.queries.filter(
+    (q) => q.filter.kinds?.includes(45003) && q.filter.top_level !== true,
   );
   expect(activity).toEqual([]);
   async function openSort() {

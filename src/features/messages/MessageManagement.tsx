@@ -185,7 +185,8 @@ export function useMessageKeyActions(session: RelaySession) {
       },
       canMarkUnread(row: ChannelMessage) {
         // Coordination between agents is never unread, so it has no read state.
-        if (!joined(row) || row.audience === "agents") return false;
+        if (!joined(row) || row.forum || row.audience === "agents")
+          return false;
         const attention = session.unread.attention(row.channelId, row.id);
         return !attention.unread && !attention.forced;
       },
@@ -513,7 +514,7 @@ export function MessageReadStateItem({
     () => session.unread.snapshot(target),
   );
   // Coordination between agents is never unread, so it has no read state.
-  if (!management || row.audience === "agents") return null;
+  if (!management || row.forum || row.audience === "agents") return null;
   const attention = session.unread.attention(row.channelId, row.id);
   const unread = attention.unread || attention.forced;
   return (
@@ -639,6 +640,7 @@ function ManagedMessageItems({
   const canEdit =
     writable && own && editor?.current && lastEditableMessage(session, [row]);
   const authorization =
+    !row.forum &&
     row.authorId !== session.viewer &&
     session.viewer &&
     ownership.status === "ready" &&
@@ -877,7 +879,8 @@ export function MessageManagementStatus() {
         (item.event.kind === 5 &&
           item.event.tags.some(
             ([name, kind]) =>
-              name === "k" && ["9", "40002"].includes(kind ?? ""),
+              name === "k" &&
+              ["9", "40002", "45001", "45003"].includes(kind ?? ""),
           ))) &&
       item.event.tags.some(([name, id]) => name === "h" && id === channelId) &&
       ["failed", "unknown"].includes(item.delivery),

@@ -3,7 +3,9 @@ import type { EventData } from "./events";
 import { objectBody } from "./body";
 
 /** Content rows retained by channel history/live windows, not the unread kind set. */
-export const CHANNEL_ROW_KINDS = [9, 40002, 40008, 40099, 48100, 48103];
+export const CHANNEL_ROW_KINDS = [
+  9, 40002, 40008, 40099, 45001, 45003, 48100, 48103,
+];
 export const channelRowKind = (kind: number) =>
   CHANNEL_ROW_KINDS.includes(kind);
 /** A content row has one channel home; ambiguous tags are not membership evidence. */

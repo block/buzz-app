@@ -351,6 +351,12 @@ and are asked to sign in again in Buzz.
   Confirmations with a required field or checkbox start at the relevant control;
   the action stays gated until its requirements are met.
 
+- Forum posts created on mobile appear in the desktop conversation. Open a post's
+  replies to read or reply in its thread, including after reloading the app.
+  Editing and reacting to forum posts and comments are unavailable while mobile
+  does not display those changes.
+  Mark unread and deleting an agent's forum content as its owner are unavailable.
+  You can still delete your own forum posts and comments.
 - Each reaction emoji has its own capsule. Hover or focus it to see everyone
   who reacted. Large lists scroll within the preview. With a keyboard, Tab into
   the list to scroll it; Escape dismisses the preview. Clicking the emoji adds

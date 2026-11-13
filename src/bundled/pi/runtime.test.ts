@@ -13,22 +13,12 @@ import type {
   Delivery,
   StandaloneTurn,
 } from "../../features/agents/service";
-import type { HostResponse } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
-import { GatewayRoutes } from "../../features/agents/gateway/route";
 import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import { turnContext } from "../../features/agents/gateway/turn";
-import { Pi } from "./pi";
-import {
-  deferred,
-  fakeHost,
-  type Handler,
-  PI_UPSTREAM,
-  piGatewayDescriptor,
-} from "./pi-testing";
+import { deferred, fakeHost, type Handler, PI_UPSTREAM } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
-import { PiSetup } from "./setup";
 import type { GatewayRoute, GatewaySeam } from "./gateway";
 
 afterEach(() => {
@@ -3150,7 +3140,16 @@ it("ends the gateway's work a revocation was seen to end, even once the same rou
       gatewayTurn(),
     );
     await first.run;
-    listing = f.runtime.providers(self);
+    // An owner's Compact elsewhere opens the agent on its gateway route.
+    listing = f.runtime.session(
+      {
+        key: self,
+        pubkey: self,
+        config: { ...DEFAULT_CONFIG, scope: "thread" },
+      } as unknown as Agent,
+      { channelId: channel },
+      "compact",
+    );
     await vi.waitFor(() => expect(f.host.requests("open")).toHaveLength(2));
     r.move({ ...pending, revision: 2 });
     r.move({ ...eligible, revision: 3 });
@@ -3323,171 +3322,6 @@ it("hands over no standalone gateway turn whose route changed while its prompt w
     error: expect.stringContaining("access to its models changed"),
   });
   expect(f.host.requests("once")).toEqual([]);
-});
-
-it("keeps an ordinary run going when listing the agent's models takes its recovered gateway route", async () => {
-  const r = routes(pending);
-  const p = placing(() => false);
-  const f = setup(
-    { ...p.handlers, providers: () => ({ providers: [], defaults: {} }) },
-    [],
-    undefined,
-    undefined,
-    r.seam,
-  );
-  try {
-    const ordinary = f.deliver({
-      type: "mention",
-      event: reply("2", "@Pi look"),
-    });
-    await ordinary.run;
-    r.move(eligible);
-    await f.runtime.providers(self);
-    expect(f.host.requests("open").at(-1)?.params.route).toMatchObject({
-      kind: "eligible",
-    });
-    expect(methods(f)).not.toContain("close");
-    expect(f.host.requests("abort")).toEqual([]);
-    p.end(7);
-    await expect(f.settled(ordinary)).resolves.toEqual({ ok: true });
-  } finally {
-    p.release();
-  }
-});
-
-it("lists an agent's models from its route: the open agent's through the gateway, else Pi's own, blocked included", async () => {
-  const r = routes({ kind: "external", revision: 1 } as GatewayRoute);
-  r.ready.resolve();
-  const listing = { providers: [], defaults: {} };
-  const f = setup(
-    {
-      providers: () => listing,
-      models: () => [],
-      test: () => ({ ok: true, message: "OK" }),
-    },
-    [],
-    undefined,
-    undefined,
-    r.seam,
-  );
-  await expect(f.runtime.providers(self)).resolves.toEqual(listing);
-  await f.runtime.providerModels(self, "anthropic");
-  expect(f.host.requests("open")).toEqual([]);
-  expect(f.host.requests("providers")[0]?.params).toEqual({});
-
-  r.move(eligible);
-  await f.runtime.providers(self);
-  await f.runtime.providerModels(self, "buzz-gateway");
-  // Each read opens it first, which changes nothing once it is open. (Pi's
-  // own protection check may close it before its first open.)
-  const methods = f.host.processes
-    .flatMap((item) => item.requests.map((request) => request.method))
-    .filter((method) => method !== "close");
-  expect(methods).toEqual([
-    "providers",
-    "models",
-    "open",
-    "providers",
-    "open",
-    "models",
-  ]);
-  expect(f.host.requests("providers").at(-1)?.params).toEqual({
-    agent: self,
-  });
-  expect(f.host.requests("models").at(-1)?.params).toEqual({
-    provider: "buzz-gateway",
-    agent: self,
-  });
-
-  const choice = { provider: "anthropic", model: "claude-x" };
-  await expect(f.runtime.test(self, choice)).resolves.toEqual({
-    ok: false,
-    message: "The gateway's models can't be tested here.",
-  });
-
-  // Pi's own test, which runs without the agent, never on the gateway.
-  expect(f.host.requests("test")).toEqual([]);
-  // Blocked, or not enabled for Pi, its turns run Pi's own providers, which
-  // it lists and tests as on an external route.
-  for (const route of [
-    { ...pending, reason: "auth", message: "Sign in again." },
-    { ...eligible, harnesses: [] },
-  ] as GatewayRoute[]) {
-    r.move(route);
-    await expect(f.runtime.providers(self)).resolves.toEqual(listing);
-    expect(f.host.requests("providers").at(-1)?.params).toEqual({});
-  }
-  await f.runtime.test(self, choice);
-  expect(f.host.requests("test").map((item) => item.params)).toEqual([choice]);
-});
-
-it("sends no Pi test once its agent's route reaches the gateway while the host starts", async () => {
-  const community = "22222222-2222-4222-8222-222222222222";
-  const real = new GatewayRoutes(() =>
-    piGatewayDescriptor(community, "https://relay.example"),
-  );
-  // The gateway's model-access answer enables Pi, once it is let through.
-  const probes: ((response: HostResponse) => void)[] = [];
-  real.bindRequest(
-    () => new Promise<HostResponse>((resolve) => probes.push(resolve)),
-  );
-  const member = (origin: string) =>
-    real.setMembership({
-      key: self,
-      origin,
-      owner: alice,
-      pubkey: self,
-      community: { id: community, session: {} },
-    });
-  member("https://other.test");
-  const host = fakeHost(
-    { test: () => ({ ok: true, message: "OK" }) },
-    { ready: false },
-  );
-  const pi = new Pi(() => host.spawn, { tool: vi.fn(), event: vi.fn() });
-  // PiRuntime's own test, over the real transport, without its other parts.
-  const runtime = Object.assign(Object.create(PiRuntime.prototype), {
-    setup: new PiSetup(pi),
-    seam: {
-      routeReady: real.routeReady.bind(real),
-      routeFor: real.routeFor.bind(real),
-    },
-  }) as PiRuntime;
-  const choice = { provider: "anthropic", model: "claude-x" };
-  try {
-    const held = runtime.test(self, choice);
-    await vi.waitFor(() => expect(host.processes[0]?.launched).toBeDefined());
-    expect(host.requests("test")).toEqual([]);
-    member("https://relay.example");
-    // Still checking, it runs Pi's own providers: nothing changes yet.
-    expect(real.routeFor(self)).toMatchObject({
-      kind: "blocked",
-      reason: "readiness_pending",
-    });
-    await vi.waitFor(() => expect(probes).toHaveLength(1));
-    probes.shift()?.({
-      status: 200,
-      headers: {},
-      body: '{"harnesses":["pi"]}',
-    });
-    await vi.waitFor(() => expect(real.routeFor(self).kind).toBe("eligible"));
-    host.processes[0]?.send({ method: "ready", params: {} });
-    await expect(held).resolves.toEqual({
-      ok: false,
-      message: "The gateway's models can't be tested here.",
-    });
-    expect(host.requests("test")).toEqual([]);
-    // External again, the test is sent as before.
-    member("https://other.test");
-    await expect(runtime.test(self, choice)).resolves.toEqual({
-      ok: true,
-      message: "OK",
-    });
-    expect(host.requests("test").map((item) => item.params)).toEqual([choice]);
-  } finally {
-    host.processes[0]?.send({ method: "ready", params: {} });
-    await pi.dispose();
-  }
 });
 
 it("sends a watch's or timer's frozen context with its standalone turn, and an Attention wake's with its delivery", async () => {

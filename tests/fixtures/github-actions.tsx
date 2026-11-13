@@ -47,6 +47,15 @@ const gh: GitHubCli = async (query) => {
           additions: 12,
           deletions: 4,
           changedFiles: 2,
+          labels: {
+            nodes: [
+              { id: "L_docs", name: "documentation", color: "0969da" },
+              { id: "L_ready", name: "ready for review", color: "0e8a16" },
+              { id: "L_neutral", name: "maintenance" },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: null },
+            totalCount: 3,
+          },
           updatedAt: "2026-10-27T12:00:00Z",
           mergeStateStatus: ready ? "CLEAN" : "BLOCKED",
           reviewDecision: ready ? "APPROVED" : "REVIEW_REQUIRED",

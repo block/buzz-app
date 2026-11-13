@@ -1367,6 +1367,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all
   communities. Turning it off keeps pull request indicators and agent tools enabled.
+- The **GitHub** pull request panel’s **Summary** checklist shows read-only
+  labels with full names and theme-aware colors. It hides a complete empty set,
+  distinguishes unavailable and partial labels, and links partial results to
+  all labels on GitHub. Labels cannot be added or edited there.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.

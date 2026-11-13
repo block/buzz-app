@@ -9,9 +9,10 @@ test.use({ historyCounts: { alpha: 1, beta: 0 } });
 test("PR metadata wraps into readable rows at enlarged text size", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   const target = "https://github.com/sample/project/pull/1";
   const author = "averylonggithubusernamewithoutwordbreaks";
+  const longLabel = "external-label-without-word-breaks-0123456789abcdef";
   await page.addInitScript(() =>
     localStorage.setItem("buzz-font-scale.v1", "2"),
   );
@@ -28,6 +29,13 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
                 title: "Keep metadata readable",
                 state: "open",
                 user: { login: author },
+                labels: [
+                  {
+                    node_id: "LA_enlarged",
+                    name: longLabel,
+                    color: "8250df",
+                  },
+                ],
                 body: "A short description.",
                 created_at: "2026-10-01T12:00:00Z",
               },
@@ -52,6 +60,13 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
   await expect(authorLink).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
   const byline = panel.locator('[class*="byline"]');
+  const checklist = panel.getByRole("list", {
+    name: "Pull request checklist",
+  });
+  const label = panel
+    .getByRole("list", { name: "Labels", exact: true })
+    .getByRole("listitem");
+  await expect(label).toHaveText(longLabel);
   const lastUpdated = panel
     .locator("dl > div")
     .filter({ has: page.locator("dt", { hasText: "Last updated" }) });
@@ -92,8 +107,25 @@ test("PR metadata wraps into readable rows at enlarged text size", async ({
       "href",
       `https://github.com/${author}`,
     );
-    await expect(
-      panel.getByRole("list", { name: "Pull request checklist" }),
-    ).toBeVisible();
+    await expect(checklist).toBeVisible();
+    await expect
+      .poll(() =>
+        checklist.evaluate((node) => node.scrollWidth <= node.clientWidth),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        label.evaluate((node) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          return range.getClientRects().length;
+        }),
+      )
+      .toBeGreaterThan(1);
+    await label.scrollIntoViewIfNeeded();
+    await expect(label).toBeInViewport({ ratio: 1 });
+    await panel.screenshot({
+      path: testInfo.outputPath(`github-metadata-${mode}-enlarged.png`),
+    });
   }
 });

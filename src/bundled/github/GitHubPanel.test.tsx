@@ -18,6 +18,7 @@ import {
   type GitHubCli,
 } from "./gh";
 import { GitHubPanel, REFRESH_MS } from "./index";
+import { PublicChecklist } from "./PullChecklist";
 import { createPanelMemory } from "./panel-memory";
 import { createPullStates } from "./pull-states";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
@@ -359,6 +360,13 @@ it.each([400])(
 );
 
 const pull = "https://github.com/block/private/pull/9";
+function labelPage(nodes: { id: string; name: string; color?: string }[]) {
+  return {
+    nodes,
+    pageInfo: { hasNextPage: false, endCursor: null },
+    totalCount: nodes.length,
+  };
+}
 /** The store's `gh` answer for an open pull request, with `pull` overrides:
  * the panel reads it as the first alias of the store's query. */
 function pullData(over: Record<string, unknown> = {}) {
@@ -384,6 +392,11 @@ function pullData(over: Record<string, unknown> = {}) {
         additions: 3,
         deletions: 1,
         changedFiles: 2,
+        labels: labelPage([
+          { id: "L_docs", name: "documentation", color: "0969da" },
+          { id: "L_ready", name: "ready for review", color: "0e8a16" },
+          { id: "L_neutral", name: "maintenance" },
+        ]),
         mergeStateStatus: "CLEAN",
         reviewDecision: "APPROVED",
         viewerCanUpdate: true,
@@ -432,6 +445,70 @@ const checklist = () =>
   screen.getByRole("list", { name: "Pull request checklist" });
 const row = (label: string) =>
   within(checklist()).getByText(label).closest("li") as HTMLElement;
+const labelList = (container: HTMLElement = checklist()) =>
+  within(container).getByRole("list", { name: "Labels" });
+const labelNames = (container: HTMLElement = checklist()) =>
+  within(labelList(container))
+    .getAllByRole("listitem")
+    .map((item) => item.textContent);
+
+it.each([
+  ["missing", undefined, "Unavailable", 0],
+  ["complete empty", { items: [], complete: true }, null, 0],
+  [
+    "incomplete empty",
+    { items: [], complete: false },
+    "Not all labels loaded.",
+    0,
+  ],
+  [
+    "incomplete with available labels",
+    {
+      items: [{ id: "L_visible", name: "still visible", color: "8250df" }],
+      complete: false,
+    },
+    "Not all labels loaded.",
+    1,
+  ],
+])(
+  "renders the public Labels row with %s data",
+  async (_name, data, text, count) => {
+    render(
+      <PublicChecklist
+        url="https://github.com/example/project/pull/3"
+        sha={undefined}
+        checks={undefined}
+        labels={data}
+      />,
+    );
+    const heading = screen.queryByText("Labels", { exact: true });
+    if (text === null) {
+      expect(heading).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("list", { name: "Labels" }),
+      ).not.toBeInTheDocument();
+      return;
+    }
+    const labelsRow = heading?.closest("li");
+    if (!labelsRow) throw new Error("Missing Labels row");
+    expect(labelsRow).toHaveTextContent(text);
+    expect(within(labelsRow).queryByRole("button")).not.toBeInTheDocument();
+    const items = within(labelsRow).queryAllByRole("listitem");
+    expect(items).toHaveLength(count);
+    if (count) expect(items[0]?.textContent).toBe("still visible");
+    const external = within(labelsRow).queryByRole("link", {
+      name: "View all labels on GitHub",
+    });
+    if (data && !data.complete) {
+      expect(external).toHaveAttribute(
+        "href",
+        "https://github.com/example/project/pull/3",
+      );
+      expect(external).toHaveAttribute("target", "_blank");
+      expect(external).toHaveAttribute("rel", "noreferrer");
+    } else expect(external).not.toBeInTheDocument();
+  },
+);
 
 it("reads a private pull request with gh as one checklist, without the public API", async () => {
   const fetch = vi.fn();
@@ -502,6 +579,24 @@ it("reads a private pull request with gh as one checklist, without the public AP
     within(row("Checks")).getByRole("link", { name: "e2e" }),
   ).toHaveAttribute("href", "https://github.com/block/private/runs/1");
   expect(row("Review")).toHaveTextContent("Changes requested by wes");
+  expect(row("Review").nextElementSibling).toBe(row("Labels"));
+  expect(row("Labels").nextElementSibling).toBe(row("Threads"));
+  expect(labelNames()).toEqual([
+    "documentation",
+    "ready for review",
+    "maintenance",
+  ]);
+  expect(within(row("Labels")).queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    within(labelList())
+      .getByText("documentation")
+      .style.getPropertyValue("--external-label-light-ink"),
+  ).toMatch(/^#[0-9a-f]{6}$/);
+  expect(
+    within(labelList())
+      .getByText("maintenance")
+      .style.getPropertyValue("--external-label-light-ink"),
+  ).toBe("");
   expect(row("Threads")).toHaveTextContent("2 unresolved");
   expect(row("Merge")).toHaveTextContent("Blocked by main’s rules");
   expect(row("Merge")).not.toHaveTextContent("bypass");
@@ -515,6 +610,41 @@ it("reads a private pull request with gh as one checklist, without the public AP
   );
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["draft", "OPEN", true, "Pull request checklist"],
+  ["closed", "CLOSED", false, "Pull request state"],
+  ["merged", "MERGED", false, "Pull request state"],
+])(
+  "keeps full label names on an authenticated %s view",
+  async (_name, state, draft, listName) => {
+    const gh = vi.fn(async () => pullData({ state, isDraft: draft }));
+    render(
+      <GitHubPanel
+        target={pull}
+        close={() => {}}
+        gh={gh as unknown as GitHubCli}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Private change #9" });
+    const list = screen.getByRole("list", { name: listName });
+    expect(labelNames(list)).toEqual([
+      "documentation",
+      "ready for review",
+      "maintenance",
+    ]);
+    if (listName === "Pull request state") {
+      expect(
+        within(list).queryByText("Review", { exact: true }),
+      ).not.toBeInTheDocument();
+      expect(list.lastElementChild).toBe(
+        within(list).getByText("Labels", { exact: true }).closest("li"),
+      );
+    } else {
+      expect(row("Review").nextElementSibling).toBe(row("Labels"));
+    }
+  },
+);
 
 it("falls back to public data when gh is unavailable, and says why private links fail", async () => {
   vi.stubGlobal(
@@ -1028,10 +1158,15 @@ it("marks a draft ready for review, and offers auto-merge while blocked", async 
   ).toBeInTheDocument();
 });
 
-it("reads an open pull request again while the panel is open", async () => {
+it("updates labels through ordinary refresh at the same head, then stops after merge", async () => {
   vi.useFakeTimers();
   try {
-    const gh = vi.fn(async () => pullData());
+    let state = "OPEN";
+    let labelResponse = labelPage([
+      { id: "L_docs", name: "documentation", color: "0969da" },
+      { id: "L_ready", name: "ready for review", color: "0e8a16" },
+    ]);
+    const gh = vi.fn(async () => pullData({ state, labels: labelResponse }));
     render(
       <GitHubPanel
         target={pull}
@@ -1042,12 +1177,46 @@ it("reads an open pull request again while the panel is open", async () => {
     await vi.waitFor(() =>
       screen.getByRole("heading", { name: "Private change #9" }),
     );
+    expect(labelNames()).toEqual(["documentation", "ready for review"]);
+    const originalInk = within(labelList())
+      .getByText("documentation")
+      .style.getPropertyValue("--external-label-light-ink");
+    expect(originalInk).toMatch(/^#[0-9a-f]{6}$/);
     expect(gh).toHaveBeenCalledTimes(1);
+
+    // The same head removes one label, adds another, and recolors the retained one.
+    labelResponse = labelPage([
+      { id: "L_docs", name: "documentation", color: "bf3989" },
+      { id: "L_tests", name: "needs tests", color: "8250df" },
+    ]);
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await vi.waitFor(() =>
+      expect(labelNames()).toEqual(["documentation", "needs tests"]),
+    );
     expect(gh).toHaveBeenCalledTimes(2);
-    // A merged pull request doesn't change, so it isn't read again.
-    gh.mockImplementation(async () => pullData({ state: "MERGED" }));
+    expect(
+      within(labelList())
+        .getByText("documentation")
+        .style.getPropertyValue("--external-label-light-ink"),
+    ).not.toBe(originalInk);
+    expect(row("Labels")).not.toHaveTextContent("Not all labels loaded.");
+
+    // A merged pull request retains its labels but isn't read again.
+    state = "MERGED";
+    labelResponse = labelPage([
+      { id: "L_release", name: "release", color: "1f883d" },
+    ]);
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    await vi.waitFor(() =>
+      expect(
+        screen.getByRole("list", { name: "Pull request state" }),
+      ).toBeInTheDocument(),
+    );
+    const terminal = screen.getByRole("list", { name: "Pull request state" });
+    expect(labelNames(terminal)).toEqual(["release"]);
+    expect(
+      within(terminal).queryByText("Review", { exact: true }),
+    ).not.toBeInTheDocument();
     expect(gh).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(REFRESH_MS * 3);
     expect(gh).toHaveBeenCalledTimes(3);
@@ -2011,7 +2180,23 @@ it("shows public checks the store read for the head, without gh", async () => {
   const fetch = vi.fn(async (input: string) =>
     Response.json(
       input.endsWith("/pulls/3")
-        ? { title: "Public change", state: "open", head: { sha: "f00d" } }
+        ? {
+            title: "Public change",
+            state: "open",
+            head: { sha: "f00d" },
+            labels: [
+              {
+                node_id: "LA_public_docs",
+                name: "documentation",
+                color: "0969da",
+              },
+              {
+                node_id: "LA_public_review",
+                name: "ready for review",
+                color: "0e8a16",
+              },
+            ],
+          }
         : input.includes("/check-runs")
           ? {
               total_count: 1,
@@ -2031,9 +2216,12 @@ it("shows public checks the store read for the head, without gh", async () => {
   );
   await screen.findByRole("heading", { name: "Public change #3" });
   await waitFor(() => expect(row("Checks")).toHaveTextContent("1 failed"));
-  expect(
-    fetch.mock.calls.filter(([input]) => input.includes("/commits/f00d/")),
-  ).toHaveLength(2);
+  expect(labelNames()).toEqual(["documentation", "ready for review"]);
+  expect(fetch.mock.calls.map(([input]) => input).sort()).toEqual([
+    "https://api.github.com/repos/example/project/commits/f00d/check-runs?per_page=100&page=1&filter=latest",
+    "https://api.github.com/repos/example/project/commits/f00d/status?per_page=100&page=1",
+    "https://api.github.com/repos/example/project/pulls/3",
+  ]);
 });
 
 it("shows the latest the store read when a refresh fails, then what it reads next", async () => {

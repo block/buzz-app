@@ -440,3 +440,60 @@
   margin: 0;
   padding-inline-start: var(--space-6);
 }
+
+.labelsContent {
+  align-items: flex-start;
+}
+
+.labelsList {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.labelPill {
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--space-half) var(--space-1h);
+  border: 1px solid var(--external-label-light-border, var(--border-standard));
+  border-radius: var(--radius-chip);
+  background: var(--external-label-light-fill, var(--surface-inset));
+  color: var(--external-label-light-ink, var(--text-standard));
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+[data-color-mode="dark"] .labelPill {
+  border-color: var(--external-label-dark-border, var(--border-standard));
+  background: var(--external-label-dark-fill, var(--surface-inset));
+  color: var(--external-label-dark-ink, var(--text-standard));
+}
+
+.labelsIncomplete {
+  flex: 0 0 100%;
+  min-width: 0;
+  color: var(--text-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 18rem) {
+  .labelsRow {
+    grid-template-columns: 1rem minmax(0, 1fr);
+  }
+
+  .labelsContent {
+    grid-column: 2;
+  }
+}

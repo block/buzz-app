@@ -6,6 +6,7 @@ import {
   CircleDashedIcon,
   DotsThreeIcon,
   GitMergeIcon,
+  TagIcon,
   WarningCircleIcon,
   XCircleIcon,
 } from "../../shared/design-system/icons/index";
@@ -33,6 +34,7 @@ import {
   type PullChecklist as Checklist,
 } from "./pull";
 import styles from "./GitHub.module.css";
+import { externalLabelStyle } from "../../shared/design-system/external-labels";
 
 type Tone = "success" | "failure" | "pending" | "neutral";
 const toneIcons = {
@@ -206,6 +208,59 @@ function ReviewRow({ review }: { review: Checklist["review"] }) {
         ? `Waiting on ${names(review.waiting)}`
         : "Not required"}
     </Row>
+  );
+}
+
+function LabelsRow({
+  labels,
+  url,
+}: {
+  labels: GitHubDetails["labels"];
+  url: string;
+}) {
+  const headingId = useId();
+  if (labels?.complete && labels.items.length === 0) return null;
+  return (
+    <li className={`${styles.checklistRow} ${styles.labelsRow}`}>
+      <TagIcon size={16} aria-hidden="true" />
+      <span id={headingId} className={styles.checklistLabel}>
+        Labels
+      </span>
+      <div className={`${styles.checklistContent} ${styles.labelsContent}`}>
+        {labels === undefined ? (
+          <span className={styles.checklistValue}>Unavailable</span>
+        ) : (
+          <>
+            {labels.items.length > 0 && (
+              <ul aria-labelledby={headingId} className={styles.labelsList}>
+                {labels.items.map((label) => (
+                  <li
+                    key={label.id}
+                    className={styles.labelPill}
+                    style={externalLabelStyle(label.color)}
+                  >
+                    {label.name}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!labels.complete && (
+              <span className={styles.labelsIncomplete}>
+                Not all labels loaded.{" "}
+                <a
+                  className={inlineStyles.link}
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View all labels on GitHub
+                </a>
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -552,6 +607,7 @@ export function PullChecklist({
             Without merging
           </Row>
         )}
+        <LabelsRow labels={details.labels} url={url} />
       </ul>
     );
   return (
@@ -570,6 +626,7 @@ export function PullChecklist({
           }
         />
         <ReviewRow review={checklist.review} />
+        <LabelsRow labels={details.labels} url={url} />
         <Row
           tone={
             checklist.unresolved || checklist.moreThreads
@@ -613,16 +670,17 @@ export function PullChecklist({
   );
 }
 
-/** Without `gh`, only CI can be read for the checklist, from the public API,
- * as the store reads the rest of the pull request. */
+/** Without `gh`, CI and labels come from the store's existing public reads. */
 export function PublicChecklist({
   url,
   sha,
   checks,
+  labels,
 }: {
   url: string;
   sha: string | undefined;
   checks: CheckSummary | undefined;
+  labels: GitHubDetails["labels"];
 }) {
   return (
     <ul className={styles.checklist} aria-label="Pull request checklist">
@@ -633,6 +691,7 @@ export function PublicChecklist({
           {sha ? "Loading…" : "Unavailable"}
         </Row>
       )}
+      <LabelsRow labels={labels} url={url} />
     </ul>
   );
 }

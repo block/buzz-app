@@ -738,6 +738,7 @@ function ObjectPanel({
                     <PublicChecklist
                       url={reference.url}
                       sha={result.headSha}
+                      labels={result.labels}
                       checks={
                         typeof loaded === "object" && "publicChecks" in loaded
                           ? (loaded as PullDetails).publicChecks

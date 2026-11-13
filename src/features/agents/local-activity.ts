@@ -406,6 +406,8 @@ export function createLocalAgentActivity() {
       };
       return {
         channelId: input.channelId,
+        threadRootId: input.threadRootId,
+        thread: input.thread,
         requestText: (requestText: string) => {
           const current = entries.get(id);
           if (

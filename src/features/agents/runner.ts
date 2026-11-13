@@ -2959,7 +2959,15 @@ export class AgentRunners {
           const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
           const ownReply =
             event.kind === 9 && !!work && destination === work.channelId;
-          const sent = ownReply ? work.sending(event.content) : undefined;
+          const reference = threadReference({ tags: event.tags ?? [] });
+          const inSource =
+            work &&
+            (reference
+              ? reference.rootId === work.threadRootId
+              : !work.thread && !event.tags?.some(([name]) => name === "e"));
+          const sent = ownReply
+            ? work.sending(inSource ? event.content : undefined)
+            : undefined;
           let confirmed: boolean | undefined = false;
           try {
             const published = await this.publish(

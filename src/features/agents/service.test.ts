@@ -2184,18 +2184,30 @@ it("captures runner handoff with a pending publication and a background watch", 
   const original = f.native.publish.getMockImplementation();
   if (!original) throw new Error("Missing native publisher");
   f.native.publish.mockImplementation((member, template) =>
-    template.kind === 9 ? publication.promise : original(member, template),
+    template.kind === 9 && template.content === "Choose the next scope"
+      ? publication.promise
+      : original(member, template),
   );
   let reply: Promise<RelayEvent> | undefined;
-  f.run.mockImplementationOnce(({ agent, acknowledged, workingUntil }) => {
-    acknowledged?.();
-    reply = agent.publish({
-      kind: 9,
-      content: "Choose the next scope",
-      tags: [["h", channel]],
-    });
-    workingUntil(turn.promise);
-  });
+  f.run.mockImplementationOnce(
+    async ({ agent, acknowledged, workingUntil }) => {
+      acknowledged?.();
+      await agent.publish({
+        kind: 9,
+        content: "Other thread content",
+        tags: [
+          ["h", channel],
+          ["e", "d".repeat(64), "", "reply"],
+        ],
+      });
+      reply = agent.publish({
+        kind: 9,
+        content: "Choose the next scope",
+        tags: [["h", channel]],
+      });
+      workingUntil(turn.promise);
+    },
+  );
   f.emit({
     events: [
       event("local-evidence", {

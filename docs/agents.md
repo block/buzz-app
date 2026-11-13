@@ -96,7 +96,8 @@ Use the ID, revision, source fields and logical session association to reject
 stale async results. Publication and step changes do not change this snapshot.
 
 `messages` contains ordered accepted input and attempted kind-9 output for the
-same agent, community, source conversation and logical session. Synthetic input
+same agent, community and source conversation. When a session association is
+present, its logical session key also isolates the history. Synthetic input
 has `synthetic: true` and author `host`. Outgoing text has a local ID and a
 `delivery` state: `pending`, `published`, or `failed`. A pending or failed
 attempt is not proof of delivery. An uncertain acknowledgement stays `pending`.

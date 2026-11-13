@@ -4,6 +4,7 @@ import { createContributions } from "../../plugins/contributions";
 import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
 import type { Navigation } from "../navigation/controller";
 import {
+  AGENT_MESSAGES,
   createNotificationPreferences,
   type NotificationPreferences,
 } from "./preferences";
@@ -67,6 +68,7 @@ const categories = Object.freeze([
   { key: "direct", label: "Direct messages" },
   { key: "thread", label: "Thread replies" },
   { key: "agent", label: "Solo chat completions" },
+  { key: AGENT_MESSAGES, label: "Messages from agents" },
 ]);
 const FRESH_MS = 120_000;
 export type NotificationSnapshot = Readonly<{

@@ -495,14 +495,29 @@ it("looks for a stale catalog again, keeping the listed one meanwhile", async ()
       modelsChecking: false,
       modelsError: "",
     });
-    // It waits another hour, then replaces the list.
+    // It waits another hour. The same listing leaves the list as it was.
     await setup.loadModels();
     expect(sessions).toHaveLength(1);
     vi.setSystemTime(Date.now() + 60 * 60_000);
     await setup.catalog();
     expect(sessions).toHaveLength(2);
-    expect(setup.snapshot().models).not.toBe(listed);
-    expect(setup.snapshot().models).toEqual(listed);
+    expect(setup.snapshot().models).toBe(listed);
+    // A changed listing replaces it.
+    vi.setSystemTime(Date.now() + 60 * 60_000);
+    spawn.mockImplementationOnce((id, options) =>
+      spawn(id, {
+        ...options,
+        onStdout: (data) =>
+          options?.onStdout?.(
+            data.replace("claude-haiku-5-5", "claude-haiku-5-6"),
+          ),
+      }),
+    );
+    const refreshed = await setup.catalog();
+    expect(sessions).toHaveLength(3);
+    expect(
+      refreshed.find((model) => model.value === "haiku")?.resolvedModel,
+    ).toBe("claude-haiku-5-6");
   } finally {
     setup.dispose();
     vi.useRealTimers();

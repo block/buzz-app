@@ -365,7 +365,12 @@ export class ClaudeSetup {
     try {
       const models = await queryModels(spawn, request.signal);
       if (!models.length) throw new Error("Claude did not list its models");
-      if (this.modelRequest === request) this.set({ models });
+      // The same listing keeps the list it has, so nothing keyed on it reruns.
+      if (
+        this.modelRequest === request &&
+        JSON.stringify(models) !== JSON.stringify(this.state.models)
+      )
+        this.set({ models });
     } catch (error) {
       if (this.modelRequest === request && !request.signal.aborted && !quiet)
         this.set({

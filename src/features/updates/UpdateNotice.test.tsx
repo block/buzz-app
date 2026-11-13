@@ -104,6 +104,24 @@ it.each(["install", "restart"])(
   },
 );
 
+it("reports a menu check after a failed install in a toast, not the recovery notice", async () => {
+  const { install } = await readyUpdate();
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  install.reject(new Error("read-only location"));
+  await screen.findByRole("dialog", { name: "Update failed" });
+
+  // The next check finds nothing.
+  await act(async () => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  expect(
+    await screen.findByText("You're on the latest version."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Retry" }),
+  ).not.toBeInTheDocument();
+});
+
 it("does not surface background check failures", async () => {
   const check = vi.fn(async () => {
     throw new Error("offline");
@@ -194,6 +212,31 @@ it.each([
   else background.reject(new Error("offline"));
   expect(await screen.findByText(message)).toBeVisible();
   expect(check).toHaveBeenCalledOnce();
+});
+
+it("reports repeated menu requests during one check once", async () => {
+  const background = deferred();
+  updates = createUpdates({
+    desktop: true,
+    check: () => background.promise.then(() => null),
+    relaunch: async () => {},
+  });
+  render(
+    <ToastProvider>
+      <UpdateNotice updates={updates} />
+    </ToastProvider>,
+  );
+  act(() => {
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+    window.dispatchEvent(new Event("buzz:check-for-updates"));
+  });
+  await act(async () => background.resolve());
+  expect(
+    await screen.findByText("You're on the latest version."),
+  ).toBeVisible();
+  // Both requests have settled by now; only one reported.
+  await act(async () => {});
+  expect(screen.getAllByText("You're on the latest version.")).toHaveLength(1);
 });
 
 it("follows a menu check's download with its progress, then updates from the notice", async () => {

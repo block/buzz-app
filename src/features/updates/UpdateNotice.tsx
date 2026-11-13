@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   ToastNotice,
@@ -22,18 +22,32 @@ const settled = (updates: Updates) =>
 /** macOS Buzz → Check for Updates… reports its result here, not in Settings. */
 function useMenuCheck(updates: Updates) {
   const notify = useToastNotification();
+  // Repeated clicks during one check report its result once.
+  const pending = useRef(false);
   useEffect(() => {
     const check = async () => {
-      await updates.checkForUpdate();
-      const status = await settled(updates);
-      // A found update, or a result while recovering, shows in the notice below.
-      if (updates.noticePinned()) return;
-      if (status.state === "up-to-date")
-        notify("You're on the latest version.", "success");
-      else if (status.state === "unavailable")
-        notify("Automatic updates aren't available on this build.", "info");
-      else if (status.state === "error")
-        notify(`Couldn't check for updates: ${status.message}`, "error");
+      if (pending.current) return;
+      pending.current = true;
+      try {
+        await updates.checkForUpdate();
+        const status = await settled(updates);
+        // A clean result retires a recovery notice; the toast reports it instead.
+        if (
+          (status.state === "up-to-date" || status.state === "unavailable") &&
+          updates.noticePinned()
+        )
+          updates.dismissNotice();
+        // A found update, or a failure while recovering, shows in the notice below.
+        if (updates.noticePinned()) return;
+        if (status.state === "up-to-date")
+          notify("You're on the latest version.", "success");
+        else if (status.state === "unavailable")
+          notify("Automatic updates aren't available on this build.", "info");
+        else if (status.state === "error")
+          notify(`Couldn't check for updates: ${status.message}`, "error");
+      } finally {
+        pending.current = false;
+      }
     };
     const request = () => void check();
     window.addEventListener("buzz:check-for-updates", request);

@@ -396,6 +396,14 @@
     }
   }
 
+  /* virtua places each drawn row itself, outside the rows' flex gap, so
+     each keeps that gap below it, inside the content box virtua measures. */
+  .search-palette-virtual > * > *::after {
+    content: "";
+    display: block;
+    block-size: 1px;
+  }
+
   .search-peek-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(17rem, 24rem);
@@ -470,6 +478,9 @@
     padding: var(--space-2);
   }
   .search-peek-line[data-hit] {
+    /* A hit scrolled into view keeps the last line of the one before it:
+       the gap, that line's padding and one line of its text. */
+    scroll-margin-top: var(--space-8);
     background: var(--affordance-message-highlight);
   }
   .search-peek-line-head {
@@ -497,9 +508,14 @@
     color: var(--text-standard);
     overflow-wrap: anywhere;
   }
+  /* Neighbours keep to one line, so the room held for them while they load
+     is the room they take. */
   .search-peek-line[data-context] .search-peek-text {
     color: var(--text-subtle);
-    -webkit-line-clamp: 3;
+    -webkit-line-clamp: 1;
+  }
+  .search-peek-line[data-slot] {
+    visibility: hidden;
   }
   .search-peek-empty {
     margin: 0;

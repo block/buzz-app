@@ -17,6 +17,7 @@ beforeEach(() => {
     "ResizeObserver",
     class {
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -238,6 +239,29 @@ it("keeps Peek's group order once the highlight moves, adding late groups at the
   expect(onFreeze).toHaveBeenCalledOnce();
 });
 
+it("keeps Tab in the field before Peek has any group to show", () => {
+  const action = {
+    key: "scope:a",
+    label: "Search in Alpha",
+    icon: ChatCircleIcon,
+    run,
+  };
+  render(
+    <SearchChoices
+      query="release plan"
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      isAction={(key) => key.startsWith("scope:")}
+      peek={{ ranked: true, preview: () => null }}
+      groups={[{ label: "This conversation", destinations: [action] }]}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  // fireEvent returns false when the default (moving focus) was prevented.
+  expect(fireEvent.keyDown(field, { key: "Tab" })).toBe(false);
+  expect(fireEvent.keyDown(field, { key: "Tab", shiftKey: true })).toBe(false);
+});
+
 it("keeps an action-only group in place when Peek's order freezes", () => {
   const row = (key: string) => ({ key, label: key, icon: ChatCircleIcon, run });
   const palette = (labels: string[]) => (
@@ -263,4 +287,44 @@ it("keeps an action-only group in place when Peek's order freezes", () => {
   fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
   rerender(palette(["This conversation", "Recent activity"]));
   expect(order()).toEqual(["This conversation", "Recent activity"]);
+});
+
+it("draws a long group Peek shows whole near the view, keeping the highlighted row drawn and placed", () => {
+  const rows = Array.from({ length: 120 }, (_, index) => ({
+    key: `browse:${index}`,
+    label: `channel-${index}`,
+    icon: ChatCircleIcon,
+    run,
+  }));
+  render(
+    <SearchChoices
+      query=""
+      onQueryChange={() => {}}
+      input={createRef<HTMLElement>()}
+      peek={{ ranked: true, preview: () => null }}
+      groups={[
+        {
+          label: "Recent activity",
+          destinations: [
+            { key: "recent", label: "recent", icon: ChatCircleIcon, run },
+          ],
+        },
+        { label: "Channels", browse: true, destinations: rows },
+      ]}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /^Channels/ }));
+  const field = screen.getByRole("combobox");
+  for (let press = 0; press < 80; press++)
+    fireEvent.keyDown(field, { key: "ArrowDown" });
+  // jsdom measures nothing, so virtua leaves the rows it draws hidden: query
+  // the DOM. Rows show once measured in a browser.
+  const drawn = document.querySelectorAll('[role="option"]');
+  expect(drawn.length).toBeLessThan(rows.length);
+  const highlighted = document.getElementById(
+    field.getAttribute("aria-activedescendant") ?? "",
+  );
+  expect(highlighted).toHaveTextContent("channel-80");
+  expect(highlighted).toHaveAttribute("aria-posinset", "81");
+  expect(highlighted).toHaveAttribute("aria-setsize", "120");
 });

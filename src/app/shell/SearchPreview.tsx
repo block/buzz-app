@@ -1,9 +1,16 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { termMatches } from "../../features/search/snippet";
 import { avatarMedia } from "../../shared/avatar-source";
+import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import type { SearchDestination, SearchTone } from "./SearchChoices";
@@ -22,6 +29,10 @@ export type PeekTarget =
   | { kind: "channel"; channelId: string; about?: string | undefined }
   | { kind: "person"; pubkey: string };
 
+/** A highlight nobody has moved follows the first row, which more typing
+ * (`text`) or results still arriving (`busy`) may replace. */
+export type PeekFollow = { text: string; busy: boolean };
+
 type Line = {
   id: string;
   channelId: string;
@@ -31,7 +42,8 @@ type Line = {
 };
 
 /** The pause on a row before its preview reads anything, so moving through
- * rows reads only where someone stops. */
+ * rows reads only where someone stops. A followed highlight waits as long as
+ * search does after each key, and for its results. */
 const DWELL = 150;
 const cache = new WeakMap<RelaySession, Map<string, readonly Line[]>>();
 
@@ -123,7 +135,11 @@ async function readLines(
     .slice(0, 3);
 }
 
-function useLines(session: RelaySession, target: PeekTarget | undefined) {
+function useLines(
+  session: RelaySession,
+  target: PeekTarget | undefined,
+  follow: PeekFollow | undefined,
+) {
   const key = target ? keyOf(target) : "";
   const known = cache.get(session)?.get(key);
   const [state, setState] = useState<{
@@ -131,34 +147,37 @@ function useLines(session: RelaySession, target: PeekTarget | undefined) {
     lines?: readonly Line[];
     failed?: boolean;
   }>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the target.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The key names the target; a followed highlight's text restarts its pause.
   useEffect(() => {
-    if (!target || known) return;
+    if (!target || known || follow?.busy) return;
     const controller = new AbortController();
-    const timer = setTimeout(() => {
-      readLines(session, target, controller.signal)
-        .then((lines) => {
-          if (controller.signal.aborted) return;
-          const saved = cache.get(session) ?? new Map();
-          cache.set(session, saved);
-          saved.set(key, lines);
-          setState({ key, lines });
-          void session.profiles
-            .ensure(
-              [...new Set(lines.map((line) => line.authorId))],
-              "background",
-            )
-            .catch(() => {});
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) setState({ key, failed: true });
-        });
-    }, DWELL);
+    const timer = setTimeout(
+      () => {
+        readLines(session, target, controller.signal)
+          .then((lines) => {
+            if (controller.signal.aborted) return;
+            const saved = cache.get(session) ?? new Map();
+            cache.set(session, saved);
+            saved.set(key, lines);
+            setState({ key, lines });
+            void session.profiles
+              .ensure(
+                [...new Set(lines.map((line) => line.authorId))],
+                "background",
+              )
+              .catch(() => {});
+          })
+          .catch(() => {
+            if (!controller.signal.aborted) setState({ key, failed: true });
+          });
+      },
+      follow ? SEARCH_DEBOUNCE_MS : DWELL,
+    );
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [session, key]);
+  }, [session, key, follow?.busy, follow?.text]);
   const failed = !known && state?.key === key && !!state.failed;
   return {
     lines: known ?? (state?.key === key ? state.lines : undefined),
@@ -178,6 +197,7 @@ export function SearchPreview({
   terms,
   nameOf,
   whereOf,
+  follow,
 }: {
   session: RelaySession;
   row: (SearchDestination & { peek?: PeekTarget | undefined }) | undefined;
@@ -185,6 +205,7 @@ export function SearchPreview({
   terms: readonly string[];
   nameOf: (pubkey: string, channelId?: string) => string;
   whereOf: (channelId: string) => string;
+  follow?: PeekFollow | undefined;
 }) {
   // Names and pictures resolve as their profiles arrive.
   const profiles = useSyncExternalStore(
@@ -192,13 +213,37 @@ export function SearchPreview({
     session.profiles.snapshot,
   );
   const target = row?.peek;
-  const { lines, failed } = useLines(session, target);
+  const { lines, failed } = useLines(session, target, follow);
+  const card = useRef<HTMLDivElement>(null);
+  // Each row's preview opens at its top, then scrolls only as far as the hit
+  // needs: a hit taller than the view starts at its own top, the last line of
+  // the one before it above.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Re-anchor when the row or its lines change.
+  useLayoutEffect(() => {
+    const view = card.current?.parentElement;
+    if (!view) return;
+    view.scrollTop = 0;
+    const hit = view.querySelector<HTMLElement>("[data-hit]");
+    // A hit first in its lines already sits just below the heading.
+    if (!hit?.previousElementSibling) return;
+    const box = view.getBoundingClientRect();
+    const rect = hit.getBoundingClientRect();
+    const pad = Number.parseFloat(getComputedStyle(view).paddingBottom) || 0;
+    const sliver =
+      Number.parseFloat(getComputedStyle(hit).scrollMarginTop) || 0;
+    const edge = view.clientTop;
+    const past = rect.bottom + pad + edge - box.bottom;
+    if (past > 0)
+      view.scrollTop = Math.min(past, rect.top - box.top - edge - sliver);
+  }, [target && keyOf(target), lines, failed]);
   if (!row) return <p className="search-peek-empty">Nothing highlighted</p>;
   const message = target?.kind === "message" ? target : undefined;
   const Icon = (message ? row.detailIcon : undefined) ?? row.icon;
   const pictureOf = (pubkey: string) =>
     avatarMedia(profiles.get(pubkey)?.picture, session.media);
-  // The hit stands in while its neighbours load.
+  // The hit stands in while its neighbours load, below room held for the two
+  // before it, so it doesn't move when they arrive.
+  const loading = !!message && !lines && !failed;
   const shown: readonly Line[] =
     lines ??
     (message
@@ -213,7 +258,7 @@ export function SearchPreview({
         ]
       : []);
   return (
-    <div className="search-peek-card">
+    <div ref={card} className="search-peek-card">
       <div className="search-peek-head">
         {row.avatar && !message ? (
           <Avatar
@@ -262,6 +307,26 @@ export function SearchPreview({
       )}
       {shown.length > 0 && (
         <ol className="search-peek-lines">
+          {/* Hidden lines of a neighbour's shape; each no-break space holds
+            its line's height. */}
+          {loading &&
+            ["before-2", "before-1"].map((slot) => (
+              <li
+                key={slot}
+                className="search-peek-line"
+                data-context=""
+                data-slot=""
+                aria-hidden="true"
+              >
+                <Avatar alt="" fallback="" size="small" shape="circle" />
+                <div className="min-w-0">
+                  <div className="search-peek-line-head text-caption">
+                    <span className="search-peek-author">{" "}</span>
+                  </div>
+                  <div className="search-peek-text text-body-sm">{" "}</div>
+                </div>
+              </li>
+            ))}
           {shown.map((line) => {
             const hit = !!message && line.id === message.messageId;
             const text = line.text.slice(0, 1600);

@@ -21,6 +21,7 @@ import { createAgentDirectory } from "../../features/identity-names/testing";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../../features/relay/session";
 import { eventDto, type RelayEvent } from "../../features/relay/events";
+import type { VerifiedProfileSink } from "../../features/relay/verified-profile";
 import { ReadError } from "../../features/relay/errors";
 import {
   keypair,
@@ -3952,6 +3953,7 @@ function verifiedAuthorSession({
   searchEmpty = false,
   extraMembers = 0,
   earlyHead = false,
+  refuseVerification,
 }: {
   namesakeName?: string;
   pageOnly?: boolean;
@@ -3961,6 +3963,7 @@ function verifiedAuthorSession({
   searchEmpty?: boolean;
   extraMembers?: number;
   earlyHead?: boolean;
+  refuseVerification?: "before-eose" | "after-eose";
 } = {}) {
   const relay = keypair(),
     viewer = keypair(),
@@ -3997,9 +4000,11 @@ function verifiedAuthorSession({
     ]),
     ...publicProfiles,
     head,
+    message(person, "crew", "deploy the engine", 1700000500),
   ];
   const reads: Filter[] = [];
   const verificationReads: Filter[] = [];
+  const verifiedSubscriptions: VerifiedProfileSink[] = [];
   let deliverHead = () => {};
   const owner = createRelaySession(
     {
@@ -4035,6 +4040,17 @@ function verifiedAuthorSession({
           dispose() {},
           syncVerifiedProfiles(_filter, sink) {
             let active = true;
+            verifiedSubscriptions.push(sink);
+            if (refuseVerification) {
+              queueMicrotask(() => {
+                if (!active) return;
+                if (refuseVerification === "after-eose") sink.eose();
+                sink.closed("error: relay refused verification");
+              });
+              return () => {
+                active = false;
+              };
+            }
             deliverHead = () => {
               if (active) sink.event(head);
             };
@@ -4070,6 +4086,7 @@ function verifiedAuthorSession({
     person,
     reads,
     verificationReads,
+    verifiedSubscriptions,
     deliverHead: () => deliverHead(),
   };
 }
@@ -4083,6 +4100,86 @@ function authorVerificationGate() {
   });
   return { promise, resolve, reject };
 }
+
+it.each(["before-eose", "after-eose"] as const)(
+  "keeps scoped author results stable when live verification is repeatedly refused %s",
+  async (refuseVerification) => {
+    const { owner, person, reads, verificationReads, verifiedSubscriptions } =
+      verifiedAuthorSession({ refuseVerification });
+    try {
+      owner.session.channels.ensureList();
+      await waitFor(() =>
+        expect(owner.session.channels.get?.("crew")?.members).toContain(
+          person.pubkey,
+        ),
+      );
+      await act(async () =>
+        owner.session.profiles.ensure(
+          owner.session.channels.get?.("crew")?.members ?? [],
+        ),
+      );
+      const beforeSearch = verifiedSubscriptions.length;
+      vi.useFakeTimers();
+      render(
+        <SearchResults
+          session={owner.session}
+          query="from:robinz deploy"
+          scopedChannelId="crew"
+          onQueryChange={() => {}}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />,
+      );
+      // Let every refusal and debounce finish without changing the query.
+      for (let cycle = 0; cycle < 6; cycle++)
+        await act(async () =>
+          vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
+        );
+      // Query resolution and first-message byline enrichment each ensure once.
+      expect(verifiedSubscriptions.length).toBeLessThanOrEqual(
+        beforeSearch + 2,
+      );
+      expect(verificationReads).toHaveLength(1);
+      expect(reads).toHaveLength(1);
+      expect(reads).toContainEqual(
+        expect.objectContaining({ authors: [person.pubkey], search: "deploy" }),
+      );
+      const counts = [
+        verifiedSubscriptions.length,
+        verificationReads.length,
+        reads.length,
+      ];
+      const result = screen.getByRole("option", { name: /deploy the engine/ });
+      for (let cycle = 0; cycle < 4; cycle++)
+        await act(async () =>
+          vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
+        );
+      expect([
+        verifiedSubscriptions.length,
+        verificationReads.length,
+        reads.length,
+      ]).toEqual(counts);
+      expect(result).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Retry messages" }),
+      ).toBeNull();
+      // A new explicit demand may retry, without restarting the settled query.
+      const beforeRetry = verifiedSubscriptions.length;
+      await act(async () => owner.session.profiles.ensure([person.pubkey]));
+      for (let cycle = 0; cycle < 3; cycle++)
+        await act(async () =>
+          vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 1),
+        );
+      expect(verifiedSubscriptions).toHaveLength(beforeRetry + 1);
+      expect([verificationReads.length, reads.length]).toEqual(counts.slice(1));
+      expect(result).toBeVisible();
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
 
 it.each([
   { namesake: false, extraMembers: 0, earlyHead: false },

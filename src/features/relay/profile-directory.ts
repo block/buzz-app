@@ -63,8 +63,9 @@ export interface ProfileQueries {
    * profile's `verified`, present or not, then outranks a search's answer:
    * a newer inactive or malformed head revokes an older name. */
   verifiedHeld?(pubkey: string): boolean;
-  /** Moves with every change to the shared verified heads, including one that
-   * leaves every profile as it was (a first inactive head), and notifies. */
+  /** Moves with published authority/head evidence, including a first inactive
+   * head that leaves profiles unchanged. Checked/cached status alone does not
+   * move it; subscribers still receive those profile status updates. */
   verifiedRevision?(): number;
   /** Whether a `verifiedRevision()` after `revision` accepted a head for
    * `pubkey`, even one the cache evicted before publishing it. Past what it
@@ -174,16 +175,6 @@ export function createProfileDirectory(
   function flushVerified() {
     clearTimeout(verifiedFlush);
     verifiedFlush = undefined;
-    verifiedRevision++;
-    for (const subject of verified?.takeAccepted() ?? []) {
-      acceptedAt.delete(subject);
-      acceptedAt.set(subject, verifiedRevision);
-    }
-    for (const [subject, revision] of acceptedAt) {
-      if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
-      acceptedAt.delete(subject);
-      forgottenAt = revision;
-    }
     if (!closed) publish();
   }
   // A background read of many pages publishes once, when its pages settle:
@@ -248,6 +239,20 @@ export function createProfileDirectory(
     const headsChanged =
       held.size !== publishedVerifiedHeads.size ||
       [...held].some((pubkey) => !publishedVerifiedHeads.has(pubkey));
+    const accepted = verified?.takeAccepted() ?? [];
+    // Search retries follow evidence, not failure-only sync notifications or
+    // checked/cached status changes. Those still publish their profile state.
+    if (accepted.length || headsChanged || publishedAuthority !== authority)
+      verifiedRevision++;
+    for (const subject of accepted) {
+      acceptedAt.delete(subject);
+      acceptedAt.set(subject, verifiedRevision);
+    }
+    for (const [subject, revision] of acceptedAt) {
+      if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
+      acceptedAt.delete(subject);
+      forgottenAt = revision;
+    }
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);

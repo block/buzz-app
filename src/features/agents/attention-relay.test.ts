@@ -1,7 +1,7 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { describe, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
-import type { AttentionValue } from "./attention";
+import { OBJECT_LIMIT, type AttentionValue } from "./attention";
 import { AttentionError } from "./attention-objects";
 import {
   ATTENTION_LABEL,
@@ -243,17 +243,18 @@ describe("attention records", () => {
     }
   });
 
-  it("applies the first 100 of a group by slug and skips the others", async () => {
+  it("applies the first OBJECT_LIMIT of a group by slug and skips the others", async () => {
+    const slug = (i: number) => `interest/i${String(i).padStart(4, "0")}`;
     const events = await Promise.all(
-      Array.from({ length: 102 }, (_, i) =>
-        record(`interest/i${String(i).padStart(3, "0")}`, interest),
+      Array.from({ length: OBJECT_LIMIT + 2 }, (_, i) =>
+        record(slug(i), interest),
       ),
     );
     const set = await attentionSet(channel, events.reverse());
-    expect(Object.keys(set.attention)).toHaveLength(100);
+    expect(Object.keys(set.attention)).toHaveLength(OBJECT_LIMIT);
     expect(Object.keys(set.skipped).sort()).toEqual([
-      "interest/i100",
-      "interest/i101",
+      slug(OBJECT_LIMIT),
+      slug(OBJECT_LIMIT + 1),
     ]);
   });
 });

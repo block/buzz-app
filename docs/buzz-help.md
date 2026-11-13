@@ -647,8 +647,10 @@ and are asked to sign in again in Buzz.
   unfinished `from:` or `in:@` lists people, `in:` or `in:#` your channels,
   `after:`, `before:` or `during:` common dates, and `on:` a calendar; choose
   one to make it a chip. Click a chip to remove it, or press Backspace at the
-  start of the text to edit the last one. With a filter, search shows only
-  messages. Each message result's conversation name starts with the icon its
+  start of the text to edit the last one. People suggestions match both verified
+  usernames and full names, including name words, whichever name this device
+  displays. The selected chip keeps the displayed name. With a filter, search
+  shows only messages. Each message result's conversation name starts with the icon its
   channel header shows: a hash for a public channel, a lock for a private
   channel, or a chat bubble for a direct message or chat. Screen readers
   announce the type before the name.

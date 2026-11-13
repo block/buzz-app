@@ -7,7 +7,11 @@ import {
 import { objectBody } from "../../features/relay/body";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
+import type { Profile } from "../../features/relay/contracts";
 import { foldProfiles } from "../../features/relay/profiles";
+import { searchedProfiles } from "../../features/relay/profile-search";
+import type { VerifiedProfile } from "../../features/relay/verified-profile";
+import { verifiedName } from "../../features/profiles/useVerifiedNames";
 import { normalizeName } from "../../features/search/person-match";
 import {
   isHexPubkey,
@@ -243,18 +247,49 @@ export function useSearchMessages(
               await session.profiles.ensure(knownMembers, "foreground");
               controller.signal.throwIfAborted();
             }
-            // A key matches by its profile name or, for a selectable agent,
-            // by the agent's own name.
-            const named = (pubkey: string, profileName = "") =>
-              normalizeName(profileName) === handle ||
-              normalizeName(agents.get(pubkey) ?? "") === handle;
+            // Shared labels can qualify namesakes. Their signed profile names
+            // still participate in exact-name ambiguity.
+            const originals = foldProfiles(
+              [...new Set([...knownMembers, ...agents.keys()])].flatMap(
+                (pubkey) => {
+                  const event = session.profiles.event?.(pubkey);
+                  return event ? [event] : [];
+                },
+              ),
+            );
+            let remoteNames: ReadonlyMap<string, VerifiedProfile> | undefined;
+            // Exact completion accepts the same profile and verified aliases
+            // as the picker, independently of the device's display preference.
+            const named = (pubkey: string, profile?: Profile) => {
+              const shared = session.profiles.snapshot().get(pubkey);
+              const original = originals.get(pubkey);
+              const verified =
+                shared?.verified ??
+                (session.profiles.verifiedHeld?.(pubkey)
+                  ? undefined
+                  : remoteNames
+                    ? remoteNames.get(pubkey)
+                    : verifiedName(session.profiles, pubkey));
+              return [
+                profile?.name,
+                profile?.username,
+                original?.name,
+                original?.username,
+                verified?.displayName,
+                verified?.username,
+                verified?.fullName,
+                agents.get(pubkey),
+              ].some(
+                (name) => name !== undefined && normalizeName(name) === handle,
+              );
+            };
             // Selectable agents are offered wherever the picker runs, so they
             // are always candidates, alongside members or relay matches.
             const agentMatches = [...agents.keys()].filter((pubkey) =>
-              named(pubkey, session.profiles.snapshot().get(pubkey)?.name),
+              named(pubkey, session.profiles.snapshot().get(pubkey)),
             );
             const scoped = knownMembers.filter((pubkey) =>
-              named(pubkey, session.profiles.snapshot().get(pubkey)?.name),
+              named(pubkey, session.profiles.snapshot().get(pubkey)),
             );
             const resolve = (keys: readonly string[]) => {
               const unique = [...new Set(keys)];
@@ -275,10 +310,20 @@ export function useSearchMessages(
                 typed.toLowerCase(),
                 { limit, signal: controller.signal },
               );
-              const matches = [...foldProfiles(candidates)]
+              const profiles = searchedProfiles(
+                candidates,
+                session.profiles.verifiedAuthority?.(),
+              );
+              const checked = await session.directMessages
+                .verified([...profiles.keys()], controller.signal)
+                .catch(() => undefined);
+              controller.signal.throwIfAborted();
+              if (checked?.authority === session.profiles.verifiedAuthority?.())
+                remoteNames = checked?.profiles;
+              const matches = [...profiles]
                 .filter(
                   ([pubkey, profile]) =>
-                    named(pubkey, profile.name) || pubkey === handle,
+                    named(pubkey, profile) || pubkey === handle,
                 )
                 .map(([pubkey]) => pubkey);
               const found = resolve([...matches, ...agentMatches]);

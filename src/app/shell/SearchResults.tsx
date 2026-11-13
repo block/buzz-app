@@ -13,7 +13,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
-import type { EventData } from "../../features/relay/events";
+import type { RelayEvent } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
 import {
   useChannelList,
@@ -31,7 +31,7 @@ import {
 } from "../../features/agents/choices";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
-import { foldProfiles } from "../../features/relay/profiles";
+import { searchedProfiles } from "../../features/relay/profile-search";
 import {
   ArrowsDownUpIcon,
   CalendarIcon,
@@ -95,8 +95,15 @@ import {
   parseSearchOperators,
 } from "./parseSearchOperators";
 import { avatarMedia } from "../../shared/avatar-source";
-import { useVerifiedNames } from "../../features/profiles/useVerifiedNames";
-import { verifiedLabel } from "../../features/profiles/name-preference";
+import {
+  useVerifiedNames,
+  withVerifiedNames,
+} from "../../features/profiles/useVerifiedNames";
+import {
+  otherVerifiedName,
+  useNamePreference,
+  verifiedLabel,
+} from "../../features/profiles/name-preference";
 import { sortParticipantNames } from "../../features/identity-names/participant-order";
 
 function conversationName(
@@ -338,7 +345,7 @@ export function SearchResults({
     query: string;
     savedOnly: boolean;
     lookupFailed?: boolean;
-    remote: readonly EventData[];
+    remote: readonly RelayEvent[];
   }>();
   // Completing either from:name or from:@name selects an exact signed key.
   const datePrompt = operatorMatches(
@@ -614,7 +621,7 @@ export function SearchResults({
   });
   useMentionArchives(session, (showAuthorPicker && !offline) || peopleActive);
   // People labels come from one names scope built each render.
-  useNamesRevision(session.names, peopleActive);
+  useNamesRevision(session.names, peopleActive || showAuthorPicker);
   // The viewer's own agents open a new chat, not a direct message: the
   // same agents the new-chat composer accepts. Their earlier chats
   // still show as conversations.
@@ -648,7 +655,7 @@ export function SearchResults({
             // A partial directory still contains verified member profiles.
           }
         }
-        let remote: readonly EventData[] = [];
+        let remote: readonly RelayEvent[] = [];
         let lookupFailed = false;
         if (!savedOnly && searchable(authorNeedle)) {
           try {
@@ -699,6 +706,10 @@ export function SearchResults({
   const selectableAgents = new Map(
     agents.selectable.map((agent) => [agent.pubkey, agent]),
   );
+  const remoteAuthors = searchedProfiles(
+    authorAnswer?.remote ?? [],
+    session.profiles.verifiedAuthority?.(),
+  );
   const candidates = new Map([
     ...[...profiles].filter(([pubkey]) => members.includes(pubkey)),
     ...agents.selectable.map(
@@ -712,50 +723,103 @@ export function SearchResults({
           },
         ] as const,
     ),
-    ...foldProfiles(authorAnswer?.remote ?? []),
+    ...remoteAuthors,
   ]);
-  // A selectable agent also matches by its own name, as in @ mentions.
-  const authorTier = (pubkey: string, name: string) =>
-    Math.min(
-      ...[name, selectableAgents.get(pubkey)?.name].map((alias) =>
+  const authorPeople = (showAuthorPicker ? [...candidates] : []).map(
+    ([pubkey, profile]) => ({
+      pubkey,
+      ...profile,
+    }),
+  );
+  const authorVerified = useVerifiedNames(
+    session,
+    [...remoteAuthors].map(([pubkey, profile]) => ({
+      pubkey,
+      isAgent: profile.isAgent || knownAgents.has(pubkey),
+    })),
+    {
+      key: query,
+      settled: showAuthorPicker && !!authorAnswer && !savedOnly,
+    },
+  );
+  const preference = useNamePreference();
+  const namedAuthors = withVerifiedNames(
+    authorPeople,
+    authorVerified,
+    profiles,
+    preference,
+  );
+  const authorNames = session.names.scope(
+    effectiveChannelId ? members : undefined,
+    namedAuthors.filter(
+      ({ pubkey }) =>
+        authorVerified.has(pubkey) && !profiles.get(pubkey)?.verified,
+    ),
+  );
+  // Match both verified names regardless of the display preference, retaining
+  // the profile and selectable-agent aliases the picker already accepted.
+  const rankedAuthors = namedAuthors.map((profile) => {
+    const { pubkey } = profile;
+    const found = authorNames(pubkey);
+    const verified =
+      profiles.get(pubkey)?.verified ?? authorVerified.get(pubkey);
+    const label =
+      (found?.source === "public-profile" && authorVerified.has(pubkey)
+        ? undefined
+        : found?.name) ?? profile.name;
+    const tier = Math.min(
+      ...[
+        label,
+        profile.name,
+        profile.username,
+        profile.fullName,
+        ...(profile.profileNames ?? []),
+        selectableAgents.get(pubkey)?.name,
+      ].map((alias) =>
         alias === undefined
           ? Infinity
           : (matchPerson(alias, authorNeedle)?.tier ?? Infinity),
       ),
     );
+    return { pubkey, profile, label, verified, tier };
+  });
   const authorChoices =
     authorToken && showAuthorPicker && authorAnswer
-      ? [...candidates]
-          .filter(([pubkey, profile]) => authorTier(pubkey, profile.name) < 4)
+      ? rankedAuthors
+          .filter(({ tier }) => tier < 4)
           .filter(
-            ([pubkey]) =>
+            ({ pubkey }) =>
               !archiveHides(session.archives, pubkey, session.viewer) &&
               (!knownAgents.has(pubkey) || selectableAgents.has(pubkey)),
           )
           // Exact names survive the cap when the resolver reports ambiguity.
           .sort(
-            ([left, leftProfile], [right, rightProfile]) =>
-              Number(authorTier(right, rightProfile.name) === 0) -
-                Number(authorTier(left, leftProfile.name) === 0) ||
+            (
+              { pubkey: left, profile: leftProfile, tier: leftTier },
+              { pubkey: right, profile: rightProfile, tier: rightTier },
+            ) =>
+              Number(rightTier === 0) - Number(leftTier === 0) ||
               Number(!!leftProfile.isAgent || knownAgents.has(left)) -
                 Number(!!rightProfile.isAgent || knownAgents.has(right)) ||
               Number(members.includes(right)) - Number(members.includes(left)),
           )
           .slice(0, 12)
-          .map(([pubkey, profile]) => ({ pubkey, profile }))
-          .map(({ pubkey, profile }) => {
+          .map(({ pubkey, profile, label, verified }) => {
             const agent = selectableAgents.get(pubkey);
             const isAgent = !!agent || !!profile.isAgent;
             return {
               key: `author:${pubkey}`,
-              label: resolveName(
-                pubkey,
-                profile.name,
-                effectiveChannelId
-                  ? session.channels.get?.(effectiveChannelId)?.members
-                  : undefined,
-              ),
-              detail: pubkey.slice(0, 12),
+              label,
+              detail: [
+                verified &&
+                  otherVerifiedName(
+                    verifiedLabel(verified, preference),
+                    verified,
+                  ),
+                pubkey.slice(0, 12),
+              ]
+                .filter(Boolean)
+                .join(" · "),
               icon: ChatCircleIcon,
               avatar: {
                 src: avatarMedia(
@@ -774,10 +838,10 @@ export function SearchResults({
                   tokenEnd,
                   {
                     operand: conversation ? `in:@${pubkey}` : `from:${pubkey}`,
-                    text: `${operator}:@${profile.name}`,
+                    text: `${operator}:@${label}`,
                     // Its first word reopens the picker on this person.
-                    edit: `${operator}:@${profile.name.split(/\s/)[0]}`,
-                    label: `Remove ${conversation ? "conversation with" : "author"} ${profile.name}`,
+                    edit: `${operator}:@${label.split(/\s/)[0]}`,
+                    label: `Remove ${conversation ? "conversation with" : "author"} ${label}`,
                     title: npubEncode(pubkey),
                   },
                 );

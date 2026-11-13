@@ -486,6 +486,8 @@ and are asked to sign in again in Buzz.
   there, a row's ✓ marks it as read and it leaves the list, with **Undo** for a moment; when nothing is left it
   says **All caught up**. If loading fails, use **Retry activity** on the page or preview to retry; recovered
   activity clears the loading error.
+  Each row previews its message as the conversation shows it, with formatting, mentions and custom emoji,
+  in up to two lines; a message with only attachments names what it attaches in italic brackets, such as “[GIF]” or “[3 images]”.
   A DM row whose unread messages are all in one thread opens that thread; later DM messages outside it stay
   unread until you open the whole DM, which its row then does.
   **Reactions** shows recent reactions to your messages, with shared emoji grouped together per message and each person’s remaining emoji in their own row; selecting it turns Unread off.
@@ -590,6 +592,7 @@ and are asked to sign in again in Buzz.
   can't start DMs, New message still shows the earlier messages but Send is
   disabled, and search opens a one-to-one DM without bringing it back.
 - **Message link previews** appear when you hover or focus a Buzz message link.
+  The card shows the message with its formatting, mentions and custom emoji.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
   been deleted; or the preview couldn't load. Links don't record their
@@ -604,7 +607,8 @@ and are asked to sign in again in Buzz.
 - **Message search** treats the last word you type as the start of a word, so
   it searches only once that word has at least three characters, even with
   `from:` or `in:`. A shorter last word shows how many characters to type, not
-  "no results". Filters narrow it, alone or with text:
+  "no results". Each result shows the message as originally sent, with its
+  formatting, mentions and custom emoji. Filters narrow it, alone or with text:
   - `from:me`, `from:@name`: messages by you or someone else.
   - `in:#channel`, `in:@person`: one channel, or your DM with someone
     (`in:@me` is your own). A name that matches several conversations, or
@@ -842,7 +846,8 @@ and are asked to sign in again in Buzz.
   the conversation sidebar available, so you can switch straight back to a chat.
   Saved links to it open the plugin, or offer to turn it on. Use the **Drafts**
   and **Sent** tabs to switch lists; Buzz remembers your choice for this community.
-  Rows lead with the destination and message text. It lists
+  Rows lead with the destination and message text. Drafts and sent messages show
+  their formatting and mentions; sent ones also show custom emoji. It lists
   the messages you started but did not send, newest
   change first, with the number of drafts shown beside it in the Messages
   sidebar, and your latest 100 sent messages in this community, grouped by

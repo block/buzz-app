@@ -491,6 +491,8 @@ export function MessageMarkdown({
   participantProfiles,
   largeEmoji = false,
   interactive = true,
+  compact = false,
+  fallback,
   edited = false,
 }: {
   row: ChannelMessage;
@@ -504,6 +506,11 @@ export function MessageMarkdown({
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
+  /** A preview in its row's type role: no block spacing or heading scale. */
+  compact?: boolean | undefined;
+  /** What a compact preview shows for a body too large or deep for Markdown,
+   * which would otherwise show its raw source, spoilers included. */
+  fallback?: ReactNode;
   /** Mark the body as replaced by an edit, after its last line. */
   edited?: boolean | undefined;
 }) {
@@ -512,6 +519,7 @@ export function MessageMarkdown({
     () => preparedBodies(row.content, () => prepareMarkdown(row.content)),
     [row.content],
   );
+  if (prepared.kind === "plain" && compact) return fallback;
   if (prepared.kind === "plain")
     return (
       <div className={styles.plainText}>
@@ -534,6 +542,7 @@ export function MessageMarkdown({
       resolveName={resolveName}
       largeEmoji={largeEmoji}
       interactive={interactive}
+      compact={compact}
       edited={edited}
     />
   );
@@ -558,6 +567,7 @@ function PreparedMessageMarkdown({
   resolveName,
   largeEmoji = false,
   interactive = true,
+  compact = false,
   edited = false,
 }: Parameters<typeof MessageMarkdown>[0] & {
   prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
@@ -575,6 +585,7 @@ function PreparedMessageMarkdown({
         label={label}
         directoryLabel={channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}
+        extensions={extensions}
         onOpenLink={onOpenLink}
         canOpenLink={canOpenLink}
         session={session}
@@ -739,7 +750,11 @@ function PreparedMessageMarkdown({
       if ("data-edited-slot" in props) return edited ? <EditedMarker /> : null;
       if ((props as Record<string, unknown>)["data-spoiler"] === "true")
         return (
-          <MessageSpoiler key={row.content} interactive={interactive}>
+          <MessageSpoiler
+            key={row.content}
+            interactive={interactive}
+            compact={compact}
+          >
             {children}
           </MessageSpoiler>
         );
@@ -780,7 +795,13 @@ function PreparedMessageMarkdown({
       <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
-  return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
+  return largeEmoji ? (
+    markdown
+  ) : (
+    <div className={styles.text} data-compact={compact || undefined}>
+      {markdown}
+    </div>
+  );
 }
 
 /** Switching channels remounts every row. Keep recent results so a revisit
@@ -875,9 +896,11 @@ const MarkdownBody = memo(function MarkdownBody({
 function MessageSpoiler({
   children,
   interactive,
+  compact,
 }: {
   children: ReactNode;
   interactive: boolean;
+  compact: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
   return (
@@ -895,7 +918,11 @@ function MessageSpoiler({
           }}
         />
       ) : (
-        <span className={styles.spoilerMask} aria-hidden="true" />
+        <>
+          <span className={styles.spoilerMask} aria-hidden="true" />
+          {/* A preview's row reads its text, so it names what the mask hides. */}
+          {compact && <span className="sr-only">Spoiler</span>}
+        </>
       )}
       <span
         className={styles.spoilerContent}

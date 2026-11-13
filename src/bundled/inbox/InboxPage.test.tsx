@@ -3,6 +3,7 @@ import type { ConversationHostServices } from "../../features/conversation/Conve
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cloneElement, StrictMode, type ReactElement } from "react";
+import { npubEncode } from "nostr-tools/nip19";
 import {
   act,
   cleanup,
@@ -1477,6 +1478,12 @@ function fixture(
 }
 /** Relay-hosted, so `media()` decides which variant the row loads. */
 const alicePicture = `https://relay.test/media/${"a".repeat(64)}.png`;
+/** An Activity row's preview paragraph by its whole text, across inline
+ * formatting; an opened conversation renders the same body outside a row. */
+const paragraph = (text: string) => (_: string, element: Element | null) =>
+  element?.tagName === "P" &&
+  element.textContent === text &&
+  !!element.closest("button");
 const rows = () =>
   within(screen.getByRole("list", { name: "Activity" })).queryAllByRole(
     "listitem",
@@ -1746,7 +1753,7 @@ it.each([false, true])(
   async (selectProgress) => {
     const h = fixture();
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await act(async () => {
       await h.owner.session.unread.markThrough(
         { kind: "message", channelId: "room", messageId: h.mention.id },
@@ -1799,7 +1806,7 @@ it.each([false, true])(
 it("Mentions orders and classifies matching senders and reads only through matching messages", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   h.publishAgentProfile();
   const root = h.root;
   if (!root) throw new Error("Missing fixture root");
@@ -1841,7 +1848,7 @@ it("Mentions orders and classifies matching senders and reads only through match
 it("lets a joined Guest read an Inbox item and change its personal unread state", async () => {
   const h = fixture({ guest: true });
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   expect(h.session.channels.get?.("room")).toMatchObject({
     viewerRole: "guest",
@@ -2003,7 +2010,7 @@ it.each([false, true])(
   async (archive) => {
     const h = fixture();
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await waitFor(() =>
       expect(h.owner.session.unread.inbox().status).toBe("ready"),
     );
@@ -2055,7 +2062,7 @@ it.each([false, true])(
 it("retires a failed captured read on archive during a held unread refresh", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await waitFor(() =>
     expect(h.owner.session.unread.inbox().status).toBe("ready"),
   );
@@ -2097,7 +2104,7 @@ it("retires a failed captured read on archive during a held unread refresh", asy
 it("filters real session evidence, opens an exact message and marks it read, and shares durable local unread", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await waitFor(() =>
     expect(
       screen.queryByText("Checking recent activity…"),
@@ -2179,7 +2186,7 @@ it("puts the actual channel or DM source below the sender without category tags"
   ).toBeTruthy();
   expect(
     (channelSource?.compareDocumentPosition(
-      within(mentionRow).getByText("Please review this"),
+      within(mentionRow).getByText(paragraph("Please review this")),
     ) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   for (const row of [dmRow, mentionRow]) {
@@ -2200,6 +2207,125 @@ it("puts the actual channel or DM source below the sender without category tags"
   expect(rows()).toHaveLength(3);
 });
 
+it("renders a row's preview like its timeline message, inert inside the row", async () => {
+  const h = fixture();
+  const stamp = "https://relay.test/media/stamp.png";
+  const note = message(
+    h.alice,
+    "room",
+    "Ping @Alice about [the PR](https://example.com/pr) :stamp:",
+    40,
+    [
+      ["p", h.viewer.pubkey],
+      ["p", h.alice.pubkey],
+      ["emoji", "stamp", stamp],
+    ],
+  );
+  h.events.push(note);
+  h.emit([note]);
+  render(h.view);
+  const preview = await screen.findByText(
+    paragraph("Ping Alice about the PR :stamp:"),
+  );
+  expect(
+    preview.querySelector('[data-mention-kind="person"]'),
+  ).toHaveTextContent("Alice");
+  expect(preview).not.toHaveTextContent("https://example.com/pr");
+  // The row is the control: nothing inside its preview is focusable.
+  expect(preview.querySelector("a[href], button")).toBeNull();
+  // The timeline's custom emoji renderer reads the signed tag the row carries.
+  expect(
+    h.session.unread.inbox().items.find((item) => item.messageId === note.id)
+      ?.previewBody?.emoji,
+  ).toEqual([{ shortcode: "stamp", url: stamp }]);
+});
+
+it("names an explicit profile link in a row's preview without its identity link", async () => {
+  const h = fixture();
+  const link = `nostr:${npubEncode(h.alice.pubkey)}`;
+  const note = message(h.alice, "room", `Ping [@Alice](${link})`, 40, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.events.push(note);
+  h.emit([note]);
+  render(h.view);
+  const preview = await screen.findByText(paragraph("Ping Alice"));
+  expect(preview.querySelector("[data-mention-kind]")).toHaveTextContent(
+    "Alice",
+  );
+  expect(preview).not.toHaveTextContent("nostr:");
+  expect(preview.querySelector("button")).toBeNull();
+});
+
+it("describes a short row's hidden spoiler without reading it", async () => {
+  const h = fixture();
+  const mixed = message(h.alice, "room", "Before ||secret|| after", 40, [
+    ["p", h.viewer.pubkey],
+  ]);
+  const only = message(h.alice, "room", "||surprise||", 41, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.events.push(mixed, only);
+  h.emit([mixed, only]);
+  render(h.view);
+  expect(
+    await screen.findByRole("button", { description: "Before Spoiler after" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { description: "Spoiler" }),
+  ).not.toHaveAccessibleDescription(/surprise/);
+});
+
+it("describes a long row by its bounded preview and never shows an oversized body's spoiler", async () => {
+  const h = fixture();
+  const long = message(h.alice, "room", `Long ${"word ".repeat(100)}`, 40, [
+    ["p", h.viewer.pubkey],
+  ]);
+  // Beyond the Markdown bound, the timeline renderer would show raw source.
+  const huge = message(
+    h.alice,
+    "room",
+    `||secret|| ${"x".repeat(100_001)}`,
+    41,
+    [["p", h.viewer.pubkey]],
+  );
+  h.events.push(long, huge);
+  h.emit([long, huge]);
+  render(h.view);
+  const button = await screen.findByRole("button", {
+    description: /^Long word word .*…$/,
+  });
+  expect(
+    document.getElementById(button.getAttribute("aria-describedby") ?? "")
+      ?.textContent?.length,
+  ).toBeLessThanOrEqual(200);
+  // The clamped rich body is still what the row shows.
+  expect(button).toContainElement(
+    screen.getByText(paragraph(`Long ${"word ".repeat(100).trim()}`)),
+  );
+  const hugeRow = rows().find((row) => row.textContent?.includes("[Spoiler]"));
+  expect(hugeRow).toBeDefined();
+  expect(hugeRow).not.toHaveTextContent("secret");
+});
+
+it("names an attachment-only row by what it attaches, bracketed as a description", async () => {
+  const h = fixture();
+  const gif = message(
+    h.alice,
+    "room",
+    "![Thank you](https://static.klipy.com/thanks.gif)",
+    40,
+    [["p", h.viewer.pubkey]],
+  );
+  h.events.push(gif);
+  h.emit([gif]);
+  render(h.view);
+  // Shown as "[GIF]" so it never reads as typed text; read out as "GIF".
+  expect(
+    await screen.findByRole("button", { description: "GIF" }),
+  ).toHaveTextContent("[GIF]");
+});
+
 it("distinguishes same-sender thread choices by their visible safe preview", async () => {
   const h = fixture();
   const root = message(h.viewer, "room", "Another discussion", 30);
@@ -2209,7 +2335,7 @@ it("distinguishes same-sender thread choices by their visible safe preview", asy
   h.events.push(root, reply);
   h.emit([root, reply]);
   render(h.view);
-  await screen.findByText("A different thread update");
+  await screen.findByText(paragraph("A different thread update"));
   await chooseFilter("Threads");
   expect(rows()).toHaveLength(2);
   for (const preview of ["A thread update", "A different thread update"]) {
@@ -2217,7 +2343,7 @@ it("distinguishes same-sender thread choices by their visible safe preview", asy
       name: "Open Alice in #Design",
       description: preview,
     });
-    expect(choice).toContainElement(screen.getByText(preview));
+    expect(choice).toContainElement(screen.getByText(paragraph(preview)));
   }
 });
 
@@ -2303,7 +2429,7 @@ it("intersects activity and representative sender evidence without inferring mis
 it("offers Open and Mark as read only on unread rows, and only Mark as read via right-click", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   const row = rows()[0];
   if (!row) throw new Error("Missing inbox row");
@@ -2337,7 +2463,7 @@ it("offers Open and Mark as read only on unread rows, and only Mark as read via 
 it("a failed Mark as read keeps the row unread until Retry reads it", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   const row = rows()[0];
   if (!row) throw new Error("Missing inbox row");
@@ -2364,7 +2490,7 @@ it.each(["button", "menu"] as const)(
   async (action) => {
     const h = fixture();
     render(h.view, { wrapper: ToastProvider });
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await chooseFilter("Mentions");
     await chooseFilter("Unread only", "Attention");
     const row = rows()[0];
@@ -2393,7 +2519,7 @@ it.each(["button", "menu"] as const)(
 it("with Unread off, Mark as read offers no Undo and keeps focus on its row", async () => {
   const h = fixture();
   render(h.view, { wrapper: ToastProvider });
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   const row = rows()[0];
   if (!row) throw new Error("Missing inbox row");
@@ -2475,7 +2601,7 @@ it("under Unread only, marking a neighbor read keeps the open conversation and i
 it("Mark as read reads an unselected row without opening or clearing it", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   const row = rows()[0];
   if (!row) throw new Error("Missing inbox row");
@@ -2607,7 +2733,7 @@ it("a row read elsewhere under its open menu leaves Mark as read in place, disab
 it("opens local unread actions with the ContextMenu key without changing selection", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   fireEvent.click(
     screen.getByRole("button", { name: "Open Alice in #Design" }),
@@ -2632,7 +2758,7 @@ it("opens local unread actions with the ContextMenu key without changing selecti
 it("holds read actions pending, surfaces storage failure, and retries without losing evidence", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   const release = h.holdSave();
   h.failSave();
@@ -2645,7 +2771,7 @@ it("holds read actions pending, surfaces storage failure, and retries without lo
     await act(async () => release());
   }
   expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
-  expect(screen.getByText("Please review this")).toBeInTheDocument();
+  expect(screen.getByText(paragraph("Please review this"))).toBeInTheDocument();
   expect(h.journal()?.state.frontiers[`msg:${h.mention.id}`]).toBeUndefined();
   fireEvent.click(screen.getByRole("button", { name: "Retry activity" }));
   await waitFor(() =>
@@ -2785,7 +2911,7 @@ it.each(["retry", "other", "blur"] as const)(
     const h = fixture();
     const user = userEvent.setup();
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await chooseFilter("Mentions");
     h.failSave();
     await user.click(
@@ -2832,7 +2958,7 @@ it("a second rejected Retry retains its focused control until a successful recov
   const h = fixture();
   const user = userEvent.setup();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   h.failSave();
   await user.click(
@@ -2879,7 +3005,7 @@ it.each([true, false])(
     const h = fixture();
     const user = userEvent.setup();
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await waitFor(() =>
       expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
     );
@@ -3044,7 +3170,7 @@ it("orders the toolbar as tabs, From, then Unread", async () => {
 it("combines the existing filter choices without placeholder actions", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   const trigger = fromTrigger();
   expect(trigger).toHaveAccessibleName("From anyone");
   expect(screen.queryByRole("combobox")).toBeNull();
@@ -3117,7 +3243,7 @@ it("waits for roster recovery before explicit evidence refresh", async () => {
   } finally {
     await act(async () => release());
   }
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   expect(h.evidenceReads()).toBeGreaterThan(baseline);
 });
 
@@ -3139,7 +3265,7 @@ it("cache clear shows explicit refresh instead of a spinner with no pending work
   );
   const reaction = { name: /Alice reacted with heart/ };
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await screen.findByRole("button", reaction);
   await waitFor(() =>
     expect(
@@ -3152,7 +3278,7 @@ it("cache clear shows explicit refresh instead of a spinner with no pending work
   // The repair the clear starts brings back the mention from unread evidence
   // on its own, but the cleared feed stays idle: it offers Refresh rather than
   // a spinner with nothing pending.
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   expect(h.owner.session.inboxFeed.snapshot().status).toBe("idle");
   expect(screen.getByText("Check recent activity.")).toBeVisible();
   expect(
@@ -3217,7 +3343,7 @@ it("does not accept a second row selection while its explicit read is pending", 
 it("a failed captured read cannot retry after access retirement", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   h.failSave();
   fireEvent.click(
@@ -3279,7 +3405,7 @@ it("classifies cached profile-only agents beyond the first 50 without unbounded 
 it("feed invalidation has its own local recovery even when shared unread stays ready", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await waitFor(() =>
     expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
   );
@@ -3297,7 +3423,7 @@ it("feed invalidation has its own local recovery even when shared unread stays r
 it("a newer manual intent invalidates retry of an earlier rejected read", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   h.failSave();
   fireEvent.click(
@@ -3322,7 +3448,7 @@ it("a newer manual intent invalidates retry of an earlier rejected read", async 
 it("same-value manual writes after a failed mark-unread supersede retry even without a projection change", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   fireEvent.click(
     screen.getByRole("button", { name: "Open Alice in #Design" }),
@@ -3352,7 +3478,7 @@ it("same-value manual writes after a failed mark-unread supersede retry even wit
 it("routine delayed publication does not cancel Retry for a failed mark-unread save", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   fireEvent.click(
@@ -3408,7 +3534,7 @@ it.each([true, false])(
         ],
       });
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await chooseFilter("Mentions");
     fireEvent.click(
       screen.getByRole("button", {
@@ -3460,7 +3586,7 @@ it("Inbox Solo chat activity shared with a person sends without a tag", async ()
     recipients: [],
   });
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
@@ -3485,7 +3611,9 @@ it("a Solo chat row includes ordinary agent responses under All, not DMs, keepin
   act(() => h.emit([progress]));
   await waitFor(() => expect(rows()[0]).toHaveTextContent("Agent progress"));
   expect(rows()[1]).toHaveTextContent("A thread update");
-  expect(screen.queryByText("Please review this")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(paragraph("Please review this")),
+  ).not.toBeInTheDocument();
   // Opening the timeline row reads it with one channel catch-up mark, leaving
   // its separate thread row unread.
   const before = h.journal()?.revision ?? 0;
@@ -3511,7 +3639,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
     memberAgents: 1,
   });
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   fireEvent.click(screen.getByRole("button", { name: "Open Alice in Design" }));
   const editor = await screen.findByRole("textbox", {
@@ -3558,7 +3686,7 @@ it.each(["preview", "name", "history"])(
   async (change) => {
     const h = fixture();
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await chooseFilter("Mentions");
     fireEvent.click(
       screen.getByRole("button", { name: "Open Alice in #Design" }),
@@ -3611,7 +3739,7 @@ it.each(["preview", "name", "history"])(
 it("revoke and regrant cannot revive a captured failed Inbox mutation", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   h.failSave();
   fireEvent.click(
@@ -3637,7 +3765,7 @@ it.each(["read-only", "unsupported"] as const)(
   async (readCapability) => {
     const h = fixture({ readCapability });
     render(h.view);
-    await screen.findByText("Please review this");
+    await screen.findByText(paragraph("Please review this"));
     await chooseFilter("Mentions");
     await waitFor(() =>
       expect(
@@ -3666,7 +3794,7 @@ it.each(["read-only", "unsupported"] as const)(
 it("retiring a session removes its open unread menu without another write", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   fireEvent.click(
     screen.getByRole("button", { name: "Open Alice in #Design" }),
@@ -3735,7 +3863,7 @@ it("All activity stays chat-only when addressed project and approval evidence ar
   );
   h.events.push(...nonchat);
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await waitFor(() =>
     expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
   );
@@ -4175,7 +4303,7 @@ it("DM read Retry retains the original cutoff and survives re-click of the selec
 it("Retry with a ready roster waits for both evidence reads before retrying sync", async () => {
   const h = fixture();
   render(h.view);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await waitFor(() =>
     expect(h.owner.session.inboxFeed.snapshot().status).toBe("ready"),
   );
@@ -4660,7 +4788,7 @@ it.each([false, true])(
 it("Undo returns the row unread even after Activity has closed", async () => {
   const h = fixture();
   const view = render(<ToastProvider>{h.view}</ToastProvider>);
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   await chooseFilter("Unread only", "Attention");
   const row = rows()[0];
@@ -4729,7 +4857,7 @@ it("Undo runs while another read is still saving", async () => {
 it("a failed Undo says it couldn't mark the row unread", async () => {
   const h = fixture();
   render(h.view, { wrapper: ToastProvider });
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   await chooseFilter("Unread only", "Attention");
   const row = rows()[0];
@@ -4750,7 +4878,7 @@ it("a failed Undo says it couldn't mark the row unread", async () => {
 it("decides on Undo when the read lands, so turning Unread off first shows no toast", async () => {
   const h = fixture();
   render(h.view, { wrapper: ToastProvider });
-  await screen.findByText("Please review this");
+  await screen.findByText(paragraph("Please review this"));
   await chooseFilter("Mentions");
   await chooseFilter("Unread only", "Attention");
   const row = rows()[0];

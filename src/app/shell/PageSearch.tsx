@@ -53,6 +53,7 @@ export type SearchServices = Pick<
       | "plugins"
       | "adminAccess"
       | "settingsCards"
+      | "conversation"
     >
   >;
 const SEARCH_ID = "global-search";
@@ -637,6 +638,7 @@ function CommunitySearch({
         inlineSettings={inlineSettings}
         key={`${client.selected}:${connection.scope}:${connection.generation}`}
         session={connection.session}
+        extensions={services.conversation}
         query={query}
         onQueryChange={onQueryChange}
         input={input}

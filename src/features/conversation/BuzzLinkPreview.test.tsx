@@ -10,6 +10,7 @@ import type {
   ChannelReference,
 } from "../relay/contracts";
 import { mediaUrl } from "../relay/transport";
+import type { ConversationExtensions } from "./contracts";
 
 afterEach(cleanup);
 const text = (tree: HTMLElement) =>
@@ -35,6 +36,7 @@ function setup(
   profiles = new Map<string, { name?: string; picture?: string }>(),
   reference?: ChannelReference,
   status: ChannelList["status"] = "ready",
+  extensions?: ConversationExtensions,
 ) {
   const views: { view: ThreadView; publish(next: ThreadSnapshot): void }[] = [];
   const starts = [snapshots].flat();
@@ -86,12 +88,13 @@ function setup(
     });
     return () => {};
   });
+  const ensure = vi.fn(async () => {});
   const session = {
     thread,
     profiles: {
       subscribe: () => () => {},
       snapshot: () => profiles,
-      ensure: vi.fn(async () => {}),
+      ensure,
     },
     channels: {
       subscribeList: (listener: () => void) => {
@@ -113,6 +116,7 @@ function setup(
       session={session}
       channelId="channel"
       messageId={messageId}
+      extensions={extensions}
     />,
   );
   return {
@@ -120,6 +124,7 @@ function setup(
     thread,
     views,
     refer,
+    ensure,
     lookups: () => lookups,
     /** The channel lookup answers, or discovery moves the list on, as the
      * store notifies list subscribers. */
@@ -390,4 +395,52 @@ it("asks for the relay thumbnail of the author's picture, as message rows do", (
   expect(tree.querySelector("img")?.getAttribute("src")).toBe(
     `https://relay.test/media/${sha}.thumb.webp`,
   );
+});
+it("shows the linked message as its timeline row, inert inside the card", () => {
+  const mentioned = "c".repeat(64);
+  const linked = {
+    ...root,
+    content: "**Ship** [the PR](https://example.com/pr)",
+    mentions: [mentioned],
+  };
+  const shown = setup({ ...base, status: "ready", root: linked });
+  const body = shown.tree.querySelector("[data-compact]");
+  expect(body?.querySelector("strong")?.textContent).toBe("Ship");
+  expect(body?.textContent).toBe("Ship the PR");
+  expect(shown.tree.querySelector("a")).toBeNull();
+  expect(shown.ensure).toHaveBeenCalledWith(
+    [root.authorId, mentioned],
+    "background",
+  );
+});
+it("renders the linked message with the linking conversation's inline renderers", () => {
+  const renderers = [
+    {
+      id: "word",
+      key: "test/word",
+      pluginId: "test",
+      revision: "1",
+      title: "Word",
+      matches: ({ text }: { text: string }) =>
+        [...text.matchAll(/PLUGIN/g)].map((match) => ({
+          start: match.index,
+          end: match.index + 6,
+        })),
+      component: ({ text }: { text: string }) => <mark>{text}</mark>,
+    },
+  ];
+  const extensions: ConversationExtensions = {
+    tools: { snapshot: () => [], subscribe: () => () => {} },
+    inline: { snapshot: () => renderers, subscribe: () => () => {} },
+  };
+  const linked = { ...root, content: "Shipped by PLUGIN" };
+  const { tree } = setup(
+    { ...base, status: "ready", root: linked },
+    root.id,
+    undefined,
+    undefined,
+    "ready",
+    extensions,
+  );
+  expect(tree.querySelector("[data-compact] mark")?.textContent).toBe("PLUGIN");
 });

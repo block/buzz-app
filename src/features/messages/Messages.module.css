@@ -292,6 +292,48 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 .imageAlt {
   composes: imageAlt from "../markdown/Markdown.module.css";
 }
+/* Previews keep their row's type role and clamp. */
+.text[data-compact],
+.text[data-compact] :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+.text[data-compact] :where(p, ul, ol, blockquote, pre, .codeBlock, table, hr) {
+  margin: 0;
+}
+/* A preview reads code and tables as text in its row's clamped flow: a framed,
+   scrolling block is its own formatting context, which the clamp cannot cut. */
+.text[data-compact] :is(pre, .codeBlock, table, thead, tbody, tr, th, td) {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+}
+.text[data-compact] pre code {
+  display: inline;
+  overflow: visible;
+  padding: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.text[data-compact] :is(table, thead, tbody, tr, th, td) {
+  display: inline;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: normal;
+}
+.text[data-compact] th {
+  font-weight: var(--type-weight-medium);
+}
+.text[data-compact] :is(th, td) + :is(th, td)::before {
+  content: " · ";
+}
+.text[data-compact] tbody tr::before {
+  content: " / ";
+}
 .text[data-single-emoji] {
   --inline-emoji-size: var(--size-emoji-display);
   min-height: var(--size-emoji-line);
@@ -2399,6 +2441,12 @@ html[data-keyboard-navigation] .replyBranchCollapse:focus-visible {
   border-radius: var(--radius-chip);
   padding-inline: var(--space-half);
   vertical-align: baseline;
+}
+/* A preview's clamp cannot cut inside this box, so it keeps one line. */
+.text[data-compact] .spoiler {
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: top;
 }
 .spoilerMask {
   position: absolute;

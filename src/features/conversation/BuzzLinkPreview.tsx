@@ -8,6 +8,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import { threadFailure, type ThreadView } from "../relay/threads";
 import type { ChannelReference } from "../relay/contracts";
+import type { ConversationExtensions } from "./contracts";
 import {
   LightningIcon,
   LockIcon,
@@ -16,8 +17,9 @@ import { channelIcon } from "../channels/channel-icon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
-import { messagePreviewText } from "./message-preview-text";
+import { MessagePreview } from "../messages/MessagePreview";
 import { linkedMessage } from "./linked-message";
+import { rowProfileIds } from "../relay/membership";
 import { avatarMedia } from "../../shared/avatar-source";
 import { sortParticipantNames } from "../identity-names/participant-order";
 import { namedChannel, useChannelReference } from "./channel-reference";
@@ -41,10 +43,13 @@ export function BuzzLinkPreview({
   session,
   channelId,
   messageId,
+  extensions,
 }: {
   session: RelaySession;
   channelId: string;
   messageId: string;
+  /** The linking conversation's renderers, such as custom emoji. */
+  extensions?: ConversationExtensions | undefined;
 }) {
   const reference = useChannelReference(session.channels, channelId);
   const listLoading = useSyncExternalStore(
@@ -82,6 +87,7 @@ export function BuzzLinkPreview({
       session={session}
       messageId={messageId}
       destination={destination}
+      extensions={extensions}
       // A lookup is on the way while one is queued or in flight, or while
       // discovery is still loading the list, which then either looks the
       // channel up or errors. Otherwise (the list errored, a failed lookup is
@@ -101,11 +107,13 @@ function PreviewContent({
   messageId,
   destination,
   looking,
+  extensions,
 }: {
   view: ThreadView;
   session: RelaySession;
   messageId: string;
   destination: FoundChannel | undefined;
+  extensions: ConversationExtensions | undefined;
   /** A channel lookup is on the way, so a refused read may yet succeed. */
   looking: boolean;
 }) {
@@ -127,13 +135,16 @@ function PreviewContent({
     session.channels.list,
     session.channels.list,
   );
-  const authorId = message?.workflowOwnerId ?? message?.authorId;
+  // Its author and the people its text mentions.
+  const people = message ? [...new Set(rowProfileIds(message))].join(",") : "";
   const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {
     void profileGeneration;
-    if (authorId)
-      void session.profiles.ensure([authorId], "background").catch(() => {});
-  }, [session, authorId, profileGeneration]);
+    if (people)
+      void session.profiles
+        .ensure(people.split(","), "background")
+        .catch(() => {});
+  }, [session, people, profileGeneration]);
   if (!ready || !message) {
     if (!stopped || looking) return loading;
     // The card stops at any failed read, as navigation does at a failed root.
@@ -208,8 +219,15 @@ function PreviewContent({
         </span>
       </span>
       <span className={styles.message}>
-        {messagePreviewText(message.content) ||
-          (message.attachments.length ? "Attachment" : "Empty message")}
+        {message.content || message.attachments.length ? (
+          <MessagePreview
+            row={message}
+            session={session}
+            extensions={extensions}
+          />
+        ) : (
+          "Empty message"
+        )}
       </span>
     </>
   );

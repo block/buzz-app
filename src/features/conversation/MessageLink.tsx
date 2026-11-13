@@ -9,7 +9,11 @@ import {
   type MouseEvent,
 } from "react";
 import { resolveMatch, type Contribution } from "../../plugins/contributions";
-import type { ContributionReader, LinkRenderer } from "./contracts";
+import type {
+  ContributionReader,
+  ConversationExtensions,
+  LinkRenderer,
+} from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import {
   ContextMenuRoot,
@@ -97,10 +101,13 @@ export function MessageLink({
   scope,
   interactive = true,
   channelPrivate = false,
+  extensions,
 }: {
   url: string;
   children?: ReactNode;
   registry: ContributionReader<LinkRenderer> | undefined;
+  /** The conversation's renderers, for a message link's preview body. */
+  extensions?: ConversationExtensions | undefined;
   onOpenLink(url: string): boolean;
   canOpenLink?: ((url: string) => boolean) | undefined;
   label?: string | undefined;
@@ -386,6 +393,7 @@ export function MessageLink({
                   session={host}
                   channelId={preview.channelId}
                   messageId={preview.messageId}
+                  extensions={extensions}
                 />
               ),
             }

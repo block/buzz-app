@@ -15,6 +15,8 @@ import {
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
+import { MessagePreview } from "../../features/messages/MessagePreview";
 import {
   useChannelList,
   useProfileGeneration,
@@ -32,6 +34,7 @@ import {
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
 import { archiveHides } from "../../features/relay/identity-archives";
 import { foldProfiles } from "../../features/relay/profiles";
+import { rowProfileIds } from "../../features/relay/membership";
 import {
   ArrowsDownUpIcon,
   CalendarIcon,
@@ -195,9 +198,12 @@ export function SearchResults({
   usageScope,
   sidebarScope,
   views,
+  extensions,
   offline,
 }: {
   session: RelaySession;
+  /** Plugin renderers, so a message hit's preview renders as its timeline row. */
+  extensions?: ConversationExtensions | undefined;
   /** Tabs that switch this search to other views of it. */
   views?: SearchViews | undefined;
   pages: readonly SearchDestination[];
@@ -802,6 +808,8 @@ export function SearchResults({
       ...search.messages.flatMap((message) => [
         message.authorId,
         ...(message.workflowOwnerId ? [message.workflowOwnerId] : []),
+        // The preview binds mentions by their profiles, as the timeline does.
+        ...(message.row ? rowProfileIds(message.row) : []),
       ]),
       ...personDirectory.people.flatMap((person) =>
         person.ownerPubkey ? [person.ownerPubkey] : [],
@@ -1436,6 +1444,15 @@ export function SearchResults({
     return {
       key: message.id,
       label: message.preview,
+      ...(message.row && {
+        preview: (
+          <MessagePreview
+            row={message.row}
+            session={session}
+            extensions={extensions}
+          />
+        ),
+      }),
       detail: `${names.get(message.channelId) ?? channel?.name ?? "Conversation"} · ${message.workflowOwnerId ? workflowLabel(name) : name} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
       detailIcon: channel && channelIcon(channel),
       detailIconLabel: channel && channelIconLabel(channel),

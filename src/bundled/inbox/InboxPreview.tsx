@@ -38,6 +38,7 @@ import {
   rowProfileIds,
 } from "./InboxRow";
 import { inboxTarget } from "./route";
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 import styles from "./InboxPreview.module.css";
 
 /** Rows the card renders and enriches; the Activity page holds the rest. */
@@ -63,8 +64,13 @@ const shortAge = (createdAt: number, now = Date.now()) => {
 export function InboxPreview({
   relay,
   navigator,
+  extensions,
   close,
-}: PagePreviewProps & { relay: RelayData; navigator: Navigation }) {
+}: PagePreviewProps & {
+  relay: RelayData;
+  navigator: Navigation;
+  extensions?: ConversationExtensions | undefined;
+}) {
   const connection = useRelayConnection(relay);
   const { viewer, scope } = connection;
   if (connection.status === "ready" && viewer && scope?.endsWith(`:${viewer}`))
@@ -77,6 +83,7 @@ export function InboxPreview({
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
         }}
         navigator={navigator}
+        extensions={extensions}
         close={close}
       />
     );
@@ -105,11 +112,13 @@ function InboxPreviewCard({
   session,
   scope,
   navigator,
+  extensions,
   close,
 }: PagePreviewProps & {
   session: RelaySession;
   scope: NavigationScope;
   navigator: Navigation;
+  extensions?: ConversationExtensions | undefined;
 }) {
   const list = useChannelList(session.channels);
   const inbox = useSyncExternalStore(
@@ -188,7 +197,9 @@ function InboxPreviewCard({
           ? row.item.events.map((event) => event.pubkey)
           : [row.item.authorId]),
         ...rowProfileIds(
-          row.kind === "reaction" ? {} : row.item,
+          row.kind === "reaction"
+            ? { previewBody: row.item.message }
+            : row.item,
           channelOf(row.item.channelId),
         ),
       ]),
@@ -330,6 +341,7 @@ function InboxPreviewCard({
                     profiles={profiles}
                     name={name}
                     channel={channelOf(item.channelId)}
+                    extensions={extensions}
                     time={shortAge(item.createdAt)}
                     onClick={() => open(row)}
                   />
@@ -342,7 +354,8 @@ function InboxPreviewCard({
                       profiles,
                       name,
                     )}
-                    media={session.media}
+                    session={session}
+                    extensions={extensions}
                     feed={feed}
                     time={shortAge(item.createdAt)}
                     onClick={() => open(row)}

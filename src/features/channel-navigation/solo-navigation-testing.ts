@@ -31,7 +31,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
         {
           manifest: { id: "example", name: "Example", apiVersion: 1 },
           source: "external",
-          enabled: false,
+          enabled: true,
           revision: "one",
           previous: null,
           reloadable: false,

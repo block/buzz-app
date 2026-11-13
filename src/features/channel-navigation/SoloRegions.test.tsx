@@ -19,7 +19,9 @@ import {
   useState,
 } from "react";
 import { SoloRegions } from "./SoloRegions";
+import { SoloInventory } from "./SoloInventory";
 import { ChannelNavigationProvider } from "./ChannelNavigationState";
+import type { ConfigurationState } from "../../plugins/types";
 import { conversationTarget, soloDraftTarget } from "./routes";
 import { MessageComposer } from "../messages/MessageComposer";
 import { composerDOMFixture } from "../messages/composer-testing";
@@ -57,6 +59,7 @@ function mount(
   h: ReturnType<typeof fixture>,
   target: OpenTarget = { version: 1, kind: "home" },
   wrap: (children: ReactNode) => ReactNode = (children) => children,
+  fallback?: ReactNode,
 ) {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const retryReveal = vi.fn();
@@ -81,6 +84,7 @@ function mount(
         scope={h.scope}
         target={target}
         navigator={navigator}
+        fallback={fallback}
         sidebar={{
           list,
           collapsed,
@@ -1304,6 +1308,129 @@ it("keeps recovery chats reachable while distinguishing installed, unknown and n
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Owned" })).toBeInTheDocument();
   expect(screen.queryByText(/buzz\.region:/)).not.toBeInTheDocument();
+});
+
+it("shows explicitly disabled region chats once in the ordinary Solo inventory", async () => {
+  const h = fixture();
+  const saved = {
+    sections: [{ id: "personal", name: "Personal", order: 0 }],
+    assignments: { owned: "personal" },
+    starred: [],
+    muted: [],
+  };
+  const preferences = { status: "ready" as const, data: saved };
+  Object.assign(h.session, {
+    soloPreferences: {
+      ...h.session.soloPreferences,
+      snapshot: () => preferences,
+      subscribe: () => () => {},
+    },
+  });
+  const configuration: ConfigurationState = {
+    status: "ready",
+    externalPluginsPaused: false,
+    catalog: {
+      profile: "fixture",
+      location: "Fixture",
+      plugins: [
+        {
+          manifest: { id: "example", name: "Example", apiVersion: 1 },
+          source: "external",
+          enabled: false,
+          revision: "one",
+          previous: null,
+          reloadable: false,
+          error: null,
+        },
+      ],
+    },
+  };
+  const channel = h.session.channels
+    .list()
+    .channels.find((item) => item.id === "owned");
+  assert(channel);
+  const target = {
+    version: 1,
+    kind: "conversation",
+    scope: {
+      communityOrigin: "https://fixture.invalid",
+      viewer: h.session.viewer ?? "",
+    },
+    channelId: "owned",
+  } as const;
+  h.navigate(target);
+  h.plugins(configuration);
+  const ordinary = (
+    <SoloInventory
+      session={h.session}
+      scope={h.scope}
+      navigator={h.navigator}
+      target={target}
+    />
+  );
+  mount(
+    h,
+    target,
+    (children) => (
+      <ChannelNavigationProvider relay={h.relay}>
+        {children}
+        <SoloHeading
+          session={h.session}
+          scope={h.scope}
+          channel={channel}
+          onConvert={() => {}}
+          onLifecycle={() => {}}
+          onMove={() => {}}
+        >
+          <WorkspaceControl session={h.session} channelId="owned" />
+        </SoloHeading>
+      </ChannelNavigationProvider>
+    ),
+    ordinary,
+  );
+
+  expect(screen.getByRole("button", { name: "Owned" })).toBeInTheDocument();
+  expect(
+    document.querySelectorAll('[data-solo-channel-id="owned"]'),
+  ).toHaveLength(1);
+  expect(
+    document
+      .querySelector('[data-solo-project="personal"]')
+      ?.querySelector('[data-solo-channel-id="owned"]'),
+  ).toBeNull();
+  expect(
+    document
+      .querySelector('[data-solo-project=""]')
+      ?.querySelector('[data-solo-channel-id="owned"]'),
+  ).not.toBeNull();
+  expect(saved.assignments).toEqual({ owned: "personal" });
+  expect(
+    screen.queryByText("The plugin for these chats is off."),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Work could not load")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Open plugin settings" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "In Plugin chats" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Workspace: Personal" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Chat actions" }),
+  ).toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Chat actions" }));
+  expect(
+    await screen.findByRole("menuitem", { name: "Chat settings" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: "Move to" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("menuitem", { name: /convert/i }),
+  ).not.toBeInTheDocument();
 });
 
 it("uses shared populated menus for header choices and refuses retired menu callbacks", async () => {

@@ -347,6 +347,7 @@ export function SoloInventory({
       )}
       <SoloWorkspaces
         sidebarRows={rowEntries}
+        dormantAssignments={regions.managed}
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}

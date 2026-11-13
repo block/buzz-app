@@ -5,12 +5,17 @@ implementation. The public types are exported from `@buzz/author`. The service i
 created with the relay in `src/app/services.ts`; plugins register sources through
 their tracked Cordis context.
 
-The host derives `buzz.region:<pluginId>:<sourceId>` from the caller. Labels own
-placement, even when a plugin is off, loading, unavailable, or failed. The host
-uses one projection for the live list, recovery list, inventory exclusion, header
-chip, and personal filing guards. Unknown channel types do not imply Solo.
-Existing personal workspace assignments remain stored while they are dormant.
-Label edits preserve region labels. There is no public remove operation.
+The host derives `buzz.region:<pluginId>:<sourceId>` from the caller. A ready
+catalog that explicitly disables a plugin shows its eligible labeled chats in
+the ordinary Solo inventory while retaining their labels and filing guards.
+Their region associations stay dormant and are reclaimed if the plugin is
+enabled again. A missing source alone does not imply that a plugin is disabled:
+loading, unavailable, failed, not-installed, and unknown states remain in the
+recovery placement. The host uses one projection for region presentation,
+inventory exclusion, and personal filing guards. Unknown channel types do not
+imply Solo. Existing personal workspace assignments remain stored while those
+assignments are dormant. Label edits preserve region labels. There is no public
+remove operation.
 
 Each bind has a fresh incarnation. Reconnect and Retry abort the previous bind;
 old handles, menus, state writes, and reveal subscribers cannot act in the new

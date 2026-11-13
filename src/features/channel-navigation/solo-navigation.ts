@@ -12,7 +12,11 @@ import { parseOpenTarget, type JsonValue } from "../navigation/targets";
 import type { PluginManager } from "../../plugins/manager";
 import { relayPartition } from "../relay/partition";
 import { ownSolo, soloLabels } from "../solo/labels";
-import { regionLabels, soloRegionLabel } from "../solo/region-labels";
+import {
+  REGION_PREFIX,
+  regionLabels,
+  soloRegionLabel,
+} from "../solo/region-labels";
 import { soloDraft, soloDraftTarget } from "./routes";
 import { createSoloWorkspaces } from "./solo-workspaces";
 import {
@@ -67,7 +71,11 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   private session: RelaySession | undefined;
   private connection: RelaySnapshot | undefined;
   private stopChannels: (() => void) | undefined;
-  private value: SoloNavigationSnapshot = { regions: [], excluded: new Set() };
+  private value: SoloNavigationSnapshot = {
+    regions: [],
+    excluded: new Set(),
+    managed: new Set(),
+  };
   private readonly titles = new Map<string, string>();
   private readonly states = new Map<string, JsonValue>();
   private pendingReveal: string | undefined;
@@ -126,8 +134,14 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   sources = () => this.contributions.snapshot();
   reveal = (channelId: string, explicit = true) => {
     const target = this.ctx.navigation?.snapshot().entry.target;
+    const disabled = this.value.regions.some(
+      (region) =>
+        region.reason === "disabled" &&
+        region.channels.some((channel) => channel.id === channelId),
+    );
     if (
-      !this.value.excluded.has(channelId) ||
+      !this.value.managed.has(channelId) ||
+      disabled ||
       (explicit &&
         (target?.kind !== "conversation" ||
           target.channelId !== channelId ||
@@ -322,7 +336,11 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         const binding = this.binding;
         const connection = this.relay.snapshot();
         if (!this.session) {
-          this.value = { regions: [], excluded: new Set() };
+          this.value = {
+            regions: [],
+            excluded: new Set(),
+            managed: new Set(),
+          };
           continue;
         }
         for (const source of entries) {
@@ -381,6 +399,15 @@ export class SoloNavigationService extends Service implements SoloNavigation {
             runtime.failed = true;
           }
         }
+        const plugins = this.plugins?.snapshot();
+        const configuration = plugins?.configuration;
+        const disabledPluginIds = new Set(
+          configuration?.status === "ready"
+            ? configuration.catalog.plugins
+                .filter((plugin) => !plugin.enabled)
+                .map((plugin) => plugin.manifest.id)
+            : [],
+        );
         const placement = projectSoloRegions(
           this.session.channels.list().channels,
           connection.viewer ?? this.session.viewer ?? "",
@@ -400,10 +427,9 @@ export class SoloNavigationService extends Service implements SoloNavigation {
               this.titles.get(cacheKey) ?? readView(scope, key, "Plugin chats");
             return typeof saved === "string" ? saved : "Plugin chats";
           },
+          disabledPluginIds,
         );
-        const plugins = this.plugins?.snapshot();
-        const configuration = plugins?.configuration;
-        this.value = {
+        const next: SoloNavigationSnapshot = {
           ...placement,
           regions: placement.regions.map((region) => {
             if (region.reason !== "off") return region;
@@ -411,13 +437,12 @@ export class SoloNavigationService extends Service implements SoloNavigation {
               return { ...region, reason: "loading" as const };
             if (configuration?.status !== "ready") return region;
             const plugin = configuration.catalog.plugins.find((plugin) =>
-              region.key.startsWith(`${plugin.manifest.id}/`),
+              region.label.startsWith(`${REGION_PREFIX}${plugin.manifest.id}:`),
             );
             if (!plugin) return { ...region, reason: "not-installed" as const };
             if (
-              !plugin.enabled ||
-              (plugin.source === "external" &&
-                configuration.externalPluginsPaused)
+              plugin.source === "external" &&
+              configuration.externalPluginsPaused
             )
               return region;
             const activation = plugins?.activation[plugin.manifest.id];
@@ -433,6 +458,18 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           }),
           ...(binding ? { binding } : {}),
         };
+        this.value = next;
+        if (
+          this.pendingReveal &&
+          next.regions.some(
+            (region) =>
+              region.reason === "disabled" &&
+              region.channels.some(
+                (channel) => channel.id === this.pendingReveal,
+              ),
+          )
+        )
+          this.pendingReveal = this.pendingHostReveal = undefined;
       } while (this.refreshAgain);
     } finally {
       this.refreshing = false;

@@ -14,6 +14,14 @@ on:
         description: Stable or beta version (X.Y.Z or X.Y.Z-beta.N) built from its v tag; empty builds a preview from main
         type: string
         default: ""
+      preview_version:
+        description: Preview version (X.Y.Z-preview.R.A) for every platform; required without release_version
+        type: string
+        default: ""
+      source_sha:
+        description: Commit to build; empty builds the triggering commit
+        type: string
+        default: ""
     outputs:
       version:
         description: The version every platform was built as
@@ -33,8 +41,10 @@ env:
   # the stable feed, previews the preview feed; both trust the same key.
   BUZZ_UPDATER_PUBLIC_KEY: ${{ !inputs.candidates && 'dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJDQjQ2RDZFMUEwOERFMTEKUldRUjNnZ2FibTIwTE10QkVaMzFyYkZlY0R4ajhmbFBjdncvNVRCYnNpSm9kaFNBaHQzemZlZHkK' || '' }}
   BUZZ_UPDATER_ENDPOINT: ${{ !inputs.candidates && (inputs.release_version && 'https://github.com/block/buzz-app/releases/download/stable-feed/latest.json' || 'https://github.com/block/buzz-app/releases/download/preview-feed/latest.json') || '' }}
-  # Read by scripts/candidate-version.mjs; empty selects the preview version.
+  # Read by scripts/candidate-version.mjs; an empty RELEASE_VERSION selects PREVIEW_VERSION.
   RELEASE_VERSION: ${{ inputs.release_version }}
+  PREVIEW_VERSION: ${{ inputs.preview_version }}
+  SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
 
 jobs:
   build:
@@ -86,6 +96,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
       - uses: ./.github/actions/setup
       # Hermit's rustup proxies select the rust-toolchain.toml release, which has
@@ -240,7 +251,6 @@ jobs:
       - name: Verify and assemble release assets
         env:
           VERSION: ${{ needs.build.outputs.version }}
-          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           for platform in macos-aarch64 macos-x64 windows linux; do
@@ -266,7 +276,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          SOURCE_SHA: ${{ github.sha }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           platforms='Includes Apple Silicon and Intel macOS (signed and notarized), Windows x64 (unsigned NSIS installer), and Linux x64 (Ubuntu 24.04 deb and AppImage).'
@@ -324,6 +333,7 @@ jobs:
           printf 'BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG<<%s\n%s\n%s\n' "$delimiter" "$SERVERS" "$delimiter" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
       # Reuse the native CI pin selection; Hermit does not run on Windows.
       - name: Read repository tool pins
@@ -387,7 +397,7 @@ jobs:
           installers=(target/release/bundle/nsis/*.exe)
           test "${#installers[@]}" -eq 1
           cp "${installers[0]}" "release-assets/Buzz_${VERSION}_x64_unsigned.exe"
-          printf '%s\n' "$GITHUB_SHA" > release-assets/SOURCE_COMMIT
+          printf '%s\n' "$SOURCE_SHA" > release-assets/SOURCE_COMMIT
           cd release-assets
           sha256sum ./*.exe > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -432,6 +442,7 @@ jobs:
             squashfs-tools wget xdg-utils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # No shared writable release caches. Use existing pins and frozen inputs.
@@ -487,7 +498,7 @@ jobs:
           mkdir release-assets
           cp "${debs[0]}" "release-assets/Buzz_${VERSION}_amd64.deb"
           cp "${images[0]}" "release-assets/Buzz_${VERSION}_x86_64.AppImage"
-          printf '%s\n' "$GITHUB_SHA" > release-assets/SOURCE_COMMIT
+          printf '%s\n' "$SOURCE_SHA" > release-assets/SOURCE_COMMIT
           cd release-assets
           sha256sum ./*.deb ./*.AppImage > SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

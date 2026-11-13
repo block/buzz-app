@@ -229,6 +229,48 @@ test("preview rollback compares the complete canonical SemVer without number rou
   }
 });
 
+test("a preview replaces a stable release on the preview feed only when it sorts above it", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "preview-over-stable-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { manifest, execute } = fixture(dir, "1.0.2-preview.301.1");
+  assert.equal(execute("generate").status, 0);
+  const candidate = JSON.parse(readFileSync(manifest, "utf8"));
+  const current = join(dir, "current.json");
+  const against = (version) => {
+    writeFileSync(current, JSON.stringify({ ...candidate, version }));
+    return execute("verify", current);
+  };
+  for (const older of ["1.0.1", "1.0.1-preview.999.1", "0.9.99"])
+    assert.equal(against(older).status, 0, older);
+  // A preview of X.Y.Z sorts below X.Y.Z itself, so it would be a rollback.
+  for (const newer of ["1.0.2", "1.0.3", "1.0.2-preview.302.1"])
+    assert.match(
+      against(newer).stderr,
+      /Refusing preview feed rollback/,
+      newer,
+    );
+  assert.match(against("1.0.2-beta.1").stderr, /Invalid preview version/);
+});
+
+test("a preview of the feed's own stable version is refused as a rollback", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "preview-under-stable-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { manifest, execute } = fixture(dir, "1.0.1-preview.301.1");
+  assert.equal(execute("generate").status, 0);
+  const current = join(dir, "current.json");
+  writeFileSync(
+    current,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(manifest, "utf8")),
+      version: "1.0.1",
+    }),
+  );
+  assert.match(
+    execute("verify", current).stderr,
+    /Refusing preview feed rollback/,
+  );
+});
+
 test("stable releases get their own feed; betas and previews never reach it", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "stable-feed-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

@@ -46,8 +46,16 @@ const assets = {
 const usage =
   "Usage: preview-feed.mjs generate|verify <version> <asset-dir> <manifest-file> <macos-app-binary-file> [current-manifest-file]";
 
+// The preview feed may still serve a stable release (one installs preview users
+// were moved to), so it compares across formats by SemVer precedence: a
+// preview sorts below its own release. The stable feed accepts only stable.
+const comparable =
+  channelName === "preview"
+    ? [channels.preview.pattern, channels.stable.pattern]
+    : [versionPattern];
+
 function versionNumbers(value) {
-  const match = versionPattern.exec(value);
+  const match = comparable.map((pattern) => pattern.exec(value)).find(Boolean);
   assert.ok(match, `Invalid ${channelName} version: ${value}`);
   return match.slice(1).map(BigInt);
 }
@@ -55,7 +63,12 @@ function versionNumbers(value) {
 function compareVersions(left, right) {
   const a = versionNumbers(left);
   const b = versionNumbers(right);
-  for (let i = 0; i < a.length; i++) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
+  }
+  // Same X.Y.Z: the release outranks its previews.
+  if (a.length !== b.length) return a.length < b.length ? 1 : -1;
+  for (let i = 3; i < a.length; i++) {
     if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
   }
   return 0;

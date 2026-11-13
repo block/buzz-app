@@ -37,8 +37,7 @@ test("candidate version embeds the updater only when both values are set, never 
           RUNNER_TEMP: directory,
           GITHUB_ENV: output,
           GITHUB_OUTPUT: join(directory, "outputs"),
-          GITHUB_RUN_NUMBER: "42",
-          GITHUB_RUN_ATTEMPT: "2",
+          PREVIEW_VERSION: "1.0.2-preview.42.2",
         },
       },
     );
@@ -46,12 +45,12 @@ test("candidate version embeds the updater only when both values are set, never 
     assert.deepEqual(
       JSON.parse(readFileSync(join(directory, "candidate.json"))),
       {
-        version: "0.7.0-preview.42.2",
+        version: "1.0.2-preview.42.2",
         bundle: { createUpdaterArtifacts: false },
         ...(plugins && { plugins }),
       },
     );
-    assert.equal(readFileSync(output, "utf8"), "VERSION=0.7.0-preview.42.2\n");
+    assert.equal(readFileSync(output, "utf8"), "VERSION=1.0.2-preview.42.2\n");
   }
 });
 
@@ -70,6 +69,50 @@ function selected(
     format,
   );
 }
+
+test("previews build daily and after each stable release, from one source commit and version", () => {
+  const caller = parse(read(".github/workflows/release.yml"));
+  assert.equal(caller.on.schedule.length, 1);
+  assert.match(caller.on.schedule[0].cron, /^[1-9]\d? \d+ \* \* \*$/);
+  assert.deepEqual(caller.on.workflow_run, {
+    workflows: ["Desktop stable release"],
+    types: ["completed"],
+  });
+  assert.equal(
+    parse(read(".github/workflows/desktop-stable.yml")).name,
+    "Desktop stable release",
+  );
+  const { source, desktop } = caller.jobs;
+  assert.match(source.if, /workflow_run\.conclusion == 'success'/);
+  assert.match(
+    source.if,
+    /!contains\(github\.event\.workflow_run\.head_branch, '-'\)/,
+  );
+  const [select, checkout, derive] = source.steps;
+  assert.match(select.run, /is not in main history/);
+  assert.equal(
+    select.env.TAGGED_SHA,
+    `\${{ github.event.workflow_run.head_sha }}`,
+  );
+  assert.equal(checkout.with.ref, `\${{ steps.source.outputs.sha }}`);
+  assert.equal(checkout.with["fetch-depth"], 0);
+  assert.equal(derive.run, "node scripts/preview-version.mjs HEAD");
+  assert.equal(desktop.needs, "source");
+  assert.equal(
+    desktop.with.preview_version,
+    `\${{ needs.source.outputs.version }}`,
+  );
+  assert.equal(desktop.with.source_sha, `\${{ needs.source.outputs.sha }}`);
+  // Every platform checks out and records the selected commit.
+  const build = parse(read(".github/workflows/desktop-build.yml"));
+  assert.equal(build.env.SOURCE_SHA, `\${{ inputs.source_sha || github.sha }}`);
+  for (const job of [build.jobs.build, build.jobs.windows, build.jobs.linux])
+    assert.equal(
+      job.steps.find((step) => step.uses?.startsWith("actions/checkout@")).with
+        .ref,
+      `\${{ env.SOURCE_SHA }}`,
+    );
+});
 
 test("all-platform releases preserve candidate isolation and read-only installer jobs", () => {
   const caller = parse(read(".github/workflows/release.yml"));

@@ -20,10 +20,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const { jobs } = parse(
   readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8"),
 );
-const baseVersion = JSON.parse(
-  readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"),
-).version.split("-")[0];
-const version = `${baseVersion}-preview.42.2`;
+const version = "1.0.2-preview.42.2";
 const sha = "a".repeat(40);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const assets = {
@@ -87,7 +84,7 @@ function temp(t) {
   return dir;
 }
 
-test("every platform takes its version from one generator: preview from the run, release from the tag", (t) => {
+test("every platform takes its version from one generator: preview from the run's one derivation, release from the tag", (t) => {
   // macOS, Windows and Linux all run the same script, so they cannot disagree.
   for (const job of [jobs.build, jobs.windows, jobs.linux])
     assert.ok(
@@ -100,7 +97,7 @@ test("every platform takes its version from one generator: preview from the run,
       .run,
     /--config "\$RUNNER_TEMP\/candidate\.json"/,
   );
-  const generate = (release) => {
+  const generate = (release, preview = version) => {
     const dir = temp(t);
     const env = {
       ...process.env,
@@ -112,6 +109,7 @@ test("every platform takes its version from one generator: preview from the run,
       BUZZ_UPDATER_PUBLIC_KEY: "fixture-key",
       BUZZ_UPDATER_ENDPOINT: "https://example.com/feed",
       RELEASE_VERSION: release,
+      PREVIEW_VERSION: preview,
     };
     const result = spawnSync(
       process.execPath,
@@ -138,6 +136,9 @@ test("every platform takes its version from one generator: preview from the run,
     return config.version;
   };
   assert.equal(generate(""), version);
+  // Previews never fall back to tauri.conf.json.
+  for (const invalid of ["", "1.0.2", "1.0.2-preview.0.1", "1.0.2-beta.1"])
+    assert.equal(generate("", invalid), undefined, invalid);
   assert.equal(generate("1.0.0"), "1.0.0");
   assert.equal(generate("1.2.3-beta.4"), "1.2.3-beta.4");
   for (const invalid of [
@@ -341,4 +342,63 @@ esac
     assert.equal(option("--title"), title);
     assert.ok(publish.args.includes("release-assets/SHA256SUMS"), release);
   }
+});
+
+test("preview version is one patch above the highest stable tag reachable from the commit", (t) => {
+  const dir = temp(t);
+  const git = (...args) =>
+    spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  const commit = () =>
+    git(
+      "-c",
+      "user.name=fixture",
+      "-c",
+      "user.email=fixture@example.com",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "fixture",
+    );
+  const derive = (ref = "HEAD", attempt = "2") => {
+    const output = join(dir, `output-${Math.random()}`);
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/preview-version.mjs"), ref],
+      {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GITHUB_RUN_NUMBER: "301",
+          GITHUB_RUN_ATTEMPT: attempt,
+          GITHUB_OUTPUT: output,
+        },
+        encoding: "utf8",
+      },
+    );
+    if (result.status !== 0) return { error: result.stderr };
+    const version = result.stdout.trim();
+    assert.equal(readFileSync(output, "utf8"), `version=${version}\n`);
+    return version;
+  };
+  git("init", "-q");
+  commit();
+  assert.match(derive().error, /No stable vX\.Y\.Z tag is reachable/);
+  // Betas, previews and malformed tags never count.
+  for (const tag of ["v9.0.0-beta.1", "v9.0.0-preview.1.1", "v09.0.0", "9.0.0"])
+    git("tag", tag);
+  assert.match(derive().error, /No stable/);
+  git("tag", "v1.0.1");
+  assert.equal(derive(), "1.0.2-preview.301.2");
+  assert.equal(derive("HEAD", "1"), "1.0.2-preview.301.1");
+  // Numeric, not lexical, order picks the highest release.
+  commit();
+  git("tag", "v1.0.10");
+  git("tag", "v1.0.9");
+  assert.equal(derive(), "1.0.11-preview.301.2");
+  // A tag on a later commit is not in an earlier commit's history.
+  commit();
+  git("tag", "v1.1.0");
+  assert.equal(derive(), "1.1.1-preview.301.2");
+  assert.equal(derive("HEAD~1"), "1.0.11-preview.301.2");
+  assert.match(derive("HEAD", "0").error, /GITHUB_RUN_ATTEMPT/);
 });

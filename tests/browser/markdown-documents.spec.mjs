@@ -83,7 +83,7 @@ const CODE = "const value = 1;";
 // The fixture's long transcript reply, as its copy action writes it.
 const LONG_CODE_TEXT = Array.from(
   { length: 60 },
-  (_, line) => `${line} ${"x".repeat(160)}`,
+  (_, line) => `  ${line} ${"x".repeat(160)}`,
 ).join("\n");
 
 /** Opens the memory and transcript disclosures that hold the sample. */
@@ -221,8 +221,8 @@ test("document screens keep their roles, elements and code actions in their host
             .poll(() => page.evaluate(() => window.copied), { message: where })
             .toEqual([CODE, CODE]);
         }
-        // In the real Canvas editor, a line that cannot wrap scrolls inside its
-        // block; the view panel and its article stay at the host's width.
+        // Long code wraps inside the real Canvas editor; the view panel and
+        // its article stay at the host's width.
         const host = await page
           .locator('[data-screen="canvas-host"]')
           .evaluate((section) => {
@@ -240,16 +240,17 @@ test("document screens keep their roles, elements and code actions in their host
         expect(host.panel, label).toBeLessThanOrEqual(host.host);
         expect(host.article, label).toBeLessThanOrEqual(host.host);
         expect(host.contained, label).toBe(true);
-        expect(host.scroll, label).toBeGreaterThan(host.client);
+        expect(host.scroll, label).toBeLessThanOrEqual(host.client);
         // A rejected document's source still wraps.
         const source = page.locator('[data-screen="canvas-source"] pre code');
         await expect(source).toHaveCSS("white-space", "pre-wrap");
+        await expect(source).toHaveCSS("max-height", "none");
         expect(
           await source.evaluate((code) => code.scrollWidth <= code.clientWidth),
           label,
         ).toBe(true);
-        // A long transcript reply wraps, scrolls under a 24rem block (frame
-        // included), and keeps its copy action pinned while it scrolls.
+        // A long transcript reply uses the shared cap and keeps its copy
+        // action pinned while the code scrolls.
         const longPre = page
           .locator('[data-screen="transcript"] pre')
           .filter({ hasText: "59 xxx" });
@@ -265,10 +266,7 @@ test("document screens keep their roles, elements and code actions in their host
           pre.scrollTop = pre.scrollHeight;
           const preScrolled = pre.scrollTop > 0;
           return {
-            outer: pre.getBoundingClientRect().height,
-            rem: Number.parseFloat(
-              getComputedStyle(document.documentElement).fontSize,
-            ),
+            capped: code.clientHeight < code.scrollHeight,
             wraps: code.scrollWidth <= code.clientWidth,
             scrolled: code.scrollTop > 0,
             pinned: offset() === before,
@@ -276,7 +274,7 @@ test("document screens keep their roles, elements and code actions in their host
           };
         });
         expect(long, label).toMatchObject({
-          outer: 24 * long.rem,
+          capped: true,
           wraps: true,
           scrolled: true,
           pinned: true,
@@ -295,7 +293,7 @@ test("document screens keep their roles, elements and code actions in their host
 });
 
 // Inline fragmentation and painted corners require a browser layout engine.
-test("inline snippets wrap with rounded ends while fenced code keeps scrolling", async ({
+test("inline snippets keep rounded ends and tall fenced code wraps with a partial-line scroll cue", async ({
   page,
 }) => {
   for (const mode of ["light", "dark"])
@@ -340,14 +338,45 @@ test("inline snippets wrap with rounded ends while fenced code keeps scrolling",
           ).toBe(true);
           expect(shape.pageFits).toBe(true);
         }
-        const block = page.locator('[data-screen="canvas-host"] pre code');
-        await expect(block).toHaveCSS("white-space", "pre");
-        await expect(block).toHaveCSS("overflow-wrap", "normal");
-        await expect(block).toHaveCSS("border-radius", "0px");
-        const widths = await block.evaluate((code) => ({
-          client: code.clientWidth,
-          scroll: code.scrollWidth,
-        }));
-        expect(widths.scroll).toBeGreaterThan(widths.client);
+        for (const screen of ["canvas-host", "message"]) {
+          const block = page
+            .locator(`[data-screen="${screen}"] pre code`)
+            .filter({ hasText: "59 xxx" });
+          await expect(block).toHaveCSS("white-space", "pre-wrap");
+          await expect(block).toHaveCSS("overflow-wrap", "anywhere");
+          await expect(block).toHaveCSS("border-radius", "0px");
+          const layout = await block.evaluate((code) => {
+            const style = getComputedStyle(code);
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            const bottom = code.getBoundingClientRect().bottom;
+            const cutLine = [...range.getClientRects()].find(
+              (rect) => rect.top < bottom && rect.bottom > bottom,
+            );
+            const visibleLines =
+              (code.getBoundingClientRect().height -
+                Number.parseFloat(style.paddingTop)) /
+              Number.parseFloat(style.lineHeight);
+            code.scrollTop = code.scrollHeight;
+            return {
+              text: code.textContent,
+              wraps: code.scrollWidth <= code.clientWidth,
+              tall: code.scrollHeight > code.clientHeight,
+              visibleLines,
+              cutFraction: cutLine && (bottom - cutLine.top) / cutLine.height,
+              scrolled: code.scrollTop > 0,
+              atEnd: code.scrollTop + code.clientHeight === code.scrollHeight,
+            };
+          });
+          const label = JSON.stringify({ mode, width, scale, screen, layout });
+          expect(layout.text, label).toBe(`${LONG_CODE_TEXT}\n`);
+          expect(layout.wraps, label).toBe(true);
+          expect(layout.tall, label).toBe(true);
+          expect(layout.visibleLines, label).toBeCloseTo(16.5, 1);
+          expect(layout.cutFraction, label).toBeGreaterThan(0.2);
+          expect(layout.cutFraction, label).toBeLessThan(0.8);
+          expect(layout.scrolled, label).toBe(true);
+          expect(layout.atEnd, label).toBe(true);
+        }
       }
 });

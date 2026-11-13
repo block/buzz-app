@@ -115,22 +115,23 @@
   overflow: hidden;
   border: 1px solid var(--border-standard);
   border-radius: var(--radius-row);
-  background: var(--surface-panel);
+  background: var(--affordance-subtle);
 }
 .document pre code {
   display: block;
-  overflow-x: auto;
+  /* Leave half a line below the cap as a cue that more code follows. */
+  max-height: calc(var(--space-3) + 16.5lh);
+  overflow: auto;
   border-radius: 0;
   background: transparent;
   padding: var(--space-3) var(--space-3);
   scrollbar-width: thin;
-  white-space: pre;
-  overflow-wrap: normal;
-}
-/* Source shown in place of a rejected document wraps like prose. */
-.document pre.source code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* A rejected document remains a wrapping source view, rather than a code fence. */
+.document pre.source code {
+  max-height: none;
 }
 /* Keep every line end reachable beside the pinned action. */
 .document pre:has(> .codeActions) code {
@@ -147,7 +148,7 @@ html[data-keyboard-navigation] .document pre code:focus-visible {
   top: var(--space-1);
   inset-inline-end: var(--space-1);
   border-radius: var(--radius-icon-button);
-  background: var(--surface-panel);
+  background: var(--affordance-subtle);
   user-select: none;
 }
 @media (hover: hover) and (pointer: fine) {

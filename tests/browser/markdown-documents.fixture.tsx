@@ -43,9 +43,8 @@ const SAMPLE = [
   "```\nconst value = 1;\n```",
 ].join("\n\n");
 
-// A line that cannot wrap, a long reply, and a document too deep to render.
-const LONG_LINE = `\`\`\`\n${"abcdefghijklmnopqrstuvwxyz ".repeat(40)}\n\`\`\``;
-const LONG_CODE = `\`\`\`\n${Array.from({ length: 60 }, (_, line) => `${line} ${"x".repeat(160)}`).join("\n")}\n\`\`\``;
+// Indented, unbroken lines and a document too deep to render.
+const LONG_CODE = `\`\`\`\n${Array.from({ length: 60 }, (_, line) => `  ${line} ${"x".repeat(160)}`).join("\n")}\n\`\`\``;
 const TOO_DEEP = `${">".repeat(120)} ${"deep ".repeat(200)}`;
 
 /** A saved Canvas holding content, with no relay behind it. */
@@ -181,7 +180,7 @@ createRoot(root).render(
             id: "fixture-message",
             channelId: "fixture-channel",
             authorId: "fixture-author",
-            content: SAMPLE,
+            content: `${SAMPLE}\n\n${LONG_CODE}`,
             createdAt: 1,
             mentions: [],
             participants: [],
@@ -205,7 +204,7 @@ createRoot(root).render(
       </section>
       <section data-screen="canvas-host">
         <CanvasEditor
-          canvas={canvasOf(LONG_LINE)}
+          canvas={canvasOf(LONG_CODE)}
           profiles={profiles}
           scope="fixture"
           channelId="22222222-2222-4222-8222-222222222222"

@@ -1,0 +1,19 @@
+[package]
+name = "buzz-nostr-verification"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Batched verification of incoming Buzz Nostr signatures"
+
+[dependencies]
+hex = "0.4"
+k256 = { version = "=0.14.0", default-features = false, features = ["arithmetic", "alloc"] }
+rand_chacha = "0.3"
+rand_core = "0.6"
+secp256k1 = { version = "0.31", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+
+[dev-dependencies]
+# Match the desktop's previous event-ID parser in differential tests.
+nostr = { version = "=0.45.5", default-features = false, features = ["std"] }

@@ -4521,6 +4521,19 @@ async fn native_signature_checks_reject_tampered_and_malformed_claims() {
         sig: sig.into(),
     };
     let sig = secp.sign_schnorr_no_aux_rand(&digest, &keys).to_string();
+    // Exercise the repeated-author batch through the production async command.
+    assert_eq!(
+        relay_verify_signatures((0..12).map(|_| claim(digest, &sig)).collect())
+            .await
+            .unwrap(),
+        [true; 12]
+    );
+    let mut batch: Vec<_> = (0..12).map(|_| claim(digest, &sig)).collect();
+    batch[6] = claim([8; 32], &sig);
+    assert_eq!(
+        relay_verify_signatures(batch).await.unwrap(),
+        (0..12).map(|index| index != 6).collect::<Vec<_>>()
+    );
     let checked = relay_verify_signatures(vec![
         claim(digest, &sig),
         claim([8; 32], &sig),

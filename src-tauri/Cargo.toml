@@ -26,6 +26,7 @@ url = "2"
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
+buzz-nostr-verification = { path = "../crates/nostr-verification" }
 buzz-mesh-compute = { path = "../src/bundled/mesh-compute/compute" }
 buzz-nsec-backup = { path = "../crates/nsec-backup" }
 buzz-pairing = { path = "../crates/pairing" }

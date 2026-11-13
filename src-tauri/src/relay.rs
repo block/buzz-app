@@ -11,6 +11,7 @@ pub(crate) use agent::{
     relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+pub(crate) use buzz_nostr_verification::SignatureClaim;
 pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -781,35 +782,12 @@ async fn admit_app_data(
     Ok(())
 }
 
-/// An incoming event's signature claim: the webview checks shape and that `id`
-/// hashes the event, then asks libsecp256k1 whether `sig` signs `id` for `pubkey`.
-#[derive(serde::Deserialize)]
-pub(crate) struct SignatureClaim {
-    id: String,
-    pubkey: String,
-    sig: String,
-}
-
 /// BIP-340 checks off the webview's main thread; one result per claim, in order.
 #[tauri::command]
 pub(crate) async fn relay_verify_signatures(claims: Vec<SignatureClaim>) -> Result<Vec<bool>> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let secp = secp256k1::Secp256k1::verification_only();
-        claims.iter().map(|claim| signs(&secp, claim)).collect()
-    })
-    .await
-    .map_err(|_| "Signature verification could not complete".into())
-}
-
-fn signs(secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>, claim: &SignatureClaim) -> bool {
-    let (Ok(id), Ok(pubkey), Ok(sig)) = (
-        nostr::event::EventId::from_hex(&claim.id),
-        claim.pubkey.parse::<secp256k1::XOnlyPublicKey>(),
-        claim.sig.parse::<secp256k1::schnorr::Signature>(),
-    ) else {
-        return false;
-    };
-    secp.verify_schnorr(&sig, id.as_bytes(), &pubkey).is_ok()
+    tauri::async_runtime::spawn_blocking(move || buzz_nostr_verification::verify(&claims))
+        .await
+        .map_err(|_| "Signature verification could not complete".into())
 }
 
 fn verify_signature(event: &serde_json::Value) -> Result<()> {

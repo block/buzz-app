@@ -268,7 +268,7 @@ export interface Signer {
   upload?(file: File, signal: AbortSignal): Promise<Response>;
   /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
   media?(url: string): string;
-  /** Native hosts check incoming signatures with libsecp256k1, off the main thread. */
+  /** Native hosts check incoming BIP-340 signatures off the main thread. */
   verifySignatures?: SignatureVerifier;
 }
 

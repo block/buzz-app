@@ -1,5 +1,15 @@
 # Source attribution
 
+Batch equation accumulation in `crates/nostr-verification/src/lib.rs` is adapted
+from Zcash Foundation FROST's `frost-core/src/batch.rs`, revision
+[`2016e44ba4a4757a996300350063b937a2ad33e8`](https://github.com/ZcashFoundation/frost/blob/2016e44ba4a4757a996300350063b937a2ad33e8/frost-core/src/batch.rs).
+Copyright 2019-2021 Zcash Foundation. Used under its Apache-2.0 license option;
+the full license is preserved in [LICENSE](LICENSE). Changes specialize the
+verifier for Nostr's BIP-340 encoding and k256 0.14, derive nonzero coefficients
+from the complete batch transcript, combine repeated-author terms, and retain
+individual libsecp256k1 fallback. No FROST dependency or threshold-signing code
+is included.
+
 The agent-card foil texture in `src/features/agents/assets/card-foil.webp`,
 portrait palette sampling, and reveal/hover treatment are adapted from
 [Block Buzz PR #5790](https://github.com/block/buzz/pull/5790), revision

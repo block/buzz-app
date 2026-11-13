@@ -96,6 +96,8 @@ function setup(
     wrap?: (spawn: ReturnType<typeof fakeSpawn>["spawn"]) => Host["spawn"];
     forwarding?: GatewayForwarding;
     provider?: string;
+    /** goose's own default provider. */
+    defaultProvider?: () => Promise<string | undefined>;
   }> = {},
 ) {
   const fake = fakeSpawn({
@@ -205,6 +207,7 @@ function setup(
     options.repositories,
     localStore(storage),
     options.forwarding,
+    options.defaultProvider,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -2464,11 +2467,6 @@ describe("goose turns through the agent gateway", () => {
   it("refuses a turn it can't forward, visibly and before anything spawns", async () => {
     const refusals: [Parameters<typeof setup>[0], string][] = [
       [{ provider: "databricks" }, "Buzz couldn't start forwarding"],
-      [{ forwarding: gateway().forwarding }, "only on the Databricks provider"],
-      [
-        { forwarding: gateway().forwarding, provider: "openai" },
-        "only on the Databricks provider",
-      ],
     ];
     for (const [options, error] of refusals) {
       const f = setup(options);
@@ -2480,6 +2478,80 @@ describe("goose turns through the agent gateway", () => {
       } finally {
         f.runtime.dispose();
       }
+    }
+  });
+
+  it("forwards on goose's default provider when the agent names none", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      defaultProvider: async () => "databricks",
+    });
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      expect(g.opens).toHaveLength(1);
+      expect(f.fake.geese[0]?.env.DATABRICKS_HOST).toBe(
+        "http://127.0.0.1:9/g1",
+      );
+      expect(f.published).toEqual([]);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it.each<[string, Parameters<typeof setup>[0]]>([
+    ["another provider", { provider: "openai" }],
+    [
+      "goose's default, another provider",
+      { defaultProvider: async () => "openai" },
+    ],
+    ["goose's default, unread", { defaultProvider: async () => undefined }],
+    [
+      "goose's default, unreadable",
+      { defaultProvider: () => Promise.reject(new Error("no goose")) },
+    ],
+  ])(
+    "runs a dispatched turn on %s as it would without the gateway",
+    async (_, options) => {
+      const g = gateway();
+      const f = setup({ ...options, forwarding: g.forwarding });
+      try {
+        await f.deliver(root, dispatched());
+        await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+        expect(g.opens).toEqual([]);
+        expect(f.goose()?.env.DATABRICKS_HOST).toBeUndefined();
+        expect(f.published.map((event) => event.content)).not.toContainEqual(
+          expect.stringContaining("gateway"),
+        );
+      } finally {
+        f.runtime.dispose();
+      }
+    },
+  );
+
+  it("compacts as without the gateway, refusing nothing, once the agent's provider is another", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      reply: "Compaction complete",
+    });
+    const place = { channelId: channel, root: root.id };
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(g.calls).toContain("close 1"));
+      const agent = {
+        ...f.agent,
+        config: { ...DEFAULT_CONFIG, provider: "openai" },
+      } as unknown as Agent;
+      f.runtime.sync([agent]);
+      await f.runtime.session(agent, place, "compact");
+      // goose's own compaction, which has no open session to compact.
+      expect(g.opens).toHaveLength(1);
+      expect(f.fake.geese).toHaveLength(1);
+    } finally {
+      f.runtime.dispose();
     }
   });
 

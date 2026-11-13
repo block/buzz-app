@@ -213,6 +213,10 @@ export class GooseRuntime {
     private readonly agentStore: AgentStore = localStore(),
     /** Opens forwarded turns' generations; absent without a plugin owner. */
     private readonly forwarding?: GatewayForwarding,
+    /** goose's own default provider, which an agent naming none runs on. */
+    private readonly defaultProvider: () => Promise<
+      string | undefined
+    > = async () => undefined,
   ) {}
 
   /** What each of the agent's sessions started with. */
@@ -416,11 +420,17 @@ export class GooseRuntime {
     return this.controls.run(control, action, async (signal) => {
       signal.throwIfAborted();
       // A saved session a forwarded turn left compacts through the gateway
-      // too, under the control's own context, or fails visibly.
+      // too, under the control's own context, or fails visibly; one whose
+      // agent's provider the gateway doesn't serve compacts as any other.
+      const through =
+        action === "compact" &&
+        !!this.forwarding &&
+        (await this.forwards(entry));
+      if (through) signal.throwIfAborted();
       const result = await entry.sessions.reset(
         key,
         action,
-        action === "compact" && this.forwarding
+        through
           ? (held) => this.compact(entry, agent, place, held, signal)
           : undefined,
       );
@@ -458,7 +468,7 @@ export class GooseRuntime {
     superseded,
     interruptible,
     named,
-    gateway,
+    gateway: offered,
     gatewayFallback,
   }: Delivery) {
     const settings = config(raw);
@@ -498,6 +508,8 @@ export class GooseRuntime {
     const entry = this.entry(agent.key, settings);
     entry.handle = agent;
     entry.team = team ?? "";
+    const gateway = offered && (await this.routed(entry, offered));
+    if (offered) signal.throwIfAborted();
     const event =
       trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
     const channel =
@@ -725,10 +737,12 @@ export class GooseRuntime {
       const text = await prompt();
       return text === undefined ? undefined : standalonePrompt(agent.key, text);
     };
+    const gateway =
+      delivery.gateway && (await this.routed(entry, delivery.gateway));
     // Its own generation and process, never saved and never unforwarded.
-    if (delivery.gateway) {
+    if (gateway) {
       const { current, synced } = delivery;
-      const done = this.forward(entry, agent.key, key, delivery.gateway, {
+      const done = this.forward(entry, agent.key, key, gateway, {
         prompt: async () => {
           if (current && !current()) return undefined;
           const text = await standalone();
@@ -749,6 +763,22 @@ export class GooseRuntime {
     });
     this.notify();
     return done.finally(() => this.notify());
+  }
+
+  /** Whether the agent's turns can go through the gateway: on the provider
+   * it names, else goose's default, the gateway's. One whose default can't
+   * be read runs as it would without the gateway. */
+  private async forwards(entry: Entry) {
+    const named = entry.config.provider.trim();
+    const provider =
+      named || (await this.defaultProvider().catch(() => undefined));
+    return provider === GATEWAY_PROVIDER;
+  }
+
+  /** The dispatched route a turn runs through, or none: a turn on another
+   * provider runs as it would without the gateway, its settings untouched. */
+  private async routed(entry: Entry, gateway: Gateway) {
+    return (await this.forwards(entry)) ? gateway : undefined;
   }
 
   /** A conversation's turn through the gateway, holding the conversation:
@@ -834,8 +864,6 @@ export class GooseRuntime {
     // A protected run through the gateway is not yet proven to work.
     if (entry.protected || entry.handle?.protection)
       return refused(FORWARDING_PROTECTED);
-    if (entry.config.provider.trim() !== GATEWAY_PROVIDER)
-      return refused(PROVIDER_ONLY);
     // What is saved, unread, is refused, never taken for none: a value that
     // is no binding reads as malformed.
     const saved = held?.binding;
@@ -1317,8 +1345,6 @@ type ForwardTurn = Readonly<{
 /** The provider goose forwards through: the gateway serves Databricks'
  * API. */
 const GATEWAY_PROVIDER = "databricks";
-const PROVIDER_ONLY =
-  "Goose runs through the agent gateway only on the Databricks provider, so this turn didn't run. Choose Databricks in the agent's settings.";
 const NOT_COMPACTED =
   "Couldn't compact: this conversation's session ran through the agent gateway, which this agent's turns don't use now.";
 /** goose's error for held work it never ran. */

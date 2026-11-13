@@ -45,6 +45,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
           native: "goose",
         })
       : undefined,
+    // Read at a forwarded turn, after `setup` exists.
+    async () => (await setup.providers()).defaults.provider,
   );
   const desktop =
     host.spawn && host.resolveDirectory

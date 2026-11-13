@@ -1,3 +1,13 @@
+.group {
+  container: solo-channel-group / inline-size;
+}
+
+@container solo-channel-group (max-width: 9rem) {
+  .group [data-solo-channel-new-task] {
+    display: none;
+  }
+}
+
 .heading {
   display: flex;
   align-items: center;

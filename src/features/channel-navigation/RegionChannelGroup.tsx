@@ -98,7 +98,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
     channelTabs(session).openSettings(channel.id, attempt.id);
   };
   return (
-    <div data-solo-channel-group={channel.id}>
+    <div className={styles.group} data-solo-channel-group={channel.id}>
       <NavigationCard
         tone="tonal"
         body={
@@ -114,6 +114,7 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
               {newTask && (
                 <IconButton
                   size="compact"
+                  data-solo-channel-new-task=""
                   aria-label={`New task in ${channel.name}`}
                   title="New task"
                   icon={<PencilSimpleIcon size={15} />}

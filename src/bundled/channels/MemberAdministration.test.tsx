@@ -2414,3 +2414,68 @@ it("keeps an access filter visible and clearable after a failed refresh", async 
   expect(filter()).toHaveAccessibleName("Filter members: All");
   expect(screen.getByText("Carl (you)")).toBeVisible();
 });
+
+it("opens the list's one menu for the row under the press and leaves the native menu elsewhere", async () => {
+  const t = await setup();
+  const rowOf = (name: string) =>
+    required(screen.getByText(name).closest("li"));
+  expect(
+    fireEvent.contextMenu(screen.getByRole("heading", { name: /^People/ }), {
+      button: 2,
+    }),
+  ).toBe(true);
+  expect(screen.queryByRole("menu")).toBeNull();
+
+  expect(fireEvent.contextMenu(rowOf("Morgan"), { button: 2 })).toBe(false);
+  const menu = await screen.findByRole("menu", { name: "Actions for Morgan" });
+  expect(rowOf("Morgan")).toHaveAttribute("data-menu-open", "context");
+  expect(
+    within(menu).getByRole("menuitem", { name: "Remove from channel" }),
+  ).toBeVisible();
+  fireEvent.keyDown(menu, { key: "Escape" });
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(rowOf("Morgan")).not.toHaveAttribute("data-menu-open");
+
+  fireEvent.contextMenu(rowOf("Carl (you)"), { button: 2 });
+  await screen.findByRole("menu", { name: "Actions for Carl" });
+  expect(
+    screen.queryByRole("menuitem", { name: "Remove from channel" }),
+  ).toBeNull();
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("closes the list's menu when its row is filtered away", async () => {
+  const t = await setup();
+  fireEvent.contextMenu(required(screen.getByText("Morgan").closest("li")), {
+    button: 2,
+  });
+  await screen.findByRole("menu", { name: "Actions for Morgan" });
+  fireEvent.change(screen.getByRole("searchbox", { hidden: true }), {
+    target: { value: "Carl" },
+  });
+  await vi.waitFor(() => expect(screen.queryByText("Morgan")).toBeNull());
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(t.publish).not.toHaveBeenCalled();
+});
+
+it("opens the Actions button's menu with menu-button semantics and returns focus to it", async () => {
+  await setup();
+  const actions = screen.getByRole("button", { name: "Actions for Morgan" });
+  expect(actions).toHaveAttribute("aria-haspopup", "menu");
+  expect(actions).toHaveAttribute("aria-expanded", "false");
+  expect(actions).not.toHaveAttribute("aria-controls");
+  actions.focus();
+  fireEvent.keyDown(actions, { key: "ArrowDown" });
+  const menu = await screen.findByRole("menu", { name: "Actions for Morgan" });
+  await vi.waitFor(() =>
+    expect(
+      within(menu).getByRole("menuitem", { name: "View profile" }),
+    ).toHaveFocus(),
+  );
+  expect(actions).toHaveAttribute("aria-expanded", "true");
+  expect(actions).toHaveAttribute("aria-controls", menu.id);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(actions).toHaveAttribute("aria-expanded", "false");
+  await vi.waitFor(() => expect(actions).toHaveFocus());
+});

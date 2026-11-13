@@ -214,12 +214,51 @@ export function createSubmissionUpdates(
         ? seen !== reviewVersion(row)
         : !!(row.reviewReports?.length || row.value.triage?.decision);
     },
-    markSeen(row: SavedSubmission) {
+    unreadLane(row: SavedSubmission, index: number | "triage") {
+      if (index === "triage" && !row.value.triage) return false;
+      const report = row.reviewReports?.find((event) =>
+        event.tags.some(
+          (tag) => tag[0] === "review" && tag[2] === String(index),
+        ),
+      );
+      const encoded = state.seen[row.artifactId];
+      if (encoded === reviewVersion(row)) return false;
+      if (encoded) {
+        try {
+          const previous: unknown = JSON.parse(encoded);
+          if (
+            Array.isArray(previous) &&
+            Array.isArray(previous[2]) &&
+            Array.isArray(previous[3])
+          ) {
+            if (
+              previous[0] !==
+              (row.value.generation ?? row.value.submittedAt ?? "")
+            )
+              return true;
+            return index === "triage"
+              ? previous[1] !== row.value.triage?.state
+              : (previous[2][index] ?? "") !==
+                  (row.value.threads[index]?.request ?? "") ||
+                  (!!report && !previous[3].includes(report.id));
+          }
+        } catch {
+          /* Old or damaged preferences must not hide current reports. */
+        }
+      }
+      return index === "triage" ? !!row.value.triage?.decision : !!report;
+    },
+    markSeen(input: SavedSubmission | SavedSubmission[]) {
       // Acknowledge exactly the rendered version; a newer report stays unread.
       const seen = {
         ...readSeen(),
         ...state.seen,
-        [row.artifactId]: reviewVersion(row),
+        ...Object.fromEntries(
+          (Array.isArray(input) ? input : [input]).map((row) => [
+            row.artifactId,
+            reviewVersion(row),
+          ]),
+        ),
       };
       try {
         localStorage.setItem(key, JSON.stringify(seen));

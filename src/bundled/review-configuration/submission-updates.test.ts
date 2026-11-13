@@ -211,3 +211,38 @@ it("keeps multiple acknowledgments usable when local storage cannot be written",
   const anotherChannel = fixture("viewer-community", "another-channel");
   expect(anotherChannel.store.unread(completed)).toBe(true);
 });
+
+it("identifies only changed lanes using the previously displayed request and reports", async () => {
+  const f = fixture();
+  await vi.advanceTimersByTimeAsync(250);
+  const initial = {
+    ...row,
+    value: {
+      ...row.value,
+      threads: [...row.value.threads, { id: "backend", request }],
+    },
+    reviewReports: [report("reviewing")],
+  };
+  expect(f.store.unreadLane(initial, 0)).toBe(true);
+  expect(f.store.unreadLane(initial, 1)).toBe(false);
+  f.store.markSeen([initial]);
+  const changed = {
+    ...initial,
+    reviewReports: [report("lgtm_not_approved", 2)],
+  };
+  expect(f.store.unreadLane(changed, 0)).toBe(true);
+  expect(f.store.unreadLane(changed, 1)).toBe(false);
+  f.store.markSeen(changed);
+  const reminder = {
+    ...changed,
+    value: {
+      ...changed.value,
+      threads: [
+        { id: "root", request, delivered: true },
+        { id: "backend", request: "22222222-2222-4222-8222-222222222222" },
+      ],
+    },
+  };
+  expect(f.store.unreadLane(reminder, 0)).toBe(false);
+  expect(f.store.unreadLane(reminder, 1)).toBe(true);
+});

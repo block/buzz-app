@@ -14,9 +14,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadPullStatus } from "./pull-facts";
 import { ReviewSubmissions } from "./ReviewSubmissions";
+import { useSubmissionUpdates } from "./submission-updates";
 import { loadConfigurations, type SavedReviewConfig } from "./configuration";
 import {
   loadSubmissions,
+  applyReviewReports,
   deleteSubmission,
   remindSubmission,
   submitReview,
@@ -66,6 +68,7 @@ const record: SavedSubmission = {
   },
 };
 beforeEach(() => {
+  localStorage.clear();
   vi.clearAllMocks();
   vi.mocked(loadConfigurations).mockResolvedValue({
     rows: [configuration],
@@ -141,19 +144,22 @@ function fixture(
   const onOpenMessage = vi.fn(async () => {});
   const editing = vi.fn();
   const content = (ready: boolean) => (
-    <ReviewSubmissions
-      readable={ready}
-      session={session}
-      mode={mode}
-      channel="channel"
-      writable
-      onEditingChange={editing}
-      onOpenThread={onOpenThread}
-      onOpenMessage={onOpenMessage}
-      readPull={readPull}
-      readStatus={readStatus}
-      describeTool={describeTool}
-    />
+    <>
+      <UpdateCount session={session} enabled={ready && mode === "all"} />
+      <ReviewSubmissions
+        readable={ready}
+        session={session}
+        mode={mode}
+        channel="channel"
+        writable
+        onEditingChange={editing}
+        onOpenThread={onOpenThread}
+        onOpenMessage={onOpenMessage}
+        readPull={readPull}
+        readStatus={readStatus}
+        describeTool={describeTool}
+      />
+    </>
   );
   const view = render(content(readable));
   return {
@@ -171,6 +177,20 @@ function fixture(
     editing,
     user: userEvent.setup(),
   };
+}
+function UpdateCount({
+  session,
+  enabled,
+}: {
+  session: RelaySession;
+  enabled: boolean;
+}) {
+  const updates = useSubmissionUpdates(session, "channel", enabled);
+  return (
+    <span data-testid="unseen-updates">
+      {updates.rows.filter(updates.store.unread).length}
+    </span>
+  );
 }
 async function enter(
   user: ReturnType<typeof userEvent.setup>,
@@ -816,4 +836,78 @@ it("waits for fresh channel access before loading submissions and lane previews"
     name: "Full message: example-org/project#42 UI last message",
   });
   expect(loadSubmissions).toHaveBeenCalledTimes(2);
+});
+
+it("clears the shared badge on opening and keeps lane highlights until the next visit", async () => {
+  const request = "11111111-1111-4111-8111-111111111111";
+  const uiLane = configuration.config.lanes[0];
+  if (!uiLane) throw new Error("Missing UI lane fixture");
+  const base: SavedSubmission = {
+    ...record,
+    value: {
+      ...record.value,
+      config: {
+        ...record.value.config,
+        lanes: [
+          uiLane,
+          {
+            ...uiLane,
+            id: "backend",
+            name: "Backend",
+          },
+        ],
+      },
+      threads: [
+        { id: "e".repeat(64), request, delivered: true },
+        { id: "f".repeat(64), request, delivered: true },
+      ],
+    },
+  };
+  const report = (index: number, time: number) =>
+    ({
+      id: String(index + 1).repeat(64),
+      kind: 9,
+      created_at: time,
+      pubkey: "a".repeat(64),
+      content: "Review status: Reviewing.",
+      tags: [
+        ["h", "channel"],
+        ["t", "buzz.review.status"],
+        ["r", request],
+        ["review", record.artifactId, String(index)],
+        ["e", (index === 0 ? "e" : "f").repeat(64), "", "reply"],
+        ["status", "reviewing"],
+        ["review-sequence", "1"],
+      ],
+    }) as import("../../features/relay/events").RelayEvent;
+  const first = applyReviewReports(base, "channel", [report(0, 200)]);
+  vi.mocked(loadSubmissions).mockResolvedValue({ rows: [first], warning: "" });
+  const view = fixture("all");
+  const ui = (await screen.findByText("UI", { exact: true })).closest("tr");
+  const backend = screen.getByText("Backend", { exact: true }).closest("tr");
+  if (!ui || !backend) throw new Error("Missing lane rows");
+  expect(within(ui).getAllByText("Updated").length).toBeGreaterThan(0);
+  expect(within(backend).queryByText("Updated")).toBeNull();
+  expect(screen.getByTestId("unseen-updates").textContent).toBe("0");
+  expect(screen.queryByRole("button", { name: /Mark .* seen/ })).toBeNull();
+  expect(
+    within(ui)
+      .getByText(/^Last updated:/)
+      .querySelector("time")?.dateTime,
+  ).toBe(new Date(200_000).toISOString());
+  view.emit([report(1, 300)]);
+  expect(within(backend).getByText("Updated")).toBeTruthy();
+  expect(
+    within(backend)
+      .getByText(/^Last updated:/)
+      .querySelector("time")?.dateTime,
+  ).toBe(new Date(300_000).toISOString());
+  expect(screen.getByTestId("unseen-updates").textContent).toBe("0");
+  view.unmount();
+  const final = applyReviewReports(first, "channel", [report(1, 300)]);
+  vi.mocked(loadSubmissions).mockResolvedValue({ rows: [final], warning: "" });
+  fixture("all");
+  await screen.findByText("Backend", { exact: true });
+  expect(screen.queryByText("Updated")).toBeNull();
+  expect(screen.getByTestId("unseen-updates").textContent).toBe("0");
 });

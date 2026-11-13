@@ -32,9 +32,12 @@ the viewer’s local timezone. If history exceeds the bounded read, current stat
 remain available and the date is explicitly unavailable.
 
 The Pull requests dock badge counts PRs with unseen review updates in the selected
-review channel. Each affected PR shows Updated and a Mark seen action. Opening the
-page alone does not clear updates. Mark seen acknowledges the displayed status;
-a later update marks the PR again. These preferences persist on this device,
+review channel. Opening Pull requests acknowledges the loaded updates and clears
+the dock badge. Updated labels remain on affected PRs and individual lanes for
+that visit; leaving and returning clears those labels unless another update arrived.
+Live changes while the page is open are also acknowledged and highlighted. Each
+lane shows Last updated from its latest status report or thread message, including
+reminders. A later update while away marks the PR again. These preferences persist on this device,
 separately for each signed-in identity, community, and channel. The dock and table
 share an event-driven reader; there is no periodic polling.
 

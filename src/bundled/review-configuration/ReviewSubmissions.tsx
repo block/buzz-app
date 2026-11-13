@@ -13,7 +13,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import type { RelaySession } from "../../features/relay/session";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
-import { TrashIcon } from "../../shared/design-system/icons";
+import { BellIcon, TrashIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -99,6 +99,37 @@ export function ReviewSubmissions({
     warning,
     store,
   } = updates;
+  const [visit, setVisit] = useState(() => ({
+    store,
+    rows: new Set<string>(),
+    lanes: new Set<string>(),
+  }));
+  useEffect(() => {
+    if (!readable || mode !== "all") {
+      setVisit({ store, rows: new Set(), lanes: new Set() });
+      return;
+    }
+    if (listLoading || listError) return;
+    const updated = rows.filter(store.unread);
+    const lanes = rows.flatMap((row) =>
+      (["triage", ...row.value.threads.map((_, index) => index)] as const)
+        .filter((index) => store.unreadLane(row, index))
+        .map((index) => `${row.artifactId}:${index}`),
+    );
+    // Retain the changes visible during this visit after clearing the dock count.
+    setVisit((previous) => ({
+      store,
+      rows: new Set([
+        ...(previous.store === store ? previous.rows : []),
+        ...updated.map((row) => row.artifactId),
+      ]),
+      lanes: new Set([
+        ...(previous.store === store ? previous.lanes : []),
+        ...lanes,
+      ]),
+    }));
+    store.markSeen(rows);
+  }, [store, rows, listLoading, listError, readable, mode]);
   const setRows = store.setRows;
   const [statuses, setStatuses] = useState<
     Record<string, { value: PullStatus | "Unavailable"; error?: string }>
@@ -489,6 +520,8 @@ export function ReviewSubmissions({
                             : "Rejected",
                       messageId: triage.decision ?? triage.thread.id,
                       laneId: undefined,
+                      updateKey: "triage",
+                      reportedAt: undefined,
                     },
                   ]
                 : []),
@@ -508,6 +541,8 @@ export function ReviewSubmissions({
                     : "—",
                   messageId: report?.id ?? thread.id,
                   laneId: lane?.id,
+                  updateKey: String(index),
+                  reportedAt: report?.created_at,
                 };
               }),
             ];
@@ -573,26 +608,12 @@ export function ReviewSubmissions({
                                   }
                                 />
                               </span>
-                              {store.unread(row) && (
-                                <>
+                              {visit.store === store &&
+                                visit.rows.has(row.artifactId) && (
                                   <strong className="text-accent">
                                     Updated
                                   </strong>
-                                  <Button
-                                    size="sm"
-                                    aria-label={`Mark ${name} seen`}
-                                    onClick={(event) => {
-                                      const link = event.currentTarget
-                                        .closest("th")
-                                        ?.querySelector("a");
-                                      store.markSeen(row);
-                                      link?.focus();
-                                    }}
-                                  >
-                                    Mark seen
-                                  </Button>
-                                </>
-                              )}
+                                )}
                             </div>
                           </th>
                           {deletable && (
@@ -674,6 +695,33 @@ export function ReviewSubmissions({
                                 : "Sending review request"
                             }
                           />
+                          {visit.store === store &&
+                            visit.lanes.has(
+                              `${row.artifactId}:${lane.updateKey}`,
+                            ) && (
+                              <strong className="review-config-update text-caption text-accent">
+                                <BellIcon size={14} aria-hidden="true" />
+                                Updated
+                              </strong>
+                            )}
+                          <span className="text-caption text-subtle">
+                            Last updated:{" "}
+                            <ReviewDate
+                              value={
+                                Math.max(
+                                  lane.reportedAt ?? 0,
+                                  latest?.message?.createdAt ?? 0,
+                                ) || undefined
+                              }
+                              missing={
+                                latest?.error
+                                  ? "Unavailable"
+                                  : !latest && lane.thread.id
+                                    ? "Loading…"
+                                    : "Not recorded"
+                              }
+                            />
+                          </span>
                           {deletable && lane.laneId && (
                             <Button
                               size="sm"

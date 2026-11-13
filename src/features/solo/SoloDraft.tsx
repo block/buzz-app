@@ -912,8 +912,15 @@ export function SoloDraft({
           ttlSeconds={settingsLifetime}
           close={() => setSettingsOpen(false)}
           save={(canvas, ttlSeconds, name) => {
-            // Saves only the settings, never the pick: edits made here win
-            // over a pick another window moved under the open dialog.
+            // These settings were loaded from and edited for the workspace
+            // the dialog opened with. A pick moved under it since goes back
+            // with them, so Save never leaves one workspace's pick with
+            // another's instructions and folders. Closing then drops a
+            // workspace deleted since.
+            const project = settingsProject ?? "";
+            const projectKey = `${draftKey}:new-project`;
+            const moved =
+              readView<unknown>(scope, projectKey, projectId ?? "") !== project;
             // A lifetime changed here, or chosen before, stays chosen; an
             // unchanged one keeps following the default.
             const chosen =
@@ -926,10 +933,14 @@ export function SoloDraft({
               ...(chosen ? { lifetimeChosen: true as const } : {}),
               name: name ?? "",
             };
-            if (!writeView(scope, `${draftKey}:settings`, next))
+            if (
+              !writeView(scope, `${draftKey}:settings`, next) ||
+              (moved && !writeView(scope, projectKey, project))
+            )
               throw new Error(
                 "Settings couldn’t be saved on this device. Try again.",
               );
+            setSelectedProject(project);
             setDraftSettings(next);
           }}
         />

@@ -1830,7 +1830,7 @@ function otherWindowWrites(scope: string, key: string, value: unknown) {
 
 it("another window dropping the workspace leaves open Chat settings alone; the draft follows once they close", async () => {
   const f = await projectSetup();
-  deletableWorkspaces(f);
+  const remove = deletableWorkspaces(f);
   const user = userEvent.setup();
   const scope = "dropped-elsewhere-under-settings";
   writeView(scope, "solo:new-project", "work");
@@ -1842,7 +1842,10 @@ it("another window dropping the workspace leaves open Chat settings alone; the d
   await waitFor(() => expect(instructions).toHaveValue("work instructions"));
   await user.clear(instructions);
   await user.type(instructions, "My own notes");
+  // The other window drops it on learning of the deletion; then this one learns.
   act(() => otherWindowWrites(scope, "solo:new-project", ""));
+  await act(async () => {});
+  act(remove);
   await act(async () => {});
   expect(screen.getByRole("textbox", { name: /^Instructions/ })).toHaveValue(
     "My own notes",
@@ -1888,6 +1891,95 @@ it("a workspace another window picks under open Chat settings is dropped on clos
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
   expect(readView(scope, "solo:new-project", null)).toBe("");
+});
+
+/** Chat settings open on `opened` with typed instructions, then another
+ * window picks Other, which still exists, from its workspace control. */
+async function pickedElsewhere(scope: string, opened: "work" | "") {
+  const f = await projectSetup();
+  const user = userEvent.setup();
+  const started = vi.fn();
+  if (opened) writeView(scope, "solo:new-project", opened);
+  render(<SoloDraft session={f.session} scope={scope} onStarted={started} />);
+  await user.click(screen.getByRole("button", { name: "Chat settings" }));
+  const instructions = await screen.findByRole("textbox", {
+    name: /^Instructions/,
+  });
+  await waitFor(() =>
+    expect(instructions).toHaveValue(opened && "work instructions"),
+  );
+  await user.clear(instructions);
+  await user.type(instructions, "My own notes");
+  // A pick from the workspace control also clears the draft's canvas.
+  act(() => {
+    otherWindowWrites(scope, "solo:new-project", "other");
+    otherWindowWrites(scope, "solo:settings", { name: "" });
+  });
+  // Other's defaults load for the start, as they would in the real window.
+  await act(async () => {});
+  expect(readView(scope, "solo:new-project", null)).toBe("other");
+  const send = async () => {
+    await user.type(screen.getByRole("textbox"), "Plan the week");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(started).toHaveBeenCalledOnce());
+    await waitFor(() => expect(f.saveCanvas).toHaveBeenCalledOnce());
+  };
+  return { f, user, send };
+}
+
+it("Saving Chat settings puts back the workspace they opened with, so the chat is filed with its own instructions", async () => {
+  const scope = "picked-elsewhere-then-saved";
+  const { f, user, send } = await pickedElsewhere(scope, "work");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Workspace: Work" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("work");
+  expect(readView(scope, "solo:settings", null)).toMatchObject({
+    canvas: "My own notes",
+  });
+  await send();
+  // The workspace the chat is filed in and the canvas it gets belong together.
+  expect(f.assign.mock.calls).toEqual([[expect.any(String), "work"]]);
+  expect(f.saveCanvas).toHaveBeenCalledWith(
+    expect.any(String),
+    "My own notes",
+    undefined,
+  );
+});
+
+it("Saving Chat settings opened with no workspace puts that back over another window's pick", async () => {
+  const scope = "picked-elsewhere-then-saved-without";
+  const { f, user, send } = await pickedElsewhere(scope, "");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("button", { name: "Add workspace" })).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("");
+  await send();
+  expect(f.assign).not.toHaveBeenCalled();
+  expect(f.saveCanvas).toHaveBeenCalledWith(
+    expect.any(String),
+    "My own notes",
+    undefined,
+  );
+});
+
+it("Cancelling Chat settings keeps the workspace another window picked, and its instructions", async () => {
+  const scope = "picked-elsewhere-then-cancelled";
+  const { f, user, send } = await pickedElsewhere(scope, "work");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Workspace: Other" }),
+  ).toBeVisible();
+  expect(readView(scope, "solo:new-project", null)).toBe("other");
+  expect(readView(scope, "solo:settings", null)).toEqual({ name: "" });
+  await send();
+  expect(f.assign.mock.calls).toEqual([[expect.any(String), "other"]]);
+  expect(f.saveCanvas).toHaveBeenCalledWith(
+    expect.any(String),
+    "other instructions",
+    undefined,
+  );
 });
 
 it("another window's saved instructions leave open Chat settings alone; its own Save wins", async () => {

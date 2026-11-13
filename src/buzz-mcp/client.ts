@@ -78,8 +78,6 @@ export type ThreadTabs = Readonly<{
   close(channel: string, root: string): "closed" | "missing" | "shown";
   /** An empty name restores the automatic title; false when it has no tab. */
   rename(channel: string, root: string, name: string): boolean;
-  /** A thread the agent deleted forgets its tab's saved name. */
-  forget(channel: string, root: string): void;
 }>;
 export type Memory = Readonly<{
   slug: string;

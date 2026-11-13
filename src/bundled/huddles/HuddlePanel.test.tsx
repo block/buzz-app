@@ -54,7 +54,6 @@ it("releases unsent files on close while retaining the saved panel text draft", 
       subscribe: () => () => {},
       observeDismiss: () => () => {},
       observeSend: () => () => {},
-      observeDelivered: () => () => {},
       ready: async () => {},
       send: () => {
         throw new Error("No send expected");

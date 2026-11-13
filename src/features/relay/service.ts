@@ -5,7 +5,6 @@ import type { IdentityNames } from "../identity-names/service";
 import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
-import { retainThreadTabNames } from "../messages/thread-tab-names";
 import { createHeadPersistence } from "./persistence";
 import {
   relayPartition,
@@ -364,8 +363,6 @@ export function provideRelay(
               transportOrigin(transport),
             ),
           });
-          // Before this session can send or confirm a recovered operation.
-          retainThreadTabNames(successor.session);
           await successor.restore();
           if (
             disposed ||

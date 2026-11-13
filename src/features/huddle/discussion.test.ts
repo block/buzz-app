@@ -60,7 +60,6 @@ function harness(room = "room", delivery: "failed" | "unknown" = "failed") {
       subscribe: () => () => {},
       observeDismiss: () => () => {},
       observeSend: () => () => {},
-      observeDelivered: () => () => {},
       supports: () => true,
       ready: async () => {},
       send: () => "id",

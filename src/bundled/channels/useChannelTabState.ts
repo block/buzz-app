@@ -8,10 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  readThreadTabName,
-  saveThreadTabName,
-} from "../../features/messages/thread-tab-names";
+import { readView, writeView } from "../../shared/view-state";
 import type { PanelOpening } from "../../features/panels/service";
 import type { ChannelDrawerOpening } from "./useChannelPanels";
 import {
@@ -249,9 +246,40 @@ const visitOwners = new Map<string, { channels: Record<string, Retirement> }>();
 const forgetVisits = (scope: string) => {
   visitOwners.delete(scope);
 };
-// Thread tab names persist in `thread-tab-names`, keyed by channel and root.
+// A thread tab's name lasts until the tab is closed, across channel switches
+// and restarts, unlike the layout: a thread's tab takes its name again when
+// it reopens. One record per account/community keeps the 256 newest names,
+// keyed `<channel>:<root>`, "" for a cleared one, oldest first. Leaving the
+// community clears it with its other view state.
 type ThreadTab = Extract<ConversationTab, { kind: "thread" }>;
+const NAMES = "tab-names";
+const MAX_NAMES = 256;
 const nameKey = (tab: ThreadTab) => `${tab.channelId}:${rootOfTab(tab)}`;
+const savedNames = (scope: string) => {
+  const names = readView<unknown>(scope, NAMES, undefined);
+  return new Map(
+    names && typeof names === "object" && !Array.isArray(names)
+      ? Object.entries(names)
+      : [],
+  );
+};
+/** A thread's saved name, "" once cleared, or undefined if never named. */
+const readThreadTabName = (scope: string, key: string) => {
+  const name = savedNames(scope).get(key);
+  return typeof name === "string" ? name : undefined;
+};
+/** Saves a name as the newest; undefined forgets it. */
+const saveThreadTabName = (
+  scope: string,
+  key: string,
+  name: string | undefined,
+) => {
+  const names = savedNames(scope);
+  const existed = names.delete(key);
+  if (name !== undefined) names.set(key, name);
+  if (existed || name !== undefined)
+    writeView(scope, NAMES, Object.fromEntries([...names].slice(-MAX_NAMES)));
+};
 function withSavedNames(scope: string, previous: State, next: State): State {
   if (next.tabs === previous.tabs) return next;
   let restored = false;
@@ -288,6 +316,18 @@ function withSavedNames(scope: string, previous: State, next: State): State {
     restored = true;
     return { ...tab, name };
   });
+  // A closed tab forgets its name, as does a provisional tab merged into its
+  // root's tab; another tab of the same thread keeps it.
+  const open = new Set(
+    next.tabs.flatMap((tab) => (tab.kind === "thread" ? [nameKey(tab)] : [])),
+  );
+  for (const tab of previous.tabs)
+    if (
+      tab.kind === "thread" &&
+      !next.tabs.some((item) => item.id === tab.id) &&
+      !open.has(nameKey(tab))
+    )
+      saveThreadTabName(scope, nameKey(tab), undefined);
   return restored ? { ...next, tabs } : next;
 }
 function createTabStore(scope?: string) {
@@ -347,11 +387,6 @@ function createTabStore(scope?: string) {
     /** A thread's saved name, "" once cleared, or undefined if never named. */
     savedName: (tab: ThreadTab) =>
       scope ? readThreadTabName(scope, nameKey(tab)) : undefined,
-    /** A provisional tab merged into its root's tab gives up its hint's name. */
-    forgetName(tab: ThreadTab, owner: ThreadTab) {
-      if (scope && !tab.rootId && nameKey(tab) !== nameKey(owner))
-        saveThreadTabName(scope, nameKey(tab), undefined);
-    },
     snapshot: () => channels,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -496,11 +531,6 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
         if (retained) store.prune(new Set(retained));
       }
       return "closed";
-    },
-    /** A thread an agent deleted forgets its tab's saved name. */
-    forget(channelId: string, rootId: string) {
-      if (session.viewer)
-        saveThreadTabName(session.scope, `${channelId}:${rootId}`, undefined);
     },
     /** Names thread `rootId`'s tab; an empty name restores its automatic
      * title. False when it has no tab there. */
@@ -760,8 +790,7 @@ export function useChannelTabState(
   // Once a reader verifies its root, a tab opened from a wrong hint merges
   // into the tab already holding that thread instead of duplicating it.
   const resolveThreadRoot = useCallback(
-    (id: string, rootId: string) => {
-      let dropped: [ThreadTab, ThreadTab] | undefined;
+    (id: string, rootId: string) =>
       update((previous) => {
         let state = previous;
         const tab = state.tabs.find((item) => item.id === id);
@@ -821,7 +850,6 @@ export function useChannelTabState(
         const merged = foreground
           ? { ...owner, messageId: tab.messageId, rootId, name }
           : { ...owner, name };
-        dropped = [tab, merged];
         const tabs = state.tabs
           .filter((item) => item !== tab)
           .map((item) => (item === owner ? merged : item));
@@ -849,9 +877,7 @@ export function useChannelTabState(
                 ? { mainSelected: undefined }
                 : {}),
             };
-      });
-      if (dropped) store.forgetName(...dropped);
-    },
+      }),
     [store, update],
   );
   const selectMain = useCallback(

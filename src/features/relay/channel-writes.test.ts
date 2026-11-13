@@ -715,7 +715,6 @@ function setup(
   const outbox: Outbox = {
     observeDismiss: () => () => {},
     observeSend: () => () => {},
-    observeDelivered: () => () => {},
     ready: async () => {},
     recovery: async () => undefined,
     recover: async () => {},
@@ -1326,7 +1325,6 @@ it.each([true, false])(
       const outbox: Outbox = {
         observeDismiss: () => () => {},
         observeSend: () => () => {},
-        observeDelivered: () => () => {},
         ready: async () => {},
         recovery: async () => undefined,
         recover: async () => {},

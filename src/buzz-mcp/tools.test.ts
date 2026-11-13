@@ -3458,7 +3458,6 @@ it("lists, opens and closes tabs for the working channel's threads", async () =>
     open: vi.fn(() => true),
     close: vi.fn((): "closed" | "missing" | "shown" => "shown"),
     rename: vi.fn(() => true),
-    forget: vi.fn(),
   };
   client.tabs = tabs;
   await expect(callTool(client, {}, "tabs", {})).rejects.toThrow(
@@ -4713,19 +4712,9 @@ it("deletes only the given message, one target per deletion", async () => {
     ],
   });
   const { client, published } = fake([mine, copy]);
-  const forget = vi.fn();
-  client.tabs = {
-    list: () => [],
-    open: () => false,
-    close: () => "missing",
-    rename: () => false,
-    forget,
-  };
   expect(
     await callTool(client, { channel: "chan" }, "delete", { id: nested }),
   ).toContain("deleted");
-  // The deleted thread's tab forgets its saved name.
-  expect(forget).toHaveBeenCalledWith("chan", nested);
   expect(published).toEqual([
     {
       kind: 5,

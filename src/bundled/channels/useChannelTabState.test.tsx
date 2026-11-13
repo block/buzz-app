@@ -1334,19 +1334,19 @@ test.each(["renamed", "cleared"] as const)(
 );
 
 test.each(["named", "cleared"] as const)(
-  "a closed provisional tab's name defers to its root's own %s name",
+  "a provisional tab left open across a restart defers to its root's own %s name",
   (root) => {
     const scope = crypto.randomUUID();
     const first = launch(scope, "page");
     act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
     first.rename("thread:alpha:hint", "Draft");
-    act(() => first.page.result.current.closeTabs(""));
     act(() => first.tabs.open("alpha", "r1"));
     first.rename("thread:alpha:r1", "Launch plan");
     if (root === "cleared") first.rename("thread:alpha:r1", "  ");
     const name = root === "named" ? "Launch plan" : undefined;
     first.page.unmount();
-    // An explicit close keeps the hint's name; its root's own name still wins.
+    // The hint's tab was never closed, so it keeps its name; its root's own
+    // name still wins.
     const second = launch(scope, "page");
     act(() => second.page.result.current.openThreadTab("alpha", "r2", "hint"));
     expect(second.page.result.current.tabs[0]).toMatchObject({ name: "Draft" });
@@ -1423,10 +1423,7 @@ test("a scope keeps its 256 newest tab names", () => {
     scope,
     "tab-names",
     Object.fromEntries(
-      Array.from({ length: 256 }, (_, index) => [
-        `alpha:old${index}`,
-        ["Old", 0],
-      ]),
+      Array.from({ length: 256 }, (_, index) => [`alpha:old${index}`, "Old"]),
     ),
   );
   const first = launch(scope);
@@ -1452,20 +1449,39 @@ test("a scope keeps its 256 newest tab names", () => {
   ]);
 });
 
-test("an agent's deleted thread forgets its tab name", () => {
-  const scope = crypto.randomUUID();
-  const first = launch(scope);
-  act(() => {
-    first.tabs.open("alpha", "r1");
-    first.tabs.open("alpha", "r2");
-  });
-  first.rename("thread:alpha:r1", "Launch plan");
-  first.rename("thread:alpha:r2", "Retro");
-  first.tabs.forget("alpha", "r1");
-  expect(readView(scope, "tab-names", {})).toEqual({
-    "alpha:r2": ["Retro", expect.any(Number)],
-  });
-});
+test.each(["page", "agent", "others"] as const)(
+  "closing a thread tab forgets its name (%s)",
+  (by) => {
+    const scope = crypto.randomUUID();
+    const first = launch(scope, "page");
+    act(() => {
+      first.tabs.open("alpha", "r1");
+      first.tabs.open("alpha", "r2");
+    });
+    first.rename("thread:alpha:r1", "Launch plan");
+    first.rename("thread:alpha:r2", "Retro");
+    act(() => {
+      if (by === "page")
+        first.page.result.current.setTabs((tabs) =>
+          tabs.filter((tab) => tab.id !== "thread:alpha:r1"),
+        );
+      else if (by === "agent") first.tabs.close("alpha", "r1");
+      else first.page.result.current.closeTabs("thread:alpha:r2");
+    });
+    expect(readView(scope, "tab-names", {})).toEqual({ "alpha:r2": "Retro" });
+    first.page.unmount();
+    // A restart is not a close: the open tab's name comes back.
+    const second = launch(scope);
+    act(() => {
+      second.tabs.open("alpha", "r1");
+      second.tabs.open("alpha", "r2");
+    });
+    expect(second.tabs.list("alpha")).toMatchObject([
+      { root: "r1", name: undefined },
+      { root: "r2", name: "Retro" },
+    ]);
+  },
+);
 
 test("sessions without a viewer keep tab names in memory only", () => {
   const session = tabSession();

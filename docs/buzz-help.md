@@ -896,11 +896,11 @@ and are asked to sign in again in Buzz.
   until you close it. Reloading Buzz does not restore it. The Terminal drawer
   closes when you leave the conversation.
 - **Renamed thread tabs**: a name you or an agent give a thread tab is saved on
-  this device for the account and community. The thread's tab shows it again
-  whenever it reopens, including after quitting or updating Buzz. Clearing the
-  name restores the automatic title. Buzz keeps the 256 most recently renamed
-  threads per account and community, and forgets a name when its thread or
-  channel is deleted on this device, or when you leave the channel.
+  this device for the account and community until the tab is closed. The
+  thread's tab shows it again when it reopens after switching channels,
+  quitting or updating Buzz. Closing the tab or clearing the name restores the
+  automatic title. Buzz keeps the 256 most recently renamed threads per account
+  and community.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.

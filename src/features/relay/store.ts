@@ -535,8 +535,10 @@ export function createChannelStore(
           !channelRowKind(event.kind) ||
           ((floor === undefined || event.created_at >= floor) &&
             (state.ceiling === undefined || event.created_at < state.ceiling));
+      // Notices read beside a head wait for a page to land (see `adoptHead`).
+      const notices = state.floor === undefined ? [] : state.notices.values();
       const combined = new Map(
-        [...state.events, ...state.notices.values(), ...state.traffic.values()]
+        [...state.events, ...notices, ...state.traffic.values()]
           .filter(shown(more ? state.floor : undefined))
           .map((event) => [event.id, event as import("./events").EventData]),
       );
@@ -768,15 +770,29 @@ export function createChannelStore(
     setWindow(state, patchFromHead(head));
     // Notices that landed before the head show with it, and so do their names.
     keepNotices(state);
-    if (state.notices.size)
-      void fetchProfiles(state.snapshot.rows.filter((row) => row.membership));
+    nameNotices(state);
     void fillNotices(state, noticeHead);
+  }
+  /** Read the names of a window's shown notice rows, then save its head with
+   * them. */
+  function nameNotices(
+    state: WindowState,
+    rows = state.snapshot.rows.filter((row) => row.membership),
+  ) {
+    if (!rows.length) return;
+    void fetchProfiles(rows).then(() => {
+      const head = heads.peek(state.channelId);
+      if (head?.notices?.length && windows.get(state.channelId) === state)
+        save(state.channelId, head);
+    });
   }
   /** Keep the newest notices among a window's head rows with the head, so a
    * later adoption shows them with its rows. */
   function keepNotices(state: WindowState) {
     const head = heads.peek(state.channelId);
-    if (!head || head.events !== state.events) return;
+    // Notices are signed and immutable: those in the head's range belong to
+    // it, whichever read put the window's rows there.
+    if (!head || state.ceiling !== undefined) return;
     const floor = head.hasMore ? (head.cursor?.createdAt ?? 0) : 0;
     const notices = [...state.notices.values()]
       .filter((event) => event.created_at >= floor)
@@ -875,11 +891,12 @@ export function createChannelStore(
           state.noticeCursor = next;
         if (top) keepNotices(state);
         // Read beside the head, notices wait for its rows (see `adoptHead`).
-        if (state.snapshot.status !== "ready") continue;
+        if (state.floor === undefined) continue;
         setWindow(state, {});
         // The page's name read ran before these rows existed.
         const added = new Set(events.map((event) => event.id));
-        void fetchProfiles(
+        nameNotices(
+          state,
           state.snapshot.rows.filter((row) => added.has(row.id)),
         );
       }
@@ -4468,7 +4485,11 @@ export function createChannelStore(
       controllers.add(controller);
       try {
         const priority = current === channelId ? "foreground" : "background";
-        const head = await requestHead(channelId, priority);
+        const reading = requestHead(channelId, priority);
+        // Live replay covers minutes; notices from a longer drop come by read,
+        // beside the head rather than after it.
+        void fillNotices(retained, true);
+        const head = await reading;
         if (!valid())
           throw new DOMException("Stale live catch-up", "AbortError");
         retained.restored = false;
@@ -4501,8 +4522,8 @@ export function createChannelStore(
           throw new DOMException("Stale live catch-up", "AbortError");
         if (retained.atHead) moveCursor(retained, page.cursor);
         retained.kept = keptAfter();
-        // Live replay covers minutes; notices from a longer drop come by read.
-        void fillNotices(retained, true);
+        // The descent below the newest notices waits for the floor set here.
+        void fillNotices(retained, false);
         // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
@@ -4510,6 +4531,9 @@ export function createChannelStore(
           freshness: streamDrops === dropsAtStart ? "verified" : "cached",
           error: undefined,
         });
+        // Notices that landed before the head show with it (see `adoptHead`).
+        keepNotices(retained);
+        nameNotices(retained);
         return true;
       } catch (error) {
         if (!valid())

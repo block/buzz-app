@@ -1,4 +1,5 @@
 import { assert, expect, it, vi } from "vitest";
+import { ReadError } from "./errors";
 import { foldMessages } from "./fold";
 import { createRelaySession } from "./session";
 import {
@@ -537,6 +538,117 @@ it("saves a head's notices with it and restores only relay-signed ones", async (
     );
   } finally {
     second.dispose();
+  }
+});
+
+it("opens a channel over the established stream with its notices read beside the head, saved with their names", async () => {
+  let saved: SavedHead[] = [];
+  const disk: HeadPersistence = {
+    read: async () => saved,
+    write: async (record) => {
+      saved = [record];
+    },
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  let live!: LiveCallbacks;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { readStateFloor: () => 0, prepared: true, persistence: disk },
+  );
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    live.state({ status: "connected", routes: [] });
+    live.established("a");
+    await flush();
+    q.ensure("a");
+    await flush();
+    // The catch-up sends both reads before either answers.
+    const head = take(wire, isWindow);
+    const notices = take(wire, isNotices);
+    const joined = addition(pinky.pubkey, 21);
+    notices.respond([joined]);
+    await flush();
+    expect(q.window("a").rows).toEqual([]);
+    const hello = message(viewer, "a", "Hello", 20);
+    head.respond([hello, end()]);
+    await flush();
+    expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, joined.id]);
+    // Each name read answers only the names it asks for, so the joiner's name
+    // lands after the head's own save.
+    const names = new Map([
+      [viewer.pubkey, profile(viewer, { name: "Wes" })],
+      [pinky.pubkey, profile(pinky, { name: "Pinky" })],
+    ]);
+    for (let round = 0; round < 3; round++) {
+      for (const entry of wire.pending.splice(0))
+        entry.respond(
+          entry.filters.flatMap((filter) =>
+            isNames(filter)
+              ? (filter.authors ?? []).flatMap((id) => names.get(id) ?? [])
+              : [],
+          ),
+        );
+      await flush();
+    }
+    expect(saved[0]?.notices).toEqual([
+      expect.objectContaining({ id: joined.id }),
+    ]);
+    expect(saved[0]?.profiles).toContainEqual(
+      expect.objectContaining({ pubkey: pinky.pubkey, kind: 0 }),
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("leaves a failed head's window empty though its notices landed first", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const owner = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+  });
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    q.ensure("a");
+    await flush();
+    const head = take(wire, isWindow);
+    take(wire, isNotices).respond([addition(pinky.pubkey, 21)]);
+    await flush();
+    head.fail(new ReadError("unavailable", "head failed"));
+    await flush();
+    expect(q.window("a")).toMatchObject({ status: "error", rows: [] });
+  } finally {
+    owner.dispose();
   }
 });
 

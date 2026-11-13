@@ -509,7 +509,6 @@ export class ClaudeRuntime {
           key,
           route &&
             this.forward(
-              entry,
               agent.key,
               { route, turn: controlTurn(place, config(agent.config).scope) },
               signal,
@@ -708,9 +707,7 @@ export class ClaudeRuntime {
             sending: () => {
               sent = true;
             },
-            ...forwarded(
-              this.forward(entry, agent.key, gateway, accepted.signal),
-            ),
+            ...forwarded(this.forward(agent.key, gateway, accepted.signal)),
             // A mention's request shows its own; a wake's shows in Activity.
             ...(wake && gatewayFallback
               ? {
@@ -827,13 +824,7 @@ export class ClaudeRuntime {
     entry.team = team ?? "";
     const refused = await this.refusal(agent.key, delivery.synced?.effort);
     if (refused) return { ok: false, error: refused };
-    const forward = this.forward(
-      entry,
-      agent.key,
-      delivery.gateway,
-      signal,
-      true,
-    );
+    const forward = this.forward(agent.key, delivery.gateway, signal, true);
     const done = entry.sessions.runOnce(key, prompt, signal, forward);
     this.notify();
     return done.finally(() => this.notify());
@@ -845,7 +836,6 @@ export class ClaudeRuntime {
    * anything spawns; it never runs on Claude's own configuration instead,
    * and is never retried or replayed. */
   private forward(
-    entry: Entry,
     agent: AgentKey,
     gateway: Readonly<{ route: EligibleRoute; turn: TurnContext }> | undefined,
     signal: AbortSignal,
@@ -853,9 +843,10 @@ export class ClaudeRuntime {
   ): Forward | undefined {
     if (!gateway) return undefined;
     const open = async (session: string, saved: unknown) => {
+      // A protected agent forwards on its own protected launch: the gate,
+      // pinned release, containment and hooks are the same, and forwarding
+      // adds only the generation's URL and session (`sessions.ts` `start`).
       if (!this.forwarding) throw new Error(UNAVAILABLE);
-      // A protected run through the gateway is not yet proven to work.
-      if (entry.protected) throw new Error(FORWARDING_PROTECTED);
       const bound = bindSession(
         gateway.route,
         saved,
@@ -1252,7 +1243,5 @@ const controlTurn = (place: SessionPlace, scope: string): TurnContext =>
     message_id: null,
     thread_id: scope !== "channel" && isHex64(place.root) ? place.root : null,
   });
-const FORWARDING_PROTECTED =
-  "Protected agents can't run through the agent gateway yet, so this turn didn't run.";
 const forwarded = (forward: Forward | undefined) =>
   forward ? { forward } : {};

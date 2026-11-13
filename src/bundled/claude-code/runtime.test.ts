@@ -3255,33 +3255,75 @@ it("fails a gateway turn visibly once the route moved past its dispatch, running
   expect(f.claudes().flatMap((claude) => claude.prompts)).toEqual([]);
 });
 
-it("fails a protected agent's gateway turn visibly, never running it unforwarded", async () => {
+it("forwards a protected agent's gateway turn on its protected launch, reviews included", async () => {
   const g = gateway(enabled);
-  const f = setup([], { forwarding: g.forwarding, hold: true });
-  f.runtime.sync([
-    {
-      key: self,
-      pubkey: self,
-      config: DEFAULT_CONFIG,
-      protection: { provider: "test", policy: {} },
+  const f = setup([], {
+    forwarding: g.forwarding,
+    hold: true,
+    nativeHistory: [
+      { type: "user", message: { role: "user", content: "@Claude hi" } },
+    ],
+  });
+  const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
+  const protection = {
+    key: "policy",
+    stateKey: "revision",
+    processProtection: { readOnlyPaths: [], hiddenPaths: [] },
+    assertAvailable() {},
+    check,
+    spawn: async () => {
+      throw new Error("Unused protected runtime");
     },
-  ] as Agent[]);
-  await f.deliver(
-    { type: "mention", event: message("1", "@Claude hi") },
-    dispatched(),
+  };
+  await f.deliver({ type: "mention", event: message("1", "@Claude hi") }, {
+    ...dispatched(),
+    agent: { ...f.agent, protection } as unknown as Delivery["agent"],
+  } as Partial<Delivery>);
+  await vi.waitFor(() =>
+    expect(f.claudes().flatMap((claude) => claude.prompts)).toHaveLength(1),
   );
-  const results = await Promise.all(
-    f.workingUntil.mock.calls.map(([done]) => done),
+  expect(g.opens.map((open) => open.routeRevision)).toEqual([2]);
+  const worker = f.claudes().find((candidate) => candidate.prompts.length);
+  if (!worker) throw new Error("Claude did not start");
+  const args = worker.options.args ?? [];
+  // The forwarding URL rides on the protected launch, which reads no
+  // settings files.
+  expect(args[args.indexOf("--settings") + 1]).toContain(
+    "http://127.0.0.1:9/h",
   );
-  expect(results).toEqual([
-    expect.objectContaining({
-      ok: false,
-      error:
-        "Protected agents can't run through the agent gateway yet, so this turn didn't run.",
-    }),
-  ]);
-  expect(g.native.push).not.toHaveBeenCalled();
-  expect(f.claudes().flatMap((claude) => claude.prompts)).toEqual([]);
+  expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
+  expect(args).toContain("--strict-mcp-config");
+  try {
+    worker.emit({
+      type: "control_request",
+      request_id: "incoming-review",
+      request: {
+        subtype: "hook_callback",
+        callback_id: "security-incoming",
+        input: {
+          transcript_path: "/native/transcript",
+          hook_event_name: "UserPromptSubmit",
+          prompt: "@Claude hi",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(worker.received).toContainEqual(
+        expect.objectContaining({
+          type: "control_response",
+          response: expect.objectContaining({
+            request_id: "incoming-review",
+            subtype: "success",
+          }),
+        }),
+      ),
+    );
+    expect(check).toHaveBeenCalled();
+  } finally {
+    worker.finish();
+    await Promise.all(f.workingUntil.mock.calls.map(([done]) => done));
+    await f.runtime.retire(self);
+  }
 });
 
 it("runs a fallen-back turn on Claude's own configuration, opening nothing", async () => {

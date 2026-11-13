@@ -5,6 +5,8 @@ import type { Communities } from "./service";
 // stand aside while a save is running or after one has started.
 const generations = new WeakMap<Communities, number>();
 const running = new WeakMap<Communities, number>();
+// Background profile writes already handed to the writer and not yet settled.
+const background = new WeakMap<Communities, Set<Promise<unknown>>>();
 
 export function beginProfileSave(communities: Communities) {
   const generation = profileSaveGeneration(communities) + 1;
@@ -37,4 +39,29 @@ export function profileSavedSince(
     profileSaveGeneration(communities) !== generation ||
     (running.get(communities) ?? 0) > 0
   );
+}
+
+/** Records a background profile write that has been handed to the writer, so
+ * a save can wait for it and then read what it published. */
+export function trackBackgroundProfileWrite(
+  communities: Communities,
+  write: Promise<unknown>,
+) {
+  const writes = background.get(communities) ?? new Set<Promise<unknown>>();
+  background.set(communities, writes);
+  const settled = write.then(
+    () => {},
+    () => {},
+  );
+  writes.add(settled);
+  void settled.then(() => writes.delete(settled));
+}
+
+/** Settles once every unsettled background profile write has; undefined when
+ * there is none, so a save need not wait at all. */
+export function backgroundProfileWrites(
+  communities: Communities,
+): Promise<unknown> | undefined {
+  const writes = background.get(communities);
+  return writes?.size ? Promise.all(writes) : undefined;
 }

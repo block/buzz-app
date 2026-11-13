@@ -1,6 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { profileFromEvent } from "../communities/api";
-import { beginProfileSave, endProfileSave } from "../communities/profile-saves";
+import {
+  backgroundProfileWrites,
+  beginProfileSave,
+  endProfileSave,
+} from "../communities/profile-saves";
 import type { Communities } from "../communities/service";
 import { newer, type EventData } from "../relay/events";
 import { keypair, profile } from "../relay/testing";
@@ -185,6 +189,48 @@ it("stands aside for a profile save that is running or started after it began", 
   release();
   expect(await started.shared).toBe(false);
   expect(started.publish).not.toHaveBeenCalled();
+});
+
+it("retries after a run abandoned during its strong read", async () => {
+  // The trigger restarts while the first run's strong read is in flight.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const events = [profile(viewer, { name: "Mic" })];
+  const controller = new AbortController();
+  const first = share(Promise.resolve(events), {
+    signal: controller.signal,
+    strong: async () => {
+      await held;
+      return events;
+    },
+  });
+  await vi.waitFor(() => expect(first.inspect).toHaveBeenCalled());
+  controller.abort();
+  const second = share(Promise.resolve(events));
+  release();
+  expect(await first.shared).toBe(false);
+  expect(await second.shared).toBe(true);
+  expect(first.publish).not.toHaveBeenCalled();
+  expect(second.publish).toHaveBeenCalledOnce();
+});
+
+it("lets a save wait for a write it has handed to the writer", async () => {
+  const communities = {} as Communities;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const { publish, shared } = share(
+    Promise.resolve([profile(viewer, { name: "Mic" })]),
+    { communities },
+  );
+  publish.mockImplementation(() => held);
+  await vi.waitFor(() => expect(publish).toHaveBeenCalled());
+  let settled = false;
+  void backgroundProfileWrites(communities)?.then(() => (settled = true));
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(settled).toBe(false);
+  release();
+  expect(await shared).toBe(true);
+  await vi.waitFor(() => expect(settled).toBe(true));
 });
 
 it("never creates a profile", async () => {

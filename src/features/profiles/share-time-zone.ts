@@ -2,6 +2,7 @@ import { profileFromEvent } from "../communities/api";
 import {
   profileSaveGeneration,
   profileSavedSince,
+  trackBackgroundProfileWrite,
 } from "../communities/profile-saves";
 import type { Communities, PersonalProfile } from "../communities/service";
 import { newer, type EventData } from "../relay/events";
@@ -21,6 +22,8 @@ export function withDeviceTimeZone(
 
 // Community and viewer pairs already settled this launch.
 const settled = new Set<string>();
+// The share in flight per pair; a replacement waits for it before checking.
+const running = new Map<string, Promise<boolean>>();
 
 type ProfileRead = ReturnType<typeof profileFromEvent>;
 
@@ -51,7 +54,25 @@ function shareable({ exists, existing, profile }: ProfileRead) {
  * write never renames anyone), and never while a profile save is running or
  * after one started. Resolves whether it published; a failed read leaves the
  * next fresh read to try. */
-export async function shareDeviceTimeZone({
+export function shareDeviceTimeZone(
+  options: Parameters<typeof attemptShare>[0],
+): Promise<boolean> {
+  const key = `${options.community}\n${options.viewer}`;
+  // A run abandoned mid-read releases the pair only when it settles, so the
+  // replacement checks after it.
+  const previous = running.get(key);
+  const current = (async () => {
+    await previous;
+    return attemptShare(options);
+  })();
+  running.set(key, current);
+  void current.finally(() => {
+    if (running.get(key) === current) running.delete(key);
+  });
+  return current;
+}
+
+async function attemptShare({
   community,
   viewer,
   communities,
@@ -112,7 +133,12 @@ export async function shareDeviceTimeZone({
   if (!shareable(current) || profileSavedSince(communities, saves))
     return false;
   try {
-    await publish(current.profile, withDeviceTimeZone(current.existing, zone));
+    const write = publish(
+      current.profile,
+      withDeviceTimeZone(current.existing, zone),
+    );
+    trackBackgroundProfileWrite(communities, write);
+    await write;
     return true;
   } catch {
     return false;
@@ -122,4 +148,5 @@ export async function shareDeviceTimeZone({
 /** Test seam: forget which communities were settled this launch. */
 export function resetSharedTimeZones() {
   settled.clear();
+  running.clear();
 }

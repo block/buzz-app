@@ -18,6 +18,7 @@ import type {
   Communities,
 } from "../features/communities/service";
 import * as communityApi from "../features/communities/api";
+import { trackBackgroundProfileWrite } from "../features/communities/profile-saves";
 import * as avatarUpload from "../features/profiles/avatar-upload";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { ProfileSettings } from "./ProfileSettings";
@@ -1154,4 +1155,61 @@ it("records clearing a shared time zone as an opt-out", async () => {
   );
   expect(await screen.findByText("Profile updated")).toBeVisible();
   expect(share).not.toBeChecked();
+});
+
+it("saves after a background write already handed to the writer, from what it published", async () => {
+  const inspect = vi.spyOn(communityApi, "inspectProfile").mockResolvedValue({
+    exists: true,
+    existing: { website: "https://example.test" },
+    profile: { name: "Community name", picture: "", about: "" },
+  });
+  const publish = vi
+    .spyOn(communityApi, "publishProfile")
+    .mockImplementation(async (_id, profile, existing) => {
+      inspect.mockResolvedValue({ exists: true, existing, profile });
+    });
+  const app = communities();
+  const user = userEvent.setup();
+  render(
+    <ProfileSettings
+      communities={app}
+      community={{ id: "community-id", name: "Acme" }}
+    />,
+    { wrapper: ToastProvider },
+  );
+  const share = await screen.findByRole("checkbox", {
+    name: "Show my local time on my profile",
+  });
+  await waitFor(() => expect(share).toBeChecked());
+  // Sharing by default has dispatched its write; the writer has not signed it.
+  const background = deferred();
+  trackBackgroundProfileWrite(
+    app,
+    background.promise.then(() =>
+      inspect.mockResolvedValue({
+        exists: true,
+        existing: { website: "https://example.test", tz: device },
+        profile: { name: "Community name", picture: "", about: "" },
+      }),
+    ),
+  );
+  await user.click(share);
+  await user.type(
+    screen.getByLabelText("Profile description (optional)"),
+    "New bio",
+  );
+  const reads = inspect.mock.calls.length;
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await act(async () => {});
+  expect(inspect).toHaveBeenCalledTimes(reads);
+  expect(publish).not.toHaveBeenCalled();
+  await act(async () => background.resolve());
+  await waitFor(() =>
+    expect(publish).toHaveBeenCalledWith(
+      "community-id",
+      { name: "Community name", picture: "", about: "New bio" },
+      { website: "https://example.test", tz: "" },
+    ),
+  );
+  expect(await screen.findByText("Profile updated")).toBeVisible();
 });

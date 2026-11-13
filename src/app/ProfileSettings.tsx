@@ -30,6 +30,7 @@ import {
 } from "../features/communities/ProfileFields";
 import * as communityApi from "../features/communities/api";
 import {
+  backgroundProfileWrites,
   beginProfileSave,
   endProfileSave,
   isCurrentProfileSave,
@@ -399,6 +400,11 @@ export function ProfileSettings({
                     void (async () => {
                       try {
                         if (community && loaded) {
+                          // A background write already handed to the writer
+                          // would land after this save; read after it instead.
+                          const background =
+                            backgroundProfileWrites(communities);
+                          if (background) await background;
                           // Preserve fields outside this editor even if another client edited them.
                           const latest = await inspect(community.id);
                           if (!mounted.current) return;

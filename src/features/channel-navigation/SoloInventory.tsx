@@ -1,4 +1,5 @@
 import { useSoloRowActivation } from "./useSoloRowActivation";
+import { useIsPresent } from "motion/react";
 import type { ComposeWorkspaces } from "./WorkspaceComposition";
 import { useSoloNavigation } from "./solo-navigation-react";
 import { soloNavigationFor } from "./solo-navigation";
@@ -457,9 +458,10 @@ function SoloConversationRow({
   | "onOpenAgentActivity"
 >) {
   const selectRef = useRef<HTMLButtonElement>(null);
+  const present = useIsPresent();
   useLayoutEffect(() => {
     const button = selectRef.current;
-    if (!button) return;
+    if (!button || !present) return;
     const document = button.ownerDocument;
     const sidebar = button.closest("nav");
     const panel = button.closest<HTMLElement>("[data-solo-project]");
@@ -504,7 +506,7 @@ function SoloConversationRow({
         }
       });
     };
-  }, [id]);
+  }, [id, present]);
   const activation = useSoloRowActivation(
     navigation,
     pendingClick,

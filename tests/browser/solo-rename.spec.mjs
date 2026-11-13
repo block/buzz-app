@@ -496,6 +496,46 @@ test("live conversion removes the old editor and permits renaming another Solo c
   await input(page).press("Escape");
 });
 
+// Native inert focus loss and the handoff across the presence exit require a
+// browser. Reuse one app for both motion preferences and the no-steal guard.
+test("passive conversion hands off row focus without stealing it elsewhere", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await newChat(page);
+  await row(page, beta).click();
+  await expect(composer(page)).toBeVisible();
+  await expect.poll(() => app.relay.hasRoute("primary", alpha)).toBe(true);
+  const metadata = [
+    ["name", "Alpha"],
+    ["about", ""],
+    ["t", "stream"],
+    ["private"],
+    ["P", app.viewer],
+  ];
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    await page.emulateMedia({ reducedMotion });
+    for (const movedElsewhere of [false, true]) {
+      await test.step(`${reducedMotion}, focus moved: ${movedElsewhere}`, async () => {
+        app.setChannelMetadata(alpha, [...metadata, ["t", "buzz.solo"]]);
+        await expect(row(page, alpha)).toBeVisible();
+        await animationsSettled(sidebar(page), { subtree: true });
+        await row(page, alpha).focus();
+        await expect(row(page, alpha)).toBeFocused();
+        await expect(row(page, beta)).toHaveAttribute("aria-current", "page");
+        if (movedElsewhere) await composer(page).focus();
+        app.setChannelMetadata(alpha, metadata);
+        await expect(rowCopies(page, alpha)).toHaveCount(0);
+        await expect(
+          movedElsewhere ? composer(page) : row(page, beta),
+        ).toBeFocused();
+        await expect(row(page, beta)).toHaveAttribute("aria-current", "page");
+      });
+    }
+  }
+});
+
 // A DOM emulator cannot establish Collapsible's real hide/unmount transition
 // while the production signer owns a pending save.
 test("collapsing a workspace waits for its rename save before hiding the editor", async ({

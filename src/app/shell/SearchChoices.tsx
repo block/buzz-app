@@ -229,10 +229,12 @@ export function SearchChoices({
   const palette = useRef<HTMLDivElement>(null);
   const resultsViewport = useRef<HTMLDivElement>(null);
   const resultsContent = useRef<HTMLDivElement>(null);
+  // Peek fills its dialog; only a palette sized by its results eases height.
+  const fills = !!peek;
   useLayoutEffect(() => {
     const viewport = resultsViewport.current;
     const content = resultsContent.current;
-    if (!viewport || !content) return;
+    if (!viewport || !content || fills) return;
     let initialized = false;
     let frame = 0;
     const measure = () => {
@@ -252,7 +254,7 @@ export function SearchChoices({
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [fills]);
   const needle = query.trim().toLowerCase();
   const score = (group: SearchGroup) =>
     group.rank ??
@@ -1144,7 +1146,7 @@ export function SearchChoices({
       {footer && <div className="search-palette-footer">{footer}</div>}
       {peek?.ranked && (
         <div
-          className="search-peek-keys text-body-sm text-subtle"
+          className="search-peek-keys text-caption text-subtle"
           aria-hidden="true"
         >
           <span>

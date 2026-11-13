@@ -288,7 +288,9 @@ export function PageSearch({
         motion="default"
         dismissOnOutsideClick
         presentation="search"
-        size="expanded"
+        size="wide"
+        height="stable-tall"
+        bodyLayout="flex"
         initialFocus={input}
         finalFocus={() =>
           returnFocus.current?.id === "main-content"

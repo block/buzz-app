@@ -240,12 +240,12 @@
 @layer components {
   /* Peek: results beside a preview of the highlighted row and a rail of
      their groups. Narrow palettes keep the single column. The results fill
-     the dialog's height, less the field, hints and key line. */
+     what the field, hints, footer and key line leave of the dialog. */
   .search-palette[data-search-peek] {
-    --search-palette-results-max: calc(
-      var(--dialog-available-height) -
-      14.5rem
-    );
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
   }
   /* Each kind of result keeps one hue, from the palette's soft fill and its
      readable ink, so a group reads at a glance. Pages and messages stay
@@ -375,47 +375,41 @@
   .search-peek-body {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(17rem, 24rem);
+    grid-template-rows: minmax(0, 1fr);
     gap: var(--space-3);
     align-items: stretch;
   }
+  .search-peek-body,
+  .search-palette[data-search-peek] .search-palette-height,
   .search-palette[data-search-peek] .search-palette-scroll {
-    min-height: var(--search-palette-results-max);
+    flex: 1;
+    min-height: 0;
+    max-height: none;
   }
+  .search-palette[data-search-peek] .search-palette-height {
+    display: flex;
+    flex-direction: column;
+  }
+  /* Ends where the results' last row does, clear of the key line. */
   .search-peek-side {
-    /* The rail's heading and five rows, or less than half the side with
-       enlarged text. The preview keeps the rest whatever groups arrive, and
-       a longer rail scrolls. */
-    --search-peek-rail-room: min(
-      calc(
-        6 *
-        var(--text-body-sm) *
-        var(--text-body-sm--line-height) +
-        var(--space-1) +
-        5 *
-        (2 * var(--space-2) + var(--space-half))
-      ),
-      calc(0.45 * var(--search-palette-results-max))
-    );
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
     min-width: 0;
-    max-height: calc(var(--search-palette-results-max) + var(--space-2));
+    min-height: 0;
     margin-top: var(--space-2);
+    padding-bottom: var(--space-3);
   }
 
-  /* The preview: concentric with the rows beside it. */
+  /* The preview: concentric with the rows beside it, and inset like them.
+     It keeps what the rail leaves, whatever groups arrive. */
   .search-peek-preview {
-    flex: none;
-    height: calc(
-      var(--search-palette-results-max) -
-      var(--space-4) -
-      var(--search-peek-rail-room)
-    );
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     border: 1px solid var(--border-standard);
     border-radius: var(--radius-control);
-    padding: var(--space-4);
+    padding: var(--space-3);
   }
   .search-peek-card {
     display: flex;
@@ -489,10 +483,20 @@
     font-size: var(--text-body-sm);
   }
 
-  /* The rail of groups. */
+  /* The rail of groups: its heading and five rows, or less than half the
+     side with enlarged text. A longer rail scrolls. */
   .search-peek-rail {
     display: flex;
-    flex: 1 1 auto;
+    flex: none;
+    height: calc(
+      6 *
+      var(--text-body-sm) *
+      var(--text-body-sm--line-height) +
+      var(--space-1) +
+      5 *
+      (2 * var(--space-2) + var(--space-half))
+    );
+    max-height: 45%;
     flex-direction: column;
     gap: var(--space-half);
     min-height: 0;
@@ -557,7 +561,8 @@
     gap: var(--space-2);
     min-height: calc(var(--space-6) + var(--space-1));
     margin-top: var(--space-2);
-    padding-inline: var(--space-control-inset);
+    /* Chip edges line up with the typed text and the rows' icons. */
+    padding-inline: var(--space-3);
   }
   .search-peek-hint {
     display: inline-flex;
@@ -628,7 +633,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-4);
-    padding: var(--space-3) var(--space-control-inset) 0;
+    padding: var(--space-3);
     border-top: 1px solid var(--border-standard);
   }
   .search-peek-keys kbd,
@@ -646,7 +651,8 @@
   }
   @media (max-width: 760px) {
     .search-peek-body {
-      display: block;
+      display: flex;
+      flex-direction: column;
     }
     .search-peek-side,
     .search-peek-keys {

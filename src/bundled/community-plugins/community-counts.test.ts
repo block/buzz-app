@@ -169,6 +169,66 @@ it("lets any member create the channel, once per session", async () => {
   });
 });
 
+it("doesn't hand a second reader the first reader's aborted lookup", async () => {
+  const channel = {
+    id: "00000000-0000-4000-8000-000000000001",
+    channelType: "system",
+    visibility: "open",
+    private: false,
+    archived: false,
+  };
+  const session = {
+    viewer: alice,
+    relayAuthor: "9".repeat(64),
+    channelLifecycle: { available: true },
+    configArtifactWriter: {},
+    snapshotRead: async () => [],
+    channels: {
+      findSystemLabeled: (
+        _label: string,
+        { signal }: { signal?: AbortSignal },
+      ) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => resolve([channel]), 20);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    },
+    channelCreation: { create: async () => {} },
+  } as never;
+  const first = new AbortController();
+  const one = readCounts(session, first.signal).then(
+    () => "resolved",
+    (error: Error) => error.name,
+  );
+  await Promise.resolve();
+  first.abort();
+  const second = await readCounts(session, new AbortController().signal);
+  expect(second.channel).toBe(channel.id);
+  await expect(one).resolves.toBe("AbortError");
+});
+
+it("looks for the channel again once a lookup has settled", async () => {
+  const member = fakeCommunity({ viewer: carol });
+  await ensureChannel(member.session);
+  const lookups = (
+    member.session as unknown as {
+      channels: { findSystemLabeled: (...args: unknown[]) => unknown };
+    }
+  ).channels;
+  const original = lookups.findSystemLabeled;
+  let calls = 0;
+  lookups.findSystemLabeled = (...args: unknown[]) => {
+    calls += 1;
+    return original(...args);
+  };
+  await ensureChannel(member.session);
+  expect(calls).toBe(1);
+  expect(member.create).toHaveBeenCalledTimes(1);
+});
+
 it("degrades quietly without system channels or artifacts", async () => {
   const community = fakeCommunity();
   const session = community.session as unknown as {

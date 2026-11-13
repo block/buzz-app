@@ -175,17 +175,31 @@ export async function findChannel(
 
 const ensuring = new WeakMap<RelaySession, Promise<ChannelSummary>>();
 
+const until = <T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> =>
+  !signal
+    ? promise
+    : new Promise((resolve, reject) => {
+        if (signal.aborted) return reject(signal.reason);
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        promise
+          .then(resolve, reject)
+          .finally(() => signal.removeEventListener("abort", abort));
+      });
+
 /** Finds the channel, creating it when a complete lookup found none. Any
  * member may; concurrent creators each make one and every client then uses
- * the oldest. */
+ * the oldest. Concurrent callers share one lookup, so no caller's signal
+ * cancels it; a caller only stops waiting on its own abort. A later call looks
+ * again, so an archived channel's successor is found without a reload. */
 export function ensureChannel(
   session: RelaySession,
   signal?: AbortSignal,
 ): Promise<ChannelSummary> {
   const pending = ensuring.get(session);
-  if (pending) return pending;
+  if (pending) return until(pending, signal);
   const run = (async () => {
-    const existing = await findChannel(session, signal);
+    const existing = await findChannel(session);
     if (existing) return existing;
     await session.channelCreation.create({
       name: "Community plugins",
@@ -194,16 +208,17 @@ export function ensureChannel(
       labels: [MARKETPLACE_LABEL],
       system: true,
     });
-    const created = await findChannel(session, signal);
+    const created = await findChannel(session);
     if (!created)
       throw new Error("The new Community plugins channel isn't readable yet.");
     return created;
   })();
   ensuring.set(session, run);
-  run.catch(() => {
+  const settle = () => {
     if (ensuring.get(session) === run) ensuring.delete(session);
-  });
-  return run;
+  };
+  run.then(settle, settle);
+  return until(run, signal);
 }
 
 async function readAll(

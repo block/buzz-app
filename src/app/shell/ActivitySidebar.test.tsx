@@ -479,14 +479,14 @@ test.each([
       ).toHaveAttribute("data-state", "working");
     } else {
       expect(
-        screen.getByText("No agent is working right now."),
+        screen.getByText("No agent is working right now"),
       ).toBeInTheDocument();
     }
     await userEvent.click(screen.getByRole("tab", { name: "Waiting" }));
     expect(rowNames()).toEqual(waitingRows);
     if (!waitingRows.length)
       expect(
-        screen.getByText("Nothing is waiting on you."),
+        screen.getByText("Nothing is waiting on you"),
       ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "All" }));
     expect(rowNames()).toEqual(["dm", "old", "solo", "new"]);

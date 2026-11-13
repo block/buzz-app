@@ -1016,6 +1016,10 @@ and are asked to sign in again in Buzz.
 - **Team card**: Activity, Threads, DMs, Mentions, and Channels each show an unread count.
   Drafts & sent and anything you move into Team appear below them. The **Team**
   heading opens the full conversation list.
+  Opening Team this way selects no conversation: the main panel says
+  **No conversation selected** until you pick a row, and **+** starts a new
+  message. A view with nothing to show says so; with **Unread only** on, it says
+  **All caught up**.
   People and one-to-one DM avatars in sidebar cards show online, away, or offline
   presence when known; channels and group chats do not show a single presence dot.
   **Open Solo** shows an unread dot and unread text styling when

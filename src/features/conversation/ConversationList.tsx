@@ -50,6 +50,7 @@ import {
   ClockIcon,
   SmileyIcon,
 } from "../../shared/design-system/icons/index";
+import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { HeaderIcon } from "../../shared/design-system/ui/HeaderIcon";
 import { Header } from "../../shared/design-system/ui/Header";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
@@ -941,20 +942,29 @@ export function ConversationList({
       </ul>
       {list.status === "ready" &&
         !shownEvents.length &&
-        (flat || !channels.length) && (
-          <p className={`text-body-sm text-subtle ${styles.empty}`}>
-            {filter === "threads"
-              ? "No thread activity yet."
-              : filter === "dms"
-                ? "No DMs yet."
-                : filter === "mentions"
-                  ? "No mentions yet."
-                  : filter === "working"
-                    ? "No agent is working right now."
-                    : filter === "waiting"
-                      ? "Nothing is waiting on you."
-                      : "Nothing here yet."}
-          </p>
+        (flat || mentions || !sorted.length) && (
+          <EmptyState
+            frame="none"
+            icon={conversationViews.find((item) => item.value === filter)?.icon}
+            title={
+              unreadOnly
+                ? "All caught up"
+                : filter === "threads"
+                  ? "No thread activity yet"
+                  : filter === "dms"
+                    ? "No DMs yet"
+                    : filter === "mentions"
+                      ? "No mentions yet"
+                      : filter === "working"
+                        ? "No agent is working right now"
+                        : filter === "waiting"
+                          ? "Nothing is waiting on you"
+                          : "Nothing here yet"
+            }
+            description={
+              unreadOnly ? "Nothing unread in this view." : undefined
+            }
+          />
         )}
     </div>
   );

@@ -37,6 +37,17 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
     "true",
   );
 
+  // Nothing is selected: the reader says so instead of starting a message.
+  await expect(
+    page.getByRole("heading", { name: "No conversation selected" }),
+  ).toBeVisible();
+  await expect(page.getByText("New message", { exact: true })).toHaveCount(0);
+  // A view with nothing in it says so.
+  await card.locator('[data-rail-team-view="mentions"]').click();
+  await expect(
+    index.getByRole("heading", { name: "No mentions yet" }),
+  ).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("team-empty.png") });
   await card.locator('[data-rail-team-view="dms"]').click();
   await expect(alpha).toHaveCount(0);
   await channels.click();

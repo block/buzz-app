@@ -10,6 +10,7 @@ import {
   linkedDraftKey,
 } from "../../features/solo/linked-chat";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
+import { NoConversationSelected } from "../../features/conversation/NoConversationSelected";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import {
@@ -381,8 +382,8 @@ function ChannelWorkspace({
   const draftTarget = navigation?.target;
   const draftRoute =
     draftTarget?.kind === "page" ? draftTarget.route?.params : undefined;
-  // A section's own address has no conversation: it shows that section's
-  // draft, Solo's for Solo and Team's for every other one.
+  // A section's own address has no conversation: Solo's shows its draft, and
+  // every other one says nothing is selected beside its list.
   const home =
     draftTarget?.kind !== "page"
       ? undefined
@@ -391,11 +392,14 @@ function ChannelWorkspace({
         : isSidebarSectionRoute(draftRoute)
           ? draftRoute.section
           : undefined;
-  const composingTeam = draftRoute === "compose" || (!!home && home !== "solo");
+  const composingTeam = draftRoute === "compose";
+  const unselected = !!home && home !== "solo";
   // A section's address is a place to come back to, drafted or not; a draft
   // opened on its own is a Back stop only once it holds something.
   const draftVisit = home ? undefined : navigation;
-  const composingMessage = composingTeam || draftRoute === "new-message";
+  // Neither a draft nor a section's own address has a conversation to read.
+  const composingMessage =
+    composingTeam || unselected || draftRoute === "new-message";
   const draft = useMemo(
     () =>
       draftTarget?.kind !== "page"
@@ -2328,7 +2332,18 @@ function ChannelWorkspace({
               navigation={listToggle}
             />
           )}
-          {composingMessage ? (
+          {unselected ? (
+            <>
+              <PanelHeader
+                variant="conversation"
+                title={null}
+                navigation={listToggle}
+              />
+              <div className={styles.unselected}>
+                <NoConversationSelected />
+              </div>
+            </>
+          ) : composingMessage ? (
             <LiveNewMessage
               {...(composingTeam && {
                 layout: "page" as const,

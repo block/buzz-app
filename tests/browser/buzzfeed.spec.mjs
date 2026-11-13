@@ -455,8 +455,8 @@ test("Activity is the landing page and opens a composer sheet over its feed", as
   await newEditor.fill("");
   for (const [view, empty] of [
     ["Direct", undefined],
-    ["Working", "No agent is working right now."],
-    ["Waiting", "Nothing is waiting on you."],
+    ["Working", "No agent is working right now"],
+    ["Waiting", "Nothing is waiting on you"],
   ]) {
     await selectView(view);
     if (empty)

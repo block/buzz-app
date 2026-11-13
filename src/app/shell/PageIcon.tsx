@@ -49,15 +49,28 @@ const declared = (element: Element, property: string) =>
     .trim()
     .toLowerCase();
 
+const shape = /^(path|rect|circle|ellipse|polygon|polyline|text)$/;
+const black = /^(black|#000|#000000)$/;
+
+/** A shape with no fill of its own or from a parent is filled black. */
+function inheritedFill(element: Element | null): string {
+  for (; element; element = element.parentElement) {
+    const fill = declared(element, "fill");
+    if (fill) return fill;
+  }
+  return "black";
+}
+
 function oneColour(elements: readonly Element[]) {
   const paints = new Set<string>();
+  const add = (paint: string) => {
+    if (paint && paint !== "none" && paint !== "transparent")
+      paints.add(black.test(paint) ? "black" : paint);
+  };
   for (const element of elements) {
     if (multiPaint.test(element.localName)) return false;
-    for (const kind of paintKinds) {
-      const paint = declared(element, kind);
-      if (paint && paint !== "none" && paint !== "transparent")
-        paints.add(paint);
-    }
+    for (const kind of paintKinds) add(declared(element, kind));
+    if (shape.test(element.localName)) add(inheritedFill(element));
   }
   return paints.size <= 1;
 }

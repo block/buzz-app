@@ -2098,7 +2098,7 @@ designer choices, with no size-to-stroke or selection-to-fill rules. Existing bo
 uses have `strokeWidth={2.5}`; video play/pause controls use explicit filled icons.
 Plugin icons take their host surface's stroke so each set reads as one: a
 one-colour or `currentColor` SVG page image draws as a text-colour mask at the
-page navigation's 2.5, and inline SVG icons in channel launchers use 2.
+page navigation's 2.5, and inline SVG icons in installed plugins' channel launchers use 2.
 Keep the public gateway names stable. For chat and conversation metaphors, use
 `ChatCircleIcon` / `ChatsCircleIcon` (Tabler’s MessageCircle / Messages), choosing
 the variant that matches the meaning. Keep accessible names on controls and

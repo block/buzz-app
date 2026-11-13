@@ -15,6 +15,7 @@ import type {
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
+import { bundledContribution } from "../../plugins/provenance";
 import {
   type ChannelDrawerOpening,
   useChannelPanels,
@@ -429,4 +430,40 @@ it("keeps the huddle last, with the linked PR just before it, regardless of regi
   expect(
     screen.getAllByRole("button").map((button) => button.textContent),
   ).toEqual(["other/tool", "buzz.github/object", "buzz.huddles/huddles"]);
+});
+
+it("sets installed plugin launchers apart so the row's stroke reaches only them", () => {
+  const available = ["buzz.terminal/terminal", "other/tool"].map((key) => ({
+    key,
+    id: key,
+    pluginId: key,
+    revision: "1",
+    title: key,
+    matches: () => false,
+    component: () => null,
+    channelLauncher: () => <button type="button">{key}</button>,
+  }));
+  bundledContribution(available[0] as object);
+  const panels: Panels = {
+    snapshot: () => available,
+    subscribe: () => () => {},
+    register: () => {},
+    resolve: () => undefined,
+    requestOpen: () => false,
+    handleOpenRequests: () => () => {},
+  };
+  function Harness() {
+    return useChannelPanels(panels, {
+      scope: "scope",
+      viewer: "viewer",
+      channelId: "solo",
+      channelName: "Solo",
+      relayUrl: "wss://example.com",
+    }).launchers;
+  }
+  render(<Harness />);
+  const wrapper = (name: string) =>
+    screen.getByRole("button", { name }).parentElement?.localName;
+  expect(wrapper("buzz.terminal/terminal")).toBe("div");
+  expect(wrapper("other/tool")).toBe("span");
 });

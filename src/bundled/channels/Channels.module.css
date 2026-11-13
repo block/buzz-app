@@ -940,9 +940,12 @@ details:not([open]) > summary .sectionChevron {
   margin-left: auto;
   gap: var(--space-1h);
 }
-/* Plugins draw their own launcher icons; the host's stroke keeps the row a set. */
-.channelLaunchers [class~="buzz-button-label"] svg,
-.channelLaunchers [class~="buzz-button-label"] svg * {
+/* Installed plugins draw their own launcher icons; the host's stroke keeps the row a set. */
+.pluginLauncher {
+  display: contents;
+}
+.pluginLauncher [class~="buzz-button-label"] svg,
+.pluginLauncher [class~="buzz-button-label"] svg * {
   /* biome-ignore lint/complexity/noImportantStyles: Plugin icons may set an inline stroke-width. */
   stroke-width: 2 !important;
 }

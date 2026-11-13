@@ -165,13 +165,17 @@ it("masks one-colour SVGs at the host stroke and leaves other images alone", () 
     '<svg xmlns="http://www.w3.org/2000/svg" fill="#333"><path opacity="0.4" d="M1 1h9"/><path d="M1 5h9"/></svg>',
   );
   expect(decoded(glyphMask(duotone, 2.5))).toContain('opacity="0.4"');
-  const accented = `data:image/svg+xml;base64,${btoa(String.fromCharCode(...new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" stroke="#333"><title>café</title><path d="M1 1h9"/></svg>')))}`;
+  const accented = `data:image/svg+xml;base64,${btoa(String.fromCharCode(...new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" stroke="#333" fill="none"><title>café</title><path d="M1 1h9"/></svg>')))}`;
   expect(decoded(glyphMask(accented, 2.5))).toContain("café");
   // Without a stroke width only currentColor SVGs are masked, unchanged.
   expect(glyphMask(grey)).toBeUndefined();
   expect(glyphMask(bag)).toBe(bag);
   // Unpainted shapes fill black: still one colour.
   expect(glyphMask(owl, 2.5)).toContain("data:image/svg+xml");
+  const filled = svgImage(
+    '<svg xmlns="http://www.w3.org/2000/svg" fill="#555"><path d="M1 1h9v9z"/></svg>',
+  );
+  expect(glyphMask(filled, 2.5)).toContain("data:image/svg+xml");
   expect(glyphMask(bag, 2.5)).toContain("stroke-width%3D%222.5%22");
 
   const twoColours = svgImage(
@@ -183,7 +187,18 @@ it("masks one-colour SVGs at the host stroke and leaves other images alone", () 
   const styled = svgImage(
     '<svg xmlns="http://www.w3.org/2000/svg" stroke="#000"><style>.b{fill:red}</style><path class="b"/></svg>',
   );
-  for (const image of [twoColours, gradient, styled, fox, svgImage("<svg")])
+  // A white cut-out on a default-black shape would flatten under a mask.
+  const knockout = svgImage(
+    '<svg xmlns="http://www.w3.org/2000/svg"><path d="M1 1h9v9z"/><path fill="#fff" d="M3 3h2v2z"/></svg>',
+  );
+  for (const image of [
+    twoColours,
+    gradient,
+    styled,
+    knockout,
+    fox,
+    svgImage("<svg"),
+  ])
     expect(glyphMask(image, 2.5)).toBeUndefined();
 });
 

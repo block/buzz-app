@@ -104,15 +104,13 @@ function setup(
     if (!profile) throw new Error("Unknown fixture community");
     return profile;
   });
-  vi.mocked(api.publishProfile).mockImplementation(
-    async (id, profile, existing) => {
-      profiles.set(id, {
-        profile: { ...profile, name: profile.name.trim() },
-        existing: { ...existing, ...profile },
-        exists: true,
-      });
-    },
-  );
+  vi.mocked(api.publishProfile).mockImplementation(async (id, profile) => {
+    profiles.set(id, {
+      profile: { ...profile, name: profile.name.trim() },
+      existing: { ...profiles.get(id)?.existing, ...profile },
+      exists: true,
+    });
+  });
   function CapturedProfile() {
     const client = useSyncExternalStore(
       communities.subscribe,
@@ -152,21 +150,14 @@ it("edits the existing selected community without another destination control an
       "Update this community’s profile. Other community profiles stay unchanged.",
     ),
   ).toBeInTheDocument();
-  vi.mocked(api.inspectProfile).mockResolvedValueOnce({
-    ...original("Alpha human"),
-    existing: {
-      ...original("Alpha human").existing,
-      website: "https://new.example",
-    },
-  });
   save();
   await screen.findByText("Profile updated");
-  expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(
-    a,
-    { name: "Changed", picture: "", about: "Keep this" },
-    { ...original("Alpha human").existing, website: "https://new.example" },
-  );
-  expect(api.inspectProfile).toHaveBeenCalledTimes(3);
+  expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(a, {
+    name: "Changed",
+    picture: "",
+    about: "Keep this",
+  });
+  expect(api.inspectProfile).toHaveBeenCalledTimes(2);
   expect(fixture.saveProfile).toHaveBeenCalledWith({
     name: "Changed",
     picture: "",
@@ -174,28 +165,38 @@ it("edits the existing selected community without another destination control an
   });
 });
 
-it("switching during the pre-save read retires that save rather than publishing into either community", async () => {
+it("keeps Save busy while its directly dispatched publication is pending", async () => {
   const fixture = setup();
   await editName();
-  const late = deferred<ReturnType<typeof original>>();
-  vi.mocked(api.inspectProfile).mockReturnValueOnce(late.promise);
-  save();
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-busy",
-    "true",
-  );
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  fixture.select(b);
-  await screen.findByDisplayValue("Beta human");
-  await act(async () => {
-    late.resolve(original("Alpha human"));
+  const late = deferred<void>();
+  vi.mocked(api.publishProfile).mockImplementationOnce(async (id, profile) => {
     await late.promise;
+    fixture.profiles.set(id, {
+      profile,
+      existing: { ...profile },
+      exists: true,
+    });
   });
-  expect(api.publishProfile).not.toHaveBeenCalled();
-  expect(screen.getByLabelText("Display name")).toHaveValue("Beta human");
+  try {
+    save();
+    expect(api.publishProfile).toHaveBeenCalledTimes(1);
+    expect(api.inspectProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(fixture.saveProfile).not.toHaveBeenCalled();
+    late.resolve();
+    await screen.findByText("Profile updated");
+    expect(api.inspectProfile).toHaveBeenCalledTimes(2);
+  } finally {
+    late.resolve();
+    await late.promise;
+  }
 });
 
 it("a dispatched save remains bound to A and its late completion cannot clear B's draft", async () => {
@@ -230,18 +231,18 @@ it("a dispatched save remains bound to A and its late completion cannot clear B'
   });
   expect(screen.getByLabelText("Display name")).toHaveValue("Beta draft");
   expect(screen.queryByText("Profile updated")).not.toBeInTheDocument();
-  expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(
-    a,
-    { name: "Changed", picture: "", about: "Keep this" },
-    original("Alpha human").existing,
-  );
+  expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(a, {
+    name: "Changed",
+    picture: "",
+    about: "Keep this",
+  });
   save();
   await screen.findByText("Profile updated");
-  expect(api.publishProfile).toHaveBeenLastCalledWith(
-    b,
-    { name: "Beta draft", picture: "", about: "Keep this" },
-    original("Beta human").existing,
-  );
+  expect(api.publishProfile).toHaveBeenLastCalledWith(b, {
+    name: "Beta draft",
+    picture: "",
+    about: "Keep this",
+  });
 });
 
 it("failed publication retains edits for explicit retry; Cancel restores the loaded profile", async () => {
@@ -331,23 +332,19 @@ it("accepted but superseded publication retains the avatar draft for explicit re
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   save();
   await screen.findByText("Profile updated");
-  expect(api.publishProfile).toHaveBeenLastCalledWith(
-    a,
-    {
-      name: "Alpha human",
-      picture: "https://images.example/new.png",
-      about: "Keep this",
-    },
-    original("Alpha human").existing,
-  );
+  expect(api.publishProfile).toHaveBeenLastCalledWith(a, {
+    name: "Alpha human",
+    picture: "https://images.example/new.png",
+    about: "Keep this",
+  });
 });
 
 it("failed confirmation keeps edits and does not automatically republish", async () => {
   setup();
   await editName();
-  vi.mocked(api.inspectProfile)
-    .mockResolvedValueOnce(original("Alpha human"))
-    .mockRejectedValueOnce(new Error("Confirmation unavailable"));
+  vi.mocked(api.inspectProfile).mockRejectedValueOnce(
+    new Error("Confirmation unavailable"),
+  );
   save();
   await screen.findByText("Confirmation unavailable");
   expect(screen.getByLabelText("Display name")).toHaveValue("Changed");
@@ -360,12 +357,10 @@ it("late confirmation after switching cannot replace the next community draft", 
   await editName();
   const late = deferred<ReturnType<typeof original>>();
   const started = deferred<void>();
-  vi.mocked(api.inspectProfile)
-    .mockResolvedValueOnce(original("Alpha human"))
-    .mockImplementationOnce(() => {
-      started.resolve();
-      return late.promise;
-    });
+  vi.mocked(api.inspectProfile).mockImplementationOnce(() => {
+    started.resolve();
+    return late.promise;
+  });
   save();
   await act(async () => {
     await started.promise;
@@ -447,11 +442,11 @@ it.each([
     }
     save();
     await screen.findByText("Profile updated");
-    expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(
-      a,
-      { name: "Changed", picture, about: "Keep this" },
-      original("Alpha human").existing,
-    );
+    expect(api.publishProfile).toHaveBeenCalledExactlyOnceWith(a, {
+      name: "Changed",
+      picture,
+      about: "Keep this",
+    });
     expect(fixture.saveProfile).toHaveBeenCalledExactlyOnceWith({
       name: "Changed",
       picture: expected,
@@ -500,10 +495,10 @@ it.each(["http://images.example/avatar.png", "data:image/png;base64,AA=="])(
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     save();
     await screen.findByText("Profile updated");
-    expect(api.publishProfile).toHaveBeenCalledWith(
-      a,
-      { name: "Changed", picture: "", about: "Keep this" },
-      expect.objectContaining({ picture }),
-    );
+    expect(api.publishProfile).toHaveBeenCalledWith(a, {
+      name: "Changed",
+      picture: "",
+      about: "Keep this",
+    });
   },
 );

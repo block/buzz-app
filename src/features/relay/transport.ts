@@ -47,6 +47,7 @@ import {
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
+import { receivingProfileError } from "../communities/receiving-profile";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -93,6 +94,13 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  /** Patches (or clears with null) an own signed profile after a fresh head check.
+   * Returns the exact accepted event ID. No arbitrary signer or automatic retry. */
+  readonly updateReceivingAddress?: (
+    address: string | null,
+    profile: RelayEvent,
+    signal: AbortSignal,
+  ) => Promise<string>;
   /** Hear the relay refuse this account for the whole community, on any
    * request after connecting: its sign-in ended, or it has no access. One
    * item's refusal (a gated channel, say) stays with whoever asked for it. */
@@ -521,6 +529,7 @@ export async function connectBrokerTransport(
     projectGit?: boolean;
     attachmentUploads?: boolean;
     directMessages?: boolean;
+    receivingAddress?: boolean;
     channelLifecycle?: boolean;
     channelDetails?: boolean;
     memberAdministration?: boolean;
@@ -621,6 +630,48 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    ...(session.receivingAddress === true
+      ? {
+          async updateReceivingAddress(
+            address: string | null,
+            profile: RelayEvent,
+            signal: AbortSignal,
+          ) {
+            const response = await fetch(`${endpoint}/receiving-address`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ address, profile }),
+              signal,
+            });
+            if (!response.ok)
+              throw new Error(
+                (
+                  await readApiFailure(response, (body, status) => {
+                    const value = body as {
+                      error?: unknown;
+                      sent?: unknown;
+                    } | null;
+                    if (
+                      (status === 400 || status === 409) &&
+                      value?.sent === false
+                    )
+                      return receivingProfileError(value.error);
+                  })
+                ).error,
+              );
+            const receipt = await response.json();
+            if (
+              receipt.accepted !== true ||
+              !/^[a-f0-9]{64}$/.test(receipt.event_id)
+            )
+              throw new Error(
+                "Receiving profile publication was not confirmed",
+              );
+            return receipt.event_id as string;
+          },
+        }
+      : {}),
     observeRefusal,
     ...(session.attachmentUploads === true && session.relayUrl
       ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl, fetch) }

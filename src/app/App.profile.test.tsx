@@ -1037,77 +1037,88 @@ it("drops the retained draft after an accepted departure to another account's un
 });
 
 it.each(["Close", "Back"] as const)(
-  "clears the %s discard prompt when the pending save is sent",
+  "%s leaves a dispatched save running and a later draft still asks before discard",
   async (exit) => {
     const user = await setup();
     let release = () => {};
-    const read = new Promise<void>((resolve) => {
+    const publication = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const inspect = communityApi.inspectProfile;
-    let holding = false;
-    vi.spyOn(communityApi, "inspectProfile").mockImplementation(
-      async (...args) => {
-        if (holding) await read;
-        return inspect(...args);
-      },
-    );
+    const inspect = vi.spyOn(communityApi, "inspectProfile");
     const publish = vi
       .spyOn(communityApi, "publishProfile")
       .mockImplementation(async (_id, next) => {
-        vi.mocked(communityApi.inspectProfile).mockResolvedValue({
+        await publication;
+        inspect.mockResolvedValue({
           exists: true,
           profile: next,
           existing: {},
         });
       });
-    await act(async () => {
-      void services?.navigation.open({
-        version: 1,
-        kind: "settings",
-        section: "profile",
+    try {
+      await act(async () => {
+        void services?.navigation.open({
+          version: 1,
+          kind: "settings",
+          section: "profile",
+        });
       });
-    });
-    const settings = await screen.findByRole("dialog", { name: "Settings" });
-    const name = await within(settings).findByRole("textbox", {
-      name: "Display name",
-    });
-    await waitFor(() => expect(name).toHaveValue("Community name"));
-    await user.clear(name);
-    await user.type(name, "Pending name");
-    holding = true;
-    await user.click(within(settings).getByRole("button", { name: "Save" }));
-    if (exit === "Back") act(() => services?.navigation.back());
-    else
-      await user.click(
-        within(settings).getByRole("button", { name: "Close Settings" }),
-      );
-    await screen.findByRole("alertdialog", { name: "Discard changes?" });
-    // The save is sent behind the prompt; nothing is left to discard.
-    holding = false;
-    await act(async () => release());
-    await waitFor(() => expect(publish).toHaveBeenCalledOnce());
-    await waitFor(() =>
+      const settings = await screen.findByRole("dialog", { name: "Settings" });
+      const name = await within(settings).findByRole("textbox", {
+        name: "Display name",
+      });
+      await waitFor(() => expect(name).toHaveValue("Community name"));
+      const captured = services?.relay.snapshot().session;
+      await user.clear(name);
+      await user.type(name, "Pending name");
+      await user.click(within(settings).getByRole("button", { name: "Save" }));
+      expect(publish).toHaveBeenCalledOnce();
+      if (exit === "Back") act(() => services?.navigation.back());
+      else
+        await user.click(
+          within(settings).getByRole("button", { name: "Close Settings" }),
+        );
+      await waitFor(() => expect(settings).not.toBeInTheDocument());
       expect(
         screen.queryByRole("alertdialog", { name: "Discard changes?" }),
-      ).toBeNull(),
-    );
-    expect(screen.getByRole("dialog", { name: "Settings" })).toBe(settings);
-    await waitFor(() => expect(name).toBeEnabled());
-    await user.clear(name);
-    await user.type(name, "Another draft");
-    await user.click(
-      within(settings).getByRole("button", { name: "Close Settings" }),
-    );
-    const prompt = await screen.findByRole("alertdialog", {
-      name: "Discard changes?",
-    });
-    await user.click(
-      within(prompt).getByRole("button", { name: "Discard changes" }),
-    );
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
-    );
+      ).toBeNull();
+      // Confirmation remains bound to the session captured before Settings closed.
+      await act(async () => release());
+      await waitFor(() =>
+        expect(services?.communities.snapshot().profile?.name).toBe(
+          "Pending name",
+        ),
+      );
+      expect(inspect).toHaveBeenLastCalledWith(origin, captured);
+      expect(publish).toHaveBeenCalledOnce();
+      await act(async () => {
+        void services?.navigation.open({
+          version: 1,
+          kind: "settings",
+          section: "profile",
+        });
+      });
+      const reopened = await screen.findByRole("dialog", { name: "Settings" });
+      const nextName = await within(reopened).findByRole("textbox", {
+        name: "Display name",
+      });
+      await waitFor(() => expect(nextName).toHaveValue("Pending name"));
+      await user.clear(nextName);
+      await user.type(nextName, "Another draft");
+      await user.click(
+        within(reopened).getByRole("button", { name: "Close Settings" }),
+      );
+      const prompt = await screen.findByRole("alertdialog", {
+        name: "Discard changes?",
+      });
+      await user.click(
+        within(prompt).getByRole("button", { name: "Discard changes" }),
+      );
+      await waitFor(() => expect(reopened).not.toBeInTheDocument());
+    } finally {
+      release();
+      await publication;
+    }
   },
   15_000,
 );

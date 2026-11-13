@@ -15,7 +15,7 @@ import { assert, expect, it } from "vitest";
 import { type Event, validateEvent, verifyEvent } from "nostr-tools";
 import { relayBrokerPlugin } from "../../../browser-host/relay-broker.mjs";
 import { connectBrokerTransport } from "../relay/transport";
-import { keypair } from "../relay/testing";
+import { keypair, signed as signedEvent } from "../relay/testing";
 
 function isSignedEvent(value: unknown): value is Event {
   return (
@@ -30,6 +30,14 @@ function isSignedEvent(value: unknown): value is Event {
 it("routes reads, profile publication, invite claims and delayed writes to their captured community", async () => {
   const identity = keypair(),
     relay = keypair();
+  const existingProfile = signedEvent(identity, {
+    kind: 0,
+    tags: [],
+    content: JSON.stringify({
+      about: "preserved",
+      website: "https://example.test",
+    }),
+  });
   const calls: { url: string; body: unknown; auth: unknown }[] = [];
   const publications: { url: string; event: RelayEvent }[] = [];
   let traffic: LiveSubscription | undefined;
@@ -70,7 +78,7 @@ it("routes reads, profile publication, invite claims and delayed writes to their
       if (url.endsWith("/claim")) return Response.json({ status: "joined" });
       if (url.endsWith("/accept-policy"))
         return Response.json({ receipt: "fixture-receipt" });
-      return Response.json([]);
+      return Response.json([existingProfile]);
     },
   });
   await (plugin.configureServer as (s: ViteDevServer) => Promise<void>)({
@@ -121,11 +129,20 @@ it("routes reads, profile publication, invite claims and delayed writes to their
       name: "Community name",
       picture: "",
       about: "Updated description",
-      existing: { about: "preserved", website: "https://example.test" },
+      existing: { about: "stale", website: "https://stale.example.test" },
     });
     expect(profile.ok).toBe(true);
-    expect(calls[1]?.url).toBe("https://secondary.example/events");
-    const profileEvent = calls[1]?.body;
+    expect(calls[1]?.url).toBe("https://secondary.example/query");
+    expect(calls[1]?.body).toEqual([
+      {
+        kinds: [0],
+        authors: [identity.pubkey],
+        limit: 5,
+        consistency: "strong",
+      },
+    ]);
+    expect(calls[2]?.url).toBe("https://secondary.example/events");
+    const profileEvent = calls[2]?.body;
     if (!isSignedEvent(profileEvent))
       throw new Error("Expected a signed profile event");
     expect(profileEvent.kind).toBe(0);
@@ -144,7 +161,7 @@ it("routes reads, profile publication, invite claims and delayed writes to their
       code: "fixture",
       policy_receipt: "fixture-receipt",
     });
-    const claim = calls[3]?.body;
+    const claim = calls[4]?.body;
     if (
       typeof claim !== "object" ||
       claim === null ||

@@ -319,7 +319,7 @@ it.each(["superseded", "missing"])(
   "retains the draft across restart when an acknowledged profile is %s, then completes on verified retry",
   async (result) => {
     admitted = true;
-    const future = Math.floor(Date.now() / 1000) + 60;
+    const future = Math.floor(Date.now() / 1000) + 1;
     profile = signed(viewer, {
       kind: 0,
       created_at: future,
@@ -339,6 +339,20 @@ it.each(["superseded", "missing"])(
     if (result === "missing")
       publish = async () => {
         profile = undefined;
+      };
+    else
+      publish = async () => {
+        // A remote writer wins after this host's fresh read and publication.
+        profile = signed(viewer, {
+          kind: 0,
+          created_at: (profile?.created_at ?? future) + 1,
+          tags: [],
+          content: JSON.stringify({
+            name: "Existing",
+            about: "Before",
+            custom: "Preserved",
+          }),
+        });
       };
     const user = userEvent.setup();
     const first = await open();

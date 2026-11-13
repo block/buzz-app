@@ -72,8 +72,8 @@ it("loads and publishes the selected community profile before updating the local
   });
   const publish = vi
     .spyOn(communityApi, "publishProfile")
-    .mockImplementation(async (_id, profile, existing) => {
-      inspect.mockResolvedValue({ exists: true, existing, profile });
+    .mockImplementation(async (_id, profile) => {
+      inspect.mockResolvedValue({ exists: true, existing: {}, profile });
     });
   const user = userEvent.setup();
   const view = render(
@@ -107,15 +107,11 @@ it("loads and publishes the selected community profile before updating the local
   await user.click(screen.getByRole("button", { name: "Save" }));
 
   await waitFor(() =>
-    expect(publish).toHaveBeenCalledWith(
-      "community-id",
-      {
-        name: "Updated community name",
-        picture: "",
-        about: "Community bio",
-      },
-      { website: "https://example.test", name: "legacy" },
-    ),
+    expect(publish).toHaveBeenCalledWith("community-id", {
+      name: "Updated community name",
+      picture: "",
+      about: "Community bio",
+    }),
   );
   expect(service.saveProfile).toHaveBeenCalledWith({
     name: "Updated community name",
@@ -123,6 +119,7 @@ it("loads and publishes the selected community profile before updating the local
     about: "Community bio",
   });
   expect(await screen.findByText("Profile updated")).toBeVisible();
+  expect(inspect).toHaveBeenCalledTimes(2);
   expect(inspect).toHaveBeenCalledWith("community-id");
 });
 
@@ -205,11 +202,11 @@ it("shows the verified name read-only and keeps the signed name when saving", as
   );
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(publish).toHaveBeenCalledWith(
-      "community-id",
-      { name: "Signed name", picture: "", about: "Bio" },
-      {},
-    ),
+    expect(publish).toHaveBeenCalledWith("community-id", {
+      name: "Signed name",
+      picture: "",
+      about: "Bio",
+    }),
   );
 });
 
@@ -233,11 +230,11 @@ it("keeps the signed name when verification arrives after a name edit", async ()
   ).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(publish).toHaveBeenCalledWith(
-      "community-id",
-      { name: "Signed name", picture: "", about: "Bio" },
-      {},
-    ),
+    expect(publish).toHaveBeenCalledWith("community-id", {
+      name: "Signed name",
+      picture: "",
+      about: "Bio",
+    }),
   );
 });
 
@@ -252,11 +249,11 @@ it("keeps an empty signed name editable for repair when verified", async () => {
   await user.type(name, "Repaired");
   await user.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(publish).toHaveBeenCalledWith(
-      "community-id",
-      { name: "Repaired", picture: "", about: "" },
-      {},
-    ),
+    expect(publish).toHaveBeenCalledWith("community-id", {
+      name: "Repaired",
+      picture: "",
+      about: "",
+    }),
   );
 });
 
@@ -366,43 +363,56 @@ it("stops reporting a discardable draft once its save is dispatched", async () =
   expect(onUnsavedChange).toHaveBeenLastCalledWith(false);
 });
 
-it("keeps a draft discardable while Save reads the latest profile", async () => {
+it("confirms after publication and stops offering to discard while readback is pending", async () => {
   const read = deferred();
   let reads = 0;
   vi.spyOn(communityApi, "inspectProfile").mockImplementation(async () => {
-    // The second read is Save's fresh inspection before publication.
-    if (++reads === 2) await read.promise;
+    const confirming = ++reads === 2;
+    if (confirming) await read.promise;
     return {
       exists: true,
-      existing: { name: "Saved" },
-      profile: { name: "Saved", picture: "" },
+      existing: {},
+      profile: {
+        name: confirming ? "Edited" : "Saved",
+        picture: "",
+        about: "",
+      },
     };
   });
-  const publish = vi
-    .spyOn(communityApi, "publishProfile")
-    .mockImplementation(() => new Promise(() => {}));
+  const publish = vi.spyOn(communityApi, "publishProfile").mockResolvedValue();
   const onUnsavedChange = vi.fn();
+  const service = communities();
   const user = userEvent.setup();
   render(
     <ProfileSettings
-      communities={communities()}
+      communities={service}
       community={{ id: "primary", name: "Primary" }}
       onUnsavedChange={onUnsavedChange}
     />,
     { wrapper: ToastProvider },
   );
-  const name = await screen.findByLabelText("Display name");
-  await waitFor(() => expect(name).toHaveValue("Saved"));
-  await user.clear(name);
-  await user.type(name, "Edited");
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(reads).toBe(2));
-  // Closing now would unmount before publication and silently lose the edit.
-  expect(publish).not.toHaveBeenCalled();
-  expect(onUnsavedChange).toHaveBeenLastCalledWith(true);
-  read.resolve();
-  await waitFor(() => expect(publish).toHaveBeenCalledOnce());
-  await waitFor(() => expect(onUnsavedChange).toHaveBeenLastCalledWith(false));
+  try {
+    const name = await screen.findByLabelText("Display name");
+    await waitFor(() => expect(name).toHaveValue("Saved"));
+    await user.clear(name);
+    await user.type(name, "Edited");
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(true);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(reads).toBe(2));
+    expect(publish).toHaveBeenCalledOnce();
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false);
+    expect(service.saveProfile).not.toHaveBeenCalled();
+    read.resolve();
+    await screen.findByText("Profile updated");
+    expect(service.saveProfile).toHaveBeenCalledWith({
+      name: "Edited",
+      picture: "",
+      about: "",
+    });
+  } finally {
+    read.resolve();
+    await read.promise;
+  }
 });
 
 it("keeps a community draft when publication fails and retries a failed read", async () => {
@@ -443,8 +453,8 @@ it("keeps a community draft when publication fails and retries a failed read", a
   );
   expect(name).toHaveValue("Keep this draft");
   expect(service.saveProfile).not.toHaveBeenCalled();
-  // Failed initial load, explicit retry, then fresh preflight; no confirmation.
-  expect(inspect).toHaveBeenCalledTimes(3);
+  // Failed initial load and explicit retry; failed publication has no confirmation.
+  expect(inspect).toHaveBeenCalledTimes(2);
   expect(publish).toHaveBeenCalledTimes(1);
 });
 

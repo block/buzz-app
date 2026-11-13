@@ -108,11 +108,11 @@ it("publishes a description-only edit to an existing community profile", async (
   await user.click(
     screen.getByRole("button", { name: "Publish profile & open" }),
   );
-  expect(api.publishProfile).toHaveBeenCalledWith(
-    "https://relay.example",
-    { name: "Fixture", picture: "", about: "After" },
-    { name: "Fixture", about: "Before" },
-  );
+  expect(api.publishProfile).toHaveBeenCalledWith("https://relay.example", {
+    name: "Fixture",
+    picture: "",
+    about: "After",
+  });
   await waitFor(() => expect(communities.joined).toHaveBeenCalledOnce());
 });
 
@@ -350,15 +350,11 @@ it("explains an inherited invalid avatar when editing at join and recovers on re
   await user.click(
     screen.getByRole("button", { name: "Publish profile & open" }),
   );
-  expect(api.publishProfile).toHaveBeenCalledWith(
-    "https://relay.example",
-    {
-      name: "Fixture changed",
-      picture: "https://images.example/new.png",
-      about: "",
-    },
-    { name: "Fixture", picture },
-  );
+  expect(api.publishProfile).toHaveBeenCalledWith("https://relay.example", {
+    name: "Fixture changed",
+    picture: "https://images.example/new.png",
+    about: "",
+  });
   await waitFor(() => expect(communities.joined).toHaveBeenCalledOnce());
 });
 

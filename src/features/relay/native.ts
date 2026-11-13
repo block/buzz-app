@@ -8,6 +8,12 @@ import {
   verifiedProfileDiscovery,
 } from "./verified-profile";
 import { nativeSocket } from "./native-socket";
+import { receivingProfileTemplate } from "../communities/receiving-profile";
+import {
+  assertReceivingProfileHead,
+  profilePublicationFilter,
+  reserveProfilePublication,
+} from "../communities/profile-publication";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { EventTemplate } from "nostr-tools";
@@ -962,6 +968,44 @@ export async function connectNativeTransport(
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
     verifiedProfiles: verifiedProfileAuthority(info),
+    async updateReceivingAddress(address, profile, signal) {
+      signal.throwIfAborted();
+      const release = reserveProfilePublication(origin, transport.viewer);
+      try {
+        const event = await nativeRelaySigner(origin).signEvent(
+          receivingProfileTemplate({ address, profile }, transport.viewer),
+        );
+        signal.throwIfAborted();
+        const current = await nativeRelayRequest(
+          origin,
+          "/query",
+          profilePublicationFilter(transport.viewer),
+          signal,
+        );
+        if (!current.ok) throw new Error((await readApiFailure(current)).error);
+        assertReceivingProfileHead(
+          await current.json(),
+          transport.viewer,
+          profile.id,
+        );
+        signal.throwIfAborted();
+        const response = await nativeRelayRequest(
+          origin,
+          "/events",
+          event,
+          signal,
+        );
+        signal.throwIfAborted();
+        if (!response.ok)
+          throw new Error((await readApiFailure(response)).error);
+        const receipt = await response.json();
+        if (receipt.accepted !== true || receipt.event_id !== event.id)
+          throw new Error("Receiving profile publication was not confirmed");
+        return event.id;
+      } finally {
+        release();
+      }
+    },
     async readVerifiedProfileAuthority(signal) {
       return verifiedProfileDiscovery(await nativeRelayInfo(origin, signal));
     },

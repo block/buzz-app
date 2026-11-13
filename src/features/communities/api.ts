@@ -105,16 +105,12 @@ export function profileFromEvent(
   };
   return { existing, profile, exists: !!event };
 }
-export async function publishProfile(
-  id: string,
-  profile: PersonalProfile,
-  existing: Record<string, unknown>,
-) {
+export async function publishProfile(id: string, profile: PersonalProfile) {
   const receipt = await communityRequest<{
     accepted: boolean;
     event_id: string;
     message?: string;
-  }>(id, "profile", { ...profile, existing });
+  }>(id, "profile", profile);
   if (!receipt.accepted || !receipt.event_id)
     throw new Error(receipt.message ?? "Profile publication was not confirmed");
 }

@@ -373,15 +373,8 @@ export function ProfileSettings({
                     void (async () => {
                       try {
                         if (community && loaded) {
-                          // Preserve fields outside this editor even if another client edited them.
-                          const latest = await inspect(community.id);
-                          if (!mounted.current) return;
                           setDispatched(true);
-                          await communityApi.publishProfile(
-                            community.id,
-                            next,
-                            latest.existing,
-                          );
+                          await communityApi.publishProfile(community.id, next);
                           // Once dispatched, finish on this session even if Settings closes.
                           const confirmed = await inspect(community.id);
                           if (

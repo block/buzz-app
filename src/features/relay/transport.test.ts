@@ -833,3 +833,34 @@ it("searches profile names through the host's signed /profiles/search request", 
     transport.searchProfiles("wes", 40, 2, controller.signal, "foreground"),
   ).rejects.toThrow();
 });
+
+it.each([
+  { status: 400, sent: false, error: "Private upstream text" },
+  { status: 409, sent: false, error: "Private upstream text" },
+  { status: 409, sent: false, error: "Profile too large\nprivate" },
+  { status: 409, sent: undefined, error: "Profile too large" },
+  { status: 502, sent: false, error: "Profile too large" },
+])(
+  "does not forward untrusted receiving failures: $status $sent $error",
+  async ({ status, sent, error }) => {
+    vi.stubGlobal("fetch", async (url: string) =>
+      url.endsWith("/session")
+        ? Response.json({
+            viewer: key.pubkey,
+            relayAuthor: "relay",
+            receivingAddress: true,
+          })
+        : Response.json({ sent, error }, { status }),
+    );
+    const transport = await connectBrokerTransport();
+    assert(transport.updateReceivingAddress);
+    const profile = signed(key, { kind: 0, tags: [], content: "{}" });
+    await expect(
+      transport.updateReceivingAddress(
+        null,
+        profile,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(`Relay request failed (${status})`);
+  },
+);

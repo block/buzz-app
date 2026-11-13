@@ -2571,6 +2571,30 @@ For kind 30177 publication, follow the
 [managed-agent registration guidance](relay-queries.md#managed-agent-registration-kind-30177).
 
 The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
+On supporting hosts, `session.receivingAddress.update(address, signal)` updates
+the signed-in person's Lightning receiving address (`lud16`) in the current
+community. `session.receivingAddress.clear(signal)` removes both `lud16` and
+`lud06` through the same host-owned publication path. Feature-detect this optional
+capability and invoke either method only after an explicit user action; never
+write an address automatically on plugin setup, mount, or discovery. Both methods
+read the current verified profile, preserve other metadata and tags, and require
+an exact publication receipt followed by verified readback of that same event as
+the current profile head. Update removes the obsolete `lud06`; clear confirms that
+both receiving fields are absent. A superseding head is unconfirmed even if its
+address matches. Each host runtime rejects overlapping profile publications and
+rechecks the signed base after signing, before sending. An observed change fails
+without publication. This is not relay-side compare-and-swap: another device can
+still write between the final check and publication. The standard profile editor
+also reads the current signed head inside the reservation before merging its
+editable fields; stale caller metadata cannot replace a saved address. Both
+writers choose a timestamp newer than the current head. It publishes once and never
+retries a write. Bind the call to the ready session's
+lifetime; a cancelled or unconfirmed call may have reached the relay, so inspect
+the profile before trying again. Cached sessions do not offer it. The host keeps
+signing inside its native/broker profile publisher; kind 0 remains unavailable
+through the general message outbox. Updating an address grants no spending access
+and does not prove that a Lightning provider can receive a payment.
+
 Shared message UI opens exact public-key targets through ordinary page callbacks;
 no inline-renderer or panel contract extension is needed.
 

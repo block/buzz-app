@@ -25,6 +25,12 @@ import { keypair, message, nativeSignatureChecks, signed } from "./testing";
 import { createOutbox, type OutgoingEvent, PublishRejected } from "./outbox";
 import { createMessages } from "./messages";
 import { createRelaySession } from "./session";
+import { nativeCommunityRequest } from "../communities/native-api";
+import { newer } from "./events";
+import {
+  TEST_RECEIVING_ADDRESS,
+  TEST_UPDATED_RECEIVING_ADDRESS,
+} from "../communities/receiving-profile-fixture";
 
 const progressChannels = new Map<string, (message: unknown) => void>();
 vi.mock("@tauri-apps/api/core", () => ({
@@ -65,6 +71,368 @@ const cancels: string[] = [];
 let hangUploads = false;
 let preparedResponse: (() => { status?: number; body: unknown }) | undefined;
 const owners: ReturnType<typeof createOutbox>[] = [];
+
+it.each(["update", "clear"] as const)(
+  "%s receiving through the native profile publisher, verifies readback, and rejects a mismatched receipt",
+  async (operation) => {
+    let profile = signed(viewer, {
+      kind: 0,
+      tags: [["keep", "tag"]],
+      created_at: 1700000000,
+      content: JSON.stringify({
+        name: "Sam",
+        display_name: "Different",
+        about: "Keep bio",
+        lud06: "old",
+        lud16: TEST_UPDATED_RECEIVING_ADDRESS,
+      }),
+    });
+    let confirm = true;
+    respond = (request) => {
+      if (request.path === "/query") return { body: [profile] };
+      if (request.path === "/events") {
+        profile = JSON.parse(request.body ?? "null");
+        return {
+          body: {
+            accepted: true,
+            event_id: confirm ? profile.id : "unrelated",
+          },
+        };
+      }
+      return { body: [] };
+    };
+    const transport = await connectNativeTransport(community);
+    const store = createRelaySession(transport);
+    try {
+      expect(store.session.outbox?.supports(0)).toBe(false);
+      assert(store.session.receivingAddress);
+      const signal = new AbortController().signal;
+      await expect(
+        operation === "clear"
+          ? store.session.receivingAddress.clear(signal)
+          : store.session.receivingAddress.update(
+              TEST_RECEIVING_ADDRESS,
+              signal,
+            ),
+      ).resolves.toBe(
+        operation === "clear" ? undefined : TEST_RECEIVING_ADDRESS,
+      );
+      expect(verifyEvent(profile)).toBe(true);
+      expect(profile.pubkey).toBe(viewer.pubkey);
+      expect(profile.tags).toEqual([["keep", "tag"]]);
+      expect(
+        JSON.parse(
+          store.session.profiles.event?.(viewer.pubkey)?.content ?? "null",
+        ),
+      ).toEqual({
+        name: "Sam",
+        display_name: "Different",
+        about: "Keep bio",
+        ...(operation === "update" ? { lud16: TEST_RECEIVING_ADDRESS } : {}),
+      });
+      confirm = false;
+      await expect(
+        operation === "clear"
+          ? store.session.receivingAddress.clear(new AbortController().signal)
+          : store.session.receivingAddress.update(
+              TEST_UPDATED_RECEIVING_ADDRESS,
+              new AbortController().signal,
+            ),
+      ).rejects.toThrow("not confirmed");
+      expect(
+        requests.filter((request) => request.path === "/events"),
+      ).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  },
+);
+it.each(["null", "[]", '"text"', "42", "true"])(
+  "native profile editor repairs signed non-object metadata %s",
+  async (content) => {
+    const original = signed(viewer, {
+      kind: 0,
+      tags: [["keep", "tag"]],
+      content,
+    });
+    let head = original;
+    respond = (request) => {
+      if (request.path === "/query") return { body: [head] };
+      head = JSON.parse(request.body ?? "null");
+      return { body: { accepted: true, event_id: head.id } };
+    };
+    await nativeCommunityRequest(community, "profile", {
+      name: "Repaired",
+      picture: "",
+      about: "New bio",
+    });
+    expect(verifyEvent(head)).toBe(true);
+    expect(JSON.parse(head.content)).toEqual({
+      name: "Repaired",
+      display_name: "Repaired",
+      picture: "",
+      about: "New bio",
+    });
+    expect(head.tags).toEqual(original.tags);
+    expect(head.created_at).toBeGreaterThan(original.created_at);
+  },
+);
+
+it("rejects a changed profile after signing and excludes overlapping native profile writers", async () => {
+  const original = signed(viewer, {
+    kind: 0,
+    tags: [],
+    content: JSON.stringify({ name: "Before" }),
+  });
+  let head = original;
+  respond = (request) => {
+    if (request.path === "/query") return { body: [head] };
+    if (request.path === "/events") {
+      assert(request.body);
+      head = JSON.parse(request.body);
+      return { body: { accepted: true, event_id: head.id } };
+    }
+    return { body: [] };
+  };
+  const transport = await connectNativeTransport(community);
+  const started = deferred<void>(),
+    gate = deferred<void>();
+  const implementation = vi.mocked(invoke).getMockImplementation();
+  assert(implementation);
+  assert(transport.updateReceivingAddress);
+  vi.mocked(invoke).mockImplementation(async (command, args, options) => {
+    if (command === "relay_sign") {
+      started.resolve();
+      await gate.promise;
+    }
+    return implementation(command, args, options);
+  });
+  const signal = new AbortController().signal;
+  const saving = transport.updateReceivingAddress(
+    TEST_RECEIVING_ADDRESS,
+    original,
+    signal,
+  );
+  const rejected = expect(saving).rejects.toThrow("profile changed");
+  try {
+    await started.promise;
+    await expect(
+      transport.updateReceivingAddress(
+        TEST_UPDATED_RECEIVING_ADDRESS,
+        original,
+        signal,
+      ),
+    ).rejects.toThrow("already in progress");
+    await expect(
+      nativeCommunityRequest(
+        community,
+        "profile",
+        { name: "Editor", picture: "", existing: {} },
+        signal,
+      ),
+    ).rejects.toThrow("already in progress");
+    head = signed(viewer, {
+      kind: 0,
+      tags: [],
+      created_at: original.created_at + 1,
+      content: JSON.stringify({ name: "After", custom: "keep" }),
+    });
+    gate.resolve();
+    await rejected;
+    expect(
+      requests.filter((request) => request.path === "/events"),
+    ).toHaveLength(0);
+    // Failure releases ownership; an explicit new save uses the new metadata.
+    await transport.updateReceivingAddress(
+      TEST_RECEIVING_ADDRESS,
+      head,
+      signal,
+    );
+    expect(JSON.parse(head.content)).toEqual({
+      name: "After",
+      custom: "keep",
+      lud16: TEST_RECEIVING_ADDRESS,
+    });
+    expect(
+      requests.filter((request) => request.path === "/events"),
+    ).toHaveLength(1);
+  } finally {
+    gate.resolve();
+    await saving.catch(() => {});
+  }
+});
+
+it.each(["failure", "cancel"])(
+  "an editor preflight %s sends no profile and releases native ownership",
+  async (outcome) => {
+    const started = deferred<void>(),
+      gate = deferred<void>();
+    let first = true;
+    respond = async (request) => {
+      if (first) {
+        first = false;
+        started.resolve();
+        await gate.promise;
+        return outcome === "cancel" ? { body: [] } : { status: 503, body: {} };
+      }
+      if (request.path === "/query") return { body: [] };
+      return {
+        body: {
+          accepted: true,
+          event_id: JSON.parse(request.body ?? "null").id,
+        },
+      };
+    };
+    const controller = new AbortController();
+    const saving = nativeCommunityRequest(
+      community,
+      "profile",
+      { name: "Editor", picture: "" },
+      controller.signal,
+    );
+    const rejected = expect(saving).rejects.toThrow();
+    try {
+      await started.promise;
+      await expect(
+        nativeCommunityRequest(community, "profile", {
+          name: "Overlap",
+          picture: "",
+        }),
+      ).rejects.toThrow("already in progress");
+      if (outcome === "cancel") controller.abort();
+      gate.resolve();
+      await rejected;
+      expect(requests.map((request) => request.path)).toEqual(["/query"]);
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.some(([command]) => command === "relay_sign"),
+      ).toBe(false);
+      await nativeCommunityRequest(community, "profile", {
+        name: "Retry",
+        picture: "",
+      });
+      expect(requests.map((request) => request.path)).toEqual([
+        "/query",
+        "/query",
+        "/events",
+      ]);
+    } finally {
+      gate.resolve();
+      await saving.catch(() => {});
+    }
+  },
+);
+
+it.each([undefined, TEST_UPDATED_RECEIVING_ADDRESS])(
+  "preserves the saved receiving address after a delayed editor read (previous: %s)",
+  async (previousAddress) => {
+    const original = signed(viewer, {
+      kind: 0,
+      tags: [["keep", "tag"]],
+      content: JSON.stringify({
+        name: "Before",
+        custom: "keep",
+        lud16: previousAddress,
+      }),
+    });
+    let head = original;
+    const started = deferred<void>(),
+      gate = deferred<void>();
+    let holdEditorRead = true;
+    respond = async (request) => {
+      if (request.path === "/query") {
+        if (holdEditorRead) {
+          holdEditorRead = false;
+          started.resolve();
+          await gate.promise;
+          return { body: [original] };
+        }
+        return { body: [head] };
+      }
+      assert(request.body);
+      const event = JSON.parse(request.body);
+      head = newer(head, event);
+      return { body: { accepted: head.id === event.id, event_id: event.id } };
+    };
+    const transport = await connectNativeTransport(community);
+    const store = createRelaySession(transport);
+    const editorRead = transport.query([
+      { kinds: [0], authors: [viewer.pubkey], limit: 5, consistency: "strong" },
+    ]);
+    try {
+      await started.promise;
+      await store.session.receivingAddress?.update(
+        TEST_RECEIVING_ADDRESS,
+        new AbortController().signal,
+      );
+      expect(JSON.parse(head.content).lud16).toBe(TEST_RECEIVING_ADDRESS);
+      gate.resolve();
+      const [editorBase] = await editorRead;
+      assert(editorBase);
+      vi.setSystemTime(Date.now() + 2000);
+      await nativeCommunityRequest(community, "profile", {
+        name: "Editor",
+        picture: "",
+        about: "Edited",
+        existing: JSON.parse(editorBase.content),
+      });
+      expect(JSON.parse(head.content)).toMatchObject({
+        name: "Editor",
+        about: "Edited",
+        custom: "keep",
+        lud16: TEST_RECEIVING_ADDRESS,
+      });
+      expect(head.tags).toEqual(original.tags);
+      expect(verifyEvent(head)).toBe(true);
+    } finally {
+      gate.resolve();
+      await editorRead.catch(() => {});
+      store.dispose();
+    }
+  },
+);
+
+it("saves an ordinary profile after consecutive receiving updates in the same second", async () => {
+  let head = signed(viewer, {
+    kind: 0,
+    tags: [],
+    content: JSON.stringify({ name: "Before" }),
+  });
+  respond = (request) => {
+    if (request.path === "/query") return { body: [head] };
+    assert(request.body);
+    const event = JSON.parse(request.body);
+    head = newer(head, event);
+    return { body: { accepted: head.id === event.id, event_id: event.id } };
+  };
+  const store = createRelaySession(await connectNativeTransport(community));
+  try {
+    for (const address of [
+      TEST_UPDATED_RECEIVING_ADDRESS,
+      TEST_RECEIVING_ADDRESS,
+    ])
+      await store.session.receivingAddress?.update(
+        address,
+        new AbortController().signal,
+      );
+    const receivingHead = head;
+    expect(head.created_at).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    await nativeCommunityRequest(community, "profile", {
+      name: "Editor",
+      picture: "",
+      existing: JSON.parse(head.content),
+    });
+    expect(head.created_at).toBeGreaterThan(receivingHead.created_at);
+    expect(JSON.parse(head.content)).toMatchObject({
+      name: "Editor",
+      lud16: TEST_RECEIVING_ADDRESS,
+    });
+  } finally {
+    store.dispose();
+  }
+});
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {

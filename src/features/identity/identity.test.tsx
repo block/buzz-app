@@ -3644,13 +3644,14 @@ function readCalls(
 ) {
   return restoreRead(relay.origin, member);
 }
-/** The profile step's Continue through the owner: a fresh read, the kind 0, its readback. */
+/** Continue reads for the caller and host, publishes kind 0, then reads it back. */
 function publishCalls(
   relay: ReturnType<typeof nativeRelay>,
   member: ReturnType<typeof keypair>,
 ) {
   return [
     ...readCalls(relay, member),
+    ...readCalls(relay, member).slice(1),
     {
       community: relay.origin,
       path: "/events",
@@ -3742,7 +3743,7 @@ it("Join journals the join, proves admission with the signed profile read, and c
   // Continue is the dialog's profile step: the profile is read afresh, the
   // kind 0 published, and read back before the membership is saved (after
   // which the service's own session reads NIP-11 again).
-  expect(relay.calls.slice(4, 9)).toEqual(publishCalls(relay, member));
+  expect(relay.calls.slice(4, 10)).toEqual(publishCalls(relay, member));
   expect(eventsCalls(relay)).toEqual([
     {
       community: relay.origin,
@@ -4061,7 +4062,7 @@ it("a profile the relay supersedes before the readback keeps the step with the d
     "Your profile change is not current. Your edits are retained; try again.",
   );
   // The publish was accepted, read back and found superseded: nothing saved.
-  expect(relay.calls.slice(4, 9)).toEqual(publishCalls(relay, member));
+  expect(relay.calls.slice(4, 10)).toEqual(publishCalls(relay, member));
   expect(communities.snapshot()).toMatchObject({
     memberships: [],
     selected: null,
@@ -4081,7 +4082,7 @@ it("a profile the relay supersedes before the readback keeps the step with the d
   relay.superseded = undefined;
   await user.click(screen.getByRole("button", { name: "Continue" }));
   expect(await screen.findByText("Signed in")).toBeVisible();
-  expect(relay.calls.slice(9, 14)).toEqual(publishCalls(relay, member));
+  expect(relay.calls.slice(10, 16)).toEqual(publishCalls(relay, member));
   expect(eventsCalls(relay)).toHaveLength(2);
   expect(communities.snapshot()).toMatchObject({
     memberships: [{ id: relay.origin }],

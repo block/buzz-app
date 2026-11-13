@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { communityRequest } from "./api";
+import { communityRequest, publishProfile } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -81,6 +81,19 @@ it("does not read when cancelled during registration", async () => {
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
+it("sends only editable profile fields to the host-owned publisher", async () => {
+  const fetcher = vi.fn(async (url: string, _init?: RequestInit) =>
+    url.endsWith("/register")
+      ? Response.json({})
+      : Response.json({ accepted: true, event_id: "a".repeat(64) }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const profile = { name: "Edited", picture: "", about: "Bio" };
+  await publishProfile("https://profile.example", profile);
+  expect(JSON.parse(fetcher.mock.calls[1]?.[1]?.body as string)).toEqual(
+    profile,
+  );
+});
 it.each([408, 429, 500, 502, 503])(
   "preserves retryable HTTP %s and its broker message",
   async (status) => {

@@ -1106,13 +1106,11 @@ test("Settings loads and publishes the selected community profile", async ({
   expect(writes.filter((url) => url.endsWith("/profile"))).toHaveLength(2);
   expect(profiles).toHaveLength(2);
   for (const profile of profiles)
-    expect(profile).toEqual(
-      expect.objectContaining({
-        name: "Updated community profile",
-        picture: "",
-        existing: expect.objectContaining({ name: "Fixture Reader" }),
-      }),
-    );
+    expect(profile).toEqual({
+      name: "Updated community profile",
+      picture: "",
+      about: "",
+    });
 });
 
 test("discarding community setup leaves the published profile unchanged", async ({

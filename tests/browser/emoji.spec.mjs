@@ -258,8 +258,10 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       /^Historic :unknown:party: and https:\/\/example\.test\/:party:\n/,
     );
     expect(rowsText).toMatch(
-      /\nFixture ReaderJan 1, 1970 at 12:00 AM\nBroken :missing:$/,
+      /\nFixture Reader Jan 1, 1970 at 12:00 AM\nBroken :missing:$/,
     );
+    // The historic row's reaction copies as its count, not the action bar's.
+    expect(rowsText).toMatch(/\n:party: 1\n/);
     expect(rowsText).not.toMatch(/Thursday|👍|❤️|😂/u);
     // Independently prove this browser's real clipboard transport with the exact
     // handler payload; the editable source path intentionally uses native copy.

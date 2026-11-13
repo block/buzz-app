@@ -43,7 +43,11 @@ export function serializeSelection(
       )
         wrapper = outer;
       // TR/TD/TBODY fragments lose their markup when parsed outside a table.
-      const root = wrapper ?? element?.closest("table") ?? ancestor;
+      const root =
+        wrapper ??
+        element?.closest("table") ??
+        wholeBlock(element, range) ??
+        ancestor;
       values.push(serializeNode(root, format, range));
     }
   }
@@ -382,6 +386,22 @@ function clip(node: Text, range?: Range): string {
     value.startsWith("\n")
     ? value.slice(1)
     : value;
+}
+
+/** The outermost block of a row whose text a range holds entirely. A
+ * triple-click ends inside a block's own text when only unselectable chrome
+ * follows it, and the block still copies as itself, a heading as a heading. */
+function wholeBlock(element: Element | null, range: Range) {
+  let block: Element | undefined;
+  for (
+    let outer = element;
+    outer && !outer.hasAttribute("data-message-id");
+    outer = outer.parentElement
+  ) {
+    if (!whole(outer, range)) break;
+    if (blockTag.test(outer.tagName)) block = outer;
+  }
+  return block;
 }
 
 /** A chip keeps its identity only when all of its text is selected. */

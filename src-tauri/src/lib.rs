@@ -1108,8 +1108,11 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
             // Before any close hides the window: the icon is the way back.
+            // Without it, closing quits as before (see the close handler).
             #[cfg(windows)]
-            tray::install(app.handle())?;
+            if let Err(error) = tray::install(app.handle()) {
+                eprintln!("Could not add Buzz to the notification area: {error}");
+            }
             #[cfg(target_os = "macos")]
             webkit_reaper::install(app.handle());
             #[cfg(target_os = "macos")]
@@ -1411,8 +1414,9 @@ pub fn run() {
                 }
             }
             // As on macOS; the notification-area icon reopens and quits Buzz.
+            // Hide only when that icon exists, or the window could not come back.
             #[cfg(windows)]
-            if window.label() == "main" {
+            if window.label() == "main" && tray::installed(window.app_handle()) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     if let Err(error) = window.hide() {

@@ -1422,8 +1422,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   watched commands stop when their Buzz process exits.
   During a handoff between Buzz builds, the new copy waits for the previous
   command to stop, then continues the watch.
-- **Shared compute** is off by default; enable it in Settings → Plugins, then
-  turn on sharing separately. **Mesh agents**, when it is enabled, use saved Interest
+- **Shared compute** starts on for fresh installs; upgrades preserve its previous
+  state. If it is off, enable it in **Settings → Plugins → Manage plugins**.
+  On desktop, choose **Shared Compute** in **Agents → New agent → Harness**.
+  **Use community compute → Continue** uses other members' models without a
+  download or sharing your hardware. Sharing is a separate opt-in.
+  **Mesh agents**, when the plugin is enabled, use saved Interest
   instructions for watched turns in both Chat and Agent mode. Watched messages
   are context for that Interest; later direct requests do not inherit it. Mesh
   agents respond only to their owner.

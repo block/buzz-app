@@ -78,9 +78,12 @@ it("restores required Channels from saved disabled settings and rejects disablin
 });
 
 it.each(
-  ["buzz.bestie", "buzz.reminders", "buzz.workflows"].flatMap((id) =>
-    [true, false, undefined].map((saved) => ({ id, saved })),
-  ),
+  [
+    "buzz.bestie",
+    "buzz.mesh-compute",
+    "buzz.reminders",
+    "buzz.workflows",
+  ].flatMap((id) => [true, false, undefined].map((saved) => ({ id, saved }))),
 )(
   "preserves saved $id=$saved and backfills legacy defaults",
   async ({ id, saved }) => {
@@ -100,10 +103,11 @@ it.each(
         reloadable: false,
         error: null,
         manifest: { id, name: id, apiVersion: 1 as const },
-        enabled: id === "buzz.bestie",
+        enabled: id === "buzz.bestie" || id === "buzz.mesh-compute",
       },
     ];
-    const expected = saved ?? id !== "buzz.bestie";
+    const expected =
+      saved ?? (id !== "buzz.bestie" && id !== "buzz.mesh-compute");
     const storage = createPluginStorage(defaults);
     expect(await storage.getCatalog()).toMatchObject({
       status: "ready",
@@ -131,6 +135,7 @@ const optionalCatalog = (): PluginInfo[] => [
   ...catalog(),
   ...["buzz.reminders", "buzz.workflows"].map((id) => bundledPlugin(id, false)),
   bundledPlugin("buzz.bestie"),
+  bundledPlugin("buzz.mesh-compute"),
 ];
 function browserStorage() {
   const values = new Map<string, string>();
@@ -168,6 +173,7 @@ it.each([false, true])(
             { enabled: existing },
             { enabled: existing },
             { enabled: !existing },
+            { enabled: !existing },
           ],
         },
       });
@@ -187,6 +193,7 @@ it.each([false, true])(
           {},
           { enabled: existing },
           { enabled: false },
+          { enabled: !existing },
           { enabled: !existing },
         ],
       },
@@ -227,6 +234,7 @@ it("requires recovery for unreadable settings and resets to current defaults dur
         { enabled: false },
         { enabled: false },
         { enabled: true },
+        { enabled: true },
       ],
     },
   });
@@ -238,6 +246,7 @@ it("requires recovery for unreadable settings and resets to current defaults dur
           {},
           { enabled: false },
           { enabled: false },
+          { enabled: true },
           { enabled: true },
         ],
       },
@@ -281,6 +290,7 @@ it.each(["corrupt", "saved"])(
               "buzz.reminders": false,
               "buzz.workflows": false,
               "buzz.bestie": false,
+              "buzz.mesh-compute": false,
             },
           });
     storage.setItem(`buzz-client.v1:${"a".repeat(64)}`, "{}");
@@ -310,6 +320,7 @@ it.each(["corrupt", "saved"])(
             { enabled: false },
             { enabled: false },
             { enabled: false },
+            { enabled: false },
           ],
         },
       });
@@ -322,6 +333,7 @@ it.each(["corrupt", "saved"])(
           { enabled: true },
           { enabled: false },
           { enabled: false },
+          { enabled: true },
           { enabled: true },
         ],
       },
@@ -336,6 +348,7 @@ it.each(["corrupt", "saved"])(
           {},
           { enabled: false },
           { enabled: false },
+          { enabled: true },
           { enabled: true },
         ],
       },

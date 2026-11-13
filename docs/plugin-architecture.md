@@ -1302,7 +1302,7 @@ contracts with their own layout and local navigation.
 ### Bundled defaults
 
 **Channels is the only required bundled plugin.** Todos, Usage, Reminders,
-Workflows, Changesets, Shared compute and Charts are off by default for fresh installs. Bestie,
+Workflows, Changesets and Charts are off by default for fresh installs. Bestie, Shared compute,
 Feedback, Diff viewer, Identity Naming, Agent Activity, Terminal, Links, GitHub, Inbox,
 Repositories, Agents, Claude, Codex, Builderlab,
 Membership, and Moderation are on by default, but optional. Both browser and
@@ -1320,6 +1320,9 @@ on the next read; explicit edits and resets still report write failures.
 Existing profiles without saved Reminders or Workflows choices retain
 their former On state; fresh profiles start both Off. Bestie starts On for fresh
 profiles; existing profiles without a saved choice retain its former Off state.
+Shared compute follows the same fresh-On, existing-Off migration; enabling it
+exposes settings and the desktop agent type without granting hardware-sharing
+or model-download consent.
 Reopening preserves these results, and an explicit reset uses current defaults.
 Future default changes must follow [the fresh-install decision](plugin-defaults.md), including legacy
 backfills for releases without saved states.

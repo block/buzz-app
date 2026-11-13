@@ -94,8 +94,7 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
-    // Opt-in: it reads community membership in the background once enabled.
-    enabledByDefault: false,
+    enabledByDefault: true,
   },
   {
     manifest: { ...relayNotesManifest, apiVersion: 1 },

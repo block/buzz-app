@@ -27,8 +27,10 @@ activation-time usage queries or a second preference owner.
 
 The initial migration backfills Reminders and Workflows as On for existing
 profiles without a saved flag. Bestie starts On for fresh installs, but existing
-profiles without a saved flag retain its former Off state. Other missing flags
-use their declared defaults.
+profiles without a saved flag retain its former Off state. Shared compute also
+starts On for fresh installs; existing profiles without a saved flag retain Off.
+Enabling the plugin exposes its settings and desktop agent type, not permission
+to share hardware or download a model. Other missing flags use their declared defaults.
 When changing another shipped default, include its previous value in this legacy
 backfill if users can upgrade directly from a release that did not persist it.
 Tests must cover that upgrade path as well as profiles with a complete snapshot.

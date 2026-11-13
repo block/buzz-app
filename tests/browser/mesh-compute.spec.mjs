@@ -1,8 +1,8 @@
 import { selectSettingsSection, settingsSections } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 
-// Browser boundary: the opt-in Mesh plugin, once enabled, must expose its consumer view in Settings → Compute.
-test("Mesh compute is off by default and can be enabled and disabled", async ({
+// Browser boundary: an existing install keeps Mesh off until enabled, then exposes Settings → Shared compute.
+test("an existing install can enable and disable Shared compute", async ({
   page,
   app,
 }) => {

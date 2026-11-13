@@ -55,7 +55,11 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
       for (const plugin of catalog.plugins) {
         const id = plugin.manifest.id;
         flags[id] ??=
-          (plugin.enabled && !(existing && id === "buzz.bestie")) ||
+          (plugin.enabled &&
+            !(
+              existing &&
+              (id === "buzz.bestie" || id === "buzz.mesh-compute")
+            )) ||
           (existing && (id === "buzz.reminders" || id === "buzz.workflows"));
         plugin.enabled = flags[id];
       }

@@ -17,7 +17,7 @@ async function plugins(page) {
 
 // An unseeded page exercises startup ordering: plugin storage must commit its
 // fresh defaults before community initialization can create an install marker.
-test("cold app startup pins fresh defaults and activates opt-in Bestie setup", async ({
+test("cold app startup activates fresh Shared compute and Bestie defaults", async ({
   context,
   app,
 }) => {
@@ -33,6 +33,7 @@ test("cold app startup pins fresh defaults and activates opt-in Bestie setup", a
     "buzz.reminders": false,
     "buzz.workflows": false,
     "buzz.bestie": true,
+    "buzz.mesh-compute": true,
   });
   // Add the account only after first-run defaults are durable. This exercises
   // real plugin activation after community setup without pre-seeding preferences.
@@ -51,7 +52,14 @@ test("cold app startup pins fresh defaults and activates opt-in Bestie setup", a
     "buzz.reminders": false,
     "buzz.workflows": false,
     "buzz.bestie": true,
+    "buzz.mesh-compute": true,
   });
+  await plugins(fresh);
+  await expect(pluginAction(fresh, "Shared compute")).toHaveAccessibleName(
+    /^Disable /,
+  );
+  await selectSettingsSection(fresh, "Shared compute", "Compute consumer");
+  await closeSettings(fresh);
   await openPage(fresh, "Messages");
   const destination = fresh
     .getByRole("navigation", { name: "Apps dock" })
@@ -101,9 +109,10 @@ test("an untouched client profile keeps its previous plugin defaults across reop
       await expect(pluginAction(upgraded, name)).toHaveAccessibleName(
         /^Disable /,
       );
-    await expect(pluginAction(upgraded, "Bestie")).toHaveAccessibleName(
-      /^Enable /,
-    );
+    for (const name of ["Bestie", "Shared compute"])
+      await expect(pluginAction(upgraded, name)).toHaveAccessibleName(
+        /^Enable /,
+      );
     expect(
       await upgraded.evaluate(
         () => JSON.parse(localStorage.getItem("buzzodz.plugins.v1")).enabled,
@@ -112,6 +121,7 @@ test("an untouched client profile keeps its previous plugin defaults across reop
       "buzz.reminders": true,
       "buzz.workflows": true,
       "buzz.bestie": false,
+      "buzz.mesh-compute": false,
     });
     await closeSettings(upgraded);
   }

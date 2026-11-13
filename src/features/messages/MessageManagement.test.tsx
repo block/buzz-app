@@ -541,7 +541,8 @@ it("offers deletion for an empty edit, permits cancel and then confirms deletion
   // has the deletion.
   const { session } = h.owner;
   const id = session.channels.window("room").rows[0]?.id;
-  const names = { [`room:${id}`]: "Launch plan" };
+  // Saved in an earlier second than the deletion.
+  const names = { [`room:${id}`]: ["Launch plan", 0] };
   retainThreadTabNames(session);
   writeView(session.scope, "tab-names", names);
   submit();
@@ -887,7 +888,7 @@ it("keeps deletion recovery outside the optimistically removed row", async () =>
   // A refused deletion keeps the thread tab's saved name.
   const { session } = h.owner;
   const names = {
-    [`room:${session.channels.window("room").rows[0]?.id}`]: "Launch plan",
+    [`room:${session.channels.window("room").rows[0]?.id}`]: ["Launch plan", 0],
   };
   retainThreadTabNames(session);
   writeView(session.scope, "tab-names", names);

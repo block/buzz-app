@@ -1423,7 +1423,10 @@ test("a scope keeps its 256 newest tab names", () => {
     scope,
     "tab-names",
     Object.fromEntries(
-      Array.from({ length: 256 }, (_, index) => [`alpha:old${index}`, "Old"]),
+      Array.from({ length: 256 }, (_, index) => [
+        `alpha:old${index}`,
+        ["Old", 0],
+      ]),
     ),
   );
   const first = launch(scope);
@@ -1459,7 +1462,9 @@ test("an agent's deleted thread forgets its tab name", () => {
   first.rename("thread:alpha:r1", "Launch plan");
   first.rename("thread:alpha:r2", "Retro");
   first.tabs.forget("alpha", "r1");
-  expect(readView(scope, "tab-names", {})).toEqual({ "alpha:r2": "Retro" });
+  expect(readView(scope, "tab-names", {})).toEqual({
+    "alpha:r2": ["Retro", expect.any(Number)],
+  });
 });
 
 test("sessions without a viewer keep tab names in memory only", () => {

@@ -6,11 +6,11 @@ import { createOutbox, type Outbox, type OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import { flush, keypair, signed } from "../relay/testing";
 import { readView, writeView } from "../../shared/view-state";
-import { retainThreadTabNames } from "./thread-tab-names";
+import { readThreadTabName, retainThreadTabNames } from "./thread-tab-names";
 
 afterEach(() => localStorage.clear());
 
-type Confirmed = Pick<RelayEvent, "kind" | "tags">;
+type Confirmed = Pick<RelayEvent, "kind" | "tags" | "created_at">;
 /** A fresh session that has opened no tab workspace. */
 function fresh(scope: string, viewer = "viewer") {
   const removals = new Set<(channelId: string) => void>();
@@ -32,7 +32,8 @@ function fresh(scope: string, viewer = "viewer") {
     },
   } as unknown as RelaySession;
   const confirm = (kind: number, tags: string[][]) => {
-    for (const listener of confirmations) listener({ kind, tags });
+    const created_at = Math.floor(Date.now() / 1000);
+    for (const listener of confirmations) listener({ kind, tags, created_at });
   };
   const remove = (channelId: string) => {
     for (const listener of removals) listener(channelId);
@@ -44,9 +45,9 @@ test("a fresh session forgets a deleted thread's name once the relay confirms it
   const scope = crypto.randomUUID();
   // Saved by an earlier launch.
   writeView(scope, "tab-names", {
-    "alpha:r1": "Launch plan",
-    "alpha:r2": "Retro",
-    "beta:r1": "Elsewhere",
+    "alpha:r1": ["Launch plan", 0],
+    "alpha:r2": ["Retro", 0],
+    "beta:r1": ["Elsewhere", 0],
   });
   const h = fresh(scope);
   retainThreadTabNames(h.session);
@@ -60,22 +61,24 @@ test("a fresh session forgets a deleted thread's name once the relay confirms it
     ["e", "r1"],
   ]);
   expect(readView(scope, "tab-names", {})).toEqual({
-    "alpha:r2": "Retro",
-    "beta:r1": "Elsewhere",
+    "alpha:r2": ["Retro", 0],
+    "beta:r1": ["Elsewhere", 0],
   });
 });
 
 test("a fresh session forgets every name of a channel deleted or left", () => {
   const scope = crypto.randomUUID();
   writeView(scope, "tab-names", {
-    "alpha:r1": "Launch plan",
-    "alpha:r2": "",
-    "beta:r1": "Elsewhere",
+    "alpha:r1": ["Launch plan", 0],
+    "alpha:r2": ["", 0],
+    "beta:r1": ["Elsewhere", 0],
   });
   const h = fresh(scope);
   retainThreadTabNames(h.session);
   h.remove("alpha");
-  expect(readView(scope, "tab-names", {})).toEqual({ "beta:r1": "Elsewhere" });
+  expect(readView(scope, "tab-names", {})).toEqual({
+    "beta:r1": ["Elsewhere", 0],
+  });
 });
 
 test("a session without a viewer observes nothing", () => {
@@ -130,7 +133,7 @@ test.each([false, true])(
   "a newer name survives the deletion's second confirmation (receipt required: %s)",
   async (needsReceipt) => {
     const scope = crypto.randomUUID();
-    writeView(scope, "tab-names", { "alpha:r1": "Launch plan" });
+    writeView(scope, "tab-names", { "alpha:r1": ["Launch plan", 0] });
     let receive = () => {};
     const { launch, records } = journal();
     const h = launch(
@@ -147,20 +150,21 @@ test.each([false, true])(
     else receive();
     await flush();
     expect(names(scope)).toEqual({});
-    writeView(scope, "tab-names", { "alpha:r1": "Newer" });
+    // Renamed in a later second than the deletion.
+    writeView(scope, "tab-names", { "alpha:r1": ["Newer", Date.now() + 1000] });
     // The other confirmation of the same deletion keeps the newer name.
     if (needsReceipt) receive();
     else h.observe([deletion]);
     await flush();
     expect(h.outbox.snapshot()).toEqual([]);
-    expect(names(scope)).toEqual({ "alpha:r1": "Newer" });
+    expect(readThreadTabName(scope, "alpha:r1")).toBe("Newer");
     h.dispose();
   },
 );
 
 test("a deletion confirmed before a restart keeps a newer name when its echo arrives after", async () => {
   const scope = crypto.randomUUID();
-  writeView(scope, "tab-names", { "alpha:r1": "Launch plan" });
+  writeView(scope, "tab-names", { "alpha:r1": ["Launch plan", 0] });
   const { launch, records } = journal();
   const first = launch(async () => {});
   retain(scope, first.outbox);
@@ -171,19 +175,48 @@ test("a deletion confirmed before a restart keeps a newer name when its echo arr
   const deletion = records()[0]?.signed;
   assert.exists(deletion);
   first.dispose();
-  writeView(scope, "tab-names", { "alpha:r1": "Newer" });
+  // Renamed in a later second than the deletion.
+  writeView(scope, "tab-names", { "alpha:r1": ["Newer", Date.now() + 1000] });
   const second = launch(async () => {});
   retain(scope, second.outbox);
   await second.outbox.ready();
   second.observe([deletion]);
   expect(second.outbox.snapshot()).toEqual([]);
-  expect(names(scope)).toEqual({ "alpha:r1": "Newer" });
+  expect(readThreadTabName(scope, "alpha:r1")).toBe("Newer");
   second.dispose();
+});
+
+test("a newer name survives a deletion confirmed again after two restarts", async () => {
+  const scope = crypto.randomUUID();
+  writeView(scope, "tab-names", { "alpha:r1": ["Launch plan", 0] });
+  const { launch, records } = journal();
+  const first = launch(async () => {});
+  retain(scope, first.outbox);
+  deleteR1(first.outbox);
+  await flush();
+  expect(names(scope)).toEqual({});
+  const deletion = records()[0]?.signed;
+  assert.exists(deletion);
+  first.dispose();
+  writeView(scope, "tab-names", { "alpha:r1": ["Newer", Date.now() + 1000] });
+  // An unrelated send saves the restored deletion again, as unknown.
+  const second = launch(() => new Promise<void>(() => {}));
+  retain(scope, second.outbox);
+  await second.outbox.ready();
+  second.outbox.send({ kind: 9, content: "hello", tags: [["h", "alpha"]] });
+  await flush();
+  second.dispose();
+  const third = launch(async () => {});
+  retain(scope, third.outbox);
+  await third.outbox.ready();
+  third.observe([deletion]);
+  expect(readThreadTabName(scope, "alpha:r1")).toBe("Newer");
+  third.dispose();
 });
 
 test("a deletion recovered after a restart forgets its name once confirmed, and only then", async () => {
   const scope = crypto.randomUUID();
-  writeView(scope, "tab-names", { "alpha:r1": "Launch plan" });
+  writeView(scope, "tab-names", { "alpha:r1": ["Launch plan", 0] });
   const { launch, records: saved } = journal();
   // The deletion is sent, but the app quits before the relay answers.
   const first = launch(() => new Promise<void>(() => {}));
@@ -198,7 +231,7 @@ test("a deletion recovered after a restart forgets its name once confirmed, and 
   await second.outbox.ready();
   expect(second.outbox.snapshot()).toMatchObject([{ event: { id } }]);
   expect(readView(scope, "tab-names", {})).toEqual({
-    "alpha:r1": "Launch plan",
+    "alpha:r1": ["Launch plan", 0],
   });
   second.observe([deletion]);
   expect(second.outbox.snapshot()).toEqual([]);

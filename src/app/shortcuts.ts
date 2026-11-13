@@ -66,14 +66,11 @@ export function registerAppShortcuts(
     shortcuts.registerHost({
       id: "attach-files",
       title: "Attach files",
-      // Slack's attach chord, then the common Open chord.
-      binding: [
-        { key: "u", mod: true },
-        { key: "o", mod: true },
-      ],
+      // The chord Slack attaches files with.
+      binding: { key: "o", mod: true },
       order: HOST_SHORTCUT_ORDER.attachFiles,
       allowInEditable: true,
-      // A shell keeps Ctrl+U and Ctrl+O in the terminal.
+      // A shell keeps Ctrl+O in the terminal.
       when: () =>
         !document.activeElement?.closest(".xterm") && !!attachFilesTrigger(),
       run: () => attachFilesTrigger()?.click(),

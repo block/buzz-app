@@ -428,9 +428,9 @@ available, Buzz consumes F8/Shift+F8 before terminal input; rebind Focus next pa
 in Settings if a terminal application needs those keys.
 Covered targets, hidden tabs and collapsed panes are skipped. These shortcuts preserve
 drafts and selection and yield to modals and editor-owned key handling.
-Cmd/Ctrl+U and Cmd/Ctrl+O press Attach files in the focused composer, else in the
+Cmd/Ctrl+O presses Attach files in the focused composer, else in the
 composer Focus message box would choose. A composer editing a message has no
-enabled Attach files, so the keys do nothing there.
+enabled Attach files, so the key does nothing there.
 Settings → Shortcuts lists Focus message box, Attach files and the platform's pane
 focus actions (Focus next pane on Windows/Linux). Each action supports a device-local override
 and reset. F6 retains notification focus.

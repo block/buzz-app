@@ -565,7 +565,7 @@ it.each(["MacIntel", "Win32", "Linux x86_64"])(
 );
 
 it.each(["MacIntel", "Win32"])(
-  "%s Mod+U and Mod+O press the focused composer's Attach files, else the pane's",
+  "%s Mod+O presses the focused composer's Attach files, else the pane's",
   async (platform) => {
     const h = harness(platform);
     const apple = platform === "MacIntel";
@@ -627,7 +627,7 @@ it.each(["MacIntel", "Win32"])(
         ctrlKey: !apple,
         metaKey: apple,
       });
-      const attach = (target: HTMLElement, key = "u") => {
+      const attach = (target: HTMLElement, key = "o") => {
         target.focus();
         clicked.length = 0;
         const prevented = press(target, chord(key)).defaultPrevented;
@@ -639,16 +639,14 @@ it.each(["MacIntel", "Win32"])(
       expect(
         h.shortcuts.hostSnapshot().find(({ id }) => id === "attach-files")
           ?.binding,
-      ).toEqual([
-        { key: "u", mod: true },
-        { key: "o", mod: true },
-      ]);
-      // The focused composer gets the files, with either default chord.
+      ).toEqual([{ key: "o", mod: true }]);
+      // The focused composer gets the files; Mod+U stays free.
       expect(attach(channel)).toEqual({
         prevented: true,
         clicked: ["Attach to Channel"],
       });
-      expect(attach(thread, "o")).toEqual({
+      expect(attach(channel, "u")).toEqual({ prevented: false, clicked: [] });
+      expect(attach(thread)).toEqual({
         prevented: true,
         clicked: ["Attach to Thread"],
       });
@@ -667,12 +665,12 @@ it.each(["MacIntel", "Win32"])(
         .getByRole("button", { name: "Attach to Thread" })
         .setAttribute("disabled", "");
       expect(attach(thread)).toEqual({ prevented: false, clicked: [] });
-      // Exact modifiers, a shell's Ctrl+U/Ctrl+O and modals keep the key.
+      // Exact modifiers, a shell's Ctrl+O and modals keep the key.
       channel.focus();
       for (const extra of [{ shiftKey: true }, { altKey: true }]) {
         clicked.length = 0;
         expect(
-          press(channel, { ...chord("u"), ...extra }).defaultPrevented,
+          press(channel, { ...chord("o"), ...extra }).defaultPrevented,
         ).toBe(false);
         expect(clicked).toEqual([]);
       }
@@ -684,7 +682,7 @@ it.each(["MacIntel", "Win32"])(
       document.body.append(modal);
       expect(attach(channel)).toEqual({ prevented: false, clicked: [] });
       modal.remove();
-      // A rebind replaces both defaults.
+      // A rebind replaces the default.
       act(() => h.bindings.set("attach-files", { key: "j", mod: true }));
       expect(attach(channel)).toEqual({ prevented: false, clicked: [] });
       expect(attach(channel, "j")).toEqual({

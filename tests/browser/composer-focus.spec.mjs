@@ -77,7 +77,7 @@ test("a successful picker image upload returns focus with the existing caret", a
 // real file chooser, whose files reach the focused composer, not another one.
 // Which composer is chosen, and when the key does nothing, is in
 // src/app/shortcuts.test.tsx.
-test("Mod+U and Mod+O open the focused composer's file picker", async ({
+test("Mod+O opens the focused composer's file picker", async ({
   page,
   app,
 }) => {
@@ -108,7 +108,7 @@ test("Mod+U and Mod+O open the focused composer's file picker", async ({
     });
   };
   await channel.getByRole("textbox").focus();
-  await pick("u", "channel.txt");
+  await pick("o", "channel.txt");
   await expect(
     channel.getByRole("button", { name: "Remove channel.txt", exact: true }),
   ).toBeVisible();

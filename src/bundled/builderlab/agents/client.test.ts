@@ -705,6 +705,30 @@ it("does not reuse a pending creation for another verified account with the same
   );
   expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
 });
+it("keeps each sign-in server's pending creation apart for the same account", async () => {
+  const first = await fixture("account-a");
+  vi.mocked(first.host.request).mockRejectedValueOnce(new Error("offline"));
+  await expect(
+    first.client.register("Helper", first.signal, first.retain),
+  ).rejects.toThrow("Retry the same name");
+  const peer = { ...first.session, target: "https://peer.example/goose" };
+  vi.mocked(first.host.request).mockResolvedValueOnce(
+    response({
+      status: 1,
+      agent_id: row.agent_id,
+      agent_pubkey: row.agent_pubkey,
+    }),
+  );
+  await createAgentClient(peer, first.owner).register(
+    "Helper",
+    first.signal,
+    first.retain,
+  );
+  const [oldBody, newBody] = vi
+    .mocked(first.host.request)
+    .mock.calls.map(([input]) => JSON.parse(input.body ?? "{}"));
+  expect(newBody.idempotency_key).not.toBe(oldBody.idempotency_key);
+});
 it.each([2, 3, 4, 5, "REGISTER_AGENT_STATUS_TOO_MANY_AGENTS"])(
   "reports a terminal registration status %s and allows a fresh retry",
   async (status) => {
@@ -787,6 +811,21 @@ it("links an unbound Buzz key to the account before attesting", async () => {
     challenge_id: challenge.challenge_id,
     nonce: challenge.nonce,
     signed_payload: JSON.stringify({ id: "signed-binding" }),
+  });
+});
+it("asks another sign-in server's binding challenge for its own origin", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(response({ identity: null }))
+    .mockResolvedValueOnce(response({ error: { code: "stop" } }, 400));
+  const peer = { ...h.session, target: "https://peer.example/goose" };
+  await expect(
+    createAgentClient(peer, h.owner).link(h.signal),
+  ).rejects.toThrow();
+  const calls = vi.mocked(h.host.request).mock.calls.map(([input]) => input);
+  expect(calls[1]?.headers?.Origin).toBe("https://peer.example");
+  expect(JSON.parse(calls[1]?.body ?? "")).toEqual({
+    origin: "https://peer.example",
   });
 });
 it("skips linking when this key is already bound", async () => {

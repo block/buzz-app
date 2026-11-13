@@ -7,9 +7,9 @@ import type {
   HostResponse,
   NipOaAuthorization,
 } from "../../../features/host/service";
-import { oauthTarget } from "../oauth/browser";
 import { managementTimestamp } from "../management-date";
 import {
+  sessionTarget,
   UNAUTHORIZED,
   type BuilderlabSession,
   type Credential,
@@ -233,7 +233,7 @@ export function createAgentClient(
   ): Promise<Record<string, unknown>> {
     signal.throwIfAborted();
     const credential = session.credential();
-    const target = oauthTarget();
+    const target = sessionTarget(session);
     let response: HostResponse;
     try {
       response = await session.request(credential, {
@@ -314,7 +314,7 @@ export function createAgentClient(
     if (bound) throw new Error(LINK_ERRORS.identity_already_bound);
     const challenge = await identityRequest(
       "challenge",
-      { origin: new URL(oauthTarget()).origin },
+      { origin: new URL(sessionTarget(session)).origin },
       signal,
     );
     const { challenge_id, nonce, verification_code, origin, expires_at } =
@@ -599,8 +599,10 @@ export function createAgentClient(
       if (!AGENT_NAME.test(agentName)) throw new Error(INVALID_NAME);
       const credential = await remoteCredential(signal);
       const { account } = credential;
+      // The server this account is on, read with it.
+      check(credential, signal);
       const intent = registrationIntent(
-        oauthTarget(),
+        sessionTarget(session),
         account.subject,
         agentName,
         picture,

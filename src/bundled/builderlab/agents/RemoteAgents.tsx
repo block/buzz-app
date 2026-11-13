@@ -89,7 +89,8 @@ export function RemoteAgents({
   ) : (
     <AgentSection>
       <p className="text-body-sm text-secondary">
-        Sign in to view your remote agents.
+        Sign in{session.providerName ? ` to ${session.providerName}` : ""} to
+        view your remote agents.
       </p>
     </AgentSection>
   );

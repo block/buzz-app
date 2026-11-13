@@ -432,6 +432,13 @@ impl FederatedIdentity {
             (Some(_), Some(_)) => Err("Name a community or a sign-in server, not both".into()),
         }
     }
+    /// Every configured sign-in server's identity origin.
+    pub(crate) fn identity_origins(&self) -> Vec<String> {
+        self.servers()
+            .iter()
+            .filter_map(|server| Some(server.config()?.identity_origin.clone()))
+            .collect()
+    }
     pub(crate) fn is(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

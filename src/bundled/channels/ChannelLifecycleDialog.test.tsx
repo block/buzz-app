@@ -75,11 +75,9 @@ it("keeps a paused delete's confirmation and offers Retry only after the pause, 
   const retry = screen.getByRole("button", { name: "Retry" });
   expect(retry).toHaveAttribute("aria-disabled", "true");
   expect(retry).toHaveAttribute("data-variant", "destructive");
-  // Base UI queues initial focus on a frame, outside the fake timeout clock.
+  // Initial focus runs in a frame; keep the fake cooldown clock unchanged.
   await act(async () => {
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => resolve()),
-    );
+    await new Promise(requestAnimationFrame);
   });
   expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   // Keyboard and screen-reader users can still reach Retry and its state.

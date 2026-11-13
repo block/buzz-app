@@ -179,6 +179,12 @@ export const TOOLS: readonly Tool[] = [
     ["team"],
   ),
   tool(
+    "team_create",
+    "Submit an unsaved draft of a new team for your owner to review. members are pubkeys or exact names of your owner's agents here. Nothing is created until they save it.",
+    { name: str, instructions: str, members: strs },
+    ["name"],
+  ),
+  tool(
     "send",
     "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
     {
@@ -597,6 +603,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         team,
         ...(name && { name }),
         ...(typeof instructions === "string" && { instructions }),
+      }),
+    );
+  },
+  async team_create({ client }, args) {
+    if (!client.createTeam)
+      throw new Error("Team creation is unavailable on this host");
+    const name = text(args.name);
+    if (!name) throw new Error("name is required");
+    const { instructions } = args;
+    const members = list(args.members)
+      .map((member) => member.trim())
+      .filter(Boolean);
+    return JSON.stringify(
+      await client.createTeam({
+        name,
+        ...(typeof instructions === "string" && { instructions }),
+        ...(members.length && { members }),
       }),
     );
   },

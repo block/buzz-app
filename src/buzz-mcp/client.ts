@@ -7,6 +7,7 @@ import type {
   AgentAttention,
   SoloPlacement,
   AgentReadout,
+  TeamCreationInput,
   TeamReadout,
   TeamUpdateInput,
 } from "../features/agents/service";
@@ -122,6 +123,9 @@ export interface BuzzClient {
   readTeams?(team?: string): Promise<TeamReadout | readonly TeamReadout[]>;
   updateTeam?(
     input: TeamUpdateInput,
+  ): Promise<Readonly<{ requestId: string; saved: false }>>;
+  createTeam?(
+    input: TeamCreationInput,
   ): Promise<Readonly<{ requestId: string; saved: false }>>;
   /** This device's plugins, where the host has them: read directly, changed
    * by owner-confirmed request. */

@@ -2559,6 +2559,9 @@ export class AgentRunners {
               ...(job.channelId ? { channelId: job.channelId } : {}),
             })
         : undefined,
+      trigger.type === "mention"
+        ? { author: trigger.event.pubkey, text: trigger.event.content }
+        : undefined,
     );
     if (
       !soloChat &&
@@ -2768,8 +2771,9 @@ export class AgentRunners {
         ...(job.work
           ? {
               ignored: () => job.work?.remove(),
-              acknowledged: () => {
+              acknowledged: (input?: Readonly<{ steering?: true }>) => {
                 job.work?.started();
+                job.work?.acknowledged(input);
                 void admission?.then((admitted) => admitted?.acknowledged());
               },
               superseded: () => job.work?.supersede(),
@@ -2955,7 +2959,8 @@ export class AgentRunners {
           const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
           const ownReply =
             event.kind === 9 && !!work && destination === work.channelId;
-          const sent = ownReply ? work.sending() : undefined;
+          const sent = ownReply ? work.sending(event.content) : undefined;
+          let confirmed: boolean | undefined = false;
           try {
             const published = await this.publish(
               runner,
@@ -2963,6 +2968,7 @@ export class AgentRunners {
               lifetime,
               check,
             );
+            confirmed = true;
             if (workspaces && event.kind === 9007) {
               const id = published.tags.find(([key]) => key === "h")?.[1];
               if (id) {
@@ -2984,10 +2990,13 @@ export class AgentRunners {
             return published;
           } catch (error) {
             const uncertain = ownReply && unconfirmedAgentEvent(error);
-            if (uncertain) work.reply(uncertain);
+            if (uncertain) {
+              confirmed = undefined;
+              work.reply(uncertain);
+            }
             throw error;
           } finally {
-            sent?.();
+            sent?.(confirmed);
           }
         },
         query: async (filters: readonly object[]) => {

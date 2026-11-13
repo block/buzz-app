@@ -284,7 +284,7 @@ function withSavedNames(
   scope: string,
   previous: State,
   next: State,
-  /** The session's other workspaces' tabs, read only when a tab closes. */
+  /** The session's other workspaces' tabs, read only when a thread leaves. */
   elsewhere: () => readonly ConversationTab[],
 ): State {
   if (next.tabs === previous.tabs) return next;
@@ -305,15 +305,17 @@ function withSavedNames(
     if (tab.name) {
       // A provisional tab's name moves to the root its reader verified,
       // unless that root has its own name or clear, as when it merges into
-      // its tab.
+      // its tab. Another copy's newer name or clear of the provisional root
+      // wins over this tab's.
       if (prior) {
-        saveThreadTabName(scope, nameKey(prior), undefined);
         const saved = readThreadTabName(scope, key);
-        if (saved !== undefined) {
+        const name =
+          saved ?? readThreadTabName(scope, nameKey(prior)) ?? tab.name;
+        if (saved === undefined) saveThreadTabName(scope, key, name);
+        if (name !== tab.name) {
           restored = true;
-          return { ...tab, name: saved || undefined };
+          return { ...tab, name: name || undefined };
         }
-        saveThreadTabName(scope, key, tab.name);
       }
       return tab;
     }
@@ -322,21 +324,19 @@ function withSavedNames(
     restored = true;
     return { ...tab, name };
   });
-  // A closed tab forgets its name, as does a provisional tab merged into its
-  // root's tab; another tab of the same thread, in any workspace, keeps it.
-  const closed = previous.tabs.filter(
-    (tab): tab is ThreadTab =>
-      tab.kind === "thread" && !next.tabs.some((item) => item.id === tab.id),
-  );
-  if (closed.length) {
-    const open = new Set(
-      [...next.tabs, ...elsewhere()].flatMap((tab) =>
-        tab.kind === "thread" ? [nameKey(tab)] : [],
-      ),
+  // A thread no tab shows any more forgets its name: a closed tab, a
+  // provisional tab merged into its root's tab or retargeted to its root.
+  // Another tab of the same thread, in any workspace, keeps it.
+  const held = (tabs: readonly ConversationTab[]) =>
+    new Set(
+      tabs.flatMap((tab) => (tab.kind === "thread" ? [nameKey(tab)] : [])),
     );
-    for (const tab of closed)
-      if (!open.has(nameKey(tab)))
-        saveThreadTabName(scope, nameKey(tab), undefined);
+  const kept = held(next.tabs);
+  const released = [...held(previous.tabs)].filter((key) => !kept.has(key));
+  if (released.length) {
+    const open = held(elsewhere());
+    for (const key of released)
+      if (!open.has(key)) saveThreadTabName(scope, key, undefined);
   }
   return restored ? { ...next, tabs } : next;
 }
@@ -859,10 +859,12 @@ export function useChannelTabState(
         // or retargets another reader after the user has left this provisional tab.
         const foreground =
           selected && (tabPane(tab) === "main" || state.paneOpen);
-        // A name given to the provisional tab survives an owner never named.
+        // A name given to the provisional tab, or saved for it since by
+        // another copy, survives an owner never named.
         const saved = store.savedName(owner);
         const name =
-          owner.name ?? (saved === undefined ? tab.name : saved || undefined);
+          owner.name ??
+          ((saved ?? store.savedName(tab) ?? tab.name) || undefined);
         const merged = foreground
           ? { ...owner, messageId: tab.messageId, rootId, name }
           : { ...owner, name };

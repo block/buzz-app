@@ -1505,6 +1505,49 @@ test("closing one workspace's copy keeps a name another workspace shows", () => 
   expect(readView(scope, "tab-names", {})).toEqual({});
 });
 
+test("a provisional copy's root change keeps a name another workspace shows", () => {
+  const scope = crypto.randomUUID();
+  const first = launch(scope, "page");
+  act(() => first.tabs.open("alpha", "hint"));
+  first.rename("thread:alpha:hint", "Launch plan");
+  // A link opens another thread in a page's workspace with the wrong root.
+  const inbox = renderHook(() =>
+    useChannelTabState(first.session, undefined, "page:inbox"),
+  );
+  act(() => inbox.result.current.openThreadTab("alpha", "reply", "hint"));
+  act(() => inbox.result.current.resolveThreadRoot("thread:alpha:hint", "r1"));
+  expect(readView(scope, "tab-names", {})).toEqual({
+    "alpha:hint": "Launch plan",
+    "alpha:r1": "Launch plan",
+  });
+});
+
+test.each(["retarget", "merge"] as const)(
+  "a provisional copy's root change keeps another copy's newer clear (%s)",
+  (by) => {
+    const scope = crypto.randomUUID();
+    const first = launch(scope, "page");
+    act(() => first.page.result.current.openThreadTab("alpha", "r2", "hint"));
+    first.rename("thread:alpha:hint", "Launch plan");
+    const inbox = renderHook(() =>
+      useChannelTabState(first.session, undefined, "page:inbox"),
+    );
+    if (by === "merge")
+      act(() => inbox.result.current.openThreadTab("alpha", "r1", "r1"));
+    act(() => inbox.result.current.openThreadTab("alpha", "r2", "hint"));
+    first.rename("thread:alpha:hint", "  ");
+    act(() =>
+      inbox.result.current.resolveThreadRoot("thread:alpha:hint", "r1"),
+    );
+    expect(inbox.result.current.tabs).toMatchObject([{ name: undefined }]);
+    expect(readView(scope, "tab-names", {})).toEqual(
+      by === "merge"
+        ? { "alpha:hint": "" }
+        : { "alpha:hint": "", "alpha:r1": "" },
+    );
+  },
+);
+
 test("sessions without a viewer keep tab names in memory only", () => {
   const session = tabSession();
   const tabs = channelTabs(session);

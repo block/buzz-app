@@ -70,7 +70,7 @@ function selected(
   );
 }
 
-test("previews build daily and after each stable release, from one source commit and version", () => {
+test("previews build main daily and after each stable release, with one version per run", () => {
   const caller = parse(read(".github/workflows/release.yml"));
   assert.equal(caller.on.schedule.length, 1);
   assert.match(caller.on.schedule[0].cron, /^[1-9]\d? \d+ \* \* \*$/);
@@ -88,13 +88,9 @@ test("previews build daily and after each stable release, from one source commit
     source.if,
     /!contains\(github\.event\.workflow_run\.head_branch, '-'\)/,
   );
-  const [select, checkout, derive] = source.steps;
-  assert.match(select.run, /is not in main history/);
-  assert.equal(
-    select.env.TAGGED_SHA,
-    `\${{ github.event.workflow_run.head_sha }}`,
-  );
-  assert.equal(checkout.with.ref, `\${{ steps.source.outputs.sha }}`);
+  // The release only gates the run: main's head is built, with its own scripts.
+  const [checkout, derive] = source.steps;
+  assert.equal(checkout.with.ref, undefined);
   assert.equal(checkout.with["fetch-depth"], 0);
   assert.equal(derive.run, "node scripts/preview-version.mjs HEAD");
   assert.equal(desktop.needs, "source");
@@ -102,16 +98,9 @@ test("previews build daily and after each stable release, from one source commit
     desktop.with.preview_version,
     `\${{ needs.source.outputs.version }}`,
   );
-  assert.equal(desktop.with.source_sha, `\${{ needs.source.outputs.sha }}`);
-  // Every platform checks out and records the selected commit.
+  assert.equal(desktop.with.source_sha, undefined);
   const build = parse(read(".github/workflows/desktop-build.yml"));
-  assert.equal(build.env.SOURCE_SHA, `\${{ inputs.source_sha || github.sha }}`);
-  for (const job of [build.jobs.build, build.jobs.windows, build.jobs.linux])
-    assert.equal(
-      job.steps.find((step) => step.uses?.startsWith("actions/checkout@")).with
-        .ref,
-      `\${{ env.SOURCE_SHA }}`,
-    );
+  assert.equal(build.env.PREVIEW_VERSION, `\${{ inputs.preview_version }}`);
 });
 
 test("all-platform releases preserve candidate isolation and read-only installer jobs", () => {

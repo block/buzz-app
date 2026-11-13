@@ -4,8 +4,9 @@ on:
   # A daily preview from main.
   schedule:
     - cron: "37 9 * * *"
-  # A preview of each published stable release, so preview installs get its
-  # code without leaving the preview feed.
+  # A preview of main right after each published stable release (always in
+  # main's history), so preview installs get its code without leaving the
+  # preview feed. The release only gates the run; main's head is built.
   workflow_run:
     workflows: [Desktop stable release]
     types: [completed]
@@ -30,44 +31,19 @@ concurrency:
 jobs:
   source:
     # Only a successful stable vX.Y.Z publication starts a preview; betas
-    # (vX.Y.Z-beta.N) do not.
+    # (vX.Y.Z-beta.N) contain '-' and do not.
     if: >-
       ${{ github.repository == 'block/buzz-app' && !inputs.promote_version && (inputs.candidates || github.ref == 'refs/heads/main') &&
           (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
             github.event.workflow_run.event == 'push' && !contains(github.event.workflow_run.head_branch, '-'))) }}
-    name: Select preview source and version
+    name: Derive preview version
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Select the commit to build
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          EVENT: ${{ github.event_name }}
-          TAG: ${{ github.event.workflow_run.head_branch }}
-          TAGGED_SHA: ${{ github.event.workflow_run.head_sha }}
-          CANDIDATES: ${{ inputs.candidates == true }}
-        run: |
-          set -euo pipefail
-          sha="$GITHUB_SHA"
-          if [[ "$EVENT" == workflow_run ]]; then
-            [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
-              { echo "::error::$TAG is not a stable release tag"; exit 1; }
-            sha="$TAGGED_SHA"
-          fi
-          if [[ "$CANDIDATES" != true ]]; then
-            main=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
-            base=$(gh api "repos/$GH_REPO/compare/$sha...$main" --jq .merge_base_commit.sha)
-            [[ "$base" == "$sha" ]] || { echo "::error::$sha is not in main history at $main"; exit 1; }
-          fi
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Derive the preview version
@@ -86,7 +62,6 @@ jobs:
     with:
       candidates: ${{ inputs.candidates == true }}
       preview_version: ${{ needs.source.outputs.version }}
-      source_sha: ${{ needs.source.outputs.sha }}
 
   promote_preview:
     name: Promote verified preview

@@ -27,8 +27,9 @@ stable releases check the [stable feed](#stable-updater-feed).
   stable build cannot read (see the
   [agent protection notice](#agent-protection-compatibility-notice)).
 
-A preview is built every day from `main`, and again from each published stable
-release's commit, so preview installs get a stable release's code without
+A preview of `main` is built every day, and again right after each stable
+release is published. Stable tags are always in `main`'s history, so that
+preview includes the release, and preview installs get its code without
 leaving the channel.
 
 ## Preview artifacts
@@ -58,15 +59,13 @@ Previews build from three triggers:
 
 - **Daily**, from `main`'s head (09:37 UTC).
 - **After each stable release.** When **Desktop stable release** succeeds for a
-  `vX.Y.Z` tag, the workflow builds that tag's commit. Betas start no preview.
+  `vX.Y.Z` tag, the workflow builds `main`'s head, which includes that release.
+  Betas start no preview.
 - **By hand**, from `main`'s head:
 
   ```sh
   gh workflow run release.yml --repo block/buzz-app --ref main
   ```
-
-Every build except a candidate-only run first checks that its commit is in
-`main`'s history.
 
 The version is set automatically, once per run, before any platform builds:
 one patch above the highest stable `vX.Y.Z` tag in the built commit's history,
@@ -238,8 +237,8 @@ git push origin refs/tags/v1.0.0
 
 If a platform job fails, use **Re-run all jobs**, as for previews. A published
 tag is never moved or reused; cut a new version instead. Publishing a stable
-release also starts a [preview](#preview-artifacts) of the same commit,
-versioned above it; nothing needs bumping by hand.
+release also starts a [preview](#preview-artifacts) of `main`, which includes
+the release and is versioned above it; nothing needs bumping by hand.
 
 ### Stable updater feed
 

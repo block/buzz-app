@@ -18,7 +18,7 @@ import {
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ChannelLifecycleAction } from "../../features/relay/channel-lifecycle-protocol";
 import { Collapsible } from "@base-ui/react/collapsible";
-import { useDroppable } from "@dnd-kit/core";
+import { useDraggable, useDndMonitor, useDroppable } from "@dnd-kit/core";
 import {
   ChannelSidebarDnd,
   DraggableChannel,
@@ -247,6 +247,11 @@ export function SoloWorkspaces({
     name: string;
   }>();
   const groups = snapshot.data?.sections ?? [];
+  const reorder = (id: string, position: number) => {
+    const order = groups.map((group) => group.id).filter((key) => key !== id);
+    order.splice(position, 0, id);
+    void preferences.reorderSections(id, order).catch(() => {});
+  };
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
@@ -477,6 +482,13 @@ export function SoloWorkspaces({
       chats.some((item) => item.id === move.channelId),
     ) ?? [];
   const entries = visible.map((project) => {
+    const groupIndex = groups.findIndex((group) => group.id === project.id);
+    const reorderable =
+      !!project.id &&
+      groups.length > 1 &&
+      preferences.sectionOrderWritable &&
+      !renaming &&
+      !deleting;
     const open =
       !collapsed.includes(project.id) || renamingProject === project.id;
     const changeOpen = (open: boolean) =>
@@ -487,6 +499,14 @@ export function SoloWorkspaces({
     const frame = (children: ReactNode) => (
       <DropProject
         projectKey={DROP + project.id}
+        groupIndex={groupIndex}
+        onKeyboardMove={(offset) => {
+          const position = groupIndex + offset;
+          if (position < 0 || position >= groups.length) return false;
+          reorder(project.id, position);
+          return true;
+        }}
+        reorderable={reorderable}
         key={project.id}
         className={`${styles.project} ${channelStyles.channelSection}`}
         data-project={project.id ? "" : undefined}
@@ -706,6 +726,20 @@ export function SoloWorkspaces({
         {header(
           <Collapsible.Trigger
             type="button"
+            data-workspace-drag-handle={reorderable ? "" : undefined}
+            aria-keyshortcuts={
+              reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+            }
+            aria-description={
+              reorderable
+                ? "Reorder this workspace with Alt+Up or Alt+Down (Option on Mac)."
+                : undefined
+            }
+            title={
+              reorderable
+                ? "Drag to reorder, or use Alt+Up/Down (Option on Mac)."
+                : undefined
+            }
             className={styles.projectHeading}
             aria-expanded={
               !collapsed.includes(project.id) || renamingProject === project.id
@@ -731,6 +765,7 @@ export function SoloWorkspaces({
       id: project.id,
       name: project.name,
       open,
+      reorderable,
       toggle: changeOpen,
       newChat: onNew ? () => onNew(project.id || undefined) : undefined,
       frame,
@@ -770,17 +805,45 @@ export function SoloWorkspaces({
           {readError.message}
         </p>
       )}
+      {snapshot.orderError && (
+        <div role="alert" className={styles.listMessage}>
+          <p>Couldn’t save workspace order. {snapshot.orderError.error}</p>
+          <Button
+            disabled={!preferences.sectionOrderWritable}
+            onClick={() => {
+              const failed = preferences.snapshot().orderError;
+              if (failed)
+                void preferences
+                  .reorderSections(failed.sectionId, failed.sectionIds)
+                  .catch(() => {});
+            }}
+          >
+            Retry move
+          </Button>
+          <Button onClick={() => preferences.dismissOrderError()}>
+            Dismiss
+          </Button>
+        </div>
+      )}
       <ChannelSidebarDnd
         writable={preferences.writable}
         onMove={(id, key) => move(id, key.slice(DROP.length) || undefined)}
-        // Solo projects keep their saved order; only chats drag.
-        onReorder={() => {}}
-        overlay={(id) => {
-          const item = chats.find((item) => item.id === id);
+        onReorder={(key, overKey) => {
+          const id = key.slice(DROP.length);
+          const position = groups.findIndex(
+            (group) => DROP + group.id === overKey,
+          );
+          if (position >= 0 && groups.some((group) => group.id === id))
+            reorder(id, position);
+        }}
+        overlay={(id, group) => {
+          const title = group
+            ? groups.find((item) => DROP + item.id === id)?.name
+            : chats.find((item) => item.id === id)?.title;
           return (
-            item && (
+            title && (
               <div className={channelStyles.channelDragOverlay}>
-                <span>{item.title}</span>
+                <span>{title}</span>
               </div>
             )
           );
@@ -1086,15 +1149,106 @@ function ContributedSoloRow({
 /** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({
   projectKey,
+  groupIndex,
+  reorderable,
+  onKeyboardMove,
   ...props
-}: ComponentProps<typeof Collapsible.Root> & { projectKey: string }) {
-  const { setNodeRef, isOver, active } = useDroppable({ id: projectKey });
+}: ComponentProps<typeof Collapsible.Root> & {
+  projectKey: string;
+  groupIndex: number;
+  reorderable: boolean;
+  onKeyboardMove(offset: number): boolean;
+}) {
+  const { setNodeRef, isOver, active } = useDroppable({
+    id: projectKey,
+    data: { group: reorderable, groupIndex },
+    resizeObserverConfig: { updateMeasurementsFor: [] },
+  });
+  const drag = useDraggable({
+    id: projectKey,
+    data: { group: true, groupIndex },
+    disabled: !reorderable,
+  });
+  const suppressClick = useRef(false);
+  const keyboardFocus = useRef<HTMLElement | undefined>(undefined);
+  useLayoutEffect(() => {
+    const title = keyboardFocus.current;
+    keyboardFocus.current = undefined;
+    if (title && document.activeElement === document.body)
+      title.focus({ preventScroll: true });
+  });
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node);
+      drag.setNodeRef(node);
+    },
+    [setNodeRef, drag.setNodeRef],
+  );
+  useDndMonitor({
+    onDragStart: ({ active }) => {
+      if (active.id === projectKey) suppressClick.current = true;
+    },
+  });
+  const group = !!active?.data.current?.group;
   return (
     <Collapsible.Root
       {...props}
-      ref={setNodeRef}
+      ref={setRef}
+      onKeyDown={(event) => {
+        if (
+          !reorderable ||
+          active ||
+          !event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+          !(event.target instanceof Element)
+        )
+          return;
+        const title = event.target.closest<HTMLElement>(
+          "[data-workspace-drag-handle]",
+        );
+        if (!title) return;
+        event.preventDefault();
+        event.stopPropagation();
+        keyboardFocus.current = title;
+        if (!onKeyboardMove(event.key === "ArrowUp" ? -1 : 1))
+          keyboardFocus.current = undefined;
+      }}
+      onPointerDown={(event) => {
+        if (
+          !(event.target instanceof Element) ||
+          !event.target.closest("[data-workspace-drag-handle]")
+        )
+          return;
+        suppressClick.current = false;
+        drag.listeners?.onPointerDown?.(event);
+      }}
+      onClickCapture={(event) => {
+        // The headings are controlled buttons, so stopping their click also
+        // prevents a completed drag from selecting or collapsing a workspace.
+        if (
+          suppressClick.current &&
+          event.detail > 0 &&
+          event.target instanceof Element &&
+          event.target.closest("[data-workspace-drag-handle]")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      data-section-dragging={drag.isDragging || undefined}
+      data-drop-edge={
+        group && isOver && active?.id !== projectKey
+          ? active?.data.current?.groupIndex < groupIndex
+            ? "after"
+            : "before"
+          : undefined
+      }
       data-drop-target={
-        (isOver && active?.data.current?.sectionKey !== projectKey) || undefined
+        (!group && isOver && active?.data.current?.sectionKey !== projectKey) ||
+        undefined
       }
     />
   );

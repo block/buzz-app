@@ -24,6 +24,7 @@ export type WorkspaceComposition = Readonly<{
     id: string;
     name: string;
     open: boolean;
+    reorderable: boolean;
     toggle(open: boolean): void;
     frame(children: ReactNode): ReactNode;
     header(
@@ -72,6 +73,20 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
         label={title}
         selected={!!props.selected}
         data-solo-workspace-id={workspace.id}
+        data-workspace-drag-handle={workspace.reorderable ? "" : undefined}
+        aria-keyshortcuts={
+          workspace.reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+        }
+        aria-description={
+          workspace.reorderable
+            ? "Reorder this workspace with Alt+Up or Alt+Down (Option on Mac)."
+            : undefined
+        }
+        title={
+          workspace.reorderable
+            ? "Drag to reorder, or use Alt+Up/Down (Option on Mac)."
+            : undefined
+        }
         onClick={() => props.onSelect?.()}
       />
       {disclosure}

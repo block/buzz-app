@@ -92,6 +92,16 @@ function fixture(projectName = "Work") {
     };
     return saved;
   });
+  const order = vi.fn(async (ids: readonly string[]) => {
+    saved = {
+      ...saved,
+      sections: ids.flatMap((id, order) => {
+        const section = saved.sections.find((section) => section.id === id);
+        return section ? [{ ...section, order }] : [];
+      }),
+    };
+    return saved;
+  });
   const store = () =>
     createSidebarPreferencesStore({
       read: async () => saved,
@@ -99,6 +109,7 @@ function fixture(projectName = "Work") {
       write,
       writeStar: async () => [],
       removeSection: remove,
+      writeOrder: order,
       // Groups-only chats have no Messages sort coordinate.
       groupsOnly: true,
     });
@@ -148,10 +159,105 @@ function fixture(projectName = "Work") {
     view,
     write,
     remove,
+    order,
     onNew,
     saved: () => saved,
   };
 }
+
+for (const composed of [false, true]) {
+  it(`advertises reordering only when available (${composed ? "composed" : "ordinary"})`, async () => {
+    const h = fixture();
+    const store = h.store();
+    const compose: ComposeWorkspaces | undefined = composed
+      ? (parts) => (
+          <WorkspaceCompositionContext value={parts}>
+            {parts.workspaces
+              .filter((workspace) => workspace.id)
+              .map((workspace) => (
+                <RegionWorkspace key={workspace.id} id={workspace.id} />
+              ))}
+            <RegionChats />
+          </WorkspaceCompositionContext>
+        )
+      : undefined;
+    const view = (preferences = store.queries) =>
+      h.view(preferences, undefined, undefined, undefined, compose);
+    const noHints = (heading: HTMLElement) => {
+      for (const attribute of [
+        "aria-keyshortcuts",
+        "aria-description",
+        "title",
+        "data-workspace-drag-handle",
+      ])
+        expect(heading).not.toHaveAttribute(attribute);
+    };
+    try {
+      await store.queries.ensure();
+      const mounted = render(view());
+      noHints(await screen.findByRole("button", { name: "Work" }));
+      noHints(screen.getByRole("button", { name: "Chats" }));
+      await act(() =>
+        store.queries.createSection({ id: "second", name: "Second" }),
+      );
+      expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute(
+        "aria-keyshortcuts",
+        "Alt+ArrowUp Alt+ArrowDown",
+      );
+      noHints(screen.getByRole("button", { name: "Chats" }));
+      mounted.rerender(view({ ...store.queries, sectionOrderWritable: false }));
+      noHints(screen.getByRole("button", { name: "Work" }));
+    } finally {
+      store.dispose();
+    }
+  });
+}
+
+it("keeps workspace ordering out of the menu", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  try {
+    render(h.view(store.queries));
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Work" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Workspace settings" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Move (to top|up|down)$/ }),
+    ).not.toBeInTheDocument();
+  } finally {
+    store.dispose();
+  }
+});
+
+it("shows a failed workspace move and retries it", async () => {
+  const h = fixture();
+  const store = h.store();
+  const user = userEvent.setup();
+  try {
+    await store.queries.ensure();
+    await store.queries.createSection({ id: "second", name: "Second" });
+    h.order.mockRejectedValueOnce(new Error("offline"));
+    render(h.view(store.queries));
+    await act(async () => {
+      await expect(
+        store.queries.reorderSections("second", ["second", "work"]),
+      ).rejects.toThrow("offline");
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn’t save workspace order. offline",
+    );
+    expect(h.saved().sections[0]?.id).toBe("work");
+    await user.click(screen.getByRole("button", { name: "Retry move" }));
+    await waitFor(() => expect(h.saved().sections[0]?.id).toBe("second"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    store.dispose();
+  }
+});
 
 it("creates and moves through the relay service, then restores in a fresh store", async () => {
   const h = fixture();

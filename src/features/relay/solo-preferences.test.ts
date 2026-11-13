@@ -500,6 +500,38 @@ const workspaces: Groups = {
 const written = (f: ReturnType<typeof fixture>) =>
   f.publish.mock.calls.map(([event]) => JSON.parse(event.content) as KitRecord);
 
+it("saves workspace order while retaining defaults, assignments and newly discovered workspaces", async () => {
+  const f = fixture();
+  const solo = f.session.soloPreferences;
+  try {
+    f.install(workspaces);
+    await solo.ensure();
+    const latest: Groups = {
+      ...workspaces,
+      groups: [
+        ...workspaces.groups,
+        { id: "new", name: "New", defaultTemplateId: "new-default" },
+      ],
+      assignments: { ...workspaces.assignments, [channel]: "new" },
+    };
+    f.install(latest);
+    await solo.reorderSections("keep", ["keep", "work"]);
+    expect(written(f).at(-1)?.value).toEqual({
+      ...latest,
+      groups: [latest.groups[1], latest.groups[0], latest.groups[2]],
+    });
+    await solo.refresh();
+    expect(solo.snapshot().data?.sections.map(({ id }) => id)).toEqual([
+      "keep",
+      "work",
+      "new",
+    ]);
+    expect(f.assignment).not.toHaveBeenCalled();
+  } finally {
+    f.dispose();
+  }
+});
+
 it("tombstones only the removed workspace's settings, without their name, instructions, folders or agents", async () => {
   const f = fixture();
   try {

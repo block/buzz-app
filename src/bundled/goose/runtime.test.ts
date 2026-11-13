@@ -2530,6 +2530,68 @@ describe("goose turns through the agent gateway", () => {
     },
   );
 
+  it("runs a protected agent's dispatched turn inside its containment, as it would without the gateway", async () => {
+    const g = gateway();
+    const f = setup({ forwarding: g.forwarding, provider: "databricks" });
+    const policy = protection("policy-1", () => f);
+    const spawn = vi.fn(policy.spawn);
+    Object.assign(f.agent, { protection: { ...policy, spawn } });
+    try {
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      expect(g.opens).toEqual([]);
+      expect(f.goose()?.env.DATABRICKS_HOST).toBeUndefined();
+      // Started by the agent's protected spawn, not the plain one.
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(f.published.map((event) => event.content)).not.toContainEqual(
+        expect.stringContaining("gateway"),
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("runs a protected agent's standalone turn and compaction as it would without the gateway", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      reply: "Compaction complete",
+    });
+    Object.assign(f.agent, { protection: protection("policy-1", () => f) });
+    const agent = {
+      ...f.agent,
+      config: { ...DEFAULT_CONFIG, provider: "databricks" },
+    } as unknown as Agent;
+    try {
+      f.runtime.sync([agent]);
+      await expect(
+        f.runtime.runOnce({
+          delivery: {
+            agent: f.agent,
+            channelId: channel,
+            config: { ...DEFAULT_CONFIG, provider: "databricks" },
+            ...dispatched(),
+          },
+          key: "Timer",
+          signal: new AbortController().signal,
+          prompt: async () => "Check in",
+        } as unknown as Parameters<GooseRuntime["runOnce"]>[0]),
+      ).resolves.toMatchObject({ ok: true });
+      await f.runtime.session(
+        agent,
+        { channelId: channel, root: root.id },
+        "compact",
+      );
+      expect(g.opens).toEqual([]);
+      expect(f.fake.geese.every((goose) => !goose.env.DATABRICKS_HOST)).toBe(
+        true,
+      );
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
   it("compacts as without the gateway, refusing nothing, once the agent's provider is another", async () => {
     const g = gateway();
     const f = setup({

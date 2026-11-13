@@ -457,6 +457,12 @@ test("live conversion removes the old editor and permits renaming another Solo c
   await row(page, alpha).dblclick();
   await expect(input(page)).toHaveValue("Alpha");
   await expect(input(page)).toHaveAttribute("aria-disabled", "false");
+  await input(page).fill("Unsubmitted name");
+  const signatures = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/channel-details-sign"))
+      signatures.push(request.postDataJSON());
+  });
   await expect.poll(() => app.relay.hasRoute("primary", alpha)).toBe(true);
   app.relay.publish(
     "primary",
@@ -480,6 +486,10 @@ test("live conversion removes the old editor and permits renaming another Solo c
   ).toHaveCount(0);
   await expect(input(page)).toHaveCount(0);
   await expect(rowCopies(page, alpha)).toHaveCount(0);
+  // Actual unmount retires the editor's save lifetime, including native blur
+  // caused by making its retained exit inert. No draft may reach the signer.
+  expect(signatures).toEqual([]);
+  expect(app.report.detailsPublications ?? []).toHaveLength(0);
   await row(page, beta).dblclick();
   await expect(input(page)).toHaveValue("Beta");
   await expect(input(page)).toBeFocused();

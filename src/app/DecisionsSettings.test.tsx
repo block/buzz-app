@@ -440,6 +440,12 @@ it("opens TypeSafe with editable focus or a closed saved-key menu until ready", 
   act(() => decisions.setStatus(TYPESAFE, "ready"));
   expect(decisions.chosen()).toBe(TYPESAFE);
   expect(screen.queryByRole("dialog")).toBeNull();
+  expect(toggle).toHaveTextContent("TypeSafe");
+  await user.click(toggle);
+  await user.click(await screen.findByRole("option", { name: "Builderlab" }));
+  expect(decisions.chosen()).toBe(builderlab);
+  expect(toggle).toHaveTextContent("Builderlab");
+  expect(screen.queryByLabelText("TypeSafe API key")).toBeNull();
 });
 
 it("explains lost Builderlab access only while it is selected and confirmed unavailable", async () => {

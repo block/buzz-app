@@ -6,7 +6,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -76,6 +75,7 @@ export function VideoControls({
   const corners = useMediaCorners();
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
+  const progress = useRef<HTMLInputElement>(null);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -88,7 +88,30 @@ export function VideoControls({
     const video = videoRef.current;
     if (!video) return;
     let frame = 0;
-    const syncTime = () => setTime(video.currentTime);
+    let displayedSecond = -1;
+    const syncTime = () => {
+      const seconds = Number.isFinite(video.currentTime)
+        ? video.currentTime
+        : 0;
+      const length = Number.isFinite(video.duration) ? video.duration : 0;
+      const input = progress.current;
+      // The native range owns frame-by-frame progress. Re-rendering every menu
+      // and button at display refresh rate competes with the viewer entrance.
+      if (input) {
+        const max = String(length || 1);
+        if (input.max !== max) input.max = max;
+        input.value = String(Math.min(seconds, length));
+        input.style.setProperty(
+          "--progress",
+          `${length ? (seconds / length) * 100 : 0}%`,
+        );
+      }
+      const wholeSecond = Math.floor(seconds);
+      if (wholeSecond !== displayedSecond) {
+        displayedSecond = wholeSecond;
+        setTime(wholeSecond);
+      }
+    };
     const tick = () => {
       syncTime();
       frame = requestAnimationFrame(tick);
@@ -106,6 +129,7 @@ export function VideoControls({
     };
     const metadata = () => {
       setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+      syncTime();
     };
     const sound = () => {
       setVolume(video.volume);
@@ -165,7 +189,6 @@ export function VideoControls({
     if (!videoRef.current || !duration) return;
     const next = Math.max(0, Math.min(seconds, duration));
     videoRef.current.currentTime = next;
-    setTime(next);
     // Keep authoring time and inline handoff synchronized even while paused.
     videoRef.current.dispatchEvent(new Event("timeupdate"));
   };
@@ -302,18 +325,14 @@ export function VideoControls({
           <input
             type="range"
             tabIndex={0}
+            ref={progress}
             aria-label={inline ? "Video progress" : "Video timeline"}
             aria-valuetext={`${videoTime(time)} / ${videoTime(duration)}`}
             min={0}
             max={duration || 1}
             step={0.1}
-            value={Math.min(time, duration)}
+            defaultValue={0}
             disabled={!duration}
-            style={
-              {
-                "--progress": `${duration ? (time / duration) * 100 : 0}%`,
-              } as CSSProperties
-            }
             onChange={(event) => seek(Number(event.currentTarget.value))}
           />
           {hover !== undefined && duration > 0 && (

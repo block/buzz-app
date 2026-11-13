@@ -41,6 +41,11 @@ export const test = base.extend({
   liveSetupTimeoutMs: [undefined, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
+  // Content of a details message the peer sends last in primary alpha.
+  detailsMessage: ["", { option: true }],
+  // Open threads in. Most journeys read threads in tabs; the app default,
+  // inline, reads them in a sheet over the conversation.
+  threadPlacement: ["side", { option: true }],
   profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
@@ -132,6 +137,8 @@ export const test = base.extend({
       liveSetupTimeoutMs,
       actionProfile,
       agentMessageDeletion,
+      detailsMessage,
+      threadPlacement,
       profilePicture,
       readState,
       threadUnread,
@@ -228,7 +235,8 @@ export const test = base.extend({
       readState ||
       exactMessages ||
       actionProfile ||
-      markdownMessages
+      markdownMessages ||
+      detailsMessage
         ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
         : [];
     const peerKey = peerKeys[0];
@@ -551,6 +559,21 @@ export const test = base.extend({
       : undefined;
     if (ownerAgentMessage)
       histories.get("primary/alpha").push(ownerAgentMessage);
+    if (detailsMessage) {
+      const alpha = histories.get("primary/alpha");
+      alpha.push(
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["audience", "details"],
+          ],
+          detailsMessage,
+          peerKey,
+          Math.max(1700000100, ...alpha.map((event) => event.created_at)) + 1,
+        ),
+      );
+    }
     const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of [...dmIds, ...lifecycleRows.map((row) => row.id)])
@@ -2563,6 +2586,12 @@ export const test = base.extend({
           });
           observer.observe(document, { childList: true, subtree: true });
         });
+      await page.addInitScript((placement) => {
+        // Seed once, so a choice made during the journey survives reloads.
+        const key = "buzz-thread-placement.v1";
+        if (placement !== "inline" && !localStorage.getItem(key))
+          localStorage.setItem(key, placement);
+      }, threadPlacement);
       await page.addInitScript(
         ({ viewer, profilePicture, iconCongestion, enabledPlugins }) => {
           // Model fresh plugin choices before seeding an existing community.

@@ -1,4 +1,9 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { ThreadReplyWindow } from "./ThreadReplyWindow";
+import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
+import { MessageLoading } from "./MessageLoading";
+import { useMessageArrival } from "./use-message-arrival";
+import { overlayHostFor, type MediaReviewOrigin } from "./composer-overlay";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -96,6 +101,10 @@ export type ThreadPanelProps = {
   revealSelected?: boolean | undefined;
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
+  /** Initial reading position; exact-message reveals still win. */
+  initialScroll?: "top" | "latest" | undefined;
+  /** Opt-in for composer sheets; window long histories without replacing short readers. */
+  virtualizeReplies?: boolean | undefined;
   /** With revealSelected: each new value reveals the selected message again. */
   revealRequest?: number | undefined;
   headerActions?: ReactNode | undefined;
@@ -118,6 +127,7 @@ export type ThreadPanelProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
+    opening?: MediaReviewOrigin,
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -144,6 +154,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
       }
       data-attachment-drop-zone=""
       data-reading-surface=""
+      data-composer-host=""
       aria-label="Thread"
       onKeyDown={(event) => {
         // Portalled viewers bubble here through React but own their Escape.
@@ -401,7 +412,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           }
         />
       ) : (
-        !error && <ThreadLoading />
+        !error && <MessageLoading label="Loading thread…" />
       )}
     </>
   );
@@ -426,6 +437,8 @@ function OwnedThreadPanel({
   active = true,
   revealSelected,
   revealFocus,
+  initialScroll,
+  virtualizeReplies,
   requireReadyRoot,
   onDraftSaved,
   onSend,
@@ -501,6 +514,8 @@ function OwnedThreadPanel({
       active={active}
       revealSelected={revealSelected}
       revealFocus={revealFocus}
+      initialScroll={initialScroll}
+      virtualizeReplies={virtualizeReplies}
       requireReadyRoot={requireReadyRoot}
       onDraftSaved={onDraftSaved}
       onSend={onSend}
@@ -509,7 +524,7 @@ function OwnedThreadPanel({
       canOpenLink={canOpenLink}
     />
   ) : (
-    <ThreadLoading />
+    <MessageLoading label="Loading thread…" />
   );
 }
 function ThreadMessages({
@@ -533,6 +548,8 @@ function ThreadMessages({
   active,
   revealSelected,
   revealFocus,
+  initialScroll,
+  virtualizeReplies,
   revealRequest,
   requireReadyRoot,
   onDraftSaved,
@@ -566,6 +583,10 @@ function ThreadMessages({
   revealSelected?: boolean | undefined;
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
+  /** Initial reading position; exact-message reveals still win. */
+  initialScroll?: "top" | "latest" | undefined;
+  /** Opt-in for composer sheets; window long histories without replacing short readers. */
+  virtualizeReplies?: boolean | undefined;
   revealRequest?: number | undefined;
   requireReadyRoot?: boolean | undefined;
   onDraftSaved?: ThreadPanelProps["onDraftSaved"];
@@ -721,10 +742,32 @@ function ThreadMessages({
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
+  // Choose before the first reading position. Do not replace a live short
+  // thread's DOM when an incoming reply happens to cross the window threshold.
+  const windowed = useRef(false);
+  const topReplies = tree.children.get(undefined) ?? [];
+  if (virtualizeReplies && !positioned.current && topReplies.length > 20)
+    windowed.current = true;
+  const [windowReady, setWindowReady] = useState(false);
+  const markWindowReady = useCallback(() => setWindowReady(true), []);
+  const [pinnedRows, setPinnedRows] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
+  const keepRowMounted = useCallback((id: string) => {
+    setPinnedRows((rows) => new Map(rows).set(id, (rows.get(id) ?? 0) + 1));
+    return () =>
+      setPinnedRows((rows) => {
+        const next = new Map(rows);
+        const count = (rows.get(id) ?? 0) - 1;
+        if (count > 0) next.set(id, count);
+        else next.delete(id);
+        return next;
+      });
+  }, []);
   const shown = useRef(active);
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
-  const follow = useRef(true);
+  const follow = useRef(initialScroll !== "top");
   const resizePosition = useRef<
     | {
         width: number;
@@ -932,10 +975,17 @@ function ThreadMessages({
   // Ordinary opens follow the latest reply after bounded history finishes.
   // Keep that first positioning invisible; exact-message navigation reveals itself.
   const positioning =
-    !revealSelected &&
-    !initialPositioned &&
-    (!navigation || positionedVisit) &&
-    snapshot.status !== "error";
+    (windowed.current && !windowReady) ||
+    (!revealSelected &&
+      !initialPositioned &&
+      (!navigation || positionedVisit) &&
+      snapshot.status !== "error");
+  useMessageArrival(
+    scroller,
+    rows,
+    !positioning,
+    windowed.current ? positioned : undefined,
+  );
   const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
   useEffect(() => {
@@ -1107,6 +1157,7 @@ function ThreadMessages({
           seconds,
           hasMediaComments,
           attachments,
+          { host: overlayHostFor(document.activeElement), rootId },
         );
     },
     [rootId, onOpenMediaReview, hasMediaComments],
@@ -1481,7 +1532,7 @@ function ThreadMessages({
   let previousDay = snapshot.root
     ? new Date(snapshot.root.createdAt * 1000).toDateString()
     : undefined;
-  function renderReplies(parent: string | undefined, depth = 0): ReactNode {
+  function renderReplies(parent: string | undefined, depth = 0): ReactNode[] {
     const chronologicalSiblings = tree.children.get(parent) ?? [];
     // Outcome captions stay within one displayed level, so a collapsed branch
     // cannot hide the reply that owns a request's outcome.
@@ -1511,6 +1562,7 @@ function ThreadMessages({
       ),
     );
     return siblings.map((row, index) => {
+      const Item = windowed.current && depth === 0 ? "div" : "li";
       const group = groupsByFirst.get(row.id);
       if (hidden.has(row.id) && !group) return null;
       const nextRow =
@@ -1569,6 +1621,7 @@ function ThreadMessages({
               snapshot.root && !soloConversation ? targetReply : undefined
             }
             row={row}
+            keepMounted={keepRowMounted}
             getThreadRoot={getThreadRoot}
             stackPrevious={inside || continuation}
             stackNext={
@@ -1605,7 +1658,7 @@ function ThreadMessages({
         </ActivityExpansion>
       );
       return (
-        <li
+        <Item
           key={row.id}
           ref={
             row.id === messageId && !groupedIds.has(row.id)
@@ -1699,10 +1752,13 @@ function ThreadMessages({
               <ol>{renderReplies(row.id, depth + 1)}</ol>
             )}
           </ReplyBranch>
-        </li>
+        </Item>
       );
     });
   }
+  const selectedBranchIndex = topReplies.findIndex(
+    (row) => row.id === messageId || tree.ancestors(messageId).includes(row.id),
+  );
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
   const captureOlderAnchor = (element: HTMLElement) => {
     follow.current = false;
@@ -1792,233 +1848,270 @@ function ThreadMessages({
             : undefined
         }
       />
-      <section
-        ref={scroller}
-        data-message-scroller
-        className={styles.threadHistory}
-        style={
-          {
-            "--channel-preview-inset": preview
-              ? `calc(${joinNoticeHeight}px + var(--space-3))`
-              : "0px",
-          } as CSSProperties
-        }
-        aria-label="Thread messages"
-        aria-busy={positioning}
-        data-positioning={positioning || undefined}
-        data-jump-visible={showJumpToLatest || undefined}
-        onScroll={(event) => {
-          if (!positioned.current) return;
-          const element = event.currentTarget;
-          if (olderAnchor.current) {
-            const anchor = olderAnchor.current;
-            const row = [
-              ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-            ].find((row) => row.dataset.messageId === anchor.id);
-            if (row) anchor.top = row.getBoundingClientRect().top;
+      <div className={styles.threadHistoryFrame} data-thread-history-frame="">
+        <section
+          ref={scroller}
+          data-message-scroller
+          className={styles.threadHistory}
+          style={
+            {
+              "--channel-preview-inset": preview
+                ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                : "0px",
+            } as CSSProperties
           }
-          // A browser-generated scroll during reflow must not replace the
-          // reading intent before ResizeObserver has corrected the new geometry.
-          const previous = resizePosition.current;
-          if (
-            previous &&
-            (previous.width !== element.clientWidth ||
-              previous.height !== element.clientHeight ||
-              previous.contentHeight !== element.scrollHeight)
-          )
-            return;
-          const bottom =
-            element.scrollHeight - element.clientHeight - element.scrollTop <
-            80;
-          if (jumpingToLatest.current) return;
-          captureResizePosition();
-          follow.current = bottom;
-          setShowJumpToLatest(!bottom);
-          if (bottom) setNewMessageCount(0);
-          loadOlder();
-        }}
-        onWheel={(event) => {
-          keepReadingPosition();
-          if (event.deltaY < 0) loadOlder();
-        }}
-        onTouchMove={() => {
-          keepReadingPosition();
-          loadOlder();
-        }}
-        onPointerDown={keepReadingPosition}
-        onKeyDown={(event) => {
-          moveMessageSelection(event);
-          if (event.defaultPrevented) return;
-          if (
-            [
-              "ArrowUp",
-              "ArrowDown",
-              "PageUp",
-              "PageDown",
-              "Home",
-              "End",
-              " ",
-            ].includes(event.key)
-          ) {
-            keepReadingPosition();
+          aria-label="Thread messages"
+          aria-busy={positioning}
+          data-positioning={positioning || undefined}
+          data-jump-visible={showJumpToLatest || undefined}
+          onScroll={(event) => {
+            if (!positioned.current) return;
+            const element = event.currentTarget;
+            if (olderAnchor.current) {
+              const anchor = olderAnchor.current;
+              const row = [
+                ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+              ].find((row) => row.dataset.messageId === anchor.id);
+              if (row) anchor.top = row.getBoundingClientRect().top;
+            }
+            // A browser-generated scroll during reflow must not replace the
+            // reading intent before ResizeObserver has corrected the new geometry.
+            const previous = resizePosition.current;
             if (
-              ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
-              (event.key === " " && event.shiftKey)
+              previous &&
+              (previous.width !== element.clientWidth ||
+                previous.height !== element.clientHeight ||
+                previous.contentHeight !== element.scrollHeight)
             )
-              loadOlder();
-          }
-        }}
-        tabIndex={0}
-      >
-        <JumpToLatestButton
-          visible={showJumpToLatest}
-          newMessageCount={newMessageCount}
-          onClick={jumpToLatest}
-        />
-        <div
-          data-thread-rows=""
-          data-activity-history-scope=""
-          inert={positioning}
+              return;
+            const bottom =
+              element.scrollHeight - element.clientHeight - element.scrollTop <
+              80;
+            if (jumpingToLatest.current) return;
+            captureResizePosition();
+            follow.current = bottom;
+            setShowJumpToLatest(!bottom);
+            if (bottom) setNewMessageCount(0);
+            loadOlder();
+          }}
+          onWheel={(event) => {
+            keepReadingPosition();
+            if (event.deltaY < 0) loadOlder();
+          }}
+          onTouchMove={() => {
+            keepReadingPosition();
+            loadOlder();
+          }}
+          onPointerDown={keepReadingPosition}
+          onKeyDown={(event) => {
+            moveMessageSelection(event);
+            if (event.defaultPrevented) return;
+            if (
+              [
+                "ArrowUp",
+                "ArrowDown",
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+                " ",
+              ].includes(event.key)
+            ) {
+              keepReadingPosition();
+              if (
+                ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+                (event.key === " " && event.shiftKey)
+              )
+                loadOlder();
+            }
+          }}
+          tabIndex={0}
         >
-          {snapshot.root && intro}
-          {snapshot.root ? (
-            <MessageRow
-              viewer={session.viewer}
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={soloConversation ? undefined : focusReply}
-              stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
-              row={snapshot.root}
-              representedAgents={stableActivity.agents(
-                snapshot.root.id,
-                rootPresentation.representedAgents.get(snapshot.root.id),
-              )}
-              repliedAgents={stableActivity.agents(
-                `replied:${snapshot.root.id}`,
-                rootReplies.repliedAgents.get(snapshot.root.id),
-              )}
-              recordedActivity={stableActivity.activity(
-                snapshot.root.id,
-                rootActivity,
-                "history",
-              )}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={false}
-              layout="thread"
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-          ) : snapshot.status !== "loading" ? (
-            targetUnavailable ? (
-              // One notice, with its recovery beside it, when nothing loaded.
-              <div className={styles.threadNotice}>
-                <p role="status">This message isn’t available.</p>
-                {!historyError && (
-                  <Button type="button" onClick={() => void view.refresh()}>
-                    Try again
-                  </Button>
+          <JumpToLatestButton
+            visible={showJumpToLatest}
+            newMessageCount={newMessageCount}
+            onClick={jumpToLatest}
+          />
+          <div
+            data-thread-rows=""
+            data-activity-history-scope=""
+            inert={positioning}
+          >
+            {snapshot.root && intro}
+            {snapshot.root ? (
+              <MessageRow
+                viewer={session.viewer}
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                onReply={soloConversation ? undefined : focusReply}
+                stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
+                row={snapshot.root}
+                representedAgents={stableActivity.agents(
+                  snapshot.root.id,
+                  rootPresentation.representedAgents.get(snapshot.root.id),
                 )}
-              </div>
-            ) : (
-              <p className={styles.empty}>Original message unavailable.</p>
-            )
-          ) : null}
-          <ol>
+                repliedAgents={stableActivity.agents(
+                  `replied:${snapshot.root.id}`,
+                  rootReplies.repliedAgents.get(snapshot.root.id),
+                )}
+                recordedActivity={stableActivity.activity(
+                  snapshot.root.id,
+                  rootActivity,
+                  "history",
+                )}
+                profile={profiles.get(snapshot.root.authorId)}
+                participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
+                media={session.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                day={false}
+                layout="thread"
+                retry={session.messages.retry}
+                mediaMode="thread"
+                {...(mediaSeek
+                  ? {
+                      mediaSeekTo: mediaSeek.seconds,
+                      mediaSeekRequest: mediaSeek.request,
+                    }
+                  : {})}
+                {...(onOpenMediaReview
+                  ? { onOpenMediaReview: openRootMedia }
+                  : {})}
+              />
+            ) : snapshot.status !== "loading" ? (
+              targetUnavailable ? (
+                // One notice, with its recovery beside it, when nothing loaded.
+                <div className={styles.threadNotice}>
+                  <p role="status">This message isn’t available.</p>
+                  {!historyError && (
+                    <Button type="button" onClick={() => void view.refresh()}>
+                      Try again
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <p className={styles.empty}>Original message unavailable.</p>
+              )
+            ) : null}
             {showOlderPageStatus && snapshot.error && (
-              <li className={styles.threadHistoryPageStatus}>
+              <div className={styles.threadHistoryPageStatus}>
                 <p role="alert">{snapshot.error}</p>
                 <Button type="button" onClick={retryThread}>
                   Try again
                 </Button>
-              </li>
+              </div>
             )}
-            {renderReplies(undefined)}
-          </ol>
-          {!preview && !positioning && composerRoot && (
-            <AgentConnectionSetup
-              key={`${channelId}:${rootId}`}
-              session={session}
-              channel={session.channels?.get?.(channelId)}
-              rows={rows}
-            />
-          )}
-          {!positioning && rootId && (
-            <TypingIndicator
-              audience="agents"
-              inFlow
-              session={session}
-              channelId={channelId}
-              threadRootId={rootId}
-              previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
-              openActivity={onOpenLink}
-              canOpenActivity={canOpenLink}
-            />
-          )}
-        </div>
-        {requireReadyRoot &&
-          snapshot.root &&
-          snapshot.root.id !== messageId && (
-            <p role="status">
-              This saved draft does not identify a thread root. Open its origin
-              to check the destination.
+            {windowed.current ? (
+              <ThreadReplyWindow
+                scroller={scroller}
+                onReady={markWindowReady}
+                follow={follow}
+                initialIndex={
+                  messageId === snapshot.root?.id &&
+                  !revealSelected &&
+                  initialScroll !== "top"
+                    ? topReplies.length - 1
+                    : selectedBranchIndex < 0
+                      ? undefined
+                      : selectedBranchIndex
+                }
+                keepMounted={topReplies.flatMap((row, index) => {
+                  const ids = [
+                    row.id,
+                    ...(branchReplies.get(row.id) ?? []).map(
+                      (reply) => reply.id,
+                    ),
+                  ];
+                  return ids.some(
+                    (id) =>
+                      id === messageId ||
+                      id === sent ||
+                      expanded.has(id) ||
+                      pinnedRows.has(id),
+                  )
+                    ? [index]
+                    : [];
+                })}
+              >
+                {renderReplies(undefined)}
+              </ThreadReplyWindow>
+            ) : (
+              <ol>{renderReplies(undefined)}</ol>
+            )}
+            {!preview && !positioning && composerRoot && (
+              <AgentConnectionSetup
+                key={`${channelId}:${rootId}`}
+                session={session}
+                channel={session.channels?.get?.(channelId)}
+                rows={rows}
+              />
+            )}
+            {!positioning && rootId && (
+              <TypingIndicator
+                audience="agents"
+                inFlow
+                session={session}
+                channelId={channelId}
+                threadRootId={rootId}
+                previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+                openActivity={onOpenLink}
+                canOpenActivity={canOpenLink}
+              />
+            )}
+          </div>
+          {requireReadyRoot &&
+            snapshot.root &&
+            snapshot.root.id !== messageId && (
+              <p role="status">
+                This saved draft does not identify a thread root. Open its
+                origin to check the destination.
+              </p>
+            )}
+          {positioning || (snapshot.status === "loading" && !rows.length) ? (
+            <MessageLoading label="Loading thread…" />
+          ) : null}
+          {selectionNotice && (
+            <p role="alert">
+              {selectionNotice.unavailable
+                ? "That message is no longer available."
+                : "Couldn’t open that message."}
             </p>
           )}
-        {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <ThreadLoading />
-        ) : null}
-        {selectionNotice && (
-          <p role="alert">
-            {selectionNotice.unavailable
-              ? "That message is no longer available."
-              : "Couldn’t open that message."}
-          </p>
-        )}
-        {snapshot.limited && !snapshot.error && (
-          <p className={styles.threadNote}>Thread history limit reached.</p>
-        )}
-        {(historyError || (targetUnavailable && snapshot.root)) && (
-          <div className={styles.threadNotice}>
-            {targetUnavailable && snapshot.root && (
-              <p role="status">Selected message unavailable.</p>
-            )}
-            {historyError && <p role="alert">{THREAD_FAILED}</p>}
-            <Button type="button" onClick={() => void view.refresh()}>
-              Try again
-            </Button>
-          </div>
-        )}
-        {selectionNotice && !selectionNotice.unavailable && (
-          <div className={styles.threadHistoryControls}>
-            <Button
-              type="button"
-              loading={selectionNotice.pending}
-              onClick={selectionNotice.retry}
-            >
-              Try again
-            </Button>
-          </div>
-        )}
-        <div
-          className={styles.timelineEnd}
-          data-thread-end=""
-          aria-hidden="true"
-        />
-      </section>
+          {snapshot.limited && !snapshot.error && (
+            <p className={styles.threadNote}>Thread history limit reached.</p>
+          )}
+          {(historyError || (targetUnavailable && snapshot.root)) && (
+            <div className={styles.threadNotice}>
+              {targetUnavailable && snapshot.root && (
+                <p role="status">Selected message unavailable.</p>
+              )}
+              {historyError && <p role="alert">{THREAD_FAILED}</p>}
+              <Button type="button" onClick={() => void view.refresh()}>
+                Try again
+              </Button>
+            </div>
+          )}
+          {selectionNotice && !selectionNotice.unavailable && (
+            <div className={styles.threadHistoryControls}>
+              <Button
+                type="button"
+                loading={selectionNotice.pending}
+                onClick={selectionNotice.retry}
+              >
+                Try again
+              </Button>
+            </div>
+          )}
+          <div
+            className={styles.timelineEnd}
+            data-thread-end=""
+            aria-hidden="true"
+          />
+        </section>
+        <DialogBarMaterial className={styles.threadEdgeBottom} />
+      </div>
       {/* After the scroller, so its ref is attached when this registers. */}
       <MessageSelection list={scroller} rows={rows} session={session} />
       {preview && (
@@ -2136,20 +2229,5 @@ function readingDrift(
     anchor.element.getBoundingClientRect().top -
       element.getBoundingClientRect().top -
       anchor.top,
-  );
-}
-
-function ThreadLoading() {
-  return (
-    <div className={styles.threadLoading} role="status">
-      <picture>
-        <source
-          media="(prefers-reduced-motion: reduce)"
-          srcSet="/buzz-mark.svg"
-        />
-        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
-      </picture>
-      <span className="sr-only">Loading thread…</span>
-    </div>
   );
 }

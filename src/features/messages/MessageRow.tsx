@@ -5,6 +5,7 @@ import { AgentResponsePreview } from "./AgentResponsePreview";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
+import { overlayHostFor, type MediaReviewOrigin } from "./composer-overlay";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { useClockPreference } from "../../shared/clock-preference";
@@ -93,6 +94,7 @@ import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
+import { DetailsMessage } from "./DetailsMessage";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { LinkPreviews } from "./LinkPreviews";
@@ -172,6 +174,7 @@ export type MessageRowProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
+    opening?: MediaReviewOrigin,
   ) => void;
 };
 
@@ -669,6 +672,8 @@ function MessageRowContent({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
+  // Details read as their brief, which opens into their own viewer.
+  const details = row.audience === "details";
   const body = row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
@@ -691,6 +696,47 @@ function MessageRowContent({
         </p>
       )}
     </div>
+  ) : details ? (
+    <DetailsMessage
+      keepMounted={keepRowMounted}
+      author={name}
+      avatar={
+        <Avatar
+          src={picture}
+          alt=""
+          fallback={name}
+          size="small"
+          shape={avatarShape}
+        />
+      }
+      createdAt={row.createdAt}
+      preview={
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+          edited={editedInBody && displayRow.edited}
+        />
+      }
+    >
+      <MessageMarkdown
+        directory={directory}
+        session={references}
+        scope={scope}
+        row={displayRow}
+        extensions={extensions}
+        media={media}
+        onOpenLink={openLink}
+        canOpenLink={canOpenLink}
+        participantProfiles={participantProfiles}
+      />
+    </DetailsMessage>
   ) : (
     <MessageMarkdown
       directory={directory}
@@ -1327,6 +1373,7 @@ function MessageRowContent({
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}
+                  data-details={details || undefined}
                   data-own={ownBubble || undefined}
                 >
                   {timeReply && (
@@ -1523,6 +1570,12 @@ function MessageRowContent({
                                         (!!row.threadRootId &&
                                           row.threadRootId !== row.id),
                                       row.attachments,
+                                      {
+                                        host: overlayHostFor(
+                                          document.activeElement,
+                                        ),
+                                        rootId: row.threadRootId ?? row.id,
+                                      },
                                     ),
                                 }
                               : {})}
@@ -1584,6 +1637,12 @@ function MessageRowContent({
                                       (!!row.threadRootId &&
                                         row.threadRootId !== row.id),
                                     row.attachments,
+                                    {
+                                      host: overlayHostFor(
+                                        document.activeElement,
+                                      ),
+                                      rootId: row.threadRootId ?? row.id,
+                                    },
                                   ),
                               }
                             : {})}

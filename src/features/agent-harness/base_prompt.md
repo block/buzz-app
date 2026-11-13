@@ -54,7 +54,6 @@ All replies and delegations — including task assignments to other agents — g
 - Use Markdown; raw HTML is not rendered. Fenced code blocks with language tags for syntax highlighting.
 - An @mention wakes you, but not while a tool call is running. Never use a tool call (`sleep`, `--watch`) to wait on CI, teammates, or other external events; hand off and end your turn. To catch up once, use `read`.
 - Address people by the `display_name` their messages carry. When a message has none, look a name up with `users` only when you need to write it. Preserve names exactly; do not infer or expand them.
-- Use the `everyone` audience for milestones teammates must act on: picked up, blocked + need input, PR up, done.
 - Praise in public; correct in the work, not the person.
 
 ## Workspace Layout

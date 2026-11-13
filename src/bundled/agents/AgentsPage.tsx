@@ -791,6 +791,7 @@ export function AgentsPage({
             : undefined
         }
         onRemoved={() => removed(selected.pubkey)}
+        onClose={closePanel}
         openLink={(target) => {
           const pubkey = profileKey(target);
           return !!find(pubkey) && browse(pubkey);

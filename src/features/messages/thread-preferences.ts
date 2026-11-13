@@ -1,7 +1,9 @@
 import { useSyncExternalStore } from "react";
 import type { DeviceSetting } from "../../shared/device-settings";
 
-export type ThreadPlacement = "main" | "side";
+/** inline reads threads, media, details and link panels in a sheet over their
+ * conversation; main and side open threads and panels in a tab in that pane. */
+export type ThreadPlacement = "inline" | "main" | "side";
 const preferenceKey = "buzz-thread-placement.v1";
 const changedEvent = "buzz-thread-placement-changed";
 let unsavedPreference: ThreadPlacement | undefined;
@@ -10,10 +12,16 @@ let unsavedPreference: ThreadPlacement | undefined;
 export function threadPlacementPreference(): ThreadPlacement {
   if (unsavedPreference !== undefined) return unsavedPreference;
   try {
-    return localStorage.getItem(preferenceKey) === "main" ? "main" : "side";
+    const saved = localStorage.getItem(preferenceKey);
+    return saved === "main" || saved === "side" ? saved : "inline";
   } catch {
-    return "side";
+    return "inline";
   }
+}
+/** The pane a new thread tab opens in; inline threads still open their tabs
+ * beside the conversation. */
+export function threadTabPane(): "main" | "side" {
+  return threadPlacementPreference() === "main" ? "main" : "side";
 }
 function subscribe(listener: () => void) {
   const storage = (event: StorageEvent) => {
@@ -51,10 +59,11 @@ export function setThreadPlacementPreference(value: ThreadPlacement): void {
 /** Thread placement as a device setting. */
 export const threadPlacementSetting: DeviceSetting = {
   key: "conversations.thread_placement",
-  description: "Where new thread tabs open: the side pane or the main pane.",
-  schema: { type: "string", enum: ["side", "main"] },
+  description:
+    "Where threads and details open: inline over the conversation, or in a tab in the side pane or the main pane.",
+  schema: { type: "string", enum: ["inline", "side", "main"] },
   applies:
-    "New thread tabs only; open threads stay where they are, and Solo threads always open in the side pane.",
+    "New threads and details only; open tabs stay where they are, and Solo threads always open in the side pane.",
   read: () => ({
     value: threadPlacementPreference(),
     unsaved:

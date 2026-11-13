@@ -192,6 +192,7 @@ import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
+import { COMPOSER_SENT, useOverlayComposerRef } from "./composer-overlay";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
   status: "idle",
@@ -361,6 +362,8 @@ export type MessageComposerProps = {
   focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** Keep a draft editable while its host verifies the delivery target. */
+  sendDisabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
   submission?: {
     draftKey: string;
@@ -542,6 +545,7 @@ function Composer({
   focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
+  sendDisabled = false,
   submission,
   soloConversation,
   ownSoloConversation = false,
@@ -1301,7 +1305,12 @@ function Composer({
     session.typing?.send,
     channelId,
     threadRootId,
-    active && !editingDisabled && !editing.target && !submission && !cached,
+    active &&
+      !sendDisabled &&
+      !editingDisabled &&
+      !editing.target &&
+      !submission &&
+      !cached,
   );
   // The editor's placeholder is text, so a channel's own placeholder is drawn
   // over it with its sidebar icon; DMs, threads and edits keep their text.
@@ -1354,6 +1363,7 @@ function Composer({
     });
   });
   useLayoutEffect(() => () => handOffFocus(), []);
+  const overlayComposerRef = useOverlayComposerRef(form);
   const canAttach = submission
     ? !!submission.attachments && !!session.attachments?.uploadForNewChat
     : !!session.attachments;
@@ -2576,6 +2586,7 @@ function Composer({
     }
     if (
       disabled ||
+      sendDisabled ||
       compactingNow() ||
       accepted ||
       conflict ||
@@ -3177,6 +3188,7 @@ function Composer({
       const pending = { next: mentionDraft(""), revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
+      form.current?.dispatchEvent(new Event(COMPOSER_SENT));
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
@@ -3358,9 +3370,11 @@ function Composer({
         />
       )}
       <form
-        ref={form}
+        ref={overlayComposerRef}
         className={styles.composer}
         data-composer-surface=""
+        // Details readers grow out of the composer beneath their message.
+        data-message-composer=""
         data-chat-presentation={chatPresentation || undefined}
         data-file-drag={dragging || undefined}
         data-editing={!!editing.target || undefined}
@@ -3865,6 +3879,7 @@ function Composer({
                 (!editing.target &&
                   stickyPicks &&
                   (pickReadPending || pickReadFailed)) ||
+                sendDisabled ||
                 untagged ||
                 (!editing.target && compacting) ||
                 (!editing.target && (!!accepted || conflict || sendPending)) ||

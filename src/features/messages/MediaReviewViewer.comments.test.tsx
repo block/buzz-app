@@ -20,14 +20,22 @@ import type { LiveCallbacks } from "../relay/live";
 import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
+import {
+  registerOverlayComposer,
+  overlayHostFor,
+  type MediaReviewOrigin,
+} from "./composer-overlay";
+import { readView } from "../../shared/view-state";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { ThreadPanel } from "./ThreadPanel";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
+const sourceReaders: HTMLElement[] = [];
 const owners: ReturnType<typeof createRelaySession>[] = [];
 
 afterEach(() => {
   cleanup();
+  for (const reader of sourceReaders.splice(0)) reader.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const owner of owners.splice(0)) owner.dispose();
@@ -38,6 +46,8 @@ type MediaKind = "image" | "video";
 type ReviewFixtureOptions = {
   kind: MediaKind;
   typingAgent?: ReturnType<typeof keypair>;
+  sheetRoot?: "verified" | "different";
+  holdVerification?: boolean;
   openComments?: boolean;
   replies?: (
     viewer: ReturnType<typeof keypair>,
@@ -57,6 +67,8 @@ function mime(kind: MediaKind) {
 async function setupReview({
   kind,
   typingAgent,
+  sheetRoot,
+  holdVerification = false,
   openComments = true,
   replies: buildReplies = () => [],
   extraRootTags = [],
@@ -118,6 +130,27 @@ async function setupReview({
         ]
       : []),
   ];
+  let releaseVerification!: () => void;
+  const verified = new Promise<void>((resolve) => {
+    releaseVerification = resolve;
+  });
+  let verificationStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    verificationStarted = resolve;
+  });
+  if (!holdVerification) releaseVerification();
+  const sourceRoot = sheetRoot === "different" ? "a".repeat(64) : root.id;
+  let opening: MediaReviewOrigin | undefined;
+  if (sheetRoot) {
+    const pane = document.createElement("section");
+    pane.dataset.composerHost = "";
+    const composer = document.createElement("form");
+    pane.append(composer);
+    document.body.append(pane);
+    sourceReaders.push(pane);
+    registerOverlayComposer(composer);
+    opening = { host: overlayHostFor(composer), rootId: sourceRoot };
+  }
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -125,6 +158,10 @@ async function setupReview({
       media,
       writer: { sign, publish },
       async query(filters) {
+        if (filters.some((filter) => filter.ids)) {
+          verificationStarted();
+          await verified;
+        }
         return filters.flatMap((filter) => {
           if (filter.kinds?.includes(0))
             return events.filter((event) => event.kind === 0);
@@ -161,6 +198,7 @@ async function setupReview({
     return selectedId ? (
       <MediaReviewViewer
         attachment={attachment}
+        opening={opening}
         session={owner.session}
         scope={`review-${kind}`}
         channelId="one"
@@ -193,9 +231,19 @@ async function setupReview({
       <Harness />
     </LinkThreadTabContext>,
   );
-  if (openComments && !fromThread)
+  if (openComments && !fromThread && !sheetRoot)
     fireEvent.click(screen.getByRole("button", { name: "Show comments" }));
-  return { owner, root, sign, user, attachmentOwner, openReview };
+  return {
+    owner,
+    root,
+    sign,
+    user,
+    attachmentOwner,
+    openReview,
+    sourceRoot,
+    verificationStarted: started,
+    releaseVerification,
+  };
 }
 
 function deferredRead() {
@@ -932,5 +980,54 @@ it.each(["image", "video"] as const)(
     expect(
       within(comments).getByRole("button", { name: /Activity:.*working/ }),
     ).toBeVisible();
+  },
+);
+
+it.each(["verified", "different"] as const)(
+  "keeps the pending media editor and draft through %s root verification",
+  async (sheetRoot) => {
+    const fixture = await setupReview({
+      kind: "image",
+      sheetRoot,
+      holdVerification: true,
+    });
+    try {
+      await fixture.verificationStarted;
+      const editor = screen.getByRole("textbox", { name: "Reply to thread" });
+      await fixture.user.click(editor);
+      await fixture.user.keyboard("Keep my pending reply");
+      fixture.releaseVerification();
+      await screen.findByText("No comments yet. Add the first below.");
+      expect(screen.getByRole("textbox", { name: "Reply to thread" })).toBe(
+        editor,
+      );
+      if (sheetRoot === "different") {
+        await screen.findByRole("alert");
+        expect(
+          screen.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled();
+      } else {
+        await waitFor(() =>
+          expect(
+            screen.getByRole("button", { name: "Send message" }),
+          ).toBeEnabled(),
+        );
+      }
+      expect(screen.getByRole("textbox", { name: "Reply to thread" })).toBe(
+        editor,
+      );
+      expect(editor).toHaveTextContent("Keep my pending reply");
+      expect(editor).toHaveFocus();
+      expect(
+        readView(
+          "review-image",
+          `draft:one:thread:${fixture.sourceRoot}`,
+          null,
+        ),
+      ).toMatchObject({ text: "Keep my pending reply" });
+      expect(fixture.sign).not.toHaveBeenCalled();
+    } finally {
+      fixture.releaseVerification();
+    }
   },
 );

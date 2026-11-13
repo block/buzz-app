@@ -96,6 +96,7 @@ export function AgentDetails({
   memories,
   memoryLinks,
   onRemoved,
+  onClose,
   messageAction,
   conversation,
   initialActivity,
@@ -117,6 +118,8 @@ export function AgentDetails({
   memories: AgentMemories | undefined;
   memoryLinks?: MemoryLinks | undefined;
   onRemoved(): void;
+  /** Only a host without its own close, such as the Agents page, supplies one. */
+  onClose?: (() => void) | undefined;
   messageAction: (variant: "glass" | "subtle") => ReactNode;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
@@ -310,12 +313,12 @@ export function AgentDetails({
     >
       <div className={styles.build}>
         <div ref={content} className={styles.detailsScroll}>
-          {!tabbed && (
+          {!tabbed && onClose && (
             <IconButton
               aria-label="Close"
               size="sm"
               icon={<XIcon size={16} />}
-              onClick={onRemoved}
+              onClick={onClose}
             />
           )}
           <motion.aside

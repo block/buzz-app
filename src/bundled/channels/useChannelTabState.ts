@@ -1,6 +1,6 @@
 import type { Navigation } from "../../features/navigation/controller";
 import { retainTabVisits } from "../../features/messages/tab-visit-lifetime";
-import { threadPlacementPreference } from "../../features/messages/thread-preferences";
+import { threadTabPane } from "../../features/messages/thread-preferences";
 import {
   useCallback,
   useLayoutEffect,
@@ -395,8 +395,7 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
         return false;
       store.update(keyOf("messages", channelId), (state) => {
         // Solo chats have no main tab workspace.
-        const pane =
-          channel.channelType === "solo" ? "side" : threadPlacementPreference();
+        const pane = channel.channelType === "solo" ? "side" : threadTabPane();
         const opened = withThread(
           state,
           channelId,
@@ -513,7 +512,7 @@ export function useChannelTabState(
       messageId: string,
       rootId: string,
       intent?: ThreadIntent,
-      pane: TabPane = threadPlacementPreference(),
+      pane: TabPane = threadTabPane(),
     ) =>
       update((state) =>
         withThread(state, channelId, messageId, rootId, intent, pane, true),
@@ -620,7 +619,7 @@ export function useChannelTabState(
             thread.messageId,
             thread.rootId,
             "select",
-            thread.pane ?? threadPlacementPreference(),
+            thread.pane ?? threadTabPane(),
             false,
             !!detail && thread.pane === "main",
           );
@@ -916,6 +915,12 @@ export function useChannelTabState(
     () => snapshot()[key]?.mainSelected,
     [key, snapshot],
   );
+  // Stable, so a memoized timeline can ask at the moment it opens a thread.
+  const hasThreadTab = useCallback(
+    (channelId: string, rootId: string) =>
+      !!threadTab(snapshot()[key]?.tabs ?? [], channelId, rootId),
+    [key, snapshot],
+  );
   // Workspace callbacks list this object as a dependency; a fresh object per
   // render would recreate them and re-render every memoized message row.
   return useMemo(
@@ -926,6 +931,7 @@ export function useChannelTabState(
       getMainSelected,
       threadVisits,
       detailVisits,
+      hasThreadTab,
       setEntries,
       setTabs,
       openThreadTab,
@@ -951,6 +957,7 @@ export function useChannelTabState(
       getMainSelected,
       threadVisits,
       detailVisits,
+      hasThreadTab,
       setEntries,
       setTabs,
       openThreadTab,

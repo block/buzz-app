@@ -2,6 +2,7 @@
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
+import { useMessageArrival } from "./use-message-arrival";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
@@ -203,6 +204,8 @@ export type ChannelTimelineProps = {
   /** False: viewing rows marks nothing read; the owner decides what was read. */
   marksRead?: boolean | undefined;
   navigation?: PageNavigation | undefined;
+  /** After an exact visit reveals and focuses its row. */
+  onRevealed?(messageId: string, signal: AbortSignal): void;
   onOpenThread?(
     messageId: string,
     threadRootId: string,
@@ -247,6 +250,7 @@ function Timeline({
   transient = false,
   marksRead = true,
   navigation,
+  onRevealed,
   onOpenThread,
   onOpenMediaReview,
   chatPresentation = false,
@@ -1036,7 +1040,8 @@ function Timeline({
     if (navigation && targetSignal === navigation.signal) present(navigation);
     navigation?.complete({ status: "opened" });
     setRevealedSignal(targetSignal);
-  }, [navigation, targetId, targetSignal, present]);
+    if (targetId && targetSignal) onRevealed?.(targetId, targetSignal);
+  }, [navigation, targetId, targetSignal, present, onRevealed]);
   // A covering Members dialog owns focus, and hides the target's mark.
   const focusesTarget = !(
     navigation?.target.kind === "conversation" &&
@@ -1837,6 +1842,7 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
+  useMessageArrival(scroller, rows, !!size.width && !!size.height, settled);
   return (
     <section
       ref={scroller}

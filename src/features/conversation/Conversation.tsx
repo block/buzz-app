@@ -57,6 +57,7 @@ export type MediaReview = Pick<
   | "initialAttachments"
   | "initialTime"
   | "hasComments"
+  | "opening"
   | "restoreFocus"
   | "close"
 >;
@@ -74,6 +75,7 @@ export function useMediaReview() {
       initialTime,
       hasComments = false,
       initialAttachments,
+      opening,
     ) => {
       trigger.current =
         document.activeElement instanceof HTMLElement
@@ -85,6 +87,7 @@ export function useMediaReview() {
         initialTime,
         hasComments,
         initialAttachments,
+        opening,
       });
     },
     [],

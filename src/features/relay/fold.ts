@@ -2,7 +2,7 @@ import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
-import { agentAudience } from "./audience";
+import { messageAudience } from "./audience";
 import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
@@ -434,6 +434,7 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    const audience = messageAudience(event);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -463,7 +464,7 @@ export function foldMessages(
         content: projected.content,
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
-        ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        ...(audience ? { audience } : {}),
         ...(() => {
           // One exact id, or none: conflicting claims bind no request.
           const ids = new Set(

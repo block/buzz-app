@@ -419,6 +419,8 @@ function children(
 ): string {
   let text = "";
   let previous: Node | undefined;
+  // A row's gap, as between a byline's name and time, reads as a space.
+  let spaced: boolean | undefined;
   for (const child of node.childNodes) {
     if ((range && !range.intersectsNode(child)) || formatting(child)) continue;
     const value = serialize(
@@ -436,7 +438,10 @@ function children(
         (value.match(/^\n*/)?.[0].length ?? 0);
       text += "\n".repeat(Math.max(0, 2 - existing));
     } else if (separator === "\t") text += separator;
-    else if (
+    else if (!separator && /\S$/.test(text) && /^\S/.test(value)) {
+      spaced ??= node instanceof Element && flexRow(node);
+      if (spaced) text += " ";
+    } else if (
       text &&
       value &&
       separator &&
@@ -476,6 +481,16 @@ const blockName = (node: Node) =>
       ? "PRE"
       : node.tagName
     : "";
+
+/** A flex row whose gap, not text, separates its items. */
+function flexRow(element: Element): boolean {
+  const style = getComputedStyle(element);
+  return (
+    /^(inline-)?flex$/.test(style.display) &&
+    !style.flexDirection.startsWith("column") &&
+    Number.parseFloat(style.columnGap) > 0
+  );
+}
 
 /** Whitespace between rendered blocks is formatting; blocks supply separators. */
 function formatting(node: Node): boolean {
@@ -541,16 +556,46 @@ function copyMessageSelection(event: ClipboardEvent) {
   event.preventDefault();
 }
 
+/** A selection begun in a message history stays in it: dragging past an edge
+ * selects to that edge, not into the sidebar, headers, composer or the other
+ * pane. Editors own their selections. */
+export function containMessageSelection() {
+  const selection = document.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) return;
+  const { anchorNode, anchorOffset, focusNode, focusOffset } = selection;
+  const anchor = anchorNode && elementOf(anchorNode);
+  if (!anchor || !focusNode || anchor.closest(editable)) return;
+  const scope = anchor.closest("[data-message-scroller]");
+  if (!scope) return;
+  const bounds = document.createRange();
+  bounds.selectNodeContents(scope);
+  const side = bounds.comparePoint(focusNode, focusOffset);
+  if (side === 0) return;
+  selection.setBaseAndExtent(
+    anchorNode,
+    anchorOffset,
+    scope,
+    side < 0 ? 0 : scope.childNodes.length,
+  );
+}
+
 let surfaces = 0;
-/** Timeline and thread surfaces share one document listener. */
+/** Timeline and thread surfaces share one set of document listeners. */
 export function useMessageSelectionCopy() {
   useEffect(() => {
     if (typeof document === "undefined") return;
-    if (surfaces++ === 0)
+    if (surfaces++ === 0) {
       document.addEventListener("copy", copyMessageSelection, true);
+      document.addEventListener("selectionchange", containMessageSelection);
+    }
     return () => {
-      if (--surfaces === 0)
+      if (--surfaces === 0) {
         document.removeEventListener("copy", copyMessageSelection, true);
+        document.removeEventListener(
+          "selectionchange",
+          containMessageSelection,
+        );
+      }
     };
   }, []);
 }

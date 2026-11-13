@@ -101,3 +101,61 @@ test("a selection spanning rows copies only the visible conversation", async ({
     page.getByRole("button", { name: /^Close .* tab$/ }),
   ).toHaveCount(0);
 });
+
+// Browser-only: a native drag past the history's edge, which engines would
+// extend into the sidebar, headers and composer. The clamp's cases live in
+// src/features/messages/selection-copy.test.tsx.
+test("a drag out of the history stays in it and copies bylines as name and time", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = page.getByRole("region", {
+    name: "Channel message history",
+  });
+  const rows = history.locator("[data-message-id]");
+  await expect(rows).toHaveCount(3);
+  const sidebar = await page.getByText("Direct messages").boundingBox();
+  // Press just past the end of the last line of text.
+  const end = await rows
+    .last()
+    .locator("p")
+    .last()
+    .evaluate((paragraph) => {
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      const line = [...range.getClientRects()].at(-1);
+      return { x: line.right + 4, y: line.top + line.height / 2 };
+    });
+  await page.mouse.move(end.x, end.y);
+  await page.mouse.down();
+  await page.mouse.move(sidebar.x + 4, sidebar.y + 4, { steps: 20 });
+  await page.mouse.up();
+  const { contained, text } = await history.evaluate((element) => {
+    const selection = getSelection();
+    let text;
+    document.addEventListener(
+      "copy",
+      (event) => {
+        text = event.clipboardData?.getData("text/plain");
+      },
+      { once: true },
+    );
+    document.execCommand("copy");
+    return {
+      contained:
+        element.contains(selection.anchorNode) &&
+        element.contains(selection.focusNode),
+      text,
+    };
+  });
+  expect(contained).toBe(true);
+  const { author, time } = await rows.first().evaluate((row) => ({
+    author: row.querySelector("strong").textContent,
+    time: row.querySelector("time [aria-hidden]").textContent,
+  }));
+  const lines = text.split("\n").filter(Boolean);
+  expect(lines).toContain(`${author} ${time}`);
+  expect(lines.at(-1)).toBe("Mixed height message content. ".repeat(7).trim());
+  expect(text).not.toContain("Direct messages");
+});

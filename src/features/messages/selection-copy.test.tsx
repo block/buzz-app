@@ -13,6 +13,7 @@ import { profileTarget } from "../profiles/target";
 import { MessageMarkdown } from "./MessageMarkdown";
 import {
   type CopyFormat,
+  containMessageSelection,
   copyDocument,
   serializeNode,
   serializeSelection,
@@ -645,6 +646,22 @@ describe("serializeNode", () => {
     });
   });
 
+  it("spaces a byline's name and time, which only a flex gap separates", () => {
+    const body = mount(
+      row(
+        '<div style="display: flex; column-gap: 8px"><strong>Morgan</strong><time>2:31 PM</time></div><p>hello</p>',
+      ),
+    );
+    expect(each(body)).toEqual({
+      text: "Morgan 2:31 PM\nhello",
+      markdown: "**Morgan** 2:31 PM\nhello",
+      html: "<p><strong>Morgan</strong> 2:31 PM</p><p>hello</p>",
+    });
+    // Without a gap, flex items abut as they render.
+    query("div[style]", body).setAttribute("style", "display: flex");
+    expect(serializeNode(body, "text")).toBe("Morgan2:31 PM\nhello");
+  });
+
   it("numbers a list from its first item a selection holds, keeping a whole empty item", () => {
     const body = mount(
       row('<ol start="3">\n<li>one</li>\n<li></li>\n<li>three</li>\n</ol>'),
@@ -727,6 +744,71 @@ describe("serializeNode", () => {
       markdown: "x plain example.com #bad Spoof Agent",
       html: "<p>x plain example.com #bad Spoof Agent</p>",
     });
+  });
+});
+
+describe("containMessageSelection", () => {
+  function layout() {
+    return mount(
+      `<nav><p>Sidebar</p></nav><section data-message-scroller><p>first</p><p>last</p></section><section data-message-scroller><p>thread</p></section><div contenteditable="true"><p>draft</p></div>`,
+    );
+  }
+  function extend(
+    anchor: Node,
+    anchorOffset: number,
+    focus: Node,
+    offset: number,
+  ) {
+    const selection = document.getSelection();
+    if (!selection) throw new Error("No selection");
+    selection.setBaseAndExtent(anchor, anchorOffset, focus, offset);
+    containMessageSelection();
+    return selection;
+  }
+
+  it("stops a drag from a message history at that history's edges", () => {
+    const body = layout();
+    const timeline = query("[data-message-scroller]", body);
+    const thread = query(
+      "[data-message-scroller] + [data-message-scroller]",
+      body,
+    );
+    const last = lastText(query("p:last-child", timeline));
+    const up = extend(last, 2, lastText(query("nav p", body)), 3);
+    expect([
+      up.anchorNode,
+      up.anchorOffset,
+      up.focusNode,
+      up.focusOffset,
+    ]).toEqual([last, 2, timeline, 0]);
+    expect(up.toString()).toBe("firstla");
+    const first = lastText(query("p", timeline));
+    const across = extend(first, 1, lastText(query("p", thread)), 2);
+    expect([across.focusNode, across.focusOffset]).toEqual([
+      timeline,
+      timeline.childNodes.length,
+    ]);
+    expect(across.toString()).toBe("irstlast");
+  });
+
+  it("leaves selections inside one history, outside histories and in editors alone", () => {
+    const body = layout();
+    const timeline = query("[data-message-scroller]", body);
+    const first = lastText(query("p", timeline));
+    const last = lastText(query("p:last-child", timeline));
+    const sidebar = lastText(query("nav p", body));
+    const draft = lastText(query("[contenteditable] p", body));
+    for (const [anchor, focus] of [
+      [first, last],
+      [sidebar, last],
+      [draft, sidebar],
+    ] satisfies [Text, Text][]) {
+      const selection = extend(anchor, 1, focus, 2);
+      expect([selection.anchorNode, selection.focusNode]).toEqual([
+        anchor,
+        focus,
+      ]);
+    }
   });
 });
 

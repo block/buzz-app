@@ -529,6 +529,7 @@ export class PiRuntime {
     acknowledged,
     superseded,
     interruptible,
+    prepareSession,
   }: Delivery) {
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
@@ -583,9 +584,19 @@ export class PiRuntime {
     // A delivery during a session action waits for it, past its handover.
     const control = `${agent.key}/${key}`;
     let interrupted = false;
-    const handoff = this.controls.deliver(control, async () => {
+    const handoff = this.controls.deliver(control, async (deferred) => {
       await wait;
       if (interrupted || (wake && current && !current())) return;
+      await prepareSession?.(
+        {
+          source: { channelId: channel, root: wake?.root ?? root },
+          conversation: {
+            channelId: channel,
+            ...(!topLevel ? { root } : {}),
+          },
+        },
+        deferred,
+      );
       this.live(entry, agent.key);
       await this.open(agent.key);
       await this.adopted(entry, agent.key, { current: request });

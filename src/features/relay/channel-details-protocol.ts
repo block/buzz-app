@@ -15,6 +15,8 @@ import {
 export type ChannelDetailsDraft = Readonly<{
   name: string;
   description: string;
+  /** Channel GOAL; empty clears it. The metadata event id is its version. */
+  goal?: string;
   visibility: "public" | "private";
   /** Admission default only; omission preserves existing relay behavior. */
   joinRole?: "member" | "guest" | undefined;
@@ -68,6 +70,11 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
         : draft.description.includes("Buzz Huddle (")
           ? 'Remove "Buzz Huddle (" from the description; that text is used by Buzz for Huddles.'
           : undefined,
+    goal:
+      draft?.goal !== undefined &&
+      (typeof draft.goal !== "string" || [...draft.goal].length > 2000)
+        ? "Use a GOAL of at most 2,000 characters."
+        : undefined,
     lifetime:
       draft?.ttlSeconds !== undefined &&
       (!Number.isInteger(draft.ttlSeconds) ||
@@ -115,6 +122,7 @@ export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
   const error =
     errors.name ??
     errors.description ??
+    errors.goal ??
     errors.visibility ??
     errors.lifetime ??
     errors.labels ??
@@ -141,6 +149,7 @@ export function detailsSettings(
   const joinRole = channelJoinRole(metadata);
   const name = exactLifecycleTag(metadata, "name");
   const description = exactLifecycleTag(metadata, "about") ?? "";
+  const goal = exactLifecycleTag(metadata, "goal") ?? "";
   const ttl = exactLifecycleTag(metadata, "ttl");
   const ttlSeconds = parseDetailsTtl(ttl);
   if (!name || !visibility)
@@ -150,6 +159,7 @@ export function detailsSettings(
     version: metadata.id,
     name,
     description,
+    goal,
     visibility,
     ...(joinRole ? { joinRole } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
@@ -176,6 +186,9 @@ export function detailsTemplate(
       ["h", lifecycleChannelId(id)],
       ["name", draft.name],
       ["about", draft.description],
+      ...((draft.goal ?? "") !== (base.goal ?? "")
+        ? [["goal", draft.goal ?? ""]]
+        : []),
       // Omission preserves current visibility, including in the remaining read/write race.
       ...(draft.visibility !== base.visibility
         ? [["visibility", draft.visibility === "private" ? "private" : "open"]]
@@ -265,24 +278,18 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     !["h", "name", "about"].every(
       (key, index) => event.tags[index]?.[0] === key,
     ) ||
-    ![
-      [],
-      ["visibility"],
-      ["ttl"],
-      ["visibility", "ttl"],
-      ["join_role"],
-      ["visibility", "join_role"],
-      ["ttl", "join_role"],
-      ["visibility", "ttl", "join_role"],
-    ].some(
-      (keys) =>
-        keys.every((key, index) => event.tags[index + 3]?.[0] === key) &&
-        event.tags.slice(keys.length + 3).every(([key]) => key === "t"),
-    )
+    (() => {
+      const expected = ["goal", "visibility", "ttl", "join_role"];
+      let position = 3;
+      for (const key of expected)
+        if (event.tags[position]?.[0] === key) position++;
+      return event.tags.slice(position).some(([key]) => key !== "t");
+    })()
   )
     throw new Error("Invalid channel details command.");
   const labels = detailsLabels(event.tags.filter(([key]) => key === "t"));
   const visibility = event.tags.find(([key]) => key === "visibility");
+  const goal = event.tags.find(([key]) => key === "goal")?.[1];
   if (visibility && !["private", "open"].includes(visibility[1] ?? ""))
     throw new Error("Invalid channel details command.");
   const ttl = event.tags.find(([key]) => key === "ttl")?.[1];
@@ -293,6 +300,7 @@ export function validateDetailsTemplate(event: EventTemplate): void {
   validateDetailsDraft({
     name: event.tags[1]?.[1] ?? "",
     description: event.tags[2]?.[1] ?? "",
+    ...(goal !== undefined ? { goal } : {}),
     visibility: visibility?.[1] === "private" ? "private" : "public",
     ttlSeconds: ttl === "" ? undefined : parseDetailsTtl(ttl),
     ...(joinRole ? { joinRole } : {}),

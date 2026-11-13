@@ -32,6 +32,25 @@ import { reactionTarget } from "./reaction-target";
 import { compareMessages, eventMs } from "./message-order";
 const HEX64 = /^[0-9a-f]{64}$/;
 
+function threadGoal(event: EventData): ChannelMessage["threadGoal"] {
+  if (threadReference(event)) return;
+  const exact = (name: string) => {
+    const tags = event.tags.filter(([key]) => key === name);
+    return tags.length === 1 && tags[0]?.length === 2 ? tags[0][1] : undefined;
+  };
+  const goal = exact("buzz:goal");
+  const version = exact("buzz:goal-version");
+  const decision = exact("buzz:decision");
+  return goal &&
+    [...goal].length <= 2000 &&
+    version &&
+    HEX64.test(version) &&
+    decision?.trim() &&
+    [...decision.trim()].length <= 1000
+    ? Object.freeze({ goal, version, decision: decision.trim() })
+    : undefined;
+}
+
 function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
   // Old Buzz uploads voice notes as video/mp4: a 16x16 H.264 black track plus AAC
   // because the relay video validator requires a video track; classify by filename convention.
@@ -434,12 +453,14 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    const goalSnapshot = threadGoal(event);
     rows.push(
       Object.freeze({
         id: event.id,
         channelId,
         threadRootId: threadReference(event)?.rootId,
         replyParentId: threadReference(event)?.parentId,
+        ...(goalSnapshot ? { threadGoal: goalSnapshot } : {}),
         ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
         sentFromThread: (() => {
           const tag = event.tags.find(

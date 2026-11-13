@@ -54,6 +54,8 @@ import { useListedChannel } from "../relay/listed-channel";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useToastClearance } from "../../shared/design-system/ui/Toast";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -130,6 +132,7 @@ import type { RelaySession } from "../relay/session";
 import {
   readView,
   writeView,
+  clearView,
   viewRevision,
   replaceView,
   subscribeView,
@@ -622,6 +625,24 @@ function Composer({
   // starts a thread of its own.
   const startsThread =
     !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
+  const channelGoal = useListedChannel(listed, channelId, (channel) =>
+    channel?.goal && channel.goalVersion
+      ? `${channel.goalVersion}\n${channel.goal}`
+      : undefined,
+  );
+  const [goalVersion, goal] = channelGoal?.split(/\n(.*)/s) ?? [];
+  const decisionKey = `${draftKey}:goal-decision:${goalVersion ?? "none"}`;
+  const savedDecision = () => {
+    const saved = readView<unknown>(scope, decisionKey, "");
+    return typeof saved === "string" ? saved : "";
+  };
+  const [decisionState, setDecisionState] = useState(() => ({
+    key: decisionKey,
+    value: savedDecision(),
+  }));
+  const decision =
+    decisionState.key === decisionKey ? decisionState.value : savedDecision();
+  const needsDecision = !!(startsThread && goal && goalVersion);
   const host = fullSession(session);
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
@@ -2614,6 +2635,10 @@ function Composer({
       !outbox
     )
       return;
+    if (needsDecision && !decision.trim()) {
+      setError("Say what decision this thread changes before starting it.");
+      return;
+    }
     if (valueRef.current.pending?.length) {
       // Enter straight after Space is the case a pending mention exists for.
       // Wait for its recipient rather than send prose; the composer shows
@@ -3025,33 +3050,48 @@ function Composer({
         uploaded: readonly UploadedAttachment[],
         sender: ComposerSession,
       ) {
-        return threadRootId
-          ? sender.messages.reply(
+        const threadGoal =
+          needsDecision && goal && goalVersion
+            ? { goal, version: goalVersion, decision: decision.trim() }
+            : undefined;
+        if (threadRootId)
+          return sender.messages.reply(
+            channelId,
+            threadRootId,
+            content,
+            recipients,
+            uploaded,
+            ...(replyParentId || references.length || tuned || mediaTargetUrl
+              ? [replyParentId]
+              : []),
+            ...(references.length || tuned || mediaTargetUrl
+              ? [references]
+              : []),
+            ...(tuned || mediaTargetUrl ? [sentPicks] : []),
+            ...(mediaTargetUrl ? [mediaTargetUrl] : []),
+          );
+        if (threadGoal)
+          return sender.messages.send(
+            channelId,
+            content,
+            recipients,
+            uploaded,
+            undefined,
+            references,
+            sentPicks,
+            threadGoal,
+          );
+        return references.length || tuned
+          ? sender.messages.send(
               channelId,
-              threadRootId,
               content,
               recipients,
               uploaded,
-              ...(replyParentId || references.length || tuned || mediaTargetUrl
-                ? [replyParentId]
-                : []),
-              ...(references.length || tuned || mediaTargetUrl
-                ? [references]
-                : []),
-              ...(tuned || mediaTargetUrl ? [sentPicks] : []),
-              ...(mediaTargetUrl ? [mediaTargetUrl] : []),
+              undefined,
+              references,
+              ...(tuned ? [sentPicks] : []),
             )
-          : references.length || tuned
-            ? sender.messages.send(
-                channelId,
-                content,
-                recipients,
-                uploaded,
-                undefined,
-                references,
-                ...(tuned ? [sentPicks] : []),
-              )
-            : sender.messages.send(channelId, content, recipients, uploaded);
+          : sender.messages.send(channelId, content, recipients, uploaded);
       }
       const publish = (
         uploaded: readonly UploadedAttachment[],
@@ -3067,6 +3107,15 @@ function Composer({
           attachments: uploaded,
           references,
           picks: sentPicks,
+          ...(needsDecision && goal && goalVersion
+            ? {
+                threadGoal: {
+                  goal,
+                  version: goalVersion,
+                  decision: decision.trim(),
+                },
+              }
+            : {}),
           ...(tokens.length ? { tokens } : {}),
         };
         const send = followUpMessage(host, message);
@@ -3203,6 +3252,10 @@ function Composer({
       const pending = { next: mentionDraft(""), revision: savedRevision };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
+      if (needsDecision) {
+        setDecisionState({ key: decisionKey, value: "" });
+        clearView(scope, decisionKey);
+      }
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
@@ -3517,6 +3570,34 @@ function Composer({
             replyContext
           )}
         </ComposerContext>
+        {needsDecision && !editing.target && (
+          <div className={styles.goalDecision}>
+            <Field
+              label="Decision this thread changes"
+              description={`Channel GOAL: ${goal}`}
+              error={
+                !decision.trim() && error?.includes("decision this thread")
+                  ? error
+                  : undefined
+              }
+            >
+              <Textarea
+                rows={2}
+                value={decision}
+                maxLength={1000}
+                disabled={editingDisabled}
+                placeholder="Name the decision or outcome this thread will change"
+                onChange={(event) => {
+                  const next = event.currentTarget.value;
+                  setDecisionState({ key: decisionKey, value: next });
+                  writeView(scope, decisionKey, next);
+                  if (next.trim() && error?.includes("decision this thread"))
+                    setError(undefined);
+                }}
+              />
+            </Field>
+          </div>
+        )}
         <div className={styles.composerContent}>
           {!editing.target && (
             <ComposerAttachments
@@ -3894,6 +3975,7 @@ function Composer({
                 (!!editing.target && (editing.locked || editDisabled)) ||
                 admitting ||
                 sending ||
+                (needsDecision && !decision.trim()) ||
                 submission?.disabled ||
                 (!editing.target && attachments.blocked) ||
                 (!draft.trim() &&

@@ -255,6 +255,20 @@ function setup(
   };
 }
 
+it("prepares a thread at the final Goose session handoff", async () => {
+  const f = setup({ reply: "Done" });
+  const prepareSession = vi.fn(async () => undefined);
+  const event = message("1", "@Gander build it");
+  await f.deliver(event, { prepareSession });
+  expect(prepareSession).toHaveBeenCalledExactlyOnceWith(
+    {
+      source: { channelId: channel, root: event.id },
+      conversation: { channelId: channel, root: event.id },
+    },
+    false,
+  );
+});
+
 it("reads a protected Goose file under containment and reviews the captured text before sending", async () => {
   const check = vi.fn<AgentProtection["check"]>().mockResolvedValue();
   const protection: AgentProtection = {

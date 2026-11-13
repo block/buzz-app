@@ -50,26 +50,58 @@ export function followUpMessage(
         );
       if (message.tokens?.length)
         return signMessageTokens(message.tokens, () =>
-          session.messages.send(
-            message.channelId,
-            message.text,
-            message.recipients,
-            message.attachments,
-            recovery,
-            message.references,
-            message.picks,
-          ),
+          message.threadGoal
+            ? session.messages.send(
+                message.channelId,
+                message.text,
+                message.recipients,
+                message.attachments,
+                recovery,
+                message.references,
+                message.picks,
+                message.threadGoal,
+              )
+            : session.messages.send(
+                message.channelId,
+                message.text,
+                message.recipients,
+                message.attachments,
+                recovery,
+                message.references,
+                message.picks,
+              ),
         );
       if (
         !recovery &&
         !message.references.length &&
         !Object.keys(message.picks).length
       )
+        return message.threadGoal
+          ? session.messages.send(
+              message.channelId,
+              message.text,
+              message.recipients,
+              message.attachments,
+              undefined,
+              [],
+              {},
+              message.threadGoal,
+            )
+          : session.messages.send(
+              message.channelId,
+              message.text,
+              message.recipients,
+              message.attachments,
+            );
+      if (!message.threadGoal)
         return session.messages.send(
           message.channelId,
           message.text,
           message.recipients,
           message.attachments,
+          recovery,
+          message.references,
+          message.picks,
         );
       return session.messages.send(
         message.channelId,
@@ -79,6 +111,7 @@ export function followUpMessage(
         recovery,
         message.references,
         message.picks,
+        message.threadGoal,
       );
     },
   };

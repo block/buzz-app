@@ -21,6 +21,7 @@ import {
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelCard } from "../../features/panels/PanelCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
+import { ThreadGovernanceChip } from "../../features/messages/ThreadPanel";
 import {
   BrowserIcon,
   MessageReplyIcon,
@@ -845,6 +846,17 @@ export function useConversationTabs({
       close: () => closeConversationTab(tab.id),
       ...(tab.kind === "conversation" &&
         target && { toolbar: conversationToolbar?.(target, openChannel) }),
+      ...(tab.kind === "thread" &&
+        tab.rootId &&
+        queries.threadGovernance?.available && {
+          toolbar: (
+            <ThreadGovernanceChip
+              session={queries}
+              channelId={tab.channelId}
+              root={tab.rootId}
+            />
+          ),
+        }),
       ...(tab.kind === "thread" && {
         attentionRequest: tab.attentionRequest,
         move: (delta: -1 | 1) => moveBy(tab, delta),

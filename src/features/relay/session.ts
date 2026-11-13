@@ -131,6 +131,7 @@ import { createMessages } from "./messages";
 import { retryRead } from "./read-retry";
 import { messageAuthor } from "./fold";
 import { createThreadView, resumeAfter, type ThreadResume } from "./threads";
+import { createThreadGovernance } from "./thread-governance";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
 import { liveRecoveryStatus } from "./live-recovery";
@@ -1023,6 +1024,27 @@ export function createRelaySession(
       notify,
     }),
   );
+  const threadGovernance = createThreadGovernance({
+    ...(transport && !options.cachedOnly ? { reader: verified } : {}),
+    ...(writes?.outbox ? { outbox: writes.outbox } : {}),
+    profiles: profiles.queries,
+    viewer: transport?.viewer ?? "",
+    ...(transport?.archiveAuthority
+      ? { relayAuthor: transport.archiveAuthority }
+      : {}),
+    canManage(pubkey, channelId) {
+      const channel = channels.queries.get?.(channelId);
+      return !!(
+        channel?.owners?.includes(pubkey) || channel?.admins?.includes(pubkey)
+      );
+    },
+    receive(listener) {
+      observations.add(listener);
+      return () => {
+        observations.delete(listener);
+      };
+    },
+  });
   const emoji = createEmojiDirectory(
     verified,
     notify,
@@ -2618,6 +2640,7 @@ export function createRelaySession(
     channelCreation,
     channelKit: channelKit.capability,
     canvas: channelKit.canvas,
+    threadGovernance,
     channelWrites,
     directMessages: createDirectMessages(
       transport,
@@ -2790,6 +2813,15 @@ export function createRelaySession(
               .map((event) => [event.id, event]),
           ).values(),
         ],
+        (id) => {
+          const channel = channels.queries.get?.(id);
+          return channel?.goal &&
+            channel.goalVersion &&
+            channel.channelType !== "dm" &&
+            channel.channelType !== "solo"
+            ? { goal: channel.goal, version: channel.goalVersion }
+            : undefined;
+        },
       ),
       /** UI eligibility only; signing/publication recheck the same role proof. */
       canRetry(event: Pick<EventData, "kind" | "tags">) {
@@ -4117,6 +4149,7 @@ export function createRelaySession(
       profiles.dispose();
       emoji.dispose();
       statuses.dispose();
+      threadGovernance.dispose();
       workflows.dispose();
       identityNames.dispose();
       agentLibrary.dispose();

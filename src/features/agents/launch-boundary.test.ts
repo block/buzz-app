@@ -2,8 +2,7 @@
 // runner and the start resolver into each real runtime, over a real relay
 // session. The config the runtime actually uses comes from confirmed synced
 // copies, the delivery carries their revision IDs, and the transport under
-// the session sees no request at start beyond a turn's conversation reads,
-// online or offline.
+// the session sees only the final admission read plus the runtime's own reads.
 import { Context } from "@deepseek-ai/cordis";
 import { finalizeEvent } from "nostr-tools";
 import { afterEach, expect, it, vi } from "vitest";
@@ -101,6 +100,31 @@ const conversationRead = (sent: RelayEvent): readonly ReadFilter[] => {
     { ...window, "#e": [sent.id], limit: 50 },
   ];
 };
+
+/** The final pre-delivery admission read for one source thread. */
+const governanceRead = (sent: RelayEvent): readonly ReadFilter[] => [
+  {
+    kinds: [42001],
+    "#h": [channel],
+    "#e": [sent.id],
+    limit: 500,
+    consistency: "strong",
+  },
+  {
+    kinds: [40002, 9],
+    "#h": [channel],
+    "#e": [sent.id],
+    limit: 500,
+    consistency: "strong",
+  },
+  {
+    kinds: [40002, 9],
+    "#h": [channel],
+    ids: [sent.id],
+    limit: 1,
+    consistency: "strong",
+  },
+];
 
 /** A transport that answers from `records`, recording every request it sees.
  * While `offline`, every request fails as an unreachable relay's does. */
@@ -317,11 +341,12 @@ const recentNotesRead = (request: Request) =>
   /^mem\/notes\/\d{4}-\d{2}-\d{2}$/.test(request.memory.slug ?? "");
 
 /** Apart from the post-run core refresh, and with `notes` a start's recent
- * notes reads, the recorded requests are exactly one conversation read for
- * each of `conversations`, in order: an extra, a wider or a different read
- * fails. */
+ * notes reads, the recorded requests are exactly one final admission read for
+ * each invocation followed by the runtime conversation reads, in order: an
+ * extra, wider or different read fails. */
 function expectOnlyAllowed(
   f: Fixture,
+  invocations: readonly RelayEvent[] = [],
   conversations: readonly RelayEvent[] = [],
   notes = false,
 ) {
@@ -332,7 +357,10 @@ function expectOnlyAllowed(
           !postRunCoreRefresh(request) && !(notes && recentNotesRead(request)),
       )
       .map((request) => request.filters),
-  ).toEqual(conversations.map(conversationRead));
+  ).toEqual([
+    ...invocations.map(governanceRead),
+    ...conversations.map(conversationRead),
+  ]);
 }
 
 const synced = (mode: Mode = "synced") => ({
@@ -371,7 +399,7 @@ async function expectCounterSeesSync(f: Fixture) {
   });
 }
 
-it("starts Claude sessions from the synced copies, with no relay request but recent notes online or offline", async () => {
+it("starts Claude sessions from the synced copies with only admission and recent-note reads", async () => {
   const claude = fakeClaude();
   const host = { spawn: claude.spawn, request: vi.fn() } as unknown as Host;
   const { revisions, seeded } = heads("buzz/claude-code", {
@@ -398,25 +426,29 @@ it("starts Claude sessions from the synced copies, with no relay request but rec
         "SYNCED INSTRUCTIONS",
       ),
     );
-  f.mention();
+  const firstMention = f.mention();
   await prompted(0);
   const [first] = claude.processes;
   expect(first?.model).toBe("synced-model");
   expect(first?.options.cwd).toBe("/this/device");
   expect(JSON.stringify(first?.received)).not.toContain("LOCAL INSTRUCTIONS");
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, [], true);
+  expectOnlyAllowed(f, [firstMention], [], true);
 
-  // The relay goes away; the next conversation starts from the same copies.
+  // The relay goes away; the next conversation is rejected at admission
+  // before another runtime process can receive a prompt.
   f.transport.offline = true;
-  f.mention();
-  await prompted(1);
-  expect(claude.processes[1]?.model).toBe("synced-model");
-  expect(JSON.stringify(claude.processes[1]?.received)).not.toContain(
-    "LOCAL INSTRUCTIONS",
+  const secondMention = f.mention();
+  await vi.waitFor(() =>
+    expect(
+      f.activity.reader
+        .work()
+        .find((work) => work.messageId === secondMention.id)?.state,
+    ).toBe("error"),
   );
+  expect(claude.processes).toHaveLength(1);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, [], true);
+  expectOnlyAllowed(f, [firstMention, secondMention], [], true);
   await expectCounterSeesSync(f);
 });
 
@@ -482,7 +514,7 @@ function fakeCodex() {
   return { spawn, sent };
 }
 
-it("starts a Codex thread and a turn from the synced copies; offline, only its conversation reads fail", async () => {
+it("starts a Codex thread and turn from synced copies, with admission before conversation reads", async () => {
   const codex = fakeCodex();
   const { revisions, seeded } = heads("buzz/codex", {
     model: "synced-model",
@@ -532,24 +564,20 @@ it("starts a Codex thread and a turn from the synced copies; offline, only its c
   expect(starts("turn/start")).toHaveLength(1);
   expect(starts("turn/start")[0]?.params).toMatchObject({ effort: "high" });
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f, [first]);
+  expectOnlyAllowed(f, [first], [first]);
 
   // Offline until the second mention ends: the thread still opens from the
-  // copies, and the turn fails on its conversation reads alone (§4.3).
+  // copies, and the final admission read prevents runtime delivery.
   f.transport.offline = true;
   f.requests.length = 0;
   const second = f.mention();
   await vi.waitFor(() => expect(outcome(second.id)?.state).toBe("error"));
   expect(outcome(second.id)?.error).toBe("Relay unreachable");
-  expect(starts("thread/start")).toHaveLength(2);
-  expect(starts("thread/start")[1]?.params).toMatchObject({
-    model: "synced-model",
-    cwd: "/this/device",
-  });
+  expect(starts("thread/start")).toHaveLength(1);
   expect(starts("turn/start")).toHaveLength(1);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  // Until the run ended, the turn's conversation read was all it asked, and
-  // it failed.
+  // Admission is the final pre-delivery seam, so its strong read fails before
+  // the runtime can ask for the conversation.
   expectOnlyAllowed(f, [second]);
   expect(
     f.requests.filter((request) => !postRunCoreRefresh(request)),
@@ -582,7 +610,7 @@ function gooseHost() {
   return { goose, host };
 }
 
-it("starts Goose sessions from the synced copies, with no relay request online or offline", async () => {
+it("starts Goose sessions from synced copies with only the admission read", async () => {
   const { goose, host } = gooseHost();
   const { revisions, seeded } = heads("buzz/goose", {
     model: "synced-model",
@@ -596,7 +624,7 @@ it("starts Goose sessions from the synced copies, with no relay request online o
     seeded,
     synced(),
   );
-  f.mention();
+  const firstMention = f.mention();
   const process = () => goose.geese[0];
   await vi.waitFor(() => expect(process()?.turns).toHaveLength(1));
   const used = () => JSON.stringify([process()?.opened, process()?.configured]);
@@ -609,14 +637,21 @@ it("starts Goose sessions from the synced copies, with no relay request online o
   expect(prompts()).toContain("SYNCED INSTRUCTIONS");
   expect(prompts()).not.toContain("LOCAL INSTRUCTIONS");
   expect(f.deliveries[0]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f);
+  expectOnlyAllowed(f, [firstMention]);
 
   f.transport.offline = true;
-  f.mention();
-  await vi.waitFor(() => expect(process()?.turns).toHaveLength(2));
-  expect(process()?.opened).toHaveLength(2);
+  const secondMention = f.mention();
+  await vi.waitFor(() =>
+    expect(
+      f.activity.reader
+        .work()
+        .find((work) => work.messageId === secondMention.id)?.state,
+    ).toBe("error"),
+  );
+  expect(process()?.turns).toHaveLength(1);
+  expect(process()?.opened).toHaveLength(1);
   expect(f.deliveries[1]?.revisions).toEqual(revisions);
-  expectOnlyAllowed(f);
+  expectOnlyAllowed(f, [firstMention, secondMention]);
   await expectCounterSeesSync(f);
 });
 

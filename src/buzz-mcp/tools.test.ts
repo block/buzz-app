@@ -443,6 +443,42 @@ it("replies in the current thread and notifies the members it names", async () =
   ]);
 });
 
+it("snapshots the current channel GOAL and requires a decision for a new thread", async () => {
+  const metadata = event({
+    id: "9".repeat(64),
+    kind: 39000,
+    tags: [
+      ["d", "chan"],
+      ["t", "stream"],
+      ["goal", "Choose the launch plan"],
+    ],
+  });
+  const { client, published } = fake([...community, metadata]);
+  await expect(
+    callTool(client, { channel: "chan" }, "send", {
+      audience: "everyone",
+      text: "Proposal",
+    }),
+  ).rejects.toThrow("decision is required");
+  await callTool(client, { channel: "chan" }, "send", {
+    audience: "everyone",
+    text: "Proposal",
+    decision: "Pick the launch date",
+  });
+  expect(published).toEqual([
+    {
+      kind: 9,
+      content: "Proposal",
+      tags: [
+        ["h", "chan"],
+        ["buzz:goal", "Choose the launch plan"],
+        ["buzz:goal-version", metadata.id],
+        ["buzz:decision", "Pick the launch date"],
+      ],
+    },
+  ]);
+});
+
 // As a model that fills in every optional field sends it.
 it("replies in the current thread when channel and reply are blank", async () => {
   const { client, published } = fake(community);

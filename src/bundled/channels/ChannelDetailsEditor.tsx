@@ -157,6 +157,7 @@ export function ChannelDetailsEditor({
     !!view.base &&
     (normalized.name !== view.base.name ||
       normalized.description !== view.base.description ||
+      (normalized.goal ?? "") !== (view.base.goal ?? "") ||
       normalized.visibility !== view.base.visibility ||
       normalized.joinRole !== view.base.joinRole ||
       normalized.ttlSeconds !== view.base.ttlSeconds);
@@ -199,6 +200,7 @@ export function ChannelDetailsEditor({
     (!view.base ||
       draft.name !== view.base.name ||
       draft.description !== view.base.description ||
+      (draft.goal ?? "") !== (view.base.goal ?? "") ||
       draft.visibility !== view.base.visibility ||
       draft.joinRole !== view.base.joinRole ||
       draft.ttlSeconds !== view.base.ttlSeconds);
@@ -417,6 +419,13 @@ export function ChannelDetailsEditor({
                   onChange={(description) =>
                     patch({ draft: { ...draft, description } })
                   }
+                />
+                <ChannelTextField
+                  field="goal"
+                  value={draft.goal ?? ""}
+                  error={errors?.goal}
+                  disabled={locked || !canEdit}
+                  onChange={(goal) => patch({ draft: { ...draft, goal } })}
                 />
                 <ChannelDurationField
                   temporary={draft.ttlSeconds !== undefined}

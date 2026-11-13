@@ -121,6 +121,7 @@ export function createChannelDetails({
     if (
       details.name !== draft.name ||
       details.description !== draft.description ||
+      details.goal !== (draft.goal ?? "") ||
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
       (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||

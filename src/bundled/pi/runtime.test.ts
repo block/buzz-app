@@ -220,6 +220,23 @@ function setup(
   };
 }
 
+it("prepares a thread at the final Pi session handoff", async () => {
+  const f = setup();
+  const prepareSession = vi.fn(async () => undefined);
+  const turn = f.deliver(
+    { type: "mention", event: reply("2", "@Pi build it") },
+    { prepareSession },
+  );
+  await turn.run;
+  expect(prepareSession).toHaveBeenCalledExactlyOnceWith(
+    {
+      source: { channelId: channel, root: root.id },
+      conversation: { channelId: channel, root: root.id },
+    },
+    false,
+  );
+});
+
 it("contains delegated file reads with the current Pi handle's policy", async () => {
   const f = setup();
   const spawn = f.desktop.spawn;

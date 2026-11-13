@@ -80,6 +80,16 @@ as the native reset. A failed reset blocks admission until New succeeds.
 Claude and Codex implement this contract. With no router and
 no saved association, the extension adds no execution or publication work.
 
+Every addressed native turn also passes the source thread circuit breaker at
+that same final handover boundary, before the harness can queue or steer the
+request. Its relay-backed `buzz.thread-governance/v1` ledger is keyed by channel
+and root, independently of the native conversation: several source threads may
+share one native session without sharing a budget. A completed turn is recorded
+only after the runner's actual work settles. Agent identity comes only from a
+cryptographically verified profile `auth` tag; the display-only `is_agent` field
+does not count. A trip refuses the new admission and never interrupts a session,
+aborts a runner, clears a runtime queue, or changes work already admitted.
+
 ## Local lifecycle evidence
 
 `session.agentActivity.snapshot().local` can include `LocalWork.evidence`.

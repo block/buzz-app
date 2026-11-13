@@ -467,6 +467,12 @@ and are asked to sign in again in Buzz.
   name alone does not guarantee a notification. Selecting someone outside the
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
+  Channel owners and leads can set a **GOAL** in Channel Settings. Starting a
+  thread in a channel with a GOAL requires **Decision this thread changes**;
+  the thread keeps that GOAL version even if Channel Settings changes later.
+  A thread's header shows its agent-turn budget. When it reaches 10, Buzz pauses
+  only new agent turns in that thread and offers Close, extend, Scope change,
+  or DEFER; turns already running and other threads continue.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.

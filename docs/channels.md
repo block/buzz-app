@@ -647,14 +647,14 @@ No dismissal saves, retries, replaces setup or confirms a destructive action.
 
 ## Editing channel details
 
-Channel Settings shows the signed name and description for ordinary channels. The centered title opens the same editor, revealing a pencil with a short
+Channel Settings shows the signed name, description and GOAL for ordinary channels. The centered title opens the same editor, revealing a pencil with a short
 left-to-right fade on hover or keyboard focus (always visible on touch, no animation
 for reduced motion). The pencil follows the final text line;
 balanced side padding keeps the text centered and lets long titles wrap without clipping it.
 Description has a small pencil after its label,
 revealed with a short left-to-right fade on row hover or keyboard focus
 (always visible on touch, no animation for reduced motion) without shifting layout;
-only the label, a 24px target, opens the shared Dialog with one Name/Description/Duration draft.
+only the label, a 24px target, opens the shared Dialog with one Name/Description/GOAL/Duration draft.
 Every viewer sees the description rendered as message Markdown: its URLs, Buzz links
 and `#channel` references open their targets, so its value is not part of the Edit target.
 Opening Description focuses its textarea; the title focuses Name.
@@ -701,7 +701,11 @@ Actionable errors and uncertain-save warnings remain visible.
 After an uncertain outcome, the edit controls re-enable so the save may be closed
 and reopened for check-only recovery, never a blind resend. The panel retains its
 own Close/Escape focus return, conversation and collapsed Diagnostics.
-Names accept 1–120 code points and descriptions up to 1,000. Typing and paste
+Names accept 1–120 code points, descriptions up to 1,000 and GOALs up to 2,000.
+The current relay-signed metadata event id versions the GOAL. A new top-level
+thread snapshots that GOAL and version in its root message and requires a
+“Decision this thread changes” value of at most 1,000 characters; replies keep
+the root's snapshot. Typing and paste
 are capped at those limits without splitting Unicode code points; a middle edit
 keeps the existing suffix and accepts only the inserted text that fits. Existing
 over-limit relay values are preserved: edits may reduce or replace text without
@@ -1439,6 +1443,16 @@ downgrade. Media review still eagerly loads its bounded comment range.
 The thread and a linked object panel share that slot; a companion can remain below.
 Close or Escape returns focus to the reply button when it is still mounted. Changing
 channel/community or disabling Channels disposes the owned thread view.
+
+The thread header shows completed agent turns against the current budget. The
+default is 10. At the limit, only new turns in that channel/root are paused;
+other source threads and work already running continue. Owners and channel
+admins can choose **[CLOSED]**, extend the budget with an approver reason,
+record **[SCOPE CHANGE]** with a thread-only GOAL override, or move the remainder
+to **DEFER**. Extensions, scope changes, human turns and blocker-open/resolved
+events reset the counter. The ledger, reset history and approval reason are
+relay-backed and survive reload; the override expires with the thread and never
+changes Channel Settings.
 
 The footer reuses `MessageComposer` and defaults to a direct reply to the resolved
 root through `session.messages.reply`. Reply on a child selects that message as the

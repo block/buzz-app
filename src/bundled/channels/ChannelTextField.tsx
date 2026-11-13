@@ -12,13 +12,14 @@ type Props = {
 } & (
   | { field: "name"; inputRef?: Ref<HTMLInputElement>; creation?: boolean }
   | { field: "description"; inputRef?: Ref<HTMLTextAreaElement> }
+  | { field: "goal"; inputRef?: Ref<HTMLTextAreaElement> }
 );
 
 /** Shared presentation/input policy, not draft or persistence ownership. */
 export function ChannelTextField(props: Props) {
   const countId = useId();
   const isName = props.field === "name";
-  const limit = isName ? 120 : 1000;
+  const limit = isName ? 120 : props.field === "goal" ? 2000 : 1000;
   const count = [...props.value].length;
   const showCount = count >= limit * 0.9 && !props.error;
   const countLabel = count.toLocaleString("en-US");
@@ -35,7 +36,9 @@ export function ChannelTextField(props: Props) {
     <Field
       label={
         <span className={styles.label}>
-          <span>{isName ? "Name" : "Description"}</span>
+          <span>
+            {isName ? "Name" : props.field === "goal" ? "GOAL" : "Description"}
+          </span>
           {showCount && (
             <span
               aria-hidden="true"
@@ -63,8 +66,12 @@ export function ChannelTextField(props: Props) {
         <Textarea
           {...control}
           ref={props.inputRef}
-          rows={3}
-          placeholder="What this channel is for"
+          rows={props.field === "goal" ? 5 : 3}
+          placeholder={
+            props.field === "goal"
+              ? "The outcome work in this channel should advance"
+              : "What this channel is for"
+          }
         />
       )}
       {showCount && (

@@ -176,6 +176,10 @@ it("masks one-colour SVGs at the host stroke and leaves other images alone", () 
     '<svg xmlns="http://www.w3.org/2000/svg" fill="#555"><path d="M1 1h9v9z"/></svg>',
   );
   expect(glyphMask(filled, 2.5)).toContain("data:image/svg+xml");
+  const clipped = svgImage(
+    '<svg xmlns="http://www.w3.org/2000/svg"><clipPath id="c"><rect width="24" height="24"/></clipPath><path clip-path="url(#c)" fill="#333" d="M1 1h9v9z"/></svg>',
+  );
+  expect(glyphMask(clipped, 2.5)).toContain("data:image/svg+xml");
   expect(glyphMask(bag, 2.5)).toContain("stroke-width%3D%222.5%22");
 
   const twoColours = svgImage(

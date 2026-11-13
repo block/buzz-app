@@ -69,6 +69,8 @@ function oneColour(elements: readonly Element[]) {
   };
   for (const element of elements) {
     if (multiPaint.test(element.localName)) return false;
+    // Clip and mask shapes shape the glyph; they are never painted.
+    if (element.closest("clipPath, mask")) continue;
     for (const kind of paintKinds) add(declared(element, kind));
     if (shape.test(element.localName)) add(inheritedFill(element));
   }

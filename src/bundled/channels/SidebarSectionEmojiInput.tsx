@@ -60,6 +60,7 @@ export function SidebarSectionEmojiInput({
             aria-expanded={pickerOpen && !disabled}
             aria-controls={pickerOpen && !disabled ? pickerId : undefined}
             disabled={disabled}
+            data-section-emoji-trigger=""
             onClick={() => {
               if (pickerOpen) return close();
               void session.emoji.ensure("foreground");

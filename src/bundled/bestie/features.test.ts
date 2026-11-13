@@ -250,6 +250,10 @@ it("has Nightly review silent, strict about promotion and bounded in what it cha
   expect(steps).toContain('Append a "Dream" section');
   // A night with no new note still retires stale hypotheses.
   expect(steps).toContain("Stop and write nothing only if there is no note");
+  // Lines are dated by day, so a line from later on last_dream's day counts.
+  expect(steps).toContain("mem/notes/<date> dated on or after last_dream");
+  expect(steps).toContain("no line in mem/user dated on or after it");
+  expect(steps).not.toMatch(/since last_dream|dated after it/);
   expect(steps).toContain("step 3 still marks and retires stale hypotheses");
   // The cards it reads, and whether it stops, both come from the notes, so
   // every card write links its card from a note: in chat and in Hourly notes.

@@ -9,12 +9,13 @@ import type { IncomingListener } from "../relay/incoming";
 import { relayPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
 import type { NotificationsService } from "./service";
-import { messageNotificationText } from "./content";
+import { messageNotificationText, notificationAuthor } from "./content";
 
 const labels = {
   mention: "Mentions",
   direct: "Direct messages",
   thread: "Thread replies",
+  person: "People on your list",
 };
 /** A local Solo run owns its completion feedback; its reply is not a mention alert. */
 export function localSoloAgentReply(
@@ -92,6 +93,8 @@ export function bindMessageNotifications(
   localActivity?: LocalAgentSource,
 ) {
   let closed = false;
+  const listed = (author: string) =>
+    notifications.snapshot().preferences.people.includes(author);
   let session: RelaySession | undefined;
   let identity = "";
   let generation = 0;
@@ -143,10 +146,21 @@ export function bindMessageNotifications(
           message.channelId,
           message.messageId,
         );
+        const author =
+          message.workflowOwnerId ??
+          message.displayAuthorId ??
+          message.authorId;
         // A reply whose conversation lookup is pending may become thread
-        // attention; admission waits until the lookup decides it.
+        // attention; admission waits until the lookup decides it. A post by
+        // someone on the viewer's list adds an alert only where nothing else
+        // matches, so it never changes how another category is decided.
         const category =
-          attention.category ?? (attention.pending ? "thread" : undefined);
+          attention.category ??
+          (attention.pending
+            ? "thread"
+            : listed(author)
+              ? "person"
+              : undefined);
         const soloReply =
           category === "mention"
             ? localSoloAgentReply(
@@ -155,12 +169,15 @@ export function bindMessageNotifications(
                 relayPartition(origin, viewer),
               )
             : undefined;
-        if (
-          !category ||
-          (attention.status !== "eligible" && !attention.pending) ||
-          soloReply === "reply"
-        )
-          continue;
+        // An ordinary post earns no engine category, so it is always admitted:
+        // a broadcast reply whose root is still loading reads "unknown" until
+        // the root arrives, and release below waits on that. Channel access is
+        // checked by admit, and a message the index lacks is cancelled there.
+        const admissible =
+          category === "person" ||
+          attention.status === "eligible" ||
+          attention.pending;
+        if (!category || !admissible || soloReply === "reply") continue;
         void notifications.admit(
           category,
           labels[category],
@@ -193,6 +210,8 @@ export function bindMessageNotifications(
               message.messageId,
             );
             const sync = owned.unread.sync();
+            // Removing a person cancels their alert at once, before any wait.
+            if (category === "person" && !listed(author)) return false;
             // Explicit mentions bypass channel mute, as in the legacy policy —
             // including p-tagged messages in DM channels, whose category is
             // "direct". Unknown preferences must not briefly release ordinary
@@ -209,12 +228,18 @@ export function bindMessageNotifications(
             }
             const whileViewing =
               notifications.snapshot().preferences.notifyWhileViewing;
+            // A person alert only adds to the rules a post already has: it
+            // needs the list now, no other category, and the viewer's own
+            // rules counting the post (so an opted-out thread stays quiet).
+            const person = category === "person";
             if (
-              attention.status === "ineligible" ||
-              (!attention.pending && attention.category !== category) ||
-              (!whileViewing && attention.viewing)
+              person
+                ? !listed(author) || attention.category || !attention.relevant
+                : attention.status === "ineligible" ||
+                  (!attention.pending && attention.category !== category)
             )
               return false;
+            if (!whileViewing && attention.viewing) return false;
             if (
               sync.status === "loading" ||
               sync.status === "error" ||
@@ -237,9 +262,9 @@ export function bindMessageNotifications(
                 .channels.find((item) => item.id === message.channelId),
               owned.profiles
                 .snapshot()
-                .get(message.workflowOwnerId ?? message.authorId),
+                .get(notificationAuthor(message, category)),
               owned.names.resolve(
-                message.workflowOwnerId ?? message.authorId,
+                notificationAuthor(message, category),
                 undefined,
                 owned.channels
                   .list()

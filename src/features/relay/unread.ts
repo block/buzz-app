@@ -73,6 +73,10 @@ export type MessageAttention = Readonly<{
   category?: "mention" | "direct" | "thread";
   /** The event mentions the viewer, excluding trusted workflow-owner attribution. */
   mentioned?: boolean;
+  /** The viewer's rules count this message (a top-level post, or a reply in
+   * their own conversations, or a broadcast), whatever its category. A reply in
+   * a thread the viewer opted out of, even a broadcast one, is not. */
+  relevant?: true;
   rootId?: string;
   /** The reply's conversation is still being looked up; it may become thread
    * attention when the lookup finishes. */
@@ -1052,7 +1056,10 @@ export function createUnread({
     // A queued or running lookup may still make this reply thread attention.
     // A read reply is never looked up, so it is undecided but not pending.
     const open = undecided(entry, dm);
-    if (open) want(entry, dm);
+    // A categoryless reply whose root is still missing (a broadcast) is asked
+    // for here too, so a waiting person alert does not depend on a mounted view.
+    if (open || (!kind && threadReference(event) && !entry.rootId))
+      want(entry, dm);
     const pending =
       open &&
       lookups.get(conversationKey(channelId, entry.parentId ?? ""))?.done ===
@@ -1080,6 +1087,9 @@ export function createUnread({
       ...(kind ? { category: kind } : {}),
       ...(pending ? { pending: true } : {}),
       ...(entry.mentioned ? { mentioned: true } : {}),
+      ...(relevant(entry, dm) && chosen(entry) !== false
+        ? { relevant: true as const }
+        : {}),
       ...(entry.rootId ? { rootId: entry.rootId } : {}),
       unread: isUnread(entry, state, dm),
       forced: forcedMessages.get(channelId)?.has(messageId) ?? false,

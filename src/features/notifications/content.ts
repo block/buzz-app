@@ -99,6 +99,19 @@ export function pluginNotificationText(
   });
 }
 
+/** Who an alert names. A person alert is about the attributed author, so a
+ * post the relay signed for someone names them, not the relay. */
+export function notificationAuthor(
+  message: IncomingMessage,
+  category: NotificationCategory,
+) {
+  return (
+    message.workflowOwnerId ??
+    (category === "person" ? message.displayAuthorId : undefined) ??
+    message.authorId
+  );
+}
+
 /** Names are optional cached enrichment; notifications never wait for profile reads. */
 export function messageNotificationText(
   message: IncomingMessage,
@@ -109,7 +122,7 @@ export function messageNotificationText(
 ): NotificationText {
   const name =
     shortText(resolvedName ?? profile?.name ?? "", 64) ||
-    (message.workflowOwnerId ?? message.authorId).slice(0, 10);
+    notificationAuthor(message, category).slice(0, 10);
   const sender = message.workflowOwnerId ? workflowLabel(name) : name;
   const destination =
     channel?.channelType === "dm"
@@ -120,6 +133,8 @@ export function messageNotificationText(
       ? `${sender} mentioned you in ${destination}`
       : category === "direct"
         ? `${sender} sent you a direct message`
-        : `${sender} replied in ${destination}`;
+        : category === "person"
+          ? `${sender} posted in ${destination}`
+          : `${sender} replied in ${destination}`;
   return Object.freeze({ title, body: messagePreview(message.previewContent) });
 }

@@ -7,6 +7,17 @@ const label = (...args: Parameters<typeof localTimeLabel>) =>
 const en = { locale: "en-US" };
 
 describe("localTimeLabel", () => {
+  it("leaves the difference out when asked", () => {
+    expect(
+      label(
+        "Europe/London",
+        new Date("2026-01-15T15:42:00Z"),
+        "America/New_York",
+        { ...en, difference: false },
+      ),
+    ).toBe("3:42 PM local time");
+  });
+
   it("follows each zone's own daylight saving", () => {
     // US clocks change on March 8, 2026 and UK clocks on March 29.
     expect(

@@ -2,10 +2,12 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { setClockPreference } from "../../shared/clock-preference";
 import { ProfileLocalTime } from "./ProfileLocalTime";
 
 afterEach(() => {
   cleanup();
+  setClockPreference({ localTimeDetails: true });
   vi.useRealTimers();
 });
 
@@ -34,4 +36,16 @@ it("renders nothing and schedules nothing for an unknown zone", () => {
   );
   expect(container).toBeEmptyDOMElement();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("adds the difference and the zone on its own line unless details are off", () => {
+  const view = render(
+    <ProfileLocalTime timeZone="Pacific/Kiritimati" className="local-time" />,
+  );
+  expect(screen.getByText("Pacific/Kiritimati")).toBeVisible();
+  expect(screen.getByText(/local time/).textContent).toMatch(/ahead$/);
+  act(() => setClockPreference({ localTimeDetails: false }));
+  expect(screen.queryByText("Pacific/Kiritimati")).toBeNull();
+  expect(screen.getByText(/local time/).textContent).toMatch(/local time$/);
+  view.unmount();
 });

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { clockHourCycle, useClockFormat } from "../../shared/clock-preference";
+import {
+  clockHourCycle,
+  useClockPreference,
+} from "../../shared/clock-preference";
 import { localTimeLabel, profileTimeZone } from "./local-time";
 
 /** Someone's local time from their profile `tz`, refreshed on each minute;
@@ -11,7 +14,7 @@ export function ProfileLocalTime({
   timeZone: string | undefined;
   className: string;
 }) {
-  useClockFormat();
+  const { localTimeDetails } = useClockPreference();
   const zone = profileTimeZone(timeZone);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -29,7 +32,15 @@ export function ProfileLocalTime({
     zone,
     now,
     new Intl.DateTimeFormat().resolvedOptions().timeZone,
-    { hourCycle: clockHourCycle() },
+    { hourCycle: clockHourCycle(), difference: localTimeDetails },
   );
-  return label ? <p className={className}>{label}</p> : null;
+  if (!label) return null;
+  return (
+    <>
+      <p className={className}>{label}</p>
+      {localTimeDetails && (
+        <p className={className}>{zone?.replaceAll("_", " ")}</p>
+      )}
+    </>
+  );
 }

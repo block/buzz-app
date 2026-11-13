@@ -123,6 +123,11 @@ test("channel establishment preserves an in-flight unread batch and its sidebar 
   app,
 }) => {
   await holdReadingFocus(page);
+  // The held unread read must outlive the app's 10s read deadline on slow
+  // runners; the test releases it explicitly, so app timeouts are not under test.
+  await page.addInitScript(() => {
+    AbortSignal.timeout = () => new AbortController().signal;
+  });
   const alphaHeads = () =>
     app.report.queries.filter(
       ({ community, filter }) =>

@@ -1,6 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { createCommunities } from "./service";
+import { createCommunities, SESSION_LIMIT } from "./service";
 import { communityDestination } from "./destination";
 import { localCommunityNameKey } from "./names";
 import * as destinations from "./destination";
@@ -154,6 +154,44 @@ it("opens a joined community without selecting it, and never one that is not joi
     "/api/relay/secondary/session",
     "/api/relay/primary/session",
   ]);
+});
+it("closes the oldest badge-only session, never selected or agent work, when the socket limit is full", async () => {
+  const ids = Array.from(
+    { length: SESSION_LIMIT + 1 },
+    (_, i) => `https://c${i}.example.test`,
+  );
+  const client = setup({
+    profile: { name: "Local", picture: "" },
+    memberships: ids.map((id) => ({ id, name: id })),
+    selected: ids[0],
+  });
+  await flush();
+  await flush();
+  // Startup badges, then visits and an agent's community fill every socket.
+  const badges = ids.slice(1, 9).map((id) => client.open(id, true));
+  for (const id of ids.slice(9, SESSION_LIMIT - 1)) client.select(id);
+  const agent = client.open(ids[SESSION_LIMIT - 1] as string);
+  client.select(ids[0] as string);
+  await flush();
+  expect(badges.every(Boolean)).toBe(true);
+  // A badge never takes the last socket from other work.
+  const last = ids[SESSION_LIMIT] as string;
+  expect(client.open(last, true)).toBeUndefined();
+
+  client.select(last);
+  await flush();
+  await flush();
+  expect(client.relay.snapshot().status).toBe("ready");
+  // Only the oldest badge-only session gave up its socket, and stays closed.
+  expect(client.open(ids[1] as string, true)).toBeUndefined();
+  for (const [index, id] of ids.slice(2, 9).entries())
+    expect(client.open(id, true)).toBe(badges[index + 1]);
+  expect(client.open(ids[SESSION_LIMIT - 1] as string)).toBe(agent);
+  expect(client.open(ids[0] as string, true)).toBeDefined();
+  // Selecting the closed community connects it again.
+  client.select(ids[1] as string);
+  await flush();
+  expect(client.relay.snapshot().status).toBe("ready");
 });
 it("a failing community does not replace its healthy sibling or the local profile", async () => {
   const client = setup();

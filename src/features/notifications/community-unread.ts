@@ -192,12 +192,12 @@ export function createCommunityUnreads(
       ),
     );
     for (const [id, entry] of entries)
-      if (!joined.has(id) || communities.open(id) !== entry.relay)
+      if (!joined.has(id) || communities.open(id, true) !== entry.relay)
         drop(id, entry);
     for (const id of joined) {
       let entry = entries.get(id);
       if (!entry) {
-        const relay = communities.open(id);
+        const relay = communities.open(id, true);
         if (!relay) continue;
         const created: Entry = { relay, stopRelay: () => {} };
         created.stopRelay = relay.subscribe(() =>

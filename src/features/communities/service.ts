@@ -27,6 +27,9 @@ import {
 } from "./names";
 
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
+/** Native relay sockets the app may hold at once, one per session; mirrors
+ * the admission check in `src-tauri/src/federated_identity/socket.rs`. */
+export const SESSION_LIMIT = 16;
 export type PersonalProfile = { name: string; picture: string; about?: string };
 export type Membership = {
   id: string;
@@ -174,14 +177,35 @@ export function createCommunities(
     for (const fn of listeners) fn();
     emitRelay();
   };
-  const acquire = (id: string, viewer = state.viewer) => {
+  // Sessions held only for a switcher badge, oldest first. They give their
+  // socket to a session opened for its own work; a closed one stays closed
+  // until that community is opened for its own work.
+  const badgeOnly = new Set<string>();
+  const closed = new Set<string>();
+  const acquire = (id: string, viewer = state.viewer, badge = false) => {
     if (!connect) return disconnected;
     let session = sessions.get(id);
+    if (!badge) {
+      badgeOnly.delete(id);
+      closed.delete(id);
+    }
     if (!session) {
+      if (badge && (closed.has(id) || sessions.size >= SESSION_LIMIT))
+        return undefined;
+      let room: Promise<unknown> = Promise.resolve();
+      const oldest = [...badgeOnly][0];
+      if (sessions.size >= SESSION_LIMIT && oldest) {
+        badgeOnly.delete(oldest);
+        closed.add(oldest);
+        // Close before connecting so the native socket is free first.
+        room = dispose(oldest);
+        for (const fn of listeners) fn();
+      }
+      if (badge) badgeOnly.add(id);
       const scope = newScope();
       session = provideRelay(
         scope,
-        (signal) => connect(id, signal),
+        (signal) => room.then(() => connect(id, signal)),
         presenceActivity,
         identityNames,
         agentChoices,
@@ -198,14 +222,14 @@ export function createCommunities(
     }
     return session;
   };
-  /** Disposes a forgotten community's retained session. Reported, never
-   * thrown: the membership is already gone, so only a report can reach the
-   * viewer, and it is named for what it is, a session that would not shut
-   * down, not a store that would not clear. */
-  const release = async (id: string): Promise<PurgeFailure[]> => {
+  /** Disposes a retained session without touching its device state. Reported,
+   * never thrown: only a report can reach the viewer, and it is named for
+   * what it is, a session that would not shut down. */
+  const dispose = async (id: string): Promise<PurgeFailure[]> => {
     const scope = sessionScopes.get(id);
     sessions.delete(id);
     sessionScopes.delete(id);
+    badgeOnly.delete(id);
     if (!scope) return [];
     // Every session scope comes from `newScope()`, so this always finds
     // it; guarding keeps a miss from splicing another community's scope.
@@ -216,7 +240,7 @@ export function createCommunities(
       return [];
     } catch (error) {
       console.warn(
-        `Couldn't dispose the session for ${communityDestination(id).url} after forgetting it`,
+        `Couldn't dispose the session for ${communityDestination(id).url}`,
         error,
       );
       return [{ store: "session", error }];
@@ -502,11 +526,13 @@ export function createCommunities(
       update({ selected: id });
     },
     /** A joined community's session, connected without selecting it, for
-     * background work such as agents; it lives until the community is left. */
-    open(id: string): RelayData | undefined {
+     * background work such as agents; it lives until the community is left.
+     * `badge` asks only for unread: it never takes the last socket, yields it
+     * to other work, and stays closed until opened for its own work. */
+    open(id: string, badge = false): RelayData | undefined {
       id = communityDestination(id).id;
       return state.memberships.some((m) => m.id === id)
-        ? acquire(id)
+        ? acquire(id, state.viewer, badge)
         : undefined;
     },
     saveProfile(profile: PersonalProfile) {
@@ -579,7 +605,8 @@ export function createCommunities(
       presentations.delete(id);
       membershipVersions.set(id, (membershipVersions.get(id) ?? 0) + 1);
       refreshPresentation();
-      const failures = await release(id);
+      closed.delete(id);
+      const failures = await dispose(id);
       // The session is gone (or at least detached), so nothing below can
       // refill the purged stores.
       if (purge && viewer)

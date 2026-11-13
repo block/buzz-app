@@ -225,7 +225,7 @@ it("keys every joined community's unread, opening its session and repair once", 
   expect([...unreads.snapshot()]).toEqual([
     [one, { unread: true, attention: 1 }],
   ]);
-  expect(opened).toHaveBeenCalledWith(two);
+  expect(opened).toHaveBeenCalledWith(two, true);
   expect(first.ensure).toHaveBeenCalledTimes(1);
   // A community whose session opens later is picked up when memberships change.
   open = new Set([one, two]);

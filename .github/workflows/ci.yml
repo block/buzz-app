@@ -90,6 +90,8 @@ jobs:
           mkdir -p test-results/protection
           set -o pipefail
           ./bin/cargo test --manifest-path src-tauri/Cargo.toml host_process --lib 2>&1 | tee test-results/protection/native.log
+      - name: Native host commands and login-shell environment
+        run: ./bin/cargo test --manifest-path src-tauri/Cargo.toml host_command --lib
       - name: Protection test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -1574,3 +1574,74 @@ it("keeps a submitted address submitted after the host withdraws its one-use con
   expect(screen.queryByLabelText("Community URL")).toBeNull();
   expect(lookups).toHaveLength(1);
 });
+
+it("holds Close from before the access step's issuer reset, so a dismissed join sends no policy acceptance", async () => {
+  api.inspectProfile.mockResolvedValue({
+    exists: false,
+    existing: {},
+    profile: { name: "", picture: "" },
+  });
+  const user = userEvent.setup();
+  const routes: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const route = String(url).split("/").at(-1) ?? "";
+      routes.push(route);
+      if (route === "register") return Response.json({ id: "x" });
+      if (route === "info")
+        return Response.json({
+          name: "Fixture",
+          policy: {
+            version: "v1",
+            terms_markdown: "Terms",
+            age_attestation_required: true,
+          },
+        });
+      if (route === "accept-policy")
+        return Response.json({ receipt: "receipt-1" });
+      if (route === "claim") return Response.json({ status: "joined" });
+      throw new Error(`Unexpected request: ${url}`);
+    }),
+  );
+  const h = federatedFixture();
+  let reset = () => {};
+  vi.mocked(h.service.askAgain)
+    .mockResolvedValueOnce(undefined)
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          reset = resolve;
+        }),
+    );
+  const writing = vi.fn();
+  render(
+    <CommunityDialog
+      communities={lookupCommunities}
+      federatedIdentity={h.service}
+      mode="join"
+      close={() => {}}
+      onWritingChange={writing}
+      invite={{ community: "https://relay.example", code: "v2.abc" }}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(
+    await screen.findByRole("checkbox", {
+      name: "I confirm that I am at least 18 years old.",
+    }),
+  );
+  await user.click(screen.getByRole("checkbox", { name: /I agree/ }));
+  await user.click(screen.getByRole("button", { name: "Continue" }));
+  // The issuer reset is pending: nothing is sent yet, but the join cannot be left.
+  await waitFor(() => expect(h.service.askAgain).toHaveBeenCalledTimes(2));
+  expect(writing).toHaveBeenLastCalledWith(true);
+  expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+  expect(routes).not.toContain("accept-policy");
+  act(() => reset());
+  expect(await screen.findByLabelText("Display name")).toBeVisible();
+  expect(routes).toContain("accept-policy");
+  await waitFor(() => expect(writing).toHaveBeenLastCalledWith(false));
+  expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+});

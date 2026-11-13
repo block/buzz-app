@@ -330,6 +330,7 @@ export class DiscoveryState {
     {
       members: readonly string[];
       owners: readonly string[];
+      guests: readonly string[];
       viewerRole: ChannelSummary["viewerRole"];
     }
   >();
@@ -343,6 +344,7 @@ export class DiscoveryState {
       parsed = {
         members: rosterKeys(roster),
         owners: rosterKeys(roster, "owner"),
+        guests: rosterKeys(roster, "guest"),
         // A contradictory guest entry cannot restore writing through another role.
         viewerRole: entries.some((entry) => entry[3] === "guest")
           ? "guest"
@@ -453,6 +455,7 @@ export class DiscoveryState {
         : {}),
       members: parsed?.members ?? noMembers,
       ...(parsed ? { owners: parsed.owners } : {}),
+      ...(parsed?.guests.length ? { guests: parsed.guests } : {}),
       ...(this.hidden(id) ? { hidden: true } : {}),
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(this.autoJoin(id) ? { autoJoin: true } : {}),

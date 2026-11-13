@@ -651,6 +651,7 @@ export function createChannelWrites(
       members: readonly string[] = [],
       active?: () => boolean,
       labels: readonly string[] = [],
+      description?: string,
     ) {
       writer();
       identifier(id);
@@ -658,6 +659,9 @@ export function createChannelWrites(
       if (!channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
+      const about = description?.trim();
+      if (about && [...about].length > 1000)
+        throw new Error("Keep the chat description under 1,000 characters.");
       if (
         ttlSeconds !== undefined &&
         (!Number.isInteger(ttlSeconds) ||
@@ -674,6 +678,7 @@ export function createChannelWrites(
             ["name", title],
             ["visibility", "private"],
             ["channel_type", "stream"],
+            ...(about ? [["about", about]] : []),
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
             ...channelLabelTags([
               SOLO_LABEL,
@@ -701,7 +706,12 @@ export function createChannelWrites(
       /** The chat's Canvas, and the work that saves it once the chat
        * exists; nothing waits for it, and a failure leaves a working chat. */
       setup?: { canvas: string; apply(): Promise<unknown> },
-      options?: { labels?: readonly string[]; active?: () => boolean },
+      options?: {
+        labels?: readonly string[];
+        active?: () => boolean;
+        /** The chat's About line. */
+        about?: string;
+      },
     ) {
       const create = api.create(
         id,
@@ -711,6 +721,7 @@ export function createChannelWrites(
         members,
         options?.active,
         options?.labels,
+        options?.about,
       );
       channels.start?.({
         id,

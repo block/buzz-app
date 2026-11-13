@@ -1337,6 +1337,7 @@ export class PiRuntime {
         id: channelId,
         ...(summary?.name ? { name: summary.name } : {}),
         dm,
+        ...(summary?.viewingOnly ? { viewingOnly: true as const } : {}),
       },
       ...(thread ? { thread } : {}),
       context: unseen,

@@ -467,6 +467,15 @@ and are asked to sign in again in Buzz.
   name alone does not guarantee a notification. Selecting someone outside the
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
+- **An agent of yours that can't reply in a channel** (Viewing only, or not in
+  it) shows that in the **@** picker. Sending to it there offers **Make member
+  and send** (or **Add to channel and send**), **Send here anyway**, or **Ask in
+  a Solo chat**. Asking posts your message, with a link back to the channel or
+  thread, in your Solo chat with that agent for that channel, named
+  `<channel>-ask-<agent>` (for example `launch-ask-pollen`). Later asks from
+  the same channel continue that chat, even after you rename it; if it is
+  archived or the agent has left it, the next ask starts a new one. You stay in
+  the channel; **Open** on the confirmation opens the chat beside it.
 - **Workspaces** group Solo chats and provide starting folders and instructions.
   With Nexus enabled, each workspace also contains its tasks and can have a Lead
   task. Nexus saves and chooses Leads, so they exist only while Nexus is enabled.

@@ -475,7 +475,9 @@ export function createChannelStore(
         old.pending === channel.pending &&
         sameKeys(old.members, channel.members) &&
         sameKeys(old.owners, channel.owners) &&
-        sameKeys(old.participants, channel.participants)
+        sameKeys(old.participants, channel.participants) &&
+        // A role change keeps the members but not who is Viewing only.
+        sameKeys(old.guests, channel.guests)
         ? old
         : Object.freeze({
             ...channel,

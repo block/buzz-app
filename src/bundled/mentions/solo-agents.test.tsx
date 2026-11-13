@@ -15,6 +15,7 @@ import { localAgentsFixture } from "../../features/agents/local-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
+import { setDefaultAgent } from "../../features/solo/default-agent";
 import { ComposerCompletions } from "../../features/conversation/ComposerCompletions";
 import type {
   ComposerCompletion,
@@ -1089,6 +1090,64 @@ it("offers the viewer's own unmanaged agent outside a stream before directory pe
   );
   view.unmount();
   test.library.dispose();
+});
+it("names the viewer's current Bestie in its row's detail, and no other agent", async () => {
+  const test = setup();
+  const bestie = "e".repeat(64),
+    other = "f".repeat(64);
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [
+      { pubkey: bestie, name: "Pollen" },
+      { pubkey: other, name: "Quill" },
+    ],
+  }));
+  await library.queries.refresh();
+  const session = {
+    ...test.session,
+    scope: "bestie-detail",
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+  };
+  const publish = vi.fn();
+  const details = () =>
+    Object.fromEntries(
+      (
+        (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items ??
+        []
+      ).map((item) => [item.label, item.detail]),
+    );
+  const view = render(
+    <MentionCompletion
+      {...emptyCompletion}
+      session={session}
+      inviteAgents
+      publish={publish}
+    />,
+  );
+  try {
+    await waitFor(() =>
+      expect(completionLabels(publish)).toEqual(["Member", "Pollen", "Quill"]),
+    );
+    expect(details().Pollen).toBe("Adds to channel");
+    // Choosing a Bestie relabels the open chooser; the rest of the detail stays.
+    act(() => {
+      setDefaultAgent("bestie-detail", bestie);
+    });
+    await waitFor(() =>
+      expect(details().Pollen).toBe("Bestie · Adds to channel"),
+    );
+    expect(details().Quill).toBe("Adds to channel");
+    expect(details().Member).toBeUndefined();
+  } finally {
+    setDefaultAgent("bestie-detail", "");
+    view.unmount();
+    library.dispose();
+    test.library.dispose();
+  }
 });
 it("focuses search on open and supports clear, Escape, and outside dismissal", async () => {
   const test = setup(),

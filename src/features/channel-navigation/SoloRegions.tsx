@@ -1,5 +1,11 @@
 import { SoloDisclosure } from "./SoloDisclosure";
 import {
+  WorkspaceCompositionContext,
+  RegionWorkspace,
+  RegionChats,
+  type ComposeWorkspaces,
+} from "./WorkspaceComposition";
+import {
   RegionDestinationContext,
   RegionCard,
   RegionConversation,
@@ -24,6 +30,8 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   SlidersHorizontalIcon,
+  DotsThreeIcon,
+  PencilSimpleIcon,
   PlusIcon,
 } from "../../shared/design-system/icons";
 import {
@@ -58,6 +66,7 @@ export function SoloRegions({
   sidebar,
   scope,
   ordinary,
+  composeOrdinary,
   fallback,
   groupDisclosure,
   hidePrimaryHeading = false,
@@ -69,6 +78,7 @@ export function SoloRegions({
   scope: string;
   sidebar: ReturnType<typeof useSidebarView>;
   ordinary?: ReactNode;
+  composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
   fallback?: ReactNode;
   hidePrimaryHeading?: boolean;
   groupDisclosure?:
@@ -88,10 +98,13 @@ export function SoloRegions({
   const snapshot = useSoloNavigation(session);
   const service = soloNavigationFor(session);
   const regions = orderContributedSidebarSections(
-    snapshot.regions.map((region) => ({
-      key: `solo-region:${region.key}`,
-      region,
-    })),
+    // Hidden sources draw nothing; explicitly disabled chats use ordinary Solo.
+    snapshot.regions
+      .filter((region) => !region.hidden && region.reason !== "disabled")
+      .map((region) => ({
+        key: `solo-region:${region.key}`,
+        region,
+      })),
     sidebar.contributionOrder,
   ).map(({ region }) => region);
   const primary = regions.findIndex((region) => region.source);
@@ -178,6 +191,7 @@ export function SoloRegions({
             first={index === 0}
             last={index === regions.length - 1}
             ordinary={index === primary ? ordinary : undefined}
+            composeOrdinary={index === primary ? composeOrdinary : undefined}
             groupDisclosure={index === primary ? groupDisclosure : undefined}
             groupSectionKey={groupDisclosure?.sectionKey}
             hideHeading={hidePrimaryHeading && index === primary}
@@ -201,6 +215,7 @@ function RegionFrame({
   first,
   last,
   ordinary,
+  composeOrdinary,
   groupDisclosure,
   groupSectionKey,
   hideHeading,
@@ -218,6 +233,7 @@ function RegionFrame({
   first: boolean;
   last: boolean;
   ordinary?: ReactNode;
+  composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
   groupDisclosure?:
     | {
         sectionKey: string;
@@ -384,7 +400,9 @@ function RegionFrame({
       ))}
     </>
   );
-  // The region's own create action trails its other actions.
+  const composing = !!source?.composeWorkspaces && !!composeOrdinary;
+  // The region's own create action trails its other actions. Composed
+  // workspaces show a direct create as a pencil and a create menu as actions.
   const create = actions.find((action) => action.icon === "plus");
   const headerActions = (
     <>
@@ -393,7 +411,23 @@ function RegionFrame({
         .map((action) => (
           <RegionAction key={action.id} action={action} run={run} />
         ))}
-      {create && <RegionAction action={create} run={run} />}
+      {create && (
+        <RegionAction
+          action={
+            composing
+              ? {
+                  ...create,
+                  icon: create.menu ? (
+                    <DotsThreeIcon size={15} strokeWidth={2.5} />
+                  ) : (
+                    <PencilSimpleIcon size={15} />
+                  ),
+                }
+              : create
+          }
+          run={run}
+        />
+      )}
     </>
   );
   const headerNotice = actionError && (
@@ -401,34 +435,52 @@ function RegionFrame({
       The action could not run.
     </p>
   );
-  const body = (
+  const unavailable = (
     <>
-      {source &&
-      binding &&
-      presentation &&
-      region.snapshot?.status === "ready" &&
-      !region.reason ? (
-        <OwnedContribution
-          entry={source}
-          registry={{ snapshot: service.sources }}
-          fallback={recovery}
-        >
-          {(entry) => (
-            <entry.component
-              binding={binding}
-              snapshot={region.snapshot as SoloRegionProps["snapshot"]}
-              live={region.live}
-              {...(current ? { current } : {})}
-              {...presentation}
-              ui={destinationUi}
-            />
-          )}
-        </OwnedContribution>
-      ) : (
-        recovery
-      )}
+      {recovery}
+      {composing && <RegionChats all />}
     </>
   );
+  const body =
+    source &&
+    binding &&
+    presentation &&
+    region.snapshot?.status === "ready" &&
+    !region.reason ? (
+      <OwnedContribution
+        entry={source}
+        registry={{ snapshot: service.sources }}
+        fallback={unavailable}
+      >
+        {(entry) => (
+          <entry.component
+            binding={binding}
+            snapshot={region.snapshot as SoloRegionProps["snapshot"]}
+            live={region.live}
+            {...(current ? { current } : {})}
+            {...presentation}
+            ui={
+              composing
+                ? {
+                    ...destinationUi,
+                    Workspace: RegionWorkspace,
+                    Chats: RegionChats,
+                  }
+                : destinationUi
+            }
+          />
+        )}
+      </OwnedContribution>
+    ) : (
+      unavailable
+    );
+  const contents = composing
+    ? composeOrdinary?.((parts) => (
+        <WorkspaceCompositionContext value={parts}>
+          {body}
+        </WorkspaceCompositionContext>
+      ))
+    : body;
   const hasActions = actions.length > 0;
   return (
     <RegionDestinationContext.Provider
@@ -450,8 +502,8 @@ function RegionFrame({
           <>
             {hasActions && <NavigationSectionHeading actions={headerActions} />}
             {headerNotice}
-            {body}
-            {groupDisclosure ? ordinary : null}
+            {contents}
+            {!composing && groupDisclosure ? ordinary : null}
           </>
         ) : (
           <SidebarSection
@@ -474,11 +526,11 @@ function RegionFrame({
             headerActions={headerActions}
             headerNotice={headerNotice}
           >
-            {body}
-            {groupDisclosure ? ordinary : null}
+            {contents}
+            {!composing && groupDisclosure ? ordinary : null}
           </SidebarSection>
         )}
-        {groupDisclosure ? null : ordinary}
+        {composing || groupDisclosure ? null : ordinary}
       </div>
     </RegionDestinationContext.Provider>
   );

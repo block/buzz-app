@@ -279,10 +279,69 @@ it("reads files and resolves directories as the calling plugin", async () => {
   await expect(plugin.host.readFile?.("/notes.md")).rejects.toThrow(
     /No such file/,
   );
+  vi.mocked(invoke).mockResolvedValueOnce("/home/me/work");
+  await expect(
+    plugin.host.resolveDirectory?.("~/work", { create: false }),
+  ).resolves.toBe("/home/me/work");
+  expect(invoke).toHaveBeenLastCalledWith("plugin_host_resolve_directory", {
+    id: "example.plugin",
+    revision: "abc",
+    path: "~/work",
+    create: false,
+  });
   vi.mocked(isTauri).mockReturnValue(false);
   await expect(plugin.host.readFile?.("/notes.md")).rejects.toThrow(
     /desktop plugin/,
   );
+});
+
+it("lists the binding's configured repositories folder as the calling plugin, never a path it names", async () => {
+  const viewer = "a".repeat(64);
+  const stored = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+  });
+  const { root, plugin } = pluginContext();
+  const binding = {
+    scope: `https://one.example:${viewer}`,
+    viewer,
+    incarnation: "1",
+  };
+  const rows = [
+    { name: "app", path: "/home/me/code/app", displayPath: "~/code/app" },
+  ];
+  const { signal } = new AbortController();
+  vi.mocked(invoke).mockResolvedValue(rows);
+  await expect(plugin.host.repositoryFolders?.(binding, signal)).resolves.toBe(
+    rows,
+  );
+  expect(invoke).toHaveBeenLastCalledWith("plugin_host_repository_folders", {
+    id: "example.plugin",
+    revision: "abc",
+    path: "~/.buzz/REPOS",
+  });
+  stored.set(
+    `buzz-community-repositories.v1:${JSON.stringify(["https://one.example", viewer])}`,
+    "~/code",
+  );
+  await plugin.host.repositoryFolders?.(binding, signal);
+  expect(invoke).toHaveBeenLastCalledWith("plugin_host_repository_folders", {
+    id: "example.plugin",
+    revision: "abc",
+    path: "~/code",
+  });
+  vi.mocked(invoke).mockClear();
+  await expect(
+    plugin.host.repositoryFolders?.({ ...binding, scope: "none" }, signal),
+  ).rejects.toThrow(/community and account/);
+  await expect(root.host.repositoryFolders?.(binding, signal)).rejects.toThrow(
+    /desktop plugin/,
+  );
+  vi.mocked(isTauri).mockReturnValue(false);
+  await expect(
+    plugin.host.repositoryFolders?.(binding, signal),
+  ).rejects.toThrow(/desktop plugin/);
+  expect(invoke).not.toHaveBeenCalled();
 });
 
 it("starts a declared process as the calling plugin and streams it", async () => {

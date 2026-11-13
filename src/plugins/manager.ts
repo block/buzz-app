@@ -126,6 +126,7 @@ export function createPluginManager(
         ? current.catalog.plugins.filter(
             (plugin) =>
               plugin.enabled &&
+              !plugin.error &&
               !builtInIds.has(plugin.manifest.id) &&
               !(current.externalPluginsPaused && plugin.source === "external"),
           )
@@ -271,6 +272,8 @@ export function createPluginManager(
       return true;
     },
     retry: () => update(getCatalog),
+    // The native fetch gives up after 30 seconds.
+    refreshManaged: () => update(storage.refreshManaged ?? getCatalog, 45_000),
     recover: () => update(storage.recoverSettings),
     dismissError: () => {
       error = null;

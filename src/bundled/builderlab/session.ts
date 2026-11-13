@@ -133,6 +133,11 @@ export async function federatedAccount(
 
 const ACCOUNT_FAILED = "Could not load your Builderlab account. Try again.";
 
+/** A Builderlab call refused with HTTP 401. Native rechecks the session on a
+ * 401 and ends it, which shows sign-in, only when the issuer says it ended;
+ * otherwise only that call was refused, so this claims no expiry. */
+export const UNAUTHORIZED = "Builderlab didn’t accept this request. Try again.";
+
 /**
  * The FI build's Builderlab session over the shared native NIP-FI session.
  * Each session revision initially reads its account from `GET v1/auth/me`; until

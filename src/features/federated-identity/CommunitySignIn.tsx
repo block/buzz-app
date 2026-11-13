@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { FederatedIdentity, SessionSnapshot } from "./service";
 import type { Membership } from "../communities/service";
 import { communityDestination } from "../communities/destination";
@@ -14,6 +14,11 @@ export function recoveryMessage(code: string) {
   if (code === "sign-in-timed-out") return SIGN_IN_TIMED_OUT;
   if (code === "storage-busy")
     return "Secure storage is busy. Close another Buzz instance and try again.";
+  // A record native can't decode, or (on Linux) duplicate keyring items: no
+  // sign-in can compare and replace it. Sign out of Buzz deletes a damaged
+  // record without reading it, but not duplicates, so it isn't offered here.
+  if (code === "storage-corrupt")
+    return "Buzz can’t read its saved sign-in for this server, and signing in again may not replace it. If this keeps happening, contact support.";
   if (code.startsWith("storage-"))
     return "Sign-in could not access secure storage. Check your system’s credential permissions and try again.";
   if (code === "sign-in-canceled")
@@ -24,7 +29,9 @@ export function recoveryMessage(code: string) {
 }
 
 /** Issuer refusals native keeps for the session revision (`refused()` in
- * assertion.rs) until the app restarts; signing in or retrying repeats them. */
+ * assertion.rs). An automatic retry repeats them; a person's Try again
+ * (`askAgain`), a sign-in that installs a new session, or a restart asks the
+ * issuer again. */
 const ISSUER_REFUSALS = new Set([
   "adapter-refused",
   "grant-refused",
@@ -34,6 +41,54 @@ const ISSUER_REFUSALS = new Set([
   "response-too-large",
 ]);
 
+const SIGN_IN_REQUIRED =
+  /Federated sign-in is required|reauthentication-required|Federated authorization (changed|expired)/;
+
+/** Whether `CommunitySignIn` explains this refusal with its own message. */
+function explains(state: SessionSnapshot, error: string | undefined) {
+  const refusal = error || state.failure || "";
+  return (
+    /binding[-_]mismatch|authorization[-_]denied/.test(refusal) ||
+    ISSUER_REFUSALS.has(refusal) ||
+    (!!error &&
+      SIGN_IN_REQUIRED.test(error) &&
+      !!state.authority &&
+      state.status !== "signed-in")
+  );
+}
+
+const noSubscribe = () => () => {};
+const noSnapshot = () => undefined;
+
+/** True once `CommunitySignIn` has explained `error`, so the caller does
+ * not also show the raw error. It stays true until `error` clears: a sign-in
+ * that resolves the refusal publishes signed-in before its retry clears the
+ * error, and the raw error must not mount as an alert in between. */
+export function useExplainedRefusal(
+  identity: FederatedIdentity | undefined,
+  error: string | undefined,
+) {
+  const state = useSyncExternalStore(
+    identity?.subscribe ?? noSubscribe,
+    identity?.snapshot ?? noSnapshot,
+    identity?.snapshot ?? noSnapshot,
+  );
+  const explained = useRef<string | undefined>(undefined);
+  if (!error) explained.current = undefined;
+  else if (state && explains(state, error)) explained.current = error;
+  return !!error && explained.current === error;
+}
+
+/** Refusals the sign-in server may answer differently when asked again, for
+ * example once an administrator fixes access or the identity link. */
+export function issuerMayAnswerAgain(error: string | undefined) {
+  return (
+    !!error &&
+    (ISSUER_REFUSALS.has(error) ||
+      /authorization[-_]denied|binding[-_]mismatch/.test(error))
+  );
+}
+
 /** Explicit recovery from native protected-community admission; never automatic login. */
 export function CommunitySignIn({
   identity,
@@ -41,10 +96,14 @@ export function CommunitySignIn({
   retry,
   relay,
   memberships = [],
+  asksAgain = false,
 }: {
   identity?: FederatedIdentity | undefined;
   error?: string | undefined;
   retry: () => void;
+  /** The caller shows its own Try again that asks the issuer again
+   * (`askAgain`), so an issuer refusal needn't wait for a restart. */
+  asksAgain?: boolean | undefined;
   /** The refusing community, so a switch names the others it affects. */
   relay?: string | undefined;
   memberships?: readonly Membership[] | undefined;
@@ -57,6 +116,7 @@ export function CommunitySignIn({
       retry={retry}
       relay={relay}
       memberships={memberships}
+      asksAgain={asksAgain}
     />
   );
 }
@@ -66,12 +126,14 @@ function Action({
   retry,
   relay,
   memberships,
+  asksAgain,
 }: {
   identity: FederatedIdentity;
   error?: string | undefined;
   retry: () => void;
   relay?: string | undefined;
   memberships: readonly Membership[];
+  asksAgain: boolean;
 }) {
   const state = useSyncExternalStore(
     identity.subscribe,
@@ -91,6 +153,7 @@ function Action({
         retry={retry}
       />
     );
+  if (!explains(state, error)) return null;
   const refusal = error || state.failure || "";
   const mismatch = /binding[-_]mismatch/.test(refusal);
   if (mismatch || /authorization[-_]denied/.test(refusal)) {
@@ -127,20 +190,13 @@ function Action({
   if (ISSUER_REFUSALS.has(refusal))
     return (
       <p role="alert" className="text-body-sm text-danger">
-        Buzz couldn’t confirm your organization sign-in for this community.
-        Restart Buzz to try again. If it keeps happening, contact your
-        administrator.
+        Buzz couldn’t confirm your organization sign-in for this community.{" "}
+        {asksAgain ? "Try again." : "Restart Buzz to try again."} If it keeps
+        happening, contact your administrator.
       </p>
     );
-  if (
-    !error ||
-    !/Federated sign-in is required|reauthentication-required|Federated authorization (changed|expired)/.test(
-      error,
-    ) ||
-    !state.authority
-  )
-    return null;
-  if (state.status === "signed-in") return null;
+  // What remains is a sign-in the community requires.
+  if (!state.authority) return null;
   return (
     <>
       <p className="text-body-sm">

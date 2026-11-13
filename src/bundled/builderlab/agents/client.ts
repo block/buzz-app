@@ -9,7 +9,11 @@ import type {
 } from "../../../features/host/service";
 import { oauthTarget } from "../oauth/browser";
 import { managementTimestamp } from "../management-date";
-import type { BuilderlabSession, Credential } from "../session";
+import {
+  UNAUTHORIZED,
+  type BuilderlabSession,
+  type Credential,
+} from "../session";
 import {
   clearRegistration,
   registrationIntent,
@@ -155,12 +159,9 @@ export function createAgentClient(
     )
       throw new DOMException("Builderlab session changed.", "AbortError");
   }
-  function refuseExpired(response: HostResponse) {
+  function refuseUnauthorized(response: HostResponse) {
     if (response.status !== 401) return;
-    throw Object.assign(
-      new Error("Your Builderlab session expired. Sign in again."),
-      { status: 401 },
-    );
+    throw Object.assign(new Error(UNAUTHORIZED), { status: 401 });
   }
   async function request(
     path: string,
@@ -188,7 +189,7 @@ export function createAgentClient(
       throw new BuilderlabUnavailable("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    refuseExpired(response);
+    refuseUnauthorized(response);
     if (response.status === 403)
       throw Object.assign(
         new Error("This Builderlab account cannot manage remote agents."),
@@ -251,7 +252,7 @@ export function createAgentClient(
       throw new Error("Could not reach Builderlab. Try again.");
     }
     check(credential, signal);
-    refuseExpired(response);
+    refuseUnauthorized(response);
     let result: Record<string, unknown> | undefined;
     try {
       const parsed = JSON.parse(response.body);

@@ -44,10 +44,12 @@ import {
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageRow } from "./MessageRow";
+import { MessageContextMenus } from "./MessageActionBar";
 import { ReplySummary } from "./ReplySummary";
 import { setClockPreference } from "../../shared/clock-preference";
 import { MessageManagement } from "./MessageManagement";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import type { AttachmentRendererProps } from "../conversation/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import type { TypingEntry } from "../relay/typing";
@@ -1168,6 +1170,86 @@ it("lets a plugin draw an image it claims, apart from the gallery", () => {
     "card from /api/relay/media?url=https%3A%2F%2Fimage.test%2Fada.png",
     "1 image",
   ]);
+});
+
+it("lets a plugin open a file from the host file card, keeping Download", () => {
+  const placements: unknown[] = [];
+  const messages: unknown[] = [];
+  const viewer = {
+    id: "pdf",
+    title: "PDF",
+    key: "test.plugin/pdf",
+    pluginId: "test.plugin",
+    revision: "one",
+    matches: (attachment: { name?: string }) =>
+      !!attachment.name?.endsWith(".pdf"),
+    component: ({
+      attachment,
+      source,
+      placement,
+      message,
+      FileCard,
+      open,
+    }: AttachmentRendererProps) => {
+      placements.push(placement);
+      messages.push(message?.id);
+      return FileCard ? (
+        <FileCard
+          attachment={attachment}
+          source={source}
+          onOpenLink={open}
+          typeLabel="PDF"
+          onPreview={() => open(`panel:${attachment.name}`)}
+        />
+      ) : null;
+    },
+  };
+  const viewers = [viewer];
+  const none: never[] = [];
+  const open = vi.fn(() => true);
+  const media = (url: string) =>
+    `/api/relay/media?url=${encodeURIComponent(url)}`;
+  renderDom(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://relay.test/report",
+            kind: "file",
+            name: "report.pdf",
+            size: 2048,
+          },
+          { url: "https://relay.test/notes", kind: "file", name: "notes.zip" },
+        ],
+      }}
+      profile={undefined}
+      media={media}
+      onOpenLink={open}
+      canOpenLink={(target) => target.startsWith("panel:")}
+      day={false}
+      retry={undefined}
+      extensions={{
+        tools: { snapshot: () => none, subscribe: () => () => {} },
+        inline: { snapshot: () => none, subscribe: () => () => {} },
+        attachments: { snapshot: () => viewers, subscribe: () => () => {} },
+      }}
+    />,
+  );
+  expect(placements).toContain("message");
+  expect(messages).toContain(row.id);
+  expect(screen.getByText("PDF · 2 KB")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Preview report.pdf" }));
+  expect(open).toHaveBeenCalledWith("panel:report.pdf", { rootId: "root" });
+  expect(
+    screen.getByRole("link", { name: "Download report.pdf" }),
+  ).toHaveAttribute("href", media("https://relay.test/report"));
+  expect(
+    screen.getByRole("link", { name: "Download notes.zip" }),
+  ).toHaveAttribute("href", media("https://relay.test/notes"));
+  expect(
+    screen.queryByRole("button", { name: "Preview notes.zip" }),
+  ).toBeNull();
 });
 
 it("renders external audio sources as open file cards", () => {
@@ -2974,6 +3056,81 @@ it.each(["menu", "toolbar", "coordination"] as const)(
     }
   },
 );
+
+it("lets a menu action in a list's shared menu open targets as its row", async () => {
+  const actions = [
+    {
+      id: "open",
+      title: "Open",
+      key: "test.plugin/open",
+      pluginId: "test.plugin",
+      revision: "one",
+      placement: "menu" as const,
+      matches: () => true,
+      component: ({
+        canOpen,
+        open,
+      }: {
+        canOpen(target: string): boolean;
+        open(target: string): boolean;
+      }) => (
+        <button type="button" onClick={() => open("buzz://target")}>
+          {canOpen("buzz://target") ? "Open target" : "Target unavailable"}
+        </button>
+      ),
+    },
+  ];
+  const none: never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const channelList = { channels: [], status: "ready" };
+  const session = {
+    viewer: "viewer",
+    presence: {
+      subscribe: () => () => {},
+      status: () => "unknown",
+      limited: () => false,
+    },
+    unread: {
+      subscribe: () => () => {},
+      subscribeSync: () => () => {},
+      snapshot: () => undefined,
+      following: () => false,
+    },
+    messages: { report: undefined },
+    channels: { subscribeList: () => () => {}, list: () => channelList },
+  } as unknown as RelaySession;
+  const onOpenLink = vi.fn(() => true);
+  try {
+    renderDom(
+      <MessageContextMenus>
+        <div>
+          <MessageRow
+            row={{ ...row, replyCount: 0, threadRootId: "thread" }}
+            session={session}
+            profile={undefined}
+            media={() => undefined}
+            onOpenLink={onOpenLink}
+            canOpenLink={(target) => target === "buzz://target"}
+            day={false}
+            retry={undefined}
+            extensions={{
+              tools: empty,
+              inline: empty,
+              actions: { snapshot: () => actions, subscribe: () => () => {} },
+            }}
+          />
+        </div>
+      </MessageContextMenus>,
+    );
+    fireEvent.contextMenu(screen.getByText("Root"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open target" }));
+    expect(onOpenLink).toHaveBeenCalledWith("buzz://target", {
+      rootId: "thread",
+    });
+  } finally {
+    cleanup();
+  }
+});
 
 it.each(["timeline", "thread", "continuation"] as const)(
   "right-aligns own %s rows and keeps only the last grouped avatar",

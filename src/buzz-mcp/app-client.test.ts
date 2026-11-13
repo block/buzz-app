@@ -290,6 +290,85 @@ it("strips a proposed picture's metadata before uploading it as the agent", asyn
   expect(pngChunks(sent).map((c) => c.kind)).toEqual(["IHDR", "IDAT", "IEND"]);
 });
 
+/** A 1x1 two-colour GIF, with `extra` blocks before its image. */
+function gif(...extra: number[]) {
+  return new Uint8Array([
+    ...new TextEncoder().encode("GIF89a"),
+    ...[1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 255, 255, 255],
+    ...extra,
+    ...[0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0, 0x3b],
+  ]);
+}
+
+it("strips an attached image's metadata and sends other files as they are", async () => {
+  const upload = vi.fn(async (_data: string, type: string) => ({
+    url: "https://relay/media/x",
+    sha256: "ab",
+    size: 1,
+    type,
+  }));
+  const client = appClient(
+    { pubkey: "agent", upload } as unknown as AgentHandle,
+    {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    },
+  );
+  const text = new TextEncoder().encode("GPS 51.5,-0.12");
+  // A comment extension carrying a location.
+  await client.upload(gif(0x21, 0xfe, 3, 0x47, 0x50, 0x53, 0), "image/gif");
+  await client.upload(text, "text/plain");
+  const sent = upload.mock.calls.map(([data, type]) => [
+    Uint8Array.from(atob(data), (c) => c.charCodeAt(0)),
+    type,
+  ]);
+  expect(sent).toEqual([
+    [gif(), "image/gif"],
+    [text, "text/plain"],
+  ]);
+});
+
+it.each(["signal", "check"])(
+  "uploads no attached image when the turn ends during its preparation (%s)",
+  async (retire) => {
+    const upload = vi.fn();
+    const controller = new AbortController();
+    let retired = false;
+    const client = appClient(
+      { pubkey: "agent", upload } as unknown as AgentHandle,
+      {
+        read: vi.fn(),
+        signal: controller.signal,
+        check: () => {
+          if (retired) throw new Error("Turn ended");
+        },
+        memories: async () => ({ entries: [], partial: false }),
+      },
+    );
+    // The second read is the prepared image's, after its last check.
+    const read = File.prototype.arrayBuffer;
+    let reads = 0;
+    const spy = vi
+      .spyOn(File.prototype, "arrayBuffer")
+      .mockImplementation(async function (this: File) {
+        if (++reads === 2) {
+          if (retire === "signal") controller.abort(new Error("Turn ended"));
+          else retired = true;
+        }
+        return read.call(this);
+      });
+    try {
+      await expect(client.upload(gif(), "image/gif")).rejects.toThrow(
+        "Turn ended",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(reads).toBe(2);
+    expect(upload).not.toHaveBeenCalled();
+  },
+);
+
 it("refuses a proposed picture its preparation does not recognize", async () => {
   const upload = vi.fn();
   const client = appClient(
@@ -362,6 +441,61 @@ it("refuses plugin calls after the calling turn ends", async () => {
   ).toBeUndefined();
 });
 
+it("offers a run handle's Bestie, checking the turn and connection before each call and before a set saves", async () => {
+  const bestie = {
+    read: vi.fn(async () => ({ device: null, account: null, here: false })),
+    set: vi.fn(),
+    clear: vi.fn(),
+  };
+  const memories = async () => ({ entries: [], partial: false });
+  expect(
+    appClient({ pubkey: "agent" } as unknown as AgentHandle, {
+      read: vi.fn(),
+      memories,
+    }).bestie,
+  ).toBeUndefined();
+  let connected = true;
+  let ended = false;
+  const client = appClient(
+    {
+      pubkey: "agent",
+      bestie: () => (connected ? bestie : undefined),
+    } as unknown as AgentHandle,
+    {
+      read: vi.fn(),
+      memories,
+      check: () => {
+        if (ended) throw new Error("The turn has ended");
+      },
+    },
+  );
+  await client.bestie?.read();
+  expect(bestie.read).toHaveBeenCalledOnce();
+  connected = false;
+  expect(() => client.bestie?.set("b".repeat(64))).toThrow("not connected");
+  connected = true;
+  ended = true;
+  expect(() => client.bestie?.set("b".repeat(64))).toThrow("ended");
+  expect(() => client.bestie?.clear()).toThrow("ended");
+  expect(bestie.set).not.toHaveBeenCalled();
+  expect(bestie.clear).not.toHaveBeenCalled();
+  // A set checks the turn again once it has read the agents.
+  ended = false;
+  let read!: () => void;
+  bestie.set.mockImplementationOnce(
+    async (_pubkey: string, check: () => void) => {
+      await new Promise<void>((resolve) => {
+        read = resolve;
+      });
+      check();
+    },
+  );
+  const setting = client.bestie?.set("b".repeat(64));
+  ended = true;
+  read();
+  await expect(setting).rejects.toThrow("ended");
+});
+
 it("offers the handle's settings, checking the turn before each call", () => {
   const settings = {
     list: vi.fn(() => []),
@@ -397,6 +531,84 @@ it("offers the handle's settings, checking the turn before each call", () => {
   expect(settings.set).toHaveBeenCalledOnce();
   expect(settings.list).not.toHaveBeenCalled();
   expect(settings.get).not.toHaveBeenCalled();
+});
+
+it("forwards workspace discovery and one-use filing only while the app client is live", async () => {
+  let live = true;
+  const file = vi.fn(async () => {});
+  const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
+  const prepare = vi.fn(async () => file);
+  const client = appClient(
+    { soloWorkspaces: { list, prepare } } as unknown as AgentHandle,
+    {
+      read: async () => new Uint8Array(),
+      memories: async () => ({ entries: [], partial: false }),
+      check: () => {
+        if (!live) throw new Error("retired");
+      },
+    },
+  );
+  expect(await client.soloWorkspaces?.list()).toEqual([
+    { id: "work", name: "Work" },
+  ]);
+  const place = await client.soloWorkspaces?.prepare("work", ["owner"], "chat");
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    ["owner"],
+    "chat",
+    undefined,
+  );
+  live = false;
+  await expect(place?.("chat")).rejects.toThrow("retired");
+  expect(file).not.toHaveBeenCalled();
+  await expect(client.soloWorkspaces?.list()).rejects.toThrow("retired");
+});
+
+it("rejects app retirement after a completed placement without undoing it", async () => {
+  const started = gate<void>(),
+    release = gate<void>();
+  let live = true,
+    durable = false;
+  const file = vi.fn(async () => {
+    durable = true;
+    started.resolve();
+    await release.promise;
+    return { status: "filed" as const };
+  });
+  const client = appClient(
+    {
+      soloWorkspaces: { list: async () => [], prepare: async () => file },
+    } as unknown as AgentHandle,
+    {
+      read: async () => new Uint8Array(),
+      memories: async () => ({ entries: [], partial: false }),
+      check: () => {
+        if (!live) throw new Error("retired");
+      },
+    },
+  );
+  const place = await client.soloWorkspaces?.prepare("work", ["owner"], "chat");
+  const pending = place?.("chat");
+  const refused = expect(pending).rejects.toThrow("retired");
+  try {
+    await started.promise;
+    expect(durable).toBe(true);
+    live = false;
+  } finally {
+    release.resolve();
+  }
+  await refused;
+  expect(file).toHaveBeenCalledExactlyOnceWith("chat");
+  expect(durable).toBe(true);
+});
+
+it("does not expose workspace capability on unsupported handles", () => {
+  expect(
+    appClient({} as AgentHandle, {
+      read: async () => new Uint8Array(),
+      memories: async () => ({ entries: [], partial: false }),
+    }).soloWorkspaces,
+  ).toBeUndefined();
 });
 
 it("never passes on an owner-read capability, even from a handle that carries one", () => {

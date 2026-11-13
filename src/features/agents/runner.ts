@@ -1,4 +1,8 @@
 import { interestPaused } from "./attention";
+import type {
+  AgentSessionAssociation,
+  AgentSessionSource,
+} from "./session-admission";
 // The agent runner: one queue per agent, its rate limit, mention and watch
 // matching, due timers, the run deadline and the claim that lets exactly one
 // host run each agent. It knows nothing of where it runs: everything it needs
@@ -12,6 +16,7 @@ import type {
   AgentVoicePipe,
   AgentType,
   AgentHandle,
+  SoloWorkspaces,
   AgentCreationInput,
   AgentReadout,
   AgentUpdateInput,
@@ -490,6 +495,23 @@ export type RunnerHost = {
   team(key: AgentKey): string;
   /** What its next run starts with, from this device's storage only. */
   start(agent: Agent): Start<unknown> | Promise<Start<unknown>>;
+  prepareSession?(
+    agent: Agent,
+    type: RegisteredAgentType,
+    trigger: Trigger,
+    placement: Readonly<{
+      source: AgentSessionSource;
+      conversation: AgentSessionSource;
+    }>,
+    signal: AbortSignal,
+  ): Promise<
+    | Readonly<{
+        session: AgentSessionAssociation;
+        context?: string;
+        acknowledged(): void;
+      }>
+    | undefined
+  >;
   protection?(agent: Agent): AgentHandle["protection"];
   agentTypes(): ReturnType<NonNullable<AgentHandle["agentTypes"]>>;
   createAgent(
@@ -516,12 +538,25 @@ export type RunnerHost = {
   plugins?(agent: Agent): AgentHandle["plugins"];
   /** Wakes the agent in another of its conversations, as its own handoff. */
   handoff(agent: Agent, handoff: AgentHandoff): void;
+  /** The instructions plugins give the agent's turns now. */
+  instructions?(
+    agent: Agent,
+  ): ReturnType<NonNullable<AgentHandle["instructions"]>>;
+  /** The instructions a plugin gave the agent in one conversation. */
+  conversationInstructions?(
+    agent: Agent,
+    channelId: string,
+    root?: string,
+  ): ReturnType<NonNullable<AgentHandle["conversationInstructions"]>>;
   /** The owner's channel templates as the agent's handle offers them. */
   templates(agent: Agent): ReturnType<AgentHandle["templates"]>;
+  soloWorkspaces?(agent: Agent): SoloWorkspaces | undefined;
   /** The owner's thread tabs as the agent's handle offers them. */
   tabs(agent: Agent): ReturnType<AgentHandle["tabs"]>;
   /** Buzz settings on this device, where there are any. */
   settings?(): DeviceSettings | undefined;
+  /** The owner's Bestie as the agent's run handle offers it. */
+  bestie(agent: Agent): ReturnType<NonNullable<AgentHandle["bestie"]>>;
   /** Whether watch classifiers can run here. */
   classifier(): ClassifierAvailability;
   /** The decisions service that runs classifiers, where there is one. */
@@ -682,6 +717,11 @@ export class AgentRunners {
     return new Set(
       Object.keys(this.left).filter((key) => !this.resuming.has(key)),
     );
+  }
+  /** The mentions the app left `key` working on, each with its channel or
+   * "" without one. */
+  interruptedTurns(key: AgentKey): Readonly<Record<string, string>> {
+    return this.left[key] ?? {};
   }
   /** Gives each of `keys` again the turns it was left working on, once
    * its community is connected. */
@@ -2474,19 +2514,23 @@ export class AgentRunners {
     if (forget && resumed.length) this.unmark(runner.key, resumed);
   }
 
-  private showWork(runner: Runner, job: Job) {
-    if (
-      job.work ||
-      (job.trigger.type !== "mention" && job.trigger.type !== "plugin")
-    )
-      return;
+  private showWork(runner: Runner, job: Job, destination?: ConversationWake) {
+    if (job.work) return;
     const trigger = job.trigger;
+    const wake =
+      destination ??
+      (trigger.type === "plugin" || trigger.type === "attention"
+        ? trigger
+        : undefined);
+    const event =
+      trigger.type === "mention" ? trigger.event : wake && wakeAnchor(wake);
+    if (!event) return;
     const agent = this.host.agent(runner.key);
     const scope = agent && this.host.scope(agent);
-    const event =
-      trigger.type === "mention" ? trigger.event : wakeAnchor(trigger);
     const channelId =
-      job.channelId ?? event.tags.find(([key]) => key === "h")?.[1];
+      wake?.channel ??
+      job.channelId ??
+      event.tags.find(([key]) => key === "h")?.[1];
     if (!scope || !channelId) return;
     const threadRootId = threadReference(event)?.rootId;
     const channel = this.host.channel(agent, event);
@@ -2506,21 +2550,37 @@ export class AgentRunners {
         agent: runner.member.pubkey,
         channelId,
         messageId: event.id,
-        ...(trigger.type === "plugin" ? { syntheticMessage: true } : {}),
+        ...(wake
+          ? {
+              syntheticMessage: true,
+              ...(wake.text ? { requestText: wake.text } : {}),
+            }
+          : {}),
         threadRootId: threadRootId ?? event.id,
+        sourceRootId:
+          channel?.channelType === "solo" ||
+          channel?.channelType === "dm" ||
+          (wake && !wake.root)
+            ? null
+            : (threadRootId ?? event.id),
         ...(thread ? { thread: true } : {}),
         ...(soloChat ? { soloChat: true } : {}),
         ...(soloChat && conversationName ? { conversationName } : {}),
       },
       // A resumed mention must not reuse its resume marker on retry.
-      () =>
-        void this.enqueue(runner, {
-          trigger:
-            trigger.type === "mention"
-              ? { type: "mention", event: trigger.event }
-              : trigger,
-          ...(job.channelId ? { channelId: job.channelId } : {}),
-        }),
+      addressed(trigger)
+        ? () =>
+            void this.enqueue(runner, {
+              trigger:
+                trigger.type === "mention"
+                  ? { type: "mention", event: trigger.event }
+                  : trigger,
+              ...(job.channelId ? { channelId: job.channelId } : {}),
+            })
+        : undefined,
+      trigger.type === "mention"
+        ? { author: trigger.event.pubkey, text: trigger.event.content }
+        : undefined,
     );
     if (
       !soloChat &&
@@ -2653,8 +2713,9 @@ export class AgentRunners {
       lifetime,
       AbortSignal.timeout(type.timeoutMs ?? 60_000),
     ]);
-    const handle = this.handleFor(runner, agent, true, job.work);
     const anchor = conversationWake(job.trigger, "");
+    this.showWork(runner, job, anchor);
+    const handle = this.handleFor(runner, agent, true, job.work);
     const destination = !addressed(job.trigger) ? anchor : undefined;
     const working = this.working(
       runner,
@@ -2690,9 +2751,33 @@ export class AgentRunners {
       const start = await this.host.start(agent);
       if (!start.ok) throw new Error(start.reason);
       const team = this.host.team(agent.key);
+      let admission:
+        | ReturnType<NonNullable<RunnerHost["prepareSession"]>>
+        | undefined;
+      const prepareSession: NonNullable<
+        import("./service").Delivery["prepareSession"]
+      > = async (placement, deferred = false) => {
+        admission ??=
+          this.host.prepareSession?.(
+            agent,
+            type,
+            addressed(job.trigger) ? job.trigger : (anchor ?? job.trigger),
+            placement,
+            deferred ? lifetime : signal,
+          ) ?? Promise.resolve(undefined);
+        const admitted = await admission;
+        if (admitted) job.work?.associate(admitted.session);
+        return admitted
+          ? {
+              session: admitted.session,
+              ...(admitted.context ? { context: admitted.context } : {}),
+            }
+          : undefined;
+      };
       signal.throwIfAborted();
       const delivery = Object.freeze({
         trigger: job.trigger,
+        ...(type.sessionAdmission ? { prepareSession } : {}),
         ...(job.channelId ? { channelId: job.channelId } : {}),
         agent: handle,
         config: start.config,
@@ -2705,12 +2790,23 @@ export class AgentRunners {
         ...(job.work
           ? {
               ignored: () => job.work?.remove(),
-              acknowledged: () => job.work?.started(),
+              acknowledged: (input?: Readonly<{ steering?: true }>) => {
+                job.work?.started();
+                job.work?.acknowledged(input);
+                void admission?.then((admitted) => admitted?.acknowledged());
+              },
               superseded: () => job.work?.supersede(),
               interruptible: (stop: () => Promise<void>) =>
                 job.work?.interruptible(stop),
               step: (tool: string, target?: string) =>
                 job.work?.step(tool, target),
+            }
+          : {}),
+        ...(!job.work && type.sessionAdmission
+          ? {
+              acknowledged: () => {
+                void admission?.then((admitted) => admitted?.acknowledged());
+              },
             }
           : {}),
         ...(named ? { named } : {}),
@@ -2729,13 +2825,16 @@ export class AgentRunners {
             throw new Error("The delivery root is not in its channel");
           if (!delivery.current()) return;
         }
-        const wakeText = () =>
-          wakePrompt(
+        const wakeText = async () => {
+          const text = await wakePrompt(
             handle,
             trigger,
             trigger.slug.replace(/^watch\//, ""),
             delivery.current,
           );
+          if (text !== undefined) job.work?.requestText(text);
+          return text;
+        };
         const text = await wakeText();
         if (!text || !delivery.current()) return;
         return invoke({
@@ -2802,8 +2901,14 @@ export class AgentRunners {
       );
     // Handover expiry releases the queue, never the actual work's outcome.
     void completion.then(
-      () => working.release(),
-      (error) => working.release({ ok: false, error: message(error) }),
+      () => {
+        if (!attempted) job.work?.remove();
+        working.release();
+      },
+      (error) => {
+        if (!attempted && !this.stillCurrent(runner, job)) job.work?.remove();
+        working.release({ ok: false, error: message(error) });
+      },
     );
     const aborted = new Promise<never>((_, reject) => {
       if (signal.aborted) reject(signal.reason);
@@ -2852,6 +2957,8 @@ export class AgentRunners {
     const lifetime = runner.controller.signal;
     const protection = this.host.protection?.(agent);
     const settings = run ? this.host.settings?.() : undefined;
+    const workspaces = run ? this.host.soloWorkspaces?.(agent) : undefined;
+    const creations = new Map<string, (event: RelayEvent) => void>();
     const handle = guarded(
       {
         protection: protection && {
@@ -2871,7 +2978,16 @@ export class AgentRunners {
           const destination = event.tags?.find((tag) => tag[0] === "h")?.[1];
           const ownReply =
             event.kind === 9 && !!work && destination === work.channelId;
-          const sent = ownReply ? work.sending() : undefined;
+          const reference = threadReference({ tags: event.tags ?? [] });
+          const inSource =
+            work &&
+            (reference
+              ? reference.rootId === work.threadRootId
+              : !event.tags?.some(([name]) => name === "e"));
+          const sent = ownReply
+            ? work.sending(inSource ? event.content : undefined)
+            : undefined;
+          let confirmed: boolean | undefined = false;
           try {
             const published = await this.publish(
               runner,
@@ -2879,6 +2995,14 @@ export class AgentRunners {
               lifetime,
               check,
             );
+            confirmed = true;
+            if (workspaces && event.kind === 9007) {
+              const id = published.tags.find(([key]) => key === "h")?.[1];
+              if (id) {
+                creations.get(id)?.(published);
+                creations.delete(id);
+              }
+            }
             if (ownReply) {
               const channel = this.host.channel(agent, published);
               if (
@@ -2893,10 +3017,13 @@ export class AgentRunners {
             return published;
           } catch (error) {
             const uncertain = ownReply && unconfirmedAgentEvent(error);
-            if (uncertain) work.reply(uncertain);
+            if (uncertain) {
+              confirmed = undefined;
+              work.reply(uncertain);
+            }
             throw error;
           } finally {
-            sent?.();
+            sent?.(confirmed);
           }
         },
         query: async (filters: readonly object[]) => {
@@ -2952,16 +3079,77 @@ export class AgentRunners {
           lifetime.throwIfAborted();
           return this.host.updateTeam(agent, input);
         },
-        // Only a run hands off or manages plugins: through `Agents.handle` a
-        // plugin's call would read as the agent's own.
+        // Only a run hands off, manages plugins or changes the Bestie: through
+        // `Agents.handle` a plugin's call would read as the agent's own.
         ...(run && {
           plugins: this.host.plugins?.(agent),
           handoff: (handoff: AgentHandoff) => {
             lifetime.throwIfAborted();
             this.host.handoff(agent, handoff);
           },
+          // The control outlives this call, so each of its calls checks the
+          // run's lifetime, and set again once it has read the agents.
+          bestie: () => {
+            const control = this.host.bestie(agent);
+            const live = () => lifetime.throwIfAborted();
+            return (
+              control &&
+              guarded(
+                {
+                  ...control,
+                  set: async (pubkey: string, check?: () => void) =>
+                    control.set(pubkey, () => {
+                      live();
+                      check?.();
+                    }),
+                },
+                live,
+              )
+            );
+          },
+        }),
+        ...(workspaces && {
+          soloWorkspaces: {
+            list: (signal?: AbortSignal) =>
+              workspaces.list(
+                AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
+              ),
+            prepare: async (
+              workspace: string,
+              members: readonly string[],
+              channelId: string,
+              signal?: AbortSignal,
+            ) => {
+              const active = AbortSignal.any([
+                lifetime,
+                ...(signal ? [signal] : []),
+              ]);
+              const file = await workspaces.prepare(workspace, members, active);
+              // Each overlapping call owns one exact future create, consumed once.
+              let created: RelayEvent | undefined;
+              if (creations.has(channelId))
+                throw new Error("Chat creation already prepared");
+              creations.set(channelId, (event) => {
+                created = event;
+              });
+              let attempted = false;
+              return async (id: string) => {
+                active.throwIfAborted();
+                if (attempted)
+                  throw new Error("Solo placement was already attempted");
+                const event = created;
+                if (id !== channelId || !event)
+                  throw new Error("No new chat from this run to file");
+                attempted = true;
+                return file(event);
+              };
+            },
+          },
         }),
         templates: () => this.host.templates(agent),
+        instructions: () => this.host.instructions?.(agent) ?? [],
+        conversationInstructions: (channelId: string, root?: string) =>
+          this.host.conversationInstructions?.(agent, channelId, root),
         tabs: () => this.host.tabs(agent),
         // Only a run's: a plugin acting through the agent doesn't get them.
         ...(settings && { settings }),

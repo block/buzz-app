@@ -30,6 +30,7 @@ export type {
   Pages,
 } from "../features/pages/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
+export type { SubjectLift } from "../features/messages/subject-lift";
 export type {
   SidebarRow,
   SidebarRowSortMode,
@@ -59,6 +60,10 @@ export type {
 } from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
+  ConversationWorkspaceProps,
+  PageTabTarget,
+  PageTabOptions,
+  PageTabsProps,
   ComposerObservation,
   CompletionContext,
   CompletionQuery,
@@ -67,6 +72,11 @@ export type {
   CompletionResult,
   ComposerCompletionProps,
   ComposerCompletion,
+  AnnotationObservation,
+  ComposerAnnotation,
+  ComposerAnnotator,
+  ComposerAnnotatorProps,
+  ComposerReplacement,
   ComposerAccessory,
   ComposerAccessoryProps,
   ComposerResource,
@@ -81,6 +91,7 @@ export type {
   LinkRenderer,
   MessageRenderer,
   MessageAction,
+  IdentityMark,
   TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
@@ -149,6 +160,7 @@ export type {
   Agents,
   AgentAddedTab,
   AgentHandle,
+  AgentInstructions,
   AgentType,
   AgentSession,
   AgentSessions,
@@ -186,6 +198,9 @@ export type {
 
 export type {
   SoloNavigation,
+  SoloWorkspaces,
+  SoloWorkspaceSnapshot,
+  SoloWorkspaceProps,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,
@@ -198,6 +213,7 @@ export type {
   SoloConversationLinkProps,
   SoloCardProps,
   SoloDisclosureProps,
+  SoloDraftStart,
 } from "../features/channel-navigation/solo-navigation-contract";
 
 export type {

@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { callTool, memoryVersion, TOOLS } from "./tools";
 import { callSessionTool, sessionTools } from "./session-tools";
 import { PLUGIN_TOOLS } from "./plugins";
+import { BESTIE_TOOLS } from "./bestie";
 import { SETTINGS_TOOLS } from "./settings";
 import { SOLO_WORKER_TOOLS } from "./solo-worker";
 import { Context } from "@deepseek-ai/cordis";
@@ -157,8 +158,8 @@ it.each([false, true])(
         if (property === "protect")
           return protectedSession ? protect : undefined;
         if (property === "nativeToolGate") return undefined;
-        // The tool list checks whether settings can change here.
-        if (property === "settings") return undefined;
+        // The tool list checks whether settings and the Bestie can change here.
+        if (property === "settings" || property === "bestie") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
       },
     });
@@ -725,6 +726,49 @@ it("tags the community emoji a message or edit uses, as the composer does", asyn
       ["emoji", "wave", "https://relay/media/wave.png"],
     ],
   ]);
+});
+
+it("tags a community emoji reaction and refuses a shortcode outside the palette", async () => {
+  const approve = "https://relay/media/approve.png";
+  const { client, published } = fake([
+    ...community,
+    event({ id: root, pubkey: alice }),
+    event({
+      id: "e".repeat(64),
+      pubkey: bob,
+      created_at: 20,
+      kind: 30030,
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "approve", approve],
+      ],
+    }),
+  ]);
+  await callTool(client, {}, "react", { id: root, emoji: ":Approve:" });
+  await callTool(client, {}, "react", { id: root, emoji: "👍" });
+  expect(published).toEqual([
+    {
+      kind: 7,
+      content: ":Approve:",
+      tags: [
+        ["e", root],
+        ["p", alice],
+        ["emoji", "approve", approve],
+      ],
+    },
+    {
+      kind: 7,
+      content: "👍",
+      tags: [
+        ["e", root],
+        ["p", alice],
+      ],
+    },
+  ]);
+  await expect(
+    callTool(client, {}, "react", { id: root, emoji: ":foo:" }),
+  ).rejects.toThrow("unknown custom emoji :foo:");
+  expect(published).toHaveLength(2);
 });
 
 it("reads no emoji sets for a message without a shortcode", async () => {
@@ -1408,13 +1452,14 @@ it("lists its tools before it can call them", async () => {
     },
   )) as { result: { tools: unknown[] } };
   // Every app session lists the same tools: the Buzz, attention, Solo worker,
-  // plugin and settings tools.
+  // plugin, settings and Bestie tools.
   expect(list.result.tools).toHaveLength(
     TOOLS.length +
       ATTENTION_TOOLS.length +
       SOLO_WORKER_TOOLS.length +
       PLUGIN_TOOLS.length +
-      SETTINGS_TOOLS.length,
+      SETTINGS_TOOLS.length +
+      BESTIE_TOOLS.length,
   );
   await expect(
     respond(
@@ -1796,6 +1841,160 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   await expect(
     callTool(client, {}, "channel_get", { channel: plain }),
   ).resolves.toBe(`${plain} ops (stream, private)\nyou: owner`);
+});
+
+it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
+  const { client, published } = relay();
+  const file = vi.fn(async () => ({ status: "filed" as const }));
+  const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
+  const prepare = vi.fn(async () => file);
+  client.soloWorkspaces = { list, prepare };
+  expect(await callTool(client, {}, "solo_workspace_list", {})).toBe(
+    JSON.stringify([{ id: "work", name: "Work" }]),
+  );
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1];
+  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice], id);
+  expect(file).toHaveBeenCalledExactlyOnceWith(id);
+  expect(answer).toBe(
+    `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
+  );
+  expect(published).toHaveLength(1);
+  expect(published[0]?.kind).toBe(9007);
+});
+
+it("rejects unsupported or invalid workspace placement before publication", async () => {
+  const { client, published } = relay();
+  const args = {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  };
+  await expect(callTool(client, {}, "solo_workspace_list", {})).rejects.toThrow(
+    "unavailable on this host",
+  );
+  await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
+    "unavailable on this host",
+  );
+  const prepare = vi.fn(async () => {
+    throw new Error("No such workspace");
+  });
+  client.soloWorkspaces = { list: async () => [], prepare };
+  await expect(
+    callTool(client, {}, "channel_create", {
+      ...args,
+      solo: false,
+      members: undefined,
+    }),
+  ).rejects.toThrow("workspace is for Solo");
+  await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
+    "No such workspace",
+  );
+  expect(published).toEqual([]);
+});
+
+it.each([
+  "deleted target",
+  "record full",
+  "revision conflict",
+  "community changed",
+])("keeps the created chat ID when filing fails: %s", async (message) => {
+  const { client, published } = relay();
+  const file = vi.fn(async () => {
+    throw new Error(message);
+  });
+  client.soloWorkspaces = { list: async () => [], prepare: async () => file };
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1];
+  expect(answer).toContain(`created ${id}`);
+  expect(answer).toContain(
+    `workspace placement unconfirmed and may have completed: ${message}`,
+  );
+  expect(answer).toContain("do not create another chat");
+  expect(published).toHaveLength(1);
+  expect(file).toHaveBeenCalledOnce();
+});
+
+it.each(["not-filed", "unconfirmed"] as const)(
+  "reports structured placement outcome without repeating create: %s",
+  async (status) => {
+    const { client, published } = relay();
+    client.soloWorkspaces = {
+      list: async () => [],
+      prepare: async () => async () => ({ status, error: "placement stopped" }),
+    };
+    const answer = await callTool(client, {}, "channel_create", {
+      name: "triage",
+      visibility: "private",
+      solo: true,
+      members: [alice],
+      workspace: "work",
+    });
+    expect(answer).toContain(`created ${published[0]?.tags[0]?.[1]}`);
+    expect(answer).toContain(
+      status === "not-filed"
+        ? "created, not filed"
+        : "placement unconfirmed and may have completed",
+    );
+    if (status === "unconfirmed")
+      expect(answer).toContain("Inspect or refresh");
+    expect(published).toHaveLength(1);
+  },
+);
+
+it("reports uncertainty after a gated durable placement loses its app lifetime", async () => {
+  const { client, published } = relay();
+  let release!: () => void;
+  const delivered = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const enqueued = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let durable = false;
+  client.soloWorkspaces = {
+    list: async () => [],
+    prepare: async () => async () => {
+      durable = true;
+      started();
+      await delivered;
+      throw new Error("retired after durable placement");
+    },
+  };
+  const pending = callTool(client, {}, "channel_create", {
+    name: "triage",
+    visibility: "private",
+    solo: true,
+    members: [alice],
+    workspace: "work",
+  });
+  try {
+    await enqueued;
+    expect(durable).toBe(true);
+    expect(published).toHaveLength(1);
+  } finally {
+    release();
+  }
+  const answer = await pending;
+  expect(answer).toContain(`created ${published[0]?.tags[0]?.[1]}`);
+  expect(answer).toContain("placement unconfirmed and may have completed");
+  expect(answer).toContain("Inspect or refresh");
+  expect(answer).not.toContain("not filed");
 });
 
 it("refuses Solo arguments that do not fit, before publishing", async () => {

@@ -27,6 +27,7 @@ import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { ProfilePublicMetadata } from "./ProfilePublicMetadata";
+import { ProfileLocalTime } from "../../features/profiles/ProfileLocalTime";
 import { relayOrigin } from "../../features/communities/destination";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
@@ -38,6 +39,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import {
   CheckCircleIcon,
@@ -119,6 +121,12 @@ function openedFrom(session: RelaySession, context: PanelProps["context"]) {
   };
 }
 
+/** Optional Info composition for a panel specializing canonical person profiles. */
+export type PersonProfileInfoContent = {
+  renderPersonInfo?: ((content: ReactNode) => ReactNode) | undefined;
+};
+const plainInfo = (content: ReactNode) => content;
+
 export function ProfilePanel({
   relay,
   target,
@@ -128,14 +136,16 @@ export function ProfilePanel({
   communities,
   linkRenderers,
   close,
-}: PanelProps & {
-  relay: RelayData;
-  navigation?: Navigation;
-  /** Agents show their type's tabs. */
-  agents?: Agents;
-  communities?: CommunityReader | undefined;
-  linkRenderers?: ConversationExtensions["links"] | undefined;
-}) {
+  renderPersonInfo,
+}: PanelProps &
+  PersonProfileInfoContent & {
+    relay: RelayData;
+    navigation?: Navigation;
+    /** Agents show their type's tabs. */
+    agents?: Agents;
+    communities?: CommunityReader | undefined;
+    linkRenderers?: ConversationExtensions["links"] | undefined;
+  }) {
   const connection = useRelayConnection(relay);
   const activityKey = profileActivityViewKey(target);
   const opening = activityKey ? "activity" : "info";
@@ -204,6 +214,7 @@ export function ProfilePanel({
     );
   return (
     <ProfileDetails
+      renderPersonInfo={renderPersonInfo}
       linkRenderers={linkRenderers}
       key={`${connection.scope}:${connection.generation}:${pubkey}:${opening}`}
       initialTab={activityKey ? "activity" : "info"}
@@ -362,7 +373,8 @@ function ProfileDetails({
   viewer,
   openConversation,
   close,
-}: {
+  renderPersonInfo = plainInfo,
+}: PersonProfileInfoContent & {
   agents: Agents | undefined;
   linkRenderers: ConversationExtensions["links"] | undefined;
   communities: CommunityReader | undefined;
@@ -628,6 +640,10 @@ function ProfileDetails({
                 }
               </p>
             )}
+            <ProfileLocalTime
+              timeZone={profile?.tz}
+              className="text-body-sm text-secondary"
+            />
             <StatusDisplay session={session} status={userStatus} />
           </div>
           {(canSetStatus || canMessage || canEdit) && (
@@ -685,118 +701,120 @@ function ProfileDetails({
               {selected.startsWith("agent:") ? (
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (
-                <>
-                  {profile?.verified && (
-                    <SettingsGroup>
-                      <PreferenceRow
-                        title={`Name verified by ${profile.verified.issuerLabel}`}
-                        subtitle={
-                          <>
-                            Last verified{" "}
-                            <time dateTime={verificationIso}>
-                              {verificationIso
-                                ? verificationDate?.toLocaleString()
-                                : `Unix time ${profile.verified.verifiedAt}`}
-                            </time>
-                            .{" "}
-                            {profile.verified.status === "cached"
-                              ? "Cached evidence; reconnect to check for updates. "
-                              : ""}
-                            This verifies the name and public key at that time,
-                            and does not confirm current account access or
-                            current issuer endorsement.
-                          </>
-                        }
-                      />
-                    </SettingsGroup>
-                  )}
-                  {profile?.about && (
-                    <SettingsGroup layout="form">
-                      <p className={styles.about}>{profile.about}</p>
-                    </SettingsGroup>
-                  )}
-                  {plugin && agents && plugin.agent.place !== "elsewhere" && (
-                    <div>
-                      <AgentDelete
-                        agents={agents}
-                        agent={plugin.agent}
-                        onRemoved={close}
-                      />
+                (displayAgent ? plainInfo : renderPersonInfo)(
+                  <>
+                    {profile?.verified && (
+                      <SettingsGroup>
+                        <PreferenceRow
+                          title={`Name verified by ${profile.verified.issuerLabel}`}
+                          subtitle={
+                            <>
+                              Last verified{" "}
+                              <time dateTime={verificationIso}>
+                                {verificationIso
+                                  ? verificationDate?.toLocaleString()
+                                  : `Unix time ${profile.verified.verifiedAt}`}
+                              </time>
+                              .{" "}
+                              {profile.verified.status === "cached"
+                                ? "Cached evidence; reconnect to check for updates. "
+                                : ""}
+                              This verifies the name and public key at that
+                              time, and does not confirm current account access
+                              or current issuer endorsement.
+                            </>
+                          }
+                        />
+                      </SettingsGroup>
+                    )}
+                    {profile?.about && (
+                      <SettingsGroup layout="form">
+                        <p className={styles.about}>{profile.about}</p>
+                      </SettingsGroup>
+                    )}
+                    {plugin && agents && plugin.agent.place !== "elsewhere" && (
+                      <div>
+                        <AgentDelete
+                          agents={agents}
+                          agent={plugin.agent}
+                          onRemoved={close}
+                        />
+                      </div>
+                    )}
+                    <div className={styles.publicKey}>
+                      <SettingsGroup>
+                        <PreferenceRow
+                          title="Public key"
+                          subtitle={
+                            <code className={styles.keyValue}>{npub}</code>
+                          }
+                          trailing={
+                            <Button
+                              size="compact"
+                              variant="ghost"
+                              aria-label="Copy npub"
+                              onClick={() => {
+                                setCopyStatus("");
+                                void Promise.resolve()
+                                  .then(() => writeClipboardText(npub))
+                                  .then(
+                                    () => setCopyStatus("Public key copied."),
+                                    () =>
+                                      setCopyStatus(
+                                        "Could not copy. Select the public key above to copy it.",
+                                      ),
+                                  );
+                              }}
+                            >
+                              <CopyIcon size={16} aria-hidden="true" />
+                              Copy
+                            </Button>
+                          }
+                        />
+                      </SettingsGroup>
+                      <span role="status" className={styles.feedback}>
+                        {copyStatus}
+                      </span>
                     </div>
-                  )}
-                  <div className={styles.publicKey}>
-                    <SettingsGroup>
-                      <PreferenceRow
-                        title="Public key"
-                        subtitle={
-                          <code className={styles.keyValue}>{npub}</code>
-                        }
-                        trailing={
-                          <Button
-                            size="compact"
-                            variant="ghost"
-                            aria-label="Copy npub"
-                            onClick={() => {
-                              setCopyStatus("");
-                              void Promise.resolve()
-                                .then(() => writeClipboardText(npub))
-                                .then(
-                                  () => setCopyStatus("Public key copied."),
-                                  () =>
-                                    setCopyStatus(
-                                      "Could not copy. Select the public key above to copy it.",
-                                    ),
-                                );
-                            }}
-                          >
-                            <CopyIcon size={16} aria-hidden="true" />
-                            Copy
-                          </Button>
-                        }
+                    {knownAgent && verifiedOwner && (
+                      <ProfileAgentIdentity
+                        session={session}
+                        owner={verifiedOwner}
+                        viewer={viewer}
+                        context={context}
                       />
-                    </SettingsGroup>
-                    <span role="status" className={styles.feedback}>
-                      {copyStatus}
-                    </span>
-                  </div>
-                  {knownAgent && verifiedOwner && (
-                    <ProfileAgentIdentity
-                      session={session}
-                      owner={verifiedOwner}
-                      viewer={viewer}
-                      context={context}
-                    />
-                  )}
-                  <ProfilePublicMetadata nip05={profile?.nip05} />
-                  {/* A verified overlay can exist while its kind-0 read failed. */}
-                  {(!profile ||
-                    (profile.verified && (status === "error" || retrying))) &&
-                    (status === "loading" ? (
-                      <p role="status">Loading profile…</p>
-                    ) : (
-                      <p role={status === "error" ? "alert" : undefined}>
-                        {status === "error"
-                          ? "Could not load this profile."
-                          : "No profile metadata is available in this community."}
-                      </p>
-                    ))}
-                  {((!profile && status !== "loading") ||
-                    (profile?.verified && status === "error") ||
-                    retrying ||
-                    ownership.failed) && (
-                    <Button
-                      ref={retryButton}
-                      size="compact"
-                      loading={retrying}
-                      onClick={() => {
-                        setRetrying(true);
-                        retry((value) => value + 1);
-                      }}
-                    >
-                      Retry profile
-                    </Button>
-                  )}
-                </>
+                    )}
+                    <ProfilePublicMetadata nip05={profile?.nip05} />
+                    {/* A verified overlay can exist while its kind-0 read failed. */}
+                    {(!profile ||
+                      (profile.verified && (status === "error" || retrying))) &&
+                      (status === "loading" ? (
+                        <p role="status">Loading profile…</p>
+                      ) : (
+                        <p role={status === "error" ? "alert" : undefined}>
+                          {status === "error"
+                            ? "Could not load this profile."
+                            : "No profile metadata is available in this community."}
+                        </p>
+                      ))}
+                    {((!profile && status !== "loading") ||
+                      (profile?.verified && status === "error") ||
+                      retrying ||
+                      ownership.failed) && (
+                      <Button
+                        ref={retryButton}
+                        size="compact"
+                        loading={retrying}
+                        onClick={() => {
+                          setRetrying(true);
+                          retry((value) => value + 1);
+                        }}
+                      >
+                        Retry profile
+                      </Button>
+                    )}
+                  </>,
+                )
               ) : (
                 <ProfileChannels
                   session={session}

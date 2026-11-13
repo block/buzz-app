@@ -147,13 +147,17 @@ import {
   mediaByteLimit,
   UPLOAD_TIMEOUT_MS,
 } from "../src/features/relay/attachment-limits.ts";
+import { legacyEmojiPicture } from "../src/shared/avatar-source.ts";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
+/** The app's profile save policy: an HTTPS URL, or old Buzz's emoji avatar
+ * that Buzz mobile still writes, never other inline or SVG data. */
 function validProfilePicture(value) {
-  if (!value) return true;
+  if (!value || legacyEmojiPicture(value.trim())) return true;
+  if (value.length > 2048) return false;
   try {
     const url = new URL(value);
     return url.protocol === "https:" && !url.username && !url.password;
@@ -2846,7 +2850,6 @@ export function relayBrokerPlugin({
               !filters.name.trim() ||
               filters.name.length > 100 ||
               typeof filters?.picture !== "string" ||
-              filters.picture.length > 2048 ||
               !validProfilePicture(filters.picture) ||
               (filters.about !== undefined &&
                 (typeof filters.about !== "string" ||

@@ -1,4 +1,8 @@
 import { openVoice } from "./voice";
+import {
+  createToolOperation,
+  type AgentToolAuthority,
+} from "../../features/agents/tool-operation";
 import { huddleDescription } from "../../features/huddle/lifecycle";
 import type { AgentExecution } from "../../features/agents/execution";
 import { createHash } from "node:crypto";
@@ -7,6 +11,10 @@ import { bytesToHex } from "nostr-tools/utils";
 import { apply } from "./index";
 import { CodexSetup, explainTurn } from "./setup";
 import { describe, afterEach, expect, it, vi } from "vitest";
+import {
+  assignConversationFolder,
+  conversationKey,
+} from "../../features/agents/conversation-folders";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads } from "../../features/agents/reads";
 import {
@@ -51,6 +59,9 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
 
 const owner = "a".repeat(64);
 const pubkey = "b".repeat(64);
+/** A 1x1 two-colour GIF without metadata, so attaching it uploads it unchanged. */
+const GIF =
+  "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
 const root = "c".repeat(64);
 const scope = `https://relay.test:${owner}`;
 function deferred<T>() {
@@ -90,6 +101,7 @@ function fixture(
     host: ConstructorParameters<typeof CodexRuntime>[12];
     handle: ConstructorParameters<typeof CodexRuntime>[13];
   },
+  resolveDirectory?: ConstructorParameters<typeof CodexRuntime>[14],
 ) {
   let terminals = remainingTerminals;
   let options: HostProcessOptions | undefined;
@@ -281,11 +293,7 @@ function fixture(
         path: value?.args?.[0] ?? "",
       });
       value?.onStdout?.(
-        btoa(
-          value?.args?.[0] === "attachment.jpg"
-            ? "\xff\xd8\xff"
-            : "FILE CONTENT",
-        ),
+        btoa(value?.args?.[0] === "attachment.gif" ? GIF : "FILE CONTENT"),
       );
       return { ...process, exited: Promise.resolve(0) };
     }
@@ -410,6 +418,7 @@ function fixture(
     undefined,
     security?.host,
     security?.handle,
+    resolveDirectory,
   );
   runtimes.push(runtime);
   const events: EventData[] = [];
@@ -693,6 +702,7 @@ function fixture(
     soloChannels,
     huddleChannels,
     exits,
+    store,
   };
 }
 it("hands over promptly and runs conversations independently on one server", async () => {
@@ -1192,7 +1202,9 @@ it("shares model discovery with active turns and another agent", async () => {
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
 });
 
-function protectedPreview() {
+function protectedPreview(
+  resolveDirectory?: ConstructorParameters<typeof CodexRuntime>[14],
+) {
   const engine = () => {
     const next = fixture();
     next.modelIds.splice(0, 2, "protected-model", "protected-deep");
@@ -1239,6 +1251,7 @@ function protectedPreview() {
       },
       handle: (key) => (key === pubkey ? handle : undefined),
     },
+    resolveDirectory,
   );
   const original = {
     ...f.delivery("unused").agent,
@@ -2104,6 +2117,48 @@ it("ends a turn's input with the notes plugins left for it in its channel", asyn
   expect(notes).toHaveBeenCalledOnce();
   expect(notes).toHaveBeenCalledWith("channel", root);
 });
+it("ends a turn's input with plugins' instructions, once", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  await f.runtime.run({
+    ...delivery,
+    agent: {
+      ...delivery.agent,
+      instructions: () => [{ plugin: "acme.dibs", text: "Run dibs_check." }],
+    },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  const text = params.input[0]?.text ?? "";
+  expect(text.match(/<plugin-instructions /g)).toHaveLength(1);
+  expect(text).toMatch(
+    /<\/buzz-event>\n\n<plugin-instructions plugin="acme\.dibs">\nRun dibs_check\.\n<\/plugin-instructions>/,
+  );
+});
+
+it("ends a turn's input with its conversation's instructions, keyed as its notes are", async () => {
+  const f = fixture();
+  const delivery = f.delivery("@Codex go on");
+  const conversationInstructions = vi.fn(() => ({
+    plugin: "acme.tasks",
+    text: "Review only.",
+  }));
+  const notes = vi.fn(() => []);
+  await f.runtime.run({
+    ...delivery,
+    agent: { ...delivery.agent, notes, conversationInstructions },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const params = f.starts()[0]?.params as { input: { text: string }[] };
+  expect(params.input[0]?.text).toMatch(
+    /<owner-instructions source="acme\.tasks">\n[\s\S]*\n\nReview only\.\n<\/owner-instructions>/,
+  );
+  expect(notes).toHaveBeenCalledOnce();
+  expect(conversationInstructions).toHaveBeenCalledWith(
+    ...(notes.mock.calls[0] as unknown[]),
+  );
+});
+
 it("hands a turn the notes plugins left while it was being prepared", async () => {
   const f = fixture();
   const delivery = f.delivery("@Codex go on");
@@ -3971,7 +4026,7 @@ it("uses the launched workspace for shared file tools and the owner view for enc
       await f.tool("send", {
         audience: "everyone",
         path: "answer.txt",
-        files: ["attachment.jpg"],
+        files: ["attachment.gif"],
         final: true,
       })
     )?.result,
@@ -3987,10 +4042,10 @@ it("uses the launched workspace for shared file tools and the owner view for enc
     expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
   );
   expect(f.fileReads).toEqual([
-    { cwd: "/tmp/codex-test", path: "attachment.jpg" },
+    { cwd: "/tmp/codex-test", path: "attachment.gif" },
     { cwd: "/tmp/codex-test", path: "answer.txt" },
   ]);
-  expect(f.upload).toHaveBeenCalledWith(btoa("\xff\xd8\xff"), "image/jpeg");
+  expect(f.upload).toHaveBeenCalledWith(btoa(GIF), "image/gif");
   expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
     content: expect.stringContaining("FILE CONTENT"),
     tags: expect.arrayContaining([["e", "c".repeat(64), "", "reply"]]),
@@ -5233,6 +5288,8 @@ it("continues an owner's Solo chat as one channel conversation posted at the top
     expect(f.sent.filter((w) => w.method === "turn/steer")).toHaveLength(1),
   );
   await vi.waitFor(() => expect(activity.superseded).toHaveBeenCalledOnce());
+  expect(activity.acknowledged).toHaveBeenCalledWith(undefined);
+  expect(next.acknowledged).toHaveBeenCalledWith({ steering: true });
   await f.tool("send", { audience: "everyone", text: "Progress" });
   if (first.trigger.type !== "mention") throw new Error("Expected mention");
   // A stale reply into the chat is returned for correction, not posted.
@@ -5841,34 +5898,56 @@ it("queues an ordinary follow-up when a source is cancelled during startup histo
   await f.complete(0);
 });
 
-it("delivers a rootless subscription to its channel without publishing its anchor", async () => {
-  const f = fixture();
-  const delivery = pluginWake(f);
-  if (delivery.trigger.type !== "plugin")
-    throw new Error("Expected plugin wake");
-  f.snapshot.session.canvas.available = true;
-  f.snapshot.session.canvas.read.mockResolvedValue(
-    canvasHead("Only Solo chats supply this"),
-  );
-  await f.runtime.run({
-    ...delivery,
-    trigger: { ...delivery.trigger, type: "attention", topLevel: true },
-  });
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  const input = JSON.stringify(f.starts()[0]?.params);
-  expect(input).not.toContain("<plugin-wake");
-  expect(input).not.toContain("continuous personal chat");
-  expect(input).toContain("unless the Interest instructions");
-  expect(input).toContain("top-level");
-  expect(input).not.toContain(WAKE_ID);
-  expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
-  f.exits.resolve(3);
-  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
-  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
-    tags: expect.not.arrayContaining([expect.arrayContaining(["e"])]),
-  });
-  expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
-});
+it.each(["plugin", "attention"] as const)(
+  "delivers a rootless %s wake without publishing its anchor",
+  async (type) => {
+    const f = fixture();
+    if (type === "plugin") f.soloChannels.add("channel");
+    const delivery = pluginWake(f);
+    const acknowledged = vi.fn();
+    if (delivery.trigger.type !== "plugin")
+      throw new Error("Expected plugin wake");
+    f.snapshot.session.canvas.available = true;
+    f.snapshot.session.canvas.read.mockResolvedValue(
+      canvasHead("Only Solo chats supply this"),
+    );
+    await f.runtime.run({
+      ...delivery,
+      acknowledged,
+      trigger:
+        type === "attention"
+          ? { ...delivery.trigger, type: "attention", topLevel: true }
+          : { ...delivery.trigger, topLevel: true },
+      prepareSession: async (placement) => {
+        expect(placement.source.root).toBeUndefined();
+        return {
+          session: {
+            sessionKey: "wake",
+            router: "example/tasks",
+            association: {},
+          },
+        };
+      },
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    await vi.waitFor(() => expect(acknowledged).toHaveBeenCalledOnce());
+    const input = JSON.stringify(f.starts()[0]?.params);
+    if (type === "attention") {
+      expect(input).not.toContain("<plugin-wake");
+      expect(input).not.toContain("continuous personal chat");
+      expect(input).toContain("unless the Interest instructions");
+      expect(input).toContain("top-level");
+      expect(input).not.toContain(WAKE_ID);
+      expect(f.snapshot.session.canvas.read).not.toHaveBeenCalled();
+    }
+    f.exits.resolve(3);
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      tags: expect.not.arrayContaining([expect.arrayContaining(["e"])]),
+    });
+    expect(JSON.stringify(f.publish.mock.calls)).not.toContain(WAKE_ID);
+  },
+);
 
 it.each(["v7", "v12", "v13"])(
   "does not reuse %s persisted bindings with older built-in tool schemas",
@@ -7331,4 +7410,263 @@ it("neither lists nor runs the retired owner-read tools, while its own reads wor
     "OWN_CONVERSATION",
   );
   await f.complete();
+});
+
+it("supplies an operation proof only while the native Codex call is active", async () => {
+  const f = fixture();
+  const provider = createToolOperation("example/proposal", () => ({
+    viewer: "a".repeat(64),
+    community: "https://relay.example.test",
+    check: () => {},
+    release: () => {},
+  }));
+  let authority: AgentToolAuthority | undefined;
+  f.added.push({
+    name: "consumer_propose",
+    description: "Propose a question.",
+    inputSchema: { type: "object" },
+    operation: provider.operation,
+    async call(_client, _context, args, proof) {
+      if (!proof) throw new Error("Expected operation proof");
+      authority = provider.resolve(proof, args);
+      authority.check();
+      expect(authority.context.channel).toBe("channel");
+      return "accepted";
+    },
+  });
+  await f.runtime.run(f.delivery("Propose a question"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(
+    JSON.stringify(await f.tool("consumer_propose", { question: "Question" })),
+  ).toContain("accepted");
+  expect(authority).toBeDefined();
+  expect(() => authority?.check()).toThrow("call has ended");
+  await f.complete();
+});
+
+it("keeps thread session context and defers its admission during New", async () => {
+  const f = fixture();
+  const session = {
+    sessionKey: "logical-one",
+    router: "example/tasks",
+    association: { task: "child" },
+  };
+  const prepare: NonNullable<Delivery["prepareSession"]> = vi.fn(
+    async (placement) => {
+      expect(placement.source).toEqual({ channelId: "channel", root });
+      expect(placement.conversation).toEqual({ channelId: "channel", root });
+      return { session };
+    },
+  );
+  const call = vi.fn(async () => "bound");
+  f.added.push({
+    name: "session_probe",
+    description: "Read session context",
+    inputSchema: { type: "object" },
+    call,
+  });
+  const delivery = f.delivery("first thread turn");
+  await f.runtime.run({ ...delivery, prepareSession: prepare });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("session_probe", {});
+  expect(call.mock.calls[0]).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ channel: "channel", root, session }),
+    ]),
+  );
+  await f.complete();
+  expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+    tags: expect.arrayContaining([["e", root, "", "reply"]]),
+  });
+  const agent = {
+    ...delivery.agent,
+    config: delivery.config,
+  } as unknown as Agent;
+  const place = { channelId: "channel", root };
+  await vi.waitFor(() =>
+    expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+  );
+  const started = deferred<void>();
+  const released = deferred<void>();
+  const reset = f.runtime.session(agent, place, "new", async (change) => {
+    started.resolve();
+    await released.promise;
+    await change();
+  });
+  await started.promise;
+  await f.runtime.run({ ...f.delivery("during New"), prepareSession: prepare });
+  expect(prepare).toHaveBeenCalledOnce();
+  released.resolve();
+  await reset;
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  expect(prepare).toHaveBeenLastCalledWith(
+    {
+      source: { channelId: "channel", root },
+      conversation: { channelId: "channel", root },
+    },
+    true,
+  );
+  await f.complete();
+});
+
+describe("a conversation given its own folder", () => {
+  const folders = (missing = new Set<string>()) =>
+    vi.fn(async (path: string, options?: { create?: boolean }) => {
+      if (options?.create === false && missing.has(path))
+        throw new Error(`Could not find ${path}`);
+      return path;
+    });
+  const withFolder = async (
+    resolveDirectory: ReturnType<typeof folders>,
+    folder: string,
+    conversation = `channel/${root}`,
+  ) => {
+    const f = fixture(
+      [],
+      undefined,
+      false,
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolveDirectory,
+    );
+    await assignConversationFolder(
+      f.store,
+      scope,
+      pubkey,
+      conversation,
+      folder,
+    );
+    return f;
+  };
+
+  it("starts its thread there and names the agent's workspace", async () => {
+    const resolveDirectory = folders();
+    const f = await withFolder(resolveDirectory, "/repos/worktree");
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(resolveDirectory).toHaveBeenCalledWith("/repos/worktree", {
+      create: false,
+    });
+    for (const method of ["config/read", "thread/start"])
+      expect(
+        f.sent.find((wire) => wire.method === method)?.params,
+      ).toMatchObject({ cwd: "/repos/worktree" });
+    expect(
+      String(
+        (
+          f.sent.find((wire) => wire.method === "thread/start")?.params as
+            | { developerInstructions?: string }
+            | undefined
+        )?.developerInstructions,
+      ),
+    ).toContain(
+      "Your persistent workspace is at `/tmp/codex-test`, not in your working directory",
+    );
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    // Its next turn resumes the thread in the same folder.
+    await f.runtime.run(f.delivery("again"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(
+      f.sent.find((wire) => wire.method === "thread/resume")?.params,
+    ).toMatchObject({ cwd: "/repos/worktree" });
+    f.complete(1, "DONE AGAIN");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(2));
+  });
+
+  it("starts a Solo chat's one thread in the folder it was given", async () => {
+    const f = await withFolder(folders(), "/repos/solo", "channel");
+    f.soloChannels.add("channel");
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({ cwd: "/repos/solo" });
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  });
+
+  it("starts a protected agent's thread there, reading files under its policy", async () => {
+    const f = protectedPreview(folders());
+    const handle = f.handle;
+    if (!handle?.protection) throw new Error("Missing protected handle");
+    await assignConversationFolder(
+      f.store,
+      scope,
+      pubkey,
+      `channel/${root}`,
+      "/repos/worktree",
+    );
+    try {
+      await f.runtime.run({
+        ...f.delivery("post a file"),
+        agent: handle,
+        config: f.agent.config,
+      });
+      await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+      expect(
+        f.worker.sent.find((wire) => wire.method === "thread/start")?.params,
+      ).toMatchObject({ cwd: "/repos/worktree" });
+      await f.worker.tool("send", {
+        audience: "everyone",
+        path: "answer.txt",
+      });
+      // The policy's containment names no folder; a file the agent sends
+      // is read from the folder, contained as in the workspace.
+      expect(f.spawn).toHaveBeenCalledWith(
+        "read-protected",
+        expect.objectContaining({
+          cwd: "/repos/worktree",
+          args: ["answer.txt"],
+          protection: handle.protection.processProtection,
+        }),
+      );
+      await f.worker.complete(0, "");
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("refuses its turn, naming the folder, once the folder is gone", async () => {
+    const f = await withFolder(
+      folders(new Set(["/repos/removed"])),
+      "/repos/removed",
+    );
+    await f.runtime.run(f.delivery("hello"));
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: expect.stringContaining(
+        "This conversation's folder /repos/removed no longer exists",
+      ),
+    });
+    // It never falls back to the agent's workspace.
+    expect(f.sent.some((wire) => wire.method === "thread/start")).toBe(false);
+    expect(f.starts()).toHaveLength(0);
+  });
+
+  it("leaves other conversations in the workspace", async () => {
+    const resolveDirectory = folders();
+    const f = await withFolder(resolveDirectory, "/repos/worktree");
+    await f.runtime.run(f.delivery("elsewhere", "d".repeat(64)));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(
+      f.sent.find((wire) => wire.method === "thread/start")?.params,
+    ).toMatchObject({ cwd: "/tmp/codex-test" });
+    expect(resolveDirectory).not.toHaveBeenCalled();
+    // Listed from its first turn, so Agents gives it no folder later.
+    await vi.waitFor(() =>
+      expect(
+        f.runtime
+          .conversations(pubkey)
+          .map(({ channelId, root }) => conversationKey(channelId, root)),
+      ).toEqual([`channel/${"d".repeat(64)}`]),
+    );
+    f.complete(0, "DONE");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  });
 });

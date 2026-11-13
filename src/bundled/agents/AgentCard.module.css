@@ -417,7 +417,18 @@ html[data-keyboard-navigation] .card:focus-visible {
   pointer-events: none;
 }
 
-/* The label and pill stay still while a newly chosen Bestie celebrates. */
+/* Fade in the whole badge while the star celebrates, without moving the pill. */
+.bestie[data-celebrating] {
+  animation: bestie-reveal calc(var(--duration-settle) * 2) ease-out both;
+}
+@keyframes bestie-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 .bestieStars {
   position: relative;
   display: inline-flex;
@@ -498,6 +509,13 @@ html[data-keyboard-navigation] .card:focus-visible {
   --spark-turn: 32deg;
   --spark-opacity: 0.35;
 }
+/* Let the Bestie confirmation close before the celebration begins. */
+.bestie[data-celebrating],
+.bestie[data-celebrating] .bestieStar,
+.bestie[data-celebrating] .bestieStar > svg,
+.bestieSpark {
+  animation-delay: 500ms;
+}
 @keyframes bestie-pop {
   0%,
   12% {
@@ -549,6 +567,7 @@ html[data-keyboard-navigation] .card:focus-visible {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .bestie[data-celebrating],
   .bestie[data-celebrating] .bestieStar,
   .bestie[data-celebrating] .bestieStar > svg {
     animation: none;

@@ -32,10 +32,7 @@ import { dmLabel } from "../inbox/dm-label";
 import { ConversationTab } from "./ConversationTab";
 import { TabSlot, useTabNodes } from "./TabHosts";
 import { createPortal, flushSync } from "react-dom";
-import {
-  VISIT_PLACE,
-  type PageNavigation,
-} from "../../features/navigation/service";
+import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { useChannelPanels } from "./useChannelPanels";
 import { focusDock } from "./useCoveredByDock";
@@ -1055,18 +1052,9 @@ export function useConversationTabs({
               extensions={extensions}
               navigation={route}
               onRetryNavigation={onRetryNavigation}
-              onResolvedRoot={(rootId) => {
-                // The visit settles on the thread its reader verified, not
-                // the link's hint, so the dock returns there.
-                if (route?.target.kind === "conversation")
-                  route.savePosition(VISIT_PLACE, {
-                    ...route.target,
-                    channelId: tab.channelId,
-                    messageId: rootId,
-                    threadRootId: rootId,
-                  });
-                tabState.resolveThreadRoot(tab.id, rootId);
-              }}
+              onResolvedRoot={(rootId) =>
+                tabState.resolveThreadRoot(tab.id, rootId)
+              }
               onDifferentThread={(requested, kept) =>
                 tabState.divertThread(tab.id, requested, kept)
               }

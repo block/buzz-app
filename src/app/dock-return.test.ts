@@ -25,6 +25,7 @@ const thread: OpenTarget = {
   threadRootId: "c".repeat(64),
   panel: "members",
   forward: "d".repeat(64),
+  context: "channel",
 };
 
 it("files Activity and conversations under Messages", () => {
@@ -43,46 +44,33 @@ it("files Activity and conversations under Messages", () => {
   ).toBeUndefined();
 });
 
-it("reopens a verified thread at its root, dropping Members and Forward", () => {
-  const verified: OpenTarget = {
-    ...thread,
-    messageId: "c".repeat(64),
+it("reopens a reply by its message alone, dropping its thread hint, Members, Forward and context", () => {
+  const reply = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+    messageId: "b".repeat(64),
   };
-  expect(dockReturn(pages, "buzz.channels/channels", verified, scope)).toEqual({
+  // A hint, right or wrong, is dropped: the reader finds the reply's thread.
+  expect(dockReturn(pages, "buzz.channels/channels", thread, scope)).toEqual(
+    reply,
+  );
+  const { threadRootId: _root, ...hintless } = thread;
+  expect(dockReturn(pages, "buzz.channels/channels", hintless, scope)).toEqual(
+    reply,
+  );
+});
+
+it("reopens a thread root with its thread", () => {
+  const root: OpenTarget = { ...thread, messageId: "c".repeat(64) };
+  expect(dockReturn(pages, "buzz.channels/channels", root, scope)).toEqual({
     version: 1,
     kind: "conversation",
     scope,
     channelId: "alpha",
     messageId: "c".repeat(64),
     threadRootId: "c".repeat(64),
-  });
-});
-
-it("never trusts a link's thread hint: an unverified thread reopens its channel", () => {
-  const channel = {
-    version: 1,
-    kind: "conversation",
-    scope,
-    channelId: "alpha",
-  };
-  // A reply whose hinted root its reader never confirmed.
-  expect(dockReturn(pages, "buzz.channels/channels", thread, scope)).toEqual(
-    channel,
-  );
-  // A reply link with no hint.
-  const { threadRootId: _root, ...reply } = thread;
-  expect(dockReturn(pages, "buzz.channels/channels", reply, scope)).toEqual(
-    channel,
-  );
-});
-
-it("reopens a channel without the message it revealed", () => {
-  const { threadRootId: _root, ...channel } = thread;
-  expect(dockReturn(pages, "buzz.channels/channels", channel, scope)).toEqual({
-    version: 1,
-    kind: "conversation",
-    scope,
-    channelId: "alpha",
   });
 });
 

@@ -479,13 +479,7 @@ export function useAppNavigation(
       const selected = pages.find((page) => page.key === key);
       if (!selected) return;
       const last = options?.resume ? dockVisits.current.get(key) : undefined;
-      destination = (last &&
-        dockReturn(
-          pages,
-          key,
-          services.navigationHost.visitPlace(last.id) ?? last.target,
-          scope,
-        )) || {
+      destination = (last && dockReturn(pages, key, last.target, scope)) || {
         version: 1,
         kind: "page",
         pluginId: selected.pluginId,

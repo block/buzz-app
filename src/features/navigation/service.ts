@@ -9,20 +9,8 @@ import {
 } from "./controller";
 import { createBrowserHistory } from "./browser-history";
 import { createMemoryHistory } from "./history";
-import {
-  parseOpenTarget,
-  targetKey,
-  type JsonValue,
-  type OpenTarget,
-} from "./targets";
+import { targetKey, type JsonValue, type OpenTarget } from "./targets";
 import type { RelayData, RelaySnapshot } from "../relay/service";
-
-/** A page's position key for the place its visit settled on, an `OpenTarget`
- * the dock returns to instead of the visit's own target: for example the
- * thread a reader verified for a link that only hinted at it. */
-export const VISIT_PLACE = "visit-place";
-const visitKey = (entryId: string, key: string) =>
-  JSON.stringify([entryId, key]);
 
 export type PageNavigation = Readonly<{
   entryId: string;
@@ -84,16 +72,6 @@ export function provideNavigation(
     ...controller,
     position,
     savePosition,
-    /** The place visit `entryId`'s page recorded under `VISIT_PLACE`, if any. */
-    visitPlace(entryId: string): OpenTarget | undefined {
-      const place = position(visitKey(entryId, VISIT_PLACE));
-      if (place === undefined) return;
-      try {
-        return parseOpenTarget(place);
-      } catch {
-        return;
-      }
-    },
     request(
       attempt: OpenAttempt,
       owner: PresentationOwner,
@@ -108,7 +86,7 @@ export function provideNavigation(
       const retainedSignal = retainUnderSettings
         ? new AbortController().signal
         : attempt.signal;
-      const visit = (key: string) => visitKey(attempt.entry.id, key);
+      const visit = (key: string) => JSON.stringify([attempt.entry.id, key]);
       const sameVisit = (next: OpenAttempt) =>
         next.entry.id === attempt.entry.id &&
         targetKey(next.entry.target) === targetKey(attempt.entry.target);

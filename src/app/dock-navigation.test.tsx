@@ -220,7 +220,7 @@ it.each([
   await opened(app, { ...activity, ...extra });
 });
 
-it("returns to the channel and its thread, without the one-time parts", async () => {
+it("returns to the channel and its thread", async () => {
   const app = dockFixture({ channel: true });
   await visit(app, {
     version: 1,

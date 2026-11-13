@@ -26,12 +26,12 @@ export function dockOwner(
 
 /**
  * Where the dock reopens `owner`: its last visit, without the parts that act
- * once (the revealed message, Members, Forward). `last` is the place that
- * visit settled on when its page recorded one, such as the thread its reader
- * verified. A thread reopens at its root, and only a verified root: a link's
- * root is a hint, so an unconfirmed thread reopens its channel. Nothing when
- * that visit was in another account or community, or now belongs to another
- * app; the dock then opens the app's own page.
+ * once (Members, Forward, and the context it was opened with). A conversation
+ * keeps its message, so its reader finds the thread again, as following the
+ * link again does. A thread root keeps its thread; a reply drops its thread
+ * hint and is placed by the reader alone. Nothing when that visit was in another
+ * account or community, or now belongs to another app; the dock then opens
+ * the app's own page.
  */
 export function dockReturn(
   pages: readonly RegisteredPage[],
@@ -52,13 +52,15 @@ export function dockReturn(
     return;
   if (last.kind !== "conversation") return last;
   const {
-    messageId,
-    threadRootId,
     panel: _panel,
     forward: _forward,
+    context: _context,
+    threadRootId,
     ...place
   } = last;
-  return threadRootId && threadRootId === messageId
-    ? { ...place, messageId, threadRootId }
+  // A reply's thread root is only a hint, and a wrong one can fold another
+  // open thread away. The reply alone lets its reader find its thread.
+  return threadRootId && threadRootId === place.messageId
+    ? { ...place, threadRootId }
     : place;
 }

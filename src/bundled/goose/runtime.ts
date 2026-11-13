@@ -425,7 +425,7 @@ export class GooseRuntime {
       const through =
         action === "compact" &&
         !!this.forwarding &&
-        (await this.forwards(entry));
+        (await this.forwards(entry, agent));
       if (through) signal.throwIfAborted();
       const result = await entry.sessions.reset(
         key,
@@ -767,8 +767,11 @@ export class GooseRuntime {
 
   /** Whether the agent's turns can go through the gateway: on the provider
    * it names, else goose's default, the gateway's. One whose default can't
-   * be read runs as it would without the gateway. */
-  private async forwards(entry: Entry) {
+   * be read runs as it would without the gateway, as does a protected
+   * agent: a forwarded turn spawns outside its containment and policy. */
+  private async forwards(entry: Entry, agent?: Pick<Agent, "protection">) {
+    if (entry.protected || entry.handle?.protection || agent?.protection)
+      return false;
     const named = entry.config.provider.trim();
     const provider =
       named || (await this.defaultProvider().catch(() => undefined));
@@ -776,7 +779,8 @@ export class GooseRuntime {
   }
 
   /** The dispatched route a turn runs through, or none: a turn on another
-   * provider runs as it would without the gateway, its settings untouched. */
+   * provider, or a protected agent's, runs as it would without the
+   * gateway, its settings untouched. */
   private async routed(entry: Entry, gateway: Gateway) {
     return (await this.forwards(entry)) ? gateway : undefined;
   }
@@ -861,7 +865,8 @@ export class GooseRuntime {
     const refused = (error: string) => Promise.resolve({ ok: false, error });
     const { forwarding } = this;
     if (!forwarding) return refused(UNAVAILABLE);
-    // A protected run through the gateway is not yet proven to work.
+    // Never reached: a protected agent's turns aren't routed here. Its
+    // forwarded spawn would run outside its containment and policy.
     if (entry.protected || entry.handle?.protection)
       return refused(FORWARDING_PROTECTED);
     // What is saved, unread, is refused, never taken for none: a value that

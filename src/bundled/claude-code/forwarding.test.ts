@@ -17,6 +17,7 @@ import {
   flush,
   sessionState,
 } from "./claude-testing";
+import { forwardEnv } from "./claude";
 import {
   BYPASSED,
   CHANGED,
@@ -25,8 +26,12 @@ import {
   type ForwardRetry,
   type Generation,
   HARNESS,
+  MANAGED_UNREADABLE,
+  managedRefusal,
+  managedRouting,
   UNAVAILABLE,
 } from "./forwarding";
+const UNREACHABLE = "Could not start forwarding";
 import {
   AgentSessions,
   type Forward,
@@ -73,6 +78,7 @@ const OWNER = { id: "buzz.claude-code", revision: "r1" };
 function harness(
   answers: ForwardOpened[] = [],
   retry: ForwardRetry = { delays: [] },
+  managed?: () => Promise<readonly string[]>,
 ) {
   let route: GatewayRoute = eligible(2);
   const listeners = new Set<() => void>();
@@ -117,7 +123,13 @@ function harness(
         setRoute({ ...route, revision: route.revision + 1 } as GatewayRoute);
     }),
   };
-  const forwarding = new ClaudeForwarding(OWNER, native, routes, retry);
+  const forwarding = new ClaudeForwarding(
+    OWNER,
+    native,
+    routes,
+    retry,
+    managed,
+  );
   return {
     forwarding,
     native,
@@ -152,7 +164,90 @@ describe("ClaudeForwarding.control", () => {
   });
 });
 
+describe("managedRouting", () => {
+  const settings = (env: Record<string, unknown>) => JSON.stringify({ env });
+
+  it("names a provider managed settings turn on, as Claude reads one", () => {
+    for (const on of ["1", "true", "TRUE", "yes", "on"])
+      expect(managedRouting([settings({ CLAUDE_CODE_USE_BEDROCK: on })])).toBe(
+        "CLAUDE_CODE_USE_BEDROCK",
+      );
+    for (const off of ["0", "", "false", "no"])
+      expect(
+        managedRouting([settings({ CLAUDE_CODE_USE_VERTEX: off })]),
+      ).toBeUndefined();
+  });
+
+  it("names an endpoint managed settings set, and a provider before it", () => {
+    expect(
+      managedRouting([settings({ ANTHROPIC_VERTEX_BASE_URL: "https://v" })]),
+    ).toBe("ANTHROPIC_VERTEX_BASE_URL");
+    expect(
+      managedRouting([settings({ CLAUDE_CODE_API_BASE_URL: " " })]),
+    ).toBeUndefined();
+    expect(
+      managedRouting([
+        settings({
+          ANTHROPIC_BASE_URL: "https://proxy",
+          CLAUDE_CODE_USE_FOUNDRY: "1",
+        }),
+      ]),
+    ).toBe("CLAUDE_CODE_USE_FOUNDRY");
+  });
+
+  it("merges files in order, a later one overriding, and skips what isn't settings", () => {
+    expect(
+      managedRouting([
+        settings({ CLAUDE_CODE_USE_BEDROCK: "1" }),
+        "not json",
+        "null",
+        JSON.stringify({ permissions: {} }),
+        settings({ CLAUDE_CODE_USE_BEDROCK: "0" }),
+      ]),
+    ).toBeUndefined();
+    expect(
+      managedRouting([
+        settings({ OTHER: "1" }),
+        settings({ ANTHROPIC_BEDROCK_BASE_URL: "https://b" }),
+      ]),
+    ).toBe("ANTHROPIC_BEDROCK_BASE_URL");
+    expect(managedRouting([])).toBeUndefined();
+  });
+});
+
 describe("ClaudeForwarding.open", () => {
+  it("refuses before pushing anything when managed settings route Claude elsewhere", async () => {
+    const h = harness([], { delays: [1] }, async () => [
+      JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: "1" } }),
+    ]);
+    await expect(
+      h.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).rejects.toThrow(managedRefusal("CLAUDE_CODE_USE_BEDROCK"));
+    expect(h.calls).toEqual([]);
+    expect(h.listeners.size).toBe(0);
+  });
+
+  it("refuses when managed settings can't be read, and opens past ones that don't route", async () => {
+    const unreadable = harness([], { delays: [1] }, async () => {
+      throw new Error("exit 1");
+    });
+    await expect(
+      unreadable.forwarding.open(AGENT, eligible(2), turn, signal),
+    ).rejects.toThrow(MANAGED_UNREADABLE);
+    expect(unreadable.calls).toEqual([]);
+
+    const plain = harness([], { delays: [] }, async () => [
+      JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: "0" } }),
+    ]);
+    const generation = await plain.forwarding.open(
+      AGENT,
+      eligible(2),
+      turn,
+      signal,
+    );
+    expect(generation.url).toBe("http://127.0.0.1:9/h1");
+  });
+
   it("pushes the dispatched revision, then opens at it with the turn's frozen headers", async () => {
     const { forwarding, native, calls } = harness();
     const generation = await forwarding.open(AGENT, eligible(2), turn, signal);
@@ -331,7 +426,7 @@ describe("ClaudeForwarding.open", () => {
     vi.useFakeTimers();
     try {
       const h = harness([], { delays: [10, 20] });
-      vi.mocked(h.native.open).mockRejectedValue(new Error("proxy down"));
+      vi.mocked(h.native.open).mockRejectedValue(new Error(UNREACHABLE));
       const result = h.forwarding.open(AGENT, eligible(2), turn, signal);
       const failed = expect(result).rejects.toThrow(UNAVAILABLE);
       await vi.advanceTimersByTimeAsync(9);
@@ -354,8 +449,8 @@ describe("ClaudeForwarding.open", () => {
 
   it("opens once native can be reached again within the bound", async () => {
     const h = harness([], { delays: [1, 1] });
-    vi.mocked(h.native.push).mockRejectedValueOnce(new Error("no proxy"));
-    vi.mocked(h.native.open).mockRejectedValueOnce(new Error("no proxy"));
+    vi.mocked(h.native.push).mockRejectedValueOnce(new Error(UNREACHABLE));
+    vi.mocked(h.native.open).mockRejectedValueOnce(new Error(UNREACHABLE));
     const generation = await h.forwarding.open(
       AGENT,
       eligible(2),
@@ -379,7 +474,7 @@ describe("ClaudeForwarding.open", () => {
     const moved = harness([], { delays: [1, 1] });
     vi.mocked(moved.native.open).mockImplementationOnce(async () => {
       moved.setRoute(eligible(3));
-      throw new Error("proxy down");
+      throw new Error(UNREACHABLE);
     });
     await expect(
       moved.forwarding.open(AGENT, eligible(2), turn, signal),
@@ -390,12 +485,34 @@ describe("ClaudeForwarding.open", () => {
     const controller = new AbortController();
     vi.mocked(stopped.native.open).mockImplementationOnce(async () => {
       queueMicrotask(() => controller.abort(new Error("Stopped")));
-      throw new Error("proxy down");
+      throw new Error(UNREACHABLE);
     });
     await expect(
       stopped.forwarding.open(AGENT, eligible(2), turn, controller.signal),
     ).rejects.toThrow("Stopped");
     expect(stopped.native.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("never retries what native decides before making a generation, which leaves none open", async () => {
+    // `host_forward.rs` answers these before inserting a generation: each
+    // fails the same way again, and there is nothing of it to close.
+    for (const message of [
+      "The page reloaded",
+      "Gateway forwarding is off",
+      "The agent gateway is not declared",
+      "Too many forwarding routes",
+      "Too many forwarding generations are open",
+    ])
+      for (const method of ["push", "open"] as const) {
+        const h = harness([], { delays: [1, 1] });
+        vi.mocked(h.native[method]).mockRejectedValue(new Error(message));
+        await expect(
+          h.forwarding.open(AGENT, eligible(2), turn, signal),
+        ).rejects.toThrow(UNAVAILABLE);
+        expect(h.native[method]).toHaveBeenCalledTimes(1);
+        expect(h.native.close).not.toHaveBeenCalled();
+        expect(h.listeners.size).toBe(0);
+      }
   });
 
   it("keeps an agent's native route key across instances", async () => {
@@ -413,27 +530,18 @@ describe("ClaudeForwarding.open", () => {
     expect(keyOf(second.calls[0])).not.toBe(keyOf(first.calls[0]));
   });
 
-  it("counts only model requests as admitted, and only the attempt that opened", async () => {
-    const h = harness([], { delays: [1] });
-    const open = vi.mocked(h.native.open);
-    const opening = open.getMockImplementation();
-    // The first invoke fails after native made a generation.
-    open.mockImplementationOnce(async (owner, options) => {
-      await opening?.(owner, options);
-      throw new Error("lost answer");
-    });
+  it("counts only model requests as admitted", async () => {
+    const h = harness();
     const generation = await h.forwarding.open(
       AGENT,
       eligible(2),
       turn,
       signal,
     );
-    const [orphan, own] = [nth(h.events, 0), nth(h.events, 1)];
-    orphan({ type: "admitted", request: 1, class: "inference" });
+    const emit = nth(h.events);
+    emit({ type: "admitted", request: 1, class: "discovery" });
     expect(generation.admitted()).toBe(false);
-    own({ type: "admitted", request: 1, class: "discovery" });
-    expect(generation.admitted()).toBe(false);
-    own({ type: "admitted", request: 2, class: "inference" });
+    emit({ type: "admitted", request: 2, class: "inference" });
     expect(generation.admitted()).toBe(true);
   });
 
@@ -570,7 +678,7 @@ describe("forwarded turns in a conversation", () => {
     await flush();
     const process = nth(claudes());
     expect(settingsOf(process)).toBe(
-      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:9/g1" } }),
+      JSON.stringify({ env: forwardEnv("http://127.0.0.1:9/g1") }),
     );
     expect(process.options.args).toEqual(
       expect.arrayContaining(["--session-id", "new-1"]),
@@ -873,17 +981,25 @@ describe("forwarded turns in a conversation", () => {
     expect(await second).toEqual({ ok: true });
   });
 
-  it("fails a forwarded turn none of whose requests native admitted", async () => {
-    const { sessions, log, claudes } = pool();
-    const delivered = sessions.deliver("c", "hi", 1, {
-      forward: async () => ({
-        generation: generation("g", log, undefined, { admitted: false }),
-        binding,
-      }),
-    });
-    await flush();
-    nth(claudes()).finish();
-    expect(await delivered).toEqual({ ok: false, error: BYPASSED });
+  it("fails a forwarded turn that made no model request as bypassed, keeping Claude's own failure", async () => {
+    // Native admitted nothing: Claude's requests went elsewhere, or it made
+    // none. Both fail, since a turn that ran can't tell them apart; one
+    // Claude itself failed keeps its own error.
+    for (const [result, settled] of [
+      [{}, { ok: false, error: BYPASSED }],
+      [{ error: "Overloaded" }, { ok: false, error: "Overloaded" }],
+    ] as const) {
+      const { sessions, log, claudes } = pool();
+      const delivered = sessions.deliver("c", "hi", 1, {
+        forward: async () => ({
+          generation: generation("g", log, undefined, { admitted: false }),
+          binding,
+        }),
+      });
+      await flush();
+      nth(claudes()).finish(result);
+      expect(await delivered).toEqual(settled);
+    }
   });
 
   it("keeps the next turn out until the last process has exited and native has closed", async () => {

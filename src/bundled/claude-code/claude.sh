@@ -8,6 +8,8 @@
 #   use VERSION                      makes a downloaded release the one in use
 #   review-token                     saves security reviews' sign-in from stdin
 #   review                           prints their folder, then that sign-in
+#   managed FOLDER                   prints each managed settings file
+#                                    Claude reads there, base64, one per line
 set -eu
 
 # Shared by every Buzz build on this computer, so there is one download.
@@ -165,6 +167,18 @@ review)
   if [ -f "$review/token" ] && [ ! -h "$review/token" ]; then
     cat "$review/token"
   fi
+  ;;
+managed)
+  # Each managed settings file Claude reads in folder $1, which outrank
+  # Buzz's own: the file, then its drop-ins in name order, as later ones
+  # merge over earlier ones. A file it can't read fails the step.
+  managed="${1:?}"
+  for file in "$managed/managed-settings.json" "$managed/managed-settings.d/"*.json; do
+    [ -f "$file" ] || continue
+    encoded=$(base64 <"$file") || exit 1
+    printf '%s\n' "$encoded" | tr -d '\n'
+    echo
+  done
   ;;
 *)
   echo "Unknown command: $command" >&2

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ClaudeProcess, stepLabel } from "./claude";
+import { ClaudeProcess, ENDPOINTS, PROVIDERS, stepLabel } from "./claude";
 import {
   backgroundTasks,
   fakeSpawn,
@@ -275,6 +275,26 @@ it("clears what would pick another provider or endpoint for a forwarded process"
     expect(env).toHaveProperty(name, null);
   // The person's own sign-in still reaches the gateway.
   expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  // Their settings' `env` applies after launch; flag settings outrank it,
+  // blanking every provider and endpoint but the generation's.
+  const args = processes[0]?.options.args ?? [];
+  const settings = JSON.parse(args[args.indexOf("--settings") + 1] ?? "{}");
+  expect(settings).toEqual({
+    env: {
+      ...Object.fromEntries(
+        [...PROVIDERS, ...ENDPOINTS].map((name) => [name, ""]),
+      ),
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:9/h",
+    },
+  });
+  for (const name of [
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_VERTEX_BASE_URL",
+    "CLAUDE_CODE_API_BASE_URL",
+  ])
+    expect(settings.env).toHaveProperty(name, "");
   const { spawn: plain, processes: own } = fakeSpawn();
   await ClaudeProcess.start(plain, { ...launch, sessionId: "s2" });
   expect(own[0]?.options.env).not.toHaveProperty("CLAUDE_CODE_USE_BEDROCK");

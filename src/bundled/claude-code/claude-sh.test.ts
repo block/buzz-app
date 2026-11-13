@@ -537,3 +537,32 @@ it.skipIf(process.platform !== "darwin")(
     });
   },
 );
+
+it("prints each managed settings file Claude reads, then its drop-ins in name order", async () => {
+  const { home, step } = await disk([]);
+  const folder = join(home, "managed");
+  const lines = async () =>
+    (await step("managed", folder)).stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => Buffer.from(line, "base64").toString("utf8"));
+  // No folder, or one without settings: nothing, so nothing is refused.
+  expect(await lines()).toEqual([]);
+  await mkdir(join(folder, "managed-settings.d"), { recursive: true });
+  expect(await lines()).toEqual([]);
+  const main = JSON.stringify(
+    { env: { CLAUDE_CODE_USE_BEDROCK: "1" } },
+    null,
+    2,
+  );
+  await writeFile(join(folder, "managed-settings.d", "20-b.json"), '{"b":"é"}');
+  await writeFile(join(folder, "managed-settings.d", "10-a.json"), "{}");
+  await writeFile(join(folder, "managed-settings.d", "notes.txt"), "skip");
+  expect(await lines()).toEqual(["{}", '{"b":"é"}']);
+  await writeFile(join(folder, "managed-settings.json"), main);
+  expect(await lines()).toEqual([main, "{}", '{"b":"é"}']);
+  // One it can't read fails the step rather than passing it over.
+  await chmod(join(folder, "managed-settings.json"), 0o000);
+  if (process.getuid?.() !== 0)
+    await expect(step("managed", folder)).rejects.toThrow();
+});

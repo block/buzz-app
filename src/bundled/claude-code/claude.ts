@@ -115,6 +115,39 @@ const STDERR_LIMIT = 4_000;
 /** What `claude` is started with: as the SDK starts it, reporting when it is
  * idle, signed in as `claude auth login` left it, and never as part of a
  * Claude session that started the app. */
+/** What has Claude (2.1.323's strings) send its requests to a provider other
+ * than Anthropic's API: on only for "1", "true", "yes" or "on". */
+export const PROVIDERS = [
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_GATEWAY",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+] as const;
+/** What names the endpoint of Anthropic's API or a provider; an empty one
+ * falls back to the default. */
+export const ENDPOINTS = [
+  "ANTHROPIC_BASE_URL",
+  "CLAUDE_CODE_API_BASE_URL",
+  "ANTHROPIC_UNIX_SOCKET",
+  "ANTHROPIC_BEDROCK_BASE_URL",
+  "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+  "ANTHROPIC_VERTEX_BASE_URL",
+  "ANTHROPIC_FOUNDRY_BASE_URL",
+  "ANTHROPIC_AWS_BASE_URL",
+  "ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+] as const;
+/** A forwarded process's `--settings` env: its generation's URL, and every
+ * provider and other endpoint blanked. Flag settings outrank the user's,
+ * the project's and the local ones, whose `env` would otherwise apply after
+ * launch; only managed settings outrank them. */
+export const forwardEnv = (url: string): Record<string, string> => ({
+  ...Object.fromEntries([...PROVIDERS, ...ENDPOINTS].map((name) => [name, ""])),
+  ANTHROPIC_BASE_URL: url,
+});
+
 export const ENV: Readonly<Record<string, string | null>> = {
   CLAUDE_CODE_ENTRYPOINT: "sdk-ts",
   CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
@@ -301,10 +334,7 @@ export class ClaudeProcess {
           : []),
         ...(launch.effort ? ["--effort", launch.effort] : []),
         ...(launch.forward
-          ? [
-              "--settings",
-              JSON.stringify({ env: { ANTHROPIC_BASE_URL: launch.forward } }),
-            ]
+          ? ["--settings", JSON.stringify({ env: forwardEnv(launch.forward) })]
           : []),
         ...(launch.resume ? ["--resume", launch.resume] : []),
         ...(!launch.resume && launch.sessionId
@@ -359,22 +389,16 @@ export class ClaudeProcess {
             }
           : {}),
         // A forwarded process's endpoint is its generation's alone: what
-        // would pick another provider or endpoint is cleared, as for review.
-        // Settings can still name one; a turn none of whose requests reach
-        // the generation fails.
+        // would pick another provider or endpoint is cleared here and blanked
+        // in its flag settings. Managed settings, which outrank those, are
+        // checked before its generation opens; a turn none of whose requests
+        // reach the generation still fails.
         ...(launch.forward
           ? {
-              ANTHROPIC_BASE_URL: null,
-              CLAUDE_CODE_API_BASE_URL: null,
-              ANTHROPIC_UNIX_SOCKET: null,
+              ...Object.fromEntries(
+                [...PROVIDERS, ...ENDPOINTS].map((name) => [name, null]),
+              ),
               CLAUDE_CODE_REMOTE_SESSION_ID: null,
-              CLAUDE_CODE_USE_BEDROCK: null,
-              CLAUDE_CODE_USE_VERTEX: null,
-              CLAUDE_CODE_USE_FOUNDRY: null,
-              CLAUDE_CODE_USE_GATEWAY: null,
-              CLAUDE_CODE_USE_MANTLE: null,
-              CLAUDE_CODE_USE_ANTHROPIC_AWS: null,
-              CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD: null,
             }
           : {}),
         ...(launch.review

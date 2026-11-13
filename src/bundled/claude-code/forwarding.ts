@@ -17,6 +17,7 @@ import {
   type ForwardOwner,
 } from "../../features/host/forward";
 import type { AgentKey } from "../../features/agents/membership";
+import { ENDPOINTS, PROVIDERS } from "./claude";
 import {
   bindingAdmits,
   discoveryBundle,
@@ -89,6 +90,38 @@ export const CHANGED =
 export const UNAVAILABLE =
   "Buzz couldn't start forwarding to the agent gateway on this device, so the turn didn't run.";
 
+/** Native's answer when its local proxy can't listen: the only open or push
+ * failure (`host_forward.rs`) worth trying again. Every other is decided
+ * before native makes a generation, and fails the same way each time. */
+const UNREACHABLE = "Could not start forwarding";
+export const MANAGED_UNREADABLE =
+  "Buzz couldn't read Claude's managed settings to check where they send this agent's requests, so the turn didn't run.";
+export const managedRefusal = (name: string) =>
+  `Claude's managed settings set ${name}, which would send this agent's requests around the agent gateway, so the turn didn't run.`;
+
+/** The provider or endpoint `files`, managed settings in merge order, set in
+ * their `env`, which outranks Buzz's flag settings; undefined when none. A
+ * file that isn't a settings object is skipped, as Claude skips it. */
+export function managedRouting(files: readonly string[]): string | undefined {
+  const env: Record<string, unknown> = {};
+  for (const file of files) {
+    let settings: unknown;
+    try {
+      settings = JSON.parse(file);
+    } catch {
+      continue;
+    }
+    const own = (settings as { env?: unknown } | null)?.env;
+    if (own && typeof own === "object") Object.assign(env, own);
+  }
+  const text = (name: string) => String(env[name] ?? "").trim();
+  return (
+    PROVIDERS.find((name) =>
+      ["1", "true", "yes", "on"].includes(text(name).toLowerCase()),
+    ) ?? ENDPOINTS.find((name) => text(name) !== "")
+  );
+}
+
 export const BYPASSED =
   "This turn's model requests didn't go through the agent gateway, so it failed. Claude's own settings may send them elsewhere.";
 
@@ -98,6 +131,8 @@ export class ClaudeForwarding {
     private readonly native: ForwardNative = NATIVE,
     private readonly routes: ForwardRoutes = ROUTES,
     private readonly retry: ForwardRetry = RETRY,
+    /** The managed settings files Claude reads, in merge order. */
+    private readonly managed?: () => Promise<readonly string[]>,
   ) {}
 
   /** The route a session control with no turn of its own (compaction) goes
@@ -116,10 +151,11 @@ export class ClaudeForwarding {
   }
 
   /** Opens the turn's generation for harness session `session` at `route`,
-   * the revision it was dispatched with. A route that moved on or a refusal
-   * throws at once, before anything is spawned. A native side that can't be
-   * reached is tried again after each of the retry's delays while the route
-   * and `signal` hold, then throws. A generation opened after `signal`
+   * the revision it was dispatched with. Managed settings that would send
+   * Claude's requests elsewhere, a route that moved on, a refusal or a
+   * native error throw at once, before anything is spawned; only a local
+   * proxy that can't listen is tried again after each of the retry's delays
+   * while the route and `signal` hold. A generation opened after `signal`
    * aborted is closed. */
   async open(
     agent: AgentKey,
@@ -140,6 +176,18 @@ export class ClaudeForwarding {
     if (!bindingAdmits(route, turn.binding).ok) throw new Error(CHANGED);
     const discovery = discoveryBundle(route.profile, route, turn.binding);
     if (!discovery.ok) throw new Error(discovery.message);
+    if (this.managed) {
+      let files: readonly string[];
+      try {
+        files = await this.managed();
+      } catch (error) {
+        console.warn("Claude's managed settings are unreadable", error);
+        throw new Error(MANAGED_UNREADABLE);
+      }
+      const set = managedRouting(files);
+      if (set) throw new Error(managedRefusal(set));
+      signal.throwIfAborted();
+    }
     // Watched from before the push: a change during it, the open or the
     // process's startup is pushed (native revokes on it) and recorded.
     let revoked = false;
@@ -161,11 +209,7 @@ export class ClaudeForwarding {
       closed = resolve;
     });
     let admitted = false;
-    // Only the attempt that opened is heard: one whose invoke failed after
-    // native made a generation never speaks for this one.
-    let attempt = 0;
-    const listener = (mine: number) => (event: ForwardEvent) => {
-      if (mine !== attempt) return;
+    const onEvent = (event: ForwardEvent) => {
       if (event.type === "closed") closed();
       // Model requests: discovery alone isn't Claude's turn reaching it.
       if (event.type === "admitted" && event.class === "inference")
@@ -179,7 +223,7 @@ export class ClaudeForwarding {
         this.routes.invalidateRoute(agent, route.revision);
     };
     let opened: ForwardOpened | undefined;
-    for (; ; attempt++) {
+    for (let attempt = 0; ; attempt++) {
       try {
         if (moved()) throw new Error(CHANGED);
         await this.push(agent, route);
@@ -193,13 +237,16 @@ export class ClaudeForwarding {
             session: turn.session,
             inference: inference.value,
             discovery: discovery.value,
-            onEvent: listener(attempt),
+            onEvent,
           });
         break;
       } catch (error) {
         const changed = error instanceof Error && error.message === CHANGED;
+        const unreachable =
+          (error instanceof Error ? error.message : String(error)) ===
+          UNREACHABLE;
         const delay = this.retry.delays[attempt];
-        if (!signal.aborted && !changed && delay !== undefined) {
+        if (!signal.aborted && unreachable && delay !== undefined) {
           console.warn("Gateway forwarding is unavailable; retrying", error);
           if (await wait(delay, signal)) continue;
         }

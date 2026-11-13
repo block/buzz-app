@@ -1074,7 +1074,10 @@ available rather than silently discarding it.
   Bestie choice unchanged; it does not delete a newly created agent. A hosted
   Bestie whose provider holds its instructions (Builderlab does) shows a
   **Bestie** tab where **Remembers you** edits them through the provider;
-  check-ins stay unavailable for hosted agents.
+  check-ins stay unavailable for hosted agents. The tab's **Cost** row shows
+  an estimate of what a local Bestie's sessions on this computer cost over the
+  last 7 days, with **Open Usage**. It is not a bill, and it says when the
+  agent's type reports no usage or the agent runs elsewhere.
 - **Settings → Agent setup → Harness defaults** is where supported agent types
   offer installation, sign-in, and default-model controls. Available controls
   depend on the type. Do not assume a provider is configured or signed in.

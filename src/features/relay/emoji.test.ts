@@ -40,6 +40,7 @@ function set(key = member, time = 1, tags = [["emoji", "party", url]]) {
 const owners: { dispose(): void }[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
+  vi.restoreAllMocks();
 });
 function session(scope = "a", publishSucceeds = false) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -1012,6 +1013,8 @@ async function timeOut(h: ReturnType<typeof session>) {
 }
 it("retries a timed-out catalog with one read per growing backoff step until it loads", async () => {
   vi.useFakeTimers();
+  // The ceiling of each jittered delay.
+  vi.spyOn(Math, "random").mockReturnValue(1);
   try {
     const h = session();
     void h.session.emoji.ensure("foreground");
@@ -1078,6 +1081,8 @@ it("credential retry leaves an unrequested catalog unread", async () => {
 });
 it("retries a ready catalog's timed-out refresh with growing backoff, keeping its entries", async () => {
   vi.useFakeTimers();
+  // The ceiling of each jittered delay.
+  vi.spyOn(Math, "random").mockReturnValue(1);
   try {
     const h = session();
     void h.session.emoji.ensure("foreground");
@@ -1120,6 +1125,28 @@ it("retries a ready catalog's timed-out refresh with growing backoff, keeping it
     );
     await vi.advanceTimersByTimeAsync(1_000);
     expect(catalogReads(h)).toBe(reads + 2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("jitters each catalog retry within the upper half of its capped delay", async () => {
+  vi.useFakeTimers();
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  try {
+    const h = session();
+    void h.session.emoji.ensure("foreground");
+    await vi.advanceTimersByTimeAsync(0);
+    await timeOut(h);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(catalogReads(h)).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catalogReads(h)).toBe(2);
+    random.mockReturnValue(0.5);
+    await timeOut(h);
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(catalogReads(h)).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(catalogReads(h)).toBe(3);
   } finally {
     vi.useRealTimers();
   }

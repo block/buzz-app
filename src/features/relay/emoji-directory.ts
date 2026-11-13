@@ -335,22 +335,31 @@ export function createEmojiDirectory(
   // catalog's refresh, retries with the shared capped backoff until it loads.
   // A read in flight is busy, so a ready catalog's refresh keeps the backoff.
   // Session recovery stays out of it; its state and notice describe the
-  // relay connection.
-  const recovery = createRecovery([
-    {
-      status: () =>
-        snapshot.transient ? "failed" : pending ? "busy" : "settled",
-      subscribe(listener) {
-        const stop = queries.subscribe(listener);
-        settled.add(listener);
-        return () => {
-          stop();
-          settled.delete(listener);
-        };
+  // relay connection. Equal jitter keeps clients that failed together, as on
+  // a relay restart, from retrying in step.
+  const recovery = createRecovery(
+    [
+      {
+        status: () =>
+          snapshot.transient ? "failed" : pending ? "busy" : "settled",
+        subscribe(listener) {
+          const stop = queries.subscribe(listener);
+          settled.add(listener);
+          return () => {
+            stop();
+            settled.delete(listener);
+          };
+        },
+        retry: () => void refresh(),
       },
-      retry: () => void refresh(),
+    ],
+    {
+      setTimeout: (callback, ms) =>
+        globalThis.setTimeout(callback, ms * (0.5 + Math.random() / 2)),
+      clearTimeout: (handle) =>
+        globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
     },
-  ]);
+  );
   return {
     queries,
     accept,

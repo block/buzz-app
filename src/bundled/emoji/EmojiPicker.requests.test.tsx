@@ -138,9 +138,17 @@ it("shows a recovering catalog as loading and keeps Retry for deterministic fail
         reaction
       />,
     );
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     fireEvent.click(screen.getByRole("button", { name: "Add reaction" }));
-    const loading = await screen.findByRole("status");
-    expect(loading).toHaveTextContent("Loading community emoji…");
+    // Loading feedback stays silent for a fast read, then announces.
+    await act(() => vi.advanceTimersByTimeAsync(999));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText("Loading community emoji…")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    vi.useRealTimers();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading community emoji…",
+    );
     expect(screen.queryByText(/timed out/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry emoji" })).toBeNull();
     // A recovery attempt in flight keeps the same loading state.
@@ -183,6 +191,7 @@ it("shows a recovering catalog as loading and keeps Retry for deterministic fail
     fireEvent.click(screen.getByRole("button", { name: "Retry emoji" }));
     expect(refresh).toHaveBeenCalledOnce();
   } finally {
+    vi.useRealTimers();
     owner.dispose();
   }
 });

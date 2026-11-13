@@ -1146,7 +1146,6 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
 test("emoji picker recovers from repeated catalog timeouts in place and across reopening", async ({
   page,
 }) => {
-  test.setTimeout(60_000);
   let server;
   try {
     server = await createServer({
@@ -1165,9 +1164,10 @@ test("emoji picker recovers from repeated catalog timeouts in place and across r
       }),
     );
     await server.listen();
-    // Four reads time out (retried after 1, 2, 4 and 8 s) before the relay answers.
+    // The passive read and its foreground promotion are held, then time out;
+    // the automatic retry is held until the close/reopen assertions finish.
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?catalog-timeouts=4`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?catalog-timeouts=2&hold-catalog`,
     );
     await page.evaluate(() => {
       window.sawTimeout = false;
@@ -1190,23 +1190,33 @@ test("emoji picker recovers from repeated catalog timeouts in place and across r
     });
     const reads = () =>
       page.evaluate(() => window.emojiFixture.report.reads.length);
-    await picker.click();
-    await expect(loading).toBeVisible();
-    // The catalog retries on its own backoff after the first timeout.
-    await expect.poll(reads, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
-    await expect(loading).toBeVisible();
-    await expect(region.getByRole("alert")).toHaveCount(0);
-    // Closing and reopening mid-recovery neither shows the error nor stops recovery.
-    await page.keyboard.press("Escape");
-    await expect(region).toHaveCount(0);
-    await picker.click();
-    await expect(loading).toBeVisible();
+    try {
+      await picker.click();
+      await expect.poll(reads).toBe(2);
+      await expect(loading).toBeVisible();
+      // Time out the held reads and hold the automatic retry.
+      await page.evaluate(() => {
+        window.emojiFixture.releaseCatalog();
+        window.emojiFixture.holdCatalog();
+      });
+      await expect.poll(reads).toBe(3);
+      await expect(loading).toBeVisible();
+      await expect(region.getByRole("alert")).toHaveCount(0);
+      // Closing and reopening mid-recovery neither shows the error nor stops recovery.
+      await page.keyboard.press("Escape");
+      await expect(region).toHaveCount(0);
+      await picker.click();
+      await expect(loading).toBeVisible();
+      await expect(region.getByRole("alert")).toHaveCount(0);
+    } finally {
+      await page.evaluate(() => window.emojiFixture.releaseCatalog());
+    }
     await expect(
       page.locator('em-emoji-picker [data-id="buzz-custom"]'),
-    ).toHaveCount(1, { timeout: 30_000 });
+    ).toHaveCount(1);
     await expect(loading).toHaveCount(0);
     await expect(region.getByRole("alert")).toHaveCount(0);
-    expect(await reads()).toBe(5);
+    expect(await reads()).toBe(3);
     expect(await page.evaluate(() => window.sawTimeout)).toBe(false);
     expect(errors.unexplained()).toEqual([]);
   } finally {

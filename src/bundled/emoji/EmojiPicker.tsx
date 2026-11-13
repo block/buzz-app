@@ -4,6 +4,7 @@ import type { GifShortcut } from "./gif-shortcut";
 import { useConversationPresentation } from "../../features/conversation/ConversationPresentation";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
+import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type RefObject,
@@ -345,9 +346,9 @@ export function EmojiPicker({
       {tab === "emoji" &&
         (catalog.status === "loading" ||
           (catalog.status === "error" && catalog.transient)) && (
-          <p role="status" className={styles.emojiStatus}>
-            Loading community emoji…
-          </p>
+          <LoadingRegion pending label="Loading community emoji…">
+            {null}
+          </LoadingRegion>
         )}
       {tab === "emoji" && catalog.error && !catalog.transient && (
         <div className={styles.emojiStatus}>

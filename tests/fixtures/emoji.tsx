@@ -74,6 +74,10 @@ const sessions = ["a", "b"].map((community) => {
     new URLSearchParams(location.search).get("catalog-timeouts") ?? 0,
   );
   let releaseCatalogRead: (() => void) | undefined;
+  if (new URLSearchParams(location.search).has("hold-catalog"))
+    catalogRead = new Promise<void>((resolve) => {
+      releaseCatalogRead = resolve;
+    });
   const makeSet = (empty = false) =>
     signed(member, {
       kind: 30030,

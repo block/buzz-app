@@ -453,7 +453,7 @@ it("a chord recorded with the Windows key off Apple platforms lists no shortcut"
     );
     expect(screen.queryAllByRole("article")).toEqual([]);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "No shortcuts use the Windows key",
+      "No shortcuts use the Windows/Command key",
     );
   } finally {
     await h.dispose();

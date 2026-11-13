@@ -610,7 +610,7 @@ export function ShortcutSettings({
                 icon={<KeyboardIcon size={24} />}
                 title={
                   windowsKey
-                    ? "No shortcuts use the Windows key"
+                    ? "No shortcuts use the Windows/Command key"
                     : filter.chord
                       ? `Nothing is mapped to ${formatBinding(filter.chord, apple).text}`
                       : "No shortcuts match"

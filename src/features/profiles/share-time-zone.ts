@@ -163,6 +163,9 @@ async function attemptShare({
     await write;
     return true;
   } catch {
+    // Unpublished: let the next fresh read try again.
+    pairs.delete(key);
+    storeSettled();
     return false;
   }
 }

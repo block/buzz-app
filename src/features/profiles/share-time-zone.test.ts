@@ -307,3 +307,13 @@ it("remembers on this device that a community was settled, across launches", asy
     vi.unstubAllGlobals();
   }
 });
+
+it("publishes nothing after a failed publication and tries again on the next read", async () => {
+  const events = [profile(viewer, { name: "Mic" })];
+  const failed = share(Promise.resolve(events));
+  failed.publish.mockRejectedValueOnce(new Error("offline"));
+  expect(await failed.shared).toBe(false);
+  const next = share(Promise.resolve(events));
+  expect(await next.shared).toBe(true);
+  expect(next.publish).toHaveBeenCalledOnce();
+});

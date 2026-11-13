@@ -576,6 +576,16 @@
     font-weight: var(--type-weight-medium);
   }
 
+  /* The chips and See all ease their hover fill and ink. The rail and the
+     rows follow Tab and the arrows, so they change at once. */
+  .search-peek-see-all,
+  .search-peek-hint,
+  .search-peek-ask-chip {
+    transition-property: background-color, color;
+    transition-duration: var(--duration-state);
+    transition-timing-function: var(--easing-state);
+  }
+
   /* Filters to add, each with its kind's dot. */
   /* One height for the filters and the Ask chip that replaces them. */
   .search-peek-hints {

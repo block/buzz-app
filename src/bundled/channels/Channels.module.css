@@ -943,7 +943,8 @@ details:not([open]) > summary .sectionChevron {
 /* Plugins draw their own launcher icons; the host's stroke keeps the row a set. */
 .channelLaunchers [class~="buzz-button-label"] svg,
 .channelLaunchers [class~="buzz-button-label"] svg * {
-  stroke-width: 2;
+  /* biome-ignore lint/complexity/noImportantStyles: Plugin icons may set an inline stroke-width. */
+  stroke-width: 2 !important;
 }
 .channelDrawer {
   --panel-motion-exit-duration: 0ms;

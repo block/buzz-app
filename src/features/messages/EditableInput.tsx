@@ -567,7 +567,9 @@ export function EditableInput({
     };
     // A long paste paints as text first; its chips follow after that paint, so
     // building every chip's artwork never delays the pasted text appearing.
-    let tokensDeferred = false;
+    // Until then no pass adopts chips inside the pasted text, so none enters
+    // a history event; the reconcile that adopts them stays out of history.
+    let pendingTokens: { from: number; to: number }[] = [];
     const normalize = new Plugin({
       filterTransaction(tr) {
         return (
@@ -577,6 +579,28 @@ export function EditableInput({
         );
       },
       appendTransaction(transactions, old, state) {
+        for (const tr of transactions) {
+          pendingTokens = pendingTokens
+            .map(({ from, to }) => ({
+              from: tr.mapping.map(from, 1),
+              to: tr.mapping.map(to, -1),
+            }))
+            .filter(({ from, to }) => from < to);
+          const pasted = tr.getMeta("composer-defer-tokens");
+          if (!pasted) continue;
+          if (!pendingTokens.length)
+            requestAnimationFrame(() =>
+              setTimeout(() => {
+                if (editor.isDestroyed || !pendingTokens.length) return;
+                pendingTokens = [];
+                const tr = editor.state.tr
+                  .setMeta("composer-decorations", true)
+                  .setMeta("addToHistory", false);
+                editor.dispatch(editor.hasFocus() ? tr.scrollIntoView() : tr);
+              }),
+            );
+          pendingTokens.push(pasted);
+        }
         if (
           !transactions.some(
             (tr) => tr.docChanged || tr.getMeta("composer-decorations"),
@@ -595,38 +619,10 @@ export function EditableInput({
             .find((tr) => tr.getMeta("composer-edit"))
             ?.getMeta("composer-edit"),
         );
-        // A long paste adopts the chips wholly inside its text after the next
-        // paint. Everything else this pass does stays in the paste's own step.
-        let deferred: { start: number; end: number } | undefined;
-        const pasted = transactions.findIndex((tr) =>
-          tr.getMeta("composer-defer-tokens"),
-        );
-        if (pasted >= 0) {
-          const range: { from: number; to: number } = transactions[
-            pasted
-          ]?.getMeta("composer-defer-tokens");
-          let { from, to } = range;
-          for (const tr of transactions.slice(pasted + 1)) {
-            from = tr.mapping.map(from, -1);
-            to = tr.mapping.map(to, 1);
-          }
-          deferred = { start: next.source(from), end: next.source(to) };
-          if (!tokensDeferred) {
-            tokensDeferred = true;
-            requestAnimationFrame(() =>
-              setTimeout(() => {
-                tokensDeferred = false;
-                if (editor.isDestroyed) return;
-                const tr = editor.state.tr
-                  .setMeta("composer-decorations", true)
-                  .setMeta("addToHistory", false);
-                editor.dispatch(editor.hasFocus() ? tr.scrollIntoView() : tr);
-              }),
-            );
-          }
-        } else if (tokensDeferred && !transactions.some((tr) => tr.docChanged))
-          // Until then a reconcile without edits would adopt them before paint.
-          return;
+        const deferred = pendingTokens.map(({ from, to }) => ({
+          start: next.source(from),
+          end: next.source(to),
+        }));
         const safe = mentionDraft(next.draft);
         const decorations = current.current
           .decorationsFor(safe)
@@ -695,9 +691,9 @@ export function EditableInput({
           if (next.source(from) !== item.start || next.source(to) !== item.end)
             continue;
           if (
-            deferred &&
-            item.start >= deferred.start &&
-            item.end <= deferred.end
+            deferred.some(
+              (range) => item.start >= range.start && item.end <= range.end,
+            )
           )
             continue;
           tr.replaceWith(
@@ -2548,6 +2544,7 @@ export function EditableInput({
           return () => {
             if (view.current !== editor) return;
             plain.current = savedPlain;
+            pendingTokens = [];
             separateHistory = savedSeparateHistory;
             emitted.current = savedDraft;
             editor.updateState(saved);
@@ -2688,6 +2685,7 @@ export function EditableInput({
         )
           return;
         plain.current = [];
+        pendingTokens = [];
         const doc = readComposerDocument(
           next,
           current.current.decorationsFor(next),

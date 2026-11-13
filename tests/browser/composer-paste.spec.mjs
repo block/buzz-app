@@ -470,6 +470,10 @@ test("a long paste keeps identity links as recipients", async ({
   await input.press("ControlOrMeta+z");
   await expect(input).toHaveJSProperty("value", filler);
   await expect(recipients).toBeHidden();
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "");
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty("value", filler);
   await input.press("ControlOrMeta+Shift+z");
   await expect(input.locator(".inline-chip")).toHaveText("@Fixture Reader");
   await expect(recipients).toBeVisible();
@@ -479,6 +483,57 @@ test("a long paste keeps identity links as recipients", async ({
     "p",
     app.viewer,
   ]);
+});
+
+// Chips still pending from a long paste stay out of the next edit's undo
+// step, so undo and redo walk both pastes in order.
+test("undo and redo walk pastes made before deferred chips render", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const long = (name) =>
+    Array.from(
+      { length: 20 },
+      (_, line) =>
+        `${name} line ${line} links https://example.com/${name}/${line} for review.`,
+    ).join("\n");
+  const first = long("first");
+  await input.click();
+  for (const second of [`\n${long("second")}`, " https://example.com/short"]) {
+    await input.evaluate(
+      (element, texts) => {
+        for (const text of texts) {
+          const clipboardData = new DataTransfer();
+          clipboardData.setData("text/plain", text);
+          element.dispatchEvent(
+            new ClipboardEvent("paste", {
+              bubbles: true,
+              cancelable: true,
+              clipboardData,
+            }),
+          );
+        }
+      },
+      [first, second],
+    );
+    const chips = second.length > 100 ? 40 : 21;
+    await expect(input.locator("[data-source]")).toHaveCount(chips);
+    await input.press("ControlOrMeta+z");
+    await expect(input).toHaveJSProperty("value", first);
+    await input.press("ControlOrMeta+z");
+    await expect(input).toHaveJSProperty("value", "");
+    await input.press("ControlOrMeta+Shift+z");
+    await expect(input).toHaveJSProperty("value", first);
+    await input.press("ControlOrMeta+Shift+z");
+    await expect(input).toHaveJSProperty("value", `${first}${second}`);
+    await expect(input.locator("[data-source]")).toHaveCount(chips);
+    await input.fill("");
+  }
 });
 
 // A long paste joined onto a link or a mention changes them in its own undo

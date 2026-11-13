@@ -94,6 +94,9 @@ bundled/inbox/          builtin Inbox page for unread conversations and mentions
 The host composes the conversation sidebar (Solo and Team inventories) beside
 independently mounted pages. Settings supplies its own modal navigation; a selected
 page can replace the conversation sidebar through its optional `sidebar` contribution.
+A page can set `conversationNavigation: true` to keep the Messages sidebar and
+dock selection. This also applies to pages with `primary: false`; it does not add
+a navigation row. Without this option, the page keeps its own navigation owner.
 The conversation sidebar reuses session-owned roster, unread, creation and
 preferences capabilities; it does not
 retain a hidden Channels page or message reader. Sidebar and page render errors
@@ -161,9 +164,10 @@ invalid.
 `buzz://plugin-install?id=<plugin-id>&url=<encoded-https-url>&sha256=<64-hex>` names
 a single packed artifact (see `buzzodz plugin pack`) instead of a repository. Buzz
 downloads it, refuses it unless its SHA-256 and plugin ID match, and opens the same
-review as a recommended plugin. If the plugin is already installed from Git, a folder
-or an unknown source, Buzz says so before downloading anything and offers
-**Open plugin**, where it can be deleted first. It never mixes with the Git keys, and
+review as a recommended plugin. A plugin installed from Git updates in place, and the
+review explains that the URL replaces the saved Git source. If the plugin is already
+installed from a folder or an unknown source, Buzz says so before downloading anything
+and offers **Open plugin**, where it can be deleted first. It never mixes with the Git keys, and
 each key may appear once.
 
 The link fetches a preview through the existing importer. Review the plugin and
@@ -376,6 +380,30 @@ See [foundation status and open gates](status.md) for maintained decisions,
 remaining acceptance work and historical evidence.
 
 ## Starting contracts
+
+### Subject lift
+
+A plugin can lift the subject out of a message image, as Photos and Messages do
+for stickers. Read the optional `subjectLift` service with
+`ctx.reflect.get("subjectLift")`; it is `undefined` on older hosts.
+
+```ts
+type SubjectLift = {
+  supports(source: string): boolean;
+  lift(source: string, signal?: AbortSignal): Promise<File>;
+};
+```
+
+`source` is what `session.media(attachment.url)` returned. `supports` is true
+only for desktop media URLs on a host that can lift, which today means the Mac
+app on macOS 14 or later, so check it before offering the action. `lift` resolves with the image's subjects over a transparent
+background, cropped to them and at most 512 px on the longer side, as a
+metadata-free PNG that `session.emoji.upload` accepts. It rejects with the
+host's reason, for example when no subject is found, the image is not GIF,
+JPEG, PNG or WebP, or the image is too large. The result is a still image, so
+an animated GIF or WebP loses its animation; offer the whole image for those.
+The host fetches the authenticated media and runs Vision's foreground instance
+mask (`media_lift_subject`); the plugin never receives media credentials.
 
 ### Plugin installer
 
@@ -615,9 +643,10 @@ install and still resolves `updated`.
 Hosts that accept only Git leave it out, so check it before requesting a URL source.
 A URL request skips the Git dialog: Buzz downloads the artifact, refuses it unless
 its SHA-256 and plugin ID match, and shows the access review for the owner to
-confirm. It can install a new plugin or update one installed from a URL. A plugin
-installed from Git, a folder or an unknown source is refused before the download,
-as a link is.
+confirm. It can install a new plugin or update one installed from a URL or Git.
+For Git installations, the review explains that the URL replaces the saved Git
+source. A plugin installed from a folder or an unknown source is refused before
+the download, as a link is.
 
 A Git request can install a new plugin, or update an installed plugin only from the same
 saved Git repository and folder. A plugin already installed from another source,
@@ -909,8 +938,11 @@ lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
 `call(client, context, args)` can read `client.signal`, a host-owned
-`AbortSignal` captured for that call. Native Claude and Codex cancel it on
-Stop. Keep that exact signal across waits. Pass it to work that supports
+`AbortSignal` captured for that call. Native Claude, Codex and Goose cancel it on
+Stop. Goose captures the current ACP work burst: steers share its signal, and
+Stop, eligible final-message settlement, normal completion, failure or session close abort
+it. Calls before a Goose session starts work or while idle receive an aborted
+signal; agent retirement also aborts captured calls. Keep that exact signal across waits. Pass it to work that supports
 cancellation, then call `signal.throwIfAborted()` before an external write.
 A new turn does not restore a canceled call. The supplied client also checks
 cancellation before it publishes. Stop cannot undo a write already sent.
@@ -930,8 +962,80 @@ close a section, so a transcript shows which plugin said what. The agent follows
 it below the base prompt and the owner's requests. Each turn carries the
 complete current set, replacing earlier turns', so turning the plugin off or a
 `when(agent)` that stops returning `true` ends them. Write the text yourself and
-keep it short: it is sent with every turn. Context for one turn belongs in a
-note, which the agent reads as data.
+keep it short: it is sent with every turn. `addInstructions` throws on text over
+4096 UTF-8 bytes after trimming. Context for one turn belongs in a note, which
+the agent reads as data.
+
+`ctx.agents.setConversationInstructions(agent, { channelId, root? }, text)`
+gives one of the owner's local agents standing instructions in one
+conversation, at most 8192 UTF-8 bytes after trimming; empty text clears them.
+Each of that agent's turns there shows them in an `<owner-instructions
+source="…">` section after the plugin instructions, escaped the same way, and
+the base prompt ranks them below the owner's messages and above a Solo chat's
+Canvas. They are kept on this device for now. `conversationInstructions(agent,
+place)` resolves with the text. See [Agents](agents.md).
+
+### Agent operation proofs
+
+A plugin can provide an operation that another installed plugin calls from a
+native agent tool. The provider calls
+`ctx.agents.createToolOperation("proposal")`. It keeps the returned `resolve`
+method private and shares only `operation` with consumers.
+
+A consumer sets `operation` on its `AddedTool`. It passes the fourth `call`
+argument, the opaque proof, and the unchanged tool arguments to the provider API.
+The provider calls `resolve(proof, args)` once. This returns the host client,
+source conversation, viewer, community origin, exact cancellation signal, and
+`check()`. The client holds
+the agent membership key and owner. It does not include device settings.
+
+```js
+// Provider activation. Share operation, never resolve.
+const proposal = ctx.agents.createToolOperation("proposal");
+const operation = proposal.operation;
+
+// Inside the provider API. Validate args before use.
+async function create(proof, args) {
+  const authority = proposal.resolve(proof, args);
+  const source = await readSource(authority.client, authority.context, args);
+  authority.check();
+  return journal.accept(() => {
+    authority.check();
+    return saveProposal(source, args);
+  });
+}
+
+// Consumer activation. The provider supplies operation and create.
+ctx.agents.addTool({
+  name: "example_propose",
+  description: "Propose a question.",
+  inputSchema: proposalSchema,
+  operation,
+  call: (_client, _context, args, proof) => create(proof, args),
+});
+```
+
+Native Claude and Codex supply proofs for these tools. Other runtimes, remote
+execution targets, external connections and ordinary UI callbacks cannot obtain
+one. A missing or fabricated descriptor fails before the consumer tool runs.
+A protected agent checks the provider operation and exact arguments in addition
+to the consumer tool. A review of another tool does not approve this operation.
+
+The proof permits one resolution for one operation and exact JSON argument
+value. Object key order does not matter. Array order, extra fields and every
+field value do matter. Keep the original args unchanged through admission;
+validate and normalize into a separate domain value. A copied proof has no
+authority. A proof cannot be saved, serialized, retried or used after `call`
+returns. A rejected local write needs a new agent call.
+
+The current check fails after cancellation, turn completion, agent retirement,
+plugin unload, a community session change, reconnection or source access loss.
+The provider must call it after awaited reads and inside the synchronous local
+admission callback. The proof does not replace source validation, membership
+refresh, consumer lifecycle checks or publication access checks in the domain.
+It authorizes local admission while the call is active. It does not grant later
+publication authority. These checks add no relay reads.
+
 
 The bundled **Plugin development** plugin (`buzz.plugin-development`, on by
 default) gives local agents three tools. `plugin_authoring_guide` returns
@@ -951,10 +1055,11 @@ plugin's folder can replace that plugin's code, though not its host access,
 without a new review. Plugin code is trusted and unsandboxed, so only load folders
 that the agents you run may change.
 
-`ctx.agents.wake(pubkey, { channel, root?, text })` wakes an agent this copy of
+`ctx.agents.wake(pubkey, { channel, root?, topLevel?, text })` wakes an agent this copy of
 the app runs in one of its conversations, as a mention there would, with no
 message. `root` is the thread's root event id (64 hex); leave it out for a Solo
-chat. The agent is told
+chat. `topLevel: true`, without `root`, wakes it at the top level of a channel
+that is not a Solo chat, for example to start a new thread there. The agent is told
 the text comes from the plugin, not its owner, and is data, so quote what others
 wrote (comments, check output) rather than phrasing it as instructions. It
 throws when this copy does not run the agent or its queue is full. Claude, Codex and Goose accept plugin wakes; Pi ignores them. Attention delivery uses a separate internal `attention` trigger in the Interest lane, accepted by all four harnesses. Its Interest instructions retain their instruction framing, while observed messages remain data. A channel-only Attention address supplies a default posting destination and allows explicit thread replies outside Solo chats.
@@ -1839,8 +1944,9 @@ program such as `base64` or `pwd` that Windows lacks.
 missing file rejects with an error whose message contains "No such file".
 `ctx.host.resolveDirectory(path)` returns an absolute or `~/…` directory as an
 absolute path without symbolic links, in the platform's ordinary form, and
-creates it if missing, as a process's `cwd` is. Both act with the user's full
-access; the import preview says so.
+creates it if missing, as a process's `cwd` is; with `{ create: false }` a
+missing path, or one that is not a directory, rejects instead. Both act with
+the user's full access; the import preview says so.
 
 `ctx.host.repositoryFolders(binding, signal)` lists the repositories folder that
 the binding's community and account configured in **Local settings**, or the

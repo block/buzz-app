@@ -504,6 +504,8 @@ export class GooseRuntime {
             entry,
             wait ? (await prompt(false, key)).text : prepared,
             notes,
+            channel,
+            noteRoot,
           );
           if (interrupted || this.agents.get(agent.key) !== entry) {
             delivered = Promise.resolve({ ok: true, undelivered: true });
@@ -526,6 +528,8 @@ export class GooseRuntime {
                       entry,
                       (await prompt(fresh, key)).text,
                       notes,
+                      channel,
+                      noteRoot,
                     );
                     return text;
                   },
@@ -533,7 +537,13 @@ export class GooseRuntime {
               : {}),
             steer: steerPrompt(text),
             fresh: async () =>
-              this.review(entry, (await prompt(true, key)).text, notes),
+              this.review(
+                entry,
+                (await prompt(true, key)).text,
+                notes,
+                channel,
+                noteRoot,
+              ),
             title: sessionTitle(entry.name, place, key.split("/")[1]),
             // A Solo chat takes the name goose gives its first session.
             ...(solo && named ? { named } : {}),
@@ -631,9 +641,15 @@ export class GooseRuntime {
   }
 
   /** `text` with the notes plugins left for the turn and the Buzz tools'
-   * end-of-turn note, when there are any. */
-  private review(entry: Entry, text: string, notes: readonly string[] = []) {
-    return [text, ...notes, turnNote(entry.handle)]
+   * end-of-turn note for its conversation, when there are any. */
+  private review(
+    entry: Entry,
+    text: string,
+    notes: readonly string[],
+    channelId: string,
+    root: string | undefined,
+  ) {
+    return [text, ...notes, turnNote(entry.handle, channelId, root)]
       .filter(Boolean)
       .join("\n\n");
   }
@@ -824,14 +840,19 @@ export class GooseRuntime {
     };
     // Every session of the agent shares them, so they read the settings, the
     // handle and the conversation's place as they are when called.
-    const tools: ToolServer = async (conversation, message) => {
+    const tools: ToolServer = async (conversation, message, workSignal) => {
       const handle = entry.handle;
       // A call in a conversation answers only while its turn runs unstopped.
       const current = conversation && entry.sessions.current(conversation);
+      const signal = AbortSignal.any([
+        entry.lifetime.signal,
+        workSignal ?? AbortSignal.abort(new Error("The turn has ended")),
+      ]);
       const client =
         handle &&
         appClient(handle, {
-          signal: entry.lifetime.signal,
+          signal,
+          callSignal: signal,
           ...(current && {
             check: () => {
               if (!current()) throw new Error("The Goose turn has ended");
@@ -921,14 +942,13 @@ export class GooseRuntime {
         model: entry.config.model.trim(),
         effort: entry.config.effort,
       }),
+      // The prompt's other parts, its instructions, team, name and core
+      // memory, reach a running session in place as its next turn starts.
       fingerprint: () =>
         JSON.stringify([
           entry.config.provider.trim() ? 0 : this.defaultsRevision,
           entry.config.workspace,
-          entry.config.instructions,
           entry.config.scope,
-          entry.team,
-          entry.name,
           addedKey(this.added()),
         ]),
       launch: async () => {

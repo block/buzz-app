@@ -33,7 +33,7 @@ checked against each job's checksums before assembly. If a job fails, use
 and publication rejects mixed-version artifacts. Windows/Linux previews are not
 Authenticode-signed Windows releases or evidence of completed desktop acceptance.
 
-Runs are scheduled at **00:17, 06:17, 12:17, and 18:17 UTC**. To start one manually:
+Previews run only when someone dispatches the workflow:
 
 ```sh
 gh workflow run release.yml --repo block/buzz-app --ref main
@@ -59,7 +59,6 @@ administrator password.
 
 The release automatically promotes each eligible build to the rolling preview
 feed after the signed prerelease is published and the promotion gate passes.
-This includes scheduled runs and manual builds without `promote_version`.
 An updater-less artifact, invalid signature, or rollback leaves the existing feed
 unchanged, but the promotion job fails and needs investigation. The workflow
 does **not** publish to the legacy `block/buzz` updater. Older installed apps
@@ -124,7 +123,7 @@ and compares the GitHub API asset; this is not evidence of public endpoint
 availability. Confirm the endpoint in an installed client after the first
 promotion. GitHub asset replacement can briefly return 404 while the old asset
 is replaced. Promotion is serialized with the release workflow, and a failed
-upload needs investigation before the next scheduled run.
+upload needs investigation before the next preview run.
 Recover from a broken feed by promoting a higher tested build; for key loss or
 client failure, distribute a manually installed build (an Apple-signed DMG on macOS). Do not assume
 rolling back a signed archive can undo an installed update.
@@ -430,8 +429,11 @@ build` runs it through `beforeBuildCommand`; `just desktop` runs it with `--dev`
 (a debug build, and a failure only warns). It selects `TAURI_ENV_TARGET_TRIPLE`
 or the host, installs under `target/buzz-cli/<rev>/<target>/<profile>`, which
 lets Cargo skip an install that is already current, and replaces the staged file
-atomically. Linked worktrees use the main checkout's `target/`, so they share
-one build of each revision. A first release build takes about two minutes.
+atomically. Each revision also builds in its own `target/buzz-cli-build/<rev>`:
+Cargo trusts an earlier build of a git checkout even after the revision changes,
+so a shared build directory would stage the old CLI after a bump. Linked
+worktrees use the main checkout's `target/`, so they share one build of each
+revision. A first release build takes about two minutes.
 
 The macOS release signing service signs the executable with the Developer ID
 certificate and the hardened runtime, as it does `goose-acp` and
@@ -463,7 +465,7 @@ gh workflow run release.yml --repo block/buzz-app \
   --ref <candidate-branch> -f candidates=true
 ```
 
-Scheduled runs and dispatches without this switch build and publish all three
+Dispatches without this switch build and publish all three
 platforms. A `promote_version` recovery run skips all platform builds and only
 updates the feed. Candidate-only runs remain artifact-only, are built without the updater, and can run from
 a feature branch, without signing credentials or publication. They use the same

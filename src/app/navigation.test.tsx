@@ -834,6 +834,75 @@ it("retires every visit to addressed plugin settings on Close", async () => {
   ).not.toBeInTheDocument();
 });
 
+it("Close retires a plugin install link's Settings visit with the others", async () => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  activation.release();
+  const current = createServices();
+  services = current;
+  render(<App services={current} />);
+  await waitFor(() =>
+    expect(current.navigation.snapshot().status).not.toBe("opening"),
+  );
+  const beneath = current.navigation.snapshot().entry;
+  const plugins = { version: 1, kind: "settings", section: "plugins" } as const;
+  // A buzz://plugin-install link opens this target. jsdom has no desktop
+  // importer, so its review dialog stays hidden, but the visit is recorded.
+  const link = {
+    ...plugins,
+    pluginImport: {
+      repository: "https://github.com/org/repo",
+      reference: "main",
+    },
+  };
+  const openLink = async () => {
+    void current.navigation.open(plugins);
+    await screen.findByRole("dialog", { name: "Settings" });
+    await waitFor(() =>
+      expect(current.navigation.snapshot().status).toBe("opened"),
+    );
+    void current.navigation.open(link);
+    await waitFor(() =>
+      expect(current.navigation.snapshot()).toMatchObject({
+        status: "opened",
+        entry: { target: link },
+      }),
+    );
+    return current.navigation.snapshot().entry.id;
+  };
+  const close = async (from: object = plugins) => {
+    await waitFor(() =>
+      expect(current.navigation.snapshot().entry.target).toEqual(from),
+    );
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Settings" }), {
+      key: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+    );
+    expect(current.navigation.snapshot().entry).toEqual(beneath);
+    expect(current.navigation.snapshot().canGoForward).toBe(false);
+  };
+  // Closing the review dismisses its visit as dismissPluginImport does. The
+  // driver steps back onto the same Plugins visit and keeps the dismissed one.
+  const visit = await openLink();
+  current.navigation.dismiss([visit], plugins);
+  await close();
+  // After Back, the link's visit is a Forward stop until Close retires it.
+  await openLink();
+  current.navigation.back();
+  await close();
+  // With no importer (the browser build), Close runs from the link's visit.
+  await openLink();
+  await close(link);
+});
+
 it("Back closes Settings onto the view beneath and Forward reopens it; other shortcuts stay blocked", async () => {
   vi.stubGlobal(
     "ResizeObserver",

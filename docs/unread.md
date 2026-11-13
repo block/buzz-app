@@ -179,8 +179,8 @@ viewport):
   backdated delivery is history, not an arrival). That row must be
   `oldestUnreadId`, with `sampled` when entry history was incomplete, and sit
   below a row a channel-wide read reaches. Once entry settles, the timeline
-  holds its reading from blur until it decides, waiting only while the window
-  refreshes or pages. Unread history, unresolved row attention (`unknown` or
+  holds its reading from blur until it decides, waiting only while the head
+  read the window is owed is in flight or queued. Unread history, unresolved row attention (`unknown` or
   `pending`), a read revision changed since attention left, or evidence that is
   not observed and complete settles it with no divider and reading resumes at
   once. A placed divider never moves.

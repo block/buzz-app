@@ -216,3 +216,48 @@ it("a click that dismisses a modal leaves focus to the modal's own return", asyn
   await settle();
   expect(screen.getByRole("textbox", { name: "Main draft" })).not.toHaveFocus();
 });
+
+it("a modal still closing does not hold back the click after it", async () => {
+  const user = userEvent.setup();
+  render(
+    <>
+      <Shell />
+      <div role="dialog" aria-modal="true" aria-label="Search" data-closed="">
+        Search
+      </div>
+    </>,
+  );
+  await user.click(screen.getByText("Main message"));
+  await settle();
+  expect(screen.getByRole("textbox", { name: "Main draft" })).toHaveFocus();
+});
+
+it("a link click leaves focus to what the link opens", async () => {
+  const user = userEvent.setup();
+  render(
+    <main id="main-content">
+      <div data-main-workspace="">
+        <section data-message-scroller="">
+          <div data-message-id="a" tabIndex={-1}>
+            <a
+              href="https://example.test/photo.png"
+              onClick={(event) => event.preventDefault()}
+            >
+              <span>Open image attachment</span>
+            </a>
+          </div>
+        </section>
+        <textarea data-tab-focus="" aria-label="Main draft" />
+      </div>
+    </main>,
+  );
+  const tile = screen.getByRole("link", { name: "Open image attachment" });
+  // WebKit focuses the row, not the link, when a pointer activates it.
+  tile.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    tile.closest<HTMLElement>("[data-message-id]")?.focus();
+  });
+  await user.click(screen.getByText("Open image attachment"));
+  await settle();
+  expect(screen.getByRole("textbox", { name: "Main draft" })).not.toHaveFocus();
+});

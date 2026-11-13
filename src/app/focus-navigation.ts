@@ -98,8 +98,10 @@ export function paneFocusTarget(pane?: "main" | "side") {
 }
 
 // Places a click keeps for itself: editing, embedded apps, terminals, overlays,
-// find, stateful controls and tab strips (tab selection focuses its content).
+// find, stateful controls, tab strips (tab selection focuses its content) and
+// links, which open their own destination (a media review returns to its tile).
 const OWNS_CLICK = [
+  "a[href]",
   "input",
   "textarea",
   "select",
@@ -122,9 +124,10 @@ const OWNS_CLICK = [
   '[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]',
 ].join(", ");
 
-// Open layers a click outside dismisses; their own close returns focus.
+// Open layers a click outside dismisses; their own close returns focus. A layer
+// still mounted for its closing motion has already returned it.
 const DISMISSIBLE =
-  '[aria-modal="true"], [role="menu"], [role="listbox"], [data-open][data-side]';
+  '[aria-modal="true"]:not([data-closed]), [role="menu"]:not([data-closed]), [role="listbox"]:not([data-closed]), [data-open][data-side]';
 
 // Containers a click focuses only as a side effect: a message row (selectable
 // by keyboard), its history scroller, or the pane itself.

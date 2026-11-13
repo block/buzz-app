@@ -646,6 +646,33 @@ describe("serializeNode", () => {
     });
   });
 
+  it("copies an unselectable reaction row as its stated counts", () => {
+    const body = mount(
+      row(
+        '<p>hello</p><div role="group" aria-label="Reactions" data-copy-text="👍 2, :party: 1"><button>👍<span>2</span></button></div>',
+      ) + row("<p>next</p>", "m2"),
+    );
+    const { range } = select(
+      query("p", body).firstChild as Text,
+      0,
+      lastText(query('[data-message-id="m2"] p', body)),
+      4,
+    );
+    expect(each(body, range)).toEqual({
+      text: "hello\n👍 2, :party: 1\nnext",
+      markdown: "hello\n👍 2, :party: 1\nnext",
+      html: "<p>hello</p><p>👍 2, :party: 1</p><p>next</p>",
+    });
+    // A selection that ends before the row leaves it out.
+    const before = select(
+      query("p", body).firstChild as Text,
+      0,
+      query("p", body).firstChild as Text,
+      5,
+    ).range;
+    expect(serializeNode(body, "text", before)).toBe("hello");
+  });
+
   it("spaces a byline's name and time, which only a flex gap separates", () => {
     const body = mount(
       row(

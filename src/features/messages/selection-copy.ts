@@ -73,6 +73,15 @@ function serialize(
   if (node.nodeType === Node.TEXT_NODE)
     return text(clip(node as Text, range), format);
   if (!(node instanceof Element)) return children(node, format, range);
+  // Unselectable chrome that still carries context, such as reaction counts,
+  // states its copy text.
+  const copyText = node.getAttribute("data-copy-text");
+  if (copyText !== null) {
+    if (!copyText || !holds(node, range)) return "";
+    return format === "html"
+      ? `<p>${text(copyText, format)}</p>`
+      : text(copyText, format);
+  }
   if (unselectable(node)) return "";
   // This module's own delimiter markup; the spoiler branch writes it afresh.
   if (node.hasAttribute("data-spoiler-delimiter")) return "";

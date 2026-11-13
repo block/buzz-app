@@ -308,7 +308,8 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   align-items: center;
   gap: var(--space-1);
   margin: var(--space-1h) 0 0;
-  /* Reactions and reply summaries are controls, not conversation text. */
+  /* Reactions and reply summaries are controls, not conversation text;
+     a copy states reaction counts from the group's data-copy-text. */
   user-select: none;
 }
 .reactions[data-populated],

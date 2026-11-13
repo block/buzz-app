@@ -6,7 +6,10 @@ import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
-import { formatItemTimestamp } from "../../shared/datetime";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
 import { useClockPreference } from "../../shared/clock-preference";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
@@ -1372,6 +1375,17 @@ function MessageRowContent({
                     </MessageCard>
                   ) : (
                     body
+                  )}
+                  {row.moved && (
+                    <div
+                      className={`${styles.movedTimestamp} text-caption text-subtle`}
+                      data-dm-move-timestamp=""
+                    >
+                      Originally sent{" "}
+                      <time dateTime={new Date(row.moved.ms).toISOString()}>
+                        {formatFullTimestamp(row.moved.ms / 1000)}
+                      </time>
+                    </div>
                   )}
                   {editedInBubble && shown.edited && <EditedMarker />}
                   {reactionsInBubble && reactionContent}

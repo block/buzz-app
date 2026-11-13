@@ -1676,6 +1676,55 @@ function renderMessage(
   );
 }
 
+it.each(["timeline", "thread", "continuation"] as const)(
+  "shows the original date on every copied %s message, including grouped rows",
+  (layout) => {
+    const original = new Date(2020, 0, 2, 15, 4, 5, 123);
+    const copied: ChannelMessage = {
+      ...row,
+      createdAt: new Date(2026, 10, 7, 18).getTime() / 1000,
+      moved: {
+        move: "00000000-0000-4000-8000-000000000001",
+        original: "a".repeat(64),
+        ms: original.getTime(),
+      },
+    };
+    setClockPreference({ hourCycle: "h12" });
+    const view = renderMessage({ row: copied, layout, stackPrevious: true });
+    try {
+      const caption = view.container.querySelector("[data-dm-move-timestamp]");
+      expect(caption).toBeVisible();
+      expect(caption).toHaveTextContent(
+        "Originally sent Thursday, January 2, 2020",
+      );
+      expect(caption).toHaveTextContent("3:04:05 PM");
+      expect(caption?.querySelector("time")).toHaveAttribute(
+        "datetime",
+        original.toISOString(),
+      );
+      act(() => setClockPreference({ hourCycle: "h23" }));
+      expect(caption).toHaveTextContent("15:04:05");
+      expect(caption).not.toHaveTextContent("PM");
+      view.rerender(
+        <MessageRow
+          row={row}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => false}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      expect(
+        view.container.querySelector("[data-dm-move-timestamp]"),
+      ).toBeNull();
+    } finally {
+      view.unmount();
+      setClockPreference({ hourCycle: "system" });
+    }
+  },
+);
+
 it.each([
   { channelType: "solo", visible: false },
   { channelType: "stream", visible: true },

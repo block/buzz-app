@@ -11,12 +11,14 @@ afterEach(() => {
 function registered() {
   const shortcuts = { register: vi.fn() };
   apply({
+    effect() {},
     shortcuts,
     conversation: {
       registerCompletion() {},
       registerTabs() {},
       registerWorkspace() {},
       registerMessageAction() {},
+      registerMessage() {},
     },
     settingsCards: { register() {} },
     pages: { register() {} },

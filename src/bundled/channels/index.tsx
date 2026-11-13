@@ -1,3 +1,11 @@
+import { MenuItem, MenuIcon } from "../../shared/design-system/ui/Menu";
+import { bindDmMoves } from "../../features/dm-moves/coordinator";
+import { nativeMoveAgentHost } from "../../features/dm-moves/native";
+import {
+  DmMoveMessage,
+  canConvertDm,
+  openDmMove,
+} from "../../features/dm-moves/DmMove";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
@@ -7,7 +15,11 @@ import { ChannelsPage } from "./ChannelsPage";
 import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
+import {
+  ChatCircleIcon,
+  CopyIcon,
+  MessageReplyIcon,
+} from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
 import {
@@ -44,6 +56,33 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ));
   const relay = ctx.relay;
   const navigator = ctx.navigation;
+  ctx.effect(() => bindDmMoves(relay, nativeMoveAgentHost()));
+  ctx.conversation.registerMessage({
+    id: "dm-move-request",
+    title: "Convert DM to thread",
+    matches: (message) => !!message.dmMove,
+    component: ({ message }) => (
+      <DmMoveMessage relay={relay} navigation={navigator} message={message} />
+    ),
+  });
+  ctx.conversation.registerMessageAction({
+    id: "dm-move-from-message",
+    title: "Convert to thread from here",
+    placement: "menu",
+    icon: () => <MessageReplyIcon size={16} aria-hidden="true" />,
+    matches: (message, session) =>
+      !message.dmMove &&
+      !message.threadRootId &&
+      canConvertDm(session, message.channelId),
+    component: ({ message, session, close }) => (
+      <DmMoveFromHere
+        message={message}
+        session={session}
+        navigation={navigator}
+        close={close}
+      />
+    ),
+  });
   ctx.conversation.registerMessageAction({
     id: "start-solo-chat",
     title: "Start Solo chat",
@@ -155,3 +194,29 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
   });
 };
+
+function DmMoveFromHere({
+  message,
+  session,
+  navigation,
+  close,
+}: {
+  message: import("../../features/relay/contracts").ChannelMessage;
+  session: import("../../features/relay/session").RelaySession;
+  navigation: import("../../features/navigation/controller").Navigation;
+  close(): void;
+}) {
+  return (
+    <MenuItem
+      onClick={() => {
+        close();
+        openDmMove(navigation, session, message.channelId, message.id);
+      }}
+    >
+      <MenuIcon>
+        <MessageReplyIcon size={16} aria-hidden="true" />
+      </MenuIcon>
+      Convert to thread from here
+    </MenuItem>
+  );
+}

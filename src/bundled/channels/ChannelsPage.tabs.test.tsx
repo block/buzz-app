@@ -51,8 +51,14 @@ import type { BrowserPlatform } from "../../features/browser/platform";
 composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
-const visitSnapshot = { entry: { id: "visit" }, attempt: {} };
-const threadVisitSnapshot = { entry: { id: "thread-visit" }, attempt: {} };
+const visitSnapshot = {
+  entry: { id: "visit", target: { version: 1, kind: "home" } },
+  attempt: {},
+};
+const threadVisitSnapshot = {
+  ...visitSnapshot,
+  entry: { ...visitSnapshot.entry, id: "thread-visit" },
+};
 beforeEach(() => {
   // jsdom has no layout/ResizeObserver. Only geometry is substituted; the page,
   // composer, session, tab store and menu interaction are production owners.

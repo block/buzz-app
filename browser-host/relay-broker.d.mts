@@ -28,3 +28,9 @@ export function validProductFeedback(event: {
   created_at: number;
   tags: unknown;
 }): boolean;
+export function validMessageTemplate(event: {
+  kind: number;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}): boolean;

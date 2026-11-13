@@ -621,6 +621,8 @@ export function RailNavigation({
           scope={scope}
           target={navigation.entry.target}
           view={counted}
+          // A list keeps its open row under Unread only; a count does not.
+          isOpen={() => false}
           includeChannel={(channel) => includeMessagesChannel(channel, counted)}
           renderEntries={(items) =>
             items.length ? (

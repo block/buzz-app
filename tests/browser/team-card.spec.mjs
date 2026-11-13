@@ -48,8 +48,13 @@ test("Team card opens its views and list rows drag onto sidebar cards", async ({
     index.getByRole("heading", { name: "No mentions yet" }),
   ).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("team-empty.png") });
-  await card.locator('[data-rail-team-view="dms"]').click();
+  const dms = card.locator('[data-rail-team-view="dms"]');
+  await dms.click();
   await expect(alpha).toHaveCount(0);
+  // Opening the unread DM clears it from the card's count.
+  await expect(dms).toContainText("1");
+  await index.locator("[data-activity-row] [data-conversation-row]").click();
+  await expect(dms).not.toContainText("1");
   await channels.click();
   await expect(alpha).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("team-card.png") });

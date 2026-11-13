@@ -598,6 +598,42 @@ export function ConversationList({
             (filter !== "channels" || kindOf(channel) === "team") &&
             (!agentView || channel.channelType === "solo"),
         );
+  // Unread only decides membership here, above the rows: opening a
+  // conversation quiets its row at once, and the list must follow at once
+  // too, not at the next Activity change.
+  const watched = unreadOnly
+    ? scoped.map((channel) => channel.id).join("\n")
+    : "";
+  const subscribeUnread = useCallback(
+    (listener: () => void) => {
+      const stops = (watched ? watched.split("\n") : []).flatMap((id) => [
+        session.unread.subscribe({ kind: "channel", channelId: id }, listener),
+        session.unread.subscribeActivity(id, listener),
+      ]);
+      return () => {
+        for (const stop of stops) stop();
+      };
+    },
+    [session, watched],
+  );
+  const unreadOf = useCallback(
+    () =>
+      (watched ? watched.split("\n") : [])
+        .map((id) =>
+          channelUnread(
+            session.unread.snapshot({ kind: "channel", channelId: id }),
+            true,
+          ) ||
+          (session.unread.activity(id).items ?? []).some(
+            (item) => item.unreadCount > 0,
+          )
+            ? "1"
+            : "0",
+        )
+        .join(""),
+    [session, watched],
+  );
+  useSyncExternalStore(subscribeUnread, unreadOf, unreadOf);
   const { latest: fetched, observe: previewRef } = useVisibleChannelPreviews(
     session,
     !flat && (filter === "waiting" || includeAuthor)
@@ -841,6 +877,8 @@ export function ConversationList({
             ...(event.rootId ? { threadRootId: event.rootId } : {}),
           })
         }
+        onPointerEnter={() => session.channels.prepare?.(event.channelId)}
+        onFocus={() => session.channels.prepare?.(event.channelId)}
         avatar={
           <Avatar
             size="fill"

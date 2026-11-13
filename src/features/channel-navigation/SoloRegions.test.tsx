@@ -1310,153 +1310,214 @@ it("keeps recovery chats reachable while distinguishing installed, unknown and n
   expect(screen.queryByText(/buzz\.region:/)).not.toBeInTheDocument();
 });
 
-it("shows explicitly disabled region chats once in the ordinary Solo inventory", async () => {
-  const h = fixture();
-  await h.register({
-    composeWorkspaces: true,
-    workspace: () => ({ id: "personal", file: async () => {} }),
-  });
-  const saved = {
-    sections: [{ id: "personal", name: "Personal", order: 0 }],
-    assignments: { owned: "personal" },
-    starred: [],
-    muted: [],
-  };
-  const preferences = { status: "ready" as const, data: saved };
-  Object.assign(h.session, {
-    soloPreferences: {
-      ...h.session.soloPreferences,
-      snapshot: () => preferences,
-      subscribe: () => () => {},
-    },
-  });
-  const configuration: ConfigurationState = {
-    status: "ready",
-    externalPluginsPaused: false,
-    catalog: {
-      profile: "fixture",
-      location: "Fixture",
-      plugins: [
+it.each([false, true])(
+  "shows explicitly disabled region chats once in the ordinary Solo inventory (composing source: %s)",
+  async (composing) => {
+    const h = fixture();
+    await h.register({
+      composeWorkspaces: true,
+      workspace: () => ({ id: "personal", file: async () => {} }),
+    });
+    if (composing)
+      await h.register(
         {
-          manifest: { id: "example", name: "Example", apiVersion: 1 },
-          source: "external",
-          enabled: false,
-          revision: "one",
-          previous: null,
-          reloadable: false,
-          error: null,
+          title: "Other work",
+          composeWorkspaces: true,
+          component: ({ ui }) => {
+            const Chats = ui.Chats;
+            const Workspace = ui.Workspace;
+            assert(Chats);
+            assert(Workspace);
+            return (
+              <>
+                <Workspace id="personal" />
+                <Chats />
+              </>
+            );
+          },
         },
-      ],
-    },
-  };
-  const channel = h.session.channels
-    .list()
-    .channels.find((item) => item.id === "owned");
-  assert(channel);
-  const target = {
-    version: 1,
-    kind: "conversation",
-    scope: {
-      communityOrigin: "https://fixture.invalid",
-      viewer: h.session.viewer ?? "",
-    },
-    channelId: "owned",
-  } as const;
-  await act(async () => {
-    await h.navigate(target);
-    h.plugins(configuration);
-  });
-  const ordinary = (
-    <SoloInventory
-      session={h.session}
-      scope={h.scope}
-      navigator={h.navigator}
-      target={target}
-    />
-  );
-  mount(
-    h,
-    target,
-    (children) => (
-      <ChannelNavigationProvider relay={h.relay}>
-        {children}
-        <SoloHeading
+        "other",
+      );
+    const saved = {
+      sections: [{ id: "personal", name: "Personal", order: 0 }],
+      assignments: { owned: "personal" },
+      starred: [],
+      muted: [],
+    };
+    const preferences = { status: "ready" as const, data: saved };
+    Object.assign(h.session, {
+      soloPreferences: {
+        ...h.session.soloPreferences,
+        snapshot: () => preferences,
+        subscribe: () => () => {},
+      },
+    });
+    const configuration: ConfigurationState = {
+      status: "ready",
+      externalPluginsPaused: false,
+      catalog: {
+        profile: "fixture",
+        location: "Fixture",
+        plugins: [
+          {
+            manifest: { id: "example", name: "Example", apiVersion: 1 },
+            source: "external",
+            enabled: false,
+            revision: "one",
+            previous: null,
+            reloadable: false,
+            error: null,
+          },
+          ...(composing
+            ? [
+                {
+                  manifest: {
+                    id: "other",
+                    name: "Other",
+                    apiVersion: 1 as const,
+                  },
+                  source: "external" as const,
+                  enabled: true,
+                  revision: "one",
+                  previous: null,
+                  reloadable: false,
+                  error: null,
+                },
+              ]
+            : []),
+        ],
+      },
+    };
+    const channel = h.session.channels
+      .list()
+      .channels.find((item) => item.id === "owned");
+    assert(channel);
+    const target = {
+      version: 1,
+      kind: "conversation",
+      scope: {
+        communityOrigin: "https://fixture.invalid",
+        viewer: h.session.viewer ?? "",
+      },
+      channelId: "owned",
+    } as const;
+    await act(async () => {
+      await h.navigate(target);
+      h.plugins(configuration);
+    });
+    function Inventory() {
+      const sidebar = useSidebarView(h.scope, true);
+      return (
+        <SoloInventory
           session={h.session}
           scope={h.scope}
-          channel={channel}
-          onConvert={() => {}}
-          onLifecycle={() => {}}
-          onMove={() => {}}
-        >
-          <WorkspaceControl session={h.session} channelId="owned" />
-        </SoloHeading>
-      </ChannelNavigationProvider>
-    ),
-    ordinary,
-  );
+          navigator={h.navigator}
+          target={target}
+          renderContents={(ordinary, header, pendingClick, composeOrdinary) => (
+            <SoloRegions
+              session={h.session}
+              scope={h.scope}
+              navigator={h.navigator}
+              target={target}
+              sidebar={sidebar}
+              ordinary={ordinary}
+              composeOrdinary={composeOrdinary}
+              pendingClick={pendingClick}
+              fallback={
+                <>
+                  {header}
+                  {ordinary}
+                </>
+              }
+            />
+          )}
+        />
+      );
+    }
+    render(
+      <ToastProvider>
+        <ChannelNavigationProvider relay={h.relay}>
+          <Inventory />
+          <SoloHeading
+            session={h.session}
+            scope={h.scope}
+            channel={channel}
+            onConvert={() => {}}
+            onLifecycle={() => {}}
+            onMove={() => {}}
+          >
+            <WorkspaceControl session={h.session} channelId="owned" />
+          </SoloHeading>
+        </ChannelNavigationProvider>
+      </ToastProvider>,
+    );
 
-  expect(screen.getByRole("button", { name: "Owned" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "New chat or workspace" }),
-  ).toBeInTheDocument();
-  for (const id of ["owned", "shared"]) {
+    expect(screen.getByRole("button", { name: "Owned" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    if (composing)
+      expect(screen.getByLabelText("Other work")).toBeInTheDocument();
+    for (const id of ["owned", "shared"]) {
+      expect(
+        document.querySelectorAll(`[data-solo-channel-id="${id}"]`),
+      ).toHaveLength(1);
+    }
+    expect(screen.getByRole("button", { name: "Shared" })).toBeInTheDocument();
     expect(
-      document.querySelectorAll(`[data-solo-channel-id="${id}"]`),
-    ).toHaveLength(1);
-  }
-  expect(screen.getByRole("button", { name: "Shared" })).toBeInTheDocument();
-  expect(
-    document
-      .querySelector('[data-solo-project="personal"]')
-      ?.querySelector('[data-solo-channel-id="owned"]'),
-  ).toBeNull();
-  expect(
-    document
-      .querySelector('[data-solo-project=""]')
-      ?.querySelector('[data-solo-channel-id="owned"]'),
-  ).not.toBeNull();
-  expect(
-    document
-      .querySelector('[data-solo-project=""]')
-      ?.querySelector('[data-solo-channel-id="shared"]'),
-  ).not.toBeNull();
-  expect(saved.assignments).toEqual({ owned: "personal" });
-  expect(
-    screen.queryByText("The plugin for these chats is off."),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByText("Work could not load")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Open plugin settings" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "In Plugin chats" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Workspace: Personal" }),
-  ).not.toBeInTheDocument();
-  const inventoryActions = screen.getByRole("button", {
-    name: "New chat or workspace",
-  });
-  const user = userEvent.setup();
-  await user.click(inventoryActions);
-  expect(
-    await screen.findByRole("menuitem", { name: "New chat" }),
-  ).toBeInTheDocument();
-  await user.keyboard("{Escape}");
-  expect(
-    screen.getByRole("button", { name: "Chat actions" }),
-  ).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Chat actions" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "Chat settings" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.queryByRole("menuitem", { name: "Move to" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("menuitem", { name: /convert/i }),
-  ).not.toBeInTheDocument();
-});
+      document
+        .querySelector('[data-solo-project="personal"]')
+        ?.querySelector('[data-solo-channel-id="owned"]'),
+    ).toBeNull();
+    expect(
+      document
+        .querySelector('[data-solo-project=""]')
+        ?.querySelector('[data-solo-channel-id="owned"]'),
+    ).not.toBeNull();
+    expect(
+      document
+        .querySelector('[data-solo-project=""]')
+        ?.querySelector('[data-solo-channel-id="shared"]'),
+    ).not.toBeNull();
+    expect(saved.assignments).toEqual({ owned: "personal" });
+    expect(
+      screen.queryByText("The plugin for these chats is off."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Work could not load")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open plugin settings" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "In Plugin chats" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Workspace: Personal" }),
+    ).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    if (!composing) {
+      await user.click(
+        screen.getByRole("button", { name: "New chat or workspace" }),
+      );
+      expect(
+        await screen.findByRole("menuitem", { name: "New chat" }),
+      ).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+    }
+    expect(
+      screen.getByRole("button", { name: "Chat actions" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Chat actions" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Chat settings" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Move to" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /convert/i }),
+    ).not.toBeInTheDocument();
+  },
+);
 
 it("uses shared populated menus for header choices and refuses retired menu callbacks", async () => {
   const h = fixture();

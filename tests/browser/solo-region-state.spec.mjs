@@ -74,7 +74,10 @@ test.describe("disabled plugin chat fallback", () => {
   }) => {
     await page.goto(`${app.origin}/?solo-region-fixture`);
     await newChat(page);
-    await page.evaluate((id) => window.fixtureSoloRegion.classify(id), alpha);
+    await page.evaluate(async (id) => {
+      await window.fixtureSoloRegion.createWorkspace();
+      await window.fixtureSoloRegion.classify(id);
+    }, alpha);
 
     const sidebar = page.getByRole("navigation", {
       name: "Solo conversations",
@@ -114,6 +117,31 @@ test.describe("disabled plugin chat fallback", () => {
       "data-message-id",
       messageId,
     );
+
+    // Pointer hit testing reaches the filing guard even for an ordinary-looking row.
+    const workspace = sidebar.getByRole("button", {
+      name: "Work",
+      exact: true,
+    });
+    await expect(workspace).toBeVisible();
+    const from = await ordinary.boundingBox();
+    const to = await workspace.boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, {
+      steps: 8,
+    });
+    await expect(sidebar.locator("[data-drop-target]")).toHaveCount(1);
+    await page.mouse.up();
+    await expect(sidebar.getByRole("alert")).toContainText(
+      "This chat is managed by",
+    );
+    await expect(sidebar.locator("[data-channel-dragging]")).toHaveCount(0);
+    await expect(
+      sidebar
+        .locator('[data-solo-project="fixture-workspace"]')
+        .locator(`[data-solo-channel-id="${alpha}"]`),
+    ).toHaveCount(0);
 
     await newChat(page);
     await expect(sidebar).toBeVisible();

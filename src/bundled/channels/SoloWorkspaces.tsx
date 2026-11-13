@@ -277,7 +277,12 @@ export function SoloWorkspaces({
     project.rows.some((item) => item.id === renaming),
   )?.id;
   const move = (id: string, projectId?: string) => {
-    if (prepareSoloMove(session, id)) return;
+    const refusal = prepareSoloMove(session, id);
+    if (refusal) {
+      setProjectError(refusal);
+      return;
+    }
+    setProjectError("");
     const saving = preferences.assign(id, projectId);
     toggle(projectId ?? "", true);
     hold([id]);

@@ -59,8 +59,8 @@ export type LocalWork = Readonly<{
   conversationName?: string;
   state: LocalWorkState;
   startedAt: number;
-  /** Immutable local conversation at an accepted lifecycle boundary. */
-  evidence?: LocalConversationEvidence;
+  /** Null until acceptance; absent on hosts without lifecycle evidence support. */
+  evidence?: LocalConversationEvidence | null;
   /** This run's messages still awaiting publication acknowledgement. */
   publishing?: number;
   /** Recent messages this run published here; their relay echoes are not separate alerts. */
@@ -353,6 +353,7 @@ export function createLocalAgentActivity() {
         id,
         Object.freeze({
           ...input,
+          evidence: null,
           state: "waiting",
           startedAt,
           ...(replyMessages?.length ? { replyMessages } : {}),

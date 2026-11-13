@@ -29,7 +29,7 @@ it("captures accepted boundaries independently of steps and publication, rejecti
     text: "Can you test it?",
   });
   first.started();
-  expect(local.reader.work()[0]?.evidence).toBeUndefined();
+  expect(local.reader.work()[0]?.evidence).toBeNull();
   first.acknowledged();
   const wake = local.reader.work()[0]?.evidence;
   expect(wake?.lifecycle.phase).toBe("wake");
@@ -83,7 +83,7 @@ it("captures accepted boundaries independently of steps and publication, rejecti
   });
   const replaced = local.begin({ ...input, messageId: reply });
   next.finish({ ok: true });
-  expect(local.reader.work()[1]?.evidence).toBeUndefined();
+  expect(local.reader.work()[1]?.evidence).toBeNull();
   replaced.acknowledged();
   expect(local.reader.work()[1]?.evidence?.lifecycle.id).not.toBe(
     steer?.lifecycle.id,

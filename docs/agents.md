@@ -84,7 +84,9 @@ no saved association, the extension adds no execution or publication work.
 
 `session.agentActivity.snapshot().local` can include `LocalWork.evidence`.
 It is an immutable snapshot at a runner-accepted `wake`, accepted mid-turn
-`steer`, or actual `handoff`. Queued requests have no evidence. Claude Code
+`steer`, or actual `handoff`. New hosts set `evidence: null` until acceptance;
+older hosts omit the field. Check field presence for capability, then skip null
+rows. A `working` presentation state alone does not prove acceptance. Claude Code
 and Codex report exact input acceptance. Other types must report
 `Delivery.acknowledged()` and use `{ steering: true }` for accepted steering.
 Acceptance does not prove that the model has consumed the input.

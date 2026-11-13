@@ -10,7 +10,11 @@ import {
 } from "react";
 import type { Host } from "../../features/host/service";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { SafeMarkdown } from "../../features/messages/SafeMarkdown";
+import { DOCUMENT_PROFILE } from "../../features/markdown/document-profile";
+import {
+  MarkdownDocument,
+  sharedComponents,
+} from "../../features/markdown/MarkdownDocument";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { PluginInstaller } from "../../plugins/installer";
@@ -671,9 +675,12 @@ function Detail({
         <section className={styles.section}>
           <InlineHeader title="About" />
           <div className={styles.markdown}>
-            <SafeMarkdown
+            <MarkdownDocument
               content={listing.description}
-              openLink={() => false}
+              profile={DOCUMENT_PROFILE}
+              components={sharedComponents}
+              capabilities={{ openLink: () => false }}
+              scale="compact"
             />
           </div>
         </section>

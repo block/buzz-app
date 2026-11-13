@@ -457,6 +457,11 @@ it("labels an outside key against the scope's named members only", () => {
   // Still compared with its named namesake in the scope.
   expect(scoped(outside)?.name).toBe(`Alex · ${npubEncode(outside).slice(-4)}`);
   expect(resolve.mock.calls.at(-1)?.[2]).toEqual([a, outside]);
+  // A member named only by a display fact is a namesake too.
+  const [shown] = unnamed;
+  if (!shown) throw new Error("Missing fixture key");
+  const facts = names.scope(unnamed, [{ pubkey: shown, name: "Alex" }]);
+  expect(facts(outside)?.name).toBe(`Alex · ${npubEncode(outside).slice(-4)}`);
 });
 
 it("keeps every DM scope of a sidebar pass for the next pass", () => {

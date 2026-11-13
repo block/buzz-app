@@ -70,12 +70,9 @@ function fixture(active = () => true) {
     </StrictMode>
   );
   const view = render(surface());
-  return {
-    setup,
-    spawn,
-    present: (connection: ClaudeConnection) =>
-      view.rerender(surface(connection)),
-  };
+  const present = (open: boolean) =>
+    view.rerender(surface({ open, onOpenChange: present }));
+  return { setup, spawn, present };
 }
 
 async function savedKey() {
@@ -225,7 +222,6 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
   native.saved = false;
   const user = userEvent.setup();
   const { present } = fixture();
-  const onOpenChange = (open: boolean) => present({ open, onOpenChange });
   let input = await connectKey(user);
   let dialog = screen.getByRole("dialog", { name: "Connect Claude" });
   let reject!: (reason: string) => void;
@@ -241,9 +237,9 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
     await user.keyboard("{Escape}");
     expect(dialog).toBeInTheDocument();
     // Back/Forward hides and restores the pending form without replaying Save.
-    present({ open: false, onOpenChange });
+    present(false);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    present({ open: true, onOpenChange });
+    present(true);
     dialog = await screen.findByRole("dialog", { name: "Connect Claude" });
     input = within(dialog).getByLabelText("Anthropic API key");
     expect(input).toHaveAttribute("readonly");

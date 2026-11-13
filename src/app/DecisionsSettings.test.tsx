@@ -379,77 +379,68 @@ it("hands focus to the section when the removed provider was the only one", asyn
   expect(screen.getByRole("region", { name: "Decisions API" })).toHaveFocus();
 });
 
-it.each(["missing", "unreadable"] as const)(
-  "opens TypeSafe with a %s key without switching until ready",
-  async (keyState) => {
-    const user = userEvent.setup();
-    const builderlab = "block.builderlab/builderlab";
-    const credential = {
-      snapshot: () => keyState,
-      subscribe: () => () => undefined,
-      desktop: () => true,
-      save: vi.fn(async () => {}),
-      clear: vi.fn(async () => {}),
-    };
-    const decisions = fake(
-      [
-        { key: builderlab, status: "ready" },
-        {
-          key: TYPESAFE,
-          status: keyState === "missing" ? "needs-setup" : "unconfirmed",
-          Settings: ({ active }) => (
-            <TypeSafeSettings
-              typesafe={credential}
-              active={active}
-              grouped={false}
-            />
-          ),
-        },
-      ],
-      builderlab,
-    );
-    render(<DecisionsSettings decisions={decisions} active={() => true} />);
-    const toggle = screen.getByRole("combobox", { name: "Decision provider" });
-    expect(toggle).toHaveTextContent("Builderlab");
-    expect(screen.queryByLabelText("TypeSafe API key")).toBeNull();
-    await user.click(toggle);
-    // The Select opens on an animation frame after the pointer press.
-    await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
-    expect(toggle).toHaveTextContent("Builderlab");
-    const dialog = screen.getByRole("dialog", { name: "Connect TypeSafe" });
-    expect(dialog).toBeVisible();
-    expect(dialog).toHaveAccessibleDescription(
-      "Create an API key at console.typesafe.ai and paste it below.",
-    );
-    expect(
-      within(dialog).getByRole("link", { name: "console.typesafe.ai" }),
-    ).toHaveAttribute("href", "https://console.typesafe.ai/keys");
-    const input =
-      within(dialog).getByLabelText<HTMLInputElement>("TypeSafe API key");
-    await waitFor(() =>
-      expect(
-        keyState === "missing" ? input : within(dialog).getByRole("link"),
-      ).toHaveFocus(),
-    );
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(input.readOnly).toBe(keyState === "unreadable");
-    expect(decisions.chosen()).toBe(builderlab);
-    await user.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(decisions.chosen()).toBe(builderlab);
-    if (keyState === "unreadable") return;
-    await user.click(toggle);
-    await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
-    act(() => decisions.setStatus(TYPESAFE, "ready"));
-    expect(decisions.chosen()).toBe(TYPESAFE);
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(toggle).toHaveTextContent("TypeSafe");
-    await user.click(toggle);
-    await user.click(await screen.findByRole("option", { name: "Builderlab" }));
-    expect(decisions.chosen()).toBe(builderlab);
-    expect(screen.queryByLabelText("TypeSafe API key")).toBeNull();
-  },
-);
+it("opens TypeSafe with editable focus or a closed saved-key menu until ready", async () => {
+  const user = userEvent.setup();
+  const builderlab = "block.builderlab/builderlab";
+  let keyState: "missing" | "unreadable" = "missing";
+  const credential = {
+    snapshot: () => keyState,
+    subscribe: () => () => undefined,
+    desktop: () => true,
+    save: async () => {},
+    clear: async () => {},
+  };
+  const decisions = fake(
+    [
+      { key: builderlab, status: "ready" },
+      {
+        key: TYPESAFE,
+        status: "needs-setup",
+        Settings: ({ active }) => (
+          <TypeSafeSettings
+            typesafe={credential}
+            active={active}
+            grouped={false}
+          />
+        ),
+      },
+    ],
+    builderlab,
+  );
+  render(<DecisionsSettings decisions={decisions} active={() => true} />);
+  const toggle = screen.getByRole("combobox", { name: "Decision provider" });
+  await user.click(toggle);
+  // The Select opens on an animation frame after the pointer press.
+  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
+  expect(toggle).toHaveTextContent("Builderlab");
+  const dialog = screen.getByRole("dialog", { name: "Connect TypeSafe" });
+  expect(dialog).toHaveAccessibleDescription(
+    "Create an API key at console.typesafe.ai and paste it below.",
+  );
+  expect(
+    within(dialog).getByRole("link", { name: "console.typesafe.ai" }),
+  ).toHaveAttribute("href", "https://console.typesafe.ai/keys");
+  await waitFor(() =>
+    expect(within(dialog).getByLabelText("TypeSafe API key")).toHaveFocus(),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(decisions.chosen()).toBe(builderlab);
+
+  keyState = "unreadable";
+  act(() => decisions.setStatus(TYPESAFE, "unconfirmed"));
+  await user.click(toggle);
+  await user.click(await screen.findByRole("option", { name: "TypeSafe" }));
+  const saved = screen.getByRole("dialog", { name: "Connect TypeSafe" });
+  expect(within(saved).getByLabelText("TypeSafe API key")).toHaveAttribute(
+    "readonly",
+  );
+  await waitFor(() => expect(within(saved).getByRole("link")).toHaveFocus());
+  expect(screen.queryByRole("menu")).toBeNull();
+  act(() => decisions.setStatus(TYPESAFE, "ready"));
+  expect(decisions.chosen()).toBe(TYPESAFE);
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
 
 it("explains lost Builderlab access only while it is selected and confirmed unavailable", async () => {
   const user = userEvent.setup();

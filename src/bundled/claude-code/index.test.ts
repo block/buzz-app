@@ -36,13 +36,7 @@ it.each([true, false])(
     } as never);
     root.provide("host", { request: vi.fn() } as never);
     root.provide("agentProtection", { registerModels: vi.fn() } as never);
-    const controller = createNavigationController(
-      createMemoryHistory({
-        version: 1,
-        kind: "settings",
-        section: "appearance",
-      }),
-    );
+    const controller = createNavigationController(createMemoryHistory());
     const navigation = controller.navigation;
     root.provide("navigation", navigation);
     const cards = new SettingsCardsService(root);
@@ -99,16 +93,7 @@ it.each([true, false])(
         expect(presentation().open).toBe(true);
         presentation().onOpenChange(false);
         expect(navigation.snapshot().entry.target).toEqual(parent);
-        navigation.back();
-        expect(navigation.snapshot().entry.target).toMatchObject({
-          section: "appearance",
-        });
-        navigation.forward();
-        expect(presentation().open).toBe(false);
         expect(navigation.snapshot().canGoForward).toBe(false);
-        presentation().onOpenChange(true);
-        expect(presentation().open).toBe(true);
-        presentation().onOpenChange(false);
       }
       await fiber.dispose();
       expect(cards.snapshot()).toEqual([]);

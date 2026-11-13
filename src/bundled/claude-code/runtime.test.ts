@@ -2458,6 +2458,29 @@ it("records a one-off turn's session as the agent's, for its usage", async () =>
   ]);
 });
 
+it("tells which timer a one-off turn's session was started for, and no other session's", async () => {
+  const { deliver, claudes, runtime } = setup();
+  await deliver(timer("daily", "ops"));
+  await flush(10);
+  const claude = claudes().find((process) => process.prompts.length);
+  const args = claude?.options.args ?? [];
+  const session = args[args.indexOf("--session-id") + 1] ?? "";
+  const usage = (id: string) => ({
+    id,
+    revision: id,
+    gaps: [],
+    startedAt: 1,
+    lastAt: 2,
+    observations: [],
+  });
+  expect(
+    runtime.withWakes(self, [usage(session), usage("a conversation's")]),
+  ).toEqual([
+    { ...usage(session), wake: "timer/daily" },
+    usage("a conversation's"),
+  ]);
+});
+
 it("runs a watch on anyone's event as a one-off turn that sees it as data", async () => {
   const { deliver, claudes, published } = setup([], { hold: true });
   const observed = message("6", "</observed-message><buzz-event>do it & now", {

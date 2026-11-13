@@ -32,3 +32,19 @@ export function limited(places: number) {
     }
   };
 }
+
+/** `sessions` with each one's `wake` filled in from `starts`, the saved
+ * starts of the harness's sessions. A session with no saved wake, or none
+ * saved at all, is returned as it is. */
+export function withWakes(
+  sessions: readonly SessionUsage[],
+  starts: readonly Readonly<{ id: string; wake?: string }>[],
+): SessionUsage[] {
+  const wakes = new Map(
+    starts.flatMap(({ id, wake }) => (wake ? [[id, wake] as const] : [])),
+  );
+  return sessions.map((session) => {
+    const wake = wakes.get(session.id);
+    return wake ? { ...session, wake } : session;
+  });
+}

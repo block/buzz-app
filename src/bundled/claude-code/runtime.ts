@@ -69,6 +69,7 @@ import type {
   SessionPlace,
   SessionControlAction,
   SessionState,
+  SessionUsage,
 } from "../../features/agents/service";
 import {
   CONTEXT_LIMIT,
@@ -87,6 +88,7 @@ import {
 } from "./transcript";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
+import { withWakes } from "../../features/agents/session-usage";
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -741,6 +743,14 @@ export class ClaudeRuntime {
       .map((turn, index) =>
         kept.has(turn.sessionId) ? (turns[index] ?? turn) : turn,
       );
+  }
+  /** `sessions` with, for each a standalone turn started, the key it ran
+   * under. */
+  withWakes(agent: AgentKey, sessions: readonly SessionUsage[]) {
+    return withWakes(
+      sessions,
+      standaloneSessions(this.storage, "claude-code", agent).list(),
+    );
   }
   /** What each of the agent's sessions started with. */
   private prompts(agent: AgentKey) {
@@ -1644,6 +1654,7 @@ export class ClaudeRuntime {
         if (once)
           void standaloneSessions(this.storage, "claude-code", agent).add(
             session,
+            once,
           );
       },
       onChange: () => this.notify(),

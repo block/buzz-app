@@ -362,3 +362,87 @@ it("keeps costs unknown when nothing priced was known, on each day too", () => {
   // A day without sessions spent nothing.
   expect(result.days.at(-3)?.costs.size).toBe(0);
 });
+
+it("groups the period's cost by the timer or watch that started each session, the rest under Other", () => {
+  const pixel = agent("pixel");
+  const relay = agent("relay");
+  const priced = (id: string, usd: number, more: Partial<SessionUsage> = {}) =>
+    session(id, [seen(today + 9 * HOUR, full(1), "acme-1", usd)], more);
+  const result = stats(
+    [
+      {
+        agent: pixel,
+        harness: "x/claude",
+        sessions: [
+          priced("a", 1, { wake: "timer/daily" }),
+          priced("b", 2, { wake: "timer/daily" }),
+          priced("c", 10, { wake: "watch/pulls" }),
+          priced("d", 4),
+          // Before the period: not counted in it.
+          session("e", [seen(dayStart(now, 9), full(1), "acme-1", 100)], {
+            wake: "timer/daily",
+          }),
+        ],
+      },
+      {
+        // A harness that does not say which turn started its sessions.
+        agent: relay,
+        harness: "x/codex",
+        sessions: [priced("f", 3)],
+      },
+    ],
+    now,
+    7,
+  );
+  expect(result.routines).toEqual([
+    { wake: "watch/pulls", cost: { value: 10, partial: false }, sessions: 1 },
+    { wake: "timer/daily", cost: { value: 3, partial: false }, sessions: 2 },
+    { cost: { value: 7, partial: false }, sessions: 2 },
+  ]);
+  expect(result.cost.value).toBe(20);
+});
+
+it("shows no routines when no session says which timer or watch started it", () => {
+  const result = stats(
+    [
+      {
+        agent: agent("pixel"),
+        harness: "x/codex",
+        sessions: [
+          session("a", [seen(today + 9 * HOUR, full(1), "acme-1", 1)]),
+        ],
+      },
+    ],
+    now,
+    7,
+  );
+  expect(result.routines).toEqual([]);
+});
+
+it("marks a routine's cost partial when its session was not fully read or a read failed", () => {
+  const priced = (id: string, more: Partial<SessionUsage>) =>
+    session(id, [seen(today + 9 * HOUR, full(1), "acme-1", 1)], more);
+  const usage = [
+    {
+      agent: agent("pixel"),
+      harness: "x/claude",
+      sessions: [
+        priced("a", { wake: "timer/daily", gaps: ["a subagent's file"] }),
+        priced("b", { wake: "timer/hourly" }),
+        priced("c", {}),
+      ],
+    },
+  ];
+  expect(
+    stats(usage, now, 7).routines.map(({ wake, cost }) => [wake, cost.partial]),
+  ).toEqual([
+    ["timer/daily", true],
+    ["timer/hourly", false],
+    [undefined, false],
+  ]);
+  expect(
+    stats(usage, now, 7, new Set(["x/claude"])).routines.map(
+      ({ cost }) => cost.partial,
+    ),
+  ).toEqual([true, true, true]);
+});

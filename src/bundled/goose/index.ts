@@ -173,13 +173,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
       subscribe: (listener) => runtime.subscribe(listener),
     },
     ...(desktop && {
-      usage: (agent, { since, signal }) =>
-        readUsage(
-          history,
+      usage: async (agent, { since, signal }) =>
+        runtime.withWakes(
           agent.key,
-          config(agent.config).workspace,
-          since,
-          signal,
+          await readUsage(
+            history,
+            agent.key,
+            config(agent.config).workspace,
+            since,
+            signal,
+          ),
         ),
     }),
     tabs: [

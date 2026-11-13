@@ -202,3 +202,37 @@ it("removes a membership's sessions of every agent type, and only its", async ()
       .map(({ id }) => id),
   ).toEqual(["o"]);
 });
+
+it("keeps the key of the turn that started a session, alongside ones without", async () => {
+  const storage = memory();
+  let now = 1_000;
+  const sessions = standaloneSessions(storage, "goose", AGENT, () => now);
+  await sessions.add("s1", "timer/daily");
+  now = 2_000;
+  await sessions.add("s2");
+  expect(sessions.list()).toEqual([
+    { id: "s1", at: 1_000, wake: "timer/daily" },
+    { id: "s2", at: 2_000 },
+  ]);
+});
+
+it("drops a session whose saved turn key is damaged", () => {
+  const storage = memory();
+  void storage.set(
+    `${STANDALONE_PREFIX}goose:${AGENT}`,
+    JSON.stringify({
+      version: 1,
+      sessions: [
+        ["good", Date.now(), "watch/pr"],
+        ["number", Date.now(), 7],
+        ["long", Date.now(), "x".repeat(300)],
+        ["extra", Date.now(), "timer/a", "more"],
+      ],
+    }),
+  );
+  expect(
+    standaloneSessions(storage, "goose", AGENT)
+      .list()
+      .map(({ id }) => id),
+  ).toEqual(["good"]);
+});

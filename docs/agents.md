@@ -1923,6 +1923,14 @@ counts it by when it last answered.
 All three read only the harness's own session history; none reads Buzz's saved
 agent activity or turn metrics.
 
+A harness may also set `wake` on a session snapshot: the key of the standalone
+turn that started it (`timer/ID` or `watch/ID`), as `AgentType.runOnce` was given
+it. Claude, Goose and Pi take it from the key their `runOnce` recorded with the
+session in the agent's standalone sessions, never from the prompt; Codex keeps
+no session for such a turn, so it sets none. The Usage page groups the period's
+cost by it under "By routine", with the sessions that have none under "Other",
+and shows no such list while no session has one. A harness that does not set it works unchanged.
+
 Where a harness recorded no cost, Usage estimates it from the token counts at the
 provider's published API list prices, including a model's long-prompt rates and,
 for a Claude model a provider prefixes such as `databricks-claude-sonnet-5-5`, the

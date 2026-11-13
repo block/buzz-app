@@ -33,6 +33,7 @@ import { fromOwner, workflowOf } from "../../features/agents/owner-attestation";
 import { type AgentKey, pubkeyOf } from "../../features/agents/membership";
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
+import { withWakes } from "../../features/agents/session-usage";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import type { AgentReads } from "../../features/agents/reads";
 import type {
@@ -415,15 +416,17 @@ export class PiRuntime {
     if (!this.running.has(agent)) return [];
     // A standalone turn's conversation is in no place: `runOnce` recorded
     // it, and it is read whenever it last answered.
-    const standalone = standaloneSessions(this.storage, "pi", agent)
-      .list()
-      .map(({ id }) => ({ conversation: Number(id) }));
-    return readUsage(
-      this.pi,
-      agent,
-      [...(await this.places(agent)), ...standalone],
-      since,
-      signal,
+    const starts = standaloneSessions(this.storage, "pi", agent).list();
+    const standalone = starts.map(({ id }) => ({ conversation: Number(id) }));
+    return withWakes(
+      await readUsage(
+        this.pi,
+        agent,
+        [...(await this.places(agent)), ...standalone],
+        since,
+        signal,
+      ),
+      starts,
     );
   }
   /** The conversations a Buzz request of the agent's is working in. */
@@ -802,6 +805,7 @@ export class PiRuntime {
       // Outside any conversation, so no place lists it for its usage.
       void standaloneSessions(this.storage, "pi", agent.key).add(
         String(conversation),
+        key,
       );
       // A removed agent's storage is closed, and stays so.
       stop = () => {

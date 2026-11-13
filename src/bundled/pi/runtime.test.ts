@@ -1954,6 +1954,7 @@ it("reads a standalone turn's conversation as the agent's usage, with no channel
   );
   expect(sessions.map((session) => session.id)).toEqual(["99"]);
   expect(sessions[0]).not.toHaveProperty("channelId");
+  expect(sessions[0]?.wake).toBe("timer/t1");
   expect(sessions[0]?.observations).toHaveLength(1);
 });
 

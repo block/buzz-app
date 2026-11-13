@@ -9,6 +9,7 @@ import {
 } from "../../features/agents/activity-transcript";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
 import type { Agent, Delivery } from "../../features/agents/service";
+import { localStore, type AgentStore } from "../../features/agents/store";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import type { Host } from "../../features/host/service";
 import type { EventData, RelayEvent } from "../../features/relay/events";
@@ -68,6 +69,8 @@ function setup(
     /** Channels that are the owner's own Solo chats; the owner is the viewer. */
     solo?: Set<string>;
     added?: readonly AddedTool[];
+    /** Where each session's start is kept; none is saved without one. */
+    agentStore?: AgentStore;
     hold?: boolean;
     reply?: string;
     thread?: readonly EventData[];
@@ -193,6 +196,7 @@ function setup(
     storage,
     () => options.added ?? [],
     options.repositories,
+    options.agentStore,
   );
   const published: { kind: number; content: string; tags: string[][] }[] = [];
   const agent = {
@@ -1248,6 +1252,44 @@ describe("GooseRuntime", () => {
     expect(goose()?.opened[0]?._meta).toMatchObject({
       tags: { "buzz.agent": self },
     });
+  });
+
+  it("tells which timer a one-off session was started for, and no conversation's", async () => {
+    const items = new Map<string, string>();
+    const { runOnce, deliver, runtime } = setup({
+      agentStore: localStore({
+        get length() {
+          return items.size;
+        },
+        key: (index: number) => [...items.keys()][index] ?? null,
+        getItem: (key: string) => items.get(key) ?? null,
+        setItem: (key: string, value: string) => void items.set(key, value),
+        removeItem: (key: string) => void items.delete(key),
+        clear: () => items.clear(),
+      }),
+    });
+    await runOnce("timer/daily", "Post the daily summary.");
+    await deliver(message("1", "@Gander hello"));
+    await flush(100);
+    const starts = runtime.prompts(self).sessions();
+    expect(starts).toHaveLength(2);
+    const usage = (id: string) => ({
+      id,
+      revision: id,
+      gaps: [],
+      startedAt: 1,
+      lastAt: 2,
+      observations: [],
+    });
+    expect(
+      runtime.withWakes(
+        self,
+        starts.map(({ id }) => usage(id)),
+      ),
+    ).toEqual([
+      { ...usage(starts[0]?.id ?? ""), wake: "timer/daily" },
+      usage(starts[1]?.id ?? ""),
+    ]);
   });
 
   it("switches a saved provider in the live session without restarting goose", async () => {

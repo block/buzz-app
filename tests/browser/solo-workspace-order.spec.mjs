@@ -135,6 +135,31 @@ for (const composed of [false, true]) {
     await drag("Main Focus", "Archive", ["Planning", "Archive", "Main Focus"]);
     await drag("Main Focus", "Planning", ["Main Focus", "Planning", "Archive"]);
 
+    const focus = handle("Main Focus");
+    await focus.focus();
+    await expect(focus).toHaveAttribute(
+      "aria-keyshortcuts",
+      "Alt+ArrowUp Alt+ArrowDown",
+    );
+    await focus.press("Alt+ArrowDown");
+    await order(["Planning", "Main Focus", "Archive"]);
+    await expect.poll(publicationCount).toBe(++count);
+    await expect(focus).toBeFocused();
+    await page.clock.runFor(1100);
+    await focus.press("Alt+ArrowUp");
+    await order(["Main Focus", "Planning", "Archive"]);
+    await expect.poll(publicationCount).toBe(++count);
+    await expect(focus).toBeFocused();
+    await page.clock.runFor(1100);
+    // At the top edge, the shortcut does not collapse/select or publish.
+    await focus.press("Alt+ArrowUp");
+    await expect(focus).toBeFocused();
+    expect(publicationCount()).toBe(count);
+    for (const id of ids)
+      await expect(
+        sidebar.locator(`[data-solo-channel-id="${id}"]`),
+      ).toBeVisible();
+
     await sidebar
       .getByRole("button", { name: "Actions for Main Focus", exact: true })
       .click();

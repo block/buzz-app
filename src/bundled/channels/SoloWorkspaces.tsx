@@ -490,6 +490,12 @@ export function SoloWorkspaces({
       <DropProject
         projectKey={DROP + project.id}
         groupIndex={groupIndex}
+        onKeyboardMove={(offset) => {
+          const position = groupIndex + offset;
+          if (position < 0 || position >= groups.length) return false;
+          reorder(project.id, position);
+          return true;
+        }}
         reorderable={
           !!project.id &&
           groups.length > 1 &&
@@ -715,6 +721,9 @@ export function SoloWorkspaces({
           <Collapsible.Trigger
             type="button"
             data-workspace-drag-handle=""
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            aria-description="Reorder this workspace with Alt+Up or Alt+Down (Option on Mac)."
+            title="Drag to reorder, or use Alt+Up/Down (Option on Mac)."
             className={styles.projectHeading}
             aria-expanded={
               !collapsed.includes(project.id) || renamingProject === project.id
@@ -1124,11 +1133,13 @@ function DropProject({
   projectKey,
   groupIndex,
   reorderable,
+  onKeyboardMove,
   ...props
 }: ComponentProps<typeof Collapsible.Root> & {
   projectKey: string;
   groupIndex: number;
   reorderable: boolean;
+  onKeyboardMove(offset: number): boolean;
 }) {
   const { setNodeRef, isOver, active } = useDroppable({
     id: projectKey,
@@ -1141,6 +1152,13 @@ function DropProject({
     disabled: !reorderable,
   });
   const suppressClick = useRef(false);
+  const keyboardFocus = useRef<HTMLElement | undefined>(undefined);
+  useLayoutEffect(() => {
+    const title = keyboardFocus.current;
+    keyboardFocus.current = undefined;
+    if (title && document.activeElement === document.body)
+      title.focus({ preventScroll: true });
+  });
   const setRef = useCallback(
     (node: HTMLDivElement | null) => {
       setNodeRef(node);
@@ -1158,6 +1176,28 @@ function DropProject({
     <Collapsible.Root
       {...props}
       ref={setRef}
+      onKeyDown={(event) => {
+        if (
+          !reorderable ||
+          active ||
+          !event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.shiftKey ||
+          (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+          !(event.target instanceof Element)
+        )
+          return;
+        const title = event.target.closest<HTMLElement>(
+          "[data-workspace-drag-handle]",
+        );
+        if (!title) return;
+        event.preventDefault();
+        event.stopPropagation();
+        keyboardFocus.current = title;
+        if (!onKeyboardMove(event.key === "ArrowUp" ? -1 : 1))
+          keyboardFocus.current = undefined;
+      }}
       onPointerDown={(event) => {
         if (
           !(event.target instanceof Element) ||

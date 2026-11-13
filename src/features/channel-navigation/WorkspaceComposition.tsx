@@ -73,6 +73,9 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
         selected={!!props.selected}
         data-solo-workspace-id={workspace.id}
         data-workspace-drag-handle=""
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        aria-description="Reorder this workspace with Alt+Up or Alt+Down (Option on Mac)."
+        title="Drag to reorder, or use Alt+Up/Down (Option on Mac)."
         onClick={() => props.onSelect?.()}
       />
       {disclosure}

@@ -284,6 +284,8 @@ export function useVoiceNoteRecorder() {
   }, [cancel]);
 
   return {
+    /** Monotonic audio origin for synchronizing pointing context with this recording. */
+    startedAt: () => sessionRef.current?.startedAt || undefined,
     cancel,
     elapsedSeconds,
     error,

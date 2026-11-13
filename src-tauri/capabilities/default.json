@@ -18,6 +18,7 @@
     "allow-pairing-cancel",
     "allow-qr-code",
     "allow-share-image",
+    "allow-window-snapshot",
     "allow-identity-restore",
     "allow-identity-import",
     "allow-identity-legacy-available",

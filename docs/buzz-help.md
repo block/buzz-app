@@ -361,6 +361,23 @@ and are asked to sign in again in Buzz.
   and attach a voice note. Sending requires ffmpeg on the host computer. Sent
   notes support playback and seeking; a note's duration appears once it
   starts playing.
+- **Voice-and-point experiment (Mac)**: with the Bestie plugin enabled and a
+  saved Bestie, hold Command and Option together for a quarter second
+  to record in the focused Buzz window. Bestie appears beneath your pointer with
+  a saturated, profile-style blurred aura and animated artwork where available, without a
+  name badge or background fill. The bottom waveform matches the composer recorder.
+  A subtle 5% dark scrim dims the window, leaving the message or control you
+  point at clear. Capture runs without debug labels or DOM outlines.
+  Rest on a target for 350ms to capture a cropped screenshot, up to four images
+  and five minutes of audio. Screenshots are taken locally from the Buzz window;
+  input/editor areas are redacted. Raw DOM text is not sent.
+  Release either key to review playback and the timestamped images. Remove any
+  image you do not want to include, then choose **Send to Bestie**. A capture
+  failure appears in review; you can still send the audio and available images.
+  The DM is opened if needed when you send. Other Command
+  shortcuts, Escape, switching windows, or changing communities cancel capture.
+  The first use may request microphone access; if that interrupts the hold,
+  allow access and hold Command and Option again. Nothing uploads before Send.
 - Long message bubbles use the available conversation width, stopping 32px
   before the opposite speaker’s avatar column. Short messages hug their text.
 - Hover over a message to reveal the capsule above it: add a reaction, reply,

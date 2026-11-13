@@ -86,6 +86,7 @@ mod plugin_url;
 mod repositories_folder;
 mod subject_lift;
 mod window_controls;
+mod window_snapshot;
 mod window_state;
 mod workspace_folder;
 use legacy_communities::legacy_communities;
@@ -731,6 +732,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         pairing::pairing_cancel,
         qr::qr_code,
         sharing::share_image,
+        window_snapshot::window_snapshot,
         identity_restore,
         identity_import,
         identity_legacy_available,

@@ -6,6 +6,7 @@ import {
 } from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { bestieChat } from "../../bundled/bestie/chat";
+import { BestieVoiceCommand } from "../../features/voice-command/BestieVoiceCommand";
 import { UnreadBadge } from "../../bundled/channels/UnreadBadge";
 import channelStyles from "../../bundled/channels/Channels.module.css";
 import { useAgentChoices } from "../../features/agents/use-choices";
@@ -121,6 +122,16 @@ export function BestieNavigationProvider({
         value={channel ? { session, channelId: channel.id } : undefined}
       >
         {children}
+        {active && promoted && mark && !mark.placeholder && (
+          <BestieVoiceCommand
+            key={`${scope}:${promoted}`}
+            session={session}
+            channelId={channel?.id}
+            agentId={promoted}
+            name={mark.label}
+            avatar={mark.avatar?.src}
+          />
+        )}
       </BestieConversationContext>
     </BestieNavigationContext>
   );

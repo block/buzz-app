@@ -72,6 +72,7 @@ fn native_command_permissions_isolate_webviews() {
         .unwrap();
 
     let application_commands = [
+        "window_snapshot",
         "federated_identity_snapshot",
         "federated_identity_servers",
         "federated_identity_requires",

@@ -72,6 +72,7 @@ fn main() {
             "pairing_cancel",
             "qr_code",
             "share_image",
+            "window_snapshot",
             "identity_restore",
             "identity_import",
             "identity_legacy_available",

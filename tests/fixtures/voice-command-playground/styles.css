@@ -1,0 +1,83 @@
+html,
+body,
+#root {
+  height: auto;
+  min-height: 100%;
+  overflow: auto;
+}
+.pg-shell {
+  font-size: 14px;
+}
+.vc-scene {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transform: translateZ(0);
+  isolation: isolate;
+  contain: paint;
+  container-type: inline-size;
+  height: 520px;
+  overflow: hidden;
+  border-radius: var(--radius-container);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+.vc-fixture {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.vc-list {
+  flex: 0 0 200px;
+  min-width: 0;
+  padding: var(--space-2);
+  border-inline-end: 1px solid var(--border-standard);
+  --message-row-preview-lines: 1;
+}
+.vc-chat {
+  padding: var(--space-4);
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.vc-chat-heading {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-4);
+}
+.vc-chat-heading > :last-child {
+  margin-inline-start: auto;
+}
+.vc-message {
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+  background: var(--surface-message);
+  border-radius: var(--radius-container);
+}
+.vc-message-own {
+  background: var(--affordance-accent);
+}
+.vc-demo-controls {
+  padding: var(--space-3);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.vc-demo-controls > span {
+  flex-basis: 100%;
+}
+.pg-inspector {
+  overflow: auto;
+}
+@container (max-width: 480px) {
+  .vc-list {
+    display: none;
+  }
+  .vc-chat {
+    padding: var(--space-2);
+  }
+}

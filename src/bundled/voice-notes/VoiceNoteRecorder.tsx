@@ -16,16 +16,19 @@ export function VoiceNoteRecorder({
   levels,
   onCancel,
   status,
+  autoFocus = true,
 }: {
   elapsedSeconds: number;
   levels: readonly number[];
   onCancel(): void;
   status: "requesting" | "recording" | "processing";
+  /** Global hold-to-record gestures preserve the user's current editor focus. */
+  autoFocus?: boolean;
 }) {
   const discard = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
-    discard.current?.focus();
-  }, []);
+    if (autoFocus) discard.current?.focus();
+  }, [autoFocus]);
   const waveform = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(38);
   const track = useRef<HTMLDivElement>(null);

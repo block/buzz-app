@@ -102,12 +102,24 @@ export type PullState = Readonly<{
   failed?: readonly string[] | undefined;
   /** At `feedback`, with `gh`: the signed-in account, which agents use too,
    * every feedback id listed, newest reviews and comments, and the text of
-   * those read so far. */
+   * those read so far; with what a watch needs to tell the pull request is
+   * ready to merge, or has stopped being on its way. */
   feedback?:
     | Readonly<{
         viewer: string;
         ids: readonly string[];
         items: readonly Feedback[];
+        /** GitHub's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY, … */
+        merge?: string | undefined;
+        /** GitHub's reviewDecision, such as `APPROVED`; absent where no
+         * review is required. */
+        decision?: string | undefined;
+        /** Auto-merge is on, or it is in the merge queue. */
+        autoMerge?: true | undefined;
+        queued?: true | undefined;
+        /** Unresolved review threads; absent when more threads were open
+         * than one read lists. */
+        unresolved?: number | undefined;
       }>
     | undefined;
   /** At `details`. */
@@ -239,6 +251,13 @@ type StateData = {
   };
   reviews?: { nodes?: ({ id?: string; comments?: Ids } | null)[] };
   comments?: Ids;
+  reviewDecision?: string | null;
+  isInMergeQueue?: boolean;
+  autoMergeRequest?: object | null;
+  reviewThreads?: {
+    totalCount?: number;
+    nodes?: ({ isResolved?: boolean } | null)[];
+  };
 };
 type IssueData = {
   state: "OPEN" | "CLOSED";
@@ -281,7 +300,9 @@ const ISSUE = "state stateReason title";
 // Every inline comment, a reply on an old thread too, comes with a newly
 // submitted review; pending ones are not yet sent.
 const FEEDBACK = `reviews(last:50,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){nodes{id comments(first:100){nodes{id}}}}
-comments(last:50){nodes{id}}`;
+comments(last:50){nodes{id}}
+reviewDecision isInMergeQueue autoMergeRequest{mergeMethod}
+reviewThreads(last:100){totalCount nodes{isResolved}}`;
 const TEXT = `query($ids:[ID!]!){nodes(ids:$ids){__typename id
 ... on PullRequestReview{author{__typename login} state body url}
 ... on IssueComment{author{__typename login} body url}
@@ -302,6 +323,24 @@ function idsOf(pull: StateData) {
     ),
     ...ids(pull.comments, "comment"),
   ];
+}
+
+/** How far `pull` is on its way to merging, as a watch follows it. */
+function mergingOf(pull: StateData) {
+  const threads = pull.reviewThreads?.nodes ?? [];
+  const unresolved = threads.filter((thread) => !thread?.isResolved).length;
+  return {
+    merge: pull.mergeStateStatus,
+    decision: pull.reviewDecision ?? undefined,
+    ...(pull.autoMergeRequest && { autoMerge: true as const }),
+    ...(pull.isInMergeQueue && { queued: true as const }),
+    // Threads beyond those listed are older; when none listed is open, they
+    // may be.
+    ...((unresolved > 0 ||
+      (pull.reviewThreads?.totalCount ?? 0) <= threads.length) && {
+      unresolved,
+    }),
+  };
 }
 
 /** The state in `pull`, an alias's answer, without its feedback or details. */
@@ -486,7 +525,7 @@ async function readStates(
     return {
       ...state,
       ...(feedback && {
-        feedback: { viewer, ids: idsOf(pull), items: held },
+        feedback: { viewer, ids: idsOf(pull), items: held, ...mergingOf(pull) },
       }),
       ...(details &&
         reference && {

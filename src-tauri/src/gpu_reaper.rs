@@ -126,19 +126,29 @@ mod macos {
         })
     }
 
+    /// Finder and login launches discard stderr, so also write to the unified log:
+    /// log show --predicate 'process == "Buzz" AND eventMessage CONTAINS "GPU process"'
+    fn log(message: &str) {
+        eprintln!("{message}");
+        if let Ok(message) = std::ffi::CString::new(message) {
+            // SAFETY: "%s" takes the one NUL-terminated string passed.
+            unsafe { libc::syslog(libc::LOG_NOTICE, c"%s".as_ptr(), message.as_ptr()) };
+        }
+    }
+
     pub(super) fn kill(process: Process) {
         // SAFETY: `kill` takes no pointers.
         if unsafe { libc::kill(process.pid, libc::SIGKILL) } == 0 {
-            eprintln!(
+            log(&format!(
                 "Killed WebKit GPU process {} that WebKit dropped but left running",
                 process.pid
-            );
+            ));
         } else {
-            eprintln!(
+            log(&format!(
                 "Could not kill WebKit GPU process {} that WebKit dropped: {}",
                 process.pid,
                 std::io::Error::last_os_error()
-            );
+            ));
         }
     }
 
@@ -152,9 +162,7 @@ mod macos {
             if !webview.respondsToSelector(sel!(_gpuProcessIdentifier))
                 || !webview.respondsToSelector(sel!(_webProcessIdentifier))
             {
-                eprintln!(
-                    "This WebKit does not report its processes; not watching the GPU process"
-                );
+                log("This WebKit does not report its processes; not watching the GPU process");
                 return;
             }
             let webview = Weak::from(webview);
@@ -185,7 +193,7 @@ mod macos {
             };
         });
         if let Err(error) = installed {
-            eprintln!("Could not watch the WebKit GPU process: {error}");
+            log(&format!("Could not watch the WebKit GPU process: {error}"));
         }
     }
 }

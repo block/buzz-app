@@ -5,6 +5,7 @@ import { afterEach, assert, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import type { ComposerInputElement } from "./composer-dom";
+import { channelTabs } from "../../bundled/channels/useChannelTabState";
 import { readView, writeView } from "../../shared/view-state";
 import { MessageComposer } from "./MessageComposer";
 import {
@@ -536,16 +537,22 @@ it("offers deletion for an empty edit, permits cancel and then confirms deletion
   await waitFor(() => expect(confirmation).not.toBeInTheDocument());
   expect(editor()).toHaveValue("");
   expect(h.publications).toHaveLength(0);
-  // Deleting a thread root here forgets its tab's saved name.
+  // Deleting a thread root here forgets its tab's saved name once the relay
+  // has the deletion.
   const { session } = h.owner;
   const id = session.channels.window("room").rows[0]?.id;
-  writeView(session.scope, "tab-names", { [`room:${id}`]: "Launch plan" });
+  const names = { [`room:${id}`]: "Launch plan" };
+  channelTabs(session);
+  writeView(session.scope, "tab-names", names);
   submit();
   fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
   await waitFor(() => expect(h.publications).toHaveLength(1));
   expect(h.publication(0).event.kind).toBe(5);
-  expect(readView(session.scope, "tab-names", undefined)).toEqual({});
+  expect(readView(session.scope, "tab-names", undefined)).toEqual(names);
   await act(async () => h.publication(0).result.resolve());
+  await waitFor(() =>
+    expect(readView(session.scope, "tab-names", undefined)).toEqual({}),
+  );
   await waitFor(() => expect(screen.queryByText("Editing message")).toBeNull());
 });
 
@@ -877,6 +884,13 @@ it("offers the follow choice only once a restored roster is confirmed", async ()
 
 it("keeps deletion recovery outside the optimistically removed row", async () => {
   const h = await fixture();
+  // A refused deletion keeps the thread tab's saved name.
+  const { session } = h.owner;
+  const names = {
+    [`room:${session.channels.window("room").rows[0]?.id}`]: "Launch plan",
+  };
+  channelTabs(session);
+  writeView(session.scope, "tab-names", names);
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Delete message" }),
   );
@@ -892,6 +906,7 @@ it("keeps deletion recovery outside the optimistically removed row", async () =>
     "Deletion refused",
   );
   expect(h.owner.session.channels.window("room").rows).toHaveLength(1);
+  expect(readView(session.scope, "tab-names", undefined)).toEqual(names);
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(h.publications).toHaveLength(2));
   expect(h.publication(1).event.id).toBe(h.publication(0).event.id);

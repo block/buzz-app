@@ -249,8 +249,8 @@ const forgetVisits = (scope: string) => {
 // Thread tab names are durable view intent for an account/community, unlike
 // the layout: a thread's tab takes its name again when it reopens after a
 // restart. One record keeps the 256 newest names, "" for a cleared one,
-// oldest first. Deleting the thread or channel here, or leaving the community,
-// forgets them.
+// oldest first. Deleting the thread here, deleting or leaving the channel, or
+// leaving the community forgets them.
 type ThreadTab = Extract<ConversationTab, { kind: "thread" }>;
 const NAMES = "tab-names";
 const MAX_NAMES = 256;
@@ -425,23 +425,25 @@ function storeOf(session: RelaySession) {
     const scope = session.viewer ? session.scope : undefined;
     store = createTabStore(scope);
     sessions.set(session, store);
-    if (scope)
+    if (scope) {
       session.channelLifecycle?.observeRemoval((channelId) =>
         forgetChannelNames(scope, channelId),
       );
+      // Only once the relay has the deletion, so a refused one keeps the name.
+      session.outbox?.observeSend((event) => {
+        const channelId = event.tags.find(([key]) => key === "h")?.[1];
+        if (event.kind !== 5 || !channelId) return;
+        return () => {
+          for (const [key, id] of event.tags)
+            if (key === "e" && id)
+              saveName(scope, `${channelId}:${id}`, undefined);
+        };
+      });
+    }
   }
   return store;
 }
 
-/** A thread deleted on this device forgets its tab's name. */
-export function forgetThreadTabName(
-  session: RelaySession,
-  channelId: string,
-  rootId: string,
-) {
-  if (session.viewer)
-    saveName(session.scope, `${channelId}:${rootId}`, undefined);
-}
 /** A blank name restores the tab's automatic title. */
 const named = (tab: ConversationTab, name: string): ConversationTab =>
   tab.kind === "thread" ? { ...tab, name: name.trim() || undefined } : tab;
@@ -547,6 +549,11 @@ export function channelTabs(session: RelaySession, navigation?: Navigation) {
         if (retained) store.prune(new Set(retained));
       }
       return "closed";
+    },
+    /** A thread an agent deleted forgets its tab's saved name. */
+    forget(channelId: string, rootId: string) {
+      if (session.viewer)
+        saveName(session.scope, `${channelId}:${rootId}`, undefined);
     },
     /** Names thread `rootId`'s tab; an empty name restores its automatic
      * title. False when it has no tab there. */

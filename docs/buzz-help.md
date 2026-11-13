@@ -899,8 +899,8 @@ and are asked to sign in again in Buzz.
   this device for the account and community. The thread's tab shows it again
   whenever it reopens, including after quitting or updating Buzz. Clearing the
   name restores the automatic title. Buzz keeps the 256 most recently renamed
-  threads per account and community, and forgets a name when you delete its
-  thread or channel on this device.
+  threads per account and community, and forgets a name when its thread or
+  channel is deleted on this device, or when you leave the channel.
 - **Panel dividers**: the divider between a page and its side panel (such as
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.

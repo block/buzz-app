@@ -328,6 +328,8 @@ export function appClient(
       open: (channel, root) => tabs().open(channel, root),
       close: (channel, root) => tabs().close(channel, root),
       rename: (channel, root, name) => tabs().rename(channel, root, name),
+      // After a published deletion, so it never fails the call.
+      forget: (channel, root) => agent.tabs()?.forget(channel, root),
     },
     ...(settings
       ? {

@@ -698,6 +698,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ["k", String(target.kind)],
       ],
     });
+    client.tabs?.forget(channel, id);
     return "deleted";
   },
 

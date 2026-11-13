@@ -219,8 +219,16 @@ pub(crate) async fn plugin_host_run_command(
         })
         .await
         .ok()?;
-        run_command(&command, input.as_deref(), DEADLINE).await
+        run_command(
+            &command,
+            login_shell_environment(),
+            input.as_deref(),
+            DEADLINE,
+        )
+        .await
     };
+    // Before the deadline starts: the probe keeps its own.
+    load_login_shell_environment().await;
     Ok(tokio::time::timeout(DEADLINE, operation)
         .await
         .ok()
@@ -331,6 +339,7 @@ async fn login_shell_exports(
         Path::new("/usr/bin/env"),
         &args,
         deadline,
+        &[],
         OsStr::new(""),
         1 << 20,
         None,
@@ -480,8 +489,12 @@ pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf 
     PathBuf::from(program)
 }
 
+/// Runs a declared host command with the app's environment, the login-shell
+/// variables `login_shell` forwards less any Buzz identity, as processes get
+/// them, and the composed PATH.
 async fn run_command(
     command: &HostCommand,
+    login_shell: &[(OsString, OsString)],
     input: Option<&str>,
     deadline: Duration,
 ) -> Option<String> {
@@ -512,10 +525,19 @@ async fn run_command(
         }
         None => resolve_program(&command.program, &path),
     };
+    let environment = login_shell
+        .iter()
+        .filter(|(name, _)| {
+            let name = name.as_encoded_bytes();
+            !name.starts_with(b"BUZZ_") && !name.starts_with(b"NOSTR_")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     run(
         &program,
         &command.args,
         deadline,
+        &environment,
         &path,
         max_output_bytes,
         input,
@@ -527,6 +549,7 @@ async fn run(
     executable: &Path,
     args: &[String],
     deadline: Duration,
+    environment: &[(OsString, OsString)],
     path: &OsStr,
     max_output_bytes: u64,
     input: Option<&str>,
@@ -535,6 +558,7 @@ async fn run(
         executable,
         args,
         deadline,
+        environment,
         path,
         max_output_bytes,
         input,
@@ -547,10 +571,12 @@ async fn run(
         .flatten()
 }
 
+#[allow(clippy::too_many_arguments)] // One spawn path for host commands and the probe.
 async fn run_output_with_input(
     executable: &Path,
     args: &[String],
     deadline: Duration,
+    environment: &[(OsString, OsString)],
     path: &OsStr,
     max_output_bytes: u64,
     input: Option<&str>,
@@ -566,7 +592,8 @@ async fn run_output_with_input(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true);
+        .kill_on_drop(true)
+        .envs(environment.iter().cloned());
     if !path.is_empty() {
         command.env("PATH", path);
     }
@@ -650,6 +677,7 @@ mod tests {
             executable,
             args,
             deadline,
+            &[],
             &effective_path(),
             super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
             None,
@@ -823,6 +851,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn host_commands_get_forwarded_login_shell_variables_but_no_buzz_identity() {
+        let (_directory, path) =
+            executable("printf '%s|%s|%s' \"$TOOL_FLOW\" \"$BUZZ_LISTED\" \"$NOSTR_LISTED\"");
+        let command = super::HostCommand {
+            id: "status".into(),
+            program: path.to_string_lossy().into_owned(),
+            args: vec![],
+            max_output_bytes: None,
+            max_input_bytes: None,
+            artifact: None,
+        };
+        let login_shell = [
+            ("TOOL_FLOW", "forwarded"),
+            ("BUZZ_LISTED", "from-profile"),
+            ("NOSTR_LISTED", "from-profile"),
+        ]
+        .map(|(name, value)| (name.into(), value.into()));
+        assert_eq!(
+            super::run_command(&command, &login_shell, None, Duration::from_secs(2)).await,
+            Some("forwarded||".into())
+        );
+    }
+
+    #[tokio::test]
     async fn larger_output_requires_a_bounded_manifest_opt_in() {
         let (_directory, path) =
             executable("/usr/bin/head -c 5000 /dev/zero | /usr/bin/tr '\\000' x");
@@ -835,23 +887,23 @@ mod tests {
             artifact: None,
         };
         assert_eq!(
-            super::run_command(&command, None, Duration::from_secs(2)).await,
+            super::run_command(&command, &[], None, Duration::from_secs(2)).await,
             None
         );
         command.max_output_bytes = Some(5000);
         assert_eq!(
-            super::run_command(&command, None, Duration::from_secs(2)).await,
+            super::run_command(&command, &[], None, Duration::from_secs(2)).await,
             Some("x".repeat(5000))
         );
         command.max_output_bytes = Some(4999);
         assert_eq!(
-            super::run_command(&command, None, Duration::from_secs(2)).await,
+            super::run_command(&command, &[], None, Duration::from_secs(2)).await,
             None
         );
         for limit in [0, super::MAX_HOST_COMMAND_OUTPUT_BYTES + 1] {
             command.max_output_bytes = Some(limit);
             assert_eq!(
-                super::run_command(&command, None, Duration::from_secs(2)).await,
+                super::run_command(&command, &[], None, Duration::from_secs(2)).await,
                 None
             );
         }
@@ -871,12 +923,12 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            super::run_command(&command, None, Duration::from_secs(2)).await,
+            super::run_command(&command, &[], None, Duration::from_secs(2)).await,
             Some("verified".into())
         );
         crate::test_executable::write_executable(&path, "#!/bin/sh\nprintf planted\n");
         assert_eq!(
-            super::run_command(&command, None, Duration::from_secs(2)).await,
+            super::run_command(&command, &[], None, Duration::from_secs(2)).await,
             None
         );
     }
@@ -890,6 +942,7 @@ mod tests {
                 &path,
                 &[],
                 Duration::from_secs(1),
+                &[],
                 &effective_path(),
                 65536,
                 Some(input)
@@ -903,6 +956,7 @@ mod tests {
             &path,
             &[],
             Duration::from_secs(2),
+            &[],
             &effective_path(),
             65536,
             Some(&input),
@@ -921,12 +975,12 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            super::run_command(&command, Some("data"), Duration::from_secs(1)).await,
+            super::run_command(&command, &[], Some("data"), Duration::from_secs(1)).await,
             None
         );
         command.max_input_bytes = Some(1);
         assert_eq!(
-            super::run_command(&command, Some("data"), Duration::from_secs(1)).await,
+            super::run_command(&command, &[], Some("data"), Duration::from_secs(1)).await,
             None
         );
         assert!(!marker.exists());
@@ -969,6 +1023,7 @@ mod tests {
                 &tool,
                 &[],
                 Duration::from_secs(5),
+                &[],
                 &path,
                 super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
                 None
@@ -1204,6 +1259,7 @@ mod windows_tests {
                     script.to_string_lossy().into_owned(),
                 ],
                 Duration::from_secs(10),
+                &[],
                 &effective_path(),
                 super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
                 None,
@@ -1232,6 +1288,7 @@ mod windows_tests {
                     script.to_string_lossy().into_owned(),
                 ],
                 Duration::from_secs(5),
+                &[],
                 &effective_path(),
                 super::DEFAULT_HOST_COMMAND_OUTPUT_BYTES,
                 None,

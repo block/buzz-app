@@ -1896,7 +1896,8 @@ every process the login shell's exports named in
 `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS`, a list separated by commas only, where
 `*` matches anything and a `!` pattern excludes wherever it appears, less any
 `BUZZ_` or `NOSTR_` variable; `env` still wins. On macOS 12.0 to 12.2 only the
-login shell's PATH is read. Host commands get only PATH. The
+login shell's PATH is read. Host commands and processes get the same forwarded
+variables. The
 program is found on the same search path as commands,
 which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and

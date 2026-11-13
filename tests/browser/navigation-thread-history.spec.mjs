@@ -1062,6 +1062,15 @@ for (const hinted of [false, true])
       )
       .getByRole("link", { name: "Alice Fixture in #Alpha", exact: true })
       .click();
+    // The dock remembers a visit once it has opened.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const { status, entry } = window.fixtureNavigation.snapshot();
+          return status === "opened" && entry.target.messageId;
+        }),
+      )
+      .toBe(linkedReply.id);
     await expect(thread).toHaveAttribute("aria-selected", "true");
     await expect(
       main.locator(`[data-message-id="${linkedReply.id}"]`),

@@ -837,7 +837,11 @@ those agents as `interrupted` and `InterruptedNotice` asks the owner: **Resume**
 reads each mention again and gives it to `run` marked `resumed`, which tells the
 agent to carry on in its saved session; **Don’t resume** forgets them. Either
 answer covers only the agents the notice names, and only Resume gives those
-mentions again: a replay or live delivery of one never does. A turn
+mentions again: a replay or live delivery of one never does. Opening the
+notice's mention count reads each agent's mentions once, the way Resume does
+(`readInterrupted`), and lists them by channel and thread root; one that read
+does not return shows "Details unavailable", and a read that fails is read again
+when the count is next opened. It is a preview: Resume reads them again. A turn
 stays saved until its resumed turn settles, so closing again first loses none.
 goose sessions end with the app, so a resumed goose turn opens a new one and is
 shown the mention's thread, including what it already posted there.
@@ -1063,6 +1067,11 @@ from profile owner metadata, not a name or presence in the library or local agen
 Recency stays in memory per session/destination and is bounded to 100 destinations
 and 100 recipients each. Neither ownership nor recency overrides membership or
 match quality.
+
+The Solo audience toolbar picker puts agents addressed at opening first when
+browsing without a query, before the 50-row limit. Typed searches keep normal
+match-quality ranking. Checks stay live as you toggle; rows do not move until a
+new query or reopening. Inline `@` order is unchanged.
 
 An open query installs at most 50 keys. Their order and membership stay fixed until
 the query changes or the chooser reopens. Labels, insertion names and availability

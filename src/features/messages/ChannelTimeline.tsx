@@ -5,6 +5,7 @@ import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMessageSelectionCopy } from "./selection-copy";
+import { SelectionQuote } from "./SelectionQuote";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { ChatCircleIcon } from "../../shared/design-system/icons";
@@ -36,6 +37,7 @@ import {
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow, type MessageLinkOrigin } from "./MessageRow";
+import { MessageContextMenus } from "./MessageActionBar";
 import {
   continuesMessageGroup,
   publicMessageNeighbor,
@@ -1962,7 +1964,7 @@ function Timeline({
     if (scroller.current && scroller.current.scrollTop <= 0)
       loadNearTop(scroller.current);
   };
-  return (
+  const feed = (
     <section
       ref={scroller}
       data-message-scroller
@@ -2327,6 +2329,8 @@ function Timeline({
             />
           </div>
         )}
+      <SelectionQuote list={scroller} />
     </section>
   );
+  return <MessageContextMenus>{feed}</MessageContextMenus>;
 }

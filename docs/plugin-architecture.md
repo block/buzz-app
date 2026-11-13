@@ -1891,10 +1891,12 @@ program but not every argument. It returns `{ write, end, kill, exited }`.
 stdout and stderr arrive as UTF-8 text as they are read, not split into lines.
 `cwd` is absolute or `~/…` and is created if missing. `env` adds to the app's
 environment (`null` removes a variable); variables starting `BUZZ_` or `NOSTR_`
-are never inherited. On macOS, every process also gets the login shell's
-exports named in `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS`, a comma-separated list
-where `*` matches anything and a leading `!` excludes, less any `BUZZ_` or
-`NOSTR_` variable; `env` still wins. The
+are never inherited. On macOS, a Buzz opened from Finder or the Dock also gives
+every process the login shell's exports named in
+`BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS`, a list separated by commas only, where
+`*` matches anything and a `!` pattern excludes wherever it appears, less any
+`BUZZ_` or `NOSTR_` variable; `env` still wins. On macOS 12.0 to 12.2 only the
+login shell's PATH is read. Host commands get only PATH. The
 program is found on the same search path as commands,
 which on macOS also includes `~/.local/bin`. A process declared with
 `"bundled": true` instead runs the copy the app ships in its `bin` resources and

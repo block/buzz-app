@@ -236,9 +236,6 @@ static LOGIN_SHELL_PROBE_GROUP: AtomicI32 = AtomicI32::new(0);
 const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(10);
 #[cfg(target_os = "macos")]
 const LOGIN_SHELL_ENVIRONMENT_MARKER: &str = "__BUZZ_LOGIN_SHELL_ENVIRONMENT__";
-/// Login-shell variables every process gets.
-#[cfg(target_os = "macos")]
-const LOGIN_SHELL_DEFAULT_EXPORTS: &[&str] = &["PATH"];
 /// Names, in the login shell, more variables to forward: comma-separated
 /// patterns where `*` matches any run of characters and a leading `!` excludes.
 #[cfg(target_os = "macos")]
@@ -276,8 +273,8 @@ pub(crate) async fn load_login_shell_environment() {
         .await;
 }
 
-/// The login-shell variables processes get: [`LOGIN_SHELL_DEFAULT_EXPORTS`]
-/// and those `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` names. Empty until
+/// The login-shell variables processes get: PATH and those
+/// `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` names. Empty until
 /// [`load_login_shell_environment`] has read them, or when it could not.
 pub(crate) fn login_shell_environment() -> &'static [(OsString, OsString)] {
     #[cfg(target_os = "macos")]
@@ -312,8 +309,10 @@ async fn login_shell_exports(
 
     // External commands only, so any shell's syntax runs it and PATH arrives
     // colon-separated even from shells that keep it as a list, such as fish.
+    // `printenv PATH` is for macOS before 12.3, whose `env` has no `-0`.
+    let marker = LOGIN_SHELL_ENVIRONMENT_MARKER;
     let script = format!(
-        "/usr/bin/printf {LOGIN_SHELL_ENVIRONMENT_MARKER}; /usr/bin/env -0; /usr/bin/printf {LOGIN_SHELL_ENVIRONMENT_MARKER}"
+        "/usr/bin/printf {marker}; /usr/bin/env -0; /usr/bin/printf {marker}; /usr/bin/printenv PATH; /usr/bin/printf {marker}"
     );
     // Profiles can check BUZZ_RESOLVING_ENVIRONMENT to skip slow setup, and
     // DISABLE_AUTO_UPDATE stops Oh My Zsh from prompting to update.
@@ -340,16 +339,22 @@ async fn login_shell_exports(
     .await?;
     // Bytes, as `env -0` prints them: a value need not be UTF-8.
     let marker = LOGIN_SHELL_ENVIRONMENT_MARKER.as_bytes();
-    let find = |bytes: &[u8]| bytes.windows(marker.len()).position(|w| w == marker);
-    let start = find(&output)? + marker.len();
+    let find = |bytes: &[u8]| bytes.windows(marker.len()).rposition(|w| w == marker);
+    let start = output.windows(marker.len()).position(|w| w == marker)? + marker.len();
     let end = start + find(&output[start..])?;
-    let variables = output[start..end]
+    let middle = start + find(&output[start..end])?;
+    let variables = output[start..middle]
         .split(|byte| *byte == 0)
         .filter_map(|entry| {
             let separator = entry.iter().position(|byte| *byte == b'=')?;
             Some((&entry[..separator], &entry[separator + 1..]))
         })
         .collect::<Vec<_>>();
+    if !variables.iter().any(|(name, _)| *name == b"PATH") {
+        // `env` could not print the environment, so only PATH is known.
+        let path = output[middle + marker.len()..end].trim_ascii_end();
+        return (!path.is_empty()).then(|| vec![("PATH".into(), OsStr::from_bytes(path).into())]);
+    }
     let additional = variables
         .iter()
         .find(|(name, _)| *name == LOGIN_SHELL_ADDITIONAL_EXPORTS.as_bytes())
@@ -358,10 +363,12 @@ async fn login_shell_exports(
         variables
             .iter()
             .filter(|(name, _)| {
-                LOGIN_SHELL_DEFAULT_EXPORTS
-                    .iter()
-                    .any(|default| default.as_bytes() == *name)
-                    || is_additional_export(additional, name)
+                // What the probe set, and what its shell keeps about itself.
+                let probe = matches!(
+                    *name,
+                    b"PWD" | b"OLDPWD" | b"SHLVL" | b"_" | b"DISABLE_AUTO_UPDATE"
+                );
+                *name == b"PATH" || (!probe && is_additional_export(additional, name))
             })
             .map(|(name, value)| {
                 (
@@ -374,19 +381,19 @@ async fn login_shell_exports(
 }
 
 /// Whether `patterns`, comma-separated, name `name`: `*` matches any run of
-/// characters, a leading `!` excludes, and the last pattern that matches
-/// decides, as in `.gitignore`.
+/// characters, and a pattern with a leading `!` excludes what it matches
+/// wherever it appears in the list.
 #[cfg(target_os = "macos")]
 fn is_additional_export(patterns: &[u8], name: &[u8]) -> bool {
-    patterns
-        .split(|byte| *byte == b',')
-        .map(<[u8]>::trim_ascii)
-        .rev()
-        .find_map(|pattern| match pattern.strip_prefix(b"!") {
-            Some(excluded) => matches_glob(excluded, name).then_some(false),
-            None => matches_glob(pattern, name).then_some(true),
-        })
-        .unwrap_or(false)
+    let mut included = false;
+    for pattern in patterns.split(|byte| *byte == b',').map(<[u8]>::trim_ascii) {
+        match pattern.strip_prefix(b"!") {
+            Some(excluded) if matches_glob(excluded, name) => return false,
+            Some(_) => {}
+            None => included |= matches_glob(pattern, name),
+        }
+    }
+    included
 }
 
 #[cfg(target_os = "macos")]
@@ -691,7 +698,8 @@ mod tests {
             "[ \"$DISABLE_AUTO_UPDATE$BUZZ_RESOLVING_ENVIRONMENT\" = true1 ] || exit\n\
              echo 'Last login: Tue'; export PATH=/opt/homebrew/bin:/usr/bin\n\
              export TOOL_FLOW='a=b\nc' TOOL_SECRET=hidden SHLVL=7 UNLISTED=dropped\n\
-             export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS='TOOL_*, !*_SECRET,SHLVL'\n\
+             export TOOL_MARK='__BUZZ_LOGIN_SHELL_ENVIRONMENT__'\n\
+             export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS='!*_SECRET,TOOL_*, SHLVL'\n\
              eval \"$4\"; echo 'Goodbye'; exit 1",
         );
         let mut exports =
@@ -707,8 +715,8 @@ mod tests {
             exports,
             [
                 ("PATH", &b"/opt/homebrew/bin:/usr/bin"[..]),
-                ("SHLVL", b"7"),
                 ("TOOL_FLOW", b"a=b\nc"),
+                ("TOOL_MARK", b"__BUZZ_LOGIN_SHELL_ENVIRONMENT__"),
             ]
         );
         let (_directory, shell) = executable("echo 'no environment here'");
@@ -719,8 +727,47 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn login_shell_wildcard_leaves_out_what_describes_the_probe() {
+        let (_directory, shell) = executable(
+            "cd /; export PROFILE_SETTING=kept BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS='*'\n\
+             eval \"$4\"",
+        );
+        let exports =
+            super::login_shell_exports(&shell, Duration::from_secs(2), &Default::default())
+                .await
+                .unwrap();
+        let names = exports
+            .iter()
+            .map(|(name, _)| name.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"PROFILE_SETTING"), "{names:?}");
+        for probe in ["PWD", "OLDPWD", "SHLVL", "_", "DISABLE_AUTO_UPDATE"] {
+            assert!(!names.contains(&probe), "{probe} in {names:?}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn login_shell_path_survives_an_env_without_nul_output() {
+        // macOS before 12.3: `env -0` fails, but `printenv PATH` works.
+        let (_directory, shell) = executable(
+            "export PATH=/opt/homebrew/bin:/usr/bin TOOL_FLOW=a BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS='*'\n\
+             eval \"$(/usr/bin/printf %s \"$4\" | /usr/bin/sed 's|/usr/bin/env -0|/usr/bin/false|')\"",
+        );
+        let exports =
+            super::login_shell_exports(&shell, Duration::from_secs(2), &Default::default())
+                .await
+                .unwrap();
+        assert_eq!(
+            exports,
+            [("PATH".into(), "/opt/homebrew/bin:/usr/bin".into())]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
-    fn additional_exports_follow_the_last_matching_pattern() {
+    fn additional_exports_match_unless_an_exclusion_does() {
         let exported = |patterns: &str, name: &str| {
             super::is_additional_export(patterns.as_bytes(), name.as_bytes())
         };
@@ -736,8 +783,11 @@ mod tests {
         assert!(!exported("AB*B", "AB"));
         assert!(exported("*", "SHLVL"));
         assert!(!exported("*,!*_SECRET", "TOOL_SECRET"));
-        assert!(exported("!TOOL_SECRET,*", "TOOL_SECRET"));
-        assert!(exported("*,!TOOL_*,TOOL_SECRET", "TOOL_SECRET"));
+        // An exclusion wins wherever it is in the list.
+        assert!(!exported("!*_SECRET,TOOL_*", "TOOL_SECRET"));
+        assert!(exported("!*_SECRET,TOOL_*", "TOOL_FLOW"));
+        assert!(!exported("!TOOL_SECRET,*", "TOOL_SECRET"));
+        assert!(!exported("*,!TOOL_*,TOOL_SECRET", "TOOL_SECRET"));
         assert!(!exported("!TOOL", "TOOL"));
         assert!(exported(" , TOOL ,", "TOOL"));
         assert!(!exported("", "TOOL"));

@@ -987,8 +987,12 @@ available rather than silently discarding it.
   `BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS` there as a comma-separated list of
   names, where `*` matches anything and a leading `!` excludes, such as
   `export BUZZ_LOGIN_SHELL_ADDITIONAL_EXPORTS="AWS_PROFILE,TOOL_*,!*_SECRET"`.
-  Variables starting with `BUZZ_` or `NOSTR_` are never passed on. Quit and
-  reopen Buzz after changing it.
+  Only commas separate names, so `"AWS_PROFILE TOOL_*"` is a single pattern.
+  An `!` pattern excludes a name wherever it appears in the list. Variables
+  starting with `BUZZ_` or `NOSTR_` are never passed on. Quit and reopen Buzz
+  after changing it. The list applies when Buzz is opened from the Dock or
+  Finder: started from a terminal, Buzz passes on that terminal's whole
+  environment instead. macOS 12.0 to 12.2 pass on only PATH.
 - In communities where your build restricts workflows, workflow messages do
   not automatically start or steer local Claude, Codex, Goose, or Pi agents. To
   have one act on a workflow result, send it a direct request explaining what

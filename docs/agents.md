@@ -583,12 +583,12 @@ section naming the plugin, after any `<plugin-instructions>`; Mesh agents get
 none. The base prompt ranks the section with the agent's instructions: the
 owner's messages override it, and it overrides a Solo chat's Canvas. New text
 replaces the old; empty text clears it, and later turns there say no such
-instructions apply now. A turn leaves the section out while the agent is not
-in the channel. Text is at most 8192 UTF-8 bytes after trimming and is sent
-with every turn. `place` names the conversation as session controls do: a
-root for a DM, a Solo chat or a channel-scoped agent rejects, and a huddle
-room rejects any instructions. The text is kept
-on this device for now, survives a restart and is dropped when the agent is
+instructions apply now. While the agent is not in the channel, its turns there
+say so too. Text is at most 8192 UTF-8 bytes after trimming and is sent with
+every turn. `place` names the conversation as session controls do: a root for
+a DM, a Solo chat or a channel-scoped agent rejects, and a huddle room rejects
+any instructions. The text is kept on this device for now. It survives a
+restart and the agent leaving the community, and is dropped when the agent is
 deleted; another program that does not share this device's agent state does
 not see it. `ctx.agents.conversationInstructions(pubkey, place)` resolves
 with the text, or undefined. Plugins feature-detect the methods.

@@ -1610,8 +1610,9 @@ export type Agents = {
    * empty text clears them. At most 8 KiB (UTF-8, after trimming). `place`
    * names the conversation as session controls do; a DM, a Solo chat or a
    * channel-scoped agent has no root, and rejects one, as a huddle room
-   * rejects any instructions. Kept on this device
-   * for now, and dropped when the agent is deleted. Plugins only. */
+   * rejects any instructions. Kept on this device for now, also when the
+   * agent leaves the community, and dropped when it is deleted. Plugins
+   * only. */
   setConversationInstructions(
     agent: AgentKey,
     place: SessionPlace,
@@ -4929,22 +4930,26 @@ export class AgentsService extends Service implements Agents {
     return found;
   }
   /** The instructions a plugin gave the agent in the conversation its
-   * harness keys as `channelId` and `root`, while the agent is in that
-   * channel: one removed from it keeps none there. */
+   * harness keys as `channelId` and `root`. One removed from that channel
+   * keeps none there: its turns say any it was shown no longer apply. */
   private turnConversationInstructions(
     agent: Agent,
     channelId: string,
     root?: string,
   ) {
     const scope = ownerReads(this.relay(agent.key), pubkeyOf(agent.key))?.scope;
-    if (!scope || this.member(agent, { tags: [["h", channelId]] }) === false)
-      return undefined;
-    return storedInstructions(
-      this.storage,
-      scope,
-      agent.key,
-      conversationKey(channelId, root),
-    );
+    const saved =
+      scope &&
+      storedInstructions(
+        this.storage,
+        scope,
+        agent.key,
+        conversationKey(channelId, root),
+      );
+    if (!saved) return undefined;
+    return this.member(agent, { tags: [["h", channelId]] }) === false
+      ? { ...saved, text: "" }
+      : saved;
   }
   /** Whether `place` has a root in a DM or Solo chat. Harnesses run each as
    * one conversation, so the root would name one that never runs. */
@@ -5409,7 +5414,9 @@ export class AgentsService extends Service implements Agents {
       this.setArchiveUnchecked(member.key, false);
       this.unlist(binding.origin, pubkey);
       await native.forget(member);
-      await forgetConversationInstructions(this.storage, member.key);
+      // Left, its conversations stay here, and so do their instructions.
+      if (deleting)
+        await forgetConversationInstructions(this.storage, member.key);
     } finally {
       await native.releaseRemoval(member);
     }

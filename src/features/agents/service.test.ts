@@ -1962,7 +1962,7 @@ describe("a conversation's instructions", () => {
       );
   });
 
-  it("are left out while the agent is not in the channel", async () => {
+  it("say none apply while the agent is not in the channel", async () => {
     const f = await ready();
     await f.plugin.agents.setConversationInstructions(
       f.agent.key,
@@ -1971,7 +1971,11 @@ describe("a conversation's instructions", () => {
     );
     const agent = await handle(f);
     f.confirm(channel, [viewer]);
-    expect(agent.conversationInstructions?.(channel, root)).toBeUndefined();
+    // Any it was shown there no longer apply.
+    expect(agent.conversationInstructions?.(channel, root)).toEqual({
+      plugin: "example",
+      text: "",
+    });
     f.confirm(channel, [viewer, bot]);
     expect(agent.conversationInstructions?.(channel, root)?.text).toBe(
       "Review.",
@@ -4659,12 +4663,14 @@ describe("an agent in several communities", () => {
   });
 
   it("leaves one community and stays in its others, never its last, and comes back with its key", async () => {
-    const { service, native, second, agent } = await joined();
+    const { service, native, second, agent, plugin } = await joined();
     await service.save(agent.key, {
       attention: {
         "interest/here": { type: "interest", instructions: "Only here." },
       },
     });
+    const thread = { channelId: channel, root: "e".repeat(64) };
+    await plugin.agents.setConversationInstructions(away, thread, "Here.");
     steps.length = 0;
     await service.leave(away);
     // Its share there goes with it: nothing there lists it to unshare after.
@@ -4695,6 +4701,10 @@ describe("an agent in several communities", () => {
     // attention to here is gone.
     const back = await service.join(bot);
     expect(back.agent.key).toBe(away);
+    // Its conversations' instructions stayed here with them.
+    await expect(
+      plugin.agents.conversationInstructions(away, thread),
+    ).resolves.toBe("Here.");
     expect(second.archives.request).toHaveBeenCalledWith(
       "unarchive",
       bot,

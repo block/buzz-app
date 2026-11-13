@@ -2563,8 +2563,8 @@ it.each([
     writable: false,
   },
   {
-    name: "unknown type",
-    change: { channelType: "future" },
+    name: "system channel",
+    change: { channelType: "system" },
     visible: false,
     writable: false,
   },
@@ -2578,6 +2578,8 @@ it.each([
   "channel groups retain host access rules for $name",
   async ({ name, change, visible, writable }) => {
     const h = fixture();
+    const viewer = h.session.viewer;
+    assert(viewer);
     h.session.channelWrites = { ...h.session.channelWrites, available: true };
     h.roster(
       name === "missing"
@@ -2587,7 +2589,7 @@ it.each([
               id: "source",
               name: "Source channel",
               channelType: "stream",
-              members: [h.session.viewer ?? ""],
+              members: [viewer],
               ...change,
             },
           ],
@@ -2612,9 +2614,9 @@ it.each([
       },
     });
     mount(h);
-    expect(
-      !!screen.queryByRole("button", { name: "Source channel", exact: true }),
-    ).toBe(visible);
+    expect(!!screen.queryByRole("button", { name: "Source channel" })).toBe(
+      visible,
+    );
     expect(!!screen.queryByText("Task content")).toBe(visible);
     expect(
       !!screen.queryByRole("button", { name: "New task in Source channel" }),
@@ -2624,12 +2626,14 @@ it.each([
 
 it("channel groups separate selection from disclosure, preserve children, and recheck task access", async () => {
   const h = fixture();
+  const viewer = h.session.viewer;
+  assert(viewer);
   h.session.channelWrites = { ...h.session.channelWrites, available: true };
   const channel: ChannelSummary = {
     id: "source",
     name: "Source channel",
     channelType: "stream",
-    members: [h.session.viewer ?? ""],
+    members: [viewer],
   };
   h.roster([channel]);
   const select = vi.fn(),
@@ -2655,9 +2659,7 @@ it("channel groups separate selection from disclosure, preserve children, and re
   await h.register({ component: Body });
   mount(h);
   const user = userEvent.setup();
-  await user.click(
-    screen.getByRole("button", { name: "Source channel", exact: true }),
-  );
+  await user.click(screen.getByRole("button", { name: "Source channel" }));
   expect(select).toHaveBeenCalledOnce();
   const disclosure = screen.getByRole("button", {
     name: "Toggle source tasks",
@@ -2680,22 +2682,32 @@ it("channel groups separate selection from disclosure, preserve children, and re
   h.session.channelWrites = { ...h.session.channelWrites, available: true };
   await user.click(newTask);
   expect(create).toHaveBeenCalledOnce();
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Source channel" }),
+  );
+  await screen.findByRole("menu");
+  await act(() => h.reconnect());
+  await waitFor(() =>
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+  );
   await act(() => h.roster([{ ...channel, members: [] }]));
   expect(draft).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Source channel", exact: true }),
+    screen.queryByRole("button", { name: "Source channel" }),
   ).not.toBeInTheDocument();
 });
 
 it("3,000 channel groups share roster reads and retain the complete native menu", async () => {
   const h = fixture();
+  const viewer = h.session.viewer;
+  assert(viewer);
   const channels: ChannelSummary[] = Array.from(
     { length: 3_000 },
     (_, index) => ({
       id: `source-${index}`,
       name: `Source ${index}`,
       channelType: "stream",
-      members: [h.session.viewer ?? ""],
+      members: [viewer],
     }),
   );
   h.roster(channels);
@@ -2757,7 +2769,6 @@ it("3,000 channel groups share roster reads and retain the complete native menu"
   await user.click(
     screen.getByRole("button", {
       name: "Actions for Source 2999",
-      exact: true,
     }),
   );
   const menu = await screen.findByRole("menu");

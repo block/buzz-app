@@ -97,6 +97,8 @@ export function policyRelay({
           ? "observer"
           : undefined);
   report.wireFrames = [];
+  // Subscription ids are per socket: pair a frame with its socket to match it.
+  report.socketFrames = [];
   report.startupFrames = [];
   let emptyRoster = false;
   let heldContent = false;
@@ -108,6 +110,7 @@ export function policyRelay({
   };
   function emit(socket, frame) {
     report.wireFrames.push(frame);
+    report.socketFrames.push({ socket: sockets.indexOf(socket), frame });
     if (wsLimit)
       report.startupFrames.push({
         socket: sockets.indexOf(socket),
@@ -533,7 +536,7 @@ export function policyRelay({
           filter.until === undefined
         )
           return new Promise((resolve, reject) => {
-            const held = { pending: true, aborted: false };
+            const held = { community, pending: true, aborted: false };
             unreadHolds.push(held);
             const abort = () => {
               held.pending = false;

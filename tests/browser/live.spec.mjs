@@ -325,20 +325,19 @@ test("automatic recovery restores an empty paused roster without restarting heal
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
+  // Every joined community holds its own stream; only the recovering one
+  // (primary) is under test.
+  const primary = (predicate) =>
+    app.relay.requests.filter(
+      ({ community, filters }) =>
+        community === "primary" && filters.some(predicate),
+    );
   const globals = () =>
-    app.relay.requests.filter(({ filters }) =>
-      filters.some(
-        (filter) => filter.kinds.includes(0) || filter.kinds.includes(44100),
-      ),
+    primary(
+      (filter) => filter.kinds.includes(0) || filter.kinds.includes(44100),
     );
-  const observer = () =>
-    app.relay.requests.filter(({ filters }) =>
-      filters.some((filter) => filter.kinds.includes(24200)),
-    );
-  const presence = () =>
-    app.relay.requests.filter(({ filters }) =>
-      filters.some((filter) => filter.kinds.includes(20001)),
-    );
+  const observer = () => primary((filter) => filter.kinds.includes(24200));
+  const presence = () => primary((filter) => filter.kinds.includes(20001));
   await expect.poll(() => globals().length).toBe(2);
   await expect.poll(() => observer().length).toBe(1);
   await expect.poll(() => presence().length).toBe(1);

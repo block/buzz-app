@@ -246,6 +246,16 @@ export async function openCommunityPicker(page) {
   return picker;
 }
 
+/** The switcher trigger for `name`, with or without the elsewhere-unread suffix. */
+export function communitySwitcher(page, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.getByRole("button", {
+    name: new RegExp(
+      `^Community switcher: ${escaped}(, unread in other communities)?$`,
+    ),
+  });
+}
+
 export async function selectCommunity(page, name) {
   const picker = await openCommunityPicker(page);
   await picker
@@ -254,12 +264,7 @@ export async function selectCommunity(page, name) {
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("button", {
-      name: `Community switcher: ${name}`,
-      exact: true,
-    }),
-  ).toBeVisible();
+  await expect(communitySwitcher(page, name)).toBeVisible();
 }
 
 export function pageChoice(group, name) {

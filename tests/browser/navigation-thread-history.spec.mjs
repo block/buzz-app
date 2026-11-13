@@ -61,7 +61,15 @@ test("Back restores each thread visit before the previous channel", async ({
     await open(page, app);
     await beta.focus(); // Prepare without selecting or adding a navigation visit.
     await headStarted;
-    await expect.poll(() => app.report.unreadHolds.length).toBe(1);
+    // Every joined community holds its unread batch; only primary's is under test.
+    await expect
+      .poll(
+        () =>
+          app.report.unreadHolds.filter(
+            ({ community }) => community === "primary",
+          ).length,
+      )
+      .toBe(1);
     await expect(beta).toHaveAccessibleName("Beta");
   } finally {
     releaseHead();

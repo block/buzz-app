@@ -59,7 +59,6 @@ administrator password.
 
 The release automatically promotes each eligible build to the rolling preview
 feed after the signed prerelease is published and the promotion gate passes.
-This includes every dispatched build without `promote_version`.
 An updater-less artifact, invalid signature, or rollback leaves the existing feed
 unchanged, but the promotion job fails and needs investigation. The workflow
 does **not** publish to the legacy `block/buzz` updater. Older installed apps

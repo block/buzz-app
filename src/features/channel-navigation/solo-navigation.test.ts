@@ -537,7 +537,15 @@ it("keeps disabled chats ordinary through loading, re-enable, and reconnect", as
 
 it("does not reveal disabled chats or replay a reveal queued before disabling", async () => {
   const h = fixture();
-  await h.register();
+  const source = await h.register();
+  const sourceEntry = h.service.sources()[0];
+  if (!sourceEntry) throw new Error("Expected the registered Solo source");
+  const revealRequests = h.service.presentation(
+    sourceEntry,
+    source.binding(),
+  ).revealRequests;
+  const sourceReveal = vi.fn();
+  const stopSourceReveal = revealRequests.subscribe(sourceReveal);
   await h.navigate({
     version: 1,
     kind: "conversation",
@@ -549,6 +557,7 @@ it("does not reveal disabled chats or replay a reveal queued before disabling", 
   });
   const listener = vi.fn();
   h.service.reveal("owned");
+  expect(sourceReveal).toHaveBeenCalledWith("owned");
   h.plugins(pluginConfiguration(false), {
     example: { revision: "one", status: "active", error: null },
   });
@@ -559,6 +568,65 @@ it("does not reveal disabled chats or replay a reveal queued before disabling", 
   const stop = h.service.subscribeReveal(listener, true);
   expect(listener).not.toHaveBeenCalled();
   stop();
+  stopSourceReveal();
+
+  h.service.reveal("owned");
+  const replayed = vi.fn(() => true);
+  const stopReplay = h.service.subscribeReveal(replayed, true);
+  expect(replayed).toHaveBeenCalledWith("owned", true);
+  stopReplay();
+});
+
+it("skips a disabled source when opening a newly created workspace", async () => {
+  const h = fixture();
+  const disabledOpen = vi.fn(async () => {});
+  const enabledOpen = vi.fn(async () => {});
+  await h.register({
+    order: -1,
+    composeWorkspaces: true,
+    openWorkspace: disabledOpen,
+  });
+  await h.register(
+    {
+      composeWorkspaces: true,
+      openWorkspace: enabledOpen,
+    },
+    "another",
+  );
+  const disabledConfiguration = pluginConfiguration(false);
+  if (disabledConfiguration.status !== "ready")
+    throw new Error("Expected plugin configuration to be ready");
+  const example = disabledConfiguration.catalog.plugins[0];
+  if (!example) throw new Error("Expected the example plugin");
+  h.plugins(
+    {
+      ...disabledConfiguration,
+      catalog: {
+        ...disabledConfiguration.catalog,
+        plugins: [
+          example,
+          {
+            ...example,
+            manifest: { ...example.manifest, id: "another", name: "Another" },
+            enabled: true,
+          },
+        ],
+      },
+    },
+    {
+      another: { revision: "one", status: "active", error: null },
+    },
+  );
+
+  expect(h.service.snapshot().regions[0]?.reason).toBe("disabled");
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(true);
+  expect(disabledOpen).not.toHaveBeenCalled();
+  expect(enabledOpen).toHaveBeenCalledWith(
+    expect.objectContaining({ viewer: h.session.viewer }),
+    "created-workspace",
+  );
 });
 
 it.each(["starting", "failed", "paused", "stale"] as const)(

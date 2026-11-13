@@ -450,17 +450,16 @@ export class SoloNavigationService extends Service implements SoloNavigation {
           ...(binding ? { binding } : {}),
         };
         this.value = next;
-        if (
-          this.pendingReveal &&
+        const isDisabledChat = (id: string | undefined) =>
+          id !== undefined &&
           next.regions.some(
             (region) =>
               region.reason === "disabled" &&
-              region.channels.some(
-                (channel) => channel.id === this.pendingReveal,
-              ),
-          )
-        )
-          this.pendingReveal = this.pendingHostReveal = undefined;
+              region.channels.some((channel) => channel.id === id),
+          );
+        if (isDisabledChat(this.pendingReveal)) this.pendingReveal = undefined;
+        if (isDisabledChat(this.pendingHostReveal?.id))
+          this.pendingHostReveal = undefined;
       } while (this.refreshAgain);
     } finally {
       this.refreshing = false;
@@ -477,7 +476,7 @@ export class SoloNavigationService extends Service implements SoloNavigation {
   }
   async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
     const region = this.value.regions.find(
-      (item) => item.source && !item.hidden,
+      (item) => item.source && !item.hidden && item.reason !== "disabled",
     );
     const source = region?.source;
     if (!source?.composeWorkspaces || !source.openWorkspace) return false;

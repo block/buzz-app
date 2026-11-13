@@ -104,6 +104,13 @@ export function resetNewChatProject(scope: string, projectId: string) {
   writeView(scope, `${key}:new-project`, null);
 }
 
+/** New can return typing to an open draft without replacing its editor. */
+export function soloDraftInput() {
+  return document.querySelector<HTMLElement>(
+    '#new-chat-prompt textarea, #new-chat-prompt [role="textbox"]',
+  );
+}
+
 /** New chats share one saved draft. When it holds only tags for agents
  * other than the named one, it has no text of the person's to keep. */
 function dropOtherAgentTag(scope: string, key: string, agent?: string) {

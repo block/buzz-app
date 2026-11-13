@@ -431,8 +431,11 @@ and are asked to sign in again in Buzz.
   message, attachments, and choices while this window stays open. Retry never
   replaces a newer New chat draft or a later Reset. Reloading or dismissing that
   notice ends this recovery option.
-  Open the composer’s agent chooser to change who you’re sending to. Already
-  selected agents appear first with checkmarks when browsing; click one to remove
+  Open the composer’s agent chooser to change who you’re sending to. New chat
+  keeps your selected agents with its draft when you leave and return. Started
+  drafts have a pencil icon and stay in the Solo list; New chat returns to the
+  open draft. Selected
+  agents appear first with checkmarks when browsing; click one to remove
   it (the last agent stays selected). Rows stay in place while you toggle; reopen
   to refresh their order. Search ranks matching choices by relevance, including
   exact names.

@@ -349,6 +349,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
           <RemoteAgents
             client={agents}
             session={agentSession}
+            signIn={
+              agentSession.target ? (
+                <Login
+                  session={agentSession}
+                  available={loginAvailable}
+                  active={active}
+                  showHeading={false}
+                  openIdentity={openIdentity}
+                />
+              ) : undefined
+            }
             active={active}
             onOverview={setAgentOverview}
             savedAgents={saved?.agents ?? []}

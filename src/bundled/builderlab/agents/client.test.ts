@@ -828,6 +828,18 @@ it("asks another sign-in server's binding challenge for its own origin", async (
     origin: "https://peer.example",
   });
 });
+it("never signs another site's challenge from a sign-in server", async () => {
+  const h = await fixture();
+  vi.mocked(h.host.request)
+    .mockResolvedValueOnce(response({ identity: null }))
+    .mockResolvedValueOnce(response({ ...challenge, kind: 24243 }));
+  const peer = { ...h.session, target: "https://peer.example/goose" };
+  await expect(createAgentClient(peer, h.owner).link(h.signal)).rejects.toThrow(
+    "challenge for another site",
+  );
+  expect(h.owner.signBinding).not.toHaveBeenCalled();
+  expect(h.host.request).toHaveBeenCalledTimes(2);
+});
 it("skips linking when this key is already bound", async () => {
   const h = await fixture();
   vi.mocked(h.host.request)
@@ -939,6 +951,28 @@ it("shares one binding attempt between overlapping links", async () => {
     .mockImplementationOnce(() => current.promise)
     .mockResolvedValueOnce(response({ status: 1 }));
   const signIn = h.client.link(h.signal);
+  const activation = h.client.activate(
+    row.agent_pubkey,
+    proof,
+    undefined,
+    h.signal,
+  );
+  current.resolve(bound());
+  await Promise.all([signIn, activation]);
+  expect(
+    vi
+      .mocked(h.host.request)
+      .mock.calls.map(([input]) => input.url.split("/").at(-1)),
+  ).toEqual(["current", "attest-agent"]);
+});
+
+it("shares one binding attempt across clients of one sign-in", async () => {
+  const h = await fixture();
+  const current = deferred<HostResponse>();
+  vi.mocked(h.host.request)
+    .mockImplementationOnce(() => current.promise)
+    .mockResolvedValueOnce(response({ status: 1 }));
+  const signIn = createAgentClient(h.session, h.owner).link(h.signal);
   const activation = h.client.activate(
     row.agent_pubkey,
     proof,

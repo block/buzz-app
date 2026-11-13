@@ -451,6 +451,40 @@ it("stays with the build's session until the build's server is known, and once d
   session.dispose();
 });
 
+it("keeps a community pending, sending nothing, until its server is known", async () => {
+  const build = federatedFixture("build");
+  const peer = federatedFixture("peer");
+  const authority = peer.service.snapshot().authority;
+  if (!authority) throw new Error("Missing fixture authority");
+  build.request.mockResolvedValue(me("build"));
+  build.publish({ status: "signed-in", revision: "build:1" });
+  peer.publish({ status: "restoring", authority: null });
+  const identity = { ...build.service, forCommunity: () => peer.service };
+  const relay = {
+    snapshot: () => ({}),
+    selected: () => "wss://team.peer.example",
+    subscribe: () => () => {},
+  };
+  const session = createNativeSession(identity);
+  await expect.poll(() => session.snapshot().status).toBe("signed-in");
+  const agents = followCommunity(session, identity, relay);
+  const sent = build.request.mock.calls.length;
+  expect(agents.snapshot().status).toBe("pending");
+  expect(() => agents.credential()).toThrow("still finding");
+  await expect(
+    agents.ensureSignedIn(new AbortController().signal),
+  ).rejects.toThrow("still finding");
+  expect(build.request).toHaveBeenCalledTimes(sent);
+  // Resolved to the build's own server: the build's session.
+  peer.publish({
+    status: "signed-in",
+    authority: build.service.snapshot().authority,
+  });
+  expect(agents.snapshot()).toBe(session.snapshot());
+  agents.dispose();
+  session.dispose();
+});
+
 it("names the build's site, else the selected server's origin, for usage and billing", () => {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://builderlab.example/app/");
   const session = {} as BuilderlabSession;

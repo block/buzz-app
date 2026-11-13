@@ -425,6 +425,28 @@ export const sessionSite = (session: BuilderlabSession) =>
     ? `${new URL(session.target).origin}/`
     : (import.meta.env.VITE_BUZZ_BUILDERLAB_URL ?? "");
 
+const unresolved = (): never => {
+  throw new Error(
+    "Builderlab is still finding this community's sign-in server. Try again.",
+  );
+};
+const PENDING_STATE: LoginSnapshot = Object.freeze({ status: "pending" });
+/** The selected community's session while its sign-in server is unknown. */
+const PENDING: BuilderlabSession = Object.freeze({
+  snapshot: () => PENDING_STATE,
+  subscribe: () => () => {},
+  credential: unresolved,
+  freshCredential: async () => unresolved(),
+  request: async () => unresolved(),
+  viewerSession: unresolved,
+  ensureSignedIn: async () => unresolved(),
+  signIn: async () => {},
+  cancel: () => {},
+  abandon: () => {},
+  signOut: () => {},
+  dispose: () => {},
+});
+
 /**
  * The Builderlab session for the sign-in server of the selected community:
  * `session`, the build's, unless that community names another server, then
@@ -451,11 +473,16 @@ export function followCommunity(
   const current = (): BuilderlabSession => {
     const named = origin();
     const server = community();
-    const authority = server?.snapshot().authority;
-    const build = identity.snapshot().authority?.id;
-    // Until both servers are known, and after disposal, the build's.
-    if (disposed || !named || !server || !authority || !build) return session;
-    if (authority.id === build) return session;
+    if (disposed || !named || !server) return session;
+    const selected = server.snapshot();
+    const build = identity.snapshot();
+    // Until both servers are known it could be either; nothing runs on one.
+    if (!selected.authority || !build.authority)
+      return selected.status === "restoring" || build.status === "restoring"
+        ? PENDING
+        : session;
+    const authority = selected.authority;
+    if (authority.id === build.authority.id) return session;
     let found = servers.get(authority.id);
     if (!found) {
       const native = createNativeSession({

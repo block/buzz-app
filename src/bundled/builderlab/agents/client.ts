@@ -133,6 +133,10 @@ const LINK_ERRORS: Record<string, string> = {
     "This Buzz identity is linked to a different Builderlab account.",
 };
 
+// Sign-in and the activation guard can overlap, also through different clients
+// of one sign-in; they share one binding attempt.
+const linking = new WeakMap<Credential, Promise<void>>();
+
 export function createAgentClient(
   session: BuilderlabSession,
   // Without native identity (the dev viewer), owner proofs come from the
@@ -282,19 +286,17 @@ export function createAgentClient(
       ?.pubkey_hex;
     return typeof hex === "string" ? hex.toLowerCase() : null;
   };
-  // Sign-in and the activation guard can overlap; they share one binding attempt.
-  let linking: { credential: Credential; done: Promise<void> } | undefined;
   /** Binds this device's Buzz key to the signed-in account; attestation requires it. */
   function link(signal: AbortSignal): Promise<void> {
     if (!owner) return Promise.resolve();
     const credential = session.credential();
-    if (linking?.credential !== credential) {
-      const done = bind(owner, signal).finally(() => {
-        if (linking?.done === done) linking = undefined;
-      });
-      linking = { credential, done };
-    }
-    return linking.done;
+    const running = linking.get(credential);
+    if (running) return running;
+    const done = bind(owner, signal).finally(() => {
+      if (linking.get(credential) === done) linking.delete(credential);
+    });
+    linking.set(credential, done);
+    return done;
   }
   async function bind(
     owner: OwnerIdentity,
@@ -305,6 +307,8 @@ export function createAgentClient(
     if (typeof key !== "string" || !/^[0-9a-f]{64}$/.test(key))
       throw new Error("Set up your Buzz identity before creating an agent.");
     const credential = session.credential();
+    // The site this attempt links; a challenge for another is never signed.
+    const expected = new URL(sessionTarget(session)).origin;
     const bound = boundKey(await identityRequest("current", {}, signal));
     if (bound === key) {
       backupLinkedIdentity();
@@ -314,11 +318,13 @@ export function createAgentClient(
     if (bound) throw new Error(LINK_ERRORS.identity_already_bound);
     const challenge = await identityRequest(
       "challenge",
-      { origin: new URL(sessionTarget(session)).origin },
+      { origin: expected },
       signal,
     );
     const { challenge_id, nonce, verification_code, origin, expires_at } =
       challenge;
+    if (origin !== expected)
+      throw new Error("Builderlab returned a challenge for another site.");
     let event: object;
     try {
       event = await owner.signBinding({

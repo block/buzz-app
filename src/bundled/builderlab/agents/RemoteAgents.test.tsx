@@ -84,6 +84,54 @@ it("asks for sign-in only when signed out, not while a sign-in is pending", asyn
   expect(screen.getByText(prompt)).toBeVisible();
   session.dispose();
 });
+it("offers the sign-in it is given for its own server when signed out", async () => {
+  const h = await fixture();
+  h.session.signOut();
+  render(
+    <RemoteAgents
+      {...h}
+      active={() => true}
+      signIn={<button type="button">Sign in to peer</button>}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "Sign in to peer" })).toBeVisible();
+});
+it("reloads the list when the session moves to another server with the same account", async () => {
+  const h = await fixture();
+  let target: string | undefined;
+  let snapshot = h.session.snapshot();
+  const listeners = new Set<() => void>();
+  const session = {
+    ...h.session,
+    get target() {
+      return target;
+    },
+    snapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  render(
+    <RemoteAgents
+      session={session}
+      client={createAgentClient(session)}
+      active={() => true}
+    />,
+  );
+  expect(await screen.findByText("Helper")).toBeInTheDocument();
+  h.request.mockResolvedValueOnce(
+    response([{ ...row, agent_id: "two", agent_name: "Peer helper" }]),
+  );
+  act(() => {
+    target = "https://peer.example/goose";
+    snapshot = { ...snapshot };
+    for (const listener of listeners) listener();
+  });
+  expect(await screen.findByText("Peer helper")).toBeInTheDocument();
+  expect(screen.queryByText("Helper")).toBeNull();
+  expect(h.request).toHaveBeenCalledTimes(2);
+});
 it("omits the agent summary when remote agents are unavailable", async () => {
   const h = await fixture(false);
   const overview = vi.fn();

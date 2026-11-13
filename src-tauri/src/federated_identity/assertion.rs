@@ -1429,7 +1429,8 @@ mod tests {
         assert!(host.assertion_for_relay(&identity, &url(b)).await.is_ok());
         assert_eq!(host.snapshot().clock_offset, None);
         assert_eq!(server.await.unwrap().len(), 2);
-        // A new session starts without it.
+        // A new session starts without a hint still set from the last one.
+        host.note_clock_offset(Some(130));
         host.switch_account_for_test();
         assert_eq!(host.snapshot().clock_offset, None);
     }

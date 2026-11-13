@@ -3855,6 +3855,11 @@ export class AgentsService extends Service implements Agents {
       community: binding.origin,
       ...this.checkedCreation(input),
     };
+    const own = this.requests.filter(
+      (request) => request.requester === next.requester,
+    );
+    if (own.length >= 4)
+      throw new Error("Wait for the owner to review this plugin's requests");
     const outcome = new Promise<AgentCreationOutcome>((resolve) =>
       this.creationOutcomes.set(next.id, resolve),
     );
@@ -3879,18 +3884,26 @@ export class AgentsService extends Service implements Agents {
       throw new Error("Review the pending agent requests first");
     return { type, name: name.trim(), ...(instructions && { instructions }) };
   }
+  private ownerReview() {
+    if (this.ctx.pluginOwner)
+      throw new Error("Only the owner reviews an agent request");
+  }
   private settleCreation(id: string, outcome: AgentCreationOutcome) {
     this.creationOutcomes.get(id)?.(outcome);
     this.creationOutcomes.delete(id);
   }
   creationRequests = () => this.requests;
-  dismissCreation = (id: string) => {
+  // Methods, not fields: `this.ctx` is then the caller's scope, so no plugin
+  // approves or discards a request in the owner's place.
+  dismissCreation(id: string) {
+    this.ownerReview();
     if (this.approving.has(id)) return;
     this.requests = this.requests.filter((request) => request.id !== id);
     this.settleCreation(id, { status: "dismissed" });
     this.notify();
-  };
+  }
   async approveCreation(id: string, input: NewAgent) {
+    this.ownerReview();
     const request = this.requests.find((item) => item.id === id);
     if (!request || this.approving.has(id))
       throw new Error("No such pending agent request");

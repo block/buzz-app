@@ -14645,11 +14645,46 @@ it("refuses plugin creation requests it cannot review", async () => {
     }),
   ).toThrow("Plain agents have no instructions to set");
   expect(service.creationRequests()).toEqual([]);
-  for (let i = 0; i < 16; i++)
+  for (let i = 0; i < 4; i++)
     plugin.agents.requestCreation({ type: "example/echo", name: `Kid ${i}` });
   expect(() =>
     plugin.agents.requestCreation({ type: "example/echo", name: "Kid" }),
+  ).toThrow("this plugin's requests");
+  const pluginNamed = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "one" }) }).agents;
+  for (const id of ["two", "three", "four"])
+    for (let i = 0; i < 4; i++)
+      pluginNamed(id).requestCreation({
+        type: "example/echo",
+        name: `Kid ${i}`,
+      });
+  expect(service.creationRequests()).toHaveLength(16);
+  expect(() =>
+    pluginNamed("five").requestCreation({ type: "example/echo", name: "Kid" }),
   ).toThrow("pending agent requests");
+});
+
+it("refuses a plugin approving or dismissing an agent request itself", async () => {
+  const { service, native, plugin } = await setup();
+  const { requestId, outcome } = plugin.agents.requestCreation({
+    type: "example/echo",
+    name: "Helper",
+  });
+  await expect(
+    plugin.agents.approveCreation(requestId, {
+      type: "example/echo",
+      name: "Helper",
+    }),
+  ).rejects.toThrow("Only the owner reviews");
+  expect(() => plugin.agents.dismissCreation(requestId)).toThrow(
+    "Only the owner reviews",
+  );
+  const settled = vi.fn();
+  void outcome.then(settled);
+  await settle();
+  expect(settled).not.toHaveBeenCalled();
+  expect(native.create).not.toHaveBeenCalled();
+  expect(service.creationRequests()).toHaveLength(1);
 });
 
 it("refuses agent creation through a stale handle or an unavailable type", async () => {

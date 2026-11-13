@@ -136,8 +136,11 @@ the available operations and arguments. Agent tools do not expose draft approval
 
 An installed plugin can ask the same way with
 `ctx.agents.requestCreation({ type, name, instructions? })`. It uses the same
-checks and the same 16-request limit, and the review form says the plugin
-asked (for example, "my.plugin plugin requested this agent"). It returns
+checks and the same 16-request limit, and one plugin may have at most 4
+requests pending. The review form says the plugin asked (for example,
+"my.plugin plugin requested this agent"), and only the owner's review can
+create or dismiss it: a plugin calling `approveCreation` or `dismissCreation`
+gets an error. Each request opens the form, so call it from a user action. It returns
 `{ requestId, outcome }` at once and creates nothing; `outcome` is a promise
 that never rejects. It resolves `{ status: "created", agent }` when the owner
 creates the agent, or `{ status: "dismissed" }` when they close the review or

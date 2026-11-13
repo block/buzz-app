@@ -1081,7 +1081,10 @@ in and shown as asked by the plugin, in the selected community. Nothing exists
 until the owner submits it. The call returns `{ requestId, outcome }`, where
 `outcome` resolves `{ status: "created", agent }` or `{ status: "dismissed" }`
 and never rejects. It throws for an unknown or hosted `type`, a blank `name`,
-`instructions` for a type that takes none, or when 16 requests are pending.
+`instructions` for a type that takes none, when this plugin already has 4
+requests pending, or when 16 are pending in all. Each request opens the form,
+so call it from a user action. Only the owner's review creates or dismisses a
+request; `approveCreation` and `dismissCreation` throw for a plugin.
 See [Creating and changing agents from a conversation](agents.md#creating-and-changing-agents-from-a-conversation).
 
 Plugins can discover active Attention source registrations through `ctx.agents.attentionProviders()`. Each entry includes its `provider` key and optional `description` and JSON-object `configExample` supplied to `addAttentionSource`. The catalog omits executable callbacks and inactive registrations; discovery tools belong in external plugins.

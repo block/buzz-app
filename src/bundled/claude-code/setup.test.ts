@@ -495,14 +495,31 @@ it("looks for a stale catalog again, keeping the listed one meanwhile", async ()
       modelsChecking: false,
       modelsError: "",
     });
-    // It waits another hour. The same listing leaves the list as it was.
+    // It waits another hour. A surface asking then gets the listed catalog
+    // at once while the refresh runs; the same listing leaves it as it was.
     await setup.loadModels();
     expect(sessions).toHaveLength(1);
     vi.setSystemTime(Date.now() + 60 * 60_000);
-    await setup.catalog();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = false;
+    spawn.mockImplementationOnce((id, options) => {
+      started = true;
+      return held.then(() => spawn(id, options));
+    });
+    try {
+      await expect(setup.catalog()).resolves.toBe(listed);
+      expect(started).toBe(true);
+      expect(sessions).toHaveLength(1);
+    } finally {
+      release();
+    }
+    await setup.loadModels();
     expect(sessions).toHaveLength(2);
     expect(setup.snapshot().models).toBe(listed);
-    // A changed listing replaces it.
+    // A changed listing replaces it once the refresh finishes.
     vi.setSystemTime(Date.now() + 60 * 60_000);
     spawn.mockImplementationOnce((id, options) =>
       spawn(id, {
@@ -513,8 +530,11 @@ it("looks for a stale catalog again, keeping the listed one meanwhile", async ()
           ),
       }),
     );
-    const refreshed = await setup.catalog();
+    await expect(setup.catalog()).resolves.toBe(listed);
+    await setup.loadModels();
     expect(sessions).toHaveLength(3);
+    const refreshed = await setup.catalog();
+    expect(refreshed).not.toBe(listed);
     expect(
       refreshed.find((model) => model.value === "haiku")?.resolvedModel,
     ).toBe("claude-haiku-5-6");

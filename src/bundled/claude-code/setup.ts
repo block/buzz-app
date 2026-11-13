@@ -385,11 +385,14 @@ export class ClaudeSetup {
     }
   }
   /** The catalog for a surface that opens without the model picker: looked
-   * for again after a discovery that listed nothing, or once it is stale. */
+   * for again after a discovery that listed nothing, or once it is stale. A
+   * listed catalog answers at once while its refresh finishes behind it. */
   catalog() {
     this.cataloging ??= (async () => {
       if (!this.state.status) await this.check();
-      await this.loadModels(!this.state.models.length);
+      const listed = this.state.models.length > 0;
+      const loading = this.loadModels(!listed);
+      if (!listed) await loading;
       return this.state.models;
     })().finally(() => {
       this.cataloging = undefined;

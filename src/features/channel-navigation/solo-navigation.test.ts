@@ -562,9 +562,11 @@ it("does not reveal disabled chats or replay a reveal queued before disabling", 
     example: { revision: "one", status: "active", error: null },
   });
   h.service.reveal("owned");
+  expect(sourceReveal).toHaveBeenCalledTimes(1);
   h.plugins(pluginConfiguration(true), {
     example: { revision: "one", status: "active", error: null },
   });
+  expect(sourceReveal).toHaveBeenCalledTimes(1);
   const stop = h.service.subscribeReveal(listener, true);
   expect(listener).not.toHaveBeenCalled();
   stop();

@@ -1312,6 +1312,10 @@ it("keeps recovery chats reachable while distinguishing installed, unknown and n
 
 it("shows explicitly disabled region chats once in the ordinary Solo inventory", async () => {
   const h = fixture();
+  await h.register({
+    composeWorkspaces: true,
+    workspace: () => ({ id: "personal", file: async () => {} }),
+  });
   const saved = {
     sections: [{ id: "personal", name: "Personal", order: 0 }],
     assignments: { owned: "personal" },
@@ -1392,6 +1396,9 @@ it("shows explicitly disabled region chats once in the ordinary Solo inventory",
   );
 
   expect(screen.getByRole("button", { name: "Owned" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "New chat or workspace" }),
+  ).toBeInTheDocument();
   for (const id of ["owned", "shared"]) {
     expect(
       document.querySelectorAll(`[data-solo-channel-id="${id}"]`),
@@ -1427,10 +1434,18 @@ it("shows explicitly disabled region chats once in the ordinary Solo inventory",
   expect(
     screen.queryByRole("button", { name: "Workspace: Personal" }),
   ).not.toBeInTheDocument();
+  const inventoryActions = screen.getByRole("button", {
+    name: "New chat or workspace",
+  });
+  const user = userEvent.setup();
+  await user.click(inventoryActions);
+  expect(
+    await screen.findByRole("menuitem", { name: "New chat" }),
+  ).toBeInTheDocument();
+  await user.keyboard("{Escape}");
   expect(
     screen.getByRole("button", { name: "Chat actions" }),
   ).toBeInTheDocument();
-  const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Chat actions" }));
   expect(
     await screen.findByRole("menuitem", { name: "Chat settings" }),

@@ -1,5 +1,6 @@
 //! Links `~/.local/bin/buzz` to the CLI bundled in the running app, so `buzz`
-//! works in a terminal. Startup relinks it, so it follows updates and moves.
+//! works in a terminal. Startup relinks a dangling link or one to a Buzz app's
+//! CLI, so that link follows updates and moves; a link to another CLI stays.
 //! Agents don't need it: `buzz-agent-command` puts its own `buzz` first.
 use std::path::{Component, Path};
 

@@ -204,6 +204,9 @@ export interface BuzzClient {
  * this channel's messages out of threads. With no `root`, or with
  * `wholeChannel`, its session is the whole channel. */
 export type Context = Readonly<{
+  /** Review thread supplied by the host, never tool arguments.
+   * Keep immutable across steering and discard when the turn ends. */
+  review?: Readonly<{ channel: string; root: string }>;
   session?: import("../features/agents/session-admission").AgentSessionAssociation;
   channel?: string;
   root?: string;

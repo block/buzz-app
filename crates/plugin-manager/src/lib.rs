@@ -538,6 +538,10 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             "../../../src/bundled/changesets/manifest.json"
         ))
         .expect("changesets manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/review-configuration/manifest.json"
+        ))
+        .expect("review configuration manifest"),
     ]
 }
 /// New bundles must opt in to the default-on policy.

@@ -329,6 +329,7 @@ function setup(
     session: vi.fn(async () => {}),
     register: vi.fn(),
     addTool: vi.fn(),
+    describeTool: vi.fn(),
     createToolOperation: vi.fn(() => {
       throw new Error("No operation provider in this fixture");
     }),

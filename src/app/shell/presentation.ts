@@ -6,6 +6,8 @@ import {
   NoteIcon,
   GearIcon,
   LightningIcon,
+  ListChecksIcon,
+  GitPullRequestIcon,
   RobotIcon,
   SendIcon,
 } from "../../shared/design-system/icons/index";
@@ -58,6 +60,8 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.reminders/reminders", AlarmIcon],
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
+  ["buzz.review-configuration/configuration", ListChecksIcon],
+  ["buzz.review-configuration/all", GitPullRequestIcon],
   ["buzz.relay-notes/notes", NoteIcon],
 ]);
 /** Resolve host navigation policy once, independently of icons and registrations. */

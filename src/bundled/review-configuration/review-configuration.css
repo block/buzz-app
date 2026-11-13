@@ -1,0 +1,187 @@
+.review-config-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.review-config-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-panel-inset) var(--space-8);
+}
+.review-config-content {
+  max-width: 48rem;
+  margin-inline: auto;
+}
+.review-config-content,
+.review-config-form,
+.review-config-lane,
+.review-config-reviewers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.review-config-content p {
+  margin: 0;
+}
+.review-config-agent-row > span:not(.buzz-avatar-status) {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.review-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.review-config-update {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.review-config-instructions {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.review-config-pr-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+.review-config-repositories,
+.review-config-repository-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: var(--space-2);
+}
+.review-config-rule {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+.review-config-rule > :nth-child(3) {
+  grid-column: 1 / -1;
+}
+.review-config-form {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 480px) {
+  .review-config-rule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.review-config-lane-card,
+.review-config-rule-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-block: var(--space-4);
+  min-width: 0;
+}
+.review-config-rule-heading,
+.review-config-agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.review-config-rule-heading {
+  justify-content: space-between;
+}
+.review-config-agent-row > .buzz-button {
+  margin-inline-start: auto;
+}
+.review-config-summary-section {
+  display: grid;
+  gap: var(--space-2);
+}
+.review-config-summary-section ul {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.review-config-result-row {
+  align-items: center;
+}
+
+.review-config-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-container);
+}
+.review-config-table {
+  width: 100%;
+  min-width: 56rem;
+  border-collapse: collapse;
+  background: var(--surface-panel);
+}
+.review-config-table th,
+.review-config-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--space-3);
+  overflow-wrap: normal;
+}
+.review-config-table th:first-child {
+  min-width: 12rem;
+  overflow-wrap: anywhere;
+}
+.review-config-table thead {
+  background: var(--surface-inset);
+}
+.review-config-table tbody tr {
+  border-top: 1px solid var(--border-standard);
+}
+.review-config-cell,
+.review-config-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.review-config-last-message {
+  min-width: 16rem;
+  max-width: 24rem;
+  overflow-wrap: anywhere;
+}
+.review-config-last-message p {
+  overflow-wrap: anywhere;
+}
+.review-config-table tbody + tbody {
+  border-top: 1px solid var(--border-standard);
+}
+
+.review-config-content[data-review-page="all"],
+.review-config-content[data-review-page="configuration"] {
+  max-width: 72rem;
+}
+
+.review-config-message-link {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-underline-offset: var(--space-1);
+}
+
+.review-config-compact-table th,
+.review-config-compact-table td {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.review-config-compact-table tbody tr {
+  cursor: pointer;
+}
+.review-config-summary {
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

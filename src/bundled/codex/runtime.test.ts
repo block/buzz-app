@@ -4913,7 +4913,7 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
   expect(JSON.stringify(reply?.result)).toContain("created");
   expect(call).toHaveBeenCalledWith(
     expect.objectContaining({ pubkey }),
-    { channel: "channel", root },
+    { channel: "channel", root, review: { channel: "channel", root } },
     { title: "Ship it" },
   );
   await f.complete();
@@ -7410,6 +7410,47 @@ it("neither lists nor runs the retired owner-read tools, while its own reads wor
     "OWN_CONVERSATION",
   );
   await f.complete();
+});
+
+it("supplies an immutable review thread outside tool arguments and omits it for channel-wide sessions", async () => {
+  const f = fixture();
+  const contexts: unknown[] = [];
+  f.added.push({
+    name: "inspect_review_context",
+    description: "Inspect host context.",
+    inputSchema: { type: "object", properties: {} },
+    call: async (_client, context) => {
+      contexts.push(context.review);
+      return "inspected";
+    },
+  });
+  await f.runtime.run(f.delivery("review"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  await f.tool("inspect_review_context", {
+    review: { channel: "wrong", root: "wrong" },
+  });
+  await f.runtime.run(f.delivery("follow-up"));
+  await vi.waitFor(() =>
+    expect(f.sent.some((wire) => wire.method === "turn/steer")).toBe(true),
+  );
+  await f.tool("inspect_review_context", {});
+  expect(contexts).toEqual([
+    { channel: "channel", root },
+    { channel: "channel", root },
+  ]);
+  await f.complete();
+  await vi.waitFor(() =>
+    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
+  );
+  const next = f.delivery("channel scope", "d".repeat(64));
+  await f.runtime.run({
+    ...next,
+    config: { ...(next.config as object), scope: "channel" },
+  });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  await f.tool("inspect_review_context", {}, 1);
+  expect(contexts[2]).toBeUndefined();
+  await f.complete(1);
 });
 
 it("supplies an operation proof only while the native Codex call is active", async () => {

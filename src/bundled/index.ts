@@ -62,6 +62,8 @@ import changesetsManifest from "./changesets/manifest.json";
 import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
+import reviewConfigurationManifest from "./review-configuration/manifest.json";
+import * as reviewConfiguration from "./review-configuration";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
@@ -249,6 +251,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...workflowsManifest, apiVersion: 1 },
     module: workflows,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...reviewConfigurationManifest, apiVersion: 1 },
+    module: reviewConfiguration,
     enabledByDefault: false,
   },
   {

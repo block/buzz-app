@@ -158,6 +158,7 @@ type Saved = {
   protection?: string;
 };
 type Active = {
+  readonly review?: Context["review"];
   /** The server this turn runs on; steering must reach the same process. */
   rpc: AppServer;
   threadId?: string;
@@ -2392,6 +2393,7 @@ export class CodexRuntime {
     // A watch or timer turn has no default destination.
     const context: Context = request
       ? {
+          ...(active?.review ? { review: active.review } : {}),
           ...(request.session ? { session: request.session } : {}),
           channel: request.conversation.channelId,
           ...(request.toolRoot ? { root: request.toolRoot } : {}),
@@ -2850,6 +2852,14 @@ export class CodexRuntime {
       ...(adopted && lane.voice ? [lane.voice.signal] : []),
     ]);
     const active: Active = {
+      ...(request.conversation.root && !request.wake
+        ? {
+            review: {
+              channel: request.conversation.channelId,
+              root: request.conversation.root,
+            },
+          }
+        : {}),
       rpc: server.rpc,
       ...(adopted && lane.voice
         ? { threadId: lane.voice.loaded.threadId, turnId: adopted }

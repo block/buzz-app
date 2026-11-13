@@ -7,6 +7,7 @@ import {
   addedKey,
   sessionHint,
   sessionTools,
+  describeTool,
 } from "./session-tools";
 import { TOOLS } from "./tools";
 import type { ProtectionAction } from "../features/agent-protection/service";
@@ -16,6 +17,27 @@ const tool = (name: string, description = "Does it."): AddedTool => ({
   description,
   inputSchema: { type: "object" },
   call: async () => "done",
+});
+
+it("reads current tool documentation without exposing handlers or mutable registry data", () => {
+  const added = tool("tasks_create");
+  const description = describeTool(added.name, [added]);
+  expect(description).toEqual({
+    name: added.name,
+    description: added.description,
+    inputSchema: added.inputSchema,
+  });
+  expect(description).not.toHaveProperty("call");
+  expect(description?.inputSchema).not.toBe(added.inputSchema);
+  expect(describeTool(added.name)).toBeUndefined();
+  expect(describeTool("send")?.description).toBe(
+    TOOLS.find((entry) => entry.name === "send")?.description,
+  );
+  expect(
+    describeTool(added.name, [
+      { ...added, description: "Updated instructions" },
+    ])?.description,
+  ).toBe("Updated instructions");
 });
 
 it("keys the added tools whatever order plugins started in", () => {

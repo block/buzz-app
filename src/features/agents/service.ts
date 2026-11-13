@@ -219,7 +219,12 @@ import {
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
-import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import {
+  type AddedTool,
+  BUZZ_SESSION,
+  describeTool,
+  type ToolDescription,
+} from "../../buzz-mcp/session-tools";
 import { soloChannelMetadata } from "../relay/discovery";
 import { channelIdentity } from "../relay/channel-labels";
 import { regionLabels } from "../solo/region-labels";
@@ -1442,6 +1447,8 @@ export type Agents = {
   createToolOperation(id: string): AgentToolProvider;
   /** The tools active plugins add now. A name is only ever one plugin's. */
   tools(): readonly AddedTool[];
+  /** Current tool documentation, without a handler. Includes built-in tools. */
+  describeTool(name: string): ToolDescription | undefined;
   /** Adds standing instructions to every turn of the agents this copy of the
    * app runs, or of those `when` accepts, while the plugin is on. Each turn
    * shows them in a `<plugin-instructions>` section that names the plugin. */
@@ -3065,6 +3072,9 @@ export class AgentsService extends Service implements Agents {
       this.toolNames.add(tool.name);
       return () => this.toolNames.delete(tool.name);
     });
+  }
+  describeTool(name: string) {
+    return describeTool(name, this.tools());
   }
   createToolOperation(id: string): AgentToolProvider {
     const ctx = this.ctx;

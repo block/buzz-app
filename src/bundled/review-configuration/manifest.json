@@ -1,0 +1,19 @@
+{
+  "id": "buzz.review-configuration",
+  "name": "Review Configuration",
+  "apiVersion": 1,
+  "description": "Configure review lanes and submit PRs to assigned reviewers.",
+  "discovery": {
+    "category": "productivity",
+    "tags": ["code", "tasks"]
+  },
+  "host": {
+    "processes": [
+      {
+        "id": "graphql",
+        "program": "gh",
+        "args": ["api", "graphql", "--hostname", "github.com", "--input", "-"]
+      }
+    ]
+  }
+}

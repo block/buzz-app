@@ -453,9 +453,26 @@ export function harnessKit(sources: Sources): HarnessKit {
           },
         });
         const added = sources.added();
-        return respond(client, context, message, added, {
-          instructions: sessionHint(added),
-        });
+        const admitted = conversation && known(conversation);
+        return respond(
+          client,
+          {
+            ...context,
+            ...(admitted && !admitted.wake && conversation.root
+              ? {
+                  review: {
+                    channel: conversation.channel,
+                    root: conversation.root,
+                  },
+                }
+              : {}),
+          },
+          message,
+          added,
+          {
+            instructions: sessionHint(added),
+          },
+        );
       };
     },
 

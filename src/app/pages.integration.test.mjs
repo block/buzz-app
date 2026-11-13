@@ -94,6 +94,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.focus",
           "buzz.charts",
           "buzz.drafts-and-sent",
+          "buzz.review-configuration",
           "buzz.changesets",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
@@ -103,12 +104,70 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       "buzz.reminders",
       "buzz.workflows",
       "buzz.drafts-and-sent",
+      "buzz.review-configuration",
     ]) {
       assert.equal(
         services.pages.snapshot().some((page) => page.pluginId === id),
         false,
       );
     }
+    await services.plugins.change("enable", "buzz.review-configuration");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some(
+            (page) => page.key === "buzz.review-configuration/configuration",
+          ),
+      ),
+    );
+    const reviewConfiguration = services.pages
+      .snapshot()
+      .find((page) => page.pluginId === "buzz.review-configuration");
+    assert.equal(reviewConfiguration.title, "Review Configuration");
+    assert.equal(reviewConfiguration.primary, true);
+    assert.equal(reviewConfiguration.placement, "dock");
+    assert.match(
+      renderToStaticMarkup(createElement(reviewConfiguration.component)),
+      /Connect to a community to configure reviews/,
+    );
+    const submitPr = services.pages
+      .snapshot()
+      .find((page) => page.key === "buzz.review-configuration/submit");
+    assert.ok(submitPr);
+    assert.equal(submitPr.title, "Submit PR");
+    assert.equal(submitPr.primary, false);
+    assert.equal(submitPr.placement, "sidebar");
+    assert.match(
+      renderToStaticMarkup(createElement(submitPr.component)),
+      /Connect to a community to submit PRs/,
+    );
+    const allPrs = services.pages
+      .snapshot()
+      .find((page) => page.key === "buzz.review-configuration/all");
+    assert.ok(allPrs);
+    assert.equal(allPrs.title, "Pull requests");
+    assert.equal(allPrs.primary, true);
+    assert.equal(allPrs.placement, "dock");
+    const detail = { channel: "reviews", submission: "submission" };
+    assert.equal(allPrs.route.validate(detail), true);
+    assert.equal(
+      allPrs.route.validate({ ...detail, message: "a".repeat(64) }),
+      true,
+    );
+    assert.equal(
+      allPrs.route.validate({ ...detail, submission: "../invalid" }),
+      false,
+    );
+    assert.equal(submitPr.route.validate(detail), false);
+    assert.equal(reviewConfiguration.route.validate(detail), false);
+    await services.plugins.change("disable", "buzz.review-configuration");
+    assert.equal(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.review-configuration"),
+      false,
+    );
     await services.plugins.change("enable", "buzz.reminders");
     await vi.waitFor(() =>
       assert.ok(

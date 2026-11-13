@@ -1472,6 +1472,53 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved
   choices persist. A deliberate plugin-settings reset uses the current defaults.
+- **Review Configuration** is optional and starts off. Enable it in **Manage
+  plugins** to add separate **Review Configuration** and **Pull requests** dock icons. Register a repository in a private review channel you belong to,
+  then save named lanes with reviewer agents and
+  instructions. Each lane supports multiple reviewers. Saved
+  repositories appear in a list; open one to manage its lanes. **Reload**
+  reads the latest saved versions. Settings live on the community relay and are
+  visible to channel members; members who can post can edit them. A conflicting
+  edit preserves your draft: copy your changes before cancelling and reloading.
+  **Review Configuration** has matching **Register repository**, **Submit PR**, and **Pull requests** actions at the top, followed by **Repositories**, grouped with their channel configurations. Set a personal default channel per repository; Submit PR uses it and allows an override. Defaults are saved on this device per identity/community. If access to a default is lost, choose another configuration. Only current members can use a private review channel; existing open-channel configurations are excluded and left unchanged. **Edit lane**
+  opens one lane; **Save lane** persists it before **Add lane** starts another.
+  **Back to lanes** cancels the editor; **Back to repositories** returns to the list.
+  Every new or edited lane requires at least one all/any routing rule matching
+  title text, labels, changed-file counts, or paths such as `src/**/*.tsx`.
+  Earlier rule-free lanes still match every PR until edited.
+  Each repository also has **Admission checks**, all off by default: require a
+  non-draft PR, green CI, no merge conflicts, and/or agent triage. Save selected
+  checkboxes before leaving. CI requires all reported statuses/checks to pass
+  (neutral/skipped count as passing); missing/pending results and unknown merge
+  conflicts block submission with a reason. Agent triage requires an assigned
+  owned agent and instructions; **Refresh agents** updates choices. Basic checks
+  run first. Triage gets its own thread and **Awaiting triage** status. Its agent
+  calls `pr_triage_decision` with `admit` or `reject` and a message; Buzz supplies
+  the target. Admit rechecks the PR and starts lane routing automatically;
+  reject shows the reason without closing the GitHub PR. Head/base changes during
+  triage require deleting and resubmitting. Keep the submitting device connected
+  with this plugin enabled; continuation works with the page closed and resumes
+  after reconnect. Submit again on that device to retry a failed continuation.
+  Decisions are final; delete and resubmit to request fresh triage. Saved admission
+  settings apply to new submissions. Pending/rejected triage cannot use Remind.
+  The **Submit PR** page has a full GitHub PR URL field and a
+  Submit button. It finds the repository in the selected review channel, reads
+  current PR details, and assigns the first configured reviewer in each matching
+  lane. Missing configuration or zero matching lanes sends nothing. Results show
+  assigned agents and their thread buttons. Choose the **Pull requests** dock icon or the matching action on the configuration page to see one compact row per PR with its overall status, lane-status summary, and update marker. Click a row or activate its PR button to open full details; **Back to Pull requests** returns to the list. Back/Forward and reload restore the selected PR after confirming access. The Pull requests page also has a **Submit PR** button. The table shows GitHub status (Open, Draft, Closed, or Merged); Reload refreshes it. Remind is disabled for closed, merged, loading, or unavailable PRs and rechecks GitHub before sending. The PR detail table separates **Lane threads**, **Lane status**, and **Lane last message**, with one row per lane. **Full message** is an underlined link in **Lane last message** and opens a popup; Back/Forward preserves it, while Close dismisses it. The original submitter can click **Remind** on each review lane to notify its reviewer in the existing thread, with an optional message included in the reminder; Admission Triage has no reminder. Only the reminded lane resets to Needs review. Finish an interrupted reminder in that lane before starting another. The submitter can also confirm **Delete** to remove a submission from the shared list; its conversations and GitHub PR remain. Deleting does not stop active reviews. Resubmitting a deleted PR applies current routing and creates new reviewer threads.
+  Submitting an existing PR reuses its saved reviewers and threads and mentions
+  them again in those threads. Incomplete initial delivery resumes from the original
+  browser profile. An interrupted notification retries its saved messages.
+  Internal **Review status** is separate from GitHub status: Needs review, Reviewing, Changes requested, Looks good · not approved, or Approved. Reviewers must first call `pr_review_status_update` with `reviewing` to acknowledge acceptance, even for acknowledgment-only requests; the status tool refuses outcomes until Reviewing is saved for that request and posts a tagged correction for a skipped step. A reminder requires a new Reviewing acknowledgment. Requests also ask reviewers to add their configured GitHub account to the PR’s requested reviewers when permitted; shared GitHub accounts do not create distinct reviewer identities. After reviewing, they report `request_changes`, `lgtm_not_approved`, or `approved` through `pr_review_status_update`; Buzz supplies the review thread. Each lane has **Allow automatic approval**, unchecked by default. When off, reviewers must not approve on GitHub and the tool refuses `approved`. When on, reviewers may approve after review and report `approved` only after GitHub succeeds. The tool records the reviewer’s report; it does not submit or independently verify GitHub approval. Lane settings apply to new submissions. Older Done reports appear as Completed · outcome unspecified; they do not imply approval. Requests put **Lane instructions** first; reminders highlight **Your reminder message** above them. Compact steps come from the status tool. Remind resets its selected lane to Needs review; resubmitting an existing PR resets all review lanes. Reviews of a PR run sequentially in the same lane threads. Incoming reports update the table; Reload catches missed updates. Reporting requires native Codex thread sessions, a compatible shared harness, or a standalone MCP process bound to that thread by its host. An unsupported host refuses the update; a chat reply alone does not record a result.
+  Completed outcomes are green, pending review is amber, and changes requested are red; labels still distinguish approval from completion. **Submitted** shows the original submission date (older records say **Not recorded**). **Last reviewed** shows the latest result, including previous reminder rounds; accepting a review does not count. Dates use your local timezone.
+  The **Pull requests** dock badge counts PRs with unseen status updates in the selected review channel. Opening Pull requests clears the badge for the loaded updates. Affected PRs and lanes keep an **Updated** marker during that visit, including list → PR details, so you can see what changed. Live changes while the page is open are highlighted too. Each lane shows **Last updated** from its latest status report or thread message, including reminders. Seen state persists on this device for your identity, community, and channel; later changes mark the PR again.
+  The separate Submit PR form has a **Back to Review Configuration** button. All pages remember the selected
+  review channel. Reviewers must have a verified owner who belongs to the selected channel, and already
+  belong to the channel. A connected agent runtime is needed for replies;
+  delivery alone does not mean a review started. Desktop uses signed-in GitHub
+  access; browser metadata reads support public PRs and may hit rate limits.
+  PRs above 3,000 changed files or 100 labels are unsupported. This does not post
+  GitHub comments, track verdicts, pin reviewer checkouts, or schedule reminders.
 - A plugin's details in Manage plugins link to the Settings sections that hold
   its settings: sections it adds, such as GitHub comment authors, and Decisions
   API for a decision provider, such as TypeSafe. Only sections the Settings

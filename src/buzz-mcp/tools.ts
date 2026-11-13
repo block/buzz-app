@@ -1,4 +1,6 @@
+import { recordTriageDecision } from "./pr-triage";
 import { messageAuthor } from "../features/relay/fold";
+import { updateReviewStatus } from "./pr-review";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
@@ -140,6 +142,28 @@ export async function captureToolBody(
 }
 
 export const TOOLS: readonly Tool[] = [
+  tool(
+    "pr_triage_decision",
+    "Record your final admission decision for the PR assigned to you in this triage thread. Follow the supplied triage instructions; call admit to start review routing or reject to stop it, with a message explaining why. Buzz supplies the target. Never supply PR, thread or request IDs. Only consider the decision saved after success; report missing host context in the thread.",
+    {
+      decision: { type: "string", enum: ["admit", "reject"] },
+      message: { type: "string", minLength: 1, maxLength: 4000 },
+    },
+    ["decision", "message"],
+    { readOnlyHint: false, destructiveHint: false },
+  ),
+  tool(
+    "pr_review_status_update",
+    '1. **Accept:** call `pr_review_status_update({"status":"reviewing"})` and wait for success, even for acknowledgment-only requests. Outcomes are refused until this is saved for the current request.\n2. **Review:** verify the current PR; post the reviewed commit, findings and blockers.\n3. **Finish:** call the same tool with `request_changes` (author must fix), `lgtm_not_approved` (reviewed and good, no GitHub approval), or `approved` (lane permits it AND GitHub approval succeeded).\n\nNo review means no positive outcome. Pass only `status`; Buzz supplies the target. This tool records reports, not GitHub approvals. Missing/stale context or a failed call means no saved status; explain the blocker.',
+    {
+      status: {
+        type: "string",
+        enum: ["reviewing", "request_changes", "lgtm_not_approved", "approved"],
+      },
+    },
+    ["status"],
+    { readOnlyHint: false, destructiveHint: false },
+  ),
   tool(
     "buzz_help",
     "Read the bundled guide to using Buzz: chats, communities, identity, agents, and settings.",
@@ -491,6 +515,10 @@ export function callTool(
 }
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
+  pr_triage_decision: ({ client, context }, args) =>
+    recordTriageDecision(client, context, args),
+  pr_review_status_update: ({ client, context }, args) =>
+    updateReviewStatus(client, context, args),
   async buzz_help() {
     return buzzHelp.trim();
   },

@@ -508,3 +508,33 @@ describe("harnessKit.tools", () => {
     );
   });
 });
+
+it("only admits review updates from a host-bound thread conversation", async () => {
+  const { kit, agent, delivery } = setup();
+  const event = reply("2", "1", "review");
+  const thread = await kit.conversation(
+    delivery({ type: "mention", event }),
+    "thread",
+  );
+  const channelConversation = await kit.conversation(
+    delivery({ type: "mention", event }),
+    "channel",
+  );
+  const call = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "pr_review_status_update",
+      arguments: { status: "reviewing" },
+    },
+  };
+  const missing = await kit.tools(agent, channelConversation)(call);
+  expect(JSON.stringify(missing)).toContain("host has not supplied");
+  expect(agent.query).not.toHaveBeenCalled();
+  const bound = await kit.tools(agent, thread)(call);
+  expect(JSON.stringify(bound)).toContain("no unique active review");
+  expect(agent.query).toHaveBeenCalledWith([
+    expect.objectContaining({ "#h": [channel], artifact: "current" }),
+  ]);
+});

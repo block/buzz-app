@@ -58,7 +58,11 @@ export type AddedTool = Readonly<{
     proof?: AgentToolProof,
   ): Promise<Reply>;
 }>;
-type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
+export type ToolDescription = Pick<
+  AddedTool,
+  "name" | "description" | "inputSchema"
+>;
+type Listed = ToolDescription;
 
 export {
   isFinalMessage,
@@ -83,7 +87,7 @@ export const BUZZ_SESSION: BuzzSession = Object.freeze({
   ],
 });
 
-const listed = ({ name, description, inputSchema }: AddedTool): Listed => ({
+const listed = ({ name, description, inputSchema }: Listed): Listed => ({
   name,
   description,
   inputSchema,
@@ -108,6 +112,16 @@ export const sessionTools = (
   ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
   ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
 ];
+
+/** Read-only metadata for plugins composing instructions. Never exposes a
+ * handler or a mutable reference to the runtime's tool definition. */
+export function describeTool(
+  name: string,
+  added: readonly AddedTool[] = [],
+): ToolDescription | undefined {
+  const tool = sessionTools(added).find((entry) => entry.name === name);
+  return tool ? structuredClone(listed(tool)) : undefined;
+}
 
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */

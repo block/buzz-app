@@ -73,6 +73,15 @@ export function apply(ctx) {
 | `subjectLift` (optional) | Lift a message image's subject | `const lift = ctx.reflect.get("subjectLift")`. `lift?.supports(source)`, then `await lift.lift(source, signal?)` resolves a transparent PNG `File` ready for `session.emoji.upload`, or rejects with a reason. `source` is `session.media(attachment.url)`. macOS 14+ only; see the plugin architecture's Subject lift contract. |
 | `pluginInstaller` (optional) | Ask the owner to install another plugin, check installation status, or access retained update reviews | `requestInstall(...)` resolves `"installed" \| "updated" \| "cancelled" \| "unavailable"` and never installs silently. Status methods are described below. `updates` is an optional, host-retained capability; see [Plugin architecture](plugin-architecture.md#plugin-installer). |
 
+Plugins can read the current documentation for a built-in or active plugin tool
+with `ctx.agents.describeTool(name)`. It returns a detached
+`{ name, description, inputSchema }`, or `undefined` when unavailable, and never
+returns the handler. Use this to compose agent instructions from the actual tool
+definition instead of maintaining a second copy. Read it when composing each
+message; already sent messages keep their original text. Feature-check the method
+on older hosts. Describing a tool does not grant access to call it or install it
+on another agent's runtime.
+
 The installation-status methods may be missing on older hosts even when `pluginInstaller` is available, so feature-check each method before calling it. `getInstallationStatus` returns `"installed"` when the manifest ID is in the ready catalog, `"absent"` when it is not, and `"unavailable"` while the catalog is not ready. Installed status is independent of whether the plugin is enabled, contributes UI, or came from a particular install source. A subscription reports later status changes; subscribe first, then read the current status to avoid missing a change between the read and subscription. Own the subscription with `ctx.effect`:
 
 ```js

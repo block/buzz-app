@@ -11857,6 +11857,13 @@ it("adds plugins' tools to every session, each name once", async () => {
   expect(service.tools()).toMatchObject([
     { name: "notes_add", pluginId: "example" },
   ]);
+  expect(plugin.agents.describeTool("notes_add")).toEqual({
+    name: "notes_add",
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+  });
+  expect(plugin.agents.describeTool("send")?.name).toBe("send");
+  expect(plugin.agents.describeTool("missing")).toBeUndefined();
   const bundled = (id: string) =>
     ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
   const tasks = bundled("buzz.tasks");

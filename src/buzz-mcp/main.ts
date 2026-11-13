@@ -3,6 +3,7 @@
 //   BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY, BUZZ_AUTH_TAG
 // plus BUZZ_CHANNEL, the channel tools default to, and BUZZ_MCP_ROOT, the only
 // directory `path` and `files` may read (default: the working directory).
+// Hosts with a process dedicated to one review thread may also set BUZZ_REVIEW_THREAD.
 import { fromJsonSchema, McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { nodeClient, relayAuthorityLookup } from "./node";
@@ -31,7 +32,17 @@ const client = nodeClient({
   ...(auth ? { auth } : {}),
   root: process.env.BUZZ_MCP_ROOT?.trim() || process.cwd(),
 });
-const context = channel ? { channel } : {};
+// A host may bind this MCP process to one review thread for its whole lifetime.
+// Channel-wide/reused-across-thread sessions must omit BUZZ_REVIEW_THREAD.
+const reviewRoot = process.env.BUZZ_REVIEW_THREAD?.trim();
+const context = channel
+  ? {
+      channel,
+      ...(reviewRoot && /^[0-9a-f]{64}$/.test(reviewRoot)
+        ? { root: reviewRoot, review: { channel, root: reviewRoot } }
+        : {}),
+    }
+  : {};
 
 serveStdio(() => {
   const server = new McpServer(

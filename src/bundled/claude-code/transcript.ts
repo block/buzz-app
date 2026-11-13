@@ -329,14 +329,14 @@ const limited = (directory: string) => {
 };
 
 /** MiB per page of a session too large to read whole, under its 50 MB. */
-const PAGE_MIB = 32;
+export const PAGE_MIB = 32;
 /** Pages read of one session at most, so a few huge turns or a record with
  * no end cannot hold more than this in memory; older lines are left. */
 const PAGE_BUDGET = 2;
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
 /** A session file's size in bytes. */
-async function sizeOf(spawn: Spawn, path: string, signal: AbortSignal) {
+export async function sizeOf(spawn: Spawn, path: string, signal: AbortSignal) {
   let output = "";
   const sizing = await spawn("size", {
     args: [path],

@@ -276,6 +276,66 @@ it("finds the agent's sessions with the manifest's processes", async () => {
   ).toEqual([]);
 });
 
+it("reads a session too large to read whole a page at a time", async () => {
+  home = mkdtempSync(join(tmpdir(), "claude-usage-"));
+  const project = join(home, ".claude/projects/-Users-me--buzz");
+  mkdirSync(project, { recursive: true });
+  // A tool result that spans the first two pages, with the first reply's
+  // streamed usage repeated on both sides of it.
+  const result = JSON.stringify({
+    type: "user",
+    timestamp: at(1500),
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", content: "x".repeat(55 << 20) }],
+    },
+  });
+  writeFileSync(
+    join(project, "large.jsonl"),
+    [
+      threadPrompt(),
+      reply(1000, "m1", usage(1, 2)),
+      result,
+      reply(1000, "m1", usage(1, 2)),
+      reply(2000, "m2", usage(3, 4)),
+      JSON.stringify({ type: "ai-title", aiTitle: "Long session" }),
+    ].join("\n"),
+  );
+  const reads: string[] = [];
+  const host = desktop(home, reads);
+  const spawn = vi.fn(host.spawn);
+  const [session, ...others] = await readUsage(
+    { ...host, spawn },
+    "~/.buzz",
+    agent,
+    [],
+    0,
+    new AbortController().signal,
+  );
+  expect(others).toEqual([]);
+  expect(session).toMatchObject({
+    id: "large",
+    channelId: "chan",
+    root,
+    title: "Long session",
+    gaps: [],
+  });
+  expect(session?.observations.map((entry) => entry.tokens)).toEqual([
+    { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+    { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 },
+  ]);
+  // The whole read is refused, and then each page is read once.
+  expect(reads).toEqual(["large.jsonl"]);
+  expect(
+    spawn.mock.calls
+      .filter(([id]) => id === "read-page")
+      .map(([, options]) => options?.args),
+  ).toEqual([
+    ["./-Users-me--buzz/large.jsonl", "0", "32"],
+    ["./-Users-me--buzz/large.jsonl", "32", "32"],
+  ]);
+});
+
 it("reads again only the files changed since the last read", async () => {
   home = mkdtempSync(join(tmpdir(), "claude-usage-"));
   const base = home;
@@ -545,7 +605,11 @@ function desktop(home: string, reads: string[] = []) {
     readFile: async (path: string) => {
       reads.push(path.replace(/^~\/\.claude\/projects\/[^/]+\//, ""));
       try {
-        return readFileSync(path.replace(/^~/, home));
+        const data = readFileSync(path.replace(/^~/, home));
+        // The app's limit, and its wording for a file past it.
+        if (data.length > 50 * 1024 * 1024)
+          throw new Error(`${path} is larger than 50 MB`);
+        return data;
       } catch (error) {
         // The app's wording for a missing file.
         if ((error as { code?: string }).code === "ENOENT")

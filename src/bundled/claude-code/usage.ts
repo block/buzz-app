@@ -2,6 +2,7 @@
 // Claude Code keeps on this computer. Claude Code owns the files; nothing here
 // writes them. What each file said is kept while the app runs, so a later read
 // opens only the files changed since.
+import { readFile } from "../../buzz-mcp/app-client";
 import { promptSections } from "../../features/agents/activity-transcript";
 import type {
   SessionUsage,
@@ -11,7 +12,12 @@ import { limited, withRevision } from "../../features/agents/session-usage";
 import type { Host } from "../../features/host/service";
 import type { Spawn } from "./claude";
 import { readProject } from "./history";
-import { type SessionsPlace, workspaceProject } from "./transcript";
+import {
+  PAGE_MIB,
+  type SessionsPlace,
+  sizeOf,
+  workspaceProject,
+} from "./transcript";
 
 type Json = Record<string, unknown>;
 /** Files read at once, by every agent's read together: the app refuses more
@@ -51,12 +57,13 @@ const promptText = (content: unknown) =>
         .map((block) => str(object(block)?.text))
         .join("\n");
 
+const isPrompt = (entry: Json) =>
+  entry.type === "user" && !entry.isMeta && !entry.isSidechain;
+
 /** Where the session started in Buzz and for which agent, from its first
  * prompt's context; undefined when Buzz did not start it. */
 export function buzzStart(entries: readonly Json[]) {
-  const first = entries.find(
-    (entry) => entry.type === "user" && !entry.isMeta && !entry.isSidechain,
-  );
+  const first = entries.find(isPrompt);
   const context = promptSections(
     promptText(object(first?.message)?.content),
   ).find((section) => section.tag === "context")?.body;
@@ -141,28 +148,89 @@ const spawned = (entries: readonly Json[]) =>
     return /^[\w-]+$/.test(agentId) ? [`agent-${agentId}`] : [];
   });
 
-function digest(file: string): Digest {
-  const { entries, unreadable } = lines(file);
-  let times: { first: number; last: number } | undefined;
-  for (const entry of entries) {
-    const at = Date.parse(str(entry.timestamp));
-    if (!(at > 0)) continue;
-    times ??= { first: at, last: at };
-    times.first = Math.min(times.first, at);
-    times.last = Math.max(times.last, at);
-  }
+/** A file's digest, from its text in parts that each end at a line's end,
+ * oldest first, so a file too large to read whole is read a part at a time. */
+function digester() {
+  let prompted = false;
+  let start: Digest["start"];
   let title: string | undefined;
-  for (const entry of entries)
-    if (entry.type === "ai-title" && str(entry.aiTitle).trim())
-      title = str(entry.aiTitle).trim();
-  return {
-    start: buzzStart(entries),
+  let unreadable = 0;
+  let times: { first: number; last: number } | undefined;
+  const seen = new Map<
+    string,
+    readonly [string | undefined, UsageObservation]
+  >();
+  const named: string[] = [];
+  const add = (text: string) => {
+    const { entries, ...part } = lines(text);
+    unreadable += part.unreadable;
+    // Whichever part holds the first prompt says where the session started.
+    if (!prompted && entries.some(isPrompt)) {
+      prompted = true;
+      start = buzzStart(entries);
+    }
+    for (const entry of entries) {
+      const at = Date.parse(str(entry.timestamp));
+      if (at > 0) {
+        times ??= { first: at, last: at };
+        times.first = Math.min(times.first, at);
+        times.last = Math.max(times.last, at);
+      }
+      if (entry.type === "ai-title" && str(entry.aiTitle).trim())
+        title = str(entry.aiTitle).trim();
+    }
+    // A streamed response's lines can fall in two parts.
+    for (const [key, observation] of observations(entries))
+      seen.set(key ?? `#${seen.size}`, [key, observation]);
+    named.push(...spawned(entries));
+  };
+  const finish = (): Digest => ({
+    start,
     ...(title ? { title } : {}),
     unreadable,
     ...(times && { times }),
-    observations: observations(entries),
-    spawned: spawned(entries),
-  };
+    observations: [...seen.values()],
+    spawned: named,
+  });
+  return { add, finish };
+}
+
+function digest(file: string): Digest {
+  const read = digester();
+  read.add(file);
+  return read.finish();
+}
+
+/** A read of a session file, once started, finishes and fills the cache, as
+ * a whole one does, even after the read that started it is stopped. */
+const UNSTOPPED = new AbortController().signal;
+
+/** The digest of a session file too large to read whole, at `path` in
+ * `~/.claude/projects`, read a page at a time from its start. A line that
+ * crosses pages is joined before it is parsed. */
+async function pagedDigest(spawn: Spawn, path: string): Promise<Digest> {
+  const size = await sizeOf(spawn, path, UNSTOPPED);
+  const read = digester();
+  let rest = new Uint8Array();
+  for (let page = 0; page * (PAGE_MIB << 20) < size; page++) {
+    const chunk = await readFile(
+      spawn,
+      "~/.claude/projects",
+      path,
+      undefined,
+      undefined,
+      "read-page",
+      [String(page * PAGE_MIB), String(PAGE_MIB)],
+    );
+    const bytes = new Uint8Array(rest.length + chunk.length);
+    bytes.set(rest);
+    bytes.set(chunk, rest.length);
+    const end = bytes.lastIndexOf(10) + 1;
+    read.add(new TextDecoder().decode(bytes.subarray(0, end)));
+    rest = bytes.slice(end);
+  }
+  read.add(new TextDecoder().decode(rest));
+  return read.finish();
 }
 
 /** A session's usage from its file's digest and its subagents' by name
@@ -269,11 +337,17 @@ export async function readUsage(
     if (pending) return pending;
     pending = reader(async () => {
       try {
-        return digest(
-          new TextDecoder().decode(
-            await host.readFile(`~/.claude/projects/${project}/${path}`),
-          ),
-        );
+        try {
+          return digest(
+            new TextDecoder().decode(
+              await host.readFile(`~/.claude/projects/${project}/${path}`),
+            ),
+          );
+        } catch (error) {
+          if (!/larger than 50 MB/.test(String(error))) throw error;
+        }
+        // Too large to read whole, it is read a page at a time.
+        return await pagedDigest(spawn, `./${project}/${path}`);
       } catch (error) {
         if (/no such file/i.test(error instanceof Error ? error.message : ""))
           return undefined;

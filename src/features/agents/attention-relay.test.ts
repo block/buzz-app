@@ -11,6 +11,7 @@ import {
   attentionChanges,
   attentionD,
   attentionSet,
+  compared,
   emptySet,
   ensureChannel,
   HEAD_LIMIT,
@@ -384,6 +385,42 @@ describe("the mirror", () => {
     const after = pendingSet(await r.set(), next, written);
     expect([...after.settled].sort()).toEqual(["interest/x", "interest/y"]);
     expect(Object.keys(after.set.attention)).toEqual(["interest/y"]);
+  });
+});
+
+describe("comparing a move", () => {
+  it("names each object that differs or only the community holds", () => {
+    const object = (slug: string, value: AttentionValue) => ({
+      slug,
+      value,
+      modifiedAt: 1,
+    });
+    let device = setAttention(blank, "interest/titled", {
+      type: "interest",
+      title: "PR reviews",
+      instructions: "# Older heading",
+    } as AttentionValue);
+    device = setAttention(device, "watch/t", timer, 1);
+    const result = compared(device.attention, {
+      ...emptySet(channel),
+      attention: {
+        "interest/q3": object("interest/q3", {
+          type: "interest",
+          instructions: "\n## Q3 launch\nShip it.",
+        }),
+        "interest/plain": object("interest/plain", {
+          type: "interest",
+          instructions: "Just text.",
+        }),
+      },
+    });
+    expect(result.names).toEqual({
+      "interest/titled": "PR reviews",
+      // A timer has no name: its id.
+      "watch/t": "t",
+      "interest/q3": "Q3 launch",
+      "interest/plain": "plain",
+    });
   });
 });
 

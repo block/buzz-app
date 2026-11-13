@@ -799,3 +799,11 @@ it("keeps a titled active Interest's watches unreadable to older builds, which w
   for (const slug of Object.keys(watches))
     expect(olderApplies(slug, plain.attention[slug].value)).toBe(true);
 });
+
+it("keeps where attention is stored", async () => {
+  const storage = memoryStorage();
+  await writeRecord(storage, { ...record, attentionStorage: "relay" });
+  expect(readRecords(storage)[pubkey]?.attentionStorage).toBe("relay");
+  await writeRecord(storage, record);
+  expect(readRecords(storage)[pubkey]).not.toHaveProperty("attentionStorage");
+});

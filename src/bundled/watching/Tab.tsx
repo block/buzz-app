@@ -24,6 +24,14 @@ import { createWatchComponents } from "./WatchRow";
 export { heading, describe } from "./presentation";
 import "./AttentionPage.css";
 
+const communityOf = (relay: string) => {
+  try {
+    return new URL(relay).host;
+  } catch {
+    return relay;
+  }
+};
+
 const button = { variant: "ghost" as const, size: "sm" as const };
 /** The watches of an Interest that this app skipped, such as ones over the
  * limit. They still belong to it. */
@@ -350,7 +358,11 @@ export function createAttentionComponents({
             )}
             <PreferenceRow
               title="Attention"
-              subtitle={`Let ${agent.name} watch for updates and check in on a schedule. Runs while Buzz is open on this device.`}
+              subtitle={`Let ${agent.name} watch for updates and check in on a schedule. Runs while Buzz is open on this device. ${
+                agent.attentionStorage === "relay"
+                  ? `Kept privately in ${communityOf(agent.relay)}.`
+                  : "Kept on this device."
+              }`}
             />
           </section>
         </SettingsGroup>

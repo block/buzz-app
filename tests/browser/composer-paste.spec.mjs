@@ -422,6 +422,127 @@ test("a long pasted text with links shows before its chips", async ({
   await expect(input.locator("[data-source]")).toHaveCount(40);
 });
 
+// Pasted identity links become recipients in the paste's own transaction,
+// in a long paste and while an earlier long paste's chips are still pending.
+test("a long paste keeps identity links as recipients", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const recipients = page.getByRole("region", { name: "Explicit mentions" });
+  const filler = Array.from(
+    { length: 20 },
+    (_, line) =>
+      `Line ${line} of the notes links https://example.com/notes/${line} for review.`,
+  ).join("\n");
+  const identity = `[@Fixture Reader](nostr:${npubEncode(app.viewer)}) `;
+  const paste = (texts) =>
+    input.evaluate((element, texts) => {
+      for (const text of texts) {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData("text/plain", text);
+        element.dispatchEvent(
+          new ClipboardEvent("paste", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+      }
+      // A promoted recipient's token carries the mention as its source.
+      return !!element.querySelector('[data-source="@Fixture Reader"]');
+    }, texts);
+  await input.click();
+  expect(await paste([`${filler}\n${identity}`])).toBe(true);
+  await expect(recipients).toBeVisible();
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(recipients).toBeHidden();
+
+  // The second paste lands before the first one's deferred chips.
+  expect(await paste([filler, identity])).toBe(true);
+  await expect(input.locator("[data-source]")).toHaveCount(21);
+  await expect(recipients).toBeVisible();
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", filler);
+  await expect(recipients).toBeHidden();
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input.locator(".inline-chip")).toHaveText("@Fixture Reader");
+  await expect(recipients).toBeVisible();
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.tags).toContainEqual([
+    "p",
+    app.viewer,
+  ]);
+});
+
+// A long paste joined onto a link or a mention changes them in its own undo
+// step, even though its inner chips render after the next paint.
+test("undoing a long paste restores the link and mention it joined", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const recipients = page.getByRole("region", { name: "Explicit mentions" });
+  const tail = ` and ${"more notes ".repeat(110)}`;
+  const paste = (text) =>
+    input.evaluate((element, text) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      element.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        }),
+      );
+    }, text);
+  await input.click();
+  await input.pressSequentially("see https://exa");
+  await paste(`mple.com${tail}`);
+  await expect(input).toHaveJSProperty(
+    "value",
+    `see https://example.com${tail}`,
+  );
+  await expect(input.locator("[data-source]")).toHaveCount(1);
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "see https://exa");
+  await expect(input.locator("[data-source]")).toHaveCount(0);
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty(
+    "value",
+    `see https://example.com${tail}`,
+  );
+
+  await input.fill("");
+  await paste(`[@Fixture Reader](nostr:${npubEncode(app.viewer)})`);
+  await expect(recipients).toBeVisible();
+  // Text joined onto the name ends the mention.
+  await paste(`s${tail}`);
+  await expect(recipients).toBeHidden();
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", "@Fixture Reader");
+  await expect(recipients).toBeVisible();
+  await input.press("ControlOrMeta+Shift+z");
+  await expect(recipients).toBeHidden();
+  await input.press("ControlOrMeta+z");
+  await input.press("Enter");
+  await expect.poll(() => app.report.publications.length).toBe(1);
+  expect(app.report.publications[0].event.tags).toContainEqual([
+    "p",
+    app.viewer,
+  ]);
+});
+
 // Browser integration: a native paste event over a selection reaches
 // the editor's link path, renders the anchor and publishes the linked label.
 test("pasting a URL over selected text links it in the composer and sent message", async ({

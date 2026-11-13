@@ -595,23 +595,38 @@ export function EditableInput({
             .find((tr) => tr.getMeta("composer-edit"))
             ?.getMeta("composer-edit"),
         );
-        if (
-          !tokensDeferred &&
-          transactions.some((tr) => tr.getMeta("composer-defer-tokens"))
-        ) {
-          tokensDeferred = true;
-          requestAnimationFrame(() =>
-            setTimeout(() => {
-              tokensDeferred = false;
-              if (editor.isDestroyed) return;
-              const tr = editor.state.tr
-                .setMeta("composer-decorations", true)
-                .setMeta("addToHistory", false);
-              editor.dispatch(editor.hasFocus() ? tr.scrollIntoView() : tr);
-            }),
-          );
-        }
-        if (tokensDeferred) return;
+        // A long paste adopts the chips wholly inside its text after the next
+        // paint. Everything else this pass does stays in the paste's own step.
+        let deferred: { start: number; end: number } | undefined;
+        const pasted = transactions.findIndex((tr) =>
+          tr.getMeta("composer-defer-tokens"),
+        );
+        if (pasted >= 0) {
+          const range: { from: number; to: number } = transactions[
+            pasted
+          ]?.getMeta("composer-defer-tokens");
+          let { from, to } = range;
+          for (const tr of transactions.slice(pasted + 1)) {
+            from = tr.mapping.map(from, -1);
+            to = tr.mapping.map(to, 1);
+          }
+          deferred = { start: next.source(from), end: next.source(to) };
+          if (!tokensDeferred) {
+            tokensDeferred = true;
+            requestAnimationFrame(() =>
+              setTimeout(() => {
+                tokensDeferred = false;
+                if (editor.isDestroyed) return;
+                const tr = editor.state.tr
+                  .setMeta("composer-decorations", true)
+                  .setMeta("addToHistory", false);
+                editor.dispatch(editor.hasFocus() ? tr.scrollIntoView() : tr);
+              }),
+            );
+          }
+        } else if (tokensDeferred && !transactions.some((tr) => tr.docChanged))
+          // Until then a reconcile without edits would adopt them before paint.
+          return;
         const safe = mentionDraft(next.draft);
         const decorations = current.current
           .decorationsFor(safe)
@@ -678,6 +693,12 @@ export function EditableInput({
           const from = next.position(item.start),
             to = next.position(item.end, -1);
           if (next.source(from) !== item.start || next.source(to) !== item.end)
+            continue;
+          if (
+            deferred &&
+            item.start >= deferred.start &&
+            item.end <= deferred.end
+          )
             continue;
           tr.replaceWith(
             from,
@@ -932,7 +953,7 @@ export function EditableInput({
         text.length >= deferredPasteLength &&
         !text.includes("nostr:")
       )
-        tr.setMeta("composer-defer-tokens", true);
+        tr.setMeta("composer-defer-tokens", { from, to: from + text.length });
       const unconverted = editor.state;
       editor.dispatch(focus ? tr.scrollIntoView() : tr);
       if (terminator && editor.state !== unconverted) separateHistory = true;

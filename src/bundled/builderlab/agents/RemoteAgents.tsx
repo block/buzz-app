@@ -77,8 +77,9 @@ export function RemoteAgents({
       </AgentSection>
     );
   // A sign-in in progress or being checked shows its state in the account
-  // notice beside this section, so this section says nothing yet.
-  if (login.status === "pending") return null;
+  // notice beside this section, so this section says nothing yet; a sign-in
+  // of its own stays mounted here with its status and Cancel.
+  if (login.status === "pending" && !signIn) return null;
   return login.status === "signed-in" ? (
     <AgentList
       // Another server's list may belong to the same subject.
@@ -93,10 +94,12 @@ export function RemoteAgents({
     />
   ) : (
     <AgentSection>
-      <p className="text-body-sm text-secondary">
-        Sign in{session.providerName ? ` to ${session.providerName}` : ""} to
-        view your remote agents.
-      </p>
+      {login.status !== "pending" && (
+        <p className="text-body-sm text-secondary">
+          Sign in{session.providerName ? ` to ${session.providerName}` : ""} to
+          view your remote agents.
+        </p>
+      )}
       {signIn}
     </AgentSection>
   );

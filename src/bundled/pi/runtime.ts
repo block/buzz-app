@@ -66,13 +66,7 @@ import {
   type ToolCall,
   type ToolResult,
 } from "./pi";
-import {
-  DEFAULT_THINKING,
-  PiSetup,
-  type Providers,
-  runsAt,
-  type Tested,
-} from "./setup";
+import { DEFAULT_THINKING, PiSetup, runsAt } from "./setup";
 import { readTranscript } from "./transcript";
 import { readUsage } from "./usage";
 import {
@@ -394,68 +388,6 @@ export class PiRuntime {
     }
   }
 
-  /** Pi's providers as the agent may use them: on its gateway route, the gateway's
-   * alone, the others unavailable; on any other, Pi's own. `retry`, as Try
-   * again asks, probes a failed route again first; otherwise it is read as
-   * it is, so one that follows the route's own changes can't loop. */
-  async providers(agent: AgentKey, retry = false): Promise<Providers> {
-    return this.setup.providers(await this.routed(agent, retry));
-  }
-
-  /** A provider's models as the agent may use them. */
-  async providerModels(agent: AgentKey, id: string, retry = false) {
-    return this.setup.models(id, await this.routed(agent, retry));
-  }
-
-  /** Tells `listener` when the agent's route changes what it may use. */
-  subscribeRoute(agent: AgentKey, listener: () => void): () => void {
-    return this.seam?.subscribeRoute(agent, listener) ?? (() => {});
-  }
-
-  /** Asks the agent's provider and model for one short reply: only while it
-   * runs Pi's own providers, as it is when asked. The gateway's models aren't
-   * tested. */
-  async test(
-    agent: AgentKey,
-    choice: Readonly<{ provider: string; model: string }>,
-  ): Promise<Tested> {
-    const seam = this.seam;
-    if (!seam) return this.setup.test(choice);
-    const refused = (route: GatewayRoute) =>
-      gatewayRoute(route)
-        ? "The gateway's models can't be tested here."
-        : undefined;
-    const first = refused(seam.routeFor(agent));
-    if (first) return { ok: false, message: first };
-    // Its route may change while the host starts: checked again just
-    // before the test is sent.
-    let late: string | undefined;
-    try {
-      return await this.setup.test(choice, () => {
-        late = refused(seam.routeFor(agent));
-        if (late) throw new Error(late);
-      });
-    } catch (error) {
-      if (late) return { ok: false, message: late };
-      throw error;
-    }
-  }
-
-  /** The agent, opened, when the host lists its models from the gateway:
-   * none when it runs Pi's own providers. Opening only to read runs nothing.
-   * A failed route is tried again only on `retry`. */
-  private async routed(agent: AgentKey, retry: boolean) {
-    const seam = this.seam;
-    if (!seam) return undefined;
-    const route = retry
-      ? await seam.routeReady(agent, AbortSignal.timeout(READ_MS))
-      : seam.routeFor(agent);
-    const gateway = gatewayRoute(route);
-    if (!gateway) return undefined;
-    await this.open(agent, gateway);
-    return agent;
-  }
-
   /** The models of the agent's provider, with the thinking levels each has.
    * Without a pick, a turn runs the configured model and level. */
   async models(agent: Agent<Config>): Promise<Models> {
@@ -463,7 +395,7 @@ export class PiRuntime {
     const defaults = await this.setup.defaults();
     const id = provider || defaults.provider;
     if (!id) return { current: "", models: [] };
-    const listed = await this.providerModels(agent.key, id);
+    const listed = await this.setup.models(id);
     const level = effort || defaults.thinking || DEFAULT_THINKING;
     return {
       current:

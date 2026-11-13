@@ -18,6 +18,9 @@ const driver = String.raw`import assert from 'node:assert/strict';
 import {PassThrough} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {createModels} from '@earendil-works/pi-ai/models';
+import {createProvider} from '@earendil-works/pi-ai';
+import {anthropicMessagesApi} from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
+import {openAIResponsesApi} from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import {fauxProvider,fauxAssistantMessage} from '@earendil-works/pi-ai/providers/faux';
 import {Harness,defineDoc} from '@earendil-works/pi-durable';
 import {BACKGROUND_CONTEXT as context,withTelemetry} from '@earendil-works/chord/context';
@@ -31,13 +34,20 @@ const V=JSON.parse(readFileSync(new URL('./vectors.json',import.meta.url),'utf8'
 assert.deepEqual(H,{launcher_client:'x-gw-launcher-client',launcher_session:'x-gw-launcher-session',human_pubkey:'x-gw-ctx-human-pubkey',agent_pubkey:'x-gw-ctx-agent-pubkey',community_id:'x-gw-ctx-community-id',channel_id:'x-gw-ctx-channel-id',message_id:'x-gw-ctx-message-id',thread_id:'x-gw-ctx-thread-id'});
 const data=process.argv[2], agent='b'.repeat(64), outside='c'.repeat(64);
 const faux=fauxProvider(), models=createModels(); models.setProvider(faux.provider);
+// Pi's own vendors, whose models the gateway serves by endpoint name; their own hosts answer in their protocol's shape.
+const vendor=(id,api,impl,baseUrl,list)=>createProvider({id,name:id,auth:{apiKey:{name:id,resolve:async()=>({auth:{apiKey:'own'},source:'test'})}},api:{[api]:impl},
+ models:list.map(([model,reasoning])=>({id:model,name:model,api,provider:id,baseUrl,reasoning,input:['text','image'],cost:{input:1,output:2,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:16384}))});
+models.setProvider(vendor('openai','openai-responses',openAIResponsesApi(),'https://openai.test/openai/v1',[['gpt-x',true],['gpt-oss-20b',true]]));
+models.setProvider(vendor('anthropic','anthropic-messages',anthropicMessagesApi(),'https://anthropic.test/anthropic',[['claude-x',true]]));
+/** What the gateway's listing serves, as Pi's own models. */
+const SERVED=['openai/gpt-oss-20b','anthropic/claude-x','openai/gpt-x'];
 const ORIGIN='https://gateway.test', REFUSED='https://refused.test', SILENT='https://silent.test', VARIED='https://varied.test', result={};
 /** Whether SILENT's listing hangs; and each origin's listing, where it differs. */
 let silentHangs=true;const catalogs=new Map();let refusing=true, refuseNext;
 const until=async test=>{const end=Date.now()+5000;while(!test()){if(Date.now()>end)throw new Error('timed out');await new Promise(r=>setTimeout(r,5));}};
 // The stand-in gateway: its listing, and scripted streams in the protocol each request's path names.
 const ep=(name,model_class,api_types,extra={})=>({name,state:{ready:'READY'},capabilities:{function_calling:true,image_input:false},config:{served_entities:[{foundation_model:{model_class,display_name:name,api_types}}]},...extra});
-const endpoints=[ep('model-gpt-oss-20b','gpt-oss',['mlflow/v1/chat/completions']),ep('model-claude-x','claude',['anthropic/v1/messages','mlflow/v1/chat/completions']),ep('model-gpt-x','gpt',['openai/v1/responses','mlflow/v1/chat/completions']),ep('model-gemini-x','gemini',['gemini/v1/generateContent']),ep('model-down','llama',['mlflow/v1/chat/completions'],{state:{ready:'NOT_READY'}})];
+const endpoints=[ep('databricks-gpt-oss-20b','gpt',['mlflow/v1/chat/completions']),ep('databricks-unmatched','gpt',['mlflow/v1/chat/completions']),ep('databricks-claude-x','claude',['anthropic/v1/messages','mlflow/v1/chat/completions']),ep('databricks-gpt-x','gpt',['openai/v1/responses','mlflow/v1/chat/completions']),ep('databricks-gemini-x','gemini',['gemini/v1/generateContent']),ep('model-down','llama',['mlflow/v1/chat/completions'],{state:{ready:'NOT_READY'}})];
 const chunk=(delta,finish,used=1)=>({id:'c',object:'chat.completion.chunk',created:0,model:'m',choices:[{index:0,delta,finish_reason:finish??null}],...(finish?{usage:{prompt_tokens:used,completion_tokens:1,total_tokens:used+1}}:{})});
 const sse=chunks=>new Response(chunks.map(c=>'data: '+JSON.stringify(c)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
 const events=list=>new Response(list.map(([type,data])=>'event: '+type+'\ndata: '+JSON.stringify({type,...data})+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});
@@ -155,7 +165,7 @@ function start(protectedAgent) {
 }
 const route={kind:'eligible',revision:1,gatewayOrigin:ORIGIN,identity:IDENTITY,base:BASE,profile:P,discovery:discoveryBundle(P,{identity:IDENTITY}).value};
 const tools=[{name:'send',description:'Post',inputSchema:{type:'object',properties:{text:{type:'string'}}},load:'always'}];
-const turn=(request,extra={})=>({agent,key:'chan/root',at:100,context:{channel:'chan'},text:'Do it',steer:'Do it',request,provider:GATEWAY,model:'model-gpt-oss-20b',instructions:'Test.',cwd:data,gatewayTurn:{channel_id:CHAN,message_id:mid(request),thread_id:mid('root')},...extra});
+const turn=(request,extra={})=>({agent,key:'chan/root',at:100,context:{channel:'chan'},text:'Do it',steer:'Do it',request,provider:'openai',model:'gpt-oss-20b',instructions:'Test.',cwd:data,gatewayTurn:{channel_id:CHAN,message_id:mid(request),thread_id:mid('root')},...extra});
 const sent=from=>requests.slice(from).map(r=>r.headers);
 const runAs=async(pi,who,request,extra)=>{const {submission}=await pi.rpc('deliver',turn(request,{agent:who,...extra}));return pi.rpc('wait',{agent:who,submission,request});};
 const run=async(pi,request,extra)=>{const {submission}=await pi.rpc('deliver',turn(request,extra));return pi.rpc('wait',{agent,submission,request});};
@@ -212,12 +222,15 @@ await pi.rpc('open',{agent,tools,route});
 assert.equal(listings[0].url,ORIGIN+'/upstream/pi/api/2.0/serving-endpoints');
 assert.equal(listings[0].headers.authorization,'Bearer buzz-gateway');
 assert.deepEqual(Object.keys(listings[0].headers).filter(k=>Object.values(H).includes(k)).sort(),['x-gw-ctx-agent-pubkey','x-gw-ctx-community-id','x-gw-ctx-human-pubkey','x-gw-launcher-client']);assert.equal(listings[0].headers['x-gw-ctx-community-id'],IDENTITY.community_id);
-assert.deepEqual((await pi.rpc('models',{agent,provider:GATEWAY})).map(m=>m.id),['model-gpt-oss-20b','model-claude-x','model-gpt-x']);
-assert.deepEqual(await pi.rpc('models',{agent,provider:'faux'}),[]);
-const {providers}=await pi.rpc('providers',{agent});
-assert.equal(providers[0].id,GATEWAY);assert.ok(providers.find(p=>p.id==='faux').unavailable);
+// Served: each of Pi's own models an endpoint names; an endpoint naming none, or not ready, serves nothing.
+assert.deepEqual((await pi.rpc('open',{agent,tools,route})).served,SERVED);
+// Pi's providers and models are its own, the gateway's never among them.
 assert.ok(!(await pi.rpc('providers',{})).providers.some(p=>p.id===GATEWAY));
-await assert.rejects(pi.rpc('deliver',turn('bad',{key:'chan/bad',provider:'faux',model:'faux-1'})),/unavailable in gateway mode/);assert.equal(binds.length,0);
+assert.deepEqual((await pi.rpc('models',{provider:'openai'})).map(m=>[m.id,m.thinking.includes('high')]),[['gpt-x',true],['gpt-oss-20b',true]]);
+// A gateway turn on a model the gateway doesn't serve runs on Pi's own provider: nothing binds or reaches the gateway.
+faux.setResponses([fauxAssistantMessage('own')]);
+assert.equal((await run(pi,'bad',{key:'chan/bad',provider:'faux',model:'faux-1'})).text,'own');
+assert.equal(binds.length+requests.length,0);
 // A refused listing tells the revision of the route it was opened with, before any is taken.
 {const refused='e'.repeat(64),own=harness;
  await assert.rejects(pi.rpc('open',{agent:refused,tools,route:{...route,gatewayOrigin:REFUSED,revision:7}}),/HTTP 403/);
@@ -241,8 +254,7 @@ result.discovery=true;
  await pi.rpc('open',{agent:racer,tools,route});
  release.resolve();
  await assert.rejects(first,/model route changed/);
- await pi.rpc('open',{agent:racer,tools,route});
- assert.deepEqual((await pi.rpc('models',{agent:racer,provider:GATEWAY})).map(m=>m.id),['model-gpt-oss-20b','model-claude-x','model-gpt-x']);
+ assert.deepEqual((await pi.rpc('open',{agent:racer,tools,route})).served,SERVED);
  harness=own;}
 result.overlap=true;
 
@@ -299,17 +311,6 @@ admit=admitted;const told=denies.length;
 replies.push(()=>new Response('',{status:400}));
 assert.equal((await run(pi,'d4')).status,'unanswered');
 assert.equal(denies.length,told);
-// A listing refused late, at the revision before, drops nothing: a refusal at the current one is still told.
-{const hold=Promise.withResolvers(),started=Promise.withResolvers();
- refuseNext={hold:hold.promise,started};
- const old=pi.rpc('models',{agent,provider:GATEWAY});await started.promise;
- await pi.rpc('close',{agent});await pi.rpc('open',{agent,tools,route:{...route,revision:2}});
- hold.resolve();await assert.rejects(old,/HTTP 403/);
- assert.deepEqual(denies.at(-1),{op:'deny',agent,revision:1});
- refuseNext={hold:Promise.resolve()};
- await assert.rejects(pi.rpc('models',{agent,provider:GATEWAY}),/HTTP 403/);
- assert.deepEqual(denies.at(-1),{op:'deny',agent,revision:2});
- admit=admitted;await pi.rpc('models',{agent,provider:GATEWAY});}
 result.denied=true;
 
 // A new session rotates the binding. The next turn asks for its reset again, by its request: nothing more is written.
@@ -483,7 +484,7 @@ result.restart=true;
  await until(()=>requests.length>from);
  await pi.stop();
  pi=start();
- assert.deepEqual(await pi.rpc('open',{agent,tools}),{gateway:false,held:true});
+ assert.deepEqual(await pi.rpc('open',{agent,tools}),{gateway:false,held:true,served:[]});
  const left=(await pi.rpc('unfinished',{agent})).submissions.find(s=>s.request==='e6');assert.ok(left);
  const discovery=Promise.withResolvers(),listed=listings.length;held.set(ORIGIN,discovery);
  const restoring=pi.rpc('open',{agent,tools,route});
@@ -496,7 +497,7 @@ result.restart=true;
  assert.equal((await run(pi,'e7',{key:'chan/e7',provider:'faux',model:'faux-1',gatewayTurn:undefined})).text,'ordinary');
  assert.equal(resumed,undefined);assert.equal(requests.length,after);
  discovery.resolve();held.delete(ORIGIN);
- assert.deepEqual(await restoring,{gateway:true,held:false});
+ assert.deepEqual(await restoring,{gateway:true,held:false,served:SERVED});
  await waiting;
  assert.equal(resumed.status,'done');
  assert.ok(requests.length>after);
@@ -510,7 +511,7 @@ const leave=async request=>{
  const placed=await pi.rpc('deliver',turn(request,{key:'chan/'+request}));
  await until(()=>requests.length>from);
  await pi.stop();pi=start();
- assert.deepEqual(await pi.rpc('open',{agent,tools}),{gateway:false,held:true});
+ assert.deepEqual(await pi.rpc('open',{agent,tools}),{gateway:false,held:true,served:[]});
  return placed;};
 const holding=async(request,submission)=>{
  const started=Promise.withResolvers();heldStream=started.resolve;
@@ -521,7 +522,7 @@ const holding=async(request,submission)=>{
  const {waiting}=await holding('e8',submission);
  await pi.rpc('abort',{agent,conversation});
  assert.equal((await waiting).status,'unanswered');
- assert.deepEqual(await pi.rpc('open',{agent,tools,route}),{gateway:true,held:false});
+ assert.deepEqual(await pi.rpc('open',{agent,tools,route}),{gateway:true,held:false,served:SERVED});
  faux.setResponses([fauxAssistantMessage('after')]);
  assert.equal((await run(pi,'e8b',{key:'chan/e8b',provider:'faux',model:'faux-1',gatewayTurn:undefined})).text,'after');
  assert.equal(requests.length,from);}
@@ -535,7 +536,7 @@ const holding=async(request,submission)=>{
  for(const h of sent(from))assert.equal(msg(h),'e9');}
 {const {conversation}=await leave('e10');
  await pi.rpc('abort',{agent,conversation});
- assert.deepEqual(await pi.rpc('open',{agent,tools}),{gateway:false,held:false});}
+ assert.deepEqual(await pi.rpc('open',{agent,tools}),{gateway:false,held:false,served:[]});}
 result.detached=true;
 await pi.stop();
 
@@ -550,10 +551,15 @@ result.protected=true;
 await protectedPi.stop();
 // Each family's verified protocol, through pi-ai's own client.
 // pi-ai's Anthropic client sends Messages through the SDK's beta resource, which adds its query.
-const PATHS=[['model-claude-x','anthropic/v1/messages?beta=true'],['model-gpt-x','openai/v1/responses'],['model-gpt-oss-20b','mlflow/v1/chat/completions']];
+/** Each endpoint's model, as the agent chose it. */
+const CHOICE={'databricks-claude-x':{provider:'anthropic',model:'claude-x'},'databricks-gpt-x':{provider:'openai',model:'gpt-x'},'databricks-gpt-oss-20b':{provider:'openai',model:'gpt-oss-20b'}};
+const PATHS=[['databricks-claude-x','anthropic/v1/messages?beta=true'],['databricks-gpt-x','openai/v1/responses'],['databricks-gpt-oss-20b','mlflow/v1/chat/completions']];
 const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,headers:{'content-type':'application/json'}});
 // Every request method: its path, the call's own context and native affinity, and a refusal told at the revision it was admitted at.
-{const catalog=gatewayModels(ORIGIN+BASE,endpoints),told=[];let at=40;
+{const catalog=gatewayModels(ORIGIN+BASE,endpoints,models),told=[];let at=40;
+ // Each served model is Pi's own, with its capabilities: reasoning only on its family's verified protocol.
+ assert.deepEqual(catalog.getModels(GATEWAY).map(m=>[m.id,m.native.provider+'/'+m.native.id,m.reasoning,m.contextWindow,m.maxTokens,m.cost.output]),
+  [['databricks-gpt-oss-20b','openai/gpt-oss-20b',false,128000,16384,2],['databricks-claude-x','anthropic/claude-x',true,128000,16384,2],['databricks-gpt-x','openai/gpt-x',true,128000,16384,2]]);
  const routed=routeModels(catalog,async session=>({profile:P,bundle:{'x-gw-launcher-session':'u/'+session},revision:++at}),async r=>{told.push(r);});
  const input={messages:[{role:'user',content:'Hi',timestamp:0}]};
  for(const [id,path] of PATHS){
@@ -579,7 +585,7 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
  await pi.rpc('open',{agent,tools,route:{...route,revision}});
  for(const [model,path] of PATHS){
   const key='chan/'+model,tooled=toolCalls.length;from=requests.length;replies.push(send(),say('done'));
-  assert.equal((await run(pi,'m-'+model,{key,model})).status,'done');
+  assert.equal((await run(pi,'m-'+model,{key,...CHOICE[model]})).status,'done');
   const pair=requests.slice(from);assert.equal(pair.length,2);
   for(const r of pair){
    assert.equal(r.url,ORIGIN+'/upstream/pi/ai-gateway/'+path);assert.equal(msg(r.headers),'m-'+model);
@@ -590,7 +596,7 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   assert.deepEqual(toolCalls.slice(tooled).map(({name,arguments:a,agent:who})=>({name,a,who})),[{name:'send',a:{text:'hi'},who:agent}]);
   assert.deepEqual(toolResult(pair[1].body),{id:path.startsWith('anthropic')?'toolu_1':'call_1',text:POSTED,error:false});
   from=requests.length;replies.push(refusal);
-  const denied=await run(pi,'n-'+model,{key,model});
+  const denied=await run(pi,'n-'+model,{key,...CHOICE[model]});
   assert.equal(denied.status,'unanswered');assert.match(denied.detail,/401/);
   assert.deepEqual(denies.at(-1),{op:'deny',agent,revision});assert.equal(requests.length,from+1);
   admit=admitted;
@@ -605,7 +611,7 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   await pi.rpc('open',{agent:outside,tools:[]});
   const held=async(init,url)=>{if(++inflight===2)both.resolve();await both.promise;return say('ok')(init,url);};
   from=requests.length;replies.push(held,held);faux.setResponses([fauxAssistantMessage('local')]);
-  const [a,b,x]=await Promise.all([runAs(pi,agent,'c-'+agent,{model:'model-claude-x'}),runAs(pi,other,'c-'+other,{model:'model-gpt-x'}),runAs(pi,outside,'c-x',{provider:'faux',model:'faux-1',gatewayTurn:undefined})]);
+  const [a,b,x]=await Promise.all([runAs(pi,agent,'c-'+agent,{provider:'anthropic',model:'claude-x'}),runAs(pi,other,'c-'+other,{model:'gpt-x'}),runAs(pi,outside,'c-x',{provider:'faux',model:'faux-1',gatewayTurn:undefined})]);
   assert.deepEqual([a.status,b.status,x.text],['done','done','local']);
   const sentNow=sent(from);assert.equal(sentNow.length,2);
   for(const h of sentNow){const who=h['x-gw-ctx-agent-pubkey'];assert.equal(msg(h),'c-'+who);}
@@ -616,15 +622,15 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
 
  // Interrupted mid-request on Responses: the held request is aborted, nothing is denied, and the next turn
  // resumes the same binding and native session.
- {const key='chan/model-gpt-x',told=denies.length;from=requests.length;
+ {const key='chan/gpt-x',told=denies.length;from=requests.length;
   replies.push(init=>new Promise((_,reject)=>init.signal?.addEventListener('abort',()=>reject(init.signal.reason))));
-  const {submission}=await pi.rpc('deliver',turn('i1',{key,model:'model-gpt-x'}));
+  const {submission}=await pi.rpc('deliver',turn('i1',{key,model:'gpt-x'}));
   await until(()=>requests.length===from+1);
   await pi.rpc('session',{agent,key,action:'interrupt'});
   const stopped=await pi.rpc('wait',{agent,submission,request:'i1'});
   assert.equal(stopped.status,'unanswered');
   const before=requests[from].headers;from=requests.length;
-  assert.equal((await run(pi,'i2',{key,model:'model-gpt-x'})).status,'done');
+  assert.equal((await run(pi,'i2',{key,model:'gpt-x'})).status,'done');
   assert.equal(binds.at(-1).event,'resume');
   assert.equal(sent(from)[0]['x-gw-launcher-session'],before['x-gw-launcher-session']);
   assert.equal(sent(from)[0]['x-session-affinity'],before['x-session-affinity']);
@@ -633,9 +639,9 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
 
  // Off the network for one Messages request: Pi durable's retry, after its backoff, sends it again
  // with the same context and native session and completes the run; nothing is denied.
- {const key='chan/model-claude-x',told=denies.length;from=requests.length;
+ {const key='chan/claude-x',told=denies.length;from=requests.length;
   offline=1;
-  assert.equal((await run(pi,'f1',{key,model:'model-claude-x'})).status,'done');
+  assert.equal((await run(pi,'f1',{key,provider:'anthropic',model:'claude-x'})).status,'done');
   const [lost,again]=sent(from);assert.equal(sent(from).length,2);
   for(const name of ['x-gw-ctx-message-id','x-gw-launcher-session','x-session-affinity'])assert.equal(again[name],lost[name]);
   assert.equal(msg(again),'f1');assert.equal(denies.length,told);
@@ -653,46 +659,42 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   assert.deepEqual(bounds,[30000]);
   assert.deepEqual(listings.slice(from).map(l=>l.url),[SILENT+'/upstream/pi/api/2.0/serving-endpoints']);
   assert.deepEqual(denies.slice(told),[]);
-  // Nothing is listed for it, from the gateway or any other provider.
-  for(const provider of [GATEWAY,'faux'])await assert.rejects(pi.rpc('models',{agent:silent,provider}),/route is not known yet/);
   // The same gateway answering again, a later open lists from it: the failure
   // is not kept as an answer, and the gateway's models are usable.
   silentHangs=false;
-  await pi.rpc('open',{agent:silent,tools,route:{...route,gatewayOrigin:SILENT,revision:6}});
+  assert.deepEqual((await pi.rpc('open',{agent:silent,tools,route:{...route,gatewayOrigin:SILENT,revision:6}})).served,SERVED);
   assert.deepEqual(listings.slice(from).map(l=>l.url),Array(2).fill(SILENT+'/upstream/pi/api/2.0/serving-endpoints'));
-  assert.deepEqual((await pi.rpc('models',{agent:silent,provider:GATEWAY})).map(m=>m.id),['model-gpt-oss-20b','model-claude-x','model-gpt-x']);
   {const before=requests.length;
    assert.equal((await runAs(pi,silent,'after-timeout',{key:'chan/silent'})).status,'done');
    assert.deepEqual(requests.slice(before).map(r=>new URL(r.url).origin),[SILENT]);}
   await pi.rpc('close',{agent:silent});
   result.timeout=true;}
- // Access varies the catalog: the gateway's listing for the route is the catalog,
- // with nothing added; a model selected before and gone after a re-listing fails
- // its turn without a request and without another model in its place.
+ // Access varies the catalog: what the gateway's listing for the route serves, taken as the host
+ // opens the agent on it. A model it stops serving runs on Pi's own provider, with no binding or
+ // Buzz headers and nothing sent to the gateway; one it still serves goes on through it.
  {const varied='1'.repeat(64),key='chan/varied',at={...route,gatewayOrigin:VARIED};
-  const exposed=async()=>(await pi.rpc('models',{agent:varied,provider:GATEWAY})).map(m=>m.id);
   const asked=from=>requests.slice(from).map(r=>[new URL(r.url).origin,r.body.model]);
-  await pi.rpc('open',{agent:varied,tools,route:{...at,revision:7}});
-  assert.deepEqual(await exposed(),['model-gpt-oss-20b','model-claude-x','model-gpt-x']);
+  assert.deepEqual((await pi.rpc('open',{agent:varied,tools,route:{...at,revision:7}})).served,SERVED);
   from=requests.length;
-  assert.equal((await runAs(pi,varied,'v1',{key,model:'model-gpt-x'})).status,'done');
-  assert.deepEqual(asked(from),[[VARIED,'model-gpt-x']]);
-  catalogs.set(VARIED,endpoints.filter(e=>e.name==='model-claude-x'));
-  await pi.rpc('open',{agent:varied,tools,route:{...at,revision:8}});
-  assert.deepEqual(await exposed(),['model-claude-x']);
-  assert.deepEqual(await pi.rpc('models',{agent:varied,provider:'faux'}),[]);
-  from=requests.length;const told=denies.length;
-  await assert.rejects(runAs(pi,varied,'v2',{key,model:'model-gpt-x'}),/Pi has no model model-gpt-x from buzz-gateway/);
-  assert.deepEqual(asked(from),[]);assert.equal(denies.length,told);
-  assert.equal((await runAs(pi,varied,'v3',{key,model:'model-claude-x'})).status,'done');
-  assert.deepEqual(asked(from),[[VARIED,'model-claude-x']]);
+  assert.equal((await runAs(pi,varied,'v1',{key,model:'gpt-x'})).status,'done');
+  assert.deepEqual(asked(from),[[VARIED,'databricks-gpt-x']]);
+  catalogs.set(VARIED,endpoints.filter(e=>e.name==='databricks-claude-x'));
+  await pi.rpc('close',{agent:varied});
+  assert.deepEqual((await pi.rpc('open',{agent:varied,tools,route:{...at,revision:8}})).served,['anthropic/claude-x']);
+  from=requests.length;const told=denies.length,bound=binds.length;
+  assert.equal((await runAs(pi,varied,'v2',{key,model:'gpt-x'})).status,'done');
+  assert.deepEqual(asked(from),[['https://openai.test','gpt-x']]);
+  assert.ok(!Object.keys(requests[from].headers).some(h=>h.startsWith('x-gw-')||h==='x-session-affinity'));
+  assert.equal(binds.length,bound);assert.equal(denies.length,told);
+  from=requests.length;
+  assert.equal((await runAs(pi,varied,'v3',{key,provider:'anthropic',model:'claude-x'})).status,'done');
+  assert.deepEqual(asked(from),[[VARIED,'databricks-claude-x']]);
   catalogs.delete(VARIED);await pi.rpc('close',{agent:varied});
   result.catalog=true;}
  // Without the gateway: a turn the runner sent without delivery.gateway runs
  // Pi's own provider even on an agent the host has open on the gateway, with
- // no binding, listing or gateway request, and so no Buzz headers. A saved
- // A gateway model fails it visibly, never another model; a missing default stays
- // the agent's own failure. A turn through the gateway after still binds.
+ // no binding, listing or gateway request, and so no Buzz headers. A missing
+ // default stays the agent's own failure. A turn through the gateway after still binds.
  {const who='3'.repeat(64),key='chan/fallback';
   await pi.rpc('open',{agent:who,tools,route:{...route,revision:9}});
   const before={requests:requests.length,listings:listings.length,binds:binds.length,denies:denies.length};
@@ -709,7 +711,6 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   const shown=async()=>(await pi.rpc('entries',{agent:who,conversation})).entries.filter(e=>e.notice).map(e=>[e.kind,e.notice,JSON.stringify(e.model).includes('Do it')]);
   assert.deepEqual(await shown(),[['pi.user',NOTICE,true]]);
   assert.equal(contexts.length,1);assert.ok(!contexts[0].includes(NOTICE));
-  await assert.rejects(runAs(pi,who,'f2',{...ordinary,provider:GATEWAY,model:'model-gpt-x'}),/available only through the model gateway/);
   await assert.rejects(runAs(pi,who,'f3',{...ordinary,provider:'',model:''}),/has no model/);
   unchanged();
   assert.equal((await runAs(pi,who,'f4',{key})).status,'done');
@@ -815,18 +816,16 @@ const refusal=()=>new Response('{"error":{"message":"denied"}}',{status:401,head
   assert.equal((await pi.rpc('wait',{agent:who,submission:(await d).submission,request:'b4'})).text,'ordinary after');
   assert.ok(requests.slice(from).every(r=>!JSON.stringify(r.body).includes('ordinary private work')));
   assert.deepEqual(sent(from).map(msg),['b3']);
-  // Its route changes in place: the ordinary run carries on, and the models
-  // it lists follow the route.
+  // Its route changes in place: the ordinary run carries on, and what the
+  // gateway serves follows the route.
   const kept=Promise.withResolvers(),working=Promise.withResolvers();
   faux.setResponses([async()=>{working.resolve();await kept.promise;return fauxAssistantMessage('kept');}]);
   const e=await pi.rpc('deliver',turn('b5',{agent:who,...ordinary}));
   await working.promise;
-  assert.deepEqual(await pi.rpc('open',{agent:who,tools,route:{kind:'external'}}),{gateway:false,held:false});
-  assert.deepEqual((await pi.rpc('models',{agent:who,provider:'faux'})).map(m=>m.id),['faux-1']);
-  assert.deepEqual(await pi.rpc('open',{agent:who,tools,route:at}),{gateway:true,held:false});
+  assert.deepEqual(await pi.rpc('open',{agent:who,tools,route:{kind:'external'}}),{gateway:false,held:false,served:[]});
+  assert.deepEqual(await pi.rpc('open',{agent:who,tools,route:at}),{gateway:true,held:false,served:SERVED});
   // Opened for work on Pi's own providers, it keeps the route it has.
-  assert.deepEqual(await pi.rpc('open',{agent:who,tools}),{gateway:true,held:false});
-  assert.deepEqual(await pi.rpc('models',{agent:who,provider:'faux'}),[]);
+  assert.deepEqual(await pi.rpc('open',{agent:who,tools}),{gateway:true,held:false,served:SERVED});
   kept.resolve();
   assert.equal((await pi.rpc('wait',{agent:who,submission:e.submission,request:'b5'})).text,'kept');
   // Bound, and waiting for the other mode's run, when the agent's route

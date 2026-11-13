@@ -194,7 +194,9 @@ git push origin refs/tags/v1.0.0
 ```
 
 If a platform job fails, use **Re-run all jobs**, as for previews. A published
-tag is never moved or reused; cut a new version instead.
+tag is never moved or reused; cut a new version instead. After tagging a stable
+release, raise `tauri.conf.json`'s version above it, so previews version above
+the release they follow.
 
 ### Stable updater feed
 

@@ -2246,6 +2246,31 @@ it.each([true, false])(
   },
 );
 
+it("gives the workflow reason for its owner's workflow mention that doesn't name it", async () => {
+  const relay = keypair();
+  const event = eventDto(
+    signed(relay, {
+      kind: 9,
+      content: "@Agent workflow",
+      tags: [
+        ["h", channel],
+        ["p", self],
+        ["buzz:workflow", "true"],
+        ["buzz:workflow-owner", alice],
+      ],
+    }),
+  );
+  const f = setup([event], { workflowAuthority: relay.pubkey });
+  try {
+    const ignored = vi.fn();
+    await f.deliver({ type: "mention", event }, { ignored });
+    expect(ignored).toHaveBeenCalledExactlyOnceWith("workflow");
+    expect(f.claudes()).toHaveLength(0);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
 it.each([false, true])(
   "handles sibling workflow authorization with cancellation=%s",
   async (cancelled) => {

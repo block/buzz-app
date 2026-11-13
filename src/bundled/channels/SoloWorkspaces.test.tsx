@@ -165,6 +165,54 @@ function fixture(projectName = "Work") {
   };
 }
 
+for (const composed of [false, true]) {
+  it(`advertises reordering only when available (${composed ? "composed" : "ordinary"})`, async () => {
+    const h = fixture();
+    const store = h.store();
+    const compose: ComposeWorkspaces | undefined = composed
+      ? (parts) => (
+          <WorkspaceCompositionContext value={parts}>
+            {parts.workspaces
+              .filter((workspace) => workspace.id)
+              .map((workspace) => (
+                <RegionWorkspace key={workspace.id} id={workspace.id} />
+              ))}
+            <RegionChats />
+          </WorkspaceCompositionContext>
+        )
+      : undefined;
+    const view = (preferences = store.queries) =>
+      h.view(preferences, undefined, undefined, undefined, compose);
+    const noHints = (heading: HTMLElement) => {
+      for (const attribute of [
+        "aria-keyshortcuts",
+        "aria-description",
+        "title",
+        "data-workspace-drag-handle",
+      ])
+        expect(heading).not.toHaveAttribute(attribute);
+    };
+    try {
+      await store.queries.ensure();
+      const mounted = render(view());
+      noHints(await screen.findByRole("button", { name: "Work" }));
+      noHints(screen.getByRole("button", { name: "Chats" }));
+      await act(() =>
+        store.queries.createSection({ id: "second", name: "Second" }),
+      );
+      expect(screen.getByRole("button", { name: "Work" })).toHaveAttribute(
+        "aria-keyshortcuts",
+        "Alt+ArrowUp Alt+ArrowDown",
+      );
+      noHints(screen.getByRole("button", { name: "Chats" }));
+      mounted.rerender(view({ ...store.queries, sectionOrderWritable: false }));
+      noHints(screen.getByRole("button", { name: "Work" }));
+    } finally {
+      store.dispose();
+    }
+  });
+}
+
 it("keeps workspace ordering out of the menu", async () => {
   const h = fixture();
   const store = h.store();

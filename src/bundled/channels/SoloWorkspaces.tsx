@@ -479,6 +479,12 @@ export function SoloWorkspaces({
     ) ?? [];
   const entries = visible.map((project) => {
     const groupIndex = groups.findIndex((group) => group.id === project.id);
+    const reorderable =
+      !!project.id &&
+      groups.length > 1 &&
+      preferences.sectionOrderWritable &&
+      !renaming &&
+      !deleting;
     const open =
       !collapsed.includes(project.id) || renamingProject === project.id;
     const changeOpen = (open: boolean) =>
@@ -496,13 +502,7 @@ export function SoloWorkspaces({
           reorder(project.id, position);
           return true;
         }}
-        reorderable={
-          !!project.id &&
-          groups.length > 1 &&
-          preferences.sectionOrderWritable &&
-          !renaming &&
-          !deleting
-        }
+        reorderable={reorderable}
         key={project.id}
         className={`${styles.project} ${channelStyles.channelSection}`}
         data-project={project.id ? "" : undefined}
@@ -720,10 +720,20 @@ export function SoloWorkspaces({
         {header(
           <Collapsible.Trigger
             type="button"
-            data-workspace-drag-handle=""
-            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-            aria-description="Reorder this workspace with Alt+Up or Alt+Down (Option on Mac)."
-            title="Drag to reorder, or use Alt+Up/Down (Option on Mac)."
+            data-workspace-drag-handle={reorderable ? "" : undefined}
+            aria-keyshortcuts={
+              reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+            }
+            aria-description={
+              reorderable
+                ? "Reorder this workspace with Alt+Up or Alt+Down (Option on Mac)."
+                : undefined
+            }
+            title={
+              reorderable
+                ? "Drag to reorder, or use Alt+Up/Down (Option on Mac)."
+                : undefined
+            }
             className={styles.projectHeading}
             aria-expanded={
               !collapsed.includes(project.id) || renamingProject === project.id
@@ -749,6 +759,7 @@ export function SoloWorkspaces({
       id: project.id,
       name: project.name,
       open,
+      reorderable,
       toggle: changeOpen,
       newChat: onNew ? () => onNew(project.id || undefined) : undefined,
       frame,

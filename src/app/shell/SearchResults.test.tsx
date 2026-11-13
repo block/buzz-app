@@ -55,6 +55,10 @@ import {
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { clearViewScope, writeView } from "../../shared/view-state";
+import {
+  namePreference,
+  setNamePreference,
+} from "../../features/profiles/name-preference";
 
 // jsdom lacks scrollIntoView; the palette reveals its typed-text selection.
 beforeEach(() => {
@@ -3809,6 +3813,435 @@ it("offers a bounded from:@ picker with distinct identities and selects an exact
       expect.objectContaining({ authors: [second.pubkey] }),
     ]);
   } finally {
+    cleanup();
+    owner.dispose();
+  }
+});
+
+it.each(
+  ["from:@", "from:", "in:@"].flatMap((operator) =>
+    ["crew", undefined].flatMap((scope) =>
+      ["username", "full-name"].map((preference) => ({
+        operator,
+        scope,
+        preference,
+      })),
+    ),
+  ),
+)(
+  "matches both verified names for $operator in $scope with $preference labels",
+  async ({ operator, scope, preference }) => {
+    const previousPreference = namePreference();
+    setNamePreference(preference as "username" | "full-name");
+    const label = preference === "full-name" ? "Robin Example" : "robinz";
+    const relay = keypair(),
+      viewer = keypair(),
+      person = keypair();
+    const raw = profile(person, {
+      name: "public-handle",
+      display_name: "Robin",
+    });
+    const verified = eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        tags: [
+          ["d", person.pubkey],
+          ["p", person.pubkey],
+          ["active", "true"],
+          ["display_name", "robinz"],
+          ["username", "robinz"],
+          ["full_name", "Robin Example"],
+          ["issuer_label", "Example"],
+          ["verified_at", "1700000000"],
+        ],
+      }),
+    );
+    const discovery = [
+      metadata(relay, "crew", "crew"),
+      roster(relay, "crew", [viewer.pubkey, person.pubkey]),
+      raw,
+      verified,
+    ];
+    const searches: string[] = [];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      verifiedProfiles: {
+        pubkey: relay.pubkey,
+        multipleIssuers: false,
+        searchable: true,
+      },
+      async query(filters) {
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+      async searchProfiles(query) {
+        searches.push(query);
+        // The endpoint can find a person by a verified head alone.
+        return query === "example" ? [verified] : [raw, verified];
+      },
+      subscribe(callbacks) {
+        callbacks.state({ status: "connected", routes: [] });
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles(_filter, sink) {
+            sink.event(eventDto(verified));
+            sink.eose();
+            return () => {};
+          },
+        };
+      },
+    });
+    function Search() {
+      const [query, setQuery] = useState(`${operator}robin`);
+      return (
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={setQuery}
+          input={createRef()}
+          pages={[]}
+          scopedChannelId={scope}
+          openConversation={() => {}}
+        />
+      );
+    }
+    try {
+      render(<Search />);
+      const input = screen.getByRole("combobox");
+      expect(
+        await screen.findByRole("option", { name: new RegExp(label) }),
+      ).toBeVisible();
+      fireEvent.change(input, { target: { value: `${operator}robinz` } });
+      expect(
+        await screen.findByRole("option", { name: new RegExp(label) }),
+      ).toBeVisible();
+      await waitFor(() => expect(searches).toEqual(["robin", "robinz"]));
+      for (const alias of ["example", "public"]) {
+        fireEvent.change(input, { target: { value: `${operator}${alias}` } });
+        expect(
+          await screen.findByRole("option", { name: new RegExp(label) }),
+        ).toBeVisible();
+      }
+      fireEvent.click(screen.getByRole("option", { name: new RegExp(label) }));
+      const chip = screen.getByRole("button", {
+        name: `Remove ${operator.startsWith("in:") ? "conversation with" : "author"} ${label}`,
+      });
+      expect(chip).toHaveAttribute("title", npubEncode(person.pubkey));
+      expect(chip).toHaveTextContent(
+        `${operator.startsWith("in:") ? "in" : "from"}:@${label}`,
+      );
+      expect(input).toHaveValue("");
+    } finally {
+      cleanup();
+      owner.dispose();
+      setNamePreference(previousPreference);
+    }
+  },
+);
+
+function verifiedAuthorSession({
+  namesakeName,
+  pageOnly = false,
+  namingPolicy = false,
+}: {
+  namesakeName?: string;
+  pageOnly?: boolean;
+  namingPolicy?: boolean;
+} = {}) {
+  const relay = keypair(),
+    viewer = keypair(),
+    person = keypair(),
+    namesake = keypair();
+  const raw = profile(person, { name: "Robin" });
+  const head = eventDto(
+    signed(relay, {
+      kind: 30382,
+      content: "",
+      tags: [
+        ["d", person.pubkey],
+        ["p", person.pubkey],
+        ["active", "true"],
+        ["display_name", "robinz"],
+        ["username", "robinz"],
+        ["full_name", "Robinexample"],
+        ["issuer_label", "Example"],
+        ["verified_at", "1700000000"],
+      ],
+    }),
+  );
+  const publicProfiles = [
+    raw,
+    ...(namesakeName ? [profile(namesake, { name: namesakeName })] : []),
+  ];
+  const discovery = [
+    metadata(relay, "crew", "crew"),
+    roster(relay, "crew", [
+      viewer.pubkey,
+      person.pubkey,
+      ...(namesakeName ? [namesake.pubkey] : []),
+    ]),
+    ...publicProfiles,
+    head,
+  ];
+  const reads: Filter[] = [];
+  const owner = createRelaySession(
+    {
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      verifiedProfiles: {
+        pubkey: relay.pubkey,
+        multipleIssuers: false,
+        searchable: true,
+      },
+      async query(filters) {
+        reads.push(
+          ...(filters.filter((filter) =>
+            filter.kinds?.includes(9),
+          ) as Filter[]),
+        );
+        return discovery.filter((event) =>
+          filters.some((filter) => matchFilter(filter as Filter, event)),
+        );
+      },
+      async searchProfiles() {
+        return [...publicProfiles, head];
+      },
+      subscribe(callbacks) {
+        callbacks.state({ status: "connected", routes: [] });
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          syncVerifiedProfiles(_filter, sink) {
+            if (!pageOnly) sink.event(head);
+            sink.eose();
+            return () => {};
+          },
+        };
+      },
+    },
+    namingPolicy
+      ? {
+          identityNames: {
+            bind: (source) =>
+              bindNames(source, {
+                snapshot: () => [createAgentDirectory()],
+                subscribe: () => () => {},
+              }),
+            register() {},
+          },
+        }
+      : {},
+  );
+  return { owner, person, reads };
+}
+
+it.each(
+  [false, true].flatMap((namingPolicy) =>
+    ["username", "full-name"].map((preference) => ({
+      namingPolicy,
+      preference,
+    })),
+  ),
+)(
+  "prefers page-only verified labels over cached kind 0 with policy $namingPolicy and $preference",
+  async ({ namingPolicy, preference }) => {
+    const previous = namePreference();
+    setNamePreference(preference as "username" | "full-name");
+    const { owner, person } = verifiedAuthorSession({
+      pageOnly: true,
+      namingPolicy,
+    });
+    const label = preference === "full-name" ? "Robinexample" : "robinz";
+    const change = vi.fn();
+    function Search() {
+      const [query, setQuery] = useState("from:@robinz");
+      return (
+        <SearchResults
+          session={owner.session}
+          query={query}
+          onQueryChange={(value) => {
+            change(value);
+            setQuery(value);
+          }}
+          input={createRef()}
+          pages={[]}
+          openConversation={() => {}}
+        />
+      );
+    }
+    try {
+      await act(async () => owner.session.profiles.ensure([person.pubkey]));
+      expect(
+        owner.session.profiles.snapshot().get(person.pubkey),
+      ).toMatchObject({ name: "Robin" });
+      expect(
+        owner.session.profiles.snapshot().get(person.pubkey)?.verified,
+      ).toBeUndefined();
+      render(<Search />);
+      const row = await screen.findByRole("option", {
+        name: new RegExp(`^${label}`),
+      });
+      fireEvent.click(row);
+      expect(change).toHaveBeenCalledWith(`from:${person.pubkey} `);
+      expect(
+        screen.getByRole("button", { name: `Remove author ${label}` }),
+      ).toHaveTextContent(`from:@${label}`);
+      expect(
+        owner.session.profiles.snapshot().get(person.pubkey)?.verified,
+      ).toBeUndefined();
+    } finally {
+      cleanup();
+      owner.dispose();
+      setNamePreference(previous);
+    }
+  },
+);
+
+it.each(
+  ["crew", undefined].flatMap((scope) =>
+    ["username", "full-name"].flatMap((preference) =>
+      ["robinz", "Robinexample"].flatMap((alias) =>
+        [false, true].map((namesake) => ({
+          scope,
+          preference,
+          alias,
+          namesake,
+        })),
+      ),
+    ),
+  ),
+)(
+  "completes verified alias $alias in $scope with $preference and namesake $namesake",
+  async ({ scope, preference, alias, namesake }) => {
+    const previous = namePreference();
+    setNamePreference(preference as "username" | "full-name");
+    const { owner, person, reads } = verifiedAuthorSession(
+      namesake ? { namesakeName: alias } : {},
+    );
+    const change = vi.fn();
+    const props = {
+      session: owner.session,
+      onQueryChange: change,
+      input: createRef<HTMLInputElement>(),
+      pages: [],
+      scopedChannelId: scope,
+      openConversation() {},
+    };
+    try {
+      // Username cases exercise the picker→space transition. Full-name cases
+      // start from a pasted completed query, with no earlier page lookup.
+      const completed = `from:@${alias} deploy`;
+      const mounted = render(
+        <SearchResults
+          {...props}
+          query={alias === "robinz" ? `from:@${alias}` : completed}
+        />,
+      );
+      if (alias === "robinz") {
+        await screen.findByRole("option", {
+          name: new RegExp(person.pubkey.slice(0, 12)),
+        });
+        mounted.rerender(<SearchResults {...props} query={completed} />);
+      }
+      if (namesake) {
+        await waitFor(() =>
+          expect(
+            within(screen.getByRole("group", { name: "People" })).getAllByRole(
+              "option",
+            ),
+          ).toHaveLength(2),
+        );
+        expect(reads).toEqual([]);
+        fireEvent.click(
+          screen.getByRole("option", {
+            name: new RegExp(person.pubkey.slice(0, 12)),
+          }),
+        );
+        expect(change).toHaveBeenCalledWith(`from:${person.pubkey} deploy`);
+      } else {
+        await waitFor(() =>
+          expect(reads).toContainEqual(
+            expect.objectContaining({
+              authors: [person.pubkey],
+              search: "deploy",
+            }),
+          ),
+        );
+      }
+    } finally {
+      cleanup();
+      owner.dispose();
+      setNamePreference(previous);
+    }
+  },
+);
+
+it("ignores a superseded author-name lookup after the full username settles", async () => {
+  const relay = keypair(),
+    viewer = keypair(),
+    person = keypair();
+  const raw = profile(person, { name: "Robin" });
+  const requests: {
+    signal: AbortSignal | undefined;
+    resolve: (events: RelayEvent[]) => void;
+  }[] = [];
+  const verification = (name: string) =>
+    eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        tags: [
+          ["d", person.pubkey],
+          ["p", person.pubkey],
+          ["active", "true"],
+          ["display_name", name],
+          ["username", name],
+          ["issuer_label", "Example"],
+          ["verified_at", "1700000000"],
+        ],
+      }),
+    );
+  const owner = createRelaySession({
+    ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+    verifiedProfiles: { pubkey: relay.pubkey, multipleIssuers: false },
+    query(filters, signal) {
+      if (filters.some((filter) => filter.kinds?.includes(30382)))
+        return new Promise((resolve) => requests.push({ signal, resolve }));
+      return Promise.resolve([]);
+    },
+    async searchProfiles() {
+      return [raw];
+    },
+  });
+  const change = vi.fn();
+  const props = {
+    session: owner.session,
+    onQueryChange: change,
+    input: createRef<HTMLInputElement>(),
+    pages: [],
+    openConversation() {},
+  };
+  try {
+    const mounted = render(<SearchResults {...props} query="from:@robin" />);
+    await screen.findByRole("option", { name: /Robin/ });
+    await waitFor(() => expect(requests).toHaveLength(1));
+    mounted.rerender(<SearchResults {...props} query="from:@robinz" />);
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[0]?.signal?.aborted).toBe(true);
+    await act(async () => requests[1]?.resolve([verification("robinz")]));
+    const row = await screen.findByRole("option", { name: /robinz/ });
+    // The transport ignores cancellation and finishes the obsolete read last.
+    await act(async () => requests[0]?.resolve([verification("robinold")]));
+    expect(row).toHaveTextContent("robinz");
+    expect(screen.queryByRole("option", { name: /robinold/ })).toBeNull();
+    fireEvent.click(row);
+    expect(change).toHaveBeenCalledWith(`from:${person.pubkey} `);
+  } finally {
+    for (const request of requests) request.resolve([]);
     cleanup();
     owner.dispose();
   }

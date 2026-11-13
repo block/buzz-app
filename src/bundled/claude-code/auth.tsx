@@ -8,8 +8,8 @@
 // names and shapes when changing it. The optional ClaudeAuth.Settings surface
 // belongs to this authentication method; other implementations may omit it.
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { type ComponentType, useEffect, useState } from "react";
-import { ClaudeSettings } from "./ClaudeSettings";
+import { type ComponentType, type ReactNode, useEffect, useState } from "react";
+import { ClaudeSettings, type ClaudeConnection } from "./ClaudeSettings";
 import { ApiKeyForm } from "../../features/settings/ApiKeyForm";
 import inlineStyles from "../../shared/InlineReference.module.css";
 import type { Spawn } from "./claude";
@@ -100,13 +100,15 @@ export class ClaudeAuth {
     | ComponentType<{
         setup: ClaudeSetup;
         active(): boolean;
+        connection?: ClaudeConnection | undefined;
       }>
     | undefined {
-    return ({ setup, active }) => (
+    return ({ setup, active, connection }) => (
       <ClaudeSettings
         setup={setup}
         active={active}
         clearKey={() => this.clear()}
+        connection={connection}
       />
     );
   }
@@ -238,6 +240,7 @@ export function SignIn({
   onSaved,
   active,
   onSavingChange,
+  render,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
@@ -245,6 +248,8 @@ export function SignIn({
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
   onSavingChange?: ((saving: boolean) => void) | undefined;
+  /** Keep the form owner alive while its navigated presentation is hidden. */
+  render?: ((form: ReactNode) => ReactNode) | undefined;
 }) {
   return (
     <div className="grid gap-3">
@@ -258,6 +263,7 @@ export function SignIn({
         onSaved={onSaved}
         active={active}
         onSavingChange={onSavingChange}
+        render={render}
       />
     </div>
   );
@@ -318,6 +324,7 @@ function KeyForm({
   onSaved,
   active = () => true,
   onSavingChange,
+  render,
 }: {
   setup: ClaudeSetup;
   disabled?: boolean;
@@ -325,6 +332,7 @@ function KeyForm({
   onSaved?: (() => void) | undefined;
   active?: (() => boolean) | undefined;
   onSavingChange?: ((saving: boolean) => void) | undefined;
+  render?: ((form: ReactNode) => ReactNode) | undefined;
 }) {
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState<AbortController>();
@@ -352,7 +360,7 @@ function KeyForm({
       onSavingChange?.(false);
     }
   };
-  return (
+  const form = (
     <ApiKeyForm
       label={replace ? "Replace API key" : "Anthropic API key"}
       description={
@@ -380,4 +388,5 @@ function KeyForm({
       }
     />
   );
+  return render ? render(form) : form;
 }

@@ -13,7 +13,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Spawn } from "./claude";
-import { ClaudeSettings } from "./ClaudeSettings";
+import { ClaudeSettings, type ClaudeConnection } from "./ClaudeSettings";
 import { ClaudeSetup } from "./setup";
 
 const native = vi.hoisted(() => ({
@@ -62,14 +62,20 @@ function fixture(active = () => true) {
   const Settings = setup.auth.Settings;
   if (!Settings)
     throw new Error("API-key auth must supply its Settings component");
-  render(
+  const surface = (connection?: ClaudeConnection) => (
     <StrictMode>
       <button type="button">Before settings</button>
-      <Settings setup={setup} active={active} />
+      <Settings setup={setup} active={active} connection={connection} />
       <button type="button">After settings</button>
-    </StrictMode>,
+    </StrictMode>
   );
-  return { setup, spawn };
+  const view = render(surface());
+  return {
+    setup,
+    spawn,
+    present: (connection: ClaudeConnection) =>
+      view.rerender(surface(connection)),
+  };
 }
 
 async function savedKey() {
@@ -218,9 +224,10 @@ it.each(["Save", "Remove key"])(
 it("keeps setup open during a write and retains a failed draft until dismissal", async () => {
   native.saved = false;
   const user = userEvent.setup();
-  fixture();
-  const input = await connectKey(user);
-  const dialog = screen.getByRole("dialog", { name: "Connect Claude" });
+  const { present } = fixture();
+  const onOpenChange = (open: boolean) => present({ open, onOpenChange });
+  let input = await connectKey(user);
+  let dialog = screen.getByRole("dialog", { name: "Connect Claude" });
   let reject!: (reason: string) => void;
   const pending = new Promise<void>((_, fail) => {
     reject = fail;
@@ -233,6 +240,18 @@ it("keeps setup open during a write and retains a failed draft until dismissal",
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
     await user.keyboard("{Escape}");
     expect(dialog).toBeInTheDocument();
+    // Back/Forward hides and restores the pending form without replaying Save.
+    present({ open: false, onOpenChange });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    present({ open: true, onOpenChange });
+    dialog = await screen.findByRole("dialog", { name: "Connect Claude" });
+    input = within(dialog).getByLabelText("Anthropic API key");
+    expect(input).toHaveAttribute("readonly");
+    expect(
+      native.invoke.mock.calls.filter(
+        ([command]) => command === "claude_api_key_set",
+      ),
+    ).toHaveLength(1);
   } finally {
     await act(async () => reject("Keychain access was denied."));
   }

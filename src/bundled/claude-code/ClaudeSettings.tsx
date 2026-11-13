@@ -11,16 +11,23 @@ import { SignIn } from "./auth";
 import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import type { ClaudeSetup } from "./setup";
 
+export type ClaudeConnection = {
+  open: boolean;
+  onOpenChange(open: boolean): void;
+};
+
 /** Credentials are independent of the installed Claude version, so a missing
  * or outdated runtime never prevents removing a saved key. */
 export function ClaudeSettings({
   setup,
   active,
   clearKey,
+  connection,
 }: {
   setup: ClaudeSetup;
   active(): boolean;
   clearKey(): Promise<void>;
+  connection?: ClaudeConnection | undefined;
 }) {
   const [configured, setConfigured] = useState<boolean>();
   const [checking, setChecking] = useState(true);
@@ -31,6 +38,16 @@ export function ClaudeSettings({
   const [clearError, setClearError] = useState("");
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [connectionId, setConnectionId] = useState(0);
+  const connectionOpen = connection?.open ?? connecting;
+  const changeConnection = useCallback(
+    (open: boolean) => {
+      setConnecting(open);
+      if (!open) setConnectionId((id) => id + 1);
+      connection?.onOpenChange(open);
+    },
+    [connection],
+  );
   const section = useRef<HTMLElement>(null);
   const actionsButton = useRef<HTMLButtonElement>(null);
   const setButton = useRef<HTMLButtonElement>(null);
@@ -46,12 +63,10 @@ export function ClaudeSettings({
       const account = await setup.auth.check();
       if (request.current === current) {
         setConfigured(account !== undefined);
-        if (account !== undefined) setConnecting(false);
       }
     } catch (error) {
       if (request.current === current) {
         setReadError(String(error));
-        setConnecting(false);
       }
     } finally {
       if (request.current === current) setChecking(false);
@@ -65,6 +80,13 @@ export function ClaudeSettings({
       unsubscribe();
     };
   }, [setup, check]);
+  useEffect(() => {
+    if (connection?.open) void check();
+  }, [connection?.open, check]);
+  useEffect(() => {
+    if (connectionOpen && (configured === true || readError))
+      changeConnection(false);
+  }, [connectionOpen, configured, readError, changeConnection]);
 
   const clear = async () => {
     if (!active() || saving || clearing) return;
@@ -149,7 +171,7 @@ export function ClaudeSettings({
                     size="sm"
                     disabled={disabled || configured === undefined}
                     onClick={() => {
-                      if (active() && !disabled) setConnecting(true);
+                      if (active() && !disabled) changeConnection(true);
                     }}
                   >
                     Set
@@ -160,53 +182,55 @@ export function ClaudeSettings({
           )}
         </LoadingRegion>
       </div>
-      {connecting && active() && (
-        <Dialog
-          open
-          visit
-          title="Connect Claude"
-          description={
-            <>
-              Create an API key at{" "}
-              <Button
-                variant="link"
-                size="text"
-                nativeButton={false}
-                role="link"
-                render={
-                  <a
-                    href="https://console.anthropic.com/settings/keys"
-                    target="_blank"
-                    rel="noreferrer"
-                  />
-                }
-              >
-                console.anthropic.com
-              </Button>{" "}
-              and paste it below.
-            </>
-          }
-          headerGap="compact"
-          preventClose={saving}
-          onOpenChange={(open) => !open && setConnecting(false)}
-          initialFocus={() =>
-            connectForm.current?.querySelector("input") ?? null
-          }
-          finalFocus={() =>
-            actionsButton.current ?? setButton.current ?? section.current
-          }
-        >
-          <div ref={connectForm}>
-            <SignIn
-              variant="dialog"
-              setup={setup}
-              disabled={disabled}
-              active={active}
-              onSavingChange={setSaving}
-              onSaved={() => setConnecting(false)}
-            />
-          </div>
-        </Dialog>
+      {configured === false && (
+        <SignIn
+          key={connectionId}
+          variant="dialog"
+          setup={setup}
+          disabled={disabled}
+          active={active}
+          onSavingChange={setSaving}
+          onSaved={() => changeConnection(false)}
+          render={(form) => (
+            <Dialog
+              open={connectionOpen && active()}
+              visit
+              title="Connect Claude"
+              description={
+                <>
+                  Create an API key at{" "}
+                  <Button
+                    variant="link"
+                    size="text"
+                    nativeButton={false}
+                    role="link"
+                    render={
+                      <a
+                        href="https://console.anthropic.com/settings/keys"
+                        target="_blank"
+                        rel="noreferrer"
+                      />
+                    }
+                  >
+                    console.anthropic.com
+                  </Button>{" "}
+                  and paste it below.
+                </>
+              }
+              headerGap="compact"
+              preventClose={saving}
+              onOpenChange={(open) => !open && changeConnection(false)}
+              initialFocus={() =>
+                connectForm.current?.querySelector("input") ?? null
+              }
+              finalFocus={() =>
+                actionsButton.current ?? setButton.current ?? section.current
+              }
+            >
+              <div ref={connectForm}>{form}</div>
+            </Dialog>
+          )}
+        />
       )}
       {confirm && (
         <AlertDialog

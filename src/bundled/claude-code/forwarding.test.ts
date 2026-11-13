@@ -78,7 +78,7 @@ const OWNER = { id: "buzz.claude-code", revision: "r1" };
 function harness(
   answers: ForwardOpened[] = [],
   retry: ForwardRetry = { delays: [] },
-  managed?: () => Promise<readonly string[]>,
+  managed: () => Promise<readonly string[]> = async () => [],
 ) {
   let route: GatewayRoute = eligible(2);
   const listeners = new Set<() => void>();
@@ -125,10 +125,10 @@ function harness(
   };
   const forwarding = new ClaudeForwarding(
     OWNER,
+    managed,
     native,
     routes,
     retry,
-    managed,
   );
   return {
     forwarding,

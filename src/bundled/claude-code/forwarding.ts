@@ -128,11 +128,12 @@ export const BYPASSED =
 export class ClaudeForwarding {
   constructor(
     private readonly owner: ForwardOwner,
+    /** The managed settings files Claude reads, in merge order: required,
+     * so nothing opens without checking them. */
+    private readonly managed: () => Promise<readonly string[]>,
     private readonly native: ForwardNative = NATIVE,
     private readonly routes: ForwardRoutes = ROUTES,
     private readonly retry: ForwardRetry = RETRY,
-    /** The managed settings files Claude reads, in merge order. */
-    private readonly managed?: () => Promise<readonly string[]>,
   ) {}
 
   /** The route a session control with no turn of its own (compaction) goes
@@ -176,18 +177,16 @@ export class ClaudeForwarding {
     if (!bindingAdmits(route, turn.binding).ok) throw new Error(CHANGED);
     const discovery = discoveryBundle(route.profile, route, turn.binding);
     if (!discovery.ok) throw new Error(discovery.message);
-    if (this.managed) {
-      let files: readonly string[];
-      try {
-        files = await this.managed();
-      } catch (error) {
-        console.warn("Claude's managed settings are unreadable", error);
-        throw new Error(MANAGED_UNREADABLE);
-      }
-      const set = managedRouting(files);
-      if (set) throw new Error(managedRefusal(set));
-      signal.throwIfAborted();
+    let files: readonly string[];
+    try {
+      files = await this.managed();
+    } catch (error) {
+      console.warn("Claude's managed settings are unreadable", error);
+      throw new Error(MANAGED_UNREADABLE);
     }
+    const set = managedRouting(files);
+    if (set) throw new Error(managedRefusal(set));
+    signal.throwIfAborted();
     // Watched from before the push: a change during it, the open or the
     // process's startup is pushed (native revokes on it) and recorded.
     let revoked = false;

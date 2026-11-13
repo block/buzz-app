@@ -3027,6 +3027,7 @@ function gateway(
   };
   const forwarding = new ClaudeForwarding(
     { id: "buzz.claude-code", revision: "r1" },
+    async () => [],
     native,
     {
       routeFor: () => route,

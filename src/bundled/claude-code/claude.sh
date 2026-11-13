@@ -173,6 +173,8 @@ managed)
   # Buzz's own: the file, then its drop-ins in name order, as later ones
   # merge over earlier ones. A file it can't read fails the step.
   managed="${1:?}"
+  # Claude sorts the names by code unit, as the C locale does bytes.
+  export LC_ALL=C
   for file in "$managed/managed-settings.json" "$managed/managed-settings.d/"*.json; do
     [ -f "$file" ] || continue
     encoded=$(base64 <"$file") || exit 1

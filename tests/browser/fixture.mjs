@@ -2213,8 +2213,7 @@ export const test = base.extend({
         const parts = request.url.split("/");
         const route = parts.at(-1);
         const requestedCommunity = decodeURIComponent(parts[3]);
-        // Congestion's saved communities read primary's data, without a
-        // live stream: each stream would hold one of the origin's connections.
+        // Congestion's saved communities read primary's data.
         const saved =
           iconCongestion &&
           /^https:\/\/saved-\d+\.example$/.test(requestedCommunity);
@@ -2256,7 +2255,7 @@ export const test = base.extend({
             relayUrl: saved
               ? requestedCommunity
               : JSON.parse(fixtureAliases)[community],
-            live: !saved,
+            live: true,
           });
         }
         if (route === "sign" && body.kind === 20002) {
@@ -2615,10 +2614,15 @@ export const test = base.extend({
                   ? [
                       { id: "primary", name: "Primary" },
                       { id: "secondary", name: "Secondary" },
-                      ...Array.from({ length: 6 }, (_, index) => ({
-                        id: `https://saved-${index}.example`,
-                        name: `Saved ${index}`,
-                      })),
+                      ...Array.from(
+                        {
+                          length: iconCongestion === true ? 6 : iconCongestion,
+                        },
+                        (_, index) => ({
+                          id: `https://saved-${index}.example`,
+                          name: `Saved ${index}`,
+                        }),
+                      ),
                     ]
                   : [
                       { id: "primary", name: "Primary" },

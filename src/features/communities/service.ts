@@ -29,7 +29,11 @@ import {
 export const PROFILE_ABOUT_MAX_LENGTH = 500;
 /** Native relay sockets the app may hold at once, one per session; mirrors
  * the admission check in `src-tauri/src/federated_identity/socket.rs`. */
-export const SESSION_LIMIT = 16;
+export const SESSION_LIMIT = 32;
+/** Sessions on the browser development broker. Each holds a live stream on
+ * one same-origin HTTP/1.1 connection, and browsers open about six per
+ * origin, so the rest stay free for ordinary requests. */
+export const BROKER_SESSION_LIMIT = 2;
 export type PersonalProfile = { name: string; picture: string; about?: string };
 export type Membership = {
   id: string;
@@ -115,6 +119,7 @@ export function createCommunities(
   const listeners = new Set<() => void>();
   const relayListeners = new Set<() => void>();
   const sessions = new Map<string, ReturnType<typeof provideRelay>>();
+  const sessionLimit = live ? BROKER_SESSION_LIMIT : SESSION_LIMIT;
   // Each session owns a scope so leaving can dispose exactly that one.
   const sessionScopes = new Map<string, Context>();
   const scopes: Context[] = [];
@@ -190,11 +195,11 @@ export function createCommunities(
       closed.delete(id);
     }
     if (!session) {
-      if (badge && (closed.has(id) || sessions.size >= SESSION_LIMIT))
+      if (badge && (closed.has(id) || sessions.size >= sessionLimit))
         return undefined;
       let room: Promise<unknown> = Promise.resolve();
       const oldest = [...badgeOnly][0];
-      if (sessions.size >= SESSION_LIMIT && oldest) {
+      if (sessions.size >= sessionLimit && oldest) {
         badgeOnly.delete(oldest);
         closed.add(oldest);
         // Close before connecting so the native socket is free first.

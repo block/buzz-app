@@ -113,7 +113,7 @@ export function observeCommunityUnread(
 /** Background sessions opened for unread. The native host refuses a 17th
  * relay socket (`socket.rs`), and each session holds one; the remainder keeps
  * room for the selected community, agents' communities and visits. */
-export const BACKGROUND_UNREAD_LIMIT = 8;
+export const BACKGROUND_UNREAD_LIMIT = 24;
 
 /** Unread for joined communities, keyed by community id. It opens the first
  * `BACKGROUND_UNREAD_LIMIT` in the background, plus every community selected

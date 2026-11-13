@@ -1,6 +1,10 @@
 import { Context } from "@deepseek-ai/cordis";
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { createCommunities, SESSION_LIMIT } from "./service";
+import {
+  BROKER_SESSION_LIMIT,
+  createCommunities,
+  SESSION_LIMIT,
+} from "./service";
 import { communityDestination } from "./destination";
 import { localCommunityNameKey } from "./names";
 import * as destinations from "./destination";
@@ -155,9 +159,91 @@ it("opens a joined community without selecting it, and never one that is not joi
     "/api/relay/primary/session",
   ]);
 });
-it("closes the oldest badge-only session, never selected or agent work, when the socket limit is full", async () => {
+it("closes the oldest badge-only session, never selected or agent work, when the native socket limit is full", async () => {
+  const nativeViewer = "c".repeat(64);
   const ids = Array.from(
     { length: SESSION_LIMIT + 1 },
+    (_, i) => `https://c${i}.example.test`,
+  );
+  const saved = {
+    profile: { name: "Native", picture: "" },
+    memberships: ids.map((id) => ({ id, name: id })),
+    selected: ids[0],
+  };
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) =>
+      key === `buzz-client.v1:${nativeViewer}` ? JSON.stringify(saved) : null,
+    setItem: vi.fn(),
+  });
+  // The host's registry: a socket per transport until its scope aborts it,
+  // refused past the limit.
+  const held = new Set<string>();
+  const refused: string[] = [];
+  const connect = vi.fn(
+    (id: string, signal: AbortSignal) =>
+      new Promise<ReadTransport>((_resolve, reject) => {
+        if (held.size >= SESSION_LIMIT) {
+          refused.push(id);
+          return reject(new Error("Native sockets are busy"));
+        }
+        held.add(id);
+        signal.addEventListener(
+          "abort",
+          () => {
+            held.delete(id);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      }),
+  );
+  const ctx = new Context();
+  roots.push(ctx);
+  const client = createCommunities(
+    ctx,
+    false,
+    undefined,
+    "",
+    undefined,
+    Promise.resolve(nativeViewer),
+    connect,
+  );
+  await flush();
+  // Startup badges, then visits and an agent's community fill every socket.
+  const badges = ids.slice(1, 9).map((id) => client.open(id, true));
+  for (const id of ids.slice(9, SESSION_LIMIT - 1)) client.select(id);
+  const agent = client.open(ids[SESSION_LIMIT - 1] as string);
+  client.select(ids[0] as string);
+  await flush();
+  expect(badges.every(Boolean)).toBe(true);
+  expect(held.size).toBe(SESSION_LIMIT);
+  // A badge never takes the last socket from other work.
+  const last = ids[SESSION_LIMIT] as string;
+  expect(client.open(last, true)).toBeUndefined();
+
+  client.select(last);
+  await flush();
+  await flush();
+  expect(refused).toEqual([]);
+  expect(held.has(last)).toBe(true);
+  // Only the oldest badge-only session gave up its socket, and stays closed.
+  expect(held.has(ids[1] as string)).toBe(false);
+  expect(client.open(ids[1] as string, true)).toBeUndefined();
+  for (const [index, id] of ids.slice(2, 9).entries())
+    expect(client.open(id, true)).toBe(badges[index + 1]);
+  expect(client.open(ids[SESSION_LIMIT - 1] as string)).toBe(agent);
+  expect(held.has(ids[0] as string)).toBe(true);
+  // Selecting the closed community connects it again, closing the next oldest.
+  client.select(ids[1] as string);
+  await flush();
+  await flush();
+  expect(refused).toEqual([]);
+  expect(held.has(ids[1] as string)).toBe(true);
+  expect(held.has(ids[2] as string)).toBe(false);
+});
+it("keeps badge-only sessions within the broker's session limit", async () => {
+  const ids = Array.from(
+    { length: BROKER_SESSION_LIMIT + 1 },
     (_, i) => `https://c${i}.example.test`,
   );
   const client = setup({
@@ -167,31 +253,15 @@ it("closes the oldest badge-only session, never selected or agent work, when the
   });
   await flush();
   await flush();
-  // Startup badges, then visits and an agent's community fill every socket.
-  const badges = ids.slice(1, 9).map((id) => client.open(id, true));
-  for (const id of ids.slice(9, SESSION_LIMIT - 1)) client.select(id);
-  const agent = client.open(ids[SESSION_LIMIT - 1] as string);
-  client.select(ids[0] as string);
-  await flush();
-  expect(badges.every(Boolean)).toBe(true);
-  // A badge never takes the last socket from other work.
-  const last = ids[SESSION_LIMIT] as string;
-  expect(client.open(last, true)).toBeUndefined();
-
+  const badges = ids.slice(1).map((id) => client.open(id, true));
+  expect(badges.filter(Boolean)).toHaveLength(BROKER_SESSION_LIMIT - 1);
+  // Selecting a community past the limit replaces the badge-only session.
+  const last = ids.at(-1) as string;
   client.select(last);
   await flush();
   await flush();
   expect(client.relay.snapshot().status).toBe("ready");
-  // Only the oldest badge-only session gave up its socket, and stays closed.
   expect(client.open(ids[1] as string, true)).toBeUndefined();
-  for (const [index, id] of ids.slice(2, 9).entries())
-    expect(client.open(id, true)).toBe(badges[index + 1]);
-  expect(client.open(ids[SESSION_LIMIT - 1] as string)).toBe(agent);
-  expect(client.open(ids[0] as string, true)).toBeDefined();
-  // Selecting the closed community connects it again.
-  client.select(ids[1] as string);
-  await flush();
-  expect(client.relay.snapshot().status).toBe("ready");
 });
 it("a failing community does not replace its healthy sibling or the local profile", async () => {
   const client = setup();

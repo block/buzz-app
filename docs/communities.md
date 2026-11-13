@@ -116,8 +116,13 @@ reporting success. This confirmation is not a transaction against other clients.
 Use the dock's community switcher to select a saved community or Personal
 space. Personal space
 clears selection without forgetting memberships. Its **Join a community** item opens the
-existing join dialog. Displaying saved communities reads relay metadata; the app
-connects to every saved community in the background so the switcher can show its unread.
+existing join dialog. Displaying saved communities reads relay metadata. So the
+switcher can show their unread, the app connects in the background to the first 24
+saved communities, plus any selected this launch. When a community opened for its
+own work needs a connection and none is free, the least recently opened community
+connected only for its badge is closed, and its badge stays blank until you open
+it again. The browser development broker connects fewer, two sessions in all, so
+its streams leave the origin's connections free for ordinary requests.
 A community other than the selected one shows a count of items that need you
 (mentions, DMs and replies in threads you follow) at the end of its row, or a dot
 for other unread, and the closed switcher shows a dot while any does. Muted

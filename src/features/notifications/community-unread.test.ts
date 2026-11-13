@@ -43,11 +43,17 @@ function fakeSession() {
   };
   let channels: { id: string; members: string[]; huddle?: true }[] = [];
   const unread = new Map<string, Partial<UnreadSnapshot>>();
+  let liveStatus = "connected";
   const ensure = vi.fn(async () => {});
   const prefs = signal(),
     list = signal(),
-    rows = signal();
+    rows = signal(),
+    live = signal();
   const session = {
+    live: {
+      snapshot: () => ({ status: liveStatus, routes: [] }),
+      subscribe: live.subscribe,
+    },
     sidebarPreferences: {
       snapshot: () => preferences,
       subscribe: prefs.subscribe,
@@ -75,6 +81,11 @@ function fakeSession() {
     session,
     ensure,
     rows,
+    live,
+    connection(status: string) {
+      liveStatus = status;
+      live.emit();
+    },
     join(...ids: string[]) {
       channels = ids.map((id) => ({ id, members: [viewer] }));
       list.emit();
@@ -268,4 +279,38 @@ it("is unknown when no channel has observed evidence, and counts the ones that d
   expect(state()).toEqual({ unread: true, attention: 1 });
   fake.set("b", { observedCount: 0, attentionCount: 0 });
   expect(state()).toEqual({ unread: false, attention: 0 });
+});
+
+it("hides the badge while the live connection is down, even when reads still succeed", () => {
+  const fake = fakeSession();
+  // Startup: HTTP reads observed unread, but the socket never connected.
+  fake.connection("retrying");
+  const state = observeKnown(fake);
+  fake.join("a");
+  fake.set("a", { observedCount: 1, attentionCount: 1 });
+  expect(state()).toBeUndefined();
+  fake.connection("connected");
+  expect(state()).toEqual({ unread: true, attention: 1 });
+  // A drop, then a successful finite refresh while the socket is still down.
+  fake.connection("retrying");
+  expect(state()).toBeUndefined();
+  fake.set("a", { observedCount: 2, attentionCount: 2 });
+  expect(state()).toBeUndefined();
+  fake.connection("connected");
+  expect(state()).toEqual({ unread: true, attention: 2 });
+});
+
+it("stops listening to the live connection when disposed", () => {
+  const fake = fakeSession();
+  const stop = observeCommunityUnread(
+    fake.session,
+    viewer,
+    one,
+    () => {},
+    undefined,
+    true,
+  );
+  expect(fake.live.size).toBe(1);
+  stop();
+  expect(fake.live.size).toBe(0);
 });

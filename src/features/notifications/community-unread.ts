@@ -17,7 +17,8 @@ export type CommunityUnread = Readonly<{ unread: boolean; attention: number }>;
 /** Observes one community session's existing unread evidence, never a new read
  * owner. `publish` gets `undefined` until confirmed mutes are known, so an
  * unknown community never reads as all read. With `known`, it also gets
- * `undefined` while the session's unread is stale (its connection dropped,
+ * `undefined` while the session's live connection is not up (HTTP reads can
+ * still succeed without it), while its unread is stale (its connection dropped,
  * until the reconnect's read finishes) or no counted channel has observed
  * evidence; channels without it are left out of the count. */
 export function observeCommunityUnread(
@@ -35,6 +36,8 @@ export function observeCommunityUnread(
     if (closed) return;
     const preferences = session.sidebarPreferences.snapshot();
     if (preferences.status !== "ready" && preferences.status !== "unsupported")
+      return publish(undefined);
+    if (known && session.live.snapshot().status !== "connected")
       return publish(undefined);
     const muted = new Set(preferences.data?.muted ?? []);
     let unread = false;
@@ -93,6 +96,7 @@ export function observeCommunityUnread(
   const stopPreferences = session.sidebarPreferences.subscribe(changed);
   const stopRoster = session.channels.subscribeList(roster);
   const stopGates = gates?.subscribe(roster) ?? (() => {});
+  const stopLive = known ? session.live.subscribe(changed) : () => {};
   roster();
   return () => {
     if (closed) return;
@@ -100,6 +104,7 @@ export function observeCommunityUnread(
     stopPreferences();
     stopRoster();
     stopGates();
+    stopLive();
     for (const stop of channels.values()) stop();
     channels.clear();
   };

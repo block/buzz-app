@@ -606,7 +606,11 @@ channel-scoped session. It is the same `plugin` trigger with `from`, the
 conversation it came from, in place of `plugin`, shown in a `<self-handoff>`
 section that names that conversation, says nobody wrote it as a message and that
 its text is data, and that the agent acts only on what its owner asked. Only a
-run's handle hands off.
+run's handle hands off. Message tools refuse self-mentions because the runner
+suppresses the agent's own relay events. The self-handoff receipt confirms
+local queue admission only, not execution or completion. A busy runner queues
+the wake behind its active mention turn; a full queue or unavailable local
+runner returns an error. The wake is not durable across host shutdown.
 
 A plugin gives standing instructions to every turn with
 `ctx.agents.addInstructions({ id, text, when? })` (see
@@ -837,7 +841,11 @@ those agents as `interrupted` and `InterruptedNotice` asks the owner: **Resume**
 reads each mention again and gives it to `run` marked `resumed`, which tells the
 agent to carry on in its saved session; **Don’t resume** forgets them. Either
 answer covers only the agents the notice names, and only Resume gives those
-mentions again: a replay or live delivery of one never does. A turn
+mentions again: a replay or live delivery of one never does. Opening the
+notice's mention count reads each agent's mentions once, the way Resume does
+(`readInterrupted`), and lists them by channel and thread root; one that read
+does not return shows "Details unavailable", and a read that fails is read again
+when the count is next opened. It is a preview: Resume reads them again. A turn
 stays saved until its resumed turn settles, so closing again first loses none.
 goose sessions end with the app, so a resumed goose turn opens a new one and is
 shown the mention's thread, including what it already posted there.

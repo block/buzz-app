@@ -11,6 +11,24 @@ tokio::task_local! {
 }
 
 pub(super) const DEADLINE: Duration = Duration::from_secs(30);
+/// How far ahead of this clock a signed timestamp may be, and how far a
+/// verifier accepts one behind or ahead of its own (NIP-FI, NIP-98).
+pub(crate) const CLOCK_SKEW_SECS: u64 = 120;
+/// A response `Date` further than this from the local clock suggests the
+/// local clock is off. It is a hint, never the cause of a refusal: the
+/// supported skew reaches 120 s, and `Date` has one-second precision.
+const CLOCK_HINT_SECS: i64 = 115;
+
+/// The server's `Date` minus the local clock, sampled when the headers arrive,
+/// when it is far enough off to suggest local skew. A missing or malformed
+/// `Date` gives nothing.
+pub(crate) fn clock_offset(date: Option<&str>) -> Option<i64> {
+    let server = chrono::DateTime::parse_from_rfc2822(date?)
+        .ok()?
+        .timestamp();
+    let offset = server - now().ok()?;
+    (offset.abs() > CLOCK_HINT_SECS).then_some(offset)
+}
 pub(crate) fn now() -> Result<i64, &'static str> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -37,12 +55,16 @@ pub(crate) fn client() -> Result<Client, &'static str> {
 pub(crate) struct Failure {
     pub(crate) code: &'static str,
     pub(crate) session_denied: bool,
+    /// `clock_offset` of a refusal's response: a diagnostic beside `code`,
+    /// which keeps its meaning and handling.
+    pub(crate) clock_offset: Option<i64>,
 }
 impl From<&'static str> for Failure {
     fn from(code: &'static str) -> Self {
         Self {
             code,
             session_denied: false,
+            clock_offset: None,
         }
     }
 }
@@ -78,12 +100,22 @@ async fn body(mut response: reqwest::Response) -> Result<Zeroizing<Vec<u8>>, Fai
 pub(crate) async fn json<T: DeserializeOwned>(
     request: impl Fn() -> RequestBuilder,
 ) -> Result<T, Failure> {
+    json_with(|| std::future::ready(Ok(request()))).await
+}
+
+/// `json`, building every transmitted attempt anew: a request carrying a
+/// single-use proof signs a fresh one per attempt, so a retry is never
+/// refused as a replay of the attempt before it.
+pub(crate) async fn json_with<T: DeserializeOwned, F>(request: impl Fn() -> F) -> Result<T, Failure>
+where
+    F: std::future::Future<Output = Result<RequestBuilder, Failure>>,
+{
     // One total deadline includes bounded retry and Retry-After. Refusals and
     // invalid success bodies do not retry; no browser is launched here.
     let terminal_headers = std::sync::atomic::AtomicBool::new(false);
     tokio::time::timeout(DEADLINE, async {
         for attempt in 0..3u64 {
-            let response = request().send().await;
+            let response = request().await?.send().await;
             let retry = match response {
                 Err(_) => Some(None),
                 Ok(response) => {
@@ -96,6 +128,13 @@ pub(crate) async fn json<T: DeserializeOwned>(
                             .and_then(retry_after);
                         Some(delay)
                     } else {
+                        let clock_offset = (!status.is_success())
+                            .then(|| {
+                                clock_offset(
+                                    response.headers().get("date").and_then(|v| v.to_str().ok()),
+                                )
+                            })
+                            .flatten();
                         terminal_headers
                             .store(!status.is_success(), std::sync::atomic::Ordering::Relaxed);
                         #[cfg(test)]
@@ -113,7 +152,12 @@ pub(crate) async fn json<T: DeserializeOwned>(
                                 .await;
                                 continue;
                             }
-                            Err(_) if !status.is_success() => return Err("adapter-refused".into()),
+                            Err(_) if !status.is_success() => {
+                                return Err(Failure {
+                                    clock_offset,
+                                    .."adapter-refused".into()
+                                })
+                            }
                             Err(failure) => return Err(failure),
                         };
                         if status.is_success() {
@@ -143,6 +187,7 @@ pub(crate) async fn json<T: DeserializeOwned>(
                         return Err(Failure {
                             code,
                             session_denied,
+                            clock_offset,
                         });
                     }
                 }

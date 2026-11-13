@@ -5,7 +5,7 @@ pub(crate) mod grant;
 
 use super::{
     config::canonical_relay,
-    protocol::{self, now, Failure},
+    protocol::{self, Failure},
     FederatedIdentity, SessionChange, Snapshot,
 };
 use base64::{
@@ -128,7 +128,7 @@ struct Cached {
     account: String,
     relay: String,
     header: Zeroizing<String>,
-    refresh_at: u64,
+    refresh_at: tokio::time::Instant,
     expires_at: tokio::time::Instant,
     grants: u64,
 }
@@ -575,7 +575,6 @@ impl AgentTokens {
             return Err(DELETED.into());
         }
         let retirements = self.admit().await?;
-        let now = now()? as u64;
         let account = self.account();
         if let Some(cached) = &slot.assertion {
             if cached.retirements == retirements
@@ -583,7 +582,7 @@ impl AgentTokens {
                     .as_ref()
                     .is_none_or(|account| *account == cached.account)
                 && cached.relay == relay
-                && cached.refresh_at > now
+                && cached.refresh_at > tokio::time::Instant::now()
                 && cached.expires_at > tokio::time::Instant::now() + valid_for
             {
                 return Ok(Some(cached.clone()));
@@ -899,6 +898,7 @@ impl AgentTokens {
             expires_at: u64,
         }
         let client = protocol::client()?;
+        let request_start = tokio::time::Instant::now();
         let issued: Issued = protocol::json(|| {
             let request = client
                 .post(endpoint.clone())
@@ -912,22 +912,31 @@ impl AgentTokens {
         })
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
-        let now = now()? as u64;
+        let monotonic_now = tokio::time::Instant::now();
+        let wall_now = std::time::SystemTime::now();
+        let now = wall_now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "clock-unavailable")?
+            .as_secs();
         if issued.nostr_pubkey != agent.pubkey || issued.expires_at <= now {
             return Err("invalid-assertion".into());
         }
-        validate(&assertion, agent, grant, &relay, issued.expires_at, now)?;
+        let minted = validate(&assertion, agent, grant, &relay, issued.expires_at, now)?;
+        let (expires_at, _) = super::assertion::token_deadline(
+            request_start,
+            minted,
+            issued.expires_at,
+            wall_now,
+            monotonic_now,
+        )
+        .ok_or("invalid-assertion")?;
         Ok(Cached {
             header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
             // One with 30s or less to live is used once, never reused.
-            refresh_at: issued.expires_at.saturating_sub(30),
-            expires_at: super::assertion::monotonic_expiry(
-                issued.expires_at,
-                std::time::SystemTime::now(),
-                tokio::time::Instant::now(),
-            )
-            .ok_or("invalid-assertion")?
-            .0,
+            refresh_at: expires_at
+                .checked_sub(std::time::Duration::from_secs(30))
+                .unwrap_or(monotonic_now),
+            expires_at,
             grants: 0,
             retirements: 0,
             account: grant.account.clone(),
@@ -1213,7 +1222,7 @@ fn validate(
     relay: &str,
     expires_at: u64,
     now: u64,
-) -> Result<(), Failure> {
+) -> Result<u64, Failure> {
     let invalid = || Failure::from("invalid-assertion");
     let parts: Vec<_> = token.split('.').collect();
     if token.len() > 8192 || parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
@@ -1233,11 +1242,13 @@ fn validate(
         || text("iss") != Some(&grant.issuer)
         || text("aud") != Some(&audience)
         || claims.get("exp").and_then(serde_json::Value::as_u64) != Some(expires_at)
-        || !minted.is_some_and(|minted| minted <= now + 5 && minted <= expires_at)
+        || !minted.is_some_and(|minted| {
+            minted <= now + super::protocol::CLOCK_SKEW_SECS && minted <= expires_at
+        })
     {
         return Err(invalid());
     }
-    Ok(())
+    minted.ok_or_else(invalid)
 }
 
 /// A failed enrollment, and whether the organization refused it (rather than

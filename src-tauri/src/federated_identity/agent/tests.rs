@@ -1,5 +1,6 @@
 use super::grant::tests::MemoryGrants;
 use super::*;
+use crate::federated_identity::protocol::now;
 use crate::federated_identity::tests::{at_adapter, record, Memory};
 
 pub(crate) struct Seen {
@@ -324,7 +325,7 @@ async fn evidence_needed_for_longer_replaces_a_cached_assertion_expiring_sooner(
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let now = super::now().unwrap() as u64;
+    let now = now().unwrap() as u64;
     let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
     let long = issued(&probe, serde_json::json!({}));
     let (base, served) = issuer(vec![
@@ -370,7 +371,7 @@ async fn evidence_minted_shorter_than_needed_is_refused() {
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let now = super::now().unwrap() as u64;
+    let now = now().unwrap() as u64;
     let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
     let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64))), (200, short)]).await;
     let mut f = fixture(base);
@@ -424,7 +425,7 @@ fn agent_assertions_must_name_this_agent_owner_issuer_and_community() {
         serde_json::json!({ "iss": "https://other.example" }),
         serde_json::json!({ "aud": "https://other.example" }),
         serde_json::json!({ "exp": now + 299 }),
-        serde_json::json!({ "iat": now + 60 }),
+        serde_json::json!({ "iat": now + 121 }),
     ] {
         assert!(check(wrong).is_err());
     }

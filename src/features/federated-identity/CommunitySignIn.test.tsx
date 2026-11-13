@@ -339,3 +339,62 @@ it("keeps an explained refusal hidden until its error clears, so a resolving sig
   rerender({ error: refusal });
   expect(result.current).toBe(false);
 });
+it("names this computer's clock when the token it was issued is from the future", () => {
+  const h = federatedFixture();
+  h.publish({ status: "signed-in", failure: "clock-skew" });
+  render(
+    <CommunitySignIn identity={h.service} error="clock-skew" retry={vi.fn()} />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Your computer’s date and time look wrong. Check them in System Settings, then try again.",
+  );
+  expect(screen.queryByText(/clock looks about/)).toBeNull();
+});
+it.each([
+  [130, "about 2 minutes off"],
+  [-130, "about 2 minutes off"],
+])(
+  "keeps a refusal's own copy and adds a clock hint at %s s",
+  (clockOffset, hint) => {
+    const h = federatedFixture();
+    h.publish({ failure: "adapter-refused", clockOffset });
+    render(
+      <CommunitySignIn
+        identity={h.service}
+        error="adapter-refused"
+        retry={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Buzz couldn’t confirm your organization sign-in for this community.",
+    );
+    expect(screen.getByText(new RegExp(hint))).toHaveTextContent(
+      "Check your date and time settings.",
+    );
+  },
+);
+it("adds no clock hint without a measured offset", () => {
+  const h = federatedFixture();
+  h.publish({ failure: "adapter-refused", clockOffset: null });
+  render(
+    <CommunitySignIn
+      identity={h.service}
+      error="adapter-refused"
+      retry={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText(/clock looks about/)).toBeNull();
+});
+it("adds the clock hint beneath a refusal it doesn't explain itself", () => {
+  const h = federatedFixture();
+  h.publish({ clockOffset: 130 });
+  render(
+    <CommunitySignIn
+      identity={h.service}
+      error="relay-forbidden"
+      retry={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText(/clock looks about 2 minutes off/)).toBeVisible();
+});

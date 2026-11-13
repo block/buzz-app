@@ -1,7 +1,7 @@
 //! NIP-FA issuance and local JWT misuse checks; the relay verifies JWT signatures.
 use super::{
     config::canonical_relay,
-    protocol::{self, expiry, now, Failure},
+    protocol::{self, expiry, now, Failure, CLOCK_SKEW_SECS},
     FederatedIdentity, Status,
 };
 use crate::identity::{EventTemplate, IdentityHost};
@@ -44,6 +44,27 @@ fn admission_retired(mutation: bool) -> &'static str {
 /// still leaves a socket time to admit.
 fn refresh_margin(lifetime: std::time::Duration) -> std::time::Duration {
     (lifetime / 2).min(std::time::Duration::from_secs(15))
+}
+
+/// The shared client lifetime rule: a fresh token's local deadline is the
+/// earlier of its issued lifetime (`exp − iat`) counted from `request_start`,
+/// sampled before the issuance request was sent, and its remaining wall-clock
+/// life at receipt. Time in flight thus counts against the token whichever
+/// way this clock is off. Only a fresh mint sets a deadline; a cached token
+/// keeps the one it was minted with.
+pub(super) fn token_deadline(
+    request_start: Instant,
+    minted: u64,
+    expires_at: u64,
+    wall_now: std::time::SystemTime,
+    monotonic_now: Instant,
+) -> Option<(Instant, std::time::Duration)> {
+    let (received, _) = monotonic_expiry(expires_at, wall_now, monotonic_now)?;
+    let issued = request_start.checked_add(std::time::Duration::from_secs(
+        expires_at.checked_sub(minted)?,
+    ))?;
+    let deadline = received.min(issued);
+    Some((deadline, deadline.saturating_duration_since(monotonic_now)))
 }
 
 pub(super) fn monotonic_expiry(
@@ -528,6 +549,7 @@ impl FederatedIdentity {
         {
             *entry.retry_at.lock().await = Some(Instant::now() + ACQUISITION_RETRY_COOLDOWN);
         }
+        self.note_clock_offset(result.as_ref().err().and_then(|f| f.clock_offset));
         match result {
             Ok(assertion) => {
                 authorization.assertion = Some(assertion);
@@ -748,43 +770,54 @@ impl FederatedIdentity {
             .ok_or("unconfigured")?
             .endpoint("/v1/identity/assertions");
         let client = protocol::client()?;
-        let timestamp = now()? as u64;
-        let proof = identity
-            .sign(EventTemplate {
-                kind: 27235,
-                created_at: timestamp,
-                content: String::new(),
-                tags: vec![
-                    vec!["u".into(), endpoint.to_string()],
-                    vec!["method".into(), "POST".into()],
-                    vec![
-                        "payload".into(),
-                        format!("{:x}", Sha256::digest(body.as_bytes())),
+        let payload = format!("{:x}", Sha256::digest(body.as_bytes()));
+        // Every transmitted attempt carries its own proof: the issuer accepts
+        // each proof once, so a retry resending one would be refused as a
+        // replay. The nonce keeps two attempts in one second distinct.
+        let (payload, endpoint, body, client) = (&payload, &endpoint, &body, &client);
+        let proof = move || async move {
+            let mut nonce = [0u8; 16];
+            getrandom::fill(&mut nonce).map_err(|_| "identity-unavailable")?;
+            let proof = identity
+                .sign(EventTemplate {
+                    kind: 27235,
+                    created_at: now()? as u64,
+                    content: String::new(),
+                    tags: vec![
+                        vec!["u".into(), endpoint.to_string()],
+                        vec!["method".into(), "POST".into()],
+                        vec!["payload".into(), payload.clone()],
+                        vec![
+                            "nonce".into(),
+                            nonce.iter().map(|b| format!("{b:02x}")).collect(),
+                        ],
                     ],
-                ],
-            })
-            .await
-            .map_err(|_| "identity-unavailable")?;
-        if proof.get("pubkey").and_then(|v| v.as_str()) != Some(viewer) {
-            return Err("invalid-viewer".into());
-        }
-        let proof = format!(
-            "Nostr {}",
-            STANDARD.encode(serde_json::to_vec(&proof).map_err(|_| "invalid-proof")?)
-        );
+                })
+                .await
+                .map_err(|_| "identity-unavailable")?;
+            if proof.get("pubkey").and_then(|v| v.as_str()) != Some(viewer) {
+                return Err(Failure::from("invalid-viewer"));
+            }
+            Ok::<_, Failure>(format!(
+                "Nostr {}",
+                STANDARD.encode(serde_json::to_vec(&proof).map_err(|_| "invalid-proof")?)
+            ))
+        };
         #[derive(Deserialize)]
         struct Issued {
             assertion: String,
             nostr_pubkey: String,
             expires_at: u64,
         }
-        let issued: Issued = protocol::json(|| {
-            client
+        let request_start = Instant::now();
+        let proof = &proof;
+        let issued: Issued = protocol::json_with(move || async move {
+            Ok(client
                 .post(endpoint.clone())
                 .bearer_auth(token)
-                .header("Nostr-Authorization", &proof)
+                .header("Nostr-Authorization", proof().await?)
                 .header("Content-Type", "application/json")
-                .body(body.clone())
+                .body(body.clone()))
         })
         .await?;
         let assertion = Zeroizing::new(issued.assertion);
@@ -797,7 +830,7 @@ impl FederatedIdentity {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| "clock-unavailable")?
             .as_secs();
-        validate_jwt(
+        let minted = validate_jwt(
             &assertion,
             &issued.nostr_pubkey,
             issued.expires_at,
@@ -806,8 +839,14 @@ impl FederatedIdentity {
             session_expiry,
             now,
         )?;
-        let (expires_at, lifetime) = monotonic_expiry(issued.expires_at, wall_now, monotonic_now)
-            .ok_or("invalid-assertion")?;
+        let (expires_at, lifetime) = token_deadline(
+            request_start,
+            minted,
+            issued.expires_at,
+            wall_now,
+            monotonic_now,
+        )
+        .ok_or("invalid-assertion")?;
         Ok(Assertion {
             header: Zeroizing::new(format!("Bearer {}", assertion.as_str())),
             expires_at,
@@ -831,6 +870,7 @@ fn refused(failure: &Failure) -> bool {
         "adapter-refused"
             | "authorization-denied"
             | "binding-mismatch"
+            | "clock-skew"
             | "grant-refused"
             | "invalid-proof"
             | "invalid-response"
@@ -879,10 +919,14 @@ fn validate_jwt(
         || expiry != returned_expiry
         || expiry <= now
         || expiry > session_expiry
-        || minted > now.saturating_add(5)
         || minted > expiry
     {
         return Err("invalid-assertion".into());
+    }
+    // Checked last: only a token sound in every other claim is refused
+    // definitively for this clock.
+    if minted > now.saturating_add(CLOCK_SKEW_SECS) {
+        return Err("clock-skew".into());
     }
     Ok(minted)
 }
@@ -890,6 +934,312 @@ fn validate_jwt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_iat_check_allows_the_shared_skew_and_names_clock_skew_beyond_it() {
+        let viewer = "a".repeat(64);
+        let relay = "wss://relay.example";
+        let now = 1_000_000;
+        let check = |minted: u64| {
+            validate_jwt(
+                &jwt(&viewer, relay, minted, now + 600),
+                &viewer,
+                now + 600,
+                &viewer,
+                relay,
+                now + 3600,
+                now,
+            )
+        };
+        assert_eq!(check(now + 119), Ok(now + 119));
+        assert_eq!(check(now + 120), Ok(now + 120));
+        assert_eq!(check(now + 121).unwrap_err().code, "clock-skew");
+        assert!(refused(&"clock-skew".into()));
+        // Any other bad claim stays invalid-assertion, even with a future iat.
+        let wrong_audience = validate_jwt(
+            &jwt(&viewer, "wss://other.example", now + 121, now + 600),
+            &viewer,
+            now + 600,
+            &viewer,
+            relay,
+            now + 3600,
+            now,
+        );
+        assert_eq!(wrong_audience.unwrap_err().code, "invalid-assertion");
+    }
+
+    #[test]
+    fn token_deadline_counts_time_in_flight_whichever_way_the_clock_is_off() {
+        let secs = std::time::Duration::from_secs;
+        let start = Instant::now();
+        let received = start + secs(20); // the issuer's reply took 20 s
+        let real = 1_000_000u64;
+        // Issuer stamps iat at real+10, exp = iat+300.
+        let (minted, exp) = (real + 10, real + 310);
+        for offset in [-120i64, 0, 120] {
+            let local = std::time::UNIX_EPOCH + secs((real as i64 + 20 + offset) as u64);
+            let (deadline, remaining) =
+                token_deadline(start, minted, exp, local, received).unwrap();
+            // Never past the real expiry, which is 290 s after receipt.
+            assert!(deadline <= received + secs(290), "offset {offset}");
+            assert_eq!(remaining, deadline - received);
+        }
+        // A slow clock (-120) is bounded by request start + lifetime.
+        let slow = std::time::UNIX_EPOCH + secs(real + 20 - 120);
+        assert_eq!(
+            token_deadline(start, minted, exp, slow, received)
+                .unwrap()
+                .0,
+            start + secs(300)
+        );
+        // A fast clock (+120) by its own wall-clock remainder.
+        let fast = std::time::UNIX_EPOCH + secs(real + 20 + 120);
+        assert_eq!(
+            token_deadline(start, minted, exp, fast, received)
+                .unwrap()
+                .0,
+            received + secs(170)
+        );
+        // A short, session-capped token spent in flight has no budget left.
+        let (_, spent) = token_deadline(start, real, real + 15, slow, received).unwrap();
+        assert!(spent.is_zero());
+        assert!(token_deadline(start, exp + 1, exp, slow, received).is_none());
+    }
+
+    /// An issuer answering each connection with the next raw reply, after its
+    /// delay; yields every request head and body it read.
+    async fn scripted_issuer(
+        replies: Vec<(std::time::Duration, String)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/mount", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for (delay, reply) in replies {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    socket.read_exact(&mut byte).await.unwrap();
+                    head.push(byte[0]);
+                }
+                seen.push(String::from_utf8(head).unwrap());
+                tokio::time::sleep(delay).await;
+                let _ = socket.write_all(reply.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+            seen
+        });
+        (base, task)
+    }
+    fn raw(status: &str, extra: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status}\r\n{extra}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+    fn proof_id(head: &str) -> String {
+        let value = head
+            .split("\r\n")
+            .find_map(|line| line.strip_prefix("nostr-authorization: Nostr "))
+            .unwrap();
+        let event: serde_json::Value =
+            serde_json::from_slice(&STANDARD.decode(value).unwrap()).unwrap();
+        event["id"].as_str().unwrap().to_owned()
+    }
+    async fn issue_against(
+        replies: impl FnOnce(&str, &str) -> Vec<(std::time::Duration, String)>,
+    ) -> (Result<Assertion, Failure>, Vec<String>, FederatedIdentity) {
+        use super::super::tests::{at_adapter, Memory};
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let relay = "wss://relay.example";
+        let (base, server) = scripted_issuer(replies(&viewer, relay)).await;
+        let host = at_adapter(Arc::new(Memory::default()), base);
+        let minted = now().unwrap() as u64;
+        let result = host
+            .issue(
+                &identity,
+                relay,
+                &viewer,
+                &host.snapshot().revision,
+                "t",
+                minted + 3600,
+            )
+            .await;
+        (result, server.await.unwrap(), host)
+    }
+    fn issued(viewer: &str, relay: &str, minted: u64, expires: u64) -> String {
+        serde_json::json!({"assertion": jwt(viewer, relay, minted, expires), "nostr_pubkey": viewer, "expires_at": expires}).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_lost_success_body_is_retried_with_a_fresh_proof() {
+        let zero = std::time::Duration::ZERO;
+        let (result, heads, _) = issue_against(|viewer, relay| {
+            let minted = now().unwrap() as u64;
+            vec![
+                // Headers arrive, the body never does.
+                (
+                    zero,
+                    "HTTP/1.1 200 OK\r\nContent-Length: 500\r\nConnection: close\r\n\r\n{".into(),
+                ),
+                (
+                    zero,
+                    raw("200 OK", "", &issued(viewer, relay, minted, minted + 60)),
+                ),
+            ]
+        })
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(heads.len(), 2);
+        assert_ne!(proof_id(&heads[0]), proof_id(&heads[1]));
+    }
+
+    #[tokio::test]
+    async fn a_retryable_failure_after_verification_recovers_with_a_fresh_proof() {
+        let zero = std::time::Duration::ZERO;
+        let (result, heads, _) = issue_against(|viewer, relay| {
+            let minted = now().unwrap() as u64;
+            vec![
+                (
+                    zero,
+                    raw("503 Service Unavailable", "Retry-After: 0\r\n", "{}"),
+                ),
+                (
+                    zero,
+                    raw("200 OK", "", &issued(viewer, relay, minted, minted + 60)),
+                ),
+            ]
+        })
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(heads.len(), 2);
+        assert_ne!(proof_id(&heads[0]), proof_id(&heads[1]));
+    }
+
+    #[tokio::test]
+    async fn a_delayed_reply_counts_against_a_short_token() {
+        let (result, _, _) = issue_against(|viewer, relay| {
+            let minted = now().unwrap() as u64;
+            vec![(
+                std::time::Duration::from_secs(2),
+                raw("200 OK", "", &issued(viewer, relay, minted, minted + 4)),
+            )]
+        })
+        .await;
+        // 4 s issued, at least 2 s spent in flight.
+        assert!(result.unwrap().remaining() <= std::time::Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn a_future_iat_is_a_definitive_clock_skew_refusal() {
+        let (result, _, _) = issue_against(|viewer, relay| {
+            let minted = now().unwrap() as u64 + 125;
+            vec![(
+                std::time::Duration::ZERO,
+                raw("200 OK", "", &issued(viewer, relay, minted, minted + 60)),
+            )]
+        })
+        .await;
+        assert_eq!(result.err().unwrap().code, "clock-skew");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_keeps_its_code_and_carries_a_date_hint_only_when_far_off() {
+        let date = |offset: i64| {
+            let at = chrono::Utc::now() + chrono::Duration::seconds(offset);
+            format!("Date: {}\r\n", at.to_rfc2822())
+        };
+        for (extra, delay, hinted) in [
+            (date(130), 0, true),
+            (date(-130), 0, true),
+            (date(3), 0, false),
+            // Inside the supported skew: the hint may show, the code stays.
+            (date(118), 0, true),
+            (date(110), 0, false),
+            ("Date: not a date\r\n".to_owned(), 0, false),
+            (String::new(), 0, false),
+            // Headers delayed 2 s: measured on arrival, so still 130 s off.
+            (date(132), 2, true),
+        ] {
+            let (result, _, _) = issue_against(|_, _| {
+                vec![(
+                    std::time::Duration::from_secs(delay),
+                    raw(
+                        "403 Forbidden",
+                        &extra,
+                        r#"{"error":"authorization_denied"}"#,
+                    ),
+                )]
+            })
+            .await;
+            let failure = result.err().unwrap();
+            assert_eq!(failure.code, "authorization-denied", "{extra}");
+            assert_eq!(failure.clock_offset.is_some(), hinted, "{extra}");
+        }
+    }
+
+    #[test]
+    fn clock_offset_reads_only_a_far_off_valid_date() {
+        let date =
+            |offset: i64| (chrono::Utc::now() + chrono::Duration::seconds(offset)).to_rfc2822();
+        assert!(protocol::clock_offset(Some(&date(130))).unwrap() >= 129);
+        assert!(protocol::clock_offset(Some(&date(-130))).unwrap() <= -129);
+        assert_eq!(protocol::clock_offset(Some(&date(110))), None);
+        assert_eq!(protocol::clock_offset(Some("Thu, 99 Foo")), None);
+        assert_eq!(protocol::clock_offset(None), None);
+    }
+
+    #[tokio::test]
+    async fn a_cached_token_handed_out_again_keeps_its_original_deadline() {
+        let relay = "wss://relay.example";
+        let url = Url::parse("https://relay.example").unwrap();
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let (base, _, bodies) = super::super::testing::issuer(&viewer, relay).await;
+        let host = super::super::testing::signed_in(base, relay, true);
+        let first = host.assertion_for_relay(&identity, &url).await.unwrap();
+        let again = host.assertion_for_relay(&identity, &url).await.unwrap();
+        let (first, again) = (first.assertion.unwrap(), again.assertion.unwrap());
+        assert_eq!(first.expires_at, again.expires_at);
+        assert_eq!(first.header.as_str(), again.header.as_str());
+        drop(host);
+        assert_eq!(bodies.await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_date_hint_reaches_the_snapshot_and_clears_without_one() {
+        let relay = "wss://relay.example";
+        let url = Url::parse("https://relay.example").unwrap();
+        let identity = IdentityHost::fixture();
+        let date = (chrono::Utc::now() + chrono::Duration::seconds(130)).to_rfc2822();
+        let (base, server) = scripted_issuer(vec![(
+            std::time::Duration::ZERO,
+            raw(
+                "403 Forbidden",
+                &format!("Date: {date}\r\n"),
+                r#"{"error":"authorization_denied"}"#,
+            ),
+        )])
+        .await;
+        let host = super::super::testing::signed_in(base, relay, true);
+        assert_eq!(
+            host.assertion_for_relay(&identity, &url)
+                .await
+                .err()
+                .as_deref(),
+            Some("authorization-denied")
+        );
+        server.await.unwrap();
+        assert!(host
+            .snapshot()
+            .clock_offset
+            .is_some_and(|offset| offset >= 129));
+        host.note_clock_offset(None);
+        assert_eq!(host.snapshot().clock_offset, None);
+    }
 
     #[test]
     fn refresh_margin_leaves_short_lifetimes_half_their_time() {
@@ -1342,12 +1692,12 @@ mod tests {
                 98,
             ),
             (
-                jwt(&viewer, relay, 107, 200),
+                jwt(&viewer, relay, 222, 300),
                 viewer.clone(),
-                200,
+                300,
                 viewer.clone(),
                 relay,
-                250,
+                350,
                 101,
             ),
             (
@@ -1515,8 +1865,9 @@ mod tests {
         let proof = serde_json::to_value(proof).unwrap();
         assert_eq!(proof["pubkey"], viewer);
         assert_eq!(proof["kind"], 27235);
+        let tags = proof["tags"].as_array().unwrap();
         assert_eq!(
-            proof["tags"],
+            tags[..3],
             serde_json::json!([
                 ["u", endpoint],
                 ["method", "POST"],
@@ -1525,7 +1876,12 @@ mod tests {
                     format!("{:x}", Sha256::digest(expected.as_bytes()))
                 ]
             ])
+            .as_array()
+            .unwrap()[..]
         );
+        assert_eq!(tags.len(), 4);
+        assert_eq!(tags[3][0], "nonce");
+        assert_eq!(tags[3][1].as_str().unwrap().len(), 32);
         assert!(
             assertion.remaining()
                 <= std::time::UNIX_EPOCH

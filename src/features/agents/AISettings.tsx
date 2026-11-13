@@ -1,14 +1,13 @@
-// "AI settings": Automatic (Recommended) or Manual, as one Settings row whose
-// Manual rows open in place under it. Create agent and an agent's Identity
-// settings share it. Automatic says only what it chose, never how.
+// "AI setup": Automatic or Custom, as one Settings row whose
+// Custom rows open in place under it. Create agent and an agent's Identity
+// settings share it. The recommendation names its source when supplied.
 import { type ComponentType, type ReactNode, useEffect, useState } from "react";
-import { InfoIcon, SparklesIcon } from "../../shared/design-system/icons";
+import styles from "./AISettings.module.css";
+import { SettingsAiIcon } from "../../shared/design-system/icons";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroupExpand } from "../../shared/design-system/ui/SettingsGroup";
-import { Tooltip } from "../../shared/design-system/ui/Tooltip";
-import { ValueChip } from "../../shared/design-system/ui/ValueChip";
-import type { RecommendedCandidate } from "./recommended";
+import { type RecommendedCandidate, recommendedSetup } from "./recommended";
 
 const effortLabel = (effort: string) =>
   effort === "xhigh"
@@ -17,31 +16,42 @@ const effortLabel = (effort: string) =>
 
 type Mark = ComponentType<{ size?: number | string }> | undefined;
 
-/** The (i) after the chip when Automatic skipped Buzz's usual pick. Its
- * hint opens on hover, focus and click; it never lists the order. */
-function FallbackInfo({ text }: Readonly<{ text: string }>) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Tooltip
-      content={text}
-      open={open}
-      onOpenChange={setOpen}
-      closeOnClick={false}
+/** Shared decorative mode/harness mark for settings and agent cards. */
+export function AISettingsIcon({
+  automatic,
+  harnessIcon: HarnessIcon,
+  compact = false,
+}: {
+  automatic: boolean;
+  harnessIcon?: Mark;
+  compact?: boolean;
+}) {
+  const [visible, setVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  return HarnessIcon ? (
+    <span
+      className={`inline-grid shrink-0 ${compact ? "size-4.5" : "size-5"} ${styles.mark}`}
+      data-cycling={automatic && visible}
+      aria-hidden="true"
     >
-      <button
-        type="button"
-        className="buzz-uses-info"
-        aria-label="Why this model"
-        onClick={() => setOpen((shown) => !shown)}
-      >
-        <InfoIcon size={14} aria-hidden="true" />
-      </button>
-    </Tooltip>
+      <span className={styles.ai}>
+        <SettingsAiIcon size={compact ? 18 : 20} />
+      </span>
+      <span className={styles.harness}>
+        <HarnessIcon size={compact ? 18 : 20} />
+      </span>
+    </span>
+  ) : (
+    <SettingsAiIcon size={compact ? 18 : 20} aria-hidden="true" />
   );
 }
 
-/** "Uses [mark] Model A · High": what Automatic picked, with an (i) when it
- * had to skip the harness it would usually use. */
+/** What Automatic picked, with a plain explanation when it skipped a harness.
+ * This sits inside a Select option, so it contains no interactive controls. */
 export function UsesLine({
   icon: Icon,
   title,
@@ -49,7 +59,7 @@ export function UsesLine({
   skipped,
 }: Readonly<{
   icon: Mark;
-  /** The harness's name, read with the chip by assistive technology. */
+  /** The harness's name, read with the value by assistive technology. */
   title: string;
   candidate: Pick<RecommendedCandidate, "label" | "effort">;
   /** The usual pick's harness, when it isn't set up here. */
@@ -57,20 +67,23 @@ export function UsesLine({
 }>) {
   const value = `${candidate.label} · ${effortLabel(candidate.effort)}`;
   return (
-    <span className="buzz-uses-line inline-flex flex-wrap items-center">
-      {/* The space keeps "Uses" and the chip apart when read aloud. */}
-      Uses{" "}
-      <ValueChip
-        icon={Icon ? <Icon size={12} /> : undefined}
-        label={title}
-        title={value}
-      >
-        {value}
-      </ValueChip>
+    <span>
+      <span className="text-caption text-subtle">
+        {Icon && (
+          <span className="inline-flex align-baseline" aria-hidden="true">
+            <Icon size={12} />
+          </span>
+        )}
+        <span className="sr-only">{title}:</span>{" "}
+        <span title={value}>{value}</span>
+      </span>
       {skipped && (
-        <FallbackInfo
-          text={`Buzz’s usual pick, ${skipped}, isn’t set up on this computer, so this agent uses ${candidate.label}.`}
-        />
+        <>
+          {" "}
+          <span className="mt-1 block text-body-sm">
+            {`Buzz’s usual pick, ${skipped}, isn’t set up on this computer, so this agent uses ${candidate.label}.`}
+          </span>
+        </>
       )}
     </span>
   );
@@ -91,34 +104,46 @@ export function Checking() {
   );
 }
 
-/** An agent's Automatic line: what it runs on, while finding it, or its
- * harness's default when none of the candidates is offered. */
-export function runsOnLine(
+/** Keep pending/default status visible; settled model details belong in the menu. */
+export function runsOnDetails(
   type: Readonly<{ title: string; icon?: Mark }>,
   resolved: RecommendedCandidate | null | undefined,
 ) {
-  return resolved === undefined ? (
-    <Checking />
-  ) : resolved ? (
-    <UsesLine icon={type.icon} title={type.title} candidate={resolved} />
-  ) : (
-    `No recommended model is available, so this uses ${type.title}’s default.`
-  );
+  if (resolved === undefined) return { summary: <Checking /> };
+  if (resolved) {
+    return {
+      modelName: resolved.label,
+      model: (
+        <UsesLine icon={type.icon} title={type.title} candidate={resolved} />
+      ),
+    };
+  }
+  return {
+    summary: `No recommended model is available, so this uses ${type.title}’s default.`,
+  };
 }
 
 export function AISettings({
   automatic,
+  harnessIcon: HarnessIcon,
+  modelName,
+  model,
   summary,
   action,
-  automaticHint = "We choose a general-purpose harness and model that balance intelligence and cost, and keep it up to date for you.",
-  manualHint = "You choose the harness, model and thinking level.",
+  automaticHint,
+  manualHint = "Choose your own settings.",
   disabled = false,
   onChange,
   children,
 }: Readonly<{
   automatic: boolean;
-  /** Under the title while Automatic is selected: what it uses. */
-  summary: ReactNode;
+  harnessIcon?: Mark;
+  /** The selected model's display name; absent while it is being resolved. */
+  modelName?: string | undefined;
+  /** Settled model details shown in Automatic's menu option. */
+  model?: ReactNode;
+  /** Pending, unavailable or error status, kept visible in the closed row. */
+  summary?: ReactNode;
   /** A next step after the summary, such as a link, outside its live region. */
   action?: ReactNode;
   /** What Automatic means, in its menu. */
@@ -126,35 +151,55 @@ export function AISettings({
   manualHint?: string;
   disabled?: boolean;
   onChange(automatic: boolean): void;
-  /** The manual rows, opened in place while Manual is selected. */
+  /** The custom rows, opened in place while Custom is selected. */
   children: ReactNode;
 }>) {
+  const { recommendedBy, description: configuredDescription } =
+    recommendedSetup();
+  const description =
+    [
+      recommendedBy && `Recommended by ${recommendedBy}.`,
+      automaticHint ?? configuredDescription,
+    ]
+      .filter(Boolean)
+      .join(" ") || "Use recommended settings.";
   return (
     <>
       <PreferenceRow
-        icon={<SparklesIcon size={20} aria-hidden="true" />}
-        title="AI settings"
+        icon={
+          <AISettingsIcon automatic={automatic} harnessIcon={HarnessIcon} />
+        }
+        title="AI setup"
         // One lasting live region, announced as it changes (from checking to
-        // what it uses); a link or button in `action` stays outside it.
+        // available); a link or button in `action` stays outside it.
         subtitle={
-          !automatic ? (
-            manualHint
-          ) : summary || action ? (
-            <span className="grid gap-1">
-              <span role="status">{summary}</span>
-              {action && <span>{action}</span>}
+          <span className="grid min-w-0 gap-1">
+            {automatic && modelName && (
+              <span
+                className="flex min-w-0 items-baseline gap-1"
+                title={`Set to ${modelName} (recommended)`}
+              >
+                <span className="shrink-0">Set to</span>{" "}
+                <span className="truncate">{modelName}</span>{" "}
+                <span className="shrink-0"> (recommended)</span>
+              </span>
+            )}
+            <span
+              role="status"
+              className={automatic && summary ? undefined : "sr-only"}
+            >
+              {automatic && summary}
             </span>
-          ) : undefined
+            {automatic && action && <span>{action}</span>}
+          </span>
         }
         trailing={(control) => (
           <Select
             describedBy={control["aria-describedby"]}
-            label="AI settings"
+            label="AI setup"
             variant="compact"
             align="end"
             value={automatic ? "automatic" : "manual"}
-            // "(Recommended)" is said in the menu, not on the trigger.
-            {...(automatic ? { valueLabel: "Automatic" } : {})}
             disabled={disabled}
             groups={[
               {
@@ -162,13 +207,25 @@ export function AISettings({
                 options: [
                   {
                     value: "automatic",
-                    label: "Automatic (Recommended)",
-                    description: automaticHint,
+                    label: "Automatic",
+                    description: (
+                      <span className="grid gap-1.5 text-caption">
+                        {description && (
+                          <span className="text-body-sm">{description}</span>
+                        )}
+                        {model && (
+                          <>
+                            {" "}
+                            <span className="text-subtle">{model}</span>
+                          </>
+                        )}
+                      </span>
+                    ),
                   },
                   {
                     value: "manual",
-                    label: "Manual",
-                    description: manualHint.replace(/^You choose/, "Choose"),
+                    label: "Custom",
+                    description: manualHint,
                   },
                 ],
               },

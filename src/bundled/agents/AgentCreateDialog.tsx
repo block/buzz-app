@@ -569,20 +569,23 @@ export function AgentCreateDialog({
               <SettingsGroup>
                 <AISettings
                   automatic={automatic}
+                  harnessIcon={automatic ? pick?.type.icon : type?.icon}
+                  modelName={pick?.candidate.label}
                   disabled={pending || nothingSetUp}
                   onChange={chooseAutomatic}
                   summary={
                     recommendation.status === "checking" ? (
                       <Checking />
-                    ) : (
-                      pick && (
-                        <UsesLine
-                          icon={pick.type.icon}
-                          title={pick.type.title}
-                          candidate={pick.candidate}
-                          skipped={pick.skipped[0]?.title}
-                        />
-                      )
+                    ) : undefined
+                  }
+                  model={
+                    pick && (
+                      <UsesLine
+                        icon={pick.type.icon}
+                        title={pick.type.title}
+                        candidate={pick.candidate}
+                        skipped={pick.skipped[0]?.title}
+                      />
                     )
                   }
                 >

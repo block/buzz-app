@@ -6,25 +6,25 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentsContext } from "../agents/react";
-import { setRuntimeCandidates } from "../agents/recommended";
+import { setRuntimeRecommendation } from "../agents/recommended";
 import type { Agents } from "../agents/service";
 import type { ProfileQueries } from "../relay/profile-directory";
 import { ComposerModels, type DraftPicks } from "./ComposerModels";
 
 // Synthetic candidates for each local harness.
 beforeEach(() =>
-  setRuntimeCandidates(
-    ["goose", "codex", "claude-code"].map((harness) => ({
+  setRuntimeRecommendation({
+    candidates: ["goose", "codex", "claude-code"].map((harness) => ({
       harness,
       ...(harness === "goose" ? { provider: "example" } : {}),
       model: "model-b",
       effort: "high",
       label: "Model B",
     })),
-  ),
+  }),
 );
 afterEach(() => {
-  setRuntimeCandidates(undefined);
+  setRuntimeRecommendation(undefined);
   cleanup();
 });
 
@@ -199,7 +199,7 @@ it("leaves out a Solo chat's pick saved before the agent switched to Automatic",
 });
 
 it("keeps the picker for a marked agent in a build that recommends nothing for it", async () => {
-  setRuntimeCandidates([]);
+  setRuntimeRecommendation({ candidates: [] });
   renderFor("goose", { preset: "recommended" });
   expect(
     await screen.findByRole("button", { name: /^Model and effort/ }),

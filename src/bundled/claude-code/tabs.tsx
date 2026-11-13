@@ -23,7 +23,7 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { ModelPicker } from "../../features/agents/ModelPicker";
-import { AISettings, runsOnLine } from "../../features/agents/AISettings";
+import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
 import {
   candidatesFor,
   followRecommended,
@@ -1348,8 +1348,9 @@ export function createTabs({
               {candidatesFor("claude-code").length ? (
                 <AISettings
                   automatic={following}
+                  harnessIcon={ClaudeLogoIcon}
                   disabled={saving}
-                  summary={runsOnLine(
+                  {...runsOnDetails(
                     { title: "Claude", icon: ClaudeLogoIcon },
                     resolved,
                   )}

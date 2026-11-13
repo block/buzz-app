@@ -1820,13 +1820,15 @@ describe("Recommended", () => {
     );
     return { save, user: userEvent.setup() };
   };
-  const aiSettings = () =>
-    screen.getByRole("combobox", { name: "AI settings" });
+  const aiSettings = () => screen.getByRole("combobox", { name: "AI setup" });
   const choose = async (
     user: ReturnType<typeof userEvent.setup>,
     option: RegExp,
   ) => {
     await user.click(aiSettings());
+    await waitFor(() =>
+      expect(screen.getByRole("option", { selected: true })).toHaveFocus(),
+    );
     await user.click(await screen.findByRole("option", { name: option }));
   };
   /** Whether a manual row is folded away, out of reach under Automatic. */
@@ -1839,15 +1841,30 @@ describe("Recommended", () => {
       preset: "recommended",
     } as Config);
     expect(aiSettings()).toHaveTextContent("Automatic");
-    // It says what it found once goose has listed the model.
+    // Automatic's menu says what it found once goose has listed the model.
+    expect(screen.queryByText("Model B · High")).not.toBeInTheDocument();
+    await user.click(aiSettings());
+    const recommendation = await screen.findByRole("option", {
+      name: "Automatic",
+    });
     expect(await screen.findByText("Model B · High")).toBeInTheDocument();
+    await waitFor(() => expect(recommendation).toHaveFocus());
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(aiSettings()).toHaveAttribute("aria-expanded", "false"),
+    );
+    await waitFor(() => expect(aiSettings()).toHaveFocus());
+    expect(aiSettings()).toHaveAccessibleDescription(
+      "Currently set to Model B",
+    );
     // Recommended owns the provider, model and thinking level; their rows
     // wait for Manual.
     expect(
       screen.queryByRole("combobox", { name: "Provider" }),
     ).not.toBeInTheDocument();
-    await choose(user, /^Manual/);
+    await choose(user, /^Custom/);
     expect(folded("Thinking")).toBe(false);
+    expect(aiSettings()).not.toHaveAccessibleDescription();
     // Manual starts from what Automatic ran on.
     expect(
       screen.getByRole("combobox", { name: "Thinking" }),
@@ -1871,8 +1888,8 @@ describe("Recommended", () => {
       effort: "low",
       instructions: "Be brief.",
     });
-    expect(aiSettings()).toHaveTextContent("Manual");
-    await choose(user, /^Automatic \(Recommended\)/);
+    expect(aiSettings()).toHaveTextContent("Custom");
+    await choose(user, /^Automatic$/);
     expect(folded("Provider")).toBe(true);
     await user.click(screen.getByRole("button", { name: "Save" }));
     // Its own model settings go with it, so none contradicts the candidate.
@@ -1934,14 +1951,14 @@ describe("Recommended", () => {
       model: "own",
       preset: "recommended",
     } as Config);
-    expect(aiSettings()).toHaveTextContent("Manual");
+    expect(aiSettings()).toHaveTextContent("Custom");
     await user.click(screen.getByRole("combobox", { name: "Provider" }));
     await user.click(
       await screen.findByRole("option", { name: /^From goose config/ }),
     );
     // The rows stay open, and the save carries no mark.
     expect(folded("Provider")).toBe(false);
-    expect(aiSettings()).toHaveTextContent("Manual");
+    expect(aiSettings()).toHaveTextContent("Custom");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(save).toHaveBeenCalled());
     expect(save.mock.calls[0]?.[0]).not.toHaveProperty("preset");
@@ -1977,8 +1994,12 @@ describe("Recommended", () => {
         candidate,
       ]),
     );
-    settings({ ...DEFAULT_CONFIG, preset: "recommended" } as Config);
+    const { user } = settings({
+      ...DEFAULT_CONFIG,
+      preset: "recommended",
+    } as Config);
     // Goose's own candidate, never Codex's.
+    await user.click(aiSettings());
     expect(await screen.findByText("Model B · High")).toBeInTheDocument();
     expect(screen.queryByText("Model A · High")).not.toBeInTheDocument();
   });
@@ -1987,7 +2008,7 @@ describe("Recommended", () => {
     vi.stubEnv("VITE_BUZZ_RECOMMENDED_AGENT", "");
     settings({ ...DEFAULT_CONFIG, preset: "recommended" } as Config);
     expect(
-      screen.queryByRole("combobox", { name: "AI settings" }),
+      screen.queryByRole("combobox", { name: "AI setup" }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "Provider" }),

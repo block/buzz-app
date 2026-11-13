@@ -2744,16 +2744,18 @@ describe("Recommended", () => {
       />,
     );
     const user = userEvent.setup();
-    const aiSettings = screen.getByRole("combobox", { name: "AI settings" });
+    const aiSettings = screen.getByRole("combobox", { name: "AI setup" });
     expect(aiSettings).toHaveTextContent("Automatic");
+    expect(screen.queryByText("Model B · Medium")).not.toBeInTheDocument();
+    await user.click(aiSettings);
     expect(await screen.findByText("Model B · Medium")).toBeInTheDocument();
+    expect(aiSettings).toHaveAccessibleDescription("Currently set to Model B");
     // The model rows wait for Manual.
     const thinking = () => screen.getByRole("combobox", { name: "Thinking" });
     expect(
       screen.queryByRole("combobox", { name: "Thinking" }),
     ).not.toBeInTheDocument();
-    await user.click(aiSettings);
-    await user.click(await screen.findByRole("option", { name: /^Manual/ }));
+    await user.click(await screen.findByRole("option", { name: /^Custom/ }));
     expect(thinking().closest("[inert]")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(save).toHaveBeenCalled());

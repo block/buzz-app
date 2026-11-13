@@ -3048,15 +3048,20 @@ it("follows the recommended setup in Settings until a manual choice", async () =
         save={save}
       />,
     );
-    const aiSettings = screen.getByRole("combobox", { name: "AI settings" });
+    const aiSettings = screen.getByRole("combobox", { name: "AI setup" });
     expect(aiSettings).toHaveTextContent("Automatic");
+    expect(screen.queryByText("Model S · High")).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(aiSettings);
     expect(await screen.findByText("Model S · High")).toBeInTheDocument();
+    expect(aiSettings).toHaveAccessibleDescription("Currently set to Model S");
+    await user.keyboard("{Escape}");
     // The model rows wait for Manual.
     const thinking = () => screen.getByRole("combobox", { name: "Thinking" });
     expect(
       screen.queryByRole("combobox", { name: "Thinking" }),
     ).not.toBeInTheDocument();
-    await choose("AI settings", "Manual");
+    await choose("AI setup", "Custom");
     expect(thinking().closest("[inert]")).toBeNull();
     // Manual starts from what Automatic ran on.
     expect(thinking()).toHaveTextContent("High");

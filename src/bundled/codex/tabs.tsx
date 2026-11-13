@@ -24,7 +24,7 @@ import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { ModelPicker } from "../../features/agents/ModelPicker";
-import { AISettings, runsOnLine } from "../../features/agents/AISettings";
+import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
 import {
   candidatesFor,
   followRecommended,
@@ -1387,8 +1387,9 @@ export function createTabs(
               {candidatesFor("codex").length ? (
                 <AISettings
                   automatic={following}
+                  harnessIcon={CodexLogoIcon}
                   disabled={saving}
-                  summary={runsOnLine(
+                  {...runsOnDetails(
                     { title: "Codex", icon: CodexLogoIcon },
                     resolved,
                   )}

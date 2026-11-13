@@ -14,7 +14,7 @@ import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
-import { AISettings, runsOnLine } from "../../features/agents/AISettings";
+import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
 import {
   candidatesFor,
   offRecommended,
@@ -1406,7 +1406,8 @@ export function createTabs({
               {candidatesFor("goose").length ? (
                 <AISettings
                   automatic={following}
-                  summary={runsOnLine(
+                  harnessIcon={GooseLogoIcon}
+                  {...runsOnDetails(
                     { title: "Goose", icon: GooseLogoIcon },
                     resolved,
                   )}

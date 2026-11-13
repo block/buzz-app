@@ -116,13 +116,13 @@ reporting success. This confirmation is not a transaction against other clients.
 Use the dock's community switcher to select a saved community or Personal
 space. Personal space
 clears selection without forgetting memberships. Its **Join a community** item opens the
-existing join dialog; displaying saved communities reads relay metadata but does not open sessions for them.
+existing join dialog. Displaying saved communities reads relay metadata; the app
+connects to every saved community in the background so the switcher can show its unread.
 A community other than the selected one shows a count of items that need you
 (mentions, DMs and replies in threads you follow) at the end of its row, or a dot
 for other unread, and the closed switcher shows a dot while any does. Muted
 channels and conversations your notification settings exclude are left out, and a
-community whose unread is not known yet shows nothing. Only communities with an open
-session are badged.
+community whose unread is not known yet shows nothing.
 Right-click a saved community (or press the ContextMenu key or Shift+F10 on it)
 for Mark all as read, Copy community URL, Invite to community, Community
 settings and, last, Leave community. Only the selected community can be marked

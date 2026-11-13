@@ -456,7 +456,10 @@ it("restores the selected native community and recovers discovery failure withou
     viewer,
     scope: `${community}:${viewer}`,
   });
-  expect(new Set(destinations)).toEqual(new Set([community]));
+  // The other saved community connects in the background for switcher unread.
+  expect(new Set(destinations)).toEqual(
+    new Set([community, "https://unopened.test"]),
+  );
   expect(fetch).not.toHaveBeenCalled();
 });
 
@@ -531,7 +534,8 @@ it("seeds a packaged native community after onboarding and preserves the user's 
   await vi.advanceTimersByTimeAsync(0);
   expect(services.communities.snapshot().selected).toBe(membership.id);
   expect(services.relay.snapshot().status).toBe("ready");
-  // Choosing Personal space also survives restart, without a new relay connection.
+  // Choosing Personal space also survives restart; the saved community still
+  // connects in the background for switcher unread.
   services.communities.select(null);
   await services.dispose();
   destinations.length = 0;
@@ -541,7 +545,7 @@ it("seeds a packaged native community after onboarding and preserves the user's 
     selected: null,
     memberships: [membership],
   });
-  expect(destinations).toEqual([]);
+  expect(new Set(destinations)).toEqual(new Set([membership.id]));
   expect(fetch).not.toHaveBeenCalled();
 });
 

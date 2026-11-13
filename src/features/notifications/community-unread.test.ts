@@ -43,6 +43,7 @@ function fakeSession() {
   };
   let channels: { id: string; members: string[]; huddle?: true }[] = [];
   const unread = new Map<string, Partial<UnreadSnapshot>>();
+  const ensure = vi.fn(async () => {});
   const prefs = signal(),
     list = signal(),
     rows = signal();
@@ -65,10 +66,12 @@ function fakeSession() {
       // One listener per channel, as the real capability holds them.
       subscribe: (_target: unknown, listener: () => void) =>
         rows.subscribe(() => listener()),
+      ensure,
     },
   } as unknown as RelaySession;
   return {
     session,
+    ensure,
     rows,
     join(...ids: string[]) {
       channels = ids.map((id) => ({ id, members: [viewer] }));
@@ -168,9 +171,9 @@ it("stops observing every channel when disposed", () => {
   expect(publish).not.toHaveBeenCalled();
 });
 
-it("keys every open community's unread and never opens a session itself", () => {
+it("keys every joined community's unread, opening its session and repair once", () => {
   const [first, second] = [fakeSession(), fakeSession()];
-  const sessions = new Map(
+  const sessions = new Map<string, { relay: RelayData }>(
     (
       [
         [one, first],
@@ -182,23 +185,23 @@ it("keys every open community's unread and never opens a session itself", () => 
         snapshot: () => ({ status: "ready", viewer, session: fake.session }),
         subscribe: changes.subscribe,
       } as unknown as RelayData;
-      return [id, { fake, relay }] as const;
+      return [id, { relay }] as const;
     }),
   );
-  let open = new Set([one]);
+  let open = new Set<string>([one]);
   const client = signal();
   let snapshot = {
     viewer,
     selected: one,
     memberships: [{ id: one }, { id: two }],
   };
-  const retained = vi.fn((id: string) =>
+  const opened = vi.fn((id: string) =>
     open.has(id) ? sessions.get(id)?.relay : undefined,
   );
   const communities = {
     snapshot: () => snapshot,
     subscribe: client.subscribe,
-    retained,
+    open: opened,
     relay: { subscribe: () => () => {} },
   } as unknown as Communities;
   const unreads = createCommunityUnreads(communities);
@@ -208,7 +211,9 @@ it("keys every open community's unread and never opens a session itself", () => 
   expect([...unreads.snapshot()]).toEqual([
     [one, { unread: true, attention: 1 }],
   ]);
-  // A visited community's session is picked up when the membership changes.
+  expect(opened).toHaveBeenCalledWith(two);
+  expect(first.ensure).toHaveBeenCalledTimes(1);
+  // A community whose session opens later is picked up when memberships change.
   open = new Set([one, two]);
   snapshot = { ...snapshot, selected: two };
   client.emit();
@@ -219,5 +224,6 @@ it("keys every open community's unread and never opens a session itself", () => 
   snapshot = { ...snapshot, selected: one, memberships: [{ id: one }] };
   client.emit();
   expect([...unreads.snapshot().keys()]).toEqual([one]);
+  expect(first.ensure).toHaveBeenCalledTimes(1);
   expect(second.rows.size).toBe(0);
 });

@@ -94,8 +94,9 @@ export function observeCommunityUnread(
   };
 }
 
-/** Unread for every joined community whose session is open, keyed by
- * community id. Communities without a ready session are absent. */
+/** Unread for every joined community, keyed by community id. It opens each
+ * one's session in the background and starts its unread repair once, as
+ * visiting it would. Communities without a ready session are absent. */
 export function createCommunityUnreads(
   communities: Communities,
   gates?: UnreadGates,
@@ -137,6 +138,8 @@ export function createCommunityUnreads(
     entry.stop = undefined;
     entry.session = session;
     set(id, undefined);
+    // Without it, unread holds only messages that arrived since connecting.
+    if (session) void session.unread.ensure().catch(() => {});
     if (session && viewer)
       entry.stop = observeCommunityUnread(
         session,
@@ -157,12 +160,12 @@ export function createCommunityUnreads(
     const { viewer, memberships } = communities.snapshot();
     const joined = new Set(viewer ? memberships.map((m) => m.id) : []);
     for (const [id, entry] of entries)
-      if (!joined.has(id) || communities.retained(id) !== entry.relay)
+      if (!joined.has(id) || communities.open(id) !== entry.relay)
         drop(id, entry);
     for (const id of joined) {
       let entry = entries.get(id);
       if (!entry) {
-        const relay = communities.retained(id);
+        const relay = communities.open(id);
         if (!relay) continue;
         const created: Entry = { relay, stopRelay: () => {} };
         created.stopRelay = relay.subscribe(() =>

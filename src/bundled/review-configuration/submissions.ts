@@ -54,6 +54,7 @@ export type Submission = {
     message?: string;
   };
   generation?: string;
+  submittedAt?: number;
   pr: number;
   config: ReviewConfig;
   configRevision: string;
@@ -71,6 +72,8 @@ export type SavedSubmission = {
   revision: string;
   reviewStates?: ReviewState[];
   reviewReports?: EventData[];
+  lastReviewedAt?: number;
+  reviewHistoryIncomplete?: boolean;
 };
 const tag = (event: EventData, name: string) =>
   event.tags.find((t) => t[0] === name)?.[1];
@@ -128,6 +131,10 @@ export async function decodeSubmission(
     ![1, 2, 3, 4].includes(value.version) ||
     ((value.version === 3 || value.version === 4) &&
       (typeof value.generation !== "string" || !UUID.test(value.generation))) ||
+    (value.submittedAt !== undefined &&
+      (!Number.isSafeInteger(value.submittedAt) ||
+        value.submittedAt <= 0 ||
+        value.submittedAt > 8_640_000_000_000)) ||
     !Number.isSafeInteger(value.pr) ||
     value.pr < 1 ||
     value.submitter !== event.pubkey ||
@@ -227,36 +234,72 @@ export async function loadSubmissions(
       ? [result.value]
       : [],
   );
-  const requests = rows.flatMap((row) =>
-    row.value.threads.flatMap((thread) =>
-      thread.request ? [thread.request] : [],
-    ),
+  const roots = rows.flatMap((row) =>
+    row.value.threads.flatMap((thread) => (thread.id ? [thread.id] : [])),
   );
   const reports: EventData[] = [];
-  // The app reader caps a page at 500. Batch request tokens and refuse a full
+  let reviewHistoryIncomplete = false;
+  // The app reader caps a page at 500. Batch thread roots and refuse a full
   // page rather than turning an incomplete snapshot into Needs review.
-  for (let offset = 0; offset < requests.length; offset += 100) {
+  for (let offset = 0; offset < roots.length; offset += 100) {
     const page = await session.snapshotRead(
       [
         {
           kinds: [9],
           "#h": [channel],
           "#t": [REVIEW_REPORT],
-          "#r": requests.slice(offset, offset + 100),
+          "#e": roots.slice(offset, offset + 100),
           limit: 500,
         },
       ],
       { signal },
     );
-    if (page.length >= 500)
-      throw new Error(
-        "Review report read reached its limit. Status could not be loaded completely.",
-      );
+    if (page.length >= 500) reviewHistoryIncomplete = true;
     reports.push(...page);
   }
+  if (reviewHistoryIncomplete) {
+    // Long review history must not prevent loading the current outcome.
+    reports.length = 0;
+    const requests = rows.flatMap((row) =>
+      row.value.threads.flatMap((thread) =>
+        thread.request ? [thread.request] : [],
+      ),
+    );
+    for (let offset = 0; offset < requests.length; offset += 100) {
+      const page = await session.snapshotRead(
+        [
+          {
+            kinds: [9],
+            "#h": [channel],
+            "#t": [REVIEW_REPORT],
+            "#r": requests.slice(offset, offset + 100),
+            limit: 500,
+          },
+        ],
+        { signal },
+      );
+      if (page.length >= 500)
+        throw new Error(
+          "Review report read reached its limit. Status could not be loaded completely.",
+        );
+      reports.push(...page);
+    }
+  }
   return {
-    rows: rows.map((row) => applyReviewReports(row, channel, reports)),
+    rows: rows.map((row) =>
+      applyReviewReports(
+        {
+          ...row,
+          ...(reviewHistoryIncomplete ? { reviewHistoryIncomplete: true } : {}),
+        },
+        channel,
+        reports,
+      ),
+    ),
     warning: [
+      reviewHistoryIncomplete
+        ? "Review history reached its limit. Current statuses are shown; last-reviewed dates are unavailable."
+        : "",
       events.length > 100
         ? "Showing results from the latest 100 saved records, including deleted entries."
         : "",
@@ -277,6 +320,7 @@ export function applyReviewReports(
 ): SavedSubmission {
   const reports = [...(row.reviewReports ?? []), ...events];
   const latest: EventData[] = [];
+  let lastReviewedAt = row.lastReviewedAt;
   const reviewStates = row.value.threads.map((thread, index): ReviewState => {
     const lane = submissionLane(row.value, index);
     if (!thread.request || !thread.id || !lane) return "need_review";
@@ -289,12 +333,26 @@ export function applyReviewReports(
       autoApprove: lane.autoApprove === true,
       index,
     };
+    // Earlier rounds in the same assigned thread still establish the review date.
+    // Current status continues to require the current request token.
+    for (const event of reports) {
+      const request = tag(event, "r");
+      if (!request || !reviewToken.test(request)) continue;
+      const status = reportStatus(event, { ...target, request });
+      if (status && status !== "reviewing")
+        lastReviewedAt = Math.max(lastReviewedAt ?? 0, event.created_at);
+    }
     const report = latestReport(reports, target);
     if (!report) return "need_review";
     latest.push({ ...report, tags: report.tags.map((tag) => [...tag]) });
     return reportStatus(report, target) ?? "need_review";
   });
-  return { ...row, reviewStates, reviewReports: latest };
+  return {
+    ...row,
+    reviewStates,
+    reviewReports: latest,
+    ...(lastReviewedAt ? { lastReviewedAt } : {}),
+  };
 }
 
 async function write(
@@ -920,6 +978,7 @@ export async function submitReview(
           : routeConfig(saved.config, reviewers, currentFacts);
         const value: Submission = {
           version: triaging ? 4 : previous ? 3 : 2,
+          submittedAt: Math.floor(Date.now() / 1000),
           ...(previous || triaging ? { generation: crypto.randomUUID() } : {}),
           ...(triaging && currentFacts && saved.config.admission
             ? {

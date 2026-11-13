@@ -1,13 +1,12 @@
+import { useSubmissionUpdates } from "./submission-updates";
+import { ReviewStatusLabel, ReviewDate } from "./ReviewStatusLabel";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useLaneMessages } from "./use-lane-messages";
 import { createAdmissionReader, type ReadAdmission } from "./admission";
 import { triageError, subscribeTriageErrors } from "./triage-recovery";
-import { REVIEW_SUBMISSION } from "../../features/agents/pr-review";
-import type { EventData } from "../../features/relay/events";
 import type { ToolDescription } from "../../buzz-mcp/session-tools";
 import {
   overallReviewStatus,
-  REVIEW_REPORT,
   reviewLabels,
 } from "../../features/agents/pr-review";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -31,9 +30,7 @@ import {
   type ReadPull,
 } from "./pull-facts";
 import {
-  loadSubmissions,
   deliveryThreads,
-  applyReviewReports,
   deleteSubmission,
   remindSubmission,
   prUrl,
@@ -90,7 +87,19 @@ export function ReviewSubmissions({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [result, setResult] = useState<SavedSubmission>();
-  const [rows, setRows] = useState<SavedSubmission[]>([]);
+  const updates = useSubmissionUpdates(
+    session,
+    channel,
+    readable && (mode === "all" || !!result),
+  );
+  const {
+    rows,
+    loading: listLoading,
+    error: listError,
+    warning,
+    store,
+  } = updates;
+  const setRows = store.setRows;
   const [statuses, setStatuses] = useState<
     Record<string, { value: PullStatus | "Unavailable"; error?: string }>
   >({});
@@ -114,9 +123,6 @@ export function ReviewSubmissions({
     setReminding({ row, ...(laneId ? { laneId } : {}) });
   }
   const [deleteError, setDeleteError] = useState("");
-  const [listLoading, setListLoading] = useState(true);
-  const [listError, setListError] = useState("");
-  const [warning, setWarning] = useState("");
   const [reload, setReload] = useState(0);
   const operation = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => operation.current?.abort(), []);
@@ -156,86 +162,16 @@ export function ReviewSubmissions({
     readable ? rootsKey : "",
     reload,
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Reload is an explicit fresh read.
   useEffect(() => {
-    if (!readable || (mode !== "all" && !resultId)) return;
-    const controller = new AbortController();
-    setListError("");
-    setListLoading(true);
-    // Subscribe before reading so reports arriving during the snapshot are kept.
-    const pending: EventData[] = [];
-    let refresh: ReturnType<typeof setTimeout> | undefined;
-    let loaded = false;
-    const stop = session.subscribeLive?.(({ events }) => {
-      if (
-        events.some(
-          (event) =>
-            event.kind === 45010 &&
-            event.tags.some((tag) => tag[0] === "h" && tag[1] === channel) &&
-            event.tags.some(
-              (tag) => tag[0] === "type" && tag[1] === REVIEW_SUBMISSION,
-            ),
-        )
-      ) {
-        clearTimeout(refresh);
-        refresh = setTimeout(() => setReload((value) => value + 1), 100);
-      }
-      const reports = events.filter(
-        (event) =>
-          event.kind === 9 &&
-          event.tags.some((tag) => tag[0] === "h" && tag[1] === channel) &&
-          event.tags.some((tag) => tag[0] === "t" && tag[1] === REVIEW_REPORT),
-      );
-      if (!reports.length) return;
-      if (!loaded) pending.push(...reports);
-      else {
-        setRows((rows) =>
-          rows.map((row) => applyReviewReports(row, channel, reports)),
-        );
-        setResult((row) => row && applyReviewReports(row, channel, reports));
-      }
-    });
-    loadSubmissions(
-      session,
-      channel,
-      AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
-    )
-      .then((next) => {
-        if (controller.signal.aborted) return;
-        loaded = true;
-        const reconciled = next.rows.map((row) =>
-          applyReviewReports(row, channel, pending),
-        );
-        setRows(reconciled);
-        pending.length = 0;
-        if (resultId)
-          setResult(
-            (current) =>
-              reconciled.find(
-                (row) => row.artifactId === current?.artifactId,
-              ) ?? current,
-          );
-        setWarning(next.warning);
-      })
-      .catch((reason: unknown) => {
-        loaded = true;
-        pending.length = 0;
-        if (!controller.signal.aborted)
-          setListError(
-            reason instanceof Error
-              ? reason.message
-              : "Could not load previous submissions.",
-          );
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setListLoading(false);
-      });
-    return () => {
-      controller.abort();
-      stop?.();
-      clearTimeout(refresh);
-    };
-  }, [session, channel, reload, mode, resultId, readable]);
+    if (!resultId) return;
+    setResult(
+      (current) =>
+        rows.find((row) => row.artifactId === current?.artifactId) ?? current,
+    );
+  }, [rows, resultId]);
+  useEffect(() => {
+    if (reload) store.reload();
+  }, [reload, store]);
 
   const statusRowsKey = rows.map((row) => row.revision).join(":");
   // biome-ignore lint/correctness/useExhaustiveDependencies: Report updates preserve PR/revision; only saved-row changes and explicit Reload require GitHub reads.
@@ -614,6 +550,50 @@ export function ReviewSubmissions({
                             >
                               {name}
                             </a>
+                            <div className="review-config-cell text-caption text-subtle">
+                              <span>
+                                Submitted:{" "}
+                                <ReviewDate
+                                  value={row.value.submittedAt}
+                                  missing="Not recorded"
+                                />
+                              </span>
+                              <span>
+                                Last reviewed:{" "}
+                                <ReviewDate
+                                  value={
+                                    row.reviewHistoryIncomplete
+                                      ? undefined
+                                      : row.lastReviewedAt
+                                  }
+                                  missing={
+                                    row.reviewHistoryIncomplete
+                                      ? "Unavailable"
+                                      : "Not yet"
+                                  }
+                                />
+                              </span>
+                              {store.unread(row) && (
+                                <>
+                                  <strong className="text-accent">
+                                    Updated
+                                  </strong>
+                                  <Button
+                                    size="sm"
+                                    aria-label={`Mark ${name} seen`}
+                                    onClick={(event) => {
+                                      const link = event.currentTarget
+                                        .closest("th")
+                                        ?.querySelector("a");
+                                      store.markSeen(row);
+                                      link?.focus();
+                                    }}
+                                  >
+                                    Mark seen
+                                  </Button>
+                                </>
+                              )}
+                            </div>
                           </th>
                           {deletable && (
                             <td
@@ -625,7 +605,7 @@ export function ReviewSubmissions({
                           )}
                           <td rowSpan={lanes.length}>
                             <div className="review-config-cell">
-                              <span>{overall}</span>
+                              <ReviewStatusLabel label={overall} />
                             </div>
                           </td>
                         </>
@@ -687,11 +667,13 @@ export function ReviewSubmissions({
                       </td>
                       <td>
                         <div className="review-config-cell">
-                          <span>
-                            {lane.thread.delivered
-                              ? lane.status
-                              : "Sending review request"}
-                          </span>
+                          <ReviewStatusLabel
+                            label={
+                              lane.thread.delivered
+                                ? lane.status
+                                : "Sending review request"
+                            }
+                          />
                           {deletable && lane.laneId && (
                             <Button
                               size="sm"

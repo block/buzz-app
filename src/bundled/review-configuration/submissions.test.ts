@@ -231,6 +231,7 @@ it("saves the instruction snapshot and creates only distinct lane threads, witho
   expect(f.messages.size).toBe(2);
   const messages = [...f.messages.values()];
   expect(record.value.version).toBe(2);
+  expect(record.value.submittedAt).toBeGreaterThan(0);
   for (const [index, message] of messages.entries()) {
     expect(message.tags).toContainEqual(["p", f.agent.pubkey]);
     expect(message.tags.some((tag) => tag[0] === "e")).toBe(false);
@@ -1116,6 +1117,10 @@ it("completes the status-only review loop, resets on Remind, and ignores other r
     (await loadSubmissions(test.session, channel, new AbortController().signal))
       .rows[0]?.reviewStates,
   ).toEqual(["reviewing", "need_review"]);
+  expect(
+    (await loadSubmissions(test.session, channel, new AbortController().signal))
+      .rows[0]?.lastReviewedAt,
+  ).toBeUndefined();
   await report(0, "request_changes");
   await report(1, "reviewing");
   await report(1, "lgtm_not_approved");
@@ -1139,6 +1144,8 @@ it("completes the status-only review loop, resets on Remind, and ignores other r
           import("../../features/relay/events").RelayEvent[]
         >),
   );
+  const lastReviewedAt = (await read()).rows[0]?.lastReviewedAt;
+  expect(lastReviewedAt).toBeGreaterThan(0);
   const reset = await remindSubmission(
     test.session,
     channel,
@@ -1149,6 +1156,8 @@ it("completes the status-only review loop, resets on Remind, and ignores other r
     undefined,
     "Please have another look at keyboard access.",
   );
+  expect(reset.value.submittedAt).toBe(first.value.submittedAt);
+  expect((await read()).rows[0]?.lastReviewedAt).toBe(lastReviewedAt);
   expect(reset.value.threads.map((thread) => thread.id)).toEqual(
     first.value.threads.map((thread) => thread.id),
   );
@@ -1604,4 +1613,33 @@ it("resumes a failed lane reminder without duplicating it or switching lanes", a
     .rows[0];
   expect(completed?.value.notifying).toBeUndefined();
   expect(completed?.value.notifyingLane).toBeUndefined();
+});
+
+it("keeps current statuses readable when historical review reports reach the cap", async () => {
+  const test = await fixture();
+  await test.run();
+  const read = vi.mocked(
+    test.session.snapshotRead as NonNullable<RelaySession["snapshotRead"]>,
+  );
+  const original = read.getMockImplementation();
+  if (!original) throw new Error("Missing fixture reader");
+  read.mockImplementation(async (filters, options) =>
+    filters[0]?.["#t"] && filters[0]?.["#e"]
+      ? Array.from({ length: 500 }, () =>
+          signed(test.agent, {
+            kind: 9,
+            content: "historical report",
+            tags: [["h", channel]],
+          }),
+        )
+      : original(filters, options),
+  );
+  const result = await loadSubmissions(
+    test.session,
+    channel,
+    new AbortController().signal,
+  );
+  expect(result.rows[0]?.reviewStates).toEqual(["need_review", "need_review"]);
+  expect(result.rows[0]?.reviewHistoryIncomplete).toBe(true);
+  expect(result.warning).toContain("last-reviewed dates are unavailable");
 });

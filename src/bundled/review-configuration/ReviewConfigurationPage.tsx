@@ -1,3 +1,4 @@
+import { useReviewChannel } from "./submission-updates";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { createAdmissionReader, type ReadAdmission } from "./admission";
 import { AdmissionEditor } from "./AdmissionEditor";
@@ -257,17 +258,10 @@ export function ReviewConfigurationCommunity({
   onOpenThread?: ((channel: string, id: string) => Promise<void>) | undefined;
 }) {
   const list = useChannelList(session.channels);
-  const selectionKey = `buzz.review.channel:${session.scope}`;
-  const [channel, setChannel] = useState(() => {
-    try {
-      return messageChannel ?? localStorage.getItem(selectionKey) ?? "";
-    } catch {
-      return "";
-    }
-  });
+  const [channel, setChannel] = useReviewChannel(session.scope);
   useEffect(() => {
     if (messageChannel) setChannel(messageChannel);
-  }, [messageChannel]);
+  }, [messageChannel, setChannel]);
   const [editing, setEditing] = useState(false);
   const [navigationError, setNavigationError] = useState("");
   async function navigate(destination: ReviewPage) {
@@ -295,15 +289,15 @@ export function ReviewConfigurationCommunity({
     if (list.channels.some((item) => item.metadataPending)) return;
     if (channel && channels.some((item) => item.id === channel)) return;
     setChannel(channels.length === 1 ? (channels[0]?.id ?? "") : "");
-  }, [list.status, list.coverage, list.channels, channels, channel, editing]);
-  useEffect(() => {
-    try {
-      if (channel) localStorage.setItem(selectionKey, channel);
-      else localStorage.removeItem(selectionKey);
-    } catch {
-      /* Storage may be unavailable; selection still works for this visit. */
-    }
-  }, [selectionKey, channel]);
+  }, [
+    list.status,
+    list.coverage,
+    list.channels,
+    channels,
+    channel,
+    editing,
+    setChannel,
+  ]);
   const selected = channels.find((item) => item.id === channel);
   const readable = !!selected && !selected.cached && !selected.metadataCached;
   const writable =

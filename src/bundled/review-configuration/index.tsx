@@ -1,3 +1,4 @@
+import { ReviewUpdatesBadge } from "./ReviewUpdatesBadge";
 import { messageRoute } from "./ReviewMessageDialog";
 import { createAdmissionReader } from "./admission";
 import { watchTriage } from "./triage-coordinator";
@@ -51,6 +52,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
       id: page,
       title: reviewPageTitle(page),
       layout: "workspace",
+      ...(page === "all"
+        ? { badge: () => <ReviewUpdatesBadge relay={relay} /> }
+        : {}),
       primary: page !== "submit",
       placement: page === "submit" ? "sidebar" : "dock",
       route: { version: 1, validate: (params) => !!messageRoute(params) },

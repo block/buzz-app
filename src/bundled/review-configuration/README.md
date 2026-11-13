@@ -21,6 +21,23 @@ threads. It resets each lane to Needs review. Incomplete original submissions re
 the original browser profile instead. Existing review notifications run only on Submit.
 Agent admission continues automatically as described below.
 
+
+Status colors retain their text labels: completed outcomes (including legacy
+Completed · outcome unspecified) are green, pending review is amber, and changes
+requested are red. Color does not imply GitHub approval. Submitted records created
+by this version show their original submission date; older records say Not recorded.
+Last reviewed is the latest valid result in the assigned review threads, including
+previous reminder rounds; Reviewing acknowledgments do not change it. Times use
+the viewer’s local timezone. If history exceeds the bounded read, current statuses
+remain available and the date is explicitly unavailable.
+
+The Pull requests dock badge counts PRs with unseen review updates in the selected
+review channel. Each affected PR shows Updated and a Mark seen action. Opening the
+page alone does not clear updates. Mark seen acknowledges the displayed status;
+a later update marks the PR again. These preferences persist on this device,
+separately for each signed-in identity, community, and channel. The dock and table
+share an event-driven reader; there is no periodic polling.
+
 All three pages use the shell's page navigation. Review Configuration and Pull requests each have their own dock icon. The first opens repository and lane setup; the second opens the PR list directly. Its Submit PR button opens the submission form. Existing configuration actions and Back buttons remain available. Repository and lane editing
 remain local sections; reloading returns Configuration to its repository list.
 Restarted submissions use a versioned delivery generation; older plugin versions cannot read or resume them.
@@ -80,7 +97,7 @@ The reminder interval is saved for the planned executor but has no effect yet.
 
 ## Try it
 
-1. Enable the plugin and open **Review Configuration** in the Messages sidebar.
+1. Enable the plugin and open the **Review Configuration** dock icon.
 2. Choose a writable stream or forum channel and click **Register repository**.
 3. Enter a repository, select lane reviewers, add instructions, then **Save settings**.
 4. Reload the page, choose the same channel, and verify the repository row.

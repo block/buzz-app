@@ -64,8 +64,8 @@ export interface Outbox {
    * receipt/verified echo, never history hydration. It cannot affect delivery. */
   observeSend(listener: SendObserver): () => void;
   /** Each operation of this outbox the relay confirms, by receipt or verified
-   * echo, including one recovered from an earlier session. Both evidences may
-   * report the same operation. It cannot affect delivery. */
+   * echo, including one recovered from an earlier session, once. It cannot
+   * affect delivery. */
   observeDelivered(listener: (event: RelayEvent) => void): () => void;
   supports(kind: number): boolean;
   ready(): Promise<void>;
@@ -256,6 +256,10 @@ export function createOutbox(
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
   const deliveredListeners = new Set<(event: RelayEvent) => void>();
+  // Receipt and echo can both confirm one operation, in this session or before
+  // a restart; delivered observers hear of it once. An id is kept while its
+  // operation is outstanding or a receipt can still arrive.
+  const reported = new Set<string>();
   const deliveryWork = new Map<
     string,
     {
@@ -279,11 +283,17 @@ export function createOutbox(
     const work = deliveryWork.get(event.id)?.work;
     const pending = [...deliveryWork.values()].map((item) => item.event);
     deliveryWork.delete(event.id);
-    for (const listener of deliveredListeners) {
-      try {
-        listener(event);
-      } catch {
-        /* Independent observer. */
+    if (hydrated)
+      for (const id of reported)
+        if (!find(id) && !attempts.has(id)) reported.delete(id);
+    if (!reported.has(event.id)) {
+      reported.add(event.id);
+      for (const listener of deliveredListeners) {
+        try {
+          listener(event);
+        } catch {
+          /* Independent observer. */
+        }
       }
     }
     for (const run of work ?? []) {
@@ -448,6 +458,10 @@ export function createOutbox(
       : item.event;
     if (!event || event.pubkey !== viewer || getEventHash(event) !== event.id)
       throw new Error("Saved outbox event is invalid");
+    // Restored intent is unknown, but an earlier session already reported
+    // its confirmation.
+    if (item.delivery === "accepted" || item.delivery === "seen")
+      reported.add(event.id);
     return Object.freeze({
       event: Object.freeze({
         ...event,
@@ -1223,6 +1237,7 @@ export function createOutbox(
       deliveredListeners.clear();
       dismissListeners.clear();
       deliveryWork.clear();
+      reported.clear();
       void ready
         .then(() => durable)
         .catch(() => {})
